@@ -49,7 +49,7 @@ class SearchResultRowFamilyTest {
 
     @Test
     fun `a disabled MCP tool says so on the row itself`() {
-        // The row has no activation, so its state has to be legible where it is drawn - a disabled
+        // The row opens Toolbox, but its state must still be legible where it is drawn - a disabled
         // tool is precisely the one someone searched for.
         val off =
             SearchResult

@@ -4,6 +4,7 @@ import ai.rever.boss.config.SelfHealingSettingsManager
 import ai.rever.boss.ipc.BossIpcClient
 import ai.rever.boss.ipc.BossIpcServer
 import ai.rever.boss.ipc.IpcAddressResolver
+import ai.rever.boss.ipc.auth.ProcessTokenRegistry
 import ai.rever.boss.ipc.proto.OrchestratorServiceGrpcKt
 import ai.rever.boss.ipc.proto.ProcessFailureReport
 import ai.rever.boss.ipc.proto.ProcessState
@@ -13,6 +14,7 @@ import ai.rever.boss.ipc.services.EventBusServiceImpl
 import ai.rever.boss.ipc.services.KernelServiceImpl
 import ai.rever.boss.ipc.services.StateServiceImpl
 import ai.rever.boss.kernel.services.*
+import ai.rever.boss.kernel.ui.RemoteUiPlacement
 import ai.rever.boss.kernel.ui.RemoteUiSurfaceRegistry
 import ai.rever.boss.plugin.api.*
 import ai.rever.boss.process.ManagedProcess
@@ -92,27 +94,15 @@ private fun resolveServiceJar(
 
 private val reapLogger = LoggerFactory.getLogger("KernelReaper")
 
-/**
- * True while [reapChildren] is running, so recovery paths know to stand down.
- *
- * Stopping supervision closes the *detection* path but not the *action* path: the failure collector
- * runs on the kernel's own scope, which a reap deliberately does not cancel, and a `handleFailure`
- * already in flight can sit for the orchestrator-advice timeout and then respawn a child *after* the
- * reap took its snapshot. A shared flow with buffered failures can also deliver one after the
- * cancel. Either way the exiting host gains a child nothing will reap.
- */
-@Volatile
-private var reaping = false
-
 /** Whether a reap is in progress. Recovery must not spawn anything while this is true. */
-internal fun isReaping(): Boolean = reaping
+internal fun isReaping(): Boolean = reapSpawnGate.isReaping()
 
 /**
  * Stop supervising children, then kill every registered one inside [gracePeriodMs] total.
  *
  * Supervision goes first because each kill below is indistinguishable from a crash to the monitor,
  * whose failure handler respawns - reaping while it still watches can hand an exiting host a fresh
- * generation of children to strand. [reaping] covers the in-flight remainder.
+ * generation of children to strand. [isReaping] covers the in-flight remainder.
  *
  * Kills are issued to everything up front and then awaited against a single deadline set *before*
  * the first one goes out, rather than destroy-then-wait per process. Per-process waiting made exit
@@ -132,8 +122,13 @@ internal fun reapChildren(
     monitor: ProcessMonitor?,
     registry: ProcessRegistry?,
     gracePeriodMs: Long = 3_000,
+    /**
+     * When present, each reaped child's IPC credential is invalidated once it is confirmed gone — see
+     * [ProcessTokenRegistry.revoke]. Null spawns behave exactly as before (no tokens exist to revoke).
+     */
+    tokenRegistry: ProcessTokenRegistry? = null,
 ) {
-    reaping = true
+    reapSpawnGate.beginReap()
     try {
         runCatching { monitor?.stopSupervision() }
 
@@ -164,11 +159,46 @@ internal fun reapChildren(
             runCatching { it.process.destroyForcibly() }
         }
 
-        // Children are dead, so nothing is going to answer on these. Close them without waiting.
+        // SIGKILL completion is asynchronous. Give the whole cohort one short shared budget
+        // before deciding which handles are confirmed dead; surviving children stay registered.
+        awaitForcedChildren(children)
+
+        // Close channels without adding a per-child IPC timeout.
         children.forEach { runCatching { it.ipcClient?.shutdown(timeoutMs = 0) } }
+
+        // Drop confirmed-dead handles, preserving live children if termination failed or is pending.
+        // Harmless at JVM exit, but shutdown() also runs
+        // this for an in-process mode switch, where the registry is process-wide and outlives the
+        // reap - stale dead entries would otherwise persist into the next generation. Keyed by
+        // config.processId, which is exactly what ProcessSpawner.spawn registered them under.
+        children.filterNot { it.isAlive }.forEach { child ->
+            runCatching { registry?.unregisterIfSame(child.config.processId, child) }
+        }
+
+        // And nothing should be able to answer *as* them either: a credential outliving the process
+        // it was issued to is exactly what BossConsole#53 exists to avoid.
+        children.forEach { runCatching { tokenRegistry?.revoke(it.config.processId) } }
     } finally {
-        reaping = false
+        reapSpawnGate.endReap()
     }
+}
+
+private fun awaitForcedChildren(children: List<ManagedProcess>) {
+    val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(100)
+    children.filter { it.isAlive }.forEach { child ->
+        val remaining = deadline - System.nanoTime()
+        if (remaining > 0) runCatching { child.process.waitFor(remaining, TimeUnit.NANOSECONDS) }
+    }
+}
+
+internal fun discardReapedSpawn(
+    child: ManagedProcess,
+    registry: ProcessRegistry?,
+) {
+    runCatching { child.process.destroyForcibly() }
+    runCatching { child.process.waitFor(100, TimeUnit.MILLISECONDS) }
+    runCatching { child.ipcClient?.shutdown(timeoutMs = 0) }
+    if (!child.isAlive) runCatching { registry?.unregisterIfSame(child.config.processId, child) }
 }
 
 private val recoveryLogger = LoggerFactory.getLogger("KernelRecovery")
@@ -343,6 +373,13 @@ class KernelBootstrap(
         private set
 
     /**
+     * Per-process IPC credentials for this kernel instance, or null in MONOLITH mode where nothing is
+     * spawned and no bridge checks identity. Shared by [processSpawner] (which mints) and [ipcServer]'s
+     * [ai.rever.boss.ipc.auth.ProcessIdentityInterceptor] (which verifies) — see BossConsole#53.
+     */
+    private var processTokenRegistry: ProcessTokenRegistry? = null
+
+    /**
      * IPC address of each registered child, so the kernel can call *them*.
      *
      * [KernelServiceImpl] has always known these — it just handed them to a callback that dropped
@@ -367,10 +404,12 @@ class KernelBootstrap(
         // Create infrastructure
         kernelAddress = IpcAddressResolver.kernelAddress()
         val registry = ProcessRegistry()
+        val tokenRegistry = ProcessTokenRegistry()
         // The spawner registers everything it spawns, so no call site can forget to.
-        val spawner = ProcessSpawner(kernelAddress!!, registry = registry)
+        val spawner = ProcessSpawner(kernelAddress!!, registry = registry, tokenRegistry = tokenRegistry)
         processRegistry = registry
         processSpawner = spawner
+        processTokenRegistry = tokenRegistry
         processMonitor = ProcessMonitor(registry, scope)
 
         // Register JVM shutdown hook to kill child processes on exit/crash
@@ -378,7 +417,7 @@ class KernelBootstrap(
             Thread({
                 try {
                     logger.info("JVM shutdown hook: cleaning up child processes...")
-                    reapChildren(processMonitor, processRegistry)
+                    reapChildren(processMonitor, processRegistry, tokenRegistry = processTokenRegistry)
                     ipcServer?.stop()
                 } catch (_: Exception) {
                 }
@@ -429,11 +468,11 @@ class KernelBootstrap(
         // and never touches the socket. Adding a service to a running server is safe; the ordering above
         // is about existence, not about protecting streams.
         ipcServer =
-            BossIpcServer(kernelAddress!!)
+            BossIpcServer(kernelAddress!!, tokenRegistry)
                 .addService(kernelService!!)
                 .addService(eventBusService!!)
                 .addService(stateService!!)
-                .addService(PluginUIServiceBridge(RemoteUiSurfaceRegistry.shared))
+                .addService(PluginUIServiceBridge(RemoteUiSurfaceRegistry.shared, placement = RemoteUiPlacement.shared))
                 .start()
 
         // Wire IPC event bridge to forward events cross-process (M8 fix)
@@ -590,6 +629,7 @@ class KernelBootstrap(
         processId: String,
         jvmArgsOverride: List<String>? = null,
     ) {
+        val generation = reapSpawnGate.generation()
         val process = respawnCandidate(registry, processId) ?: return
         val restartCount = registry.getRestartCount(processId)
 
@@ -605,7 +645,11 @@ class KernelBootstrap(
         try {
             // spawn() registers the replacement itself. The manifest survives because a respawn
             // never unregisters, so it is still keyed under this processId.
-            spawner.spawn(config)
+            reapSpawnGate.spawn(
+                generation,
+                createChild = { spawner.spawn(config) },
+                discardChild = { discardReapedSpawn(it, registry) },
+            )
             registry.incrementRestartCount(processId)
         } catch (e: Exception) {
             logger.error("Respawn failed for {}: {}", processId, e.message)
@@ -851,7 +895,7 @@ class KernelBootstrap(
         //    back-to-back with no wait between tiers, so no tier was actually down before the next
         //    was signalled. Reintroducing it would mean a wait per tier, and therefore an exit cost
         //    that scales with the number of tiers.
-        reapChildren(processMonitor, processRegistry)
+        reapChildren(processMonitor, processRegistry, tokenRegistry = processTokenRegistry)
 
         // 3. Stop IPC server
         ipcServer?.stop()

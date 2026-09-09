@@ -41,7 +41,20 @@ import androidx.compose.ui.unit.dp
 internal const val BODY_SCROLLBAR_TAG = "alert-body-scrollbar"
 
 /** Width of a BOSS alert card, matching the house confirmation dialog. */
-internal val AlertWidth: Dp = 400.dp
+internal val ALERT_WIDTH: Dp = 400.dp
+
+/**
+ * Whether a spacer belongs above the button row.
+ *
+ * Only when there is header content - a title or a body - for it to separate the buttons FROM. A
+ * buttons-only card (the `buttons` overload with no title and no text) would otherwise carry a dead
+ * `space.xl` gap above a lone action row. Pure so the one rule is pinned by a test rather than read
+ * off the layout.
+ */
+internal fun alertHeaderSpacerVisible(
+    hasTitle: Boolean,
+    hasText: Boolean,
+): Boolean = hasTitle || hasText
 
 /**
  * The card [BossAlertDialog] puts inside a dialog, split out so it can be measured.
@@ -51,7 +64,7 @@ internal val AlertWidth: Dp = 400.dp
  * below are about a card with LESS room than it wants, which only a constrained parent produces -
  * hence `internal`, and `BossAlertCardLayoutTest` constraining it directly.
  *
- * **Width: [AlertWidth] is what an alert wants, not what it must have.** `.width(AlertWidth)` set
+ * **Width: [ALERT_WIDTH] is what an alert wants, not what it must have.** `.width(ALERT_WIDTH)` set
  * the minimum as well as the maximum, so a window narrower than 400dp got a card it could not fit.
  * `BoxWithConstraints` rather than `widthIn(max = …)`, because with only a maximum a `Surface` wraps
  * its content and every short alert in the app would have become narrower than 400dp.
@@ -115,7 +128,7 @@ internal fun BossAlertCard(
         Surface(
             modifier =
                 modifier
-                    .width(AlertWidth.coerceAtMost(available))
+                    .width(ALERT_WIDTH.coerceAtMost(available))
                     .then(
                         if (parentBoundsUs) {
                             // The margin, not the fix - see the KDoc. Pinned by
@@ -147,7 +160,9 @@ internal fun BossAlertCard(
                     if (text != null) {
                         AlertBody(text, bodyCanFlex, colors.textSecondary)
                     }
-                    Spacer(Modifier.height(space.xl))
+                    if (alertHeaderSpacerVisible(title != null, text != null)) {
+                        Spacer(Modifier.height(space.xl))
+                    }
                     buttons()
                 }
             }

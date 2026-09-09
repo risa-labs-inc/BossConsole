@@ -33,6 +33,7 @@ graalvmNative {
 
 dependencies {
     implementation(project(":boss-ipc"))
+    implementation(project(":plugin-platform:plugin-language-types"))
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.slf4j.api)
     runtimeOnly(libs.slf4j.simple)

@@ -4,10 +4,11 @@ import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import java.io.File
 
 /**
  * Desktop implementation of update settings
@@ -48,6 +49,12 @@ actual object UpdateSettings {
      */
     @Volatile
     actual var lastDismissedVersion: String? = null
+
+    /**
+     * Version string for the newest release notes viewed by the user.
+     */
+    @Volatile
+    actual var lastSeenReleaseVersion: String? = null
 }
 
 /**
@@ -59,6 +66,7 @@ data class UpdateSettingsData(
     val checkIntervalHours: Long = 6,
     val includePreReleases: Boolean = false,
     val lastDismissedVersion: String? = null,
+    val lastSeenReleaseVersion: String? = null,
 )
 
 /**
@@ -69,6 +77,9 @@ data class UpdateSettingsData(
  */
 actual object UpdateSettingsManager {
     private val logger = BossLogger.forComponent("UpdateSettingsManager")
+
+    // Serialize snapshot-and-write operations so concurrent saves cannot persist stale settings.
+    private val settingsWriteMutex = Mutex()
     private val settingsFile = BossDirectories.resolve("update-settings.json")
     private val json =
         Json {
@@ -83,6 +94,11 @@ actual object UpdateSettingsManager {
         // Load settings on initialization
         loadSettingsSync()
     }
+
+    // Accessing this JVM object runs init/loadSettingsSync exactly once before this method.
+    // Keep this explicit initialization barrier: the coordinator must snapshot the persisted
+    // marker, not UpdateSettings defaults. Re-running the load here would overwrite live edits.
+    actual fun ensureLoaded() = Unit
 
     /**
      * Load settings from disk synchronously
@@ -99,6 +115,7 @@ actual object UpdateSettingsManager {
                 UpdateSettings.checkIntervalHours = settings.checkIntervalHours
                 UpdateSettings.includePreReleases = settings.includePreReleases
                 UpdateSettings.lastDismissedVersion = settings.lastDismissedVersion
+                UpdateSettings.lastSeenReleaseVersion = settings.lastSeenReleaseVersion
 
                 logger.debug(
                     LogCategory.SYSTEM,
@@ -123,21 +140,28 @@ actual object UpdateSettingsManager {
      */
     actual suspend fun saveSettings() =
         withContext(Dispatchers.IO) {
-            try {
-                val settings =
-                    UpdateSettingsData(
-                        autoCheckEnabled = UpdateSettings.autoCheckEnabled,
-                        checkIntervalHours = UpdateSettings.checkIntervalHours,
-                        includePreReleases = UpdateSettings.includePreReleases,
-                        lastDismissedVersion = UpdateSettings.lastDismissedVersion,
+            settingsWriteMutex.withLock {
+                try {
+                    val settings =
+                        UpdateSettingsData(
+                            autoCheckEnabled = UpdateSettings.autoCheckEnabled,
+                            checkIntervalHours = UpdateSettings.checkIntervalHours,
+                            includePreReleases = UpdateSettings.includePreReleases,
+                            lastDismissedVersion = UpdateSettings.lastDismissedVersion,
+                            lastSeenReleaseVersion = UpdateSettings.lastSeenReleaseVersion,
+                        )
+
+                    val content = json.encodeToString(UpdateSettingsData.serializer(), settings)
+                    settingsFile.writeText(content)
+
+                    logger.debug(
+                        LogCategory.SYSTEM,
+                        "Saved update settings",
+                        mapOf("path" to settingsFile.absolutePath),
                     )
-
-                val content = json.encodeToString(UpdateSettingsData.serializer(), settings)
-                settingsFile.writeText(content)
-
-                logger.debug(LogCategory.SYSTEM, "Saved update settings", mapOf("path" to settingsFile.absolutePath))
-            } catch (e: Exception) {
-                logger.warn(LogCategory.SYSTEM, "Failed to save update settings", error = e)
+                } catch (e: Exception) {
+                    logger.warn(LogCategory.SYSTEM, "Failed to save update settings", error = e)
+                }
             }
         }
 }

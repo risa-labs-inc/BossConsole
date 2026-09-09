@@ -3,11 +3,13 @@ package ai.rever.boss.keymap
 import ai.rever.boss.keymap.model.KeyBinding
 import ai.rever.boss.keymap.model.KeyStroke
 import ai.rever.boss.keymap.model.KeymapSettings
+import ai.rever.boss.keymap.model.keyNameForStoredKeyCode
 import ai.rever.boss.keymap.presets.KeymapPresets
 import ai.rever.boss.keymap.presets.KeymapPresets.claimsChord
 import ai.rever.boss.keymap.presets.KeymapPresets.withoutChordsTakenBy
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.ComponentLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -103,9 +105,18 @@ actual object KeymapSettingsManager {
      * @return Migrated settings with any missing actions added from the preset
      */
     internal fun migrateSettings(loaded: KeymapSettings): KeymapSettings {
+        // Before anything reads a chord off this keymap. Every rebind made in the Shortcuts
+        // screen up to #329 stored a packed `Key.keyCode`, and the chord arithmetic below is
+        // exactly what that breaks: `chordHolders` signs a numeric key into a signature no
+        // preset chord can equal, so a keymap whose owner rebound panel.navigate_right through
+        // the UI reads as NOT claiming that chord, and the drop-on-conflict guard added for
+        // that user hands them a second action on it. Repairing first is what makes the guard
+        // see the chords its motivating example is about.
+        val repaired = repairStoredKeyCodes(loaded, logger)
+
         // Get the preset that matches user's presetName
         val presetShortcuts =
-            when (loaded.presetName) {
+            when (repaired.presetName) {
                 "VS Code" -> KeymapPresets.getVSCodePreset().shortcuts
                 "IntelliJ IDEA" -> KeymapPresets.getIntelliJPreset().shortcuts
                 "Emacs" -> KeymapPresets.getEmacsPreset().shortcuts
@@ -115,10 +126,10 @@ actual object KeymapSettingsManager {
         // Find actions in preset that are missing from user settings
         val missingActions =
             presetShortcuts.filterKeys { actionId ->
-                !loaded.shortcuts.containsKey(actionId)
+                !repaired.shortcuts.containsKey(actionId)
             }
 
-        val alternateTopUps = alternateTopUps(loaded, presetShortcuts)
+        val alternateTopUps = alternateTopUps(repaired, presetShortcuts)
 
         // Chord-checked against the keymap as it will stand, exactly as withStandardBrowserBindings
         // checks additions against the preset. Adding a preset's new actions verbatim would ship
@@ -128,8 +139,8 @@ actual object KeymapSettingsManager {
         // tab.next_positional on it. The stored binding wins the match, so the new chord would
         // do nothing while the conflict badge lit up - and this PR lands twenty chords in one
         // migration, not one. An action whose every chord is taken is dropped, as in the merge.
-        val toppedUp = loaded.shortcuts + alternateTopUps
-        val holders = chordHolders(loaded.copy(shortcuts = toppedUp))
+        val toppedUp = repaired.shortcuts + alternateTopUps
+        val holders = chordHolders(repaired.copy(shortcuts = toppedUp))
         val newActions =
             missingActions.values
                 .mapNotNull { it.withoutChordsTakenBy(holders) }
@@ -149,7 +160,7 @@ actual object KeymapSettingsManager {
         }
 
         if (newActions.isEmpty() && alternateTopUps.isEmpty()) {
-            return loaded // No migration needed
+            return repaired // Nothing beyond the key-name repair, if any
         }
 
         logger.info(
@@ -166,7 +177,7 @@ actual object KeymapSettingsManager {
         // Merge: user settings, alternates topped up on untouched bindings, then new actions
         val mergedShortcuts = toppedUp + newActions
 
-        return loaded.copy(shortcuts = mergedShortcuts)
+        return repaired.copy(shortcuts = mergedShortcuts)
     }
 
     /**
@@ -234,7 +245,7 @@ actual object KeymapSettingsManager {
      */
     actual suspend fun importFromJson(jsonString: String): KeymapSettings? =
         try {
-            val settings = json.decodeFromString<KeymapSettings>(jsonString)
+            val settings = repairStoredKeyCodes(json.decodeFromString<KeymapSettings>(jsonString), logger)
             updateSettings(settings)
             settings
         } catch (e: Exception) {
@@ -352,3 +363,46 @@ private fun chordHolders(settings: KeymapSettings): List<KeyBinding> = settings.
  * object is at its TooManyFunctions threshold.
  */
 private fun KeyStroke.sameChordAs(other: KeyStroke): Boolean = signature() == other.signature()
+
+/**
+ * Rewrite any key stored as a packed `Key.keyCode` back to the name it stands for.
+ *
+ * The Shortcuts screen wrote `Key.keyCode.toString()` for every rebind up to #329, so a
+ * keymap that has been touched through the UI carries entries like
+ * `"key": "4294967333"`. `canonicalKeyName` resolves those at match time, so this is not what
+ * makes them fire again - it is what stops the Shortcuts list rendering a ten-digit key, what lets
+ * `migrateSettings`' chord arithmetic see the chord, and what keeps the file legible for the hand
+ * editing its own docs invite.
+ *
+ * Alternates are rewritten too: nothing writes one today, but `keymap-settings.json` is a
+ * documented hand-edited file and a repair that covers only half of a binding is a worse
+ * answer than one that covers none.
+ *
+ * Top-level rather than a member of the object, for the reason [sameChordAs] gives; the logger is
+ * passed in because that makes the object's private one unreachable.
+ */
+private fun repairStoredKeyCodes(
+    loaded: KeymapSettings,
+    logger: ComponentLogger,
+): KeymapSettings {
+    var repairs = 0
+
+    fun repair(key: String): String = keyNameForStoredKeyCode(key)?.also { repairs++ } ?: key
+
+    val shortcuts =
+        loaded.shortcuts.mapValues { (_, binding) ->
+            binding.copy(
+                key = repair(binding.key),
+                alternateKeystrokes = binding.alternateKeystrokes.map { it.copy(key = repair(it.key)) },
+            )
+        }
+
+    if (repairs == 0) return loaded
+
+    logger.info(
+        LogCategory.SYSTEM,
+        "Repaired keymap entries that stored a packed Key.keyCode instead of a key name",
+        mapOf("count" to repairs),
+    )
+    return loaded.copy(shortcuts = shortcuts)
+}

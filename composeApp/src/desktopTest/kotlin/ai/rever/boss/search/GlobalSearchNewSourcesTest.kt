@@ -303,7 +303,7 @@ class GlobalSearchNewSourcesTest {
     @Test
     fun `a short query does not match every tool by its description`() {
         // FuzzyMatcher accepts any in-order subsequence, so "abc" hits almost any paragraph. Those
-        // rows still drew an "MCP Tools" section header full of rows that cannot be activated. A
+        // rows still drew an "MCP Tools" section header full of irrelevant rows. A
         // score floor could not fix it - word-boundary and start-of-string bonuses push scattered
         // initials on prose into the sixties - so a description hit has to CONTAIN what was typed.
         SearchSources.registerMcpTools {

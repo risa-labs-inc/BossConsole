@@ -21,13 +21,13 @@ import java.io.File
  *
  * This reconciler groups JARs by their manifest `pluginId`, keeps the highest
  * version, best-effort deletes the rest, and repoints `installed.json` at the
- * winner. It is idempotent and safe to run at startup and after updates.
+ * winner. A full scan is startup-only; an in-session update must explicitly select its plugin ids.
  */
 object PluginJarReconciler {
     private val logger = BossLogger.forComponent("PluginJarReconciler")
 
     data class ReconcileResult(
-        /** One JAR per pluginId (highest version), plus non-plugin JARs passed through. */
+        /** One selected JAR per in-scope pluginId, plus unreadable/non-plugin JARs passed through. */
         val winners: List<File>,
         /** Loser filenames actually removed from disk. */
         val deleted: List<String>,
@@ -45,8 +45,13 @@ object PluginJarReconciler {
      * or unload anything. Deletes are best-effort: on Windows the JVM may hold
      * a lock on a previously-loaded JAR and `delete()` returns false — the
      * stale file lingers until the next reconcile.
+     * [pluginIds] limits an in-session update to its own plugin. A full scan is startup-only:
+     * other plugins may have staged newer JARs while their old JARs are still in use.
      */
-    fun reconcilePluginDir(pluginDir: File): ReconcileResult {
+    fun reconcilePluginDir(
+        pluginDir: File,
+        pluginIds: Set<String>?,
+    ): ReconcileResult {
         val jars =
             pluginDir
                 .listFiles { file ->
@@ -54,18 +59,7 @@ object PluginJarReconciler {
                 }?.toList() ?: emptyList()
 
         val skipped = mutableListOf<String>()
-        val candidates = mutableListOf<Candidate>()
-        for (jar in jars) {
-            val manifest = runCatching { PluginManifestReader.readFromJar(jar.absolutePath) }.getOrNull()
-            if (manifest == null || manifest.pluginId.isBlank()) {
-                // Unreadable or non-plugin JAR: never delete, never group.
-                skipped.add(jar.name)
-            } else if (manifest.pluginId == MicrokernelRuntime.PLUGIN_ID) {
-                skipped.add(jar.name)
-            } else {
-                candidates.add(Candidate(jar, manifest))
-            }
-        }
+        val candidates = readCandidates(jars, pluginIds, skipped)
 
         val installedByPluginId = PluginPersistence.getInstalledPlugins().associateBy { it.pluginId }
         val winners = mutableListOf<File>()
@@ -73,8 +67,14 @@ object PluginJarReconciler {
 
         candidates.groupBy { it.manifest.pluginId }.forEach { (pluginId, group) ->
             val installedPath = installedByPluginId[pluginId]?.jarPath
-            val winner = pickWinner(group, installedPath)
+            val unordered = group.any { Version.parse(it.manifest.version) == null }
+            val persistedCandidate = group.firstOrNull { it.file.absolutePath == installedPath }
+            val winner =
+                if (unordered && persistedCandidate != null) persistedCandidate else pickWinner(group, installedPath)
             winners.add(winner.file)
+            // Unknown version precedence cannot justify deleting the selected next-launch artifact
+            // or repointing its record back to a known older release.
+            if (unordered) return@forEach
 
             for (loser in group) {
                 if (loser.file == winner.file) continue
@@ -98,26 +98,7 @@ object PluginJarReconciler {
                 )
             }
 
-            // Repoint installed.json if it referenced a non-winner path, so the
-            // persisted-load path loads the kept JAR rather than a deleted one.
-            val entry = installedByPluginId[pluginId]
-            if (entry != null && entry.jarPath != winner.file.absolutePath) {
-                PluginPersistence.addInstalledPlugin(
-                    pluginId = pluginId,
-                    jarPath = winner.file.absolutePath,
-                    enabled = entry.enabled,
-                    sourceUrl = entry.sourceUrl,
-                    installedVersion = winner.manifest.version,
-                )
-                logger.info(
-                    LogCategory.SYSTEM,
-                    "Repointed installed.json at winner JAR",
-                    mapOf(
-                        "pluginId" to pluginId,
-                        "jarPath" to winner.file.name,
-                    ),
-                )
-            }
+            repointInstalledEntry(pluginId, installedByPluginId[pluginId], winner)
         }
 
         if (deleted.isNotEmpty()) {
@@ -136,6 +117,53 @@ object PluginJarReconciler {
         // existing scan would have attempted.
         winners.addAll(jars.filter { it.name in skipped })
         return ReconcileResult(winners, deleted, skipped)
+    }
+
+    private fun readCandidates(
+        jars: List<File>,
+        pluginIds: Set<String>?,
+        skipped: MutableList<String>,
+    ): List<Candidate> {
+        val candidates = mutableListOf<Candidate>()
+        for (jar in jars) {
+            val manifest = runCatching { PluginManifestReader.readFromJar(jar.absolutePath) }.getOrNull()
+            if (manifest == null || manifest.pluginId.isBlank()) {
+                // Unreadable or non-plugin JAR: never delete, never group.
+                skipped.add(jar.name)
+            } else if (manifest.pluginId == MicrokernelRuntime.PLUGIN_ID) {
+                skipped.add(jar.name)
+            } else if (pluginIds == null || manifest.pluginId in pluginIds) {
+                candidates.add(Candidate(jar, manifest))
+            }
+        }
+
+        return candidates
+    }
+
+    private fun repointInstalledEntry(
+        pluginId: String,
+        entry: PluginPersistence.InstalledPluginEntry?,
+        winner: Candidate,
+    ) {
+        // Repoint installed.json if it referenced a non-winner path, so the
+        // persisted-load path loads the kept JAR rather than a deleted one.
+        if (entry != null && entry.jarPath != winner.file.absolutePath) {
+            PluginPersistence.addInstalledPlugin(
+                pluginId = pluginId,
+                jarPath = winner.file.absolutePath,
+                enabled = entry.enabled,
+                sourceUrl = entry.sourceUrl,
+                installedVersion = winner.manifest.version,
+            )
+            logger.info(
+                LogCategory.SYSTEM,
+                "Repointed installed.json at winner JAR",
+                mapOf(
+                    "pluginId" to pluginId,
+                    "jarPath" to winner.file.name,
+                ),
+            )
+        }
     }
 
     /**

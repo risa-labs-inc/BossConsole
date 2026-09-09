@@ -18,7 +18,7 @@ import kotlinx.coroutines.launch
 /**
  * Width of the logout card.
  *
- * The house confirmation width, matching [ConfirmationDialog] and `BossAlertDialog`'s `AlertWidth`.
+ * The house confirmation width, matching [ConfirmationDialog] and `BossAlertDialog`'s `ALERT_WIDTH`.
  * It has to be a FIXED width rather than `fillMaxWidth()`: `BossDialog`'s contract is that its
  * content is an intrinsically-sized card, and on the heavyweight path the card is measured inside a
  * `fillMaxSize()` scrim spanning the whole window, so a filling card became a band across the entire

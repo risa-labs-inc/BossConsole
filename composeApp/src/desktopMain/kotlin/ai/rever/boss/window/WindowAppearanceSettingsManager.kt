@@ -1,5 +1,6 @@
 package ai.rever.boss.window
 
+import ai.rever.boss.layout.ChromeDensity
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.SystemUtils
 import ai.rever.boss.utils.logging.BossLogger
@@ -10,6 +11,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import java.awt.Toolkit
 import java.io.File
 
 /**
@@ -92,7 +94,8 @@ actual object WindowAppearanceSettingsManager {
             }
         } catch (e: Exception) {
             logger.warn(LogCategory.SYSTEM, "Failed to load settings", error = e)
-            _currentSettings.value = getDefaultSettings()
+            // An unreadable existing file is not a fresh install. Do not apply a screen profile.
+            _currentSettings.value = defaultWindowAppearanceSettings(isMacOs = SystemUtils.isMacOS)
         }
     }
 
@@ -128,9 +131,58 @@ actual object WindowAppearanceSettingsManager {
         //
         // Stamped current: a fresh file is already on this build's defaults and must not be
         // migrated on the next launch as though it were an older one.
-        return WindowAppearanceSettings(
-            showTitleBar = SystemUtils.isMacOS,
-            settingsVersion = WindowAppearanceSettings.CURRENT_SETTINGS_VERSION,
+        return defaultWindowAppearanceSettings(
+            isMacOs = SystemUtils.isMacOS,
+            screenHeightDp = primaryScreenHeightDp(),
         )
     }
+
+    /**
+     * The primary screen's logical height in dp, or null when it cannot be read.
+     *
+     * `Toolkit.getScreenSize()` throws `HeadlessException` off a display (a test JVM, a CI runner),
+     * which must not crash a fresh install's very first launch - `runCatching` and a null fall
+     * through [defaultDensityFor] to [ChromeDensity.COMFORTABLE], the same as it always defaulted.
+     */
+    private fun primaryScreenHeightDp(): Int? =
+        runCatching {
+            Toolkit.getDefaultToolkit().screenSize.height
+        }.getOrNull()
 }
+
+/**
+ * Screen heights at or above this stay on [ChromeDensity.COMFORTABLE]. See [defaultDensityFor].
+ *
+ * Chosen from issue #239's own measurements, not the 900 pt its first draft proposed: a 13"
+ * MacBook Air's default scaled resolution reports 956 pt of screen height (931 pt once the macOS
+ * menu bar is subtracted) - 900 would have left the reference machine this issue is about on
+ * Comfortable. 1000 clears both figures with margin, while a 15"+ laptop (typically >=1024 pt of
+ * logical height) or a desktop display stays untouched.
+ */
+private const val SMALL_SCREEN_HEIGHT_THRESHOLD_DP = 1000
+
+/**
+ * The density a fresh install should start on, given its primary screen's logical height in dp.
+ *
+ * A pure function, not a method on the manager, so it is directly testable without touching AWT -
+ * [defaultWindowAppearanceSettings] applies it; only fresh-install defaults read [Toolkit].
+ * `null` (the height could not be read) is treated as "not small": the manager
+ * must not crash or misconfigure a fresh install because a display could not be measured.
+ */
+internal fun defaultDensityFor(screenHeightDp: Int?): ChromeDensity =
+    if (screenHeightDp != null && screenHeightDp < SMALL_SCREEN_HEIGHT_THRESHOLD_DP) {
+        ChromeDensity.COMPACT
+    } else {
+        ChromeDensity.COMFORTABLE
+    }
+
+/** Only fresh installs supply a screen height; read-failure recovery keeps Comfortable. */
+internal fun defaultWindowAppearanceSettings(
+    isMacOs: Boolean,
+    screenHeightDp: Int? = null,
+): WindowAppearanceSettings =
+    WindowAppearanceSettings(
+        showTitleBar = isMacOs,
+        density = defaultDensityFor(screenHeightDp),
+        settingsVersion = WindowAppearanceSettings.CURRENT_SETTINGS_VERSION,
+    )

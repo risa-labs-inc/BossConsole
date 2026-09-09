@@ -88,4 +88,68 @@ class ReleaseNotesMarkdownTest {
         val blocks = parseReleaseNotes("```\ndangling")
         assertEquals(listOf(NotesBlock.CodeBlock("dangling")), blocks)
     }
+
+    @Test
+    fun `summary skips release metadata and finds the first actual change`() {
+        val blocks =
+            parseReleaseNotes(
+                """
+                # BOSS 9.5.8
+
+                ## Downloads
+
+                | Platform | Package |
+                |----------|---------|
+                | Windows | MSI |
+
+                ```
+                artifact-name
+                ```
+
+                - **Dashboard**: Added a What's New feed.
+                """.trimIndent(),
+            )
+
+        assertEquals(
+            "**Dashboard**: Added a What's New feed.",
+            summarizeReleaseNotes(blocks),
+        )
+    }
+
+    @Test
+    fun `summary prefers opening prose over later list items`() {
+        val blocks =
+            parseReleaseNotes(
+                """
+                ## Improvements
+
+                This release improves Dashboard discoverability.
+
+                - Added release cards.
+                """.trimIndent(),
+            )
+
+        assertEquals(
+            "This release improves Dashboard discoverability.",
+            summarizeReleaseNotes(blocks),
+        )
+    }
+
+    @Test
+    fun `summary is null when notes contain no useful prose`() {
+        val blocks =
+            parseReleaseNotes(
+                """
+                # BOSS 9.5.8
+
+                ---
+
+                ```
+                artifact-name
+                ```
+                """.trimIndent(),
+            )
+
+        assertEquals(null, summarizeReleaseNotes(blocks))
+    }
 }

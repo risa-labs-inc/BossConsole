@@ -40,6 +40,7 @@ fun PluginLoadGateHost(
     val scope = rememberCoroutineScope()
     var busy by remember(gate.pluginId) { mutableStateOf(false) }
     var error by remember(gate.pluginId) { mutableStateOf<String?>(null) }
+    var successMessage by remember(gate.pluginId) { mutableStateOf<String?>(null) }
 
     // Resolved asynchronously because one of the three inputs is a store request. Until it arrives
     // the dialog is not shown at all rather than shown with no buttons: an empty dialog that fills
@@ -55,6 +56,7 @@ fun PluginLoadGateHost(
         remedies = resolved,
         busy = busy,
         error = error,
+        successMessage = successMessage,
         onDismiss = {
             // Dismissal forgets the refusal for this session. A dialog that comes back on every
             // recomposition for a problem the user has decided to live with would be worse than
@@ -62,9 +64,11 @@ fun PluginLoadGateHost(
             // the right cadence for something this consequential.
             PluginLoadGateRegistry.clear(gate.pluginId)
         },
-        onApply = { remedy ->
+        onApply = apply@{ remedy ->
+            if (busy || (successMessage != null && remedy is PluginLoadRemedy.UpdateHost)) return@apply
             busy = true
             error = null
+            successMessage = null
             scope.launch {
                 try {
                     // runCatching, not a catch: a throw rather than a failed Result would leave
@@ -72,7 +76,9 @@ fun PluginLoadGateHost(
                     // nothing.
                     runCatching { remedyResolver.apply(gate, remedy, manager) }
                         .getOrElse { Result.failure(it) }
-                        .onFailure { e ->
+                        .onSuccess { msg ->
+                            successMessage = msg
+                        }.onFailure { e ->
                             error = e.message ?: "Could not apply that fix."
                         }
                 } finally {

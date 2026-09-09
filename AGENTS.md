@@ -1014,6 +1014,8 @@ the whole `TabTypeId`, whose equality includes `pluginId` and `defaultOrder`.
 
 ## Documentation
 
+- [MCP for agent-less operators](docs/mcp-agentless-operators.md) - Toolbox kill-switches and attach path
+
 - [Core Subsystems](docs/SUBSYSTEMS.md) - Auth, UI, keyboard shortcuts, threading, default applications, runner, BossTerm
 - [BossEditor](docs/BOSSEDITOR.md) - External editor dependency, LSP, PSI, editor features
 - [Application Features](docs/FEATURES.md) - Performance monitoring, dashboard, downloads, Chromium branding
@@ -1024,3 +1026,19 @@ the whole `TabTypeId`, whose equality includes `pluginId` and `defaultOrder`.
 - [Windows Deep Link](docs/WINDOWS_DEEP_LINK_SETUP.md) - Windows protocol handler setup
 - [Release Rebuild](docs/RELEASE_REBUILD_GUIDE.md) - Re-running release builds
 
+
+
+### Governed MCP invocation (#371)
+
+The host policy applies to registry invocation; it does not isolate installed JVM
+plugins. Unknown tool names default to ALLOW. Known mutations default to ASK with
+a 45-second timeout. Each queued prompt is delivered to exactly one window and
+window teardown denies its owned request. Session trust is process-wide and can
+be cleared using “Revoke MCP session trust” in the bottom bar; restore the bar if
+it is hidden. Persistent rules currently require editing ~/.boss/mcp-tool-policy.json
+and restarting. Preserve a backup before manual recovery of a damaged policy;
+the fault flow withholds all tools until recovery. No automatic quarantine UI is
+provided. Ledger redaction is bounded and best effort, not a guarantee for secrets
+under arbitrary keys. Queue overflow and cancellation before/after dispatch have
+distinct ledger dispositions. These controls require deliberate integration with
+the alternative #336 and #362 registry interceptors before shipping together.

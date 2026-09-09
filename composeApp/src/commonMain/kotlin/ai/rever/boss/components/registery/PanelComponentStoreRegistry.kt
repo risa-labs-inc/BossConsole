@@ -35,6 +35,16 @@ object PanelComponentStoreRegistry {
     fun getAllStores(): Collection<PanelComponentStore> = stores.value.values
 
     /**
+     * The store for [windowId], or null if that window isn't registered (or never was).
+     *
+     * The per-window counterpart of [getAllStores], mirroring
+     * [ai.rever.boss.components.window_panel.SplitViewStateRegistry.getState] — for a caller that
+     * has resolved one target window (e.g. [ai.rever.boss.utils.WindowFocusManager]) rather than
+     * needing every window.
+     */
+    fun getStore(windowId: String): PanelComponentStore? = stores.value[windowId]
+
+    /**
      * Reset every OPEN slot showing one of [panelIds], across all windows;
      * slots showing other panels are left untouched. Returns the number of
      * slots reset.

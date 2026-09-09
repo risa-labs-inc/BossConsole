@@ -231,9 +231,11 @@ fun BoxScope.OverlayHud(
  * seconds while the user keeps working. This one is sized to its content, so only the toast itself
  * is covered.
  *
- * [initialSize] is the size of the window before its content has been measured, so it must be a
- * generous UPPER bound - too small and the content measures clipped, then the overlay settles at
- * the clipped size. On the lightweight path it is unused, as the content sizes itself normally.
+ * [initialSize] is the size of the window before its content has been measured - a first-frame
+ * placeholder. Content is measured against the parent content pane rather than this (see
+ * `HeavyweightCorner`), so an [initialSize] smaller than the content no longer clips it; it only
+ * sets the one frame before measurement lands. On the lightweight path it is unused, as the content
+ * sizes itself normally.
  *
  * [inset] exists because the two paths anchor to different things. The lightweight path aligns
  * inside the CALLER's `BoxScope`, but the heavyweight one is a separate window placed against the

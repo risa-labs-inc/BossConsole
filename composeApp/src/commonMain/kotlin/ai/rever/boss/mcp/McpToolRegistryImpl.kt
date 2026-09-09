@@ -7,16 +7,20 @@ import ai.rever.boss.plugin.api.McpToolProvider
 import ai.rever.boss.plugin.api.McpToolRegistry
 import ai.rever.boss.plugin.api.McpToolResult
 import ai.rever.boss.plugin.api.RegisteredMcpTool
+import ai.rever.boss.plugin.logging.LogSanitizer
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -93,6 +97,19 @@ object McpToolRegistryImpl : McpToolRegistry {
     /** How long a kill-switch fault sits in the bottom bar — longer than a routine status message. */
     private const val FAULT_MESSAGE_MS = 10_000L
 
+    val policyEngine =
+        McpPolicyEngine(
+            policyFile = BossDirectories.resolve("mcp-tool-policy.json"),
+            onFault = { StatusMessageManager.showMessage(it.message, durationMs = FAULT_MESSAGE_MS) },
+        )
+
+    val approvalBus = McpApprovalBus()
+
+    val ledger =
+        McpOperationLedger(
+            ledgerFile = BossDirectories.resolve("mcp-calls.jsonl"),
+        )
+
     private val core =
         McpToolRegistryCore(
             disabledFile = BossDirectories.resolve("mcp-disabled-tools.json"),
@@ -100,6 +117,9 @@ object McpToolRegistryImpl : McpToolRegistry {
             // without an api release, so the host announces the event itself. The
             // durable surface is the flow below, read by the status bar.
             onFault = { StatusMessageManager.showMessage(it.message, durationMs = FAULT_MESSAGE_MS) },
+            policyEngine = policyEngine,
+            approvalBus = approvalBus,
+            ledger = ledger,
         )
 
     override val allTools: StateFlow<List<RegisteredMcpTool>> get() = core.allTools
@@ -115,6 +135,9 @@ object McpToolRegistryImpl : McpToolRegistry {
      * before anyone looked. See [McpKillSwitchFault].
      */
     val killSwitchFault: StateFlow<McpKillSwitchFault?> get() = core.fault
+
+    /** Non-null when the policy engine degraded to fail-closed state. */
+    val policyFault: StateFlow<McpPolicyFault?> get() = core.policyEngine.fault
 
     /** See `Core.permittedTools`. */
     fun permittedTools(): List<RegisteredMcpTool> = core.permittedTools()
@@ -272,6 +295,9 @@ internal class McpToolRegistryCore(
     private val disabledFile: File?,
     private val invokeTimeoutMs: Long = 60_000L,
     private val onFault: (McpKillSwitchFault) -> Unit = {},
+    val policyEngine: McpPolicyEngine = McpPolicyEngine(),
+    val approvalBus: McpApprovalBus = McpApprovalBus(),
+    val ledger: McpOperationLedger = McpOperationLedger(),
 ) {
     private val logger = BossLogger.forComponent("McpToolRegistry")
 
@@ -627,42 +653,136 @@ internal class McpToolRegistryCore(
     /** Mirrors host RBAC. The rule itself is [mcpToolPermitted], which is where it is tested. */
     private fun permitted(def: McpToolDefinition): Boolean = mcpToolPermitted(def, isAdmin, permissions)
 
+    @Suppress("LongMethod") // Keep authorization and execution inside the same cancellation audit boundary.
     suspend fun invoke(
         toolName: String,
         arguments: String,
     ): McpToolResult {
-        // Only enabled tools are reachable (the bridge exposes exactly _tools).
         val tool =
             _tools.value.firstOrNull { it.definition.name == toolName }
                 ?: return McpToolResult("Unknown or disabled MCP tool: $toolName", isError = true)
         val args = parseArgs(arguments)
-        return try {
-            withTimeout(invokeTimeoutMs) { tool.definition.handler.call(args) }
-        } catch (t: TimeoutCancellationException) {
-            logger.warn(
-                LogCategory.SYSTEM,
-                "MCP tool handler timed out",
-                mapOf("tool" to toolName, "providerId" to tool.providerId, "timeoutMs" to invokeTimeoutMs),
-                error = t,
-            )
-            McpToolResult("Tool '$toolName' timed out after ${invokeTimeoutMs / 1000}s", isError = true)
-        } catch (t: CancellationException) {
-            // Caller cancellation (not our timeout) must propagate — swallowing it
-            // would break structured concurrency during request cancel/shutdown.
-            throw t
-        } catch (t: Throwable) {
-            logger.warn(
-                LogCategory.SYSTEM,
-                "MCP tool handler failed",
-                mapOf(
-                    "tool" to toolName,
-                    "providerId" to tool.providerId,
-                    "error" to (t.message ?: t::class.simpleName),
-                ),
-            )
-            McpToolResult("Tool '$toolName' failed: ${t.message ?: t::class.simpleName}", isError = true)
+        val policy = policyEngine.policyFor(toolName)
+        val startTime = System.nanoTime()
+        var disposition = McpApprovalDisposition.AUTO_ALLOWED
+        var result: McpToolResult? = null
+        var executionStarted = false
+        try {
+            val authorization = authorizeInvocation(tool, args, policy)
+            disposition = authorization.first
+            val denial = authorization.second
+            result =
+                when {
+                    denial != null -> {
+                        McpToolResult(denial, isError = true)
+                    }
+
+                    _tools.value.none { it.providerId == tool.providerId && it.definition === tool.definition } ||
+                        policyEngine.policyFor(toolName) == McpPolicyAction.DENY -> {
+                        disposition = McpApprovalDisposition.POLICY_DENIED
+                        McpToolResult("MCP tool access revoked while awaiting approval", isError = true)
+                    }
+
+                    else -> {
+                        if (disposition == McpApprovalDisposition.SESSION_TRUSTED) {
+                            policyEngine.trustForSession(toolName)
+                        }
+                        executionStarted = true
+                        executeAuthorized(tool, args)
+                    }
+                }
+            return requireNotNull(result)
+        } catch (cancelled: CancellationException) {
+            disposition =
+                if (executionStarted) {
+                    McpApprovalDisposition.CANCELLED_IN_FLIGHT
+                } else {
+                    McpApprovalDisposition.CANCELLED_AWAITING_APPROVAL
+                }
+            throw cancelled
+        } finally {
+            withContext(NonCancellable + Dispatchers.IO) {
+                ledger.record(
+                    toolName = toolName,
+                    providerId = tool.providerId,
+                    policyApplied = policy,
+                    approvalDisposition = disposition,
+                    durationMs = (System.nanoTime() - startTime) / 1_000_000L,
+                    isError = result?.isError ?: true,
+                    rawArgs = McpArgumentSanitizer.parseArguments(args.raw),
+                    errorSnippet =
+                        when {
+                            result == null -> "Execution cancelled by caller"
+                            result?.isError == true -> result?.text
+                            else -> null
+                        },
+                )
+            }
         }
     }
+
+    private suspend fun authorizeInvocation(
+        tool: RegisteredMcpTool,
+        args: McpToolArgs,
+        policy: McpPolicyAction,
+    ): Pair<McpApprovalDisposition, String?> =
+        when (policy) {
+            McpPolicyAction.DENY -> {
+                McpApprovalDisposition.POLICY_DENIED to "MCP tool rejected by policy (DENY)"
+            }
+
+            McpPolicyAction.ALLOW -> {
+                McpApprovalDisposition.AUTO_ALLOWED to null
+            }
+
+            McpPolicyAction.ASK -> {
+                when (
+                    val decision =
+                        approvalBus.requestApproval(
+                            tool.definition.name,
+                            tool.providerId,
+                            McpArgumentSanitizer.parseArguments(args.raw),
+                        )
+                ) {
+                    is McpApprovalDecision.Approved -> {
+                        val disposition =
+                            if (decision.trustForSession) {
+                                McpApprovalDisposition.SESSION_TRUSTED
+                            } else {
+                                McpApprovalDisposition.APPROVED_ONCE
+                            }
+                        disposition to null
+                    }
+
+                    is McpApprovalDecision.Denied -> {
+                        McpApprovalDisposition.DENIED_BY_OPERATOR to
+                            "MCP tool rejected by operator: ${decision.reason}"
+                    }
+
+                    McpApprovalDecision.QueueFull -> {
+                        McpApprovalDisposition.QUEUE_FULL to "MCP approval queue is full; no operator decision was made"
+                    }
+
+                    McpApprovalDecision.Timeout -> {
+                        McpApprovalDisposition.TIMEOUT to "MCP tool timed out waiting for operator approval"
+                    }
+                }
+            }
+        }
+
+    @Suppress("TooGenericExceptionCaught") // Plugin handlers may throw any implementation-specific exception.
+    private suspend fun executeAuthorized(tool: RegisteredMcpTool, args: McpToolArgs): McpToolResult =
+        try {
+            withTimeout(invokeTimeoutMs) { tool.definition.handler.call(args) }
+        } catch (_: TimeoutCancellationException) {
+            McpToolResult("Tool '${tool.definition.name}' timed out after ${invokeTimeoutMs / 1000}s", isError = true)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            // The tool caller receives a sanitized failure; never log the raw plugin exception.
+            val reason = LogSanitizer.sanitizeExceptionMessage(failure.message ?: failure::class.simpleName)
+            McpToolResult("Tool '${tool.definition.name}' failed: $reason", isError = true)
+        }
 
     /**
      * Read the persisted disabled set. "Absent" and "unparseable" are NOT the same

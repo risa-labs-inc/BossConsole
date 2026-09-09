@@ -9,6 +9,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import java.io.File
 import kotlin.test.AfterTest
@@ -632,4 +633,8 @@ class McpToolRegistryCoreTest {
         assertTrue(core.tools.value.isEmpty())
         assertTrue(core.permittedTools().isEmpty(), "permittedTools reads the same snapshot")
     }
+
+    // ---------------------------------------------------------------------
+    // Governed Autonomy - Policy, Approval Gate, and Operation Ledger
+    // ---------------------------------------------------------------------
 }
