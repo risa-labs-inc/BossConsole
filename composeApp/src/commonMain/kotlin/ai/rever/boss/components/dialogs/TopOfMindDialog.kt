@@ -1,5 +1,6 @@
 package ai.rever.boss.components.dialogs
 
+import ai.rever.boss.components.buttons.TabAudioIcon
 import ai.rever.boss.components.common.rememberFaviconLoader
 import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
 import ai.rever.boss.components.window_panel.SplitViewState
@@ -302,29 +303,31 @@ private fun ActiveTabDialogItem(
                     .padding(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Display favicon if available, otherwise fallback icon
-            loadedFavicon?.let { favicon ->
-                // Display actual favicon (safe call, no !!)
-                Image(
-                    painter = favicon.asPainter(),
-                    contentDescription = "Tab icon",
-                    modifier = Modifier.size(16.dp),
-                )
-            } ?: run {
-                // Fallback to appropriate vector icon based on tab type
-                val fallbackIcon =
-                    when (activeTab.tabInfo) {
-                        is FluckTabInfo -> Icons.Outlined.Language
+            TabAudioIcon(activeTab.tabInfo.id, Modifier.size(16.dp)) {
+                // Display favicon if available, otherwise fallback icon
+                loadedFavicon?.let { favicon ->
+                    // Display actual favicon (safe call, no !!)
+                    Image(
+                        painter = favicon.asPainter(),
+                        contentDescription = "Tab icon",
+                        modifier = Modifier.size(16.dp),
+                    )
+                } ?: run {
+                    // Fallback to appropriate vector icon based on tab type
+                    val fallbackIcon =
+                        when (activeTab.tabInfo) {
+                            is FluckTabInfo -> Icons.Outlined.Language
 
-                        // Browser tabs
-                        else -> Icons.Outlined.Tab // Other tab types
-                    }
-                Icon(
-                    fallbackIcon,
-                    contentDescription = "Tab icon",
-                    tint = if (isSelected) BossTheme.colors.textPrimary else BossTheme.colors.textSecondary,
-                    modifier = Modifier.size(16.dp),
-                )
+                            // Browser tabs
+                            else -> Icons.Outlined.Tab // Other tab types
+                        }
+                    Icon(
+                        fallbackIcon,
+                        contentDescription = "Tab icon",
+                        tint = if (isSelected) BossTheme.colors.textPrimary else BossTheme.colors.textSecondary,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.width(12.dp))
