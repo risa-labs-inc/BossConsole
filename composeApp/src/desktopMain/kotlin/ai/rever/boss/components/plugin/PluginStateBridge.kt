@@ -1,5 +1,6 @@
 package ai.rever.boss.components.plugin
 
+import ai.rever.boss.ipc.proto.PluginStateDelta
 import ai.rever.boss.ipc.proto.PluginIntentEnvelope
 import ai.rever.boss.ipc.proto.PluginStateRequest
 import ai.rever.boss.ipc.proto.PluginStateServiceGrpcKt
@@ -174,21 +175,14 @@ class PluginStateBridge(
 
             update.hasDeltaState() -> {
                 try {
-                    val currentStateStr = _state.value.decodeToString()
-                    val currentStateJson = if (currentStateStr.isBlank()) JsonObject(emptyMap()) else Json.parseToJsonElement(currentStateStr)
-                    
-                    val patchStr = update.deltaState.patchBytes.toByteArray().decodeToString()
-                    val patchJson = Json.parseToJsonElement(patchStr)
-                    
-                    val mergedJson = currentStateJson.mergePatch(patchJson)
-                    val mergedBytes = mergedJson.toString().encodeToByteArray()
-                    
-                    applyState(mergedBytes, update.deltaState.version)
+                    val delta = update.deltaState
+                    val mergedBytes = mergePluginStateDelta(_state.value, _version.value, delta)
+                    if (mergedBytes != null) applyState(mergedBytes, delta.newVersion)
                 } catch (e: Exception) {
                     logger.warn(
                         "Failed to apply delta state for plugin={}, requesting full state instead: {}",
                         pluginId,
-                        e.message
+                        e.javaClass.simpleName,
                     )
                     fetchCurrentState()
                 }
@@ -205,7 +199,7 @@ class PluginStateBridge(
         stateBytes: ByteArray,
         version: Long,
     ) {
-        if (version > _version.value) {
+        if (version > _version.value || (_state.value.isEmpty() && version == _version.value)) {
             _state.value = stateBytes
             _version.value = version
         }
@@ -219,6 +213,20 @@ class PluginStateBridge(
         scope.cancel()
         logger.info("PluginStateBridge disposed for plugin={}", pluginId)
     }
+}
+
+/** Returns null for an already applied delta; invalid bases require a full snapshot. */
+internal fun mergePluginStateDelta(
+    currentState: ByteArray,
+    currentVersion: Long,
+    delta: PluginStateDelta,
+): ByteArray? {
+    if (delta.newVersion <= currentVersion) return null
+    require(currentState.isNotEmpty()) { "No state snapshot available" }
+    require(delta.baseVersion == currentVersion) { "Delta base does not match current state" }
+    val target = Json.parseToJsonElement(currentState.decodeToString(throwOnInvalidSequence = true))
+    val patch = Json.parseToJsonElement(delta.patchBytes.toByteArray().decodeToString(throwOnInvalidSequence = true))
+    return target.mergePatch(patch).toString().encodeToByteArray()
 }
 
 private fun JsonElement.mergePatch(patch: JsonElement): JsonElement {

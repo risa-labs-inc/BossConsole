@@ -204,7 +204,6 @@
     <ID>ExplicitGarbageCollectionCall:PerformanceMonitor.kt$PerformanceMonitor$gc()</ID>
     <ID>ForbiddenComment:FluckEngine.kt$FluckEngine$// TODO: Implement if needed</ID>
     <ID>ForbiddenComment:FluckEngine.kt$FluckEngine$// TODO: Show user warning dialog (for now, just proceed)</ID>
-    <ID>ForbiddenComment:PluginStateBridge.kt$PluginStateBridge$// TODO: Implement actual JSON Merge Patch for delta state.</ID>
     <ID>ForbiddenComment:VersionVerifier.kt$VersionVerifier$// TODO: Consider adding analytics/crash reporting here</ID>
     <ID>FunctionNaming:MacOSScreenCapture.kt$CoreGraphics$@Suppress("ktlint:standard:function-naming") // JNA maps by native symbol name fun CGPreflightScreenCaptureAccess(): Boolean</ID>
     <ID>FunctionNaming:MacOSScreenCapture.kt$CoreGraphics$@Suppress("ktlint:standard:function-naming") // JNA maps by native symbol name fun CGRequestScreenCaptureAccess(): Boolean</ID>
