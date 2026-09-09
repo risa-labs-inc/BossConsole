@@ -14,7 +14,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.Text
 import androidx.compose.material.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -34,15 +33,7 @@ fun UpdateAvailableDialog(
     onUpdateNow: () -> Unit,
     onLater: () -> Unit,
 ) {
-    // Release notes are markdown; render them like the editor's preview does.
-    // Best-effort: if parsing fails (or yields nothing), notesBlocks stays null
-    // and the dialog falls back to the plain-text lines it always showed.
-    val notesBlocks =
-        remember(updateInfo.releaseNotes) {
-            runCatching { parseReleaseNotes(updateInfo.releaseNotes) }
-                .getOrNull()
-                ?.takeIf { it.isNotEmpty() }
-        }
+    // Render release notes through the shared Markdown renderer with a plain-text fallback.
     BossAlertDialog(
         onDismissRequest = onLater,
         modifier = Modifier.widthIn(min = 360.dp, max = 480.dp),
@@ -81,19 +72,7 @@ fun UpdateAvailableDialog(
                             .verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
-                        if (notesBlocks != null) {
-                            notesBlocks.forEach { block ->
-                                NotesBlockView(block)
-                            }
-                        } else {
-                            updateInfo.releaseNotes.lines().forEach { line ->
-                                Text(
-                                    line,
-                                    color = BossTheme.colors.textSecondary,
-                                    fontSize = 12.sp,
-                                )
-                            }
-                        }
+                        ReleaseNotesContent(updateInfo.releaseNotes)
                     }
                 }
             }

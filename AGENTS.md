@@ -1014,6 +1014,8 @@ the whole `TabTypeId`, whose equality includes `pluginId` and `defaultOrder`.
 
 ## Documentation
 
+- [MCP for agent-less operators](docs/mcp-agentless-operators.md) - Toolbox kill-switches and attach path
+
 - [Core Subsystems](docs/SUBSYSTEMS.md) - Auth, UI, keyboard shortcuts, threading, default applications, runner, BossTerm
 - [BossEditor](docs/BOSSEDITOR.md) - External editor dependency, LSP, PSI, editor features
 - [Application Features](docs/FEATURES.md) - Performance monitoring, dashboard, downloads, Chromium branding
@@ -1026,15 +1028,20 @@ the whole `TabTypeId`, whose equality includes `pluginId` and `defaultOrder`.
 
 
 
-### MCP runtime approval scope (#336)
+### Governed MCP invocation (#371)
 
-The host gates calls routed through `McpToolRegistry.invoke`; the terminal-tab MCP
-bridge calls this method (`McpDynamicTools.registerOne`). This is an operator
-consent layer for tool callers, not isolation from installed JVM plugin code.
-Public API handlers remain accessible to trusted plugins; keep API pin 1.0.88.
-Risk names must be reviewed alongside plugin tool additions. Unknown names remain
-LOW in this proposal, so this is not a complete policy for arbitrary plugins.
-Read-only results can contain sensitive data. Shell-pattern matching only changes
-prompt wording; HIGH and CRITICAL both require approval. Prompt arguments are
-withheld, consent is per call, and each delivered request belongs to one window.
-Do not coalesce calls solely by tool/risk: their actual arguments may differ.
+The host policy applies to registry invocation; it does not isolate installed JVM
+plugins. Unknown tool names default to ALLOW. Known mutations default to ASK with
+a 45-second timeout. Each queued prompt is delivered to exactly one window and
+window teardown denies its owned request. Session trust is process-wide and can
+be cleared using “Revoke MCP session trust” in the bottom bar; restore the bar if
+it is hidden. Persistent rules currently require editing ~/.boss/mcp-tool-policy.json
+and restarting. Preserve a backup before manual recovery of a damaged policy;
+the fault flow withholds all tools until recovery. No automatic quarantine UI is
+provided. Ledger redaction is bounded and best effort, not a guarantee for secrets
+under arbitrary keys. Queue overflow and cancellation before/after dispatch have
+distinct ledger dispositions. Risk classification from #336 feeds this same policy and approval path; there is
+no second sandbox prompt. Explicit policies and session trust retain precedence.
+HIGH/CRITICAL names use the mutating default, while unknown names remain allowed
+by default. Risk reasons and sanitized arguments appear together in the existing
+approval dialog. #362 is closed pending extraction into a management plugin.

@@ -1,7 +1,10 @@
 package ai.rever.boss.components.settings.keymap
 
+import ai.rever.boss.components.events.MODIFIER_ONLY_KEYS
 import ai.rever.boss.keymap.model.KeyBinding
+import ai.rever.boss.keymap.model.KeyStroke
 import ai.rever.boss.keymap.model.ShortcutContext
+import ai.rever.boss.keymap.model.storedKeyName
 import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.utils.SystemUtils
@@ -147,7 +150,7 @@ fun KeyCaptureDialog(
                                 shape = RoundedCornerShape(8.dp),
                             ).focusRequester(focusRequester)
                             .onPreviewKeyEvent { event ->
-                                if (event.type == KeyEventType.KeyDown) {
+                                if (event.type == KeyEventType.KeyDown && isShortcutCaptureKey(event.key)) {
                                     capturedKey = event.key
                                     val mods = mutableListOf<String>()
                                     val isMacOS = SystemUtils.isMacOS
@@ -170,7 +173,10 @@ fun KeyCaptureDialog(
                     contentAlignment = Alignment.Center,
                 ) {
                     if (hasCapture && capturedKey != null) {
-                        val displayStr = buildDisplayString(capturedKey!!, capturedModifiers)
+                        // The preview renders the keystroke that Apply will persist, rather than
+                        // formatting the captured Key on its own. It used to have a private copy
+                        // of the formatter, which is how it came to display a raw keyCode.
+                        val displayStr = KeyStroke(storedKeyName(capturedKey!!), capturedModifiers).displayString()
                         KeyDisplay(displayStr, large = true)
                     } else {
                         Column(
@@ -209,7 +215,11 @@ fun KeyCaptureDialog(
                                 val binding =
                                     KeyBinding(
                                         actionId = actionId,
-                                        key = capturedKey!!.keyCode.toString(),
+                                        // #329: this was `capturedKey!!.keyCode.toString()`, a
+                                        // packed Long ("4294967333"). Both matchers compare
+                                        // key NAMES, so every rebind made here saved, displayed
+                                        // and then fired on neither path.
+                                        key = storedKeyName(capturedKey!!),
                                         modifiers = capturedModifiers,
                                         context = context,
                                         category = category,
@@ -258,45 +268,5 @@ private fun KeyDisplay(
     }
 }
 
-/**
- * Builds a display string for captured keys.
- */
-private fun buildDisplayString(
-    key: Key,
-    modifiers: List<String>,
-): String {
-    val isMac = System.getProperty("os.name").contains("Mac", ignoreCase = true)
-
-    val modifierStrings =
-        modifiers.map { modifier ->
-            when (modifier.lowercase()) {
-                "cmd", "meta" -> if (isMac) "⌘" else "Ctrl"
-                "ctrl", "control" -> if (isMac) "⌃" else "Ctrl"
-                "shift" -> if (isMac) "⇧" else "Shift"
-                "alt", "option" -> if (isMac) "⌥" else "Alt"
-                else -> modifier
-            }
-        }
-
-    val keyString = formatKeyDisplay(key.keyCode.toString())
-
-    return (modifierStrings + keyString).joinToString(if (isMac) "" else "+")
-}
-
-/**
- * Formats the key name for display.
- */
-private fun formatKeyDisplay(keyName: String): String =
-    when (keyName.lowercase()) {
-        "space", "spacebar" -> "Space"
-        "arrowleft", "directionleft" -> "←"
-        "arrowright", "directionright" -> "→"
-        "arrowup", "directionup" -> "↑"
-        "arrowdown", "directiondown" -> "↓"
-        "enter", "return" -> "↩"
-        "backspace" -> "⌫"
-        "delete" -> "⌦"
-        "escape", "esc" -> "Esc"
-        "tab" -> "Tab"
-        else -> keyName.uppercase()
-    }
+/** A modifier alone cannot be dispatched by the AWT shortcut interceptor. */
+internal fun isShortcutCaptureKey(key: Key): Boolean = key !in MODIFIER_ONLY_KEYS

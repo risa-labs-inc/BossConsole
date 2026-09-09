@@ -11,6 +11,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 
 /**
  * Pins the ordering invariant that [PluginClassLoader]'s refusal policy rests
@@ -104,6 +105,21 @@ class PluginUnloadOrderingTest {
             assertEquals(ClassLoaderState.UNLOADED, classLoader.state)
         }
 
+    @Test
+    fun `a disposal linkage error does not strand the plugin or its loader`() =
+        runBlocking<Unit> {
+            val loader = DynamicPluginLoaderImpl()
+            loader.loadPlugin(probePluginJar()).getOrThrow()
+            val classLoader = assertNotNull(loader.getClassLoaderManager().getClassLoader(FIXTURE_ID))
+            UnloadOrderProbe.disposalFailure = NoClassDefFoundError("missing disposal dependency")
+
+            loader.unloadPlugin(FIXTURE_ID).getOrThrow()
+
+            assertNull(loader.getPlugin(FIXTURE_ID))
+            assertNull(loader.getClassLoaderManager().getClassLoader(FIXTURE_ID))
+            assertEquals(ClassLoaderState.UNLOADED, classLoader.state)
+        }
+
     private companion object {
         const val FIXTURE_ID = "com.example.unload.ordering"
     }
@@ -115,7 +131,10 @@ object UnloadOrderProbe {
 
     @Volatile var stateAtDispose: ClassLoaderState? = null
 
+    @Volatile var disposalFailure: Throwable? = null
+
     fun reset() {
+        disposalFailure = null
         classLoader = null
         stateAtDispose = null
     }
@@ -130,5 +149,6 @@ class OrderProbePlugin : Plugin {
 
     override fun dispose() {
         UnloadOrderProbe.stateAtDispose = UnloadOrderProbe.classLoader?.state
+        UnloadOrderProbe.disposalFailure?.let { throw it }
     }
 }

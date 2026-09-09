@@ -22,7 +22,7 @@ import kotlinx.coroutines.launch
  * Set of modifier-only keys that should not trigger shortcut matching.
  * These keys don't have a standalone action and are only used in combination.
  */
-private val MODIFIER_ONLY_KEYS =
+internal val MODIFIER_ONLY_KEYS =
     setOf(
         Key.CapsLock,
         Key.ShiftLeft,

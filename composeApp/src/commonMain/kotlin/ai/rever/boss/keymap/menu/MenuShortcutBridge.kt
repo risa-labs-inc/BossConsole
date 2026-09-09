@@ -3,6 +3,7 @@ package ai.rever.boss.keymap.menu
 import ai.rever.boss.keymap.model.KeyBinding
 import ai.rever.boss.keymap.model.KeymapActions
 import ai.rever.boss.keymap.model.KeymapSettings
+import ai.rever.boss.keymap.model.canonicalKeyName
 import ai.rever.boss.keymap.model.canonicalModifiers
 import androidx.compose.ui.input.key.Key
 import java.awt.event.KeyEvent as AwtKeyEvent
@@ -55,7 +56,7 @@ class MenuShortcutBridge(
         val binding = settings.getBinding(actionId) ?: return null
         if (!binding.enabled) return null
 
-        val key = keyNameToComposeKey(binding.key) ?: return null
+        val key = keyNameToComposeKey(canonicalKeyName(binding.key)) ?: return null
 
         // Shared canonicaliser, not a fourth private copy: this one only ever sees
         // preset-authored spellings, so it was harmless, but "one definition" has to be true

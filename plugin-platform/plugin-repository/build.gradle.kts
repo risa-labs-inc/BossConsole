@@ -41,6 +41,9 @@ kotlin {
                 // Logging
                 implementation(projects.pluginPlatform.pluginLogging)
 
+                // Date and time
+                implementation(libs.kotlinx.datetime)
+
                 // Path utilities (BossDirectories)
                 implementation(projects.pluginPlatform.pluginPathUtils)
 

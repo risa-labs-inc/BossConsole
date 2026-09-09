@@ -164,5 +164,33 @@ kotlin {
                 implementation(compose.desktop.currentOs)
             }
         }
+
+        named("desktopTest") {
+            dependencies {
+                implementation(kotlin("test"))
+                // Not already on the classpath via commonMain's `api()` deps like the other
+                // six duplicated-package modules are - ApiPackageDivergenceTest needs it to
+                // reflect on the host's ai.rever.boss.plugin.scrollbar copy.
+                implementation(projects.pluginPlatform.pluginScrollbar)
+            }
+        }
     }
+}
+
+// ApiPackageDivergenceTest diffs the host's copies of the packages boss-plugin-api also ships
+// against the pinned release jar itself (not the filtered apiContractCoreJar - that one IS the
+// api's ai.rever.boss.plugin.api package by construction, so it can't diverge from itself).
+// Reuses fetchApiPluginJar's output rather than re-downloading it.
+tasks.named<Test>("desktopTest") {
+    dependsOn(fetchApiPluginJar)
+    jvmArgumentProviders.add(ApiContractJarArgumentProvider(apiPluginJar.get().asFile))
+}
+
+// Keep checkout-specific absolute paths out of the test's cache key.
+class ApiContractJarArgumentProvider(
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    val jar: File,
+) : CommandLineArgumentProvider {
+    override fun asArguments(): Iterable<String> = listOf("-Dboss.api.contract.jar=${jar.absolutePath}")
 }

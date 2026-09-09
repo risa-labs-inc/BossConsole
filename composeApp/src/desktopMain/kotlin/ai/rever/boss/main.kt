@@ -641,6 +641,10 @@ fun main(args: Array<String>) {
     // BEHIND the page. Dormant - a no-op - wherever OFF_SCREEN is the mode (macOS, Linux), so the
     // unchanged platforms cannot regress. See JxBrowserConfig.renderingMode and
     // benchmarks/speedometer/win/WINDOWS.md.
+    // Install logging before the guarded renderers so startup registration conflicts are visible.
+    ai.rever.boss.plugin.ui.BossOverlayHost.diagnostics = { message ->
+        logger.warn(LogCategory.UI, message)
+    }
     ai.rever.boss.components.overlays.OverlayConfig.heavyweightPopup =
         { onDismiss, anchorInWindow, anchoring, popupOffset, focusable, popupContent ->
             ai.rever.boss.components.overlays
@@ -684,13 +688,6 @@ fun main(args: Array<String>) {
         ->
         ai.rever.boss.components.overlays
             .HeavyweightCorner(alignment, initialSize, inset, focusable, regionInWindow, cornerContent)
-    }
-    // plugin-ui-core owns the modal registry (plugins draw dialogs too) and depends on nothing but
-    // Compose, so it cannot log. Give it this logger instead: the condition it reports is a dialog
-    // that silently fell back to lightweight and is now hidden behind the page, which is invisible
-    // on screen and would otherwise have to be diagnosed from a screenshot.
-    ai.rever.boss.plugin.ui.BossOverlayHost.diagnostics = { message ->
-        logger.warn(LogCategory.UI, message)
     }
     ai.rever.boss.components.overlays.OverlayConfig.useHeavyweightPopups =
         ai.rever.boss.config.JxBrowserConfig.renderingMode ==
@@ -852,9 +849,14 @@ fun main(args: Array<String>) {
     startupScope.launch {
         ai.rever.boss.updater.AppUpdateRealtimeService.instance.apply {
             onReleaseChanged = {
-                // App-level trigger through the app-level owner.
-                ai.rever.boss.updater.UpdateCoordinator.instance
-                    .checkForUpdatesInBackground()
+                val updateCoordinator =
+                    ai.rever.boss.updater.UpdateCoordinator.instance
+
+                // Preserve the existing update notification behavior.
+                updateCoordinator.checkForUpdatesInBackground()
+
+                // Refresh the same cached list used by Settings and the Dashboard.
+                updateCoordinator.versionListManager.fetchVersions(forceRefresh = true)
             }
             start()
         }

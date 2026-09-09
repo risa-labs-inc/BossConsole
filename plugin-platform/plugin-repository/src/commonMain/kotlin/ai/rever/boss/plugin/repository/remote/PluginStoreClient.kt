@@ -1,6 +1,8 @@
 package ai.rever.boss.plugin.repository.remote
 
 import ai.rever.boss.plugin.api.PluginType
+import ai.rever.boss.plugin.logging.BossLogger
+import ai.rever.boss.plugin.logging.LogCategory
 import ai.rever.boss.plugin.repository.PluginInfo
 import ai.rever.boss.plugin.repository.PluginSearchFilter
 import ai.rever.boss.plugin.repository.PluginSearchResult
@@ -534,6 +536,44 @@ object PluginStoreClient {
 
         return json.decodeFromString(response.bodyAsText())
     }
+
+    private val logger = BossLogger.forComponent("PluginStoreClient")
+
+    /** Parses store dates as epoch milliseconds; offset-less legacy values use UTC, and unknown dates return zero. */
+    internal fun parseTimestamp(
+        timestamp: String,
+        pluginId: String? = null,
+    ): Long {
+        if (timestamp.isBlank()) return 0L
+        return try {
+            // Normalize Postgres timestamp to strict ISO 8601
+            var isoString = timestamp.trim().replace(" ", "T")
+
+            // Treat legacy timestamps without an offset as UTC, independent of the host timezone.
+            if (
+                !isoString.endsWith("Z", ignoreCase = true) &&
+                isoString.indexOf('+', 10) == -1 &&
+                isoString.indexOf('-', 10) == -1
+            ) {
+                isoString += "Z"
+            }
+
+            kotlinx.datetime.Instant
+                .parse(isoString)
+                .toEpochMilliseconds()
+        } catch (e: IllegalArgumentException) {
+            logger.warn(
+                LogCategory.NETWORK,
+                "Failed to parse timestamp from store",
+                mapOf(
+                    "timestamp" to timestamp,
+                    "pluginId" to (pluginId ?: "unknown"),
+                    "error" to (e.message ?: e.toString()),
+                ),
+            )
+            0L
+        }
+    }
 }
 
 /**
@@ -609,6 +649,7 @@ data class PluginListItem(
             downloadCount = downloadCount,
             tags = tags,
             verified = verified,
+            publishedAt = PluginStoreClient.parseTimestamp(updatedAt, pluginId),
         )
 
     private fun parsePluginType(type: String): PluginType =
@@ -662,7 +703,16 @@ data class PluginDetailResponse(
             downloadCount = downloadCount,
             tags = tags,
             verified = verified,
-            publishedAt = parseTimestamp(updatedAt),
+            // Admin metadata edits change updatedAt without publishing a new version.
+            // List responses lack version dates; details prefer the matching release when present.
+            publishedAt =
+                PluginStoreClient.parseTimestamp(
+                    versions
+                        .firstOrNull { it.version == latestVersion }
+                        ?.publishedAt
+                        ?.takeIf { it.isNotBlank() } ?: updatedAt,
+                    pluginId,
+                ),
         )
 
     private fun parsePluginType(type: String): PluginType =
@@ -671,16 +721,6 @@ data class PluginDetailResponse(
             "hybrid" -> PluginType.MIXED
             else -> PluginType.PANEL
         }
-
-    private fun parseTimestamp(timestamp: String): Long {
-        // Simple ISO timestamp parsing - return 0 if parsing fails
-        return try {
-            // Remove timezone info and parse
-            0L // TODO: Implement proper timestamp parsing if needed
-        } catch (_: Exception) {
-            0L
-        }
-    }
 }
 
 @Serializable

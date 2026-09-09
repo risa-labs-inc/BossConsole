@@ -177,13 +177,12 @@ sealed class SearchResult {
     }
 
     /**
-     * An MCP tool, indexed so its existence and name can be found - and nothing else.
+     * An MCP tool, indexed so its name (and kill-switch state) can be found.
      *
-     * There is deliberately no activation for this one. An MCP tool takes arguments a search row
-     * cannot collect, so selecting it closes the dialog, which is what [GlobalSearchDialog] already
-     * does for a result whose handler is absent. The question this answers is "is there a tool for
-     * this, and what is it called", which is why [enabled] and [providerId] are carried: a disabled
-     * tool is precisely the one someone is looking for.
+     * Selecting it does **not** invoke the tool - arguments cannot be collected in a search row.
+     * Activation opens Toolbox (plugin-manager) so an agent-less operator can reach per-tool
+     * kill-switches without an attached coding CLI (BossConsole#380). [enabled] and [providerId]
+     * stay on the row because a disabled tool is precisely the one someone is looking for.
      *
      * @property name The tool's name, e.g. `git_status`. Clients see it as `mcp__boss__git_status`
      * @property providerId The plugin that contributes it
@@ -240,8 +239,8 @@ sealed class SearchResult {
  * and predictability is what a launcher is for. Ordering stays absolute; the order itself is the
  * knob.
  *
- * [MCP] and [PAGES] sit last for the opposite reason: an MCP row cannot be activated at all, and a
- * recent page is the weakest kind of intent.
+ * [MCP] and [PAGES] sit last: MCP rows open Toolbox for kill-switches rather than invoking a tool,
+ * and a recent page is the weakest kind of intent.
  */
 enum class SearchCategory(
     val displayName: String,

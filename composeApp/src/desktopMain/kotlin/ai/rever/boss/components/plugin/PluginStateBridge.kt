@@ -1,6 +1,7 @@
 package ai.rever.boss.components.plugin
 
 import ai.rever.boss.ipc.proto.PluginIntentEnvelope
+import ai.rever.boss.ipc.proto.PluginStateDelta
 import ai.rever.boss.ipc.proto.PluginStateRequest
 import ai.rever.boss.ipc.proto.PluginStateServiceGrpcKt
 import ai.rever.boss.ipc.proto.PluginStateUpdate
@@ -16,6 +17,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import org.slf4j.LoggerFactory
 
 /**
@@ -169,14 +176,19 @@ class PluginStateBridge(
             }
 
             update.hasDeltaState() -> {
-                // TODO: Implement actual JSON Merge Patch for delta state.
-                // For now, request full state since applying raw patch bytes
-                // as a replacement would corrupt state.
-                logger.debug(
-                    "Delta state received for plugin={}, requesting full state instead",
-                    pluginId,
-                )
-                fetchCurrentState()
+                try {
+                    val delta = update.deltaState
+                    val mergedBytes = mergePluginStateDelta(_state.value, _version.value, delta)
+                    if (mergedBytes != null) {
+                        applyState(mergedBytes, delta.newVersion)
+                    } else {
+                        logger.debug("Ignoring stale delta: plugin={}, version={}", pluginId, delta.newVersion)
+                    }
+                } catch (e: StatePatchException) {
+                    resyncAfterDeltaFailure(e.message ?: "Invalid state patch")
+                } catch (e: Exception) {
+                    resyncAfterDeltaFailure(e.javaClass.simpleName)
+                }
             }
 
             update.hasEffect() -> {
@@ -186,11 +198,16 @@ class PluginStateBridge(
         }
     }
 
-    private fun applyState(
+    private suspend fun resyncAfterDeltaFailure(reason: String) {
+        logger.warn("Failed to apply delta state for plugin={}, requesting full state instead: {}", pluginId, reason)
+        fetchCurrentState()
+    }
+
+    internal fun applyState(
         stateBytes: ByteArray,
         version: Long,
     ) {
-        if (version > _version.value) {
+        if (version > _version.value || (_state.value.isEmpty() && version == _version.value)) {
             _state.value = stateBytes
             _version.value = version
         }
@@ -203,5 +220,76 @@ class PluginStateBridge(
         _connected.value = false
         scope.cancel()
         logger.info("PluginStateBridge disposed for plugin={}", pluginId)
+    }
+}
+
+/**
+ * Applies the plugin_state.proto JSON Merge Patch contract. Producers must send the exact
+ * base_version of the snapshot they patched and a monotonically increasing new_version.
+ * Returns null for a stale delta; an invalid/missing base requires a full snapshot.
+ */
+internal fun mergePluginStateDelta(
+    currentState: ByteArray,
+    currentVersion: Long,
+    delta: PluginStateDelta,
+): ByteArray? {
+    if (delta.newVersion <= currentVersion) return null
+    if (currentState.isEmpty()) throw StatePatchException("No state snapshot available")
+    if (delta.baseVersion != currentVersion) throw StatePatchException("Delta base does not match current state")
+    val target = Json.parseToJsonElement(currentState.decodeToString(throwOnInvalidSequence = true))
+    val patch = Json.parseToJsonElement(delta.patchBytes.toByteArray().decodeToString(throwOnInvalidSequence = true))
+    validatePatchJson(target)
+    validatePatchJson(patch)
+    return target.mergePatch(patch).toString().encodeToByteArray()
+}
+
+private fun JsonElement.mergePatch(patch: JsonElement): JsonElement {
+    if (patch !is JsonObject) {
+        return patch
+    }
+
+    val targetObj = if (this is JsonObject) this.toMutableMap() else mutableMapOf()
+
+    for ((key, value) in patch) {
+        if (value is JsonNull) {
+            targetObj.remove(key)
+        } else {
+            val targetValue = targetObj[key] ?: JsonNull
+            targetObj[key] = targetValue.mergePatch(value)
+        }
+    }
+
+    return JsonObject(targetObj)
+}
+
+private const val MAX_PATCH_DEPTH = 128
+private val jsonNumber = Regex("-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?")
+
+private class StatePatchException(
+    message: String,
+) : IllegalArgumentException(message)
+
+/** The JSON tree parser accepts unquoted non-JSON literals; validate before serializing state. */
+private fun validatePatchJson(
+    element: JsonElement,
+    depth: Int = 0,
+) {
+    if (depth > MAX_PATCH_DEPTH) throw StatePatchException("State or patch nesting exceeds limit")
+    when (element) {
+        is JsonObject -> {
+            element.values.forEach { validatePatchJson(it, depth + 1) }
+        }
+
+        is JsonArray -> {
+            element.forEach { validatePatchJson(it, depth + 1) }
+        }
+
+        is JsonPrimitive -> {
+            if (!element.isString && element != JsonNull) {
+                val literal = element.content
+                val valid = literal == "true" || literal == "false" || jsonNumber.matches(literal)
+                if (!valid) throw StatePatchException("Invalid JSON literal in state or patch")
+            }
+        }
     }
 }

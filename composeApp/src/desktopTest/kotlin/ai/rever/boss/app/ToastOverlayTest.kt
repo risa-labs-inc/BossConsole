@@ -1,6 +1,7 @@
 package ai.rever.boss.app
 
 import ai.rever.boss.components.overlays.OverlayConfig
+import ai.rever.boss.components.overlays.resetOverlayFieldForTest
 import ai.rever.boss.plugin.sandbox.notification.PluginToastState
 import ai.rever.boss.plugin.sandbox.notification.ToastDuration
 import ai.rever.boss.plugin.sandbox.notification.ToastMessage
@@ -49,6 +50,7 @@ class ToastOverlayTest {
         // OverlayConfig is a process-global registry; leaving a fake in it would leak into any
         // other test that routes an overlay.
         OverlayConfig.heavyweightCorner = previousRenderer
+        resetOverlayFieldForTest("useHeavyweightOverlays")
         OverlayConfig.useHeavyweightPopups = previousUseHeavyweight
     }
 
@@ -64,6 +66,7 @@ class ToastOverlayTest {
         focused: Boolean = true,
     ): Boolean {
         var requested = false
+        resetOverlayFieldForTest("useHeavyweightOverlays")
         OverlayConfig.useHeavyweightPopups = true
         OverlayConfig.heavyweightCorner = { _, _, _, _, _, _ ->
             // Recorded, not composed: composing a real Window needs a display.

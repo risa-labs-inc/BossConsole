@@ -49,6 +49,7 @@ import androidx.compose.ui.window.DialogProperties
  *
  * @param busy true while a remedy is being applied, so the dialog stays put and says what is
  *   happening rather than vanishing and leaving a user to guess whether it worked
+ * @param successMessage confirmation of a started update; other remedies stay available
  * @param error a failure from the last attempt, kept on screen instead of dismissing the dialog
  */
 @Composable
@@ -57,6 +58,7 @@ fun PluginLoadGateDialog(
     remedies: List<PluginLoadRemedy>,
     busy: Boolean,
     error: String?,
+    successMessage: String?,
     onDismiss: () -> Unit,
     onApply: (PluginLoadRemedy) -> Unit,
 ) {
@@ -93,6 +95,7 @@ fun PluginLoadGateDialog(
                 remedies = remedies,
                 busy = busy,
                 error = error,
+                successMessage = successMessage,
                 onDismiss = onDismiss,
                 onApply = onApply,
             )
@@ -106,56 +109,21 @@ private fun PluginLoadGateBody(
     remedies: List<PluginLoadRemedy>,
     busy: Boolean,
     error: String?,
+    successMessage: String?,
     onDismiss: () -> Unit,
     onApply: (PluginLoadRemedy) -> Unit,
 ) {
     Column(modifier = Modifier.padding(20.dp)) {
-        Text(
-            text = "${gate.displayName} could not be loaded",
-            fontSize = 18.sp,
-            fontWeight = FontWeight.Bold,
-            color = BossTheme.colors.textPrimary,
-            // The display name falls back to the plugin id, which comes from a manifest. Clamped
-            // so a crafted one cannot grow the dialog or run on into something that reads like our
-            // own copy.
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
+        PluginLoadGateHeader(gate)
 
-        Spacer(modifier = Modifier.height(10.dp))
-
-        Text(
-            text =
-                when (gate) {
-                    is PluginLoadGate.NeedsNewerHost -> {
-                        "It needs BOSS ${gate.required} or later. This is ${gate.current}."
-                    }
-
-                    is PluginLoadGate.NeedsNewerApi -> {
-                        "It needs plugin API ${gate.required} or later. The installed API layer is ${gate.current}."
-                    }
-
-                    is PluginLoadGate.SignatureRejected -> {
-                        // Says what is wrong with the FILE, not with a version, and does not
-                        // accuse: the ordinary cause is a jar replaced by hand during development,
-                        // not an attack. The verifier's own reason is shown below.
-                        "The installed file does not match the signature the store recorded for " +
-                            "it, so it was not loaded."
-                    }
-                },
-            fontSize = 13.sp,
-            color = BossTheme.colors.textSecondary,
-        )
-
-        Spacer(modifier = Modifier.height(6.dp))
-
-        Text(
-            text = gate.pluginId,
-            fontSize = 11.sp,
-            color = BossTheme.colors.textMuted,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
+        if (successMessage != null) {
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = successMessage,
+                fontSize = 13.sp,
+                color = BossTheme.colors.signalText,
+            )
+        }
 
         if (error != null) {
             Spacer(modifier = Modifier.height(12.dp))
@@ -171,7 +139,7 @@ private fun PluginLoadGateBody(
         Spacer(modifier = Modifier.height(20.dp))
 
         PluginLoadGateActions(
-            remedies = remedies,
+            remedies = remainingLoadRemedies(remedies, updateStarted = successMessage != null),
             busy = busy,
             onDismiss = onDismiss,
             onApply = onApply,
@@ -242,7 +210,11 @@ private fun PluginLoadGateActions(
 
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
             TextButton(onClick = onDismiss) {
-                Text("Not now", fontSize = 13.sp, color = BossTheme.colors.textSecondary)
+                Text(
+                    if (remedies.isEmpty()) "Close" else "Not now",
+                    fontSize = 13.sp,
+                    color = BossTheme.colors.textSecondary,
+                )
             }
         }
     }
@@ -296,3 +268,59 @@ internal fun remedyLabel(remedy: PluginLoadRemedy): String =
 
         is PluginLoadRemedy.NothingAvailable -> remedy.reason
     }
+
+@Composable
+private fun PluginLoadGateHeader(gate: PluginLoadGate) {
+    Text(
+        text = "${gate.displayName} could not be loaded",
+        fontSize = 18.sp,
+        fontWeight = FontWeight.Bold,
+        color = BossTheme.colors.textPrimary,
+        // The display name falls back to the plugin id, which comes from a manifest. Clamped
+        // so a crafted one cannot grow the dialog or run on into something that reads like our
+        // own copy.
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
+    )
+
+    Spacer(modifier = Modifier.height(10.dp))
+
+    Text(
+        text =
+            when (gate) {
+                is PluginLoadGate.NeedsNewerHost -> {
+                    "It needs BOSS ${gate.required} or later. This is ${gate.current}."
+                }
+
+                is PluginLoadGate.NeedsNewerApi -> {
+                    "It needs plugin API ${gate.required} or later. The installed API layer is ${gate.current}."
+                }
+
+                is PluginLoadGate.SignatureRejected -> {
+                    // Says what is wrong with the FILE, not with a version, and does not
+                    // accuse: the ordinary cause is a jar replaced by hand during development,
+                    // not an attack. The verifier's own reason is shown below.
+                    "The installed file does not match the signature the store recorded for " +
+                        "it, so it was not loaded."
+                }
+            },
+        fontSize = 13.sp,
+        color = BossTheme.colors.textSecondary,
+    )
+
+    Spacer(modifier = Modifier.height(6.dp))
+
+    Text(
+        text = gate.pluginId,
+        fontSize = 11.sp,
+        color = BossTheme.colors.textMuted,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
+    )
+}
+
+/** A background host update must not take the immediate rollback option away. */
+internal fun remainingLoadRemedies(
+    remedies: List<PluginLoadRemedy>,
+    updateStarted: Boolean,
+): List<PluginLoadRemedy> = if (updateStarted) remedies.filterNot { it is PluginLoadRemedy.UpdateHost } else remedies

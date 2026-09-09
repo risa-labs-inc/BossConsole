@@ -4256,7 +4256,7 @@ internal class BrowserHandleImpl(
                 val heavyweight = overlayCornerIsHeavyweight()
                 OverlayCorner(
                     alignment = Alignment.TopEnd,
-                    initialSize = FIND_BAR_CEILING,
+                    initialSize = FIND_BAR_INITIAL_SIZE,
                     focusable = true,
                     regionInWindow = findRegion,
                 ) {

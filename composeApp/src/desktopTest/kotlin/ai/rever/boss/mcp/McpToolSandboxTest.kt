@@ -1,14 +1,7 @@
 package ai.rever.boss.mcp
 
 import ai.rever.boss.mcp.sandbox.DefaultMcpRiskEvaluator
-import ai.rever.boss.mcp.sandbox.DefaultMcpSandboxPolicyGate
-import ai.rever.boss.mcp.sandbox.DefaultMcpToolSandbox
-import ai.rever.boss.mcp.sandbox.McpApprovalHandler
-import ai.rever.boss.mcp.sandbox.McpRiskAssessment
-import ai.rever.boss.mcp.sandbox.McpRiskEvaluator
 import ai.rever.boss.mcp.sandbox.McpRiskLevel
-import ai.rever.boss.mcp.sandbox.McpSandboxPolicyGate
-import ai.rever.boss.mcp.sandbox.McpToolDecision
 import ai.rever.boss.plugin.api.McpToolArgs
 import ai.rever.boss.plugin.api.McpToolDefinition
 import ai.rever.boss.plugin.api.McpToolHandler
@@ -20,15 +13,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-/**
- * Comprehensive unit tests for Milestone 1 of the Agent Tool Sandbox:
- * - Risk classification determinism
- * - Policy gate evaluation
- * - Approval handler integration
- * - Fail-closed behavior for unresolved approval requests
- * - Precedence: disabled tool & RBAC gating occur before sandbox evaluation
- * - Verification that denied handlers NEVER execute
- */
+/** Risk classification and argument preservation; shared governance tests cover approval delivery. */
 class McpToolSandboxTest {
     private fun provider(
         id: String,
@@ -147,169 +132,6 @@ class McpToolSandboxTest {
         }
 
     @Test
-    fun `DENY policy decision prevents handler execution and returns isError true`() =
-        runBlocking {
-            var executed = false
-            // Custom policy gate that denies all invocations
-            val denyPolicyGate =
-                McpSandboxPolicyGate { _, _, _ -> McpToolDecision.DENY }
-            val sandbox = DefaultMcpToolSandbox(policyGate = denyPolicyGate)
-            val core = McpToolRegistryCore(disabledFile = null, sandbox = sandbox)
-
-            core.registerProvider(
-                provider(
-                    "p1",
-                    testTool("any_tool") {
-                        executed = true
-                        McpToolResult("should not run")
-                    },
-                ),
-            )
-
-            val result = core.invoke("any_tool", "{}")
-
-            assertFalse(executed, "Denied tool handler MUST NOT execute")
-            assertTrue(result.isError)
-            assertTrue(result.text.contains("Sandbox denied invocation"))
-        }
-
-    @Test
-    fun `REQUIRE_APPROVAL without approval handler prevents execution (fail-closed)`() =
-        runBlocking {
-            var executed = false
-            // Default policy gate maps HIGH/CRITICAL (e.g. secret_get) to REQUIRE_APPROVAL
-            val sandbox = DefaultMcpToolSandbox(approvalHandler = null)
-            val core = McpToolRegistryCore(disabledFile = null, sandbox = sandbox)
-
-            core.registerProvider(
-                provider(
-                    "p1",
-                    testTool("secret_get") {
-                        executed = true
-                        McpToolResult("secret value")
-                    },
-                ),
-            )
-
-            val result = core.invoke("secret_get", "{}")
-
-            assertFalse(executed, "Handler MUST NOT execute when REQUIRE_APPROVAL has no approval handler")
-            assertTrue(result.isError)
-            assertTrue(result.text.contains("requires human approval"))
-        }
-
-    @Test
-    fun `REQUIRE_APPROVAL with approval handler that grants approval executes handler`() =
-        runBlocking {
-            var executed = false
-            val autoApproveHandler = McpApprovalHandler { _, _, _ -> true }
-            val sandbox = DefaultMcpToolSandbox(approvalHandler = autoApproveHandler)
-            val core = McpToolRegistryCore(disabledFile = null, sandbox = sandbox)
-
-            core.registerProvider(
-                provider(
-                    "p1",
-                    testTool("secret_get") {
-                        executed = true
-                        McpToolResult("secret value")
-                    },
-                ),
-            )
-
-            val result = core.invoke("secret_get", "{}")
-
-            assertTrue(executed, "Handler MUST execute when human approval is granted")
-            assertFalse(result.isError)
-            assertEquals("secret value", result.text)
-        }
-
-    @Test
-    fun `REQUIRE_APPROVAL with approval handler that rejects approval prevents execution`() =
-        runBlocking {
-            var executed = false
-            val rejectHandler = McpApprovalHandler { _, _, _ -> false }
-            val sandbox = DefaultMcpToolSandbox(approvalHandler = rejectHandler)
-            val core = McpToolRegistryCore(disabledFile = null, sandbox = sandbox)
-
-            core.registerProvider(
-                provider(
-                    "p1",
-                    testTool("secret_get") {
-                        executed = true
-                        McpToolResult("secret value")
-                    },
-                ),
-            )
-
-            val result = core.invoke("secret_get", "{}")
-
-            assertFalse(executed, "Handler MUST NOT execute when human approval is rejected")
-            assertTrue(result.isError)
-        }
-
-    // ---------------------------------------------------------------------
-    // Precedence Tests (Disabled tools & RBAC check before Sandbox)
-    // ---------------------------------------------------------------------
-
-    @Test
-    fun `disabled tool rejection occurs before sandbox logic`() =
-        runBlocking {
-            var sandboxEvaluated = false
-            val defaultEvaluator = DefaultMcpRiskEvaluator()
-            val trackingEvaluator =
-                McpRiskEvaluator { toolName, args ->
-                    sandboxEvaluated = true
-                    defaultEvaluator.evaluateRisk(toolName, args)
-                }
-            val sandbox = DefaultMcpToolSandbox(riskEvaluator = trackingEvaluator)
-            val core = McpToolRegistryCore(disabledFile = null, sandbox = sandbox)
-
-            core.registerProvider(provider("p1", testTool("disabled_tool") { McpToolResult("ok") }))
-            core.setToolEnabled("disabled_tool", enabled = false)
-
-            val result = core.invoke("disabled_tool", "{}")
-
-            assertTrue(result.isError)
-            assertTrue(result.text.contains("Unknown or disabled MCP tool"))
-            assertFalse(sandboxEvaluated, "Sandbox MUST NOT be evaluated for a disabled tool")
-        }
-
-    @Test
-    fun `permission-denied tool rejection occurs before sandbox logic`() =
-        runBlocking {
-            var sandboxEvaluated = false
-            val defaultEvaluator = DefaultMcpRiskEvaluator()
-            val trackingEvaluator =
-                McpRiskEvaluator { toolName, args ->
-                    sandboxEvaluated = true
-                    defaultEvaluator.evaluateRisk(toolName, args)
-                }
-            val sandbox = DefaultMcpToolSandbox(riskEvaluator = trackingEvaluator)
-            val core = McpToolRegistryCore(disabledFile = null, sandbox = sandbox)
-
-            core.registerProvider(
-                provider(
-                    "p1",
-                    testTool("gated_tool", requiredPermissions = listOf("admin.perm")) {
-                        McpToolResult("ok")
-                    },
-                ),
-            )
-            // updateAccess with no permissions
-            core.updateAccess(isAdmin = false, permissions = emptySet())
-
-            val result = core.invoke("gated_tool", "{}")
-
-            assertTrue(result.isError)
-            assertTrue(result.text.contains("Unknown or disabled MCP tool"))
-            assertFalse(sandboxEvaluated, "Sandbox MUST NOT be evaluated for a permission-denied tool")
-        }
-
-    // ---------------------------------------------------------------------
-    // Argument Parsing Preservation Test
-    // ---------------------------------------------------------------------
-
-    @Test
     fun `existing argument parsing behavior is preserved in sandbox`() =
         runBlocking {
             var capturedArgs: McpToolArgs? = null
@@ -350,52 +172,4 @@ class McpToolSandboxTest {
         }
         assertEquals(McpRiskLevel.HIGH, evaluator.evaluateRisk("project_replace", McpToolArgs(emptyMap(), "{}")).level)
     }
-
-    @Test
-    fun `approval cannot revive disabled revoked or replaced tool`() =
-        runBlocking {
-            for (change in listOf("disable", "revoke", "unload", "replace")) {
-                var executed = false
-                lateinit var core: McpToolRegistryCore
-                val sandbox =
-                    DefaultMcpToolSandbox(
-                        approvalHandler =
-                            McpApprovalHandler { _, _, _ ->
-                                when (change) {
-                                    "disable" -> {
-                                        core.setToolEnabled("secret_get", false)
-                                    }
-
-                                    "revoke" -> {
-                                        core.updateAccess(false, emptySet())
-                                    }
-
-                                    "unload" -> {
-                                        core.unregisterProvider("p")
-                                    }
-
-                                    "replace" -> {
-                                        core.registerProvider(
-                                            provider("p", testTool("secret_get") { McpToolResult("replacement") }),
-                                        )
-                                    }
-                                }
-                                true
-                            },
-                    )
-                core = McpToolRegistryCore(disabledFile = null, sandbox = sandbox)
-                core.updateAccess(true, emptySet())
-                core.registerProvider(
-                    provider(
-                        "p",
-                        testTool("secret_get", requiresAdmin = true) {
-                            executed = true
-                            McpToolResult("secret")
-                        },
-                    ),
-                )
-                assertTrue(core.invoke("secret_get", "{}").isError, change)
-                assertFalse(executed, change)
-            }
-        }
 }

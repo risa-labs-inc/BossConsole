@@ -40,10 +40,9 @@ import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 
 /**
- * Hard upper bound on the quick-actions overlay: its size before measurement, and the ceiling every
- * later measurement is taken against.
+ * First-frame size of the quick-actions overlay; later measurements use the parent region.
  *
- * A bound, not an estimate - content that would exceed it is CLIPPED. Three `BossActionButton`s at
+ * Content can grow beyond this placeholder. Three `BossActionButton`s at
  * 28.dp square in `imageVector` mode come to ~94x30dp with `space.xs` on each end of the row and
  * the 1.dp border. Kept close to that rather than round, because until measurement lands this is
  * also the region the overlay swallows clicks in - the same reason `TOAST_OVERLAY_INITIAL_SIZE`
@@ -59,7 +58,7 @@ import androidx.compose.ui.unit.dp
 internal val QUICK_ACTIONS_OVERLAY_SIZE = DpSize(132.dp, 34.dp)
 
 /**
- * The same bound with the tools launcher in the row, when both icon strips are gone.
+ * The same first-frame estimate with the tools launcher, when both icon strips are gone.
  *
  * See `toolLauncherPlacement` for when that happens, and [QUICK_ACTIONS_OVERLAY_SIZE] for why the
  * two are separate rather than one number wide enough for both.

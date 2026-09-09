@@ -1,5 +1,6 @@
 package ai.rever.boss.kernel.services
 
+import ai.rever.boss.ipc.auth.ProcessIdentityInterceptor
 import ai.rever.boss.ipc.proto.Empty
 import ai.rever.boss.ipc.proto.PluginUIServiceGrpcKt
 import ai.rever.boss.ipc.proto.UIEvent
@@ -7,6 +8,7 @@ import ai.rever.boss.ipc.proto.UIRegistration
 import ai.rever.boss.ipc.proto.UIRegistrationResponse
 import ai.rever.boss.ipc.proto.UIUnregistration
 import ai.rever.boss.ipc.proto.WidgetUpdate
+import ai.rever.boss.kernel.ui.RemoteUiPlacement
 import ai.rever.boss.kernel.ui.RemoteUiSurface
 import ai.rever.boss.kernel.ui.RemoteUiSurfaceDescriptor
 import ai.rever.boss.kernel.ui.RemoteUiSurfaceRegistry
@@ -28,6 +30,8 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import java.util.concurrent.atomic.AtomicReference
@@ -58,26 +62,79 @@ import kotlin.time.Duration.Companion.seconds
 class PluginUIServiceBridge(
     private val registry: RemoteUiSurfaceRegistry = RemoteUiSurfaceRegistry.shared,
     private val bindTimeoutMs: Long = DEFAULT_BIND_TIMEOUT_MS,
+    /**
+     * Turns an accepted registration into a visible panel or tab (BossConsole#54). Null (the
+     * default) accepts registrations exactly as before placement existed — every #53 test, and any
+     * caller that only cares about the transport, constructs this bridge with no placer and sees no
+     * behaviour change.
+     */
+    private val placement: RemoteUiPlacement? = null,
 ) : PluginUIServiceGrpcKt.PluginUIServiceCoroutineImplBase() {
+    private val registrationLock = Mutex()
+
     override suspend fun registerUI(request: UIRegistration): UIRegistrationResponse =
-        when (val outcome = registry.register(request.surfaceId, request.processId, request.descriptor())) {
-            is SurfaceRegistration.Rejected -> {
+        registrationLock.withLock {
+            val authenticated = authenticatedCallerOrRefuse(request.surfaceId, "RegisterUI")
+            // request.processId is whatever the caller wrote in its own message - never the source of
+            // truth for who it is (BossConsole#53). A blank field is fine (nothing to disagree with); a
+            // non-blank one that disagrees with the verified caller is a plugin claiming another
+            // process's identity, not a business-level rejection, so it goes out as PERMISSION_DENIED
+            // rather than a `success = false` response.
+            if (request.processId.isNotBlank() && request.processId != authenticated) {
                 logger.warn(
                     LogCategory.UI,
-                    "Refused a UI surface registration",
-                    mapOf("surfaceId" to request.surfaceId, "reason" to outcome.reason),
+                    "Refused RegisterUI: declared process_id does not match the authenticated caller",
+                    mapOf(
+                        "surfaceId" to request.surfaceId,
+                        "declared" to request.processId,
+                        "authenticated" to authenticated,
+                    ),
                 )
-                registrationResponse(success = false, error = outcome.reason)
+                throw StatusException(Status.PERMISSION_DENIED.withDescription(IDENTITY_MISMATCH))
             }
 
-            is SurfaceRegistration.Accepted -> {
-                // Applied before the stream exists so a surface renders from the moment it is opened,
-                // rather than staying blank until the plugin's first update.
-                if (request.hasInitialTree()) {
-                    outcome.surface.pushTree(request.initialTree.toKotlin())
+            when (val outcome = registry.register(request.surfaceId, authenticated, request.descriptor())) {
+                is SurfaceRegistration.Rejected -> {
+                    logger.warn(
+                        LogCategory.UI,
+                        "Refused a UI surface registration",
+                        mapOf("surfaceId" to request.surfaceId, "reason" to outcome.reason),
+                    )
+                    registrationResponse(success = false, error = outcome.reason)
                 }
-                registrationResponse(success = true, error = "")
+
+                is SurfaceRegistration.Accepted -> {
+                    // Applied before the stream exists so a surface renders from the moment it is opened,
+                    // rather than staying blank until the plugin's first update.
+                    if (request.hasInitialTree()) {
+                        outcome.surface.pushTree(request.initialTree.toKotlin())
+                    }
+                    // Fire-and-forget: placement (BossConsole#54) may retry before a window is
+                    // available, and RegisterUI's response is "accepted," not "on screen yet."
+                    placement?.place(request.surfaceId)
+                    registrationResponse(success = true, error = "")
+                }
             }
+        }
+
+    /**
+     * The verified identity behind this call, or a thrown `PERMISSION_DENIED` when there is none.
+     *
+     * Fails closed: a call with no credential, or one the kernel's [ProcessIdentityInterceptor] could
+     * not resolve to a live process, is refused here rather than let through with a null identity that
+     * some later check might forget to test for.
+     */
+    private fun authenticatedCallerOrRefuse(
+        surfaceId: String,
+        rpc: String,
+    ): String =
+        ProcessIdentityInterceptor.AUTHENTICATED_PROCESS_ID.get() ?: run {
+            logger.warn(
+                LogCategory.UI,
+                "Refused $rpc: no verified process identity on this call",
+                mapOf("surfaceId" to surfaceId),
+            )
+            throw StatusException(Status.PERMISSION_DENIED.withDescription(NO_IDENTITY))
         }
 
     /**
@@ -93,8 +150,14 @@ class PluginUIServiceBridge(
      * plugin that registers a surface and then streams nothing cannot be matched to it, and gets
      * `INVALID_ARGUMENT` when its request stream ends rather than an RPC that hangs open.
      */
-    override fun streamUI(requests: Flow<WidgetUpdate>): Flow<UIEvent> =
-        channelFlow {
+    override fun streamUI(requests: Flow<WidgetUpdate>): Flow<UIEvent> {
+        // Captured synchronously, before anything below suspends. The call arrives inside the gRPC
+        // Context ProcessIdentityInterceptor established, but that Context is not automatically carried
+        // into a coroutine launched later on its own (the `pump` below) - so pumpUpdates is handed the
+        // identity as a plain parameter rather than re-reading a Context that may no longer be current
+        // on whichever thread it eventually runs on.
+        val authenticated = ProcessIdentityInterceptor.CURRENT_IDENTITY.get()
+        return channelFlow {
             val bound = CompletableDeferred<RemoteUiSurface>()
             // Written by the pump the instant it claims, and read by the finally below. The claim happens
             // inside the pump, so a `finally` guarding only the collect would miss it: an RPC cancelled
@@ -105,7 +168,7 @@ class PluginUIServiceBridge(
             // precisely the frozen-not-disconnected state this transport exists to avoid, and it is the
             // likeliest crash: a plugin dying right after its first WidgetUpdate.
             val claimed = AtomicReference<RemoteUiSurface>(null)
-            val pump = launch { pumpUpdates(requests, bound, claimed) }
+            val pump = launch { pumpUpdates(requests, bound, claimed, authenticated) }
             try {
                 // Throws the StatusException the pump resolved this with when the id is unusable.
                 //
@@ -146,18 +209,46 @@ class PluginUIServiceBridge(
                 claimed.get()?.let(registry::closeStream)
             }
         }
-
-    override suspend fun unregisterUI(request: UIUnregistration): Empty {
-        val removed = registry.unregister(request.surfaceId)
-        if (!removed) {
-            logger.debug(
-                LogCategory.UI,
-                "Ignoring UnregisterUI for an unknown surface",
-                mapOf("surfaceId" to request.surfaceId),
-            )
-        }
-        return Empty.getDefaultInstance()
     }
+
+    override suspend fun unregisterUI(request: UIUnregistration): Empty =
+        registrationLock.withLock {
+            // UIUnregistration carries only a surface_id - no process_id to compare against, so "does the
+            // caller own this" has to be asked against the registry's own record of who registered it.
+            // Before this existed literally any connected plugin could tear down any other plugin's live
+            // surface (BossConsole#53's own description of the gap: "there is nothing in the request to
+            // attribute it to"). An unregistered surface has no owner to protect, so it still no-ops
+            // exactly as before - this only closes the case where a surface genuinely exists.
+            val expected = registry.surfaceOf(request.surfaceId)
+            val owner = expected?.processId
+            if (owner != null) {
+                val authenticated = ProcessIdentityInterceptor.AUTHENTICATED_PROCESS_ID.get()
+                if (authenticated == null || authenticated != owner) {
+                    logger.warn(
+                        LogCategory.UI,
+                        "Refused UnregisterUI: caller does not own this surface",
+                        mapOf(
+                            "surfaceId" to request.surfaceId,
+                            "owner" to owner,
+                            "authenticated" to (authenticated ?: "none"),
+                        ),
+                    )
+                    throw StatusException(Status.PERMISSION_DENIED.withDescription(NOT_SURFACE_OWNER))
+                }
+            }
+
+            val removed = registry.unregister(request.surfaceId, expected)
+            if (removed) {
+                placement?.remove(request.surfaceId)
+            } else {
+                logger.debug(
+                    LogCategory.UI,
+                    "Ignoring UnregisterUI for an unknown surface",
+                    mapOf("surfaceId" to request.surfaceId),
+                )
+            }
+            Empty.getDefaultInstance()
+        }
 
     /**
      * Drain the plugin's update stream into its surface.
@@ -170,6 +261,7 @@ class PluginUIServiceBridge(
         requests: Flow<WidgetUpdate>,
         bound: CompletableDeferred<RemoteUiSurface>,
         claimed: AtomicReference<RemoteUiSurface>,
+        authenticatedProcessId: (() -> String?)?,
     ) {
         var surface: RemoteUiSurface? = null
         var refused = false
@@ -189,11 +281,9 @@ class PluginUIServiceBridge(
                     }
 
                     !refused -> {
-                        when (val opened = registry.openStream(update.surfaceId)) {
+                        when (val opened = registry.openStream(update.surfaceId, authenticatedProcessId?.invoke())) {
                             is SurfaceStream.Bound -> {
                                 surface = opened.surface
-                                // Recorded before anything can suspend, so the claim is never held by a
-                                // coroutine that no longer has a way to release it.
                                 claimed.set(opened.surface)
                                 bound.complete(opened.surface)
                                 opened.surface.applyUpdate(update)
@@ -246,6 +336,7 @@ class PluginUIServiceBridge(
      */
     private fun SurfaceStream.Refused.status(): Status =
         when (this) {
+            is SurfaceStream.NotOwner -> Status.PERMISSION_DENIED.withDescription(reason)
             is SurfaceStream.Unregistered -> Status.NOT_FOUND.withDescription(reason)
             is SurfaceStream.AlreadyStreaming -> Status.FAILED_PRECONDITION.withDescription(reason)
         }
@@ -319,5 +410,14 @@ class PluginUIServiceBridge(
         private const val UNIDENTIFIED_STREAM =
             "StreamUI takes its surface identity from the surface_id of its first WidgetUpdate; " +
                 "the request stream ended without sending one"
+
+        private const val NO_IDENTITY =
+            "This call presented no verified process identity"
+
+        private const val IDENTITY_MISMATCH =
+            "The authenticated process identity does not match the declared process_id"
+
+        private const val NOT_SURFACE_OWNER =
+            "Only the process that registered a surface may unregister or stream it"
     }
 }

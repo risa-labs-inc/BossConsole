@@ -106,14 +106,16 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /**
- * Hard upper bound on the toast overlay: its size before measurement, and the ceiling every later
- * measurement is taken against.
+ * The toast overlay's size before its content has been measured - a small first-frame placeholder,
+ * not a clip.
  *
- * A bound, not an estimate. The overlay measures its content against this rather than against its
- * own current size, so content that would exceed it is CLIPPED rather than merely starting small.
- * Width is `PluginToastHost`'s own `widthIn(max = 400.dp)` plus its 16.dp padding on each side;
- * height comfortably clears `PluginToastState`'s three-toast maximum. It is also the region the
- * overlay swallows clicks in until measurement lands, so it is kept no larger than it needs to be.
+ * It is the window's size for the one frame before measurement lands, and the region the overlay
+ * swallows clicks in until then, so it is kept no larger than it needs to be: `PluginToastHost`'s
+ * own `widthIn(max = 400.dp)` plus its 16.dp padding on each side, and the existing 600dp height to
+ * limit first-frame grow-in for typical stacks. It is NOT the measurement ceiling - that is the
+ * parent content pane (see `HeavyweightCorner` / `regionCeiling`), so content taller than this grows
+ * the window rather than being clipped. The two were one number until #154, which clipped three
+ * verbose toasts' dismiss buttons off the bottom of the content-sized window.
  */
 private val TOAST_OVERLAY_INITIAL_SIZE = DpSize(432.dp, 600.dp)
 

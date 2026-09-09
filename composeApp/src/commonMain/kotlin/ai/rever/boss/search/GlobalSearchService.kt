@@ -86,8 +86,7 @@ object GlobalSearchService {
      *
      * Ranking still comes from [FuzzyMatcher], so these sort among themselves as everything else
      * does. Worth the strictness because any non-empty category draws a section header: without
-     * it, a two-character query sprouted a whole "MCP Tools" section of rows that cannot even be
-     * activated.
+     * it, a two-character query sprouted a whole "MCP Tools" section of irrelevant tool rows.
      */
     private fun proseScore(
         queryLower: String,
@@ -656,11 +655,12 @@ object GlobalSearchService {
      * **Name first, description as a weak fallback.** [FuzzyMatcher] succeeds on any in-order
      * subsequence, so a two- or three-character query matches almost any paragraph-length
      * description. Those scored low and still produced a section header, so short queries grew an
-     * "MCP Tools" section of rows that cannot even be activated. A description-only hit now has to
+     * "MCP Tools" section of irrelevant tool rows. A description-only hit now has to
      * contain what was typed - see [proseScore] - while a name hit stays fuzzy, because the name is
      * what someone is actually trying to recall.
      *
-     * These results have no activation. See [SearchResult.McpToolResult].
+     * Activation opens Toolbox for kill-switch management (not tool invoke). See
+     * [SearchResult.McpToolResult] and BossConsole#380.
      */
     private fun searchMcpTools(query: String): List<SearchResult.McpToolResult> {
         val queryLower = query.lowercase()
