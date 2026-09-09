@@ -88,7 +88,20 @@ object CrashReportService {
             val message: String,
         ) : SubmitResult() {
             companion object {
-                operator fun invoke(message: String): Error = Error(LogSanitizer.sanitizeExceptionMessage(message))
+                // Bound regex work independently of the footer's maxLines. Sanitized placeholders
+                // can expand this input; the UI still owns the display-height limit.
+                private const val MAX_SANITIZER_INPUT_CHARS = 4_000
+
+                operator fun invoke(message: String): Error {
+                    // Drop a cut token: truncating inside a hostname or credential can defeat its matcher.
+                    val bounded =
+                        if (message.length > MAX_SANITIZER_INPUT_CHARS) {
+                            message.take(MAX_SANITIZER_INPUT_CHARS).dropLastWhile { !it.isWhitespace() }
+                        } else {
+                            message
+                        }
+                    return Error(LogSanitizer.sanitizeExceptionMessage(bounded))
+                }
             }
         }
     }

@@ -313,6 +313,11 @@ internal fun BossAppScaffold(
             drawerVisible = drawerVisible,
         )
 
+    // Whether the collapsed tab-bar rail has enough height for its quick actions.
+    // Keep the measured answer while a hover drawer temporarily owns the actions. The rail
+    // stays composed behind that drawer and will not report again unless its fit changes.
+    var railActionsFit by remember { mutableStateOf(true) }
+
     // Gated, so the measurement costs nothing in the configuration that will never use it. With
     // the top bar up - the default, focus mode off - these actions are not homeless, and without
     // this a right-panel drag would subcompose `PanelFooterHostActions` once per frame to answer
@@ -326,6 +331,7 @@ internal fun BossAppScaffold(
                     topBarHidden = !appearance.showTopBar,
                     showTopBar = reveal.showTopBar,
                     verticalBar = verticalBar,
+                    railActionsFit = railActionsFit,
                 ),
         )
 
@@ -359,6 +365,7 @@ internal fun BossAppScaffold(
             // hovering it opens the drawer, which IS a full bar, so they move up into its foot for
             // as long as it is up. Only TOP position leaves nothing at all.
             verticalBar = verticalBar,
+            railActionsFit = railActionsFit,
             // Only consulted once the bar has offered nothing, i.e. in TOP position.
             panelFootAvailable = panelFootAvailable(panelFooterEdge, panelFootFits),
         )
@@ -760,16 +767,18 @@ internal fun BossAppScaffold(
                             // rail and the hover drawer are on screen together, so a slot handed
                             // to both drew these twice - see `WindowVerticalTabBar.belowTabs`.
                             verticalBarRailActions = {
-                                VerticalBarRailActions(
+                                MeasuredRailHostActions(
                                     actions =
                                         focusQuickActionsTabRail(
-                                            placement = quickActionsPlacement,
+                                            placement = FocusQuickActionsPlacement.TAB_BAR_RAIL,
                                             onShowSettings = { state.settingsWindow.open() },
                                             toolbox = hostToolbox,
                                             onShowSearch = { state.showGlobalSearchDialog = true },
                                             onSignOut = { state.showLogoutDialog = true },
                                             toolLauncher = hostToolLauncher,
                                         ),
+                                    showActions = quickActionsPlacement == FocusQuickActionsPlacement.TAB_BAR_RAIL,
+                                    onFitsChange = { fits -> railActionsFit = fits },
                                 )
                             },
                             verticalBarFooter = {
@@ -950,18 +959,21 @@ private fun BossDraggableComponent.hostActionsPanelColumn(needsAHome: Boolean): 
  * Whether the host's actions are looking for a panel to live in at all.
  *
  * Both halves of "nothing above the panel can take them": focus mode has actually cleared the top
- * bar that owns them, AND there is no vertical bar, which is the only host ahead of the panel in
- * the ladder. See `focusQuickActionsPlacement` for the ladder itself.
+ * bar that owns them, AND the vertical bar cannot host them. A collapsed rail that is too
+ * short yields to the panel too. See `focusQuickActionsPlacement` for the ladder itself.
  *
- * Deliberately reads none of the measured state. It gates the panel MEASUREMENT, so a term here
- * that depended on what that measurement reports would be a cycle rather than a gate.
+ * Reads the rail measurement, never the panel measurement it gates. The rail owns a separate
+ * column, so putting actions in the panel cannot change the rail fit and create a cycle.
  */
-private fun hostActionsNeedAPanel(
+internal fun hostActionsNeedAPanel(
     settings: FocusModeSettings,
     topBarHidden: Boolean,
     showTopBar: Boolean,
     verticalBar: VerticalBarHost,
-): Boolean = focusQuickActionsVisible(settings, topBarHidden, showTopBar) && verticalBar == VerticalBarHost.NONE
+    railActionsFit: Boolean,
+): Boolean =
+    focusQuickActionsVisible(settings, topBarHidden, showTopBar) &&
+        (verticalBar == VerticalBarHost.NONE || (verticalBar == VerticalBarHost.RAIL && !railActionsFit))
 
 /**
  * Whether the host's actions have a panel foot to go in: there is a column, and it can hold the row.

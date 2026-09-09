@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -71,7 +72,7 @@ fun BossDraggableComponent.BossWindow(
      * All three columns ask, though today only `right` is ever named - `hostActionsPanelEdge` has
      * the reasons the other two are out. Asking uniformly is what lets that stay one decision in
      * one place, and an unfilled [PanelColumn] is a `Column` around one `weight(1f)` child, which
-     * lays out exactly as the bare panel did.
+     * lays out the current fill-sized panels exactly as the bare panel did.
      */
     panelFooterEdge: Panel? = null,
     /**
@@ -236,7 +237,9 @@ private fun BossDraggableComponent.DragTargetHighlight() {
  * would move about with whatever the user happens to have open.
  *
  * With no footer to draw this is a Column around one `weight(1f)` child, which lays out exactly as
- * the bare panel did, so wrapping every column costs nothing in the common case.
+ * the current fill-sized panels did, so wrapping every column costs nothing in the common case.
+ * The content Box explicitly fills the width so its BoxScope alignment uses the whole column
+ * even if future content does not fill it. This does not propagate a minimum width to children.
  *
  * **The `[footerEdge] == [column]` gate lives here, not at the three call sites.** It was written
  * out three times, which made it three things that could disagree and, in a test, something to
@@ -256,7 +259,7 @@ internal fun PanelColumn(
     content: @Composable BoxScope.() -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
-        Box(modifier = Modifier.weight(1f), content = content)
+        Box(modifier = Modifier.weight(1f).fillMaxWidth(), content = content)
         if (footerEdge == column) footer()
     }
 }

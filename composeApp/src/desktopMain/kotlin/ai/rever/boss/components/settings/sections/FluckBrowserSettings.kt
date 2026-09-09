@@ -14,6 +14,8 @@ import ai.rever.boss.config.AutoPipSettingsManager
 import ai.rever.boss.config.SwipeNavSettingsManager
 import ai.rever.boss.config.parseAutoPipEnabled
 import ai.rever.boss.config.parseSwipeNavEnabled
+import ai.rever.boss.html.HtmlFileOpenMode
+import ai.rever.boss.html.HtmlFileSettingsManager
 import ai.rever.boss.plugin.browser.BrowserSettings
 import ai.rever.boss.plugin.browser.BrowserSettingsManager
 import ai.rever.boss.plugin.ui.BossAlertDialog
@@ -49,6 +51,9 @@ fun FluckBrowserSettings() {
     val terminalLinkSettings by TerminalLinkSettingsManager.currentSettings.collectAsState()
     var terminalLinkOpenMode by remember(terminalLinkSettings) { mutableStateOf(terminalLinkSettings.openMode) }
     var existingSplitTarget by remember(terminalLinkSettings) { mutableStateOf(terminalLinkSettings.existingSplitTarget) }
+
+    val htmlFileSettings by HtmlFileSettingsManager.currentSettings.collectAsState()
+    var htmlFileOpenMode by remember(htmlFileSettings) { mutableStateOf(htmlFileSettings.openMode) }
 
     val userAgents = listOf("Default", "Chrome", "Firefox", "Safari", "Edge", "Custom")
     var showRestartDialog by remember { mutableStateOf(false) }
@@ -263,6 +268,51 @@ fun FluckBrowserSettings() {
                         terminalLinkOpenMode = TerminalLinkOpenMode.ALWAYS_ASK
                         coroutineScope.launch {
                             TerminalLinkSettingsManager.resetToDefault()
+                        }
+                    },
+                    description = "Reset to \"Always Ask\" mode",
+                )
+            }
+        }
+
+        // HTML File Behavior
+        SettingsSection(title = "HTML Files") {
+            val htmlOpenModeOptions =
+                listOf(
+                    "Always Ask" to HtmlFileOpenMode.ALWAYS_ASK,
+                    "Code Editor" to HtmlFileOpenMode.EDITOR,
+                    "Webpage" to HtmlFileOpenMode.BROWSER,
+                )
+
+            SettingsDropdown(
+                label = "Open HTML files with",
+                options = htmlOpenModeOptions.map { it.first },
+                selectedOption = htmlOpenModeOptions.find { it.second == htmlFileOpenMode }?.first ?: "Always Ask",
+                onOptionSelected = { selectedLabel ->
+                    val selectedMode =
+                        htmlOpenModeOptions.find { it.first == selectedLabel }?.second
+                            ?: HtmlFileOpenMode.ALWAYS_ASK
+                    htmlFileOpenMode = selectedMode
+                    coroutineScope.launch {
+                        HtmlFileSettingsManager.setOpenMode(selectedMode)
+                    }
+                },
+                description =
+                    when (htmlFileOpenMode) {
+                        HtmlFileOpenMode.ALWAYS_ASK -> "A dialog appears each time you open an .html or .htm file"
+                        HtmlFileOpenMode.EDITOR -> "Opens in the code editor as source code"
+                        HtmlFileOpenMode.BROWSER -> "Opens rendered as a webpage in a browser tab"
+                    },
+            )
+
+            if (htmlFileOpenMode != HtmlFileOpenMode.ALWAYS_ASK) {
+                SettingsButtonRow(
+                    label = "Reset HTML File Behavior",
+                    buttonText = "Reset",
+                    onClick = {
+                        htmlFileOpenMode = HtmlFileOpenMode.ALWAYS_ASK
+                        coroutineScope.launch {
+                            HtmlFileSettingsManager.resetToDefault()
                         }
                     },
                     description = "Reset to \"Always Ask\" mode",

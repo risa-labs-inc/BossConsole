@@ -22,6 +22,7 @@ import ai.rever.boss.components.window_panel.rememberSplitViewState
 import ai.rever.boss.components.wizard.plugin.WizardPluginInfo
 import ai.rever.boss.components.workspaces.LayoutWorkspace
 import ai.rever.boss.components.workspaces.workspaceManager
+import ai.rever.boss.html.HtmlFileOpenRequest
 import ai.rever.boss.services.FileHandlerService
 import ai.rever.boss.services.TerminalHandlerService
 import ai.rever.boss.services.URLHandlerService
@@ -135,6 +136,9 @@ internal class BossAppState(
     var showTerminalLinkDialog by mutableStateOf(false)
     var pendingTerminalLinkUrl by mutableStateOf("")
     var pendingTerminalSourceId by mutableStateOf<String?>(null)
+
+    // HTML file open dialog
+    var pendingHtmlFileOpen by mutableStateOf<HtmlFileOpenRequest?>(null)
 
     /**
      * A dependency a just-installed plugin declares but which is absent.
