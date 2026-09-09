@@ -14,20 +14,27 @@ import java.nio.file.attribute.PosixFileAttributeView
 import java.nio.file.attribute.PosixFileAttributes
 import java.nio.file.attribute.PosixFilePermissions
 
+private typealias OwnershipCopier = (Path, PosixFileAttributeView, PosixFileAttributes) -> Unit
+
 /**
  * Writes for the editor's file API must not truncate the user's only copy before
  * replacement content is complete. Each save stages its own sibling and requires
  * atomic replacement; unsupported filesystems report failure without an in-place retry.
  * Power loss may lose the rename; parent-directory durability is not guaranteed.
  * Process termination may leave a sibling staging file. No automatic sweep deletes these.
+ * Preserves nine POSIX rwx bits, ACLs and DOS flags; owner/group are best-effort.
+ * Special mode bits and arbitrary extended attributes are not preserved.
  * The disk-write operation is injectable to test partial-output failures.
  */
 internal class EditorFileWriter(
     private val cleanup: (Path) -> Unit = { Files.deleteIfExists(it) },
-    private val copyOwnership: (PosixFileAttributeView, PosixFileAttributes) -> Unit = { destination, attributes ->
+    private val copyOwnership: OwnershipCopier = { target, destination, attributes ->
         val current = destination.readAttributes()
-        if (current.owner() != attributes.owner()) destination.setOwner(attributes.owner())
-        if (current.group() != attributes.group()) destination.setGroup(attributes.group())
+        preserveOwnership(
+            target,
+            owner = { if (current.owner() != attributes.owner()) destination.setOwner(attributes.owner()) },
+            group = { if (current.group() != attributes.group()) destination.setGroup(attributes.group()) },
+        )
     },
     private val writeContent: (File, String) -> Unit = { file, text ->
         file.outputStream().use { output ->
@@ -46,11 +53,14 @@ internal class EditorFileWriter(
         // Resolve existing links so replacing a symlink updates its target, not
         // the link itself. A dangling link fails safely instead of being removed.
         val existing = Files.exists(requested) || Files.isSymbolicLink(requested)
-        val target = if (existing) requested.toRealPath() else requested
-        if (existing && (!Files.isRegularFile(target) || !Files.isWritable(target))) {
-            throw IOException("Editor target is not a writable regular file: $target")
+        val candidate = if (existing) requested.toRealPath() else requested
+        if (existing && (!Files.isRegularFile(candidate) || !Files.isWritable(candidate))) {
+            throw IOException("Editor target is not a writable regular file: $candidate")
         }
-        Files.createDirectories(target.parent)
+        val parent = requireNotNull(candidate.parent) { "Editor target has no containing directory: $candidate" }
+        Files.createDirectories(parent)
+        // Use the same parent spelling before and after a create (e.g. /tmp and /private/tmp).
+        val target = parent.toRealPath().resolve(candidate.fileName)
         val temporary =
             if (!existing && Files.getFileAttributeView(target.parent, PosixFileAttributeView::class.java) != null) {
                 // The filesystem applies the current umask, just as for ordinary file creation.
@@ -69,7 +79,7 @@ internal class EditorFileWriter(
             // Windows may deny two simultaneous replacements of the same directory entry.
             // Only promotion is serialized; staging and syncing remain concurrent.
             synchronized(promotionLocks[(target.normalize().hashCode() and Int.MAX_VALUE) % promotionLocks.size]) {
-                Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+                Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE)
             }
         } catch (failure: Throwable) {
             // Ordinary cleanup exceptions cannot replace the primary cause. Fatal cleanup errors propagate.
@@ -90,13 +100,9 @@ internal class EditorFileWriter(
             val attributes = source.readAttributes()
             val destination =
                 requireView(temporary, PosixFileAttributeView::class.java)
-            try {
-                copyOwnership(destination, attributes)
-            } catch (_: IOException) {
-                // Like COPY_ATTRIBUTES: shared writable files need not be owned by the writer.
-                logger.warn(LogCategory.EDITOR, "Editor save could not preserve file ownership")
-            }
+            // Apply rwx before a permitted ownership transfer can give chmod rights away.
             destination.setPermissions(attributes.permissions())
+            copyOwnership(target, destination, attributes)
         }
         Files.getFileAttributeView(target, AclFileAttributeView::class.java)?.let { source ->
             val destination =
@@ -119,8 +125,31 @@ internal class EditorFileWriter(
         type: Class<T>,
     ): T = Files.getFileAttributeView(path, type) ?: throw IOException("Cannot preserve ${type.simpleName} for $path")
 
-    private companion object {
-        val promotionLocks = Array(64) { Any() }
-        val logger = BossLogger.forComponent("EditorFileWriter")
+    companion object {
+        internal fun preserveOwnership(
+            target: Path,
+            owner: () -> Unit,
+            group: () -> Unit,
+        ) {
+            // Owner denial must not prevent a permitted group change on a shared file.
+            for ((attribute, update) in listOf("owner" to owner, "group" to group)) {
+                try {
+                    update()
+                } catch (failure: IOException) {
+                    logger.warn(
+                        LogCategory.EDITOR,
+                        "Editor save could not preserve file ownership",
+                        mapOf(
+                            "path" to target.toString(),
+                            "attribute" to attribute,
+                            "error" to failure.javaClass.simpleName,
+                        ),
+                    )
+                }
+            }
+        }
+
+        private val promotionLocks = Array(64) { Any() }
+        private val logger = BossLogger.forComponent("EditorFileWriter")
     }
 }

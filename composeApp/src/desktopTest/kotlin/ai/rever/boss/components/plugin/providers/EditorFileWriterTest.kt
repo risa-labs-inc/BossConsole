@@ -1,7 +1,6 @@
 package ai.rever.boss.components.plugin.providers
 
 import org.junit.jupiter.api.Assumptions.assumeFalse
-import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.condition.EnabledOnOs
 import org.junit.jupiter.api.condition.OS
 import org.junit.jupiter.api.io.TempDir
@@ -18,6 +17,7 @@ import java.util.EnumSet
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
@@ -250,9 +250,18 @@ class EditorFileWriterTest {
         val target = Files.writeString(directory.resolve("shared.txt"), "original")
         val permissions = PosixFilePermissions.fromString("rw-rw----")
         Files.setPosixFilePermissions(target, permissions)
-        val writer = EditorFileWriter(copyOwnership = { _, _ -> throw IOException("Operation not permitted") })
+        var groupPreserved = false
+        val writer =
+            EditorFileWriter(copyOwnership = { path, _, _ ->
+                EditorFileWriter.preserveOwnership(
+                    path,
+                    owner = { throw IOException("Operation not permitted") },
+                    group = { groupPreserved = true },
+                )
+            })
         writer.write(target.toString(), "replacement")
         assertEquals("replacement", Files.readString(target))
+        assertTrue(groupPreserved, "Owner denial must not skip the independent group update")
         assertEquals(permissions, Files.getPosixFilePermissions(target))
     }
 
