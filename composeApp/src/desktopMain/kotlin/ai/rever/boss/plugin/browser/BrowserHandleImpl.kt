@@ -1108,20 +1108,25 @@ internal class BrowserHandleImpl(
         // Navigation started - track loading state
         subscriptions +=
             browser.navigation().on(NavigationStarted::class.java) { _ ->
-                _isLoading = true
-                loadingListeners.forEach { listener ->
-                    try {
-                        listener(true)
-                    } catch (e: Exception) {
-                        logger.warn(LogCategory.BROWSER, "Loading listener threw exception", error = e)
+                try {
+                    _isLoading = true
+                    loadingListeners.forEach { listener ->
+                        try {
+                            listener(true)
+                        } catch (e: Exception) {
+                            logger.warn(LogCategory.BROWSER, "Loading listener threw exception", error = e)
+                        }
                     }
+                } catch (e: ObjectClosedException) {
+                    logger.debug(LogCategory.BROWSER, "Browser closed during NavigationStarted")
                 }
             }
 
         // Navigation finished - track loading state, notify URL change, and inject trackers
         subscriptions +=
             browser.navigation().on(NavigationFinished::class.java) { event ->
-                // Record the outcome BEFORE notifying anyone: the loading, navigation and
+                try {
+                    // Record the outcome BEFORE notifying anyone: the loading, navigation and
                 // title callbacks below are what feed the URL history and the dashboard's
                 // recent pages, and they must see whether this navigation actually landed
                 // on a page. A mistyped host (youtube.como) commits an error page and still
@@ -1234,7 +1239,7 @@ internal class BrowserHandleImpl(
                     // mode RendererPid is built to prefer.
                     rendererPid.onCommit(null)
 
-                    // Skip injection for about:blank pages (used for dashboard display)
+                    // skip injection for about:blank pages (used for dashboard display)
                     // Only inject into actual web pages
                     val injectTarget = frame?.takeIf { url.isNotEmpty() && url != "about:blank" }
                     val followUp =
@@ -1251,6 +1256,9 @@ internal class BrowserHandleImpl(
                         }
                     pageInjectJob.getAndSet(followUp)?.cancel()
                 }
+              } catch (e: ObjectClosedException) {
+                  logger.debug(LogCategory.BROWSER, "Browser closed during NavigationFinished")
+              }
             }
 
         // Device capture, which is how this tab says "I am in a call". Chrome gates its auto
@@ -1259,44 +1267,56 @@ internal class BrowserHandleImpl(
         // which is why Chrome's rule does not fire for getDisplayMedia either.
         subscriptions +=
             browser.on(MediaStreamCaptureStarted::class.java) { event ->
-                val media = capturedMediaOf(event.mediaStreamType())
-                media?.let(captureTracker::started)
-                logger.debug(
-                    LogCategory.BROWSER,
-                    "Capture started",
-                    mapOf(
-                        "handleId" to id,
-                        "media" to media.toString(),
-                        "capturing" to captureTracker.isCapturing().toString(),
-                    ),
-                )
+                try {
+                    val media = capturedMediaOf(event.mediaStreamType())
+                    media?.let(captureTracker::started)
+                    logger.debug(
+                        LogCategory.BROWSER,
+                        "Capture started",
+                        mapOf(
+                            "handleId" to id,
+                            "media" to media.toString(),
+                            "capturing" to captureTracker.isCapturing().toString(),
+                        ),
+                    )
+                } catch (e: ObjectClosedException) {
+                    logger.debug(LogCategory.BROWSER, "Browser closed during MediaStreamCaptureStarted")
+                }
             }
         subscriptions +=
             browser.on(MediaStreamCaptureStopped::class.java) { event ->
-                val media = capturedMediaOf(event.mediaStreamType())
-                media?.let(captureTracker::stopped)
-                logger.debug(
-                    LogCategory.BROWSER,
-                    "Capture stopped",
-                    mapOf(
-                        "handleId" to id,
-                        "media" to media.toString(),
-                        "capturing" to captureTracker.isCapturing().toString(),
-                    ),
-                )
+                try {
+                    val media = capturedMediaOf(event.mediaStreamType())
+                    media?.let(captureTracker::stopped)
+                    logger.debug(
+                        LogCategory.BROWSER,
+                        "Capture stopped",
+                        mapOf(
+                            "handleId" to id,
+                            "media" to media.toString(),
+                            "capturing" to captureTracker.isCapturing().toString(),
+                        ),
+                    )
+                } catch (e: ObjectClosedException) {
+                    logger.debug(LogCategory.BROWSER, "Browser closed during MediaStreamCaptureStopped")
+                }
             }
 
         // Title changed
         subscriptions +=
             browser.on(TitleChanged::class.java) { event ->
-                val title = event.title()
-                lastKnownTitle = title
-                titleListeners.forEach { listener ->
-                    try {
-                        listener(title)
-                    } catch (e: Exception) {
-                        logger.warn(LogCategory.BROWSER, "Title listener threw exception", error = e)
+                try {
+                    val title = event.title()
+                    lastKnownTitle = title
+                    titleListeners.forEach { listener ->
+                        try {
+                            listener(title)
+                        } catch (e: Exception) {
+                            logger.warn(LogCategory.BROWSER, "Title listener threw exception", error = e)
+                        }
                     }
+                } catch (e: ObjectClosedException) {
+                    logger.debug(LogCategory.BROWSER, "Browser closed during TitleChanged")
                 }
             }
 
@@ -1348,6 +1368,8 @@ internal class BrowserHandleImpl(
                             }
                         }
                     }
+                } catch (e: ObjectClosedException) {
+                    logger.debug(LogCategory.BROWSER, "Browser closed during FaviconChanged")
                 } catch (e: Exception) {
                     logger.warn(LogCategory.BROWSER, "Error processing favicon", error = e)
                 }
