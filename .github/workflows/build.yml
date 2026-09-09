@@ -261,7 +261,9 @@ jobs:
           name: test-results-${{ matrix.os }}
           path: |
             **/build/test-results/test/
+            **/build/test-results/desktopTest/
             **/build/reports/tests/test/
+            **/build/reports/tests/desktopTest/
           retention-days: 7
 
       - name: 📦 Upload Build Artifacts

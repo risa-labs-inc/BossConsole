@@ -42,6 +42,17 @@ class BossMcpCliTest {
     }
 
     @Test
+    fun `describe uses the same case sensitive names as invocation`() {
+        SingleInstanceManager.mcpListProviderOverride = { """[{"name":"read_file"}]""" }
+        assertTrue(SingleInstanceManager.acquireLock())
+        val exit =
+            assertFailsWith<ProgramResult> {
+                createBossCLI().parse(listOf("mcp", "describe", "READ_FILE"))
+            }
+        assertEquals(1, exit.statusCode)
+    }
+
+    @Test
     fun `invalid timeouts fail before invoking any tool`() {
         var invoked = false
         SingleInstanceManager.mcpInvokeHandlerOverride = { _, _ ->
@@ -50,9 +61,10 @@ class BossMcpCliTest {
         }
         assertTrue(SingleInstanceManager.acquireLock())
         for (timeout in listOf("0", "-1", "61", "garbage", Long.MAX_VALUE.toString())) {
-            val exit = assertFailsWith<ProgramResult> {
-                createBossCLI().parse(listOf("mcp", "invoke", "test", "--timeout", timeout))
-            }
+            val exit =
+                assertFailsWith<ProgramResult> {
+                    createBossCLI().parse(listOf("mcp", "invoke", "test", "--timeout", timeout))
+                }
             assertEquals(1, exit.statusCode)
         }
         assertFalse(invoked)
@@ -84,7 +96,7 @@ class BossMcpCliTest {
 
     @Test
     fun `mcp list command outputs json array`() {
-        val fakeTools = """[{"name":"mcp__boss__read_file","description":"Read file","pluginId":"editor-tab"}]"""
+        val fakeTools = """[{"name":"read_file","description":"Read file","pluginId":"editor-tab"}]"""
         SingleInstanceManager.mcpListProviderOverride = { fakeTools }
         assertTrue(SingleInstanceManager.acquireLock())
 
@@ -108,9 +120,9 @@ class BossMcpCliTest {
         val outContent = ByteArrayOutputStream()
         System.setOut(PrintStream(outContent))
 
-        cli.parse(listOf("mcp", "invoke", "mcp__boss__read_file", "-a", """{"path":"test.kt"}"""))
+        cli.parse(listOf("mcp", "invoke", "read_file", "-a", """{"path":"test.kt"}"""))
         val output = outContent.toString().trim()
-        assertTrue(output.contains("Tool mcp__boss__read_file received {\"path\":\"test.kt\"}"))
+        assertTrue(output.contains("Tool read_file received {\"path\":\"test.kt\"}"))
     }
 
     @Test
@@ -146,15 +158,15 @@ class BossMcpCliTest {
         val outContent = ByteArrayOutputStream()
         System.setOut(PrintStream(outContent))
 
-        cli.parse(listOf("mcp", "invoke", "mcp__boss__git_status", "-r"))
+        cli.parse(listOf("mcp", "invoke", "git_status", "-r"))
         assertEquals("clean raw result", outContent.toString().trim())
     }
 
     @Test
     fun `mcp list with filter filters tools`() {
         val fakeTools = """[
-            {"name":"mcp__boss__read_file","description":"Read file","pluginId":"editor-tab"},
-            {"name":"mcp__boss__browser_nav","description":"Navigate URL","pluginId":"fluck-browser"}
+            {"name":"read_file","description":"Read file","pluginId":"editor-tab"},
+            {"name":"browser_nav","description":"Navigate URL","pluginId":"fluck-browser"}
         ]"""
         SingleInstanceManager.mcpListProviderOverride = { fakeTools }
         assertTrue(SingleInstanceManager.acquireLock())
@@ -165,16 +177,16 @@ class BossMcpCliTest {
 
         cli.parse(listOf("mcp", "list", "--filter", "browser"))
         val output = outContent.toString().trim()
-        assertTrue(output.contains("mcp__boss__browser_nav"))
-        assertFalse(output.contains("mcp__boss__read_file"))
+        assertTrue(output.contains("browser_nav"))
+        assertFalse(output.contains("read_file"))
         assertTrue(output.contains("Matching tools: 1 (of 2 total)"))
     }
 
     @Test
     fun `mcp list with filter in json mode returns filtered json array`() {
         val fakeTools = """[
-            {"name":"mcp__boss__read_file","description":"Read file","pluginId":"editor-tab"},
-            {"name":"mcp__boss__browser_nav","description":"Navigate URL","pluginId":"fluck-browser"}
+            {"name":"read_file","description":"Read file","pluginId":"editor-tab"},
+            {"name":"browser_nav","description":"Navigate URL","pluginId":"fluck-browser"}
         ]"""
         SingleInstanceManager.mcpListProviderOverride = { fakeTools }
         assertTrue(SingleInstanceManager.acquireLock())
@@ -185,14 +197,14 @@ class BossMcpCliTest {
 
         cli.parse(listOf("mcp", "list", "-f", "browser", "--json"))
         val output = outContent.toString().trim()
-        assertTrue(output.contains("mcp__boss__browser_nav"))
-        assertFalse(output.contains("mcp__boss__read_file"))
+        assertTrue(output.contains("browser_nav"))
+        assertFalse(output.contains("read_file"))
     }
 
     @Test
     fun `mcp describe outputs tool detail`() {
         val fakeTools = """[
-            {"name":"mcp__boss__browser_nav","description":"Navigate to URL","pluginId":"fluck-browser","requiresAdmin":true,"requiredPermissions":["browser.nav"]}
+            {"name":"browser_nav","description":"Navigate to URL","pluginId":"fluck-browser","requiresAdmin":true,"requiredPermissions":["browser.nav"]}
         ]"""
         SingleInstanceManager.mcpListProviderOverride = { fakeTools }
         assertTrue(SingleInstanceManager.acquireLock())
@@ -201,9 +213,9 @@ class BossMcpCliTest {
         val outContent = ByteArrayOutputStream()
         System.setOut(PrintStream(outContent))
 
-        cli.parse(listOf("mcp", "describe", "mcp__boss__browser_nav"))
+        cli.parse(listOf("mcp", "describe", "browser_nav"))
         val output = outContent.toString().trim()
-        assertTrue(output.contains("MCP Tool: mcp__boss__browser_nav"))
+        assertTrue(output.contains("MCP Tool: browser_nav"))
         assertTrue(output.contains("Plugin:   fluck-browser"))
         assertTrue(output.contains("Access:   Requires Administrator"))
         assertTrue(output.contains("Navigate to URL"))
@@ -212,7 +224,7 @@ class BossMcpCliTest {
     @Test
     fun `mcp describe in json mode outputs single tool json`() {
         val fakeTools = """[
-            {"name":"mcp__boss__browser_nav","description":"Navigate to URL","pluginId":"fluck-browser"}
+            {"name":"browser_nav","description":"Navigate to URL","pluginId":"fluck-browser"}
         ]"""
         SingleInstanceManager.mcpListProviderOverride = { fakeTools }
         assertTrue(SingleInstanceManager.acquireLock())
@@ -221,10 +233,10 @@ class BossMcpCliTest {
         val outContent = ByteArrayOutputStream()
         System.setOut(PrintStream(outContent))
 
-        cli.parse(listOf("mcp", "describe", "mcp__boss__browser_nav", "--json"))
+        cli.parse(listOf("mcp", "describe", "browser_nav", "--json"))
         val output = outContent.toString().trim()
         assertTrue(output.startsWith("{") && output.endsWith("}"))
-        assertTrue(output.contains("mcp__boss__browser_nav"))
+        assertTrue(output.contains("browser_nav"))
     }
 
     @Test
@@ -290,9 +302,9 @@ class BossMcpCliTest {
         val outContent = ByteArrayOutputStream()
         System.setOut(PrintStream(outContent))
 
-        cli.parse(listOf("mcp", "invoke", "mcp__boss__sql_query", "--stdin"))
+        cli.parse(listOf("mcp", "invoke", "sql_query", "--stdin"))
         val output = outContent.toString().trim()
-        assertTrue(output.contains("Tool mcp__boss__sql_query received from stdin: $inputJson"))
+        assertTrue(output.contains("Tool sql_query received from stdin: $inputJson"))
     }
 
     @Test

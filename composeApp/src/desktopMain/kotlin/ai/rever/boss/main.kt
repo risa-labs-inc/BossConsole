@@ -69,7 +69,7 @@ import java.io.File
 import javax.swing.JPopupMenu
 import kotlin.system.exitProcess
 
-private val logger = BossLogger.forComponent("Main")
+private val logger by lazy { BossLogger.forComponent("Main") }
 
 /**
  * Decides the render-recovery toast and rate-limits it. EDT-confined: the window
@@ -243,16 +243,18 @@ fun main(args: Array<String>) {
         )
     }
 
-    // Headless CLI commands (status, mcp, completion, --help, -v) target the running
+    // Headless CLI commands (status, mcp, completion, --help) target the running
     // instance or generate output headlessly. Execute before AWT, plugins, Skiko,
     // or acquiring the single-instance lock so they fail without GUI startup when BOSS is
     // closed without booting the GUI or corrupting standard output streams.
     val firstNonFlag = args.firstOrNull { !it.startsWith("-") }?.lowercase()
     val isHeadlessCli =
         firstNonFlag in setOf("status", "mcp", "completion") ||
-            (args.isNotEmpty() && args.all { it in setOf("-h", "--help", "-v", "--version", "help", "version") })
+            (args.isNotEmpty() && args.all { it in setOf("-h", "--help") })
 
     if (isHeadlessCli) {
+        ai.rever.boss.cli
+            .configureHeadlessLogging()
         try {
             createBossCLI().main(args)
             exitProcess(0)

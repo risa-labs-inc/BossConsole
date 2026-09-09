@@ -117,6 +117,7 @@ goto :eof
 :cmd_forward_exe
 REM Preserve literal exclamation marks in JSON arguments.
 setlocal DisableDelayedExpansion
+if defined BOSS_EXE if not exist "%BOSS_EXE%" goto :cmd_missing_exe
 if not defined BOSS_EXE set "BOSS_EXE=%LOCALAPPDATA%\Programs\BOSS\BOSS.exe"
 if not exist "%BOSS_EXE%" set "BOSS_EXE=%ProgramFiles%\BOSS\BOSS.exe"
 if not exist "%BOSS_EXE%" set "BOSS_EXE=%~dp0..\composeApp\build\compose\binaries\main\app\BOSS\BOSS.exe"

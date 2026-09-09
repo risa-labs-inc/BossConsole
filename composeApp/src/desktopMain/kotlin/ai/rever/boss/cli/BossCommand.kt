@@ -308,7 +308,7 @@ class BossMcpCommand : CliktCommand(name = "mcp") {
                                     ?.jsonPrimitive
                                     ?.contentOrNull
                                     .orEmpty()
-                            name.equals(toolName, ignoreCase = true)
+                            name == toolName
                         }
                     if (match == null) {
                         fail(
@@ -568,3 +568,8 @@ fun createBossCLI(): BossCommand =
         BossMcpCommand(),
         BossCompletionCommand(),
     )
+
+/** Configure before any BOSS logger initializes, keeping machine-readable stdout clean. */
+internal fun configureHeadlessLogging() {
+    System.setProperty("org.slf4j.simpleLogger.logFile", "System.err")
+}

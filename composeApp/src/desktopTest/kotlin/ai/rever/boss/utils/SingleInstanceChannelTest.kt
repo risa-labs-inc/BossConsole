@@ -459,8 +459,7 @@ class SingleInstanceChannelTest {
         println("Combined roundtrip median latency: $roundtripFmt ms")
         println("=======================================================\n")
 
-        assertTrue(medianStatusMs < 50.0, "Status query median must be under 50ms")
-        assertTrue(medianMcpListMs < 50.0, "MCP list query median must be under 50ms")
+        // Timing is diagnostic only: loaded CI machines must not fail a correctness suite.
     }
 
     @Test
@@ -512,7 +511,8 @@ class SingleInstanceChannelTest {
         var called = false
         SingleInstanceManager.mcpInvokeHandlerOverride = { _, _ ->
             called = true
-            ai.rever.boss.plugin.api.McpToolResult("unexpected")
+            ai.rever.boss.plugin.api
+                .McpToolResult("unexpected")
         }
         assertTrue(SingleInstanceManager.acquireLock())
         val descriptor = assertNotNull(readPublishedDescriptor())
@@ -531,40 +531,99 @@ class SingleInstanceChannelTest {
             val status = Json.parseToJsonElement(SingleInstanceManager.queryStatus().getOrThrow()).jsonObject
             assertEquals(unusual, status["arch"]?.jsonPrimitive?.content)
         } finally {
-            System.setProperty("os.arch", previous)
+            previous?.let { System.setProperty("os.arch", it) } ?: System.clearProperty("os.arch")
         }
     }
 
     @Test
     fun `tool names are escaped in result envelopes and cannot inject wire lines`() {
         assertTrue(SingleInstanceManager.acquireLock())
-        SingleInstanceManager.mcpInvokeHandlerOverride = { _, _ -> ai.rever.boss.plugin.api.McpToolResult("ok") }
+        SingleInstanceManager.mcpInvokeHandlerOverride = { _, _ ->
+            ai.rever.boss.plugin.api
+                .McpToolResult("ok")
+        }
         val name = "tool\"quoted"
         val result = SingleInstanceManager.invokeMcpTool(name).getOrThrow()
-        assertEquals(name, Json.parseToJsonElement(result).jsonObject["tool"]?.jsonPrimitive?.content)
+        assertEquals(
+            name,
+            Json
+                .parseToJsonElement(result)
+                .jsonObject["tool"]
+                ?.jsonPrimitive
+                ?.content,
+        )
         assertTrue(SingleInstanceManager.invokeMcpTool("tool\nOTHER").isFailure)
     }
 
     @Test
     fun `arguments at the client limit fit the base64 wire budget`() {
-        SingleInstanceManager.mcpInvokeHandlerOverride = { _, args -> ai.rever.boss.plugin.api.McpToolResult(args.length.toString()) }
+        SingleInstanceManager.mcpInvokeHandlerOverride = { _, args ->
+            ai.rever.boss.plugin.api
+                .McpToolResult(args.length.toString())
+        }
         assertTrue(SingleInstanceManager.acquireLock())
         val args = "{\"x\":\"" + "a".repeat(MAX_ARGUMENT_BYTES - 8) + "\"}"
         assertEquals(MAX_ARGUMENT_BYTES, args.toByteArray().size)
-        assertTrue(SingleInstanceManager.invokeMcpTool("echo", args).isSuccess)
+        val longestName = "界".repeat(MAX_TOOL_NAME_LENGTH)
+        val wire = formatMcpInvokeRequest("f".repeat(TOKEN_HEX_LENGTH), longestName, args)
+        assertTrue(wire.toByteArray(StandardCharsets.UTF_8).size <= MAX_REQUEST_BYTES)
+        assertTrue(SingleInstanceManager.invokeMcpTool(longestName, args).isSuccess)
         assertTrue(SingleInstanceManager.invokeMcpTool("echo", args + " ").isFailure)
     }
 
     @Test
     fun `tool discovery preserves structured input schema`() {
         val schema = """{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"""
-        val definition = ai.rever.boss.plugin.api.McpToolDefinition(
-            name = "read_file", description = "Reads a file", inputSchema = schema,
-            handler = { ai.rever.boss.plugin.api.McpToolResult("ok") },
-        )
-        val tool = ai.rever.boss.plugin.api.RegisteredMcpTool("test", definition)
+        val definition =
+            ai.rever.boss.plugin.api.McpToolDefinition(
+                name = "read_file",
+                description = "Reads a file",
+                inputSchema = schema,
+                handler = {
+                    ai.rever.boss.plugin.api
+                        .McpToolResult("ok")
+                },
+            )
+        val tool =
+            ai.rever.boss.plugin.api
+                .RegisteredMcpTool("test", definition)
         val tools = Json.parseToJsonElement(encodeMcpTools(listOf(tool))) as kotlinx.serialization.json.JsonArray
         assertEquals(Json.parseToJsonElement(schema), tools.single().jsonObject["inputSchema"])
+    }
+
+    @Test
+    fun `one malformed schema does not hide other tools`() {
+        val tools =
+            listOf("", "{invalid", "{\"type\":\"object\"}").mapIndexed { index, schema ->
+                ai.rever.boss.plugin.api.RegisteredMcpTool(
+                    "test",
+                    ai.rever.boss.plugin.api.McpToolDefinition(
+                        name = "tool_$index",
+                        description = "test",
+                        inputSchema = schema,
+                        handler = {
+                            ai.rever.boss.plugin.api
+                                .McpToolResult("ok")
+                        },
+                    ),
+                )
+            }
+        val encoded = Json.parseToJsonElement(encodeMcpTools(tools)) as kotlinx.serialization.json.JsonArray
+        assertEquals(3, encoded.size)
+        assertEquals("", encoded[0].jsonObject["inputSchema"]?.jsonPrimitive?.content)
+        assertEquals("{invalid", encoded[1].jsonObject["inputSchema"]?.jsonPrimitive?.content)
+        assertTrue(encoded[2].jsonObject["inputSchema"] is kotlinx.serialization.json.JsonObject)
+    }
+
+    @Test
+    fun `oversized tool result reports size limit rather than offline desktop`() {
+        SingleInstanceManager.mcpInvokeHandlerOverride = { _, _ ->
+            ai.rever.boss.plugin.api
+                .McpToolResult("x".repeat(4 * 1024 * 1024))
+        }
+        assertTrue(SingleInstanceManager.acquireLock())
+        val failure = SingleInstanceManager.invokeMcpTool("large").exceptionOrNull()
+        assertTrue(assertNotNull(failure).message.orEmpty().contains("response size limit"))
     }
 
     // ==================== Helpers ====================

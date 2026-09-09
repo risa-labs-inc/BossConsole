@@ -158,13 +158,13 @@ boss completion fish > ~/.config/fish/completions/boss.fish
 The CLI adheres to strict UNIX process exit codes and standard stream separation:
 
 - **Exit Code `0`**: Operation succeeded. `stdout` contains the tool output or JSON response.
-- **Exit Code `1`**: Tool execution failed (`isError == true`), invalid tool arguments, or desktop app offline. Clikt usage errors use exit code `2`. The error description is written strictly to `stderr`, leaving `stdout` clean so shell pipelines do not ingest corrupted data.
+- **Exit Code `1`**: Tool execution failed (`isError == true`), invalid tool arguments, or desktop app offline. Clikt usage errors also use exit code `1`. The error description is written strictly to `stderr`, leaving `stdout` clean so shell pipelines do not ingest corrupted data.
 
 ### Offline Fail-Fast
 If BossConsole is not running, commands fail immediately without hanging:
 ```bash
 $ boss mcp list
-Error listing MCP tools: BOSS is not running. Launch BOSS to list MCP tools.
+Error: BOSS is not running. Launch BOSS to list MCP tools.
 $ echo $?
 1
 ```
@@ -176,3 +176,7 @@ $ echo $?
 1. **Local Authentication**: Uses a per-launch 32-byte cryptographically secure random token written to an owner-restricted runtime directory. Other OS users cannot read that token. Processes running as the same OS user can read it and are trusted by this channel.
 2. **Non-Blocking Coroutines**: Tool execution runs on a background client thread with a cooperative 30-second coroutine timeout. Socket watchdogs bound client waits; a blocking plugin handler may continue after a timeout.
 3. **RBAC & Kill-Switch**: All calls go through `McpToolRegistryImpl`, enforcing role-based permissions and per-tool user disable switches (`mcp-disabled-tools.json`).
+
+PowerShell: use `--stdin` for JSON on Windows PowerShell 5.1 or legacy native argument passing, which can strip embedded quotes from `--args`. PowerShell 7.3+ uses Standard argument passing in this launcher. Packaged Windows console I/O still requires platform verification.
+
+Registry access before sign-in follows the existing host policy: tools without required permissions or an admin requirement remain available. For an admin operator, the per-tool disabled switch is the remaining registry access control.

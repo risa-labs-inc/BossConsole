@@ -21,4 +21,9 @@ BOSS_BIN='' OSTYPE=unknown bash "$root/scripts/boss" status > "$scratch/out" 2> 
 [[ "$status" == 1 ]]
 [[ ! -s "$scratch/out" ]]
 grep -q 'binary not found' "$scratch/err"
+status=0
+BOSS_BIN="$scratch/missing" bash "$root/scripts/boss" status > "$scratch/out" 2> "$scratch/err" || status=$?
+[[ "$status" == 1 ]]
+[[ ! -s "$scratch/out" ]]
+grep -q 'binary not found' "$scratch/err"
 echo 'Headless launcher tests passed'

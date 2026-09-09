@@ -97,7 +97,10 @@ private const val MCP_INVOKE_TIMEOUT_MS = 60000L
  * sized to accommodate Base64-encoded tool arguments and payloads.
  */
 internal const val MAX_REQUEST_BYTES = 1024 * 1024
+
+// Reserve 1368 wire bytes for the protocol, token and up to 256 UTF-8 tool-name characters.
 internal const val MAX_ARGUMENT_BYTES = 768 * 1024 - 1024
+internal const val MAX_TOOL_NAME_LENGTH = 256
 
 /** A response is one short word; nothing legitimate approaches this. */
 private const val MAX_RESPONSE_BYTES = 256
@@ -233,20 +236,27 @@ internal fun parseRequestLine(line: String): SingleInstanceRequest? {
         }
 
         VERB_MCP_INVOKE -> {
-            if (parts.size >= 4) {
-                val toolName = parts[3].trim()
-                val base64Payload = if (parts.size == 5) parts[4].trim() else ""
-                val decodedArgs = decodeBase64Args(base64Payload) ?: return null
-                if (toolName.length > 256 || toolName.any { it.isWhitespace() || it.isISOControl() }) return null
-                SingleInstanceRequest(token, VERB_MCP_INVOKE, DeepLinkOrigin.OPERATOR_CLI, null, toolName, decodedArgs)
-            } else {
-                null
-            }
+            parseMcpInvokeRequest(token, parts)
         }
 
         else -> {
             null
         }
+    }
+}
+
+private fun validMcpToolName(toolName: String): Boolean =
+    toolName.length in 1..MAX_TOOL_NAME_LENGTH && toolName.none { it.isWhitespace() || it.isISOControl() }
+
+private fun parseMcpInvokeRequest(
+    token: String,
+    parts: List<String>,
+): SingleInstanceRequest? {
+    if (parts.size < 4) return null
+    val toolName = parts[3].trim()
+    val base64Payload = parts.getOrNull(4)?.trim().orEmpty()
+    return decodeBase64Args(base64Payload)?.takeIf { validMcpToolName(toolName) }?.let { decodedArgs ->
+        SingleInstanceRequest(token, VERB_MCP_INVOKE, DeepLinkOrigin.OPERATOR_CLI, null, toolName, decodedArgs)
     }
 }
 
@@ -709,11 +719,14 @@ private fun buildStatusResponse(statusProviderOverride: (() -> String)?): String
                     put("os", os)
                     put("arch", arch)
                     put("activeProject", projectPath)
-                    put("memory", buildJsonObject {
-                        put("usedMb", usedMem)
-                        put("maxMb", maxMem)
-                        put("heapPercent", heapPercent)
-                    })
+                    put(
+                        "memory",
+                        buildJsonObject {
+                            put("usedMb", usedMem)
+                            put("maxMb", maxMem)
+                            put("heapPercent", heapPercent)
+                        },
+                    )
                 }.toString()
             } catch (e: Exception) {
                 return RESPONSE_ERROR_PREFIX + (e.message ?: "Failed to query status")
@@ -743,7 +756,11 @@ private fun buildMcpListResponse(listProviderOverride: (() -> String)?): String 
         java.util.Base64
             .getEncoder()
             .encodeToString(rawJson.toByteArray(StandardCharsets.UTF_8))
-    return RESPONSE_MCP_LIST_PREFIX + base64
+    return if (base64.length + RESPONSE_MCP_LIST_PREFIX.length > MAX_DATA_RESPONSE_BYTES) {
+        RESPONSE_ERROR_PREFIX + "Tool list exceeds the IPC response size limit"
+    } else {
+        RESPONSE_MCP_LIST_PREFIX + base64
+    }
 }
 
 @Suppress("ReturnCount", "TooGenericExceptionCaught", "LongMethod")
@@ -796,10 +813,17 @@ internal fun encodeMcpTools(tools: List<ai.rever.boss.plugin.api.RegisteredMcpTo
                 put("pluginId", registeredTool.providerId)
                 put("requiresAdmin", def.requiresAdmin)
                 put("requiredPermissions", JsonArray(def.requiredPermissions.map(::JsonPrimitive)))
-                put("inputSchema", Json.parseToJsonElement(def.inputSchema))
+                put("inputSchema", parseToolSchema(def.inputSchema))
             }
         },
     ).toString()
+
+private fun parseToolSchema(schema: String): kotlinx.serialization.json.JsonElement =
+    try {
+        Json.parseToJsonElement(schema)
+    } catch (_: IllegalArgumentException) {
+        JsonPrimitive(schema)
+    }
 
 internal fun encodeMcpResult(
     toolName: String,
@@ -816,7 +840,11 @@ internal fun encodeMcpResult(
         java.util.Base64
             .getEncoder()
             .encodeToString(payload.toString().toByteArray(StandardCharsets.UTF_8))
-    return RESPONSE_MCP_INVOKE_PREFIX + encoded
+    return if (encoded.length + RESPONSE_MCP_INVOKE_PREFIX.length > MAX_DATA_RESPONSE_BYTES) {
+        RESPONSE_ERROR_PREFIX + "Tool result exceeds the IPC response size limit"
+    } else {
+        RESPONSE_MCP_INVOKE_PREFIX + encoded
+    }
 }
 
 /**
@@ -1065,7 +1093,7 @@ object SingleInstanceManager {
      */
     private fun responseFor(request: SingleInstanceRequest?): String {
         if (request == null || !presentsLiveToken(request)) {
-            logger.warn(LogCategory.SYSTEM, "Refused a single-instance request that did not present the channel token")
+            logger.warn(LogCategory.SYSTEM, "Refused a malformed single-instance request or missing channel token")
             return RESPONSE_REJECTED
         }
 
@@ -1250,7 +1278,7 @@ object SingleInstanceManager {
         argsJson: String = "{}",
         timeoutMs: Long = MCP_INVOKE_TIMEOUT_MS,
     ): Result<String> {
-        if (toolName.isBlank() || toolName.length > 256 || toolName.any { it.isWhitespace() || it.isISOControl() }) {
+        if (!validMcpToolName(toolName)) {
             return Result.failure(IllegalArgumentException("Tool name must be a single nonempty token"))
         }
         if (argsJson.toByteArray(StandardCharsets.UTF_8).size > MAX_ARGUMENT_BYTES) {

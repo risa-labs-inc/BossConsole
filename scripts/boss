@@ -198,7 +198,7 @@ case "$1" in
                 elif [ -x "$SCRIPT_DIR/../composeApp/build/compose/binaries/main/app/BOSS.app/Contents/MacOS/BOSS" ]; then
                     BOSS_BIN="$SCRIPT_DIR/../composeApp/build/compose/binaries/main/app/BOSS.app/Contents/MacOS/BOSS"
                 fi
-            elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+            elif [[ "$OSTYPE" == "linux"* ]]; then
                 if command -v boss-desktop &> /dev/null; then
                     BOSS_BIN="boss-desktop"
                 elif [ -x "/opt/boss/bin/BOSS" ]; then
@@ -209,7 +209,7 @@ case "$1" in
             fi
         fi
 
-        if [ -n "$BOSS_BIN" ]; then
+        if [ -n "$BOSS_BIN" ] && command -v "$BOSS_BIN" >/dev/null 2>&1; then
             exec "$BOSS_BIN" "$@"
         else
             echo "Error: BOSS application binary not found. Set BOSS_BIN to the packaged executable." >&2

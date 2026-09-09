@@ -16,13 +16,29 @@
     Opens the URL in Fluck browser
 
 .EXAMPLE
-    boss.ps1 terminal -Command "ls -la"
+    boss.ps1 terminal -c "ls -la"
     Opens a terminal tab with the specified command
 
 .EXAMPLE
     boss.ps1 folder C:\Projects\MyProject
     Opens the folder in the codebase plugin
 #>
+
+# Preserve the original named script interface alongside positional CLI forwarding.
+if ($args.Count -gt 0 -and $args[0] -in '-Command', '-Argument', '-CommandToRun') {
+    $legacy = @{}
+    for ($i = 0; $i -lt $args.Count; $i += 2) {
+        if ($i + 1 -ge $args.Count -or $args[$i] -notin '-Command', '-Argument', '-CommandToRun', '-c') {
+            [Console]::Error.WriteLine("Error: Invalid named launcher arguments.")
+            exit 1
+        }
+        $legacy[$args[$i].TrimStart('-')] = $args[$i + 1]
+    }
+    $args = @($legacy['Command'])
+    if ($legacy.ContainsKey('Argument')) { $args += $legacy['Argument'] }
+    $legacyRun = if ($legacy.ContainsKey('CommandToRun')) { $legacy['CommandToRun'] } else { $legacy['c'] }
+    if ($legacyRun) { $args += @('-c', $legacyRun) }
+}
 
 if ($args.Count -eq 0) {
     Write-Error "Error: No command specified"
@@ -38,7 +54,6 @@ for ($i = 1; $i -lt $args.Count; $i++) {
         $CommandToRun = $args[$i + 1]
     }
 }
-$remainingArgs = if ($args.Count -gt 2) { @($args[2..($args.Count - 1)]) } else { @() }
 
 function Open-BossDeepLink {
     param([string]$DeepLink)
@@ -224,6 +239,10 @@ switch ($Command.ToLower()) {
 
     { $_ -in "status", "mcp", "completion" } {
         $bossExe = $env:BOSS_EXE
+        if ($bossExe -and -not (Test-Path $bossExe -PathType Leaf)) {
+            [Console]::Error.WriteLine("Error: BOSS_EXE does not name an executable file.")
+            exit 1
+        }
         if (-not $bossExe -or -not (Test-Path $bossExe)) {
             $bossExe = "$env:LOCALAPPDATA\Programs\BOSS\BOSS.exe"
         }
@@ -235,6 +254,9 @@ switch ($Command.ToLower()) {
         }
         if (Test-Path $bossExe) {
             $forwardArgs = @($args)
+            if ($PSVersionTable.PSVersion -ge [Version]"7.3") {
+                $PSNativeCommandArgumentPassing = 'Standard'
+            }
             & $bossExe @forwardArgs
             exit $LASTEXITCODE
         }
