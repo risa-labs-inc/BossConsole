@@ -2,18 +2,59 @@
 <SmellBaseline>
   <ManuallySuppressedIssues/>
   <CurrentIssues>
+    <ID>CyclomaticComplexMethod:UnifiedDiffParser.kt$UnifiedDiffParser$internal fun cUnquote(p: String): String</ID>
+    <ID>LongParameterList:HomeToolCatalog.kt$HomeToolCatalog$( tabTypes: List&lt;HomeTabTypeInput&gt;, panels: List&lt;HomePanelInput&gt;, storeCatalogue: List&lt;HomeStorePluginInput&gt;, installedPluginIds: Set&lt;String&gt;, access: RegistryAccess, installedVersionOf: (String) -&gt; String? = { null }, )</ID>
+    <ID>LongParameterList:ContentSearchService.kt$EditorBufferBridge$( path: String, startLine: Int, startCol: Int, endLine: Int, endCol: Int, newText: String, expectedVersion: Long, )</ID>
+    <ID>ReturnCount:ContentSearchService.kt$ContentSearchService$internal fun resolveFile( rawPath: String, projectPath: String, ): File?</ID>
+    <ID>SwallowedException:ContentSearchService.kt$ContentSearchService$e: java.nio.file.AtomicMoveNotSupportedException</ID>
+    <ID>ComplexCondition:UnifiedDiffParser.kt$UnifiedDiffParser$h != null &amp;&amp; (line.startsWith("+") || line.startsWith("-") || line.startsWith(" ") || line.isEmpty())</ID>
+    <ID>ComplexCondition:WorkspaceExtractor.kt$tab.filePath.isBlank() || tab.staged || tab.fromRef != null || tab.toRef != null</ID>
+    <ID>CyclomaticComplexMethod:ContentSearchService.kt$ContentSearchService$override suspend fun searchInProject( query: String, pathPattern: String?, excludePattern: String?, isRegex: Boolean, caseSensitive: Boolean, wholeWord: Boolean, maxResults: Int, ): List&lt;FileMatch&gt;</ID>
+    <ID>CyclomaticComplexMethod:UnifiedDiffParser.kt$UnifiedDiffParser$fun parse(input: String): List&lt;GitDiffData&gt;</ID>
+    <ID>CyclomaticComplexMethod:WorkspaceApplier.kt$internal fun createTabFromWorkspaceConfig( tabConfig: TabConfig, resolvedProjectPath: String, splitViewState: SplitViewState, ): TabInfo?</ID>
+    <ID>LongMethod:WorkspaceApplier.kt$internal fun createTabFromWorkspaceConfig( tabConfig: TabConfig, resolvedProjectPath: String, splitViewState: SplitViewState, ): TabInfo?</ID>
+    <ID>LongMethod:WorkspaceExtractor.kt$private fun extractTabConfig( tab: TabInfo, defaultWorkingDirectory: String, ): TabConfig?</ID>
+    <ID>LongParameterList:ContentSearchService.kt$ContentSearchService$( file: File, text: String, version: Long, regex: Regex, replacement: String, isRegex: Boolean, dryRun: Boolean, )</ID>
+    <ID>LongParameterList:ContentSearchService.kt$ContentSearchService$( projectRoot: String, query: String, pathPattern: String?, excludePattern: String?, isRegex: Boolean, caseSensitive: Boolean, wholeWord: Boolean, path: String, // projectRoot is part of the key because a cached FileMatch carries a path // RELATIVE to the root it was found under. The same absolute file walked under // a different root (switching between nested projects) would otherwise get its // old relative path served from cache until its mtime changed, and a // result-click would resolve it against the new root - the wrong file. )</ID>
+    <ID>LongParameterList:EditorAPIAccess.kt$EditorAPIAccess$( path: String, startLine: Int, startCol: Int, endLine: Int, endCol: Int, newText: String, expectedVersion: Long, )</ID>
+    <ID>LoopWithTooManyJumpStatements:ContentSearchService.kt$ContentSearchService$for</ID>
+    <ID>LoopWithTooManyJumpStatements:DesktopGitService.kt$GitService$for</ID>
+    <ID>LoopWithTooManyJumpStatements:UnifiedDiffParser.kt$UnifiedDiffParser$for</ID>
+    <ID>MaxLineLength:BufferEditRangeTest.kt$BufferEditRangeTest$assertEquals("y", text.substring(offsetOf(lines, r.startLine, r.startCol), offsetOf(lines, r.endLine, r.endCol)))</ID>
+    <ID>MaxLineLength:InstalledPluginVersionDesktop.kt$internal actual fun installedPluginVersionOf(pluginId: String): String?</ID>
+    <ID>MaxLineLength:ContentSearchService.kt$ContentSearchService$cacheKey(projectPath, query, pathPattern, excludePattern, isRegex, caseSensitive, wholeWord, file.absolutePath)</ID>
+    <ID>MaxLineLength:EditorAPIAccess.kt$EditorAPIAccess$/** Snapshot of the live buffer for [path], or null when the file has no open buffer (or the plugin predates the method). */</ID>
+    <ID>MaxLineLength:UnifiedDiffParser.kt$UnifiedDiffParser.HunkBuilder$lines.add(DiffLine(DiffLineKind.ADDED, line.substring(1), oldLine = null, newLine = n.takeIf { n &gt; 0 }))</ID>
+    <ID>MaxLineLength:UnifiedDiffParser.kt$UnifiedDiffParser.HunkBuilder$lines.add(DiffLine(DiffLineKind.REMOVED, line.substring(1), oldLine = o.takeIf { o &gt; 0 }, newLine = null))</ID>
+    <ID>MaxLineLength:UnifiedDiffParser.kt$UnifiedDiffParser$if</ID>
+    <ID>PackageNaming:TabPaths.kt$package ai.rever.boss.components.window_panel</ID>
+    <ID>PackageNaming:TabPathsTest.kt$package ai.rever.boss.components.window_panel</ID>
+    <ID>ReturnCount:ContentSearchService.kt$ContentSearchService$override suspend fun replaceInProject( query: String, replacement: String, files: List&lt;String&gt;, isRegex: Boolean, caseSensitive: Boolean, wholeWord: Boolean, dryRun: Boolean, ): ReplaceSummary</ID>
+    <ID>ReturnCount:ContentSearchService.kt$ContentSearchService$override suspend fun searchInProject( query: String, pathPattern: String?, excludePattern: String?, isRegex: Boolean, caseSensitive: Boolean, wholeWord: Boolean, maxResults: Int, ): List&lt;FileMatch&gt;</ID>
+    <ID>ReturnCount:DesktopGitService.kt$GitService$internal fun isSafeRefName(ref: String): Boolean</ID>
+    <ID>ReturnCount:DesktopGitService.kt$GitService$private fun stagedPathsFor( projectPath: String, filePath: String, ): List&lt;String&gt;</ID>
+    <ID>ReturnCount:UnifiedDiffParser.kt$UnifiedDiffParser$private fun splitSides(s: String): Pair&lt;String, String&gt;?</ID>
+    <ID>SpreadOperator:DesktopGitService.kt$GitService$(projectPath, "restore", "--staged", "--", *paths.toTypedArray())</ID>
+    <ID>SpreadOperator:DesktopGitService.kt$GitService$(projectPath, *args)</ID>
+    <ID>SwallowedException:ContentSearchService.kt$ContentSearchService$e: Exception</ID>
+    <ID>SwallowedException:TabPaths.kt$TabPaths$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:ContentSearchService.kt$ContentSearchService$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:TabPaths.kt$TabPaths$e: Exception</ID>
+    <ID>TooManyFunctions:ContentSearchService.kt$ContentSearchService : ProjectSearchProvider</ID>
+    <ID>TooManyFunctions:EditorAPIAccess.kt$EditorAPIAccess</ID>
+    <ID>LongParameterList:DownloadCenter.kt$DownloadCenter$( id: String, title: String, kind: TransferKind, detail: String? = null, onCancel: (() -&gt; Unit)? = null, owner: String? = null, )</ID>
+    <ID>LongParameterList:StoreVersionInstaller.kt$StoreVersionInstaller$( store: PluginRepository, request: StoreVersionRequest, unload: suspend (String) -&gt; Result&lt;Unit&gt;, load: suspend (String) -&gt; Result&lt;Boolean&gt;, onProgress: ((Float) -&gt; Unit)? = null, onInstalling: (() -&gt; Unit)? = null, )</ID>
     <ID>ComplexCondition:BossAppEventBusEffects.kt$processingState.totalTabs == 0 &amp;&amp; !processingState.isProcessingURLs &amp;&amp; !processingState.isProcessingTerminals &amp;&amp; !processingState.isProcessingFiles &amp;&amp; processingState.isRestorationComplete</ID>
     <ID>ComplexCondition:BrowserHandleImpl.kt$BrowserHandleImpl$ch != '\u0000' &amp;&amp; !ch.isISOControl() &amp;&amp; !bool("ctrl") &amp;&amp; !bool("meta")</ID>
     <ID>ComplexCondition:ChromiumAutoDownloader.kt$ChromiumAutoDownloader$isMacOSExecutable || isChromium || isSharedLib || isShellScript || hasNoExtension</ID>
     <ID>ComplexCondition:DynamicPluginManager.kt$DynamicPluginManager$closeTabsAcrossWindows &amp;&amp; candidate != null &amp;&amp; (force || (candidate.manifest.canUnload &amp;&amp; checkCanUnload(pluginId).isAllowed))</ID>
     <ID>ComplexCondition:FileNameSanitizer.kt$FileNameSanitizer$sanitized.startsWith("/") || sanitized.startsWith("\\") || sanitized.contains("..") || sanitized.contains(":/")</ID>
+    <ID>ComplexCondition:FullscreenBrowserWindow.kt$FullscreenBrowserWindow.&lt;no name provided&gt;$hasReachedFullscreen &amp;&amp; isInFullscreenMode &amp;&amp; !isExiting &amp;&amp; fullscreenFrame != null</ID>
     <ID>ComplexCondition:NewTabDialog.kt$lowerTrimmed.startsWith("http://") || lowerTrimmed.startsWith("https://") || lowerTrimmed.startsWith("file://") || lowerTrimmed.startsWith("javascript:") || lowerTrimmed.startsWith("chrome://")</ID>
     <ID>ComplexCondition:PasskeyBrowserScreen.kt$link != null &amp;&amp; ( link.contains("auth/verify") || link.contains("passkey/registered") || link.contains("passkey/authenticated") )</ID>
     <ID>ComplexCondition:PluginInstallService.kt$PluginInstallService$name.endsWith(".jar") &amp;&amp; !name.contains("-sources", ignoreCase = true) &amp;&amp; !name.contains("-javadoc", ignoreCase = true) &amp;&amp; !name.contains("-test", ignoreCase = true)</ID>
     <ID>ComplexCondition:SplitView.kt$SplitViewState$panel.tabsComponent.tabsState.value.tabs.any { tab -&gt; (tab is EditorTabInfo &amp;&amp; tab.filePath == filePath) || (tab is FluckTabInfo &amp;&amp; tab.currentUrl == fileUrl) }</ID>
-    <ID>ComplexCondition:UnifiedDiffParser.kt$UnifiedDiffParser$h != null &amp;&amp; (line.startsWith("+") || line.startsWith("-") || line.startsWith(" ") || line.isEmpty())</ID>
     <ID>ComplexCondition:UpdateManager.kt$UpdateManager$current is UpdateState.Downloading || current is UpdateState.ReadyToInstall || current is UpdateState.Installing || current is UpdateState.RestartRequired</ID>
-    <ID>ComplexCondition:WorkspaceExtractor.kt$tab.filePath.isBlank() || tab.staged || tab.fromRef != null || tab.toRef != null</ID>
     <ID>ComplexCondition:WorkspacePlaceholders.kt$WorkspacePlaceholders$exitCode != 0 || ( !url.startsWith("git@") &amp;&amp; !url.startsWith("https://") &amp;&amp; !url.startsWith("http://") &amp;&amp; !url.startsWith("ssh://") )</ID>
     <ID>ConstructorParameterNaming:DefaultPlugin.kt$DefaultPlugin$private val _windowId: String? = null</ID>
     <ID>ConstructorParameterNaming:Fluck.kt$FluckTabInfo$@Volatile private var _currentUrl: String = url</ID>
@@ -40,6 +81,7 @@
     <ID>ConstructorParameterNaming:UserService.kt$UserBasicInfo$val created_at: String? = null</ID>
     <ID>ConstructorParameterNaming:UserService.kt$UserBasicInfo$val updated_at: String? = null</ID>
     <ID>CyclomaticComplexMethod:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$fun install()</ID>
+    <ID>CyclomaticComplexMethod:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$private fun chordMatchesEvent( modifiers: Collection&lt;String&gt;, event: KeyEvent, ): Boolean</ID>
     <ID>CyclomaticComplexMethod:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$internal fun dispatchAction( actionId: String, windowId: String, ): Boolean</ID>
     <ID>CyclomaticComplexMethod:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$internal fun getKeyName(keyCode: Int): String</ID>
     <ID>CyclomaticComplexMethod:AuthScreenContainer.kt$@Composable fun AuthScreenContainer(onLoginSuccess: () -&gt; Unit)</ID>
@@ -53,12 +95,14 @@
     <ID>CyclomaticComplexMethod:BossDraggableComponent.kt$BossDraggableComponent$private fun updateHoverTarget()</ID>
     <ID>CyclomaticComplexMethod:BossMainWindowPanel.kt$@Composable fun BossTabsComponent.BossMainPanelContent(modifier: Modifier)</ID>
     <ID>CyclomaticComplexMethod:BossMainWindowPanel.kt$@Composable fun BossTabsComponent.rememberTabBarState( splitViewState: ai.rever.boss.components.window_panel.SplitViewState? = null, currentPanelId: String? = null, focusRequester: FocusRequester? = null, tabDragComponent: TabDraggableComponent? = null, onTabDropResult: (TabDropResult) -&gt; Unit = {}, /** * Render as a vertical bar down the panel's leading edge rather than a strip across its top. * * Passed in rather than read from `WindowAppearanceSettings` here, because the caller has to * know it too - it is what decides whether the panel is a Row or a Column - and a second, * independent read is a second thing that can disagree. */ vertical: Boolean = false, /** * Reports whether an interaction that outlives a single click is in flight - today, an open * tab context menu. * * All of it is state owned by this composition, so an owner that disposes the bar on its own * schedule (the hover-reveal drawer, which retracts when the pointer leaves) has to keep it * alive while this is true. Otherwise right-clicking a tab in the drawer and moving onto the * menu drops the menu. Null for every owner whose lifetime is not tied to the pointer. */ onTransientInteraction: ((Boolean) -&gt; Unit)? = null, /** * Invoked after a tab is activated from this bar, whichever control did it. * * For the hover-reveal drawer, which is finished the moment the user picks something and * would otherwise sit open under the pointer that just used it. */ onTabActivated: (() -&gt; Unit)? = null, /** * The list these rows will actually live in, when that list is not this panel's own. * * A window-level bar splices several panels' rows into ONE column, and everything here that * scrolls - the drag edge-scroll, the keep-the-active-tab-visible effect - has to move that * column rather than a state nothing is attached to. Null means "you are the only group in * your list", which is the top strip and the single-panel case. */ sharedListState: LazyListState? = null, /** * Whether this panel may scroll the list to keep its own active tab in view. * * False for a group in a shared list: a background pane changing tabs would otherwise yank * the viewport away from the pane the user is looking at. The owner of a shared list runs * one such effect, for the active pane only. */ autoScrollToActive: Boolean = true, /** * Whether a pinned block may carry its PINNED / OPEN headers. * * False once the bar holds more than one group. The group rules already divide the column, * and a second kind of divider inside each of them turns the bar into mostly headers. Pinned * tabs stay first either way - that is the invariant, not the labels. */ showSections: Boolean = true, /** * Whether this group belongs to the pane the user is working in. * * Only the active pane's selected tab wears the amber marker; every other group's shows the * quiet line. With one bar for several panes this is the only thing saying which pane a click * will land in - see BossTabButton's isFocused. */ isActiveGroup: Boolean = true, /** * Whether this group draws its own full-width "New Tab" row. * * False once the bar holds more than one group: the group header is already a row, and it * carries this pane's "+" alongside its name. Two rows of chrome per pane, times four panes, * was most of a bar. */ showNewTabRow: Boolean = true, /** * Render only this panel's ACTIVE tab, leaving the rest for its owner to summarise. * * Four panes with five tabs each is twenty rows, and nineteen of them are about somewhere the * user is not looking. Collapsed, a pane costs its header, its current tab, and a line saying * how many others there are. * * The tabs that are not rendered keep their model indices: what changes is which rows are * emitted, not what a row means. Every menu action, drag registration and reorder still keys * off the tab's own index in the panel. */ collapseToActiveTab: Boolean = false, ): TabBarState</ID>
+    <ID>CyclomaticComplexMethod:BossPanelTopBar.kt$@Composable fun BossPanelTopBar( title: String?, isHovered: Boolean, onReloadPlugin: (() -&gt; Unit)? = null, onOpenAsTab: (() -&gt; Unit)? = null, onCheckForUpdates: (() -&gt; Unit)? = null, onOpenEvolver: (() -&gt; Unit)? = null, onReportIssue: (() -&gt; Unit)? = null, onUninstallPlugin: (() -&gt; Unit)? = null, uninstallEnabled: Boolean = true, onMinimize: () -&gt; Unit, updateAvailable: AvailablePluginUpdate? = null, onUpdateClick: (() -&gt; Unit)? = null, buildInfo: PluginBuildInfo? = null, onBuildTagClick: (() -&gt; Unit)? = null, panelId: PanelId? = null, windowId: String? = null, dragModifier: Modifier = Modifier, content: (@Composable () -&gt; Unit)? = null, )</ID>
     <ID>CyclomaticComplexMethod:BossResizablePanel.kt$@Composable fun BossResizablePanel( modifier: Modifier, panel: Panel, isPanelVisible: Boolean = false, isMainVisible: Boolean = true, isRelative: Boolean = false, defaultWeight: Float = 1f, sideContent: (@Composable BoxScope.() -&gt; Unit)? = null, mainContent: (@Composable BoxScope.() -&gt; Unit)? = null, )</ID>
     <ID>CyclomaticComplexMethod:BossTabButton.kt$@OptIn(ExperimentalComposeUiApi::class) @Composable fun BossTabButton( fileName: String, icon: ImageVector? = null, iconPainter: Painter? = null, tabIcon: TabIcon? = null, isSelected: Boolean = false, /** * This tab is pinned. * * Pinning already puts a tab first in its panel and, in a bar showing one pane, under a * "PINNED" heading. Neither survives contact with a split: several panes' pinned blocks run * together down one column, and the headings are dropped there because the rules between * panes are already doing that job. So the tab itself has to say it. */ isPinned: Boolean = false, isFocused: Boolean = true, modifier: Modifier = Modifier, onClick: () -&gt; Unit, onClose: () -&gt; Unit = {}, contextMenuItems: List&lt;ContextMenuItem&gt; = emptyList(), /** * Explicit width for this tab. When provided, the tab is sized exactly to this value * (no min/max content sizing). Callers compute this from available row width to get * Safari-style "shrink to fit, then scroll" behaviour. Defaults to null which falls * back to the legacy intrinsic-min sizing with a 180–450 dp width clamp. */ tabWidth: Dp? = null, /** * Lay this tab out as a row in a LEFT tab bar rather than a column in a TOP one. * * Two things change and nothing else does. The tab fills the bar's width and takes a fixed * [tabHeight] instead of filling the bar's height and taking a computed [tabWidth]; and the * active marker moves from a underline at the bottom to a bar down the leading edge, which * is where a vertical list's selection reads. * * Everything the tab DOES - favicon, title badge, hover/selected close button, middle-click * close, right-click menu, drag gestures and the bounds they register - is shared, because * none of it is about which way the bar runs. */ vertical: Boolean = false, /** Fixed row height in [vertical] mode. Ignored otherwise. */ tabHeight: Dp = 32.dp, /** * Optional marker drawn immediately after the title, before the close button. Used for the * plugin build tag, which qualifies the title (this panel is not running the released build) and * so belongs beside it rather than out at the tab's edge. */ titleBadge: (@Composable () -&gt; Unit)? = null, // Drag-related parameters tabDragComponent: TabDraggableComponent? = null, tabInfo: TabInfo? = null, panelId: String? = null, tabIndex: Int = -1, onDragStart: () -&gt; Unit = {}, onDragEnd: (TabDropResult?) -&gt; Unit = {}, /** * Reports whether this tab's context menu is open. * * Exists for one owner: the vertical bar's hover-reveal drawer, which is disposed when the * pointer leaves it. A right-click opens the menu in its own popup, the pointer moves off the * drawer to reach it, and the drawer would retract and take the menu's composition with it. * So hover cannot be the only vote on whether the drawer stays. Default no-op, which is what * every owner whose lifetime is not tied to the pointer wants. */ onContextMenuVisibilityChange: (Boolean) -&gt; Unit = {}, )</ID>
     <ID>CyclomaticComplexMethod:BossTopBar.kt$@Composable fun BossDraggableComponent.BossTopLeftBar( workspaceManager: WorkspaceManager? = null, onApplyWorkspace: ((LayoutWorkspace) -&gt; Unit)? = null, getCurrentWorkspace: (() -&gt; LayoutWorkspace)? = null, onShowTopOfMind: (() -&gt; Unit)? = null, onNewProject: (() -&gt; Unit)? = null, onCloneProject: (() -&gt; Unit)? = null, )</ID>
     <ID>CyclomaticComplexMethod:BossWindow.kt$@Composable fun ApplicationScope.BossWindow( windowState: BossWindowState, onCloseRequest: () -&gt; Unit, )</ID>
     <ID>CyclomaticComplexMethod:BrowserEngineSettings.kt$@Composable fun BrowserEngineSettings()</ID>
     <ID>CyclomaticComplexMethod:BrowserFunctions.kt$actual fun getBrowserState( url: String, onOpenInNewTab: ((String) -&gt; Unit)?, onBrowserClosed: (() -&gt; Unit)?, window: Any?, ): Pair&lt;Any, Any&gt;?</ID>
+    <ID>CyclomaticComplexMethod:BrowserFunctions.kt$private fun configureBrowserPopupHandler( browser: Browser, onOpenInNewTab: (String) -&gt; Unit, )</ID>
     <ID>CyclomaticComplexMethod:BrowserHandleImpl.kt$BrowserHandleImpl$@OptIn(ExperimentalComposeUiApi::class) @Composable override fun Content()</ID>
     <ID>CyclomaticComplexMethod:BrowserHandleImpl.kt$BrowserHandleImpl$override fun dispatchCoBrowseInput(inputJson: String)</ID>
     <ID>CyclomaticComplexMethod:BrowserHandleImpl.kt$BrowserHandleImpl$private fun getFormFieldInfoFromJS(frame: com.teamdev.jxbrowser.frame.Frame): FormFieldInfo?</ID>
@@ -71,12 +115,13 @@
     <ID>CyclomaticComplexMethod:CloneProjectDialog.kt$@Composable private fun ConfigurationStep( onDismiss: () -&gt; Unit, onClone: (url: String, directory: String) -&gt; Unit, )</ID>
     <ID>CyclomaticComplexMethod:CommitDialog.kt$@Composable fun CommitDialog( onDismiss: () -&gt; Unit, onCommitSuccess: (String) -&gt; Unit = {}, )</ID>
     <ID>CyclomaticComplexMethod:CommitDialog.kt$@Composable private fun CommitFileRow( file: GitFileStatus, isStaged: Boolean, onToggle: () -&gt; Unit, )</ID>
-    <ID>CyclomaticComplexMethod:ContentSearchService.kt$ContentSearchService$override suspend fun searchInProject( query: String, pathPattern: String?, excludePattern: String?, isRegex: Boolean, caseSensitive: Boolean, wholeWord: Boolean, maxResults: Int, ): List&lt;FileMatch&gt;</ID>
     <ID>CyclomaticComplexMethod:ContextMenu.kt$@Composable private fun ContextMenuContent( items: List&lt;ContextMenuItem&gt;, modifier: Modifier = Modifier, onDismissRequest: () -&gt; Unit, )</ID>
     <ID>CyclomaticComplexMethod:ContextMenu.kt$@Composable private fun SubMenuContent( items: List&lt;ContextMenuItem&gt;, onDismissRequest: () -&gt; Unit, )</ID>
     <ID>CyclomaticComplexMethod:CoreAuthService.kt$CoreAuthService$private fun initializeWithNetwork()</ID>
+    <ID>CyclomaticComplexMethod:CrashHandler.kt$CrashHandler$internal fun isIgnorable(throwable: Throwable): Boolean</ID>
     <ID>CyclomaticComplexMethod:CrashReportDialog.kt$@Composable internal fun CrashReportDialog( crashReport: CrashReport, onDismiss: () -&gt; Unit, onSubmit: (userNotes: String?, includeLogs: Boolean) -&gt; Unit, recoverablePluginId: String? = null, onCleanAndRestart: (() -&gt; Unit)? = null, onSubmittingChanged: (Boolean) -&gt; Unit = {}, initialSubmitResult: CrashReportService.SubmitResult? = null, )</ID>
     <ID>CyclomaticComplexMethod:CrossDeviceAuthenticationDialog.kt$@Composable fun CrossDeviceAuthenticationDialog( qrCodeUrl: String?, challenge: String?, sessionId: String? = null, onDismiss: () -&gt; Unit, onSuccess: () -&gt; Unit, onCreateFluckTab: ((FluckTabInfo) -&gt; Unit)? = null, )</ID>
+    <ID>CyclomaticComplexMethod:Dashboard.kt$@Composable fun Dashboard( onOpenFile: (String) -&gt; Unit, onOpenUrl: (String) -&gt; Unit, onOpenProject: (Project) -&gt; Unit, selectedProject: Project = Project("No Project", "", 0L), onNewTab: () -&gt; Unit, onNewTerminal: () -&gt; Unit, onNewWindow: () -&gt; Unit, onOpenProjectDialog: () -&gt; Unit, onOpenFileDialog: () -&gt; Unit, onNewProject: () -&gt; Unit, onApplySplitTemplate: (SplitTemplate) -&gt; Unit, onActivatePlugin: (String) -&gt; Unit, onShowSettings: (() -&gt; Unit)? = null, modifier: Modifier = Modifier, )</ID>
     <ID>CyclomaticComplexMethod:DefaultBrowserSection.kt$@Composable fun DefaultBrowserSection()</ID>
     <ID>CyclomaticComplexMethod:DesktopBrowserAccessor.kt$private fun findBrowserForTab( splitViewState: ai.rever.boss.components.window_panel.SplitViewState, tabId: String, ): LockedBrowser?</ID>
     <ID>CyclomaticComplexMethod:DesktopGitService.kt$GitService$actual suspend fun cloneRepository( repositoryUrl: String, targetDirectory: String, onProgress: (String) -&gt; Unit, ): GitOperationResult</ID>
@@ -87,7 +132,9 @@
     <ID>CyclomaticComplexMethod:DynamicPluginManager.kt$DynamicPluginManager$suspend fun installPlugin( jarPath: String, enabled: Boolean = true, ): Result&lt;DynamicPluginInfo&gt;</ID>
     <ID>CyclomaticComplexMethod:DynamicPluginManager.kt$DynamicPluginManager.Companion$private suspend fun hotSwapApiLayerOrchestration(pluginDir: java.io.File): Result&lt;Int&gt;</ID>
     <ID>CyclomaticComplexMethod:EditableKeymapSettings.kt$@Composable fun EditableKeymapSettings()</ID>
+    <ID>CyclomaticComplexMethod:EditorContentProviderImpl.kt$EditorContentProviderImpl$override fun detectLanguage(filePath: String): String</ID>
     <ID>CyclomaticComplexMethod:EmailAuthService.kt$EmailAuthService$suspend fun verifyMagicLinkToken( token: String, email: String? = null, type: String = "magiclink", ): Result&lt;Boolean&gt;</ID>
+    <ID>CyclomaticComplexMethod:EmptyContentScreen.kt$@Composable private fun Card( icon: ImageVector, title: String, description: String, isSelected: Boolean, enabled: Boolean, onClick: () -&gt; Unit, modifier: Modifier = Modifier, )</ID>
     <ID>CyclomaticComplexMethod:FileIndexer.kt$FileIndexer$private fun scanDirectory( dir: File, rootCanonicalPath: String, rootPathLength: Int, files: MutableList&lt;IndexedFile&gt;, depth: Int = 0, )</ID>
     <ID>CyclomaticComplexMethod:FileNameSanitizer.kt$FileNameSanitizer$fun sanitize( fileName: String, replacement: Char = '_', ): String</ID>
     <ID>CyclomaticComplexMethod:Fluck.kt$@Composable fun BrowserErrorView( error: Throwable, url: String, retryCount: Int = 0, maxRetries: Int = 3, onRetry: (() -&gt; Unit)? = null, onReset: (() -&gt; Unit)? = null, onResetBrowser: (() -&gt; Unit)? = null, onRetryEngine: (() -&gt; Unit)? = null, )</ID>
@@ -102,10 +149,13 @@
     <ID>CyclomaticComplexMethod:GlobalSearchService.kt$GlobalSearchService$private fun convertPluginSearchResult(result: PluginSearchResult): SearchResult?</ID>
     <ID>CyclomaticComplexMethod:KernelBootstrap.kt$KernelBootstrap$fun registerPluginServices( performanceDataProvider: PerformanceDataProvider? = null, downloadDataProvider: DownloadDataProvider? = null, gitDataProvider: GitDataProvider? = null, logDataProvider: LogDataProvider? = null, activeTabsProvider: ActiveTabsProvider? = null, secretDataProvider: SecretDataProvider? = null, supabaseDataProvider: SupabaseDataProvider? = null, splitViewOperations: SplitViewOperations? = null, runConfigurationDataProvider: RunConfigurationDataProvider? = null, panelEventProvider: PanelEventProvider? = null, roleManagementProvider: RoleManagementProvider? = null, directoryPickerProvider: DirectoryPickerProvider? = null, projectDataProvider: ProjectDataProvider? = null, notificationProvider: NotificationProvider? = null, )</ID>
     <ID>CyclomaticComplexMethod:KeyCaptureDialog.kt$@Composable fun KeyCaptureDialog( actionId: String, actionDescription: String, context: ShortcutContext, category: String, currentBinding: KeyBinding?, onKeyCaptured: (KeyBinding) -&gt; Unit, onDismiss: () -&gt; Unit, )</ID>
+    <ID>CyclomaticComplexMethod:KeymapMatcher.kt$KeymapMatcher$private fun matchesBinding( event: KeyEvent, binding: KeyBinding, ): Boolean</ID>
+    <ID>CyclomaticComplexMethod:KeymapMatcher.kt$KeymapMatcher$private fun normalizeKeyName(keyName: String): String</ID>
+    <ID>CyclomaticComplexMethod:LLMProvidersSettings.kt$@Composable fun LLMProvidersSettings()</ID>
+    <ID>CyclomaticComplexMethod:LoginFormScreen.kt$@OptIn(ExperimentalComposeUiApi::class) @Composable fun LoginFormScreen( viewModel: LoginViewModel, onLoginSuccess: () -&gt; Unit, isLoading: Boolean, errorMessage: String?, onMagicLinkSent: (String) -&gt; Unit = {}, onPasskeyAuthInitiated: (String) -&gt; Unit = {}, onPasskeySelectionRequired: (String) -&gt; Unit = {}, )</ID>
     <ID>CyclomaticComplexMethod:MacOSGestureHandler.kt$MacOSGestureHandler$fun addMagnificationListener( component: Component, onZoomIn: () -&gt; Unit, onZoomOut: () -&gt; Unit, ): Any?</ID>
     <ID>CyclomaticComplexMethod:MagicLinkWaitingScreen.kt$@OptIn(ExperimentalComposeUiApi::class) @Composable fun MagicLinkWaitingScreen( email: String, viewModel: LoginViewModel, onBack: () -&gt; Unit, onSuccess: () -&gt; Unit, isLoading: Boolean = false, errorMessage: String? = null, )</ID>
     <ID>CyclomaticComplexMethod:MenuShortcutBridge.kt$MenuShortcutBridge$private fun keyNameToComposeKey(keyName: String): Key?</ID>
-    <ID>CyclomaticComplexMethod:NewTabDialog.kt$@Composable fun NewTabDialog( onDismiss: () -&gt; Unit, onCreateTab: (type: TabType, path: String) -&gt; Unit, tabRegistry: TabRegistry, initialTabType: TabType? = null, /** * Opens a [TabInfo] built by a plugin tab type's [TabTypeInfo.createTabInfo]. * When null, plugin-registered tab types are not offered (legacy callers). */ onCreateTabInfo: ((TabInfo) -&gt; Unit)? = null, projectPath: String? = null, windowId: String? = null, /** * Where the new tab goes: null for the pane it would land in anyway, or the side a new pane * should be created on. * * Hoisted rather than owned here because the split map opens this dialog with a direction * already chosen - clicking a trapezoid IS asking for a tab in that direction - and a picker * that reset itself to "this pane" would throw that away in front of the user. */ splitDirection: SplitDirection? = null, /** Null when this caller cannot split (no split view to split), which hides the picker. */ onSplitDirectionChange: ((SplitDirection?) -&gt; Unit)? = null, )</ID>
     <ID>CyclomaticComplexMethod:PasskeyAuthService.kt$PasskeyAuthService$suspend fun authenticateWithPasskey( email: String? = null, credentialId: String? = null, ): Result&lt;Unit&gt;</ID>
     <ID>CyclomaticComplexMethod:PasskeyWaitingScreen.kt$@Composable fun PasskeyWaitingScreen( email: String, viewModel: LoginViewModel, onBack: () -&gt; Unit, onSuccess: () -&gt; Unit, )</ID>
     <ID>CyclomaticComplexMethod:PerformanceDataProviderImpl.kt$PerformanceDataProviderImpl$private fun queryProcessMetrics(pids: List&lt;Long&gt;): Map&lt;Long, OsProcessMetrics&gt;</ID>
@@ -113,6 +163,7 @@
     <ID>CyclomaticComplexMethod:PluginInstallService.kt$PluginInstallService$private fun downloadFromGitHubRelease( owner: String, repo: String, pluginDir: File, ): String?</ID>
     <ID>CyclomaticComplexMethod:PluginInstallService.kt$PluginInstallService$suspend fun installPlugins( plugins: List&lt;WizardPluginInfo&gt;, onProgress: (Float, String) -&gt; Unit, ): Result&lt;PluginInstallResult&gt;</ID>
     <ID>CyclomaticComplexMethod:PluginInstallWizardWindow.kt$@Composable fun PluginInstallWizardWindow( state: PluginInstallWizardState, onDismiss: () -&gt; Unit, onComplete: () -&gt; Unit, onInstallPlugins: suspend (List&lt;WizardPluginInfo&gt;, (Float, String) -&gt; Unit) -&gt; Result&lt;PluginInstallResult&gt;, )</ID>
+    <ID>CyclomaticComplexMethod:PluginJarReconciler.kt$PluginJarReconciler$fun reconcilePluginDir(pluginDir: File): ReconcileResult</ID>
     <ID>CyclomaticComplexMethod:PluginStoreSetup.kt$PluginStoreSetup$private fun copyBundledPluginsToPluginDir(dynamicPluginManager: ai.rever.boss.components.plugin.DynamicPluginManager)</ID>
     <ID>CyclomaticComplexMethod:PluginStoreSetup.kt$PluginStoreSetup$private suspend fun downloadSystemPluginFromGitHub(plugin: SystemPluginInfo): Boolean</ID>
     <ID>CyclomaticComplexMethod:PluginStoreSetup.kt$PluginStoreSetup$private suspend fun ensureSystemPluginsInstalled()</ID>
@@ -123,8 +174,9 @@
     <ID>CyclomaticComplexMethod:SecuritySettings.kt$private suspend fun detectWebAuthnCapabilities(): WebAuthnCapabilities</ID>
     <ID>CyclomaticComplexMethod:SettingsWindow.kt$@Composable private fun SettingsContentArea( section: SettingsSection, modifier: Modifier = Modifier, )</ID>
     <ID>CyclomaticComplexMethod:ShortcutTestDialog.kt$@Composable private fun TestResultItem(result: ShortcutTestResult)</ID>
+    <ID>CyclomaticComplexMethod:SidePanel.kt$@Composable fun BossDraggableComponent.SidePanel( panel: Panel, panelComponentStore: PanelComponentStore, )</ID>
     <ID>CyclomaticComplexMethod:SidebarCustomizeMenu.kt$@Composable fun BossDraggableComponent.SidebarCustomizeMenu( /** Slot the button visually belongs to; controls hint direction &amp; drag overlay rendering. */ slot: Panel = left.top.bottom, modifier: Modifier = Modifier, )</ID>
-    <ID>CyclomaticComplexMethod:SplitView.kt$SplitViewState$fun splitPanel( panelId: String, orientation: SplitOrientation, tabToMove: TabInfo? = null, detachedTab: BossTabsComponent.DetachedTab? = null, /** * Put the new pane in the left or top half, moving the original over. * * Defaults to false, which is what every caller did before the split map could ask for * a direction: the original keeps its side and the new pane goes second. */ placeBefore: Boolean = false, ): String</ID>
+    <ID>CyclomaticComplexMethod:SingleInstanceManager.kt$SingleInstanceManager$private fun startServer()</ID>
     <ID>CyclomaticComplexMethod:SplitView.kt$SplitViewState$private fun removePanel( node: SplitNode, targetPanelId: String, ): SplitNode</ID>
     <ID>CyclomaticComplexMethod:SupabaseServiceBridge.kt$SupabaseServiceBridge$override suspend fun select(request: SupabaseSelectRequest): SupabaseJsonResponse</ID>
     <ID>CyclomaticComplexMethod:TabDropHandler.kt$internal fun handleTabDropResult( result: TabDropResult, splitViewState: SplitViewState, )</ID>
@@ -132,20 +184,19 @@
     <ID>CyclomaticComplexMethod:TerminalLinkOpener.kt$private fun openTerminalLinkInternal( url: String, mode: TerminalLinkOpenMode, splitViewState: SplitViewState, validSourcePanelId: String, isFile: Boolean, fileLine: Int = 0, fileColumn: Int = 0, scope: CoroutineScope, windowId: String? = null, )</ID>
     <ID>CyclomaticComplexMethod:TopOfMindDialog.kt$@Composable fun TopOfMindDialog( splitViewState: SplitViewState? = null, // Kept for backward compatibility but not used workspaceManager: WorkspaceManager, onDismiss: () -&gt; Unit, onTabSelect: (ActiveTab) -&gt; Unit, )</ID>
     <ID>CyclomaticComplexMethod:TopOfMindDialog.kt$@Composable private fun ActiveTabDialogItem( activeTab: ActiveTab, isSelected: Boolean, onTabClick: () -&gt; Unit, )</ID>
-    <ID>CyclomaticComplexMethod:UnifiedDiffParser.kt$UnifiedDiffParser$fun parse(input: String): List&lt;GitDiffData&gt;</ID>
-    <ID>CyclomaticComplexMethod:UnifiedDiffParser.kt$UnifiedDiffParser$internal fun cUnquote(p: String): String</ID>
     <ID>CyclomaticComplexMethod:UpdateInstaller.kt$UpdateInstaller$private fun detectLinuxDistroType(): String</ID>
     <ID>CyclomaticComplexMethod:UpdateInstaller.kt$UpdateInstaller$suspend fun installUpdate(downloadPath: String): InstallResult</ID>
     <ID>CyclomaticComplexMethod:UpdateUI.kt$@Composable fun UpdateSettingsSection(updateCoordinator: UpdateCoordinator = UpdateCoordinator.instance)</ID>
     <ID>CyclomaticComplexMethod:UpdateUI.kt$private fun formatTime(instant: kotlin.time.Instant): String</ID>
     <ID>CyclomaticComplexMethod:UserExistenceService.kt$UserExistenceService$suspend fun checkUserExists(email: String): Result&lt;UserExistence&gt;</ID>
     <ID>CyclomaticComplexMethod:WizardComponents.kt$@Composable fun CheckboxCard( title: String, description: String, icon: ImageVector? = null, isChecked: Boolean, onCheckedChange: (Boolean) -&gt; Unit, enabled: Boolean = true, modifier: Modifier = Modifier, )</ID>
-    <ID>CyclomaticComplexMethod:WorkspaceApplier.kt$internal fun createTabFromWorkspaceConfig( tabConfig: TabConfig, resolvedProjectPath: String, splitViewState: SplitViewState, ): TabInfo?</ID>
+    <ID>CyclomaticComplexMethod:WorkspaceApplier.kt$private fun createTabFromWorkspaceConfig( tabConfig: TabConfig, projectPath: String, splitViewState: SplitViewState, ): TabInfo?</ID>
     <ID>CyclomaticComplexMethod:WorkspaceApplier.kt$private suspend fun applyWorkspaceNode( node: SplitConfig, splitViewState: SplitViewState, currentPanelId: String, projectPath: String, )</ID>
     <ID>CyclomaticComplexMethod:WorkspaceButton.kt$@Composable fun WorkspaceButton( onOpenWorkspace: (LayoutWorkspace) -&gt; Unit, workspaceManager: WorkspaceManager, getCurrentWorkspace: (() -&gt; LayoutWorkspace)? = null, onShowTopOfMind: (() -&gt; Unit)? = null, /** Sized for the vertical tab bar rather than the top bar. See BossActionButton. */ compact: Boolean = false, )</ID>
     <ID>CyclomaticComplexMethod:WorkspaceSelectionDialog.kt$@Composable private fun WorkspaceSelectionItem( workspace: ai.rever.boss.components.workspaces.LayoutWorkspace, isSelected: Boolean, selectedPanelId: String?, onToggle: () -&gt; Unit, onPanelSelected: (String?) -&gt; Unit, )</ID>
     <ID>CyclomaticComplexMethod:main.kt$fun main(args: Array&lt;String&gt;)</ID>
     <ID>CyclomaticComplexMethod:main.kt$private fun extractPty4jNatives(targetDir: File)</ID>
+    <ID>EmptyElseBlock:FluckEngine.kt$FluckEngine${ }</ID>
     <ID>EmptyFunctionBlock:BossTabsComponentMoveTest.kt$BossTabsComponentMoveTest.TestTabComponent${ }</ID>
     <ID>EmptyFunctionBlock:PanelComponentStoreResetTest.kt$PanelComponentStoreResetTest.FakePanelComponent${ }</ID>
     <ID>EmptyFunctionBlock:TabDropResultHandlingTest.kt$TabDropResultHandlingTest.DropTestComponent${ }</ID>
@@ -160,6 +211,7 @@
     <ID>FunctionOnlyReturningConstant:CLIInstaller.kt$CLIInstaller$private fun getHomebrewCLISourcePath(): String</ID>
     <ID>FunctionOnlyReturningConstant:FluckEngine.kt$FluckEngine$private fun isShiftPressed(): Boolean</ID>
     <ID>FunctionOnlyReturningConstant:KeymapValidator.kt$KeymapValidator$fun isSafeToSave(settings: KeymapSettings): Boolean</ID>
+    <ID>FunctionOnlyReturningConstant:LLMModelFetcher.kt$LLMModelFetcher$private suspend fun loadCachedModels(): ModelCache?</ID>
     <ID>FunctionOnlyReturningConstant:PasskeyConfigHelper.kt$PasskeyConfigHelper$fun getRpName(): String</ID>
     <ID>FunctionOnlyReturningConstant:WindowManager.kt$WindowManager$fun shouldQuitApp(): Boolean</ID>
     <ID>FunctionOnlyReturningConstant:WorkspaceFileManager.kt$WorkspaceFileManagerCommon$fun getDefaultWorkspaceDirectoryName(): String</ID>
@@ -168,6 +220,7 @@
     <ID>FunctionParameterNaming:Fluck.kt$FluckTabInfo$_icon: ImageVector = this._icon</ID>
     <ID>FunctionParameterNaming:Fluck.kt$FluckTabInfo$_tabIcon: TabIcon? = this._tabIcon</ID>
     <ID>FunctionParameterNaming:Fluck.kt$FluckTabInfo$_title: String = this._title</ID>
+    <ID>ImplicitDefaultLocale:LLMProvidersSettings.kt$String.format("%.1f", temperature)</ID>
     <ID>InstanceOfCheckForException:FluckEngine.kt$FluckEngine$e is Error</ID>
     <ID>InstanceOfCheckForException:PasskeyCredentialManager.kt$PasskeyCredentialManager$e is java.util.concurrent.CancellationException</ID>
     <ID>InstanceOfCheckForException:SupabasePasskeyService.kt$SupabasePasskeyService$e is java.util.concurrent.CancellationException</ID>
@@ -184,6 +237,7 @@
     <ID>LongMethod:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$fun install()</ID>
     <ID>LongMethod:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$internal fun dispatchAction( actionId: String, windowId: String, ): Boolean</ID>
     <ID>LongMethod:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$internal fun getKeyName(keyCode: Int): String</ID>
+    <ID>LongMethod:ActionCard.kt$@Composable fun ActionCard( icon: ImageVector, title: String, shortcut: String? = null, onClick: () -&gt; Unit, modifier: Modifier = Modifier, )</ID>
     <ID>LongMethod:AdvancedSettings.kt$@Composable fun AdvancedSettings()</ID>
     <ID>LongMethod:ApplicationRestarter.kt$ApplicationRestarter$private fun buildRelaunchCommand(): List&lt;String&gt;</ID>
     <ID>LongMethod:AuthScreenContainer.kt$@Composable fun AuthScreenContainer(onLoginSuccess: () -&gt; Unit)</ID>
@@ -201,6 +255,7 @@
     <ID>LongMethod:BossMainWindowPanel.kt$@Composable fun BossTabsComponent.BossMainPanel( modifier: Modifier = Modifier, splitViewState: ai.rever.boss.components.window_panel.SplitViewState? = null, currentPanelId: String? = null, tabDragComponent: TabDraggableComponent? = null, onTabDropResult: (TabDropResult) -&gt; Unit = {}, /** * Whether this panel draws its own tab bar. * * False in LEFT position, where `SplitViewPanel` draws one bar for the whole window and this * panel's tabs are a group inside it. The panel keeps everything else it owns - its border * ring, its focus handling, `LocalIsPanelActive` - because none of that was ever the bar's. */ showTabBar: Boolean = true, )</ID>
     <ID>LongMethod:BossMainWindowPanel.kt$@Composable fun BossTabsComponent.BossMainPanelContent(modifier: Modifier)</ID>
     <ID>LongMethod:BossMainWindowPanel.kt$@Composable fun BossTabsComponent.rememberTabBarState( splitViewState: ai.rever.boss.components.window_panel.SplitViewState? = null, currentPanelId: String? = null, focusRequester: FocusRequester? = null, tabDragComponent: TabDraggableComponent? = null, onTabDropResult: (TabDropResult) -&gt; Unit = {}, /** * Render as a vertical bar down the panel's leading edge rather than a strip across its top. * * Passed in rather than read from `WindowAppearanceSettings` here, because the caller has to * know it too - it is what decides whether the panel is a Row or a Column - and a second, * independent read is a second thing that can disagree. */ vertical: Boolean = false, /** * Reports whether an interaction that outlives a single click is in flight - today, an open * tab context menu. * * All of it is state owned by this composition, so an owner that disposes the bar on its own * schedule (the hover-reveal drawer, which retracts when the pointer leaves) has to keep it * alive while this is true. Otherwise right-clicking a tab in the drawer and moving onto the * menu drops the menu. Null for every owner whose lifetime is not tied to the pointer. */ onTransientInteraction: ((Boolean) -&gt; Unit)? = null, /** * Invoked after a tab is activated from this bar, whichever control did it. * * For the hover-reveal drawer, which is finished the moment the user picks something and * would otherwise sit open under the pointer that just used it. */ onTabActivated: (() -&gt; Unit)? = null, /** * The list these rows will actually live in, when that list is not this panel's own. * * A window-level bar splices several panels' rows into ONE column, and everything here that * scrolls - the drag edge-scroll, the keep-the-active-tab-visible effect - has to move that * column rather than a state nothing is attached to. Null means "you are the only group in * your list", which is the top strip and the single-panel case. */ sharedListState: LazyListState? = null, /** * Whether this panel may scroll the list to keep its own active tab in view. * * False for a group in a shared list: a background pane changing tabs would otherwise yank * the viewport away from the pane the user is looking at. The owner of a shared list runs * one such effect, for the active pane only. */ autoScrollToActive: Boolean = true, /** * Whether a pinned block may carry its PINNED / OPEN headers. * * False once the bar holds more than one group. The group rules already divide the column, * and a second kind of divider inside each of them turns the bar into mostly headers. Pinned * tabs stay first either way - that is the invariant, not the labels. */ showSections: Boolean = true, /** * Whether this group belongs to the pane the user is working in. * * Only the active pane's selected tab wears the amber marker; every other group's shows the * quiet line. With one bar for several panes this is the only thing saying which pane a click * will land in - see BossTabButton's isFocused. */ isActiveGroup: Boolean = true, /** * Whether this group draws its own full-width "New Tab" row. * * False once the bar holds more than one group: the group header is already a row, and it * carries this pane's "+" alongside its name. Two rows of chrome per pane, times four panes, * was most of a bar. */ showNewTabRow: Boolean = true, /** * Render only this panel's ACTIVE tab, leaving the rest for its owner to summarise. * * Four panes with five tabs each is twenty rows, and nineteen of them are about somewhere the * user is not looking. Collapsed, a pane costs its header, its current tab, and a line saying * how many others there are. * * The tabs that are not rendered keep their model indices: what changes is which rows are * emitted, not what a row means. Every menu action, drag registration and reorder still keys * off the tab's own index in the panel. */ collapseToActiveTab: Boolean = false, ): TabBarState</ID>
+    <ID>LongMethod:BossPanelTopBar.kt$@Composable fun BossPanelTopBar( title: String?, isHovered: Boolean, onReloadPlugin: (() -&gt; Unit)? = null, onOpenAsTab: (() -&gt; Unit)? = null, onCheckForUpdates: (() -&gt; Unit)? = null, onOpenEvolver: (() -&gt; Unit)? = null, onReportIssue: (() -&gt; Unit)? = null, onUninstallPlugin: (() -&gt; Unit)? = null, uninstallEnabled: Boolean = true, onMinimize: () -&gt; Unit, updateAvailable: AvailablePluginUpdate? = null, onUpdateClick: (() -&gt; Unit)? = null, buildInfo: PluginBuildInfo? = null, onBuildTagClick: (() -&gt; Unit)? = null, panelId: PanelId? = null, windowId: String? = null, dragModifier: Modifier = Modifier, content: (@Composable () -&gt; Unit)? = null, )</ID>
     <ID>LongMethod:BossTabButton.kt$@OptIn(ExperimentalComposeUiApi::class) @Composable fun BossTabButton( fileName: String, icon: ImageVector? = null, iconPainter: Painter? = null, tabIcon: TabIcon? = null, isSelected: Boolean = false, /** * This tab is pinned. * * Pinning already puts a tab first in its panel and, in a bar showing one pane, under a * "PINNED" heading. Neither survives contact with a split: several panes' pinned blocks run * together down one column, and the headings are dropped there because the rules between * panes are already doing that job. So the tab itself has to say it. */ isPinned: Boolean = false, isFocused: Boolean = true, modifier: Modifier = Modifier, onClick: () -&gt; Unit, onClose: () -&gt; Unit = {}, contextMenuItems: List&lt;ContextMenuItem&gt; = emptyList(), /** * Explicit width for this tab. When provided, the tab is sized exactly to this value * (no min/max content sizing). Callers compute this from available row width to get * Safari-style "shrink to fit, then scroll" behaviour. Defaults to null which falls * back to the legacy intrinsic-min sizing with a 180–450 dp width clamp. */ tabWidth: Dp? = null, /** * Lay this tab out as a row in a LEFT tab bar rather than a column in a TOP one. * * Two things change and nothing else does. The tab fills the bar's width and takes a fixed * [tabHeight] instead of filling the bar's height and taking a computed [tabWidth]; and the * active marker moves from a underline at the bottom to a bar down the leading edge, which * is where a vertical list's selection reads. * * Everything the tab DOES - favicon, title badge, hover/selected close button, middle-click * close, right-click menu, drag gestures and the bounds they register - is shared, because * none of it is about which way the bar runs. */ vertical: Boolean = false, /** Fixed row height in [vertical] mode. Ignored otherwise. */ tabHeight: Dp = 32.dp, /** * Optional marker drawn immediately after the title, before the close button. Used for the * plugin build tag, which qualifies the title (this panel is not running the released build) and * so belongs beside it rather than out at the tab's edge. */ titleBadge: (@Composable () -&gt; Unit)? = null, // Drag-related parameters tabDragComponent: TabDraggableComponent? = null, tabInfo: TabInfo? = null, panelId: String? = null, tabIndex: Int = -1, onDragStart: () -&gt; Unit = {}, onDragEnd: (TabDropResult?) -&gt; Unit = {}, /** * Reports whether this tab's context menu is open. * * Exists for one owner: the vertical bar's hover-reveal drawer, which is disposed when the * pointer leaves it. A right-click opens the menu in its own popup, the pointer moves off the * drawer to reach it, and the drawer would retract and take the menu's composition with it. * So hover cannot be the only vote on whether the drawer stays. Default no-op, which is what * every owner whose lifetime is not tied to the pointer wants. */ onContextMenuVisibilityChange: (Boolean) -&gt; Unit = {}, )</ID>
     <ID>LongMethod:BossTopBar.kt$@Composable fun BossDraggableComponent.BossTopLeftBar( workspaceManager: WorkspaceManager? = null, onApplyWorkspace: ((LayoutWorkspace) -&gt; Unit)? = null, getCurrentWorkspace: (() -&gt; LayoutWorkspace)? = null, onShowTopOfMind: (() -&gt; Unit)? = null, onNewProject: (() -&gt; Unit)? = null, onCloneProject: (() -&gt; Unit)? = null, )</ID>
     <ID>LongMethod:BossTopBar.kt$@Composable private fun getGitContextMenuItems( currentBranch: String?, localBranches: List&lt;GitBranchInfo&gt;, remoteBranches: List&lt;GitBranchInfo&gt;, stashList: List&lt;GitStashInfo&gt;, isLoading: Boolean, onCheckout: (String) -&gt; Unit, onMerge: (String) -&gt; Unit, onRebase: (String) -&gt; Unit, onCreateBranch: () -&gt; Unit, onCommit: () -&gt; Unit, onPull: () -&gt; Unit, onPush: () -&gt; Unit, onCreatePR: (() -&gt; Unit)?, onStash: () -&gt; Unit, onStashPop: (Int) -&gt; Unit, onRefresh: () -&gt; Unit, ): List&lt;ContextMenuItem&gt;</ID>
@@ -211,6 +266,7 @@
     <ID>LongMethod:BrowserHandleImpl.kt$BrowserHandleImpl$@OptIn(ExperimentalComposeUiApi::class) @Composable override fun Content()</ID>
     <ID>LongMethod:BrowserHandleImpl.kt$BrowserHandleImpl$override fun dispatchCoBrowseInput(inputJson: String)</ID>
     <ID>LongMethod:BrowserHandleImpl.kt$BrowserHandleImpl$private fun getFormFieldInfoFromJS(frame: com.teamdev.jxbrowser.frame.Frame): FormFieldInfo?</ID>
+    <ID>LongMethod:BrowserHandleImpl.kt$BrowserHandleImpl$private fun setupContextMenuHandler()</ID>
     <ID>LongMethod:BrowserHandleImpl.kt$BrowserHandleImpl$private fun setupEventListeners()</ID>
     <ID>LongMethod:BrowserHandleImpl.kt$BrowserHandleImpl$private fun setupPopupHandler()</ID>
     <ID>LongMethod:BrowserPageCard.kt$@Composable fun BrowserPageCard( page: RecentBrowserPage, onClick: () -&gt; Unit, onRemove: () -&gt; Unit, modifier: Modifier = Modifier, )</ID>
@@ -235,11 +291,11 @@
     <ID>LongMethod:CrashReportService.kt$CrashReportService$private fun formatIssueBody( report: CrashReport, isNewReport: Boolean, ): String</ID>
     <ID>LongMethod:CrashReportService.kt$CrashReportService$private suspend fun submitViaProxy(report: CrashReport): ProxyResult</ID>
     <ID>LongMethod:CrossDeviceAuthenticationDialog.kt$@Composable fun CrossDeviceAuthenticationDialog( qrCodeUrl: String?, challenge: String?, sessionId: String? = null, onDismiss: () -&gt; Unit, onSuccess: () -&gt; Unit, onCreateFluckTab: ((FluckTabInfo) -&gt; Unit)? = null, )</ID>
+    <ID>LongMethod:Dashboard.kt$@Composable fun Dashboard( onOpenFile: (String) -&gt; Unit, onOpenUrl: (String) -&gt; Unit, onOpenProject: (Project) -&gt; Unit, selectedProject: Project = Project("No Project", "", 0L), onNewTab: () -&gt; Unit, onNewTerminal: () -&gt; Unit, onNewWindow: () -&gt; Unit, onOpenProjectDialog: () -&gt; Unit, onOpenFileDialog: () -&gt; Unit, onNewProject: () -&gt; Unit, onApplySplitTemplate: (SplitTemplate) -&gt; Unit, onActivatePlugin: (String) -&gt; Unit, onShowSettings: (() -&gt; Unit)? = null, modifier: Modifier = Modifier, )</ID>
     <ID>LongMethod:DefaultAppsSettings.kt$@Composable fun DefaultAppsSettings()</ID>
     <ID>LongMethod:DefaultBrowserSection.kt$@Composable fun DefaultBrowserSection()</ID>
     <ID>LongMethod:DefaultPlugin.kt$DefaultPlugin$private fun loadExternalPlugins()</ID>
     <ID>LongMethod:DefaultPlugin.kt$DefaultPlugin$private fun registerKernelPluginServices()</ID>
-    <ID>LongMethod:DesktopAuthBrandSite.kt$@Suppress("TooGenericExceptionCaught") @Composable internal actual fun AuthBrandSite( onReady: () -&gt; Unit, onFailed: () -&gt; Unit, )</ID>
     <ID>LongMethod:DesktopBrowserAccessor.kt$private fun findBrowserForTab( splitViewState: ai.rever.boss.components.window_panel.SplitViewState, tabId: String, ): LockedBrowser?</ID>
     <ID>LongMethod:DesktopGitService.kt$GitService$actual suspend fun cloneRepository( repositoryUrl: String, targetDirectory: String, onProgress: (String) -&gt; Unit, ): GitOperationResult</ID>
     <ID>LongMethod:DesktopPasskeyBrowserView.kt$@Composable actual fun PasskeyBrowserView( url: String, onLoadComplete: () -&gt; Unit, onError: (String) -&gt; Unit, )</ID>
@@ -257,6 +313,8 @@
     <ID>LongMethod:EditableKeymapSettings.kt$@Composable fun EditableKeymapSettings()</ID>
     <ID>LongMethod:EditableKeymapSettings.kt$@Composable private fun ShortcutItem( binding: KeyBinding, hasConflict: Boolean, conflictingBindings: List&lt;KeyBinding&gt;, onEdit: () -&gt; Unit, )</ID>
     <ID>LongMethod:EmailAuthService.kt$EmailAuthService$suspend fun verifyMagicLinkToken( token: String, email: String? = null, type: String = "magiclink", ): Result&lt;Boolean&gt;</ID>
+    <ID>LongMethod:EmptyContentScreen.kt$@Composable fun EmptyContent( onOpenFile: () -&gt; Unit, onNewTab: () -&gt; Unit, onSplitPanel: (() -&gt; Unit)? = null, onSwitchPanel: (() -&gt; Unit)? = null, onNewWindow: () -&gt; Unit, )</ID>
+    <ID>LongMethod:EmptyContentScreen.kt$@Composable private fun Card( icon: ImageVector, title: String, description: String, isSelected: Boolean, enabled: Boolean, onClick: () -&gt; Unit, modifier: Modifier = Modifier, )</ID>
     <ID>LongMethod:FileCard.kt$@Composable fun FileCard( file: RecentFile, onClick: () -&gt; Unit, onRemove: () -&gt; Unit, modifier: Modifier = Modifier, )</ID>
     <ID>LongMethod:Fluck.kt$@Composable fun BrowserErrorView( error: Throwable, url: String, retryCount: Int = 0, maxRetries: Int = 3, onRetry: (() -&gt; Unit)? = null, onReset: (() -&gt; Unit)? = null, onResetBrowser: (() -&gt; Unit)? = null, onRetryEngine: (() -&gt; Unit)? = null, )</ID>
     <ID>LongMethod:Fluck.kt$FluckTabComponent$@Composable override fun Content()</ID>
@@ -266,8 +324,10 @@
     <ID>LongMethod:FluckEngine.kt$FluckEngine$private fun createEngineInstance( chromiumDir: java.nio.file.Path, profileDirPath: java.nio.file.Path, ): Engine</ID>
     <ID>LongMethod:FluckEngine.kt$FluckEngine$private fun killStaleChromiumProcesses()</ID>
     <ID>LongMethod:FluckEngine.kt$FluckEngine$suspend fun resetBrowserProfile(): ResetResult</ID>
+    <ID>LongMethod:FluckEngine.kt$FluckEngine.BrowserFindBar$private fun createDialog(owner: java.awt.Window)</ID>
     <ID>LongMethod:FocusModeSettings.kt$@Composable fun FocusModeSettings()</ID>
     <ID>LongMethod:FormFieldDetector.kt$FormFieldDetector$fun injectFormDetectionScript(browser: LockedBrowser)</ID>
+    <ID>LongMethod:FullscreenBrowserWindow.kt$FullscreenBrowserWindow$private fun createFullscreenWindow( browser: Browser, tabId: String, )</ID>
     <ID>LongMethod:GenericDialogHost.kt$@Composable private fun MultiChoiceDialog(request: DialogRequest.MultiChoice)</ID>
     <ID>LongMethod:GenericDialogHost.kt$@Composable private fun SingleChoiceDialog(request: DialogRequest.SingleChoice)</ID>
     <ID>LongMethod:GenericDialogHost.kt$@Composable private fun TextInputDialog(request: DialogRequest.TextInput)</ID>
@@ -281,10 +341,13 @@
     <ID>LongMethod:KeymapImportExport.kt$@Composable fun KeymapImportExport( onImport: suspend (String) -&gt; Boolean, modifier: Modifier = Modifier, )</ID>
     <ID>LongMethod:KeymapImportExport.kt$@Composable private fun ExportDialog(onDismiss: () -&gt; Unit)</ID>
     <ID>LongMethod:KeymapImportExport.kt$@Composable private fun ImportDialog( onImport: (String) -&gt; Unit, onDismiss: () -&gt; Unit, )</ID>
+    <ID>LongMethod:KeymapMatcher.kt$KeymapMatcher$private fun normalizeKeyName(keyName: String): String</ID>
     <ID>LongMethod:KeymapPresets.kt$KeymapPresets$fun getBOSSDefault(): KeymapSettings</ID>
     <ID>LongMethod:KeymapPresets.kt$KeymapPresets$fun getIntelliJPreset(): KeymapSettings</ID>
     <ID>LongMethod:KeymapPresets.kt$KeymapPresets$fun getVSCodePreset(): KeymapSettings</ID>
     <ID>LongMethod:KeymapSettings.kt$@Composable fun KeymapSettings()</ID>
+    <ID>LongMethod:LLMProvidersSettings.kt$@Composable fun LLMProvidersSettings()</ID>
+    <ID>LongMethod:LoginFormScreen.kt$@OptIn(ExperimentalComposeUiApi::class) @Composable fun LoginFormScreen( viewModel: LoginViewModel, onLoginSuccess: () -&gt; Unit, isLoading: Boolean, errorMessage: String?, onMagicLinkSent: (String) -&gt; Unit = {}, onPasskeyAuthInitiated: (String) -&gt; Unit = {}, onPasskeySelectionRequired: (String) -&gt; Unit = {}, )</ID>
     <ID>LongMethod:LogoutConfirmationDialog.kt$@Composable fun LogoutConfirmationDialog(onDismiss: () -&gt; Unit)</ID>
     <ID>LongMethod:MacOSGestureHandler.kt$MacOSGestureHandler$fun addMagnificationListener( component: Component, onZoomIn: () -&gt; Unit, onZoomOut: () -&gt; Unit, ): Any?</ID>
     <ID>LongMethod:MagicLinkWaitingScreen.kt$@OptIn(ExperimentalComposeUiApi::class) @Composable fun MagicLinkWaitingScreen( email: String, viewModel: LoginViewModel, onBack: () -&gt; Unit, onSuccess: () -&gt; Unit, isLoading: Boolean = false, errorMessage: String? = null, )</ID>
@@ -296,7 +359,6 @@
     <ID>LongMethod:NewProjectWizardDialog.kt$@Composable private fun ErrorStep( message: String, onRetry: () -&gt; Unit, onClose: () -&gt; Unit, )</ID>
     <ID>LongMethod:NewProjectWizardDialog.kt$@Composable private fun TemplateCard( template: ProjectTemplate, isSelected: Boolean, onClick: () -&gt; Unit, )</ID>
     <ID>LongMethod:NewProjectWizardDialog.kt$@Composable private fun TemplateSelectionStep( onDismiss: () -&gt; Unit, onTemplateSelected: (ProjectTemplate) -&gt; Unit, )</ID>
-    <ID>LongMethod:NewTabDialog.kt$@Composable fun NewTabDialog( onDismiss: () -&gt; Unit, onCreateTab: (type: TabType, path: String) -&gt; Unit, tabRegistry: TabRegistry, initialTabType: TabType? = null, /** * Opens a [TabInfo] built by a plugin tab type's [TabTypeInfo.createTabInfo]. * When null, plugin-registered tab types are not offered (legacy callers). */ onCreateTabInfo: ((TabInfo) -&gt; Unit)? = null, projectPath: String? = null, windowId: String? = null, /** * Where the new tab goes: null for the pane it would land in anyway, or the side a new pane * should be created on. * * Hoisted rather than owned here because the split map opens this dialog with a direction * already chosen - clicking a trapezoid IS asking for a tab in that direction - and a picker * that reset itself to "this pane" would throw that away in front of the user. */ splitDirection: SplitDirection? = null, /** Null when this caller cannot split (no split view to split), which hides the picker. */ onSplitDirectionChange: ((SplitDirection?) -&gt; Unit)? = null, )</ID>
     <ID>LongMethod:NewTabDialog.kt$@Composable private fun DialogFileTreeItem( node: FileNodeData, level: Int, expandedPaths: Set&lt;String&gt;, onToggleExpanded: (String) -&gt; Unit, onFileClick: (FileNodeData) -&gt; Unit, )</ID>
     <ID>LongMethod:OfflineScreen.kt$@Composable fun OfflineScreen(onRetry: suspend () -&gt; Boolean)</ID>
     <ID>LongMethod:OutOfProcessPluginSpawnerImpl.kt$OutOfProcessPluginSpawnerImpl$override suspend fun spawn( manifest: PluginManifest, jarPath: String, ): Result&lt;Unit&gt;</ID>
@@ -310,11 +372,13 @@
     <ID>LongMethod:PerformanceMonitor.kt$PerformanceMonitor$fun start()</ID>
     <ID>LongMethod:PerformanceSettings.kt$@Composable fun PerformanceSettings()</ID>
     <ID>LongMethod:PluginInstallService.kt$PluginInstallService$private fun downloadFromGitHubRelease( owner: String, repo: String, pluginDir: File, ): String?</ID>
+    <ID>LongMethod:PluginInstallService.kt$PluginInstallService$private suspend fun installFromGitHub( plugin: WizardPluginInfo, pluginDir: File, baseProgress: Float, totalPlugins: Int, onProgress: (Float, String) -&gt; Unit, ): Result&lt;Unit&gt;</ID>
     <ID>LongMethod:PluginInstallService.kt$PluginInstallService$suspend fun installPlugins( plugins: List&lt;WizardPluginInfo&gt;, onProgress: (Float, String) -&gt; Unit, ): Result&lt;PluginInstallResult&gt;</ID>
     <ID>LongMethod:PluginInstallWizard.kt$@Composable internal fun CompleteStepContent( installedCount: Int, failedPlugins: List&lt;Pair&lt;String, String&gt;&gt; = emptyList(), )</ID>
     <ID>LongMethod:PluginInstallWizard.kt$@Composable internal fun InstallingStepContent( progress: Float, status: String, error: String?, onRetry: () -&gt; Unit, )</ID>
     <ID>LongMethod:PluginInstallWizard.kt$@Composable internal fun WizardNavigation( currentStep: PluginInstallStep, isInstalling: Boolean, hasSelectedPlugins: Boolean, onBack: () -&gt; Unit, onNext: () -&gt; Unit, onSkip: () -&gt; Unit, onFinish: () -&gt; Unit, )</ID>
     <ID>LongMethod:PluginInstallWizardWindow.kt$@Composable fun PluginInstallWizardWindow( state: PluginInstallWizardState, onDismiss: () -&gt; Unit, onComplete: () -&gt; Unit, onInstallPlugins: suspend (List&lt;WizardPluginInfo&gt;, (Float, String) -&gt; Unit) -&gt; Result&lt;PluginInstallResult&gt;, )</ID>
+    <ID>LongMethod:PluginJarReconciler.kt$PluginJarReconciler$fun reconcilePluginDir(pluginDir: File): ReconcileResult</ID>
     <ID>LongMethod:PluginListProvider.kt$PluginListProvider$private fun getFallbackPluginList(): List&lt;WizardPluginInfo&gt;</ID>
     <ID>LongMethod:PluginShortcutRegistryImpl.kt$PluginShortcutRegistryImpl$fun register(provider: ShortcutActionProvider)</ID>
     <ID>LongMethod:PluginStoreSetup.kt$PluginStoreSetup$private fun copyBundledPluginsToPluginDir(dynamicPluginManager: ai.rever.boss.components.plugin.DynamicPluginManager)</ID>
@@ -351,12 +415,14 @@
     <ID>LongMethod:ShortcutHelpDialog.kt$@Composable fun ShortcutHelpDialog( keymapSettings: KeymapSettings, onDismiss: () -&gt; Unit, onOpenSettings: () -&gt; Unit, )</ID>
     <ID>LongMethod:ShortcutTestDialog.kt$@Composable fun ShortcutTestDialog( keymapSettings: KeymapSettings, onDismiss: () -&gt; Unit, )</ID>
     <ID>LongMethod:ShortcutTestDialog.kt$@Composable private fun TestResultItem(result: ShortcutTestResult)</ID>
+    <ID>LongMethod:ShortcutTestRunner.kt$ShortcutTestRunner$private fun validateKeyName(keyName: String): Pair&lt;Boolean, String&gt;</ID>
     <ID>LongMethod:ShortcutTestRunner.kt$ShortcutTestRunner$suspend fun testShortcut(binding: KeyBinding): ShortcutTestResult</ID>
     <ID>LongMethod:SidePanel.kt$@Composable fun BossDraggableComponent.SidePanel( panel: Panel, panelComponentStore: PanelComponentStore, )</ID>
     <ID>LongMethod:SidebarCustomizeMenu.kt$@Composable fun BossDraggableComponent.SidebarCustomizeMenu( /** Slot the button visually belongs to; controls hint direction &amp; drag overlay rendering. */ slot: Panel = left.top.bottom, modifier: Modifier = Modifier, )</ID>
+    <ID>LongMethod:SingleInstanceManager.kt$SingleInstanceManager$private fun startServer()</ID>
     <ID>LongMethod:SplitView.kt$@Composable private fun PanelDropZoneOverlay( panelId: String, dropTarget: TabDropTarget?, leadingInset: Dp = 0.dp, )</ID>
     <ID>LongMethod:SplitView.kt$@Composable private fun RenderSplitNode( node: SplitNode, splitViewState: SplitViewState, tabDragComponent: TabDraggableComponent? = null, onTabDropResult: (TabDropResult) -&gt; Unit = {}, showPanelTabBar: Boolean = true, )</ID>
-    <ID>LongMethod:SplitView.kt$SplitViewState$fun splitPanel( panelId: String, orientation: SplitOrientation, tabToMove: TabInfo? = null, detachedTab: BossTabsComponent.DetachedTab? = null, /** * Put the new pane in the left or top half, moving the original over. * * Defaults to false, which is what every caller did before the split map could ask for * a direction: the original keeps its side and the new pane goes second. */ placeBefore: Boolean = false, ): String</ID>
+    <ID>LongMethod:SplitView.kt$SplitViewState$fun openTerminalInActivePanel( command: String? = null, workingDirectory: String? = null, )</ID>
     <ID>LongMethod:StartupSettings.kt$@Composable fun StartupSettingsSection()</ID>
     <ID>LongMethod:TabDraggingOverlay.kt$@Composable fun TabDraggableComponent.TabDraggingOverlay()</ID>
     <ID>LongMethod:TabDropHandler.kt$internal fun handleTabDropResult( result: TabDropResult, splitViewState: SplitViewState, )</ID>
@@ -365,6 +431,7 @@
     <ID>LongMethod:TerminalLinkOpener.kt$private fun openTerminalLinkInternal( url: String, mode: TerminalLinkOpenMode, splitViewState: SplitViewState, validSourcePanelId: String, isFile: Boolean, fileLine: Int = 0, fileColumn: Int = 0, scope: CoroutineScope, windowId: String? = null, )</ID>
     <ID>LongMethod:TopOfMindDialog.kt$@Composable fun TopOfMindDialog( splitViewState: SplitViewState? = null, // Kept for backward compatibility but not used workspaceManager: WorkspaceManager, onDismiss: () -&gt; Unit, onTabSelect: (ActiveTab) -&gt; Unit, )</ID>
     <ID>LongMethod:TopOfMindDialog.kt$@Composable private fun ActiveTabDialogItem( activeTab: ActiveTab, isSelected: Boolean, onTabClick: () -&gt; Unit, )</ID>
+    <ID>LongMethod:UpdateAvailableDialog.kt$@Composable fun UpdateAvailableDialog( updateInfo: UpdateInfo, onUpdateNow: () -&gt; Unit, onLater: () -&gt; Unit, )</ID>
     <ID>LongMethod:UpdateInstaller.kt$UpdateInstaller$private suspend fun installMacOSUpdate(downloadFile: File): InstallResult</ID>
     <ID>LongMethod:UpdateInstaller.kt$UpdateInstaller$suspend fun installUpdate(downloadPath: String): InstallResult</ID>
     <ID>LongMethod:UpdateScriptGenerator.kt$UpdateScriptGenerator$fun generateLinuxDebUpdateScript( debPath: String, appPid: Long, ): File</ID>
@@ -372,13 +439,15 @@
     <ID>LongMethod:UpdateScriptGenerator.kt$UpdateScriptGenerator$fun generateMacOSUpdateScript( dmgPath: String, targetAppPath: String, appPid: Long, ): File</ID>
     <ID>LongMethod:UpdateUI.kt$@Composable fun UpdateSettingsSection(updateCoordinator: UpdateCoordinator = UpdateCoordinator.instance)</ID>
     <ID>LongMethod:UserExistenceService.kt$UserExistenceService$suspend fun checkUserExists(email: String): Result&lt;UserExistence&gt;</ID>
+    <ID>LongMethod:VersionSelectionDialog.kt$@Composable fun VersionSelectionDialog( currentVersion: Version, versions: List&lt;VersionInfo&gt;, isLoading: Boolean, error: String? = null, onVersionSelected: (VersionInfo) -&gt; Unit, onDismiss: () -&gt; Unit, )</ID>
+    <ID>LongMethod:VersionSelectionDialog.kt$@Composable private fun VersionItem( versionInfo: VersionInfo, isCurrent: Boolean, isLatest: Boolean = false, onClick: () -&gt; Unit, )</ID>
     <ID>LongMethod:WindowsDefaultBrowserHandler.kt$WindowsDefaultBrowserHandler$internal fun registerAsBrowserCandidate(): Boolean</ID>
     <ID>LongMethod:WizardComponents.kt$@Composable fun CheckboxCard( title: String, description: String, icon: ImageVector? = null, isChecked: Boolean, onCheckedChange: (Boolean) -&gt; Unit, enabled: Boolean = true, modifier: Modifier = Modifier, )</ID>
     <ID>LongMethod:WizardComponents.kt$@Composable fun SelectionCard( title: String, description: String, icon: ImageVector? = null, isSelected: Boolean, onClick: () -&gt; Unit, modifier: Modifier = Modifier, )</ID>
     <ID>LongMethod:WizardComponents.kt$@Composable fun WizardStepIndicator( currentStep: Int, totalSteps: Int, modifier: Modifier = Modifier, )</ID>
-    <ID>LongMethod:WorkspaceApplier.kt$internal fun createTabFromWorkspaceConfig( tabConfig: TabConfig, resolvedProjectPath: String, splitViewState: SplitViewState, ): TabInfo?</ID>
     <ID>LongMethod:WorkspaceApplier.kt$private suspend fun applyWorkspaceNode( node: SplitConfig, splitViewState: SplitViewState, currentPanelId: String, projectPath: String, )</ID>
     <ID>LongMethod:WorkspaceButton.kt$@Composable fun WorkspaceButton( onOpenWorkspace: (LayoutWorkspace) -&gt; Unit, workspaceManager: WorkspaceManager, getCurrentWorkspace: (() -&gt; LayoutWorkspace)? = null, onShowTopOfMind: (() -&gt; Unit)? = null, /** Sized for the vertical tab bar rather than the top bar. See BossActionButton. */ compact: Boolean = false, )</ID>
+    <ID>LongMethod:WorkspaceExtractor.kt$private fun extractSplitConfig(node: SplitNode): SplitConfig</ID>
     <ID>LongMethod:WorkspaceSelectionDialog.kt$@Composable fun WorkspaceSelectionDialog( title: String, workspaces: List&lt;ai.rever.boss.components.workspaces.LayoutWorkspace&gt;, preselectedWorkspaces: Map&lt;String, String?&gt; = emptyMap(), onDismiss: () -&gt; Unit, onConfirm: (workspacePanelMap: Map&lt;String, String?&gt;) -&gt; Unit, )</ID>
     <ID>LongMethod:WorkspaceSelectionDialog.kt$@Composable private fun WorkspaceSelectionItem( workspace: ai.rever.boss.components.workspaces.LayoutWorkspace, isSelected: Boolean, selectedPanelId: String?, onToggle: () -&gt; Unit, onPanelSelected: (String?) -&gt; Unit, )</ID>
     <ID>LongMethod:main.kt$fun main(args: Array&lt;String&gt;)</ID>
@@ -387,36 +456,27 @@
     <ID>LongParameterList:BossWindow.kt$( current: DpSize, deltaWidthPx: Float, deltaHeightPx: Float, scaleX: Float, scaleY: Float, maxWidthDp: Float, maxHeightDp: Float, minWidthDp: Float = MIN_FIT_WIDTH_DP, minHeightDp: Float = MIN_FIT_HEIGHT_DP, )</ID>
     <ID>LongParameterList:ChromiumAutoDownloader.kt$ChromiumAutoDownloader$( candidates: List&lt;EngineDownloadCandidate&gt;, version: String, targetDir: Path, staged: Boolean, onProgress: (DownloadProgress) -&gt; Unit, fetch: (String, Path) -&gt; Unit = { url, dest -&gt; downloadWithProgress(url, dest, onProgress) }, extract: (Path, Path) -&gt; Unit = { zip, dest -&gt; extractZip(zip, dest) }, )</ID>
     <ID>LongParameterList:ConfigLoader.kt$ConfigLoader$( key: String, defaultValue: String?, envValue: String?, sysPropValue: String?, localProps: Properties, embeddedProps: Properties, )</ID>
-    <ID>LongParameterList:ContentSearchService.kt$ContentSearchService$( file: File, projectRoot: String, regex: Regex, replacement: String, isRegex: Boolean, dryRun: Boolean, isCancelled: () -&gt; Boolean, )</ID>
-    <ID>LongParameterList:ContentSearchService.kt$ContentSearchService$( file: File, text: String, version: Long, regex: Regex, replacement: String, isRegex: Boolean, dryRun: Boolean, isCancelled: () -&gt; Boolean, )</ID>
-    <ID>LongParameterList:ContentSearchService.kt$ContentSearchService$( projectRoot: String, query: String, pathPattern: String?, excludePattern: String?, isRegex: Boolean, caseSensitive: Boolean, wholeWord: Boolean, path: String, // projectRoot is part of the key because a cached FileMatch carries a path // RELATIVE to the root it was found under. The same absolute file walked under // a different root (switching between nested projects) would otherwise get its // old relative path served from cache until its mtime changed, and a // result-click would resolve it against the new root - the wrong file. )</ID>
-    <ID>LongParameterList:ContentSearchService.kt$EditorBufferBridge$( path: String, startLine: Int, startCol: Int, endLine: Int, endCol: Int, newText: String, expectedVersion: Long, )</ID>
     <ID>LongParameterList:DefaultPlugin.kt$DefaultPlugin$( override val panelRegistry: PanelRegistry, override val tabRegistry: TabRegistry, val windowProjectState: WindowProjectState?, val windowGitState: WindowGitState? = null, private val _windowId: String? = null, private val workspaceManager: ai.rever.boss.components.workspaces.WorkspaceManager? = null, private val splitViewState: ai.rever.boss.components.window_panel.SplitViewState? = null, )</ID>
     <ID>LongParameterList:DesktopFluckTabComponent.kt$( config: TabInfo, componentContext: ComponentContext, onTitleUpdate: (String) -&gt; Unit, onIconUpdate: (ImageVector) -&gt; Unit, onTabIconUpdate: (TabIcon) -&gt; Unit, onOpenInNewTab: (String) -&gt; Unit, onNavigationUpdate: ((String, String) -&gt; Unit)?, onFaviconCacheKeyUpdate: ((String?) -&gt; Unit)?, onCloseTab: (() -&gt; Unit)?, )</ID>
     <ID>LongParameterList:DesktopRunnerTerminalService.kt$RunnerTerminalService$( windowId: String, configId: String, command: String, workingDirectory: String?, tabTitle: String, isRerun: Boolean, )</ID>
-    <ID>LongParameterList:DownloadCenter.kt$DownloadCenter$( id: String, title: String, kind: TransferKind, detail: String? = null, onCancel: (() -&gt; Unit)? = null, owner: String? = null, )</ID>
-    <ID>LongParameterList:EditorAPIAccess.kt$EditorAPIAccess$( path: String, startLine: Int, startCol: Int, endLine: Int, endCol: Int, newText: String, expectedVersion: Long, )</ID>
     <ID>LongParameterList:Fluck.kt$( config: TabInfo, componentContext: ComponentContext, onTitleUpdate: (String) -&gt; Unit, onIconUpdate: (ImageVector) -&gt; Unit, onTabIconUpdate: (TabIcon) -&gt; Unit, onOpenInNewTab: (String) -&gt; Unit, onNavigationUpdate: ((String, String) -&gt; Unit)? = null, onFaviconCacheKeyUpdate: ((String?) -&gt; Unit)? = null, onCloseTab: (() -&gt; Unit)? = null, )</ID>
     <ID>LongParameterList:Fluck.kt$FluckTabComponent$( override val config: TabInfo, private val componentContext: ComponentContext, private val onTitleUpdate: (String) -&gt; Unit, private val onIconUpdate: (ImageVector) -&gt; Unit, private val onTabIconUpdate: (TabIcon) -&gt; Unit, private val onOpenInNewTab: (String) -&gt; Unit, private val onNavigationUpdate: ((String, String) -&gt; Unit)? = null, private val onFaviconCacheKeyUpdate: ((String?) -&gt; Unit)? = null, private val onCloseTab: (() -&gt; Unit)? = null, )</ID>
     <ID>LongParameterList:Fluck.kt$FluckTabInfo$( id: String = this.id, typeId: TabTypeId = this.typeId, _title: String = this._title, _icon: ImageVector = this._icon, _tabIcon: TabIcon? = this._tabIcon, url: String = this.url, _currentUrl: String = this._currentUrl, _currentZoomLevel: Double = this._currentZoomLevel, faviconCacheKey: String? = this.faviconCacheKey, navigationHistory: MutableList&lt;Pair&lt;String, String&gt;&gt;? = null, historyIndex: Int = this.historyIndex, )</ID>
     <ID>LongParameterList:Fluck.kt$FluckTabInfo$( override val id: String, override val typeId: TabTypeId, private var _title: String, private var _icon: ImageVector = Icons.Outlined.Language, private var _tabIcon: TabIcon? = null, val url: String = "", // Initial URL @Volatile private var _currentUrl: String = url, // Current URL being viewed (volatile for visibility) val navigationHistory: MutableList&lt;Pair&lt;String, String&gt;&gt; = mutableListOf(), // List of (title, url) pairs @Volatile var historyIndex: Int = -1, // Current position in navigation history private var _currentZoomLevel: Double = 1.0, // Current zoom level (1.0 = 100%) var faviconCacheKey: String? = null, // Cache key for persisted favicon )</ID>
     <ID>LongParameterList:FormFieldDetector.kt$FormFieldDetector$( inputType: String, fieldName: String, fieldId: String, placeholder: String, autocomplete: String, className: String, ariaLabel: String, )</ID>
-    <ID>LongParameterList:HomeToolCatalog.kt$HomeToolCatalog$( tabTypes: List&lt;HomeTabTypeInput&gt;, panels: List&lt;HomePanelInput&gt;, storeCatalogue: List&lt;HomeStorePluginInput&gt;, installedPluginIds: Set&lt;String&gt;, access: RegistryAccess, installedVersionOf: (String) -&gt; String? = { null }, )</ID>
     <ID>LongParameterList:KernelBootstrap.kt$KernelBootstrap$( performanceDataProvider: PerformanceDataProvider? = null, downloadDataProvider: DownloadDataProvider? = null, gitDataProvider: GitDataProvider? = null, logDataProvider: LogDataProvider? = null, activeTabsProvider: ActiveTabsProvider? = null, secretDataProvider: SecretDataProvider? = null, supabaseDataProvider: SupabaseDataProvider? = null, splitViewOperations: SplitViewOperations? = null, runConfigurationDataProvider: RunConfigurationDataProvider? = null, panelEventProvider: PanelEventProvider? = null, roleManagementProvider: RoleManagementProvider? = null, directoryPickerProvider: DirectoryPickerProvider? = null, projectDataProvider: ProjectDataProvider? = null, notificationProvider: NotificationProvider? = null, )</ID>
     <ID>LongParameterList:KeyBinding.kt$KeyBinding.Companion$( actionId: String, key: Key, isMetaPressed: Boolean, isCtrlPressed: Boolean, isShiftPressed: Boolean, isAltPressed: Boolean, context: ShortcutContext = ShortcutContext.GLOBAL, category: String = "Other", description: String = "", )</ID>
+    <ID>LongParameterList:KeyBinding.kt$KeyBinding.Companion$( actionId: String, key: String, vararg additionalModifiers: String, context: ShortcutContext = ShortcutContext.GLOBAL, category: String = "Other", description: String = "", )</ID>
     <ID>LongParameterList:KeyBinding.kt$KeyBinding.Companion$( actionId: String, primaryKey: String, primaryModifiers: List&lt;String&gt;, alternates: List&lt;KeyStroke&gt;, context: ShortcutContext = ShortcutContext.GLOBAL, category: String = "Other", description: String = "", )</ID>
     <ID>LongParameterList:PasskeyService.kt$PasskeyService$( challenge: ByteArray, allowedCredentials: List&lt;String&gt;? = null, rpId: String = "api.risaboss.com", userEmail: String, sessionId: String? = null, allowedCredentialTransports: Map&lt;String, List&lt;String&gt;&gt;? = null, )</ID>
     <ID>LongParameterList:RunnerTerminalEventBus.kt$RunnerTerminalEventBus$( terminalId: String, command: String, configId: String, configName: String, workingDirectory: String?, isRerun: Boolean, sourceWindowId: String, )</ID>
     <ID>LongParameterList:RunnerTerminalService.kt$RunnerTerminalService$( windowId: String, configId: String, command: String, workingDirectory: String?, tabTitle: String, isRerun: Boolean = false, )</ID>
     <ID>LongParameterList:SplitView.kt$SplitViewState$( node: SplitNode, workspaceId: String, workspaceName: String, windowId: String, result: MutableList&lt;ActiveTab&gt;, seenTabIds: MutableSet&lt;String&gt;, )</ID>
-    <ID>LongParameterList:StoreVersionInstaller.kt$StoreVersionInstaller$( store: PluginRepository, request: StoreVersionRequest, unload: suspend (String) -&gt; Result&lt;Unit&gt;, load: suspend (String) -&gt; Result&lt;Boolean&gt;, onProgress: ((Float) -&gt; Unit)? = null, onInstalling: (() -&gt; Unit)? = null, )</ID>
     <ID>LongParameterList:TerminalLinkOpener.kt$( url: String, mode: TerminalLinkOpenMode, splitViewState: SplitViewState, sourceTerminalId: String? = null, scope: CoroutineScope, windowId: String? = null, )</ID>
     <ID>LongParameterList:TerminalLinkOpener.kt$( url: String, mode: TerminalLinkOpenMode, splitViewState: SplitViewState, validSourcePanelId: String, isFile: Boolean, fileLine: Int = 0, fileColumn: Int = 0, scope: CoroutineScope, windowId: String? = null, )</ID>
     <ID>LoopWithTooManyJumpStatements:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$for</ID>
     <ID>LoopWithTooManyJumpStatements:BrowserServiceImpl.kt$BrowserServiceImpl$for</ID>
     <ID>LoopWithTooManyJumpStatements:CLIInstaller.kt$CLIInstaller$for</ID>
-    <ID>LoopWithTooManyJumpStatements:ContentSearchService.kt$ContentSearchService$for</ID>
-    <ID>LoopWithTooManyJumpStatements:DesktopGitService.kt$GitService$for</ID>
     <ID>LoopWithTooManyJumpStatements:DesktopGitService.kt$GitService$while</ID>
     <ID>LoopWithTooManyJumpStatements:FileIndexer.kt$FileIndexer$for</ID>
     <ID>LoopWithTooManyJumpStatements:GitHubUpdateSource.kt$GitHubUpdateSource$while</ID>
@@ -425,10 +485,10 @@
     <ID>LoopWithTooManyJumpStatements:PluginInstallService.kt$PluginInstallService$for</ID>
     <ID>LoopWithTooManyJumpStatements:PluginStoreSetup.kt$PluginStoreSetup$for</ID>
     <ID>LoopWithTooManyJumpStatements:ReleaseNotesMarkdown.kt$while</ID>
-    <ID>LoopWithTooManyJumpStatements:UnifiedDiffParser.kt$UnifiedDiffParser$for</ID>
     <ID>MatchingDeclarationName:BrowserSettingsConfig.kt$BrowserSettings</ID>
     <ID>MatchingDeclarationName:CodeBase.kt$ProjectState</ID>
     <ID>MatchingDeclarationName:CollectionSelectionDialog.kt$CollectionSelectionMode</ID>
+    <ID>MatchingDeclarationName:ContextMenu.kt$ContextMenuItem</ID>
     <ID>MatchingDeclarationName:DesktopCommandProcessor.kt$CommandProcessor</ID>
     <ID>MatchingDeclarationName:DesktopDirectoryPickerProviderImpl.kt$DirectoryPickerProviderImpl : DirectoryPickerProvider</ID>
     <ID>MatchingDeclarationName:DesktopGitService.kt$GitService</ID>
@@ -440,6 +500,7 @@
     <ID>MatchingDeclarationName:DesktopRunnerTerminalService.kt$RunnerTerminalService</ID>
     <ID>MatchingDeclarationName:DesktopStartupSettingsManager.kt$StartupSettingsManager</ID>
     <ID>MatchingDeclarationName:DesktopTerminalLinkSettingsManager.kt$TerminalLinkSettingsManager</ID>
+    <ID>MatchingDeclarationName:DesktopUpdateService.kt$UpdateService</ID>
     <ID>MatchingDeclarationName:DesktopWindowOperations.kt$WindowOperations</ID>
     <ID>MatchingDeclarationName:DesktopWorkspaceFileManager.kt$WorkspaceFileManager</ID>
     <ID>MatchingDeclarationName:DesktopWorkspaceSettingsManager.kt$WorkspaceSettingsManager</ID>
@@ -472,9 +533,20 @@
     <ID>MaxLineLength:BossDraggableComponent.kt$BossDraggableComponent$fun</ID>
     <ID>MaxLineLength:BossDraggableComponent.kt$BossDraggableComponent$fun isSelected(item: SidebarItem): Boolean</ID>
     <ID>MaxLineLength:BossDraggableComponent.kt$BossDraggableComponent$val currentTargetItems = itemsBySlot[currentDropTarget]?.toList() ?: emptyList() // Use current items in target</ID>
+    <ID>MaxLineLength:BossEditorSettings.kt$PluginSettingsUnavailableNotice("Editor settings are provided by the Code Editor plugin, which isn't loaded yet.")</ID>
     <ID>MaxLineLength:BossLoggerTest.kt$BossLoggerTest$private val testLogDir = File(System.getProperty("java.io.tmpdir"), "boss-logger-test-${System.currentTimeMillis()}")</ID>
+    <ID>MaxLineLength:BossMainWindowPanel.kt$BookmarkAPIAccess.addFavoriteWorkspace(currentWorkspace.id, currentWorkspace.name)</ID>
+    <ID>MaxLineLength:BossMainWindowPanel.kt$ContextMenuItem</ID>
+    <ID>MaxLineLength:BossMainWindowPanel.kt$bossMainWindowPanelLogger.debug(LogCategory.UI, "Plugin activation requested", mapOf("pluginId" to pluginId))</ID>
+    <ID>MaxLineLength:BossMainWindowPanel.kt$orientation = ai.rever.boss.components.window_panel.SplitOrientation.HORIZONTAL</ID>
+    <ID>MaxLineLength:BossMainWindowPanel.kt$orientation = ai.rever.boss.components.window_panel.SplitOrientation.VERTICAL</ID>
     <ID>MaxLineLength:BossMainWindowPanel.kt$val pluginLogger = if (sandbox != null) remember { BossLogger.forComponent("BossMainPanelContent") } else null</ID>
     <ID>MaxLineLength:BossPanelTopBar.kt$contentDescription = "Update available: v${updateAvailable.currentVersion} → v${updateAvailable.newVersion}"</ID>
+    <ID>MaxLineLength:BossPanelTopBar.kt$onCheckForUpdates?.let { cb -&gt; add(ContextMenuItem(text = "Check for Updates", icon = Icons.Outlined.Upgrade, onClick = cb)) }</ID>
+    <ID>MaxLineLength:BossPanelTopBar.kt$onOpenAsTab?.let { cb -&gt; add(ContextMenuItem(text = "Open as Tab", icon = Icons.Outlined.Tab, onClick = cb)) }</ID>
+    <ID>MaxLineLength:BossPanelTopBar.kt$onOpenEvolver?.let { cb -&gt; add(ContextMenuItem(text = "Open Evolver", icon = Icons.Outlined.MonitorHeart, onClick = cb)) }</ID>
+    <ID>MaxLineLength:BossPanelTopBar.kt$onReportIssue?.let { cb -&gt; add(ContextMenuItem(text = "Report Issue", icon = Icons.Outlined.BugReport, onClick = cb)) }</ID>
+    <ID>MaxLineLength:BossPanelTopBar.kt$onReset?.let { cb -&gt; add(ContextMenuItem(text = "Restart Panel", icon = Icons.Outlined.RestartAlt, onClick = cb)) }</ID>
     <ID>MaxLineLength:BossScrollBar.kt$)</ID>
     <ID>MaxLineLength:BossTheme.kt$@Deprecated(DARK_ALIAS_DEPRECATION, ReplaceWith("BossThemeController.current.colors.alert", "ai.rever.boss.plugin.ui.BossThemeController"))</ID>
     <ID>MaxLineLength:BossTheme.kt$@Deprecated(DARK_ALIAS_DEPRECATION, ReplaceWith("BossThemeController.current.colors.data", "ai.rever.boss.plugin.ui.BossThemeController"))</ID>
@@ -503,21 +575,23 @@
     <ID>MaxLineLength:BrowserFunctions.kt$logger.warn(LogCategory.BROWSER, "getBrowserState: Could not create BrowserViewState - no valid window available")</ID>
     <ID>MaxLineLength:BrowserFunctions.kt$logger.warn(LogCategory.BROWSER, "isBrowserValid: Exception checking browser state", mapOf("error" to (e.message ?: "unknown")))</ID>
     <ID>MaxLineLength:BrowserHandleImpl.kt$BrowserHandleImpl$logger.debug(LogCategory.BROWSER, "Co-browse control ${if (granted) "granted" else "revoked"}", mapOf("handleId" to id))</ID>
+    <ID>MaxLineLength:BrowserHandleImpl.kt$BrowserHandleImpl$logger.debug(LogCategory.BROWSER, "Context menu and navigation trackers injected", mapOf("handleId" to id))</ID>
     <ID>MaxLineLength:BrowserHandleImpl.kt$BrowserHandleImpl$logger.error(LogCategory.BROWSER, "Co-browse recorder bundle missing; capture not started", mapOf("handleId" to id))</ID>
     <ID>MaxLineLength:BrowserHandleImpl.kt$BrowserHandleImpl$logger.warn(LogCategory.BROWSER, "Co-browse input dispatch failed", mapOf("handleId" to id, "kind" to kind), error = e)</ID>
     <ID>MaxLineLength:BrowserHandleImpl.kt$BrowserHandleImpl$logger.warn(LogCategory.BROWSER, "Co-browse input unknown kind", mapOf("handleId" to id, "kind" to kind))</ID>
+    <ID>MaxLineLength:BrowserHandleImpl.kt$BrowserHandleImpl$logger.warn(LogCategory.BROWSER, "JS execution error", mapOf("handleId" to id, "error" to (e.message ?: "unknown")))</ID>
     <ID>MaxLineLength:BrowserHandleImpl.kt$BrowserHandleImpl$val bufferedImage = java.awt.image.BufferedImage(width, height, java.awt.image.BufferedImage.TYPE_INT_ARGB)</ID>
     <ID>MaxLineLength:BrowserServiceImpl.kt$BrowserServiceImpl$Files.move(tmp.toPath(), metaFile.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)</ID>
     <ID>MaxLineLength:BrowserServiceImpl.kt$BrowserServiceImpl$mapOf("name" to c.name, "url" to LogSanitizer.maskUriParams(c.url), "error" to (e.message ?: "unknown"))</ID>
     <ID>MaxLineLength:BrowserServiceImpl.kt$BrowserServiceImpl$meta[it.namedId] = NamedMeta(it.namedId, it.profileName, it.profile.path(), System.currentTimeMillis())</ID>
     <ID>MaxLineLength:BrowserServiceImpl.kt$BrowserServiceImpl$private fun dirSize(dir: File): Long</ID>
-    <ID>MaxLineLength:BufferEditRangeTest.kt$BufferEditRangeTest$assertEquals("y", text.substring(offsetOf(lines, r.startLine, r.startCol), offsetOf(lines, r.endLine, r.endCol)))</ID>
     <ID>MaxLineLength:CLICommandHandler.kt$CLICommandHandler$logger.debug(LogCategory.SYSTEM, "File handler not ready, queueing file", mapOf("path" to command.filePath))</ID>
     <ID>MaxLineLength:CLICommandHandler.kt$CLICommandHandler$logger.debug(LogCategory.SYSTEM, "File handler ready, executing immediately", mapOf("path" to command.filePath))</ID>
     <ID>MaxLineLength:CLICommandHandler.kt$CLICommandHandler$logger.debug(LogCategory.SYSTEM, "Workspace handler not ready, queueing", mapOf("path" to file.absolutePath))</ID>
     <ID>MaxLineLength:CLICommandHandler.kt$CLICommandHandler$logger.warn(LogCategory.SYSTEM, "Invalid file path (security check failed)", mapOf("path" to file.absolutePath))</ID>
     <ID>MaxLineLength:CLICommandHandler.kt$CLICommandHandler$logger.warn(LogCategory.SYSTEM, "Invalid folder path (security check failed)", mapOf("path" to folder.absolutePath))</ID>
     <ID>MaxLineLength:CLICommandHandler.kt$CLICommandHandler$logger.warn(LogCategory.SYSTEM, "Invalid workspace path (security check failed)", mapOf("path" to file.absolutePath))</ID>
+    <ID>MaxLineLength:CLICommandHandler.kt$CLICommandHandler$logger.warn(LogCategory.SYSTEM, "No window focused, cannot load workspace", mapOf("path" to file.absolutePath))</ID>
     <ID>MaxLineLength:CLIInstaller.kt$CLIInstaller$"Please add the following to your shell configuration:\n export PATH=\"\$HOME/.local/bin:\$PATH\"\n\n"</ID>
     <ID>MaxLineLength:CLIInstaller.kt$CLIInstaller$logger.warn(LogCategory.SYSTEM, "Failed to update shell config", mapOf("configPath" to configPath), error = e)</ID>
     <ID>MaxLineLength:CLIVersionManager.kt$CLIVersionManager$logger.debug(LogCategory.SYSTEM, "CLI version check: Found installed version", mapOf("version" to version))</ID>
@@ -534,7 +608,6 @@
     <ID>MaxLineLength:CommonConditions.kt$Conditions$fun</ID>
     <ID>MaxLineLength:CommonConditions.kt$infix</ID>
     <ID>MaxLineLength:ConfigLoader.kt$ConfigLoader$logger.debug(LogCategory.SYSTEM, "Loading local.properties", mapOf("path" to localPropertiesFile.absolutePath))</ID>
-    <ID>MaxLineLength:ContentSearchService.kt$ContentSearchService$cacheKey(projectPath, query, pathPattern, excludePattern, isRegex, caseSensitive, wholeWord, file.absolutePath)</ID>
     <ID>MaxLineLength:CoreAuthService.kt$CoreAuthService$AuthStateManager.setAuthState(AuthService.AuthState.Error(e.message ?: "Failed to initialize authentication"))</ID>
     <ID>MaxLineLength:CoreAuthService.kt$CoreAuthService$logger.debug(LogCategory.AUTH, "Other session status", mapOf("status" to sessionStatus.toString()))</ID>
     <ID>MaxLineLength:CoreAuthService.kt$CoreAuthService$logger.debug(LogCategory.AUTH, "Session authenticated", mapOf("hasUserId" to userId.isNotEmpty()))</ID>
@@ -549,15 +622,20 @@
     <ID>MaxLineLength:CrossDeviceAuthenticationDialog.kt$backgroundColor = if (pollError != null) BossTheme.colors.alert else BossTheme.colors.line</ID>
     <ID>MaxLineLength:CrossDeviceBrowserManager.kt$CrossDeviceBrowserManager$logger.debug(LogCategory.BROWSER, "Ready to display WebAuthn in embedded browser", mapOf("sessionId" to sessionId))</ID>
     <ID>MaxLineLength:CrossDeviceBrowserManager.kt$CrossDeviceBrowserManager$logger.warn(LogCategory.BROWSER, "Failed to initialize WebAuthn - using system browser fallback", error = e)</ID>
+    <ID>MaxLineLength:DashboardEventBus.kt$DashboardEventBus$private</ID>
     <ID>MaxLineLength:DeepLinkHandler.kt$DeepLinkHandler$logger.info(LogCategory.SYSTEM, "Received deep link (macOS)", mapOf("uri" to LogSanitizer.maskUriParams(uri)))</ID>
+    <ID>MaxLineLength:DeepLinkHandler.kt$DeepLinkHandler$logger.info(LogCategory.SYSTEM, "Received deep link from command line", mapOf("uri" to LogSanitizer.maskUriParams(url)))</ID>
     <ID>MaxLineLength:DeepLinkHandler.kt$DeepLinkHandler$logger.info(LogCategory.SYSTEM, "Received deep link", mapOf("uri" to LogSanitizer.maskUriParams(uri)))</ID>
     <ID>MaxLineLength:DefaultPlugin.kt$ApiActiveTabsProviderAdapter$.</ID>
     <ID>MaxLineLength:DefaultPlugin.kt$ApiActiveTabsProviderAdapter$override</ID>
     <ID>MaxLineLength:DefaultPlugin.kt$DefaultKeyboardShortcutProvider$override fun getShortcutsByCategory(category: String): List&lt;KeyboardShortcutInfo&gt;</ID>
+    <ID>MaxLineLength:DefaultPlugin.kt$DefaultPlugin$(dirsCls2.getMethod("getRootDir").invoke(dirsInst2) as java.io.File).absolutePath</ID>
     <ID>MaxLineLength:DefaultPlugin.kt$DefaultPlugin$// Skip microkernel runtime — it's a classpath dependency for OOP plugins, not a loadable plugin</ID>
     <ID>MaxLineLength:DefaultPlugin.kt$DefaultPlugin$logger.info(LogCategory.SYSTEM, "KernelBootstrap not yet initialized - skipping service registration")</ID>
     <ID>MaxLineLength:DefaultPlugin.kt$DefaultPlugin$logger.info(LogCategory.SYSTEM, "OOP spawner: BOSS_MODE resolved", mapOf("bossMode" to (bossMode ?: "null")))</ID>
     <ID>MaxLineLength:DefaultPlugin.kt$DefaultPlugin$logger.warn(LogCategory.SYSTEM, "OOP spawner: ConfigLoader failed", mapOf("error" to e.toString()))</ID>
+    <ID>MaxLineLength:DefaultPlugin.kt$DefaultPlugin$logger.warn(LogCategory.SYSTEM, "OOP spawner: kernel addr failed", mapOf("error" to e.toString()))</ID>
+    <ID>MaxLineLength:DefaultPlugin.kt$DefaultPlugin$val dirsCls2 = Class.forName("ai.rever.boss.plugin.pathutils.BossDirectories")</ID>
     <ID>MaxLineLength:DefaultPlugin.kt$DefaultPlugin$}</ID>
     <ID>MaxLineLength:DesktopBrowserAccessor.kt$DesktopBrowserIntegration$browserAccessorLogger.warn(LogCategory.BROWSER, "navigate failed", mapOf("error" to (e.message ?: "unknown")))</ID>
     <ID>MaxLineLength:DesktopBrowserAccessor.kt$browserAccessorLogger.warn(LogCategory.BROWSER, "Error finding browser for tab", mapOf("tabId" to tabId), error = e)</ID>
@@ -567,6 +645,7 @@
     <ID>MaxLineLength:DesktopGitService.kt$GitService$logger.warn(LogCategory.SYSTEM, "Could not create FS watcher; HEAD updates won't auto-refresh", error = e)</ID>
     <ID>MaxLineLength:DesktopGitService.kt$GitService$val errorMessage = "Unexpected error during clone: ${e.message ?: e.javaClass.simpleName}. Please check logs for details."</ID>
     <ID>MaxLineLength:DesktopGitTerminalService.kt$GitTerminalService$logger.warn(LogCategory.TERMINAL, "Failed to open in sidebar terminal - panel may not be open", mapOf("windowId" to windowId))</ID>
+    <ID>MaxLineLength:DesktopLLMSettingsManager.kt$LLMSettingsManager$logger.info(LogCategory.SYSTEM, "Created environment variables template", mapOf("path" to envFile.absolutePath))</ID>
     <ID>MaxLineLength:DesktopMainFunctionDetector.kt$DesktopMainFunctionDetector$private fun generateJavaScriptCommand(detected: DetectedMainFunction): String</ID>
     <ID>MaxLineLength:DesktopMainFunctionDetector.kt$DesktopMainFunctionDetector$private fun generatePythonCommand(detected: DetectedMainFunction): String</ID>
     <ID>MaxLineLength:DesktopMainFunctionDetector.kt$DesktopMainFunctionDetector$private fun generateTypeScriptCommand(detected: DetectedMainFunction): String</ID>
@@ -591,6 +670,7 @@
     <ID>MaxLineLength:DesktopWorkspaceFileManager.kt$WorkspaceFileManager$val documentsPath = Paths.get(userHome, "Documents", WorkspaceFileManagerCommon.getDefaultWorkspaceDirectoryName())</ID>
     <ID>MaxLineLength:DisplayUtils.kt$DisplayUtils$logger.debug(LogCategory.UI, "Windows DPI scaling", mapOf("dpi" to screenResolution, "scalingFactor" to scalingFactor))</ID>
     <ID>MaxLineLength:DisplayUtils.kt$DisplayUtils$mapOf("physical" to "${displayMode.width}x${displayMode.height}", "logical" to "${width}x$height")</ID>
+    <ID>MaxLineLength:DownloadDataProviderImpl.kt$DownloadDataProviderImpl$logger.warn(LogCategory.FILE, "Failed to delete file", mapOf("path" to download.destinationPath))</ID>
     <ID>MaxLineLength:DownloadServiceBridge.kt$DownloadServiceBridge$DownloadStatusData.CANCELLED -&gt; DownloadStatusProto.DOWNLOAD_STATUS_CANCELLED</ID>
     <ID>MaxLineLength:DownloadServiceBridge.kt$DownloadServiceBridge$DownloadStatusData.COMPLETED -&gt; DownloadStatusProto.DOWNLOAD_STATUS_COMPLETED</ID>
     <ID>MaxLineLength:DownloadServiceBridge.kt$DownloadServiceBridge$DownloadStatusData.DOWNLOADING -&gt; DownloadStatusProto.DOWNLOAD_STATUS_DOWNLOADING</ID>
@@ -598,7 +678,8 @@
     <ID>MaxLineLength:DownloadSettings.kt$downloadSettingsLogger.debug(LogCategory.BROWSER, "Could not read XDG user-dirs config", mapOf("error" to (e.message ?: "Unknown")))</ID>
     <ID>MaxLineLength:DraggableActionButton.kt$// Only update state if the position actually changed to avoid redundant recompositions/effect triggers</ID>
     <ID>MaxLineLength:EditableKeymapSettings.kt$description = spec.displayName + (spec.description.takeIf { it.isNotBlank() }?.let { " - $it" } ?: "")</ID>
-    <ID>MaxLineLength:EditorAPIAccess.kt$EditorAPIAccess$/** Snapshot of the live buffer for [path], or null when the file has no open buffer (or the plugin predates the method). */</ID>
+    <ID>MaxLineLength:EmailAuthService.kt$EmailAuthService$logger.warn(LogCategory.AUTH, "Magic link sending failed", mapOf("exceptionType" to e.javaClass.simpleName), error = e)</ID>
+    <ID>MaxLineLength:EmptyContentScreen.kt$Text("Welcome to BOSS", color = BossTheme.colors.textPrimary, fontSize = 28.sp, fontWeight = FontWeight.Bold)</ID>
     <ID>MaxLineLength:EvolverContractTest.kt$EvolverContractTest$private</ID>
     <ID>MaxLineLength:FallbackUpdateSource.kt$FallbackUpdateSource$logger.warn(LogCategory.NETWORK, "${primary.name} failed for $tag; falling back to ${backup.name}", error = e)</ID>
     <ID>MaxLineLength:FileEventBus.kt$FileEventBus$ipcBridge?.forward("FileOpenEvent", FileOpenEvent(cleanPath, fileName, line, column, sourceWindowId), sourceWindowId)</ID>
@@ -634,11 +715,21 @@
     <ID>MaxLineLength:FluckEngine.kt$FluckEngine$logger.debug(LogCategory.BROWSER, "Widevine activation failed", mapOf("error" to (error.message ?: "unknown")))</ID>
     <ID>MaxLineLength:FluckEngine.kt$FluckEngine$private</ID>
     <ID>MaxLineLength:FluckEngine.kt$FluckEngine$return</ID>
+    <ID>MaxLineLength:FluckEngine.kt$FluckEngine$val plainText = clipboard.getData(java.awt.datatransfer.DataFlavor.stringFlavor) as? String</ID>
     <ID>MaxLineLength:FluckEngine.kt$FluckEngine.&lt;no name provided&gt;$logger.debug(LogCategory.BROWSER, "Granting permission", mapOf("type" to permissionType.name))</ID>
+    <ID>MaxLineLength:FluckEngine.kt$FluckEngine.BrowserFindBar$logger.debug(LogCategory.BROWSER, "Error clearing find highlights", mapOf("error" to (e.message ?: "unknown")))</ID>
+    <ID>MaxLineLength:FluckEngine.kt$FluckEngine.BrowserFindBar$val caseBtn = makeBtn("&lt;html&gt;&lt;span style='font-size:12px;color:${cssHex(mutedFg)};'&gt;Aa&lt;/span&gt;&lt;/html&gt;", "Case sensitive")</ID>
+    <ID>MaxLineLength:FluckEngine.kt$FluckEngine.BrowserFindBar$val closeBtn = makeBtn("&lt;html&gt;&lt;span style='font-size:12px;color:${cssHex(fg)};'&gt;\u2715&lt;/span&gt;&lt;/html&gt;", "Close (Esc)")</ID>
+    <ID>MaxLineLength:FluckEngine.kt$FluckEngine.BrowserFindBar$val nextBtn = makeBtn("&lt;html&gt;&lt;span style='font-size:10px;color:${cssHex(fg)};'&gt;\u25BC&lt;/span&gt;&lt;/html&gt;", "Next (Enter)")</ID>
+    <ID>MaxLineLength:FluckEngine.kt$FluckEngine.BrowserFindBar$val prevBtn = makeBtn("&lt;html&gt;&lt;span style='font-size:10px;color:${cssHex(fg)};'&gt;\u25B2&lt;/span&gt;&lt;/html&gt;", "Previous (Shift+Enter)")</ID>
     <ID>MaxLineLength:FocusModeSettingsManager.kt$FocusModeSettingsManager$logger.debug(LogCategory.SYSTEM, "Created default settings file", mapOf("path" to settingsFile.absolutePath))</ID>
     <ID>MaxLineLength:FontManager.kt$FontManager$logger.debug(LogCategory.SYSTEM, "Font not found, using bundled JetBrains Mono", mapOf("fontName" to fontName))</ID>
     <ID>MaxLineLength:FontManager.kt$FontManager$logger.warn(LogCategory.SYSTEM, "Font resource not found for Compose", mapOf("resourcePath" to resourcePath))</ID>
     <ID>MaxLineLength:FormFieldDetector.kt$FormFieldDetector$"JSON.stringify(window.__BOSS_GET_FOCUSED_FIELD ? window.__BOSS_GET_FOCUSED_FIELD() : null)"</ID>
+    <ID>MaxLineLength:GitDataProviderImpl.kt$GitDataProviderImpl$override suspend fun checkout(ref: String): GitOperationResultData</ID>
+    <ID>MaxLineLength:GitDataProviderImpl.kt$GitDataProviderImpl$override suspend fun cherryPick(commitHash: String): GitOperationResultData</ID>
+    <ID>MaxLineLength:GitDataProviderImpl.kt$GitDataProviderImpl$override suspend fun stage(filePath: String): GitOperationResultData</ID>
+    <ID>MaxLineLength:GitDataProviderImpl.kt$GitDataProviderImpl$override suspend fun unstage(filePath: String): GitOperationResultData</ID>
     <ID>MaxLineLength:GitHubConfig.kt$GitHubConfig$logger.warn(LogCategory.NETWORK, "GitHub CLI token retrieval timed out", mapOf("timeoutSeconds" to GH_TIMEOUT_SECONDS))</ID>
     <ID>MaxLineLength:GitServiceBridge.kt$GitServiceBridge$override suspend fun checkout(request: GitRefRequest): GitOperationResultProto</ID>
     <ID>MaxLineLength:GitServiceBridge.kt$GitServiceBridge$override suspend fun cherryPick(request: GitHashRequest): GitOperationResultProto</ID>
@@ -648,7 +739,6 @@
     <ID>MaxLineLength:GlobalSearchDialog.kt$enter = fadeIn(tween(200, delayMillis = 100)) + slideInVertically(tween(200, delayMillis = 100)) { it / 2 }</ID>
     <ID>MaxLineLength:GlobalSearchDialog.kt$enter = fadeIn(tween(200, delayMillis = 50)) + slideInVertically(tween(200, delayMillis = 50)) { -it / 2 }</ID>
     <ID>MaxLineLength:GlobalSearchDialog.kt$val textColor = if (isHighlighted) BossThemeController.current.colors.textPrimary else BossThemeController.current.colors.textSecondary</ID>
-    <ID>MaxLineLength:InstalledPluginVersionDesktop.kt$internal actual fun installedPluginVersionOf(pluginId: String): String?</ID>
     <ID>MaxLineLength:IpcCompatibility.kt$IpcCompatibility$fun</ID>
     <ID>MaxLineLength:KeyBinding.kt$KeyBinding$fun</ID>
     <ID>MaxLineLength:KeyboardEventBus.kt$KeyboardEventBus$logger.warn(LogCategory.UI, "Error in keyboard handler", mapOf("handler" to handlerInfo.handlerName), error = e)</ID>
@@ -665,12 +755,25 @@
     <ID>MaxLineLength:KeymapValidatorTest.kt$KeymapValidatorTest$KeyBinding(actionId = "action2", key = "T", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true)</ID>
     <ID>MaxLineLength:KeymapValidatorTest.kt$KeymapValidatorTest$KeyBinding(actionId = "action3", key = "T", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true)</ID>
     <ID>MaxLineLength:KeymapValidatorTest.kt$KeymapValidatorTest$KeyBinding(actionId = "action4", key = "T", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true)</ID>
+    <ID>MaxLineLength:LLMModelFetcher.kt$LLMModelFetcher$capabilities = listOf("text", "vision", "function-calling", "code-execution", "web-search", "extended-thinking")</ID>
+    <ID>MaxLineLength:LLMProvidersSettings.kt$availableModels[provider.name] ?: LLMModelFetcher.getModelsForProvider(provider)</ID>
+    <ID>MaxLineLength:LLMProvidersSettings.kt$text = "Context: ${it.toString().reversed().chunked(3).reversed().joinToString(",")} tokens"</ID>
+    <ID>MaxLineLength:LLMProvidersSettings.kt$val providerModels = availableModels[selectedProvider.name] ?: LLMModelFetcher.getModelsForProvider(selectedProvider)</ID>
+    <ID>MaxLineLength:LLMProvidersSettings.kt$visualTransformation = if (showApiKey) VisualTransformation.None else PasswordVisualTransformation()</ID>
+    <ID>MaxLineLength:LLMSettings.kt$LLMModel$LLAMA_3_2_11B_VISION : LLMModel</ID>
+    <ID>MaxLineLength:LLMSettings.kt$LLMModel$LLAMA_3_2_90B_VISION : LLMModel</ID>
     <ID>MaxLineLength:LinuxDefaultBrowserHandler.kt$LinuxDefaultBrowserHandler$logger.debug(LogCategory.BROWSER, "Linux default browser check", mapOf("defaultBrowser" to (defaultBrowser ?: "none")))</ID>
     <ID>MaxLineLength:LogServiceBridge.kt$LogServiceBridge$ai.rever.boss.plugin.api.LogSourceData.STDERR -&gt; LogSourceProto.LOG_SOURCE_STDERR</ID>
     <ID>MaxLineLength:LogServiceBridge.kt$LogServiceBridge$ai.rever.boss.plugin.api.LogSourceData.STDOUT -&gt; LogSourceProto.LOG_SOURCE_STDOUT</ID>
+    <ID>MaxLineLength:LspSettings.kt$PluginSettingsUnavailableNotice("Language-server settings are provided by the Code Editor plugin, which isn't loaded yet.")</ID>
     <ID>MaxLineLength:MacOSCamera.kt$MacOSCamera$macOSCameraLogger.info(LogCategory.SYSTEM, "macOS camera permission is handled by system dialog when accessed")</ID>
     <ID>MaxLineLength:MacOSDefaultBrowserHandler.kt$MacOSDefaultBrowserHandler$logger.warn(LogCategory.BROWSER, "Could not set default programmatically, opening System Preferences")</ID>
     <ID>MaxLineLength:MacOSDefaultBrowserHandler.kt$MacOSDefaultBrowserHandler$logger.warn(LogCategory.BROWSER, "Swift process timed out setting default handler", mapOf("scheme" to scheme))</ID>
+    <ID>MaxLineLength:MacOSScreenCapture.kt$CoreGraphics.Companion$macOSScreenCaptureLogger.debug(LogCategory.SYSTEM, "CoreGraphics not available", mapOf("error" to (e.message ?: "unknown")))</ID>
+    <ID>MaxLineLength:MacOSScreenCapture.kt$MacOSScreenCapture$macOSScreenCaptureLogger.debug(LogCategory.SYSTEM, "Screen capture permission request", mapOf("result" to result))</ID>
+    <ID>MaxLineLength:MagicLinkWaitingScreen.kt$if</ID>
+    <ID>MaxLineLength:MagicLinkWaitingScreen.kt$text = if (showManualInput) "Hide Manual Input" else "Having trouble? Paste magic link manually"</ID>
+    <ID>MaxLineLength:MagicLinkWaitingScreen.kt$tint = if (resendCooldown == 0) BossTheme.colors.textPrimary else BossTheme.colors.textSecondary</ID>
     <ID>MaxLineLength:MenuActionsHandler.kt$MenuActionsHandler$private val _checkPluginUpdatesEvents = MutableSharedFlow&lt;Pair&lt;String, ai.rever.boss.plugin.api.PanelId&gt;&gt;(extraBufferCapacity = 10)</ID>
     <ID>MaxLineLength:MenuActionsHandler.kt$MenuActionsHandler$private val _reloadPluginEvents = MutableSharedFlow&lt;Pair&lt;String, ai.rever.boss.plugin.api.PanelId&gt;&gt;(extraBufferCapacity = 10)</ID>
     <ID>MaxLineLength:MenuActionsHandler.kt$MenuActionsHandler$val checkPluginUpdatesEvents: SharedFlow&lt;Pair&lt;String, ai.rever.boss.plugin.api.PanelId&gt;&gt; = _checkPluginUpdatesEvents.asSharedFlow()</ID>
@@ -679,16 +782,26 @@
     <ID>MaxLineLength:NewTabDialog.kt$(selectedType == TabType.TERMINAL || selectedType == TabType.JUPYTER || inputText.isNotBlank())</ID>
     <ID>MaxLineLength:NewTabDialog.kt$// Always consume arrow keys to prevent cursor movement in text field</ID>
     <ID>MaxLineLength:NewTabDialog.kt$child.copy(hasChildren = hasKids)</ID>
+    <ID>MaxLineLength:NewTabDialog.kt$children = loadedChildren</ID>
     <ID>MaxLineLength:NewTabDialog.kt$directoryHasChildren(child.path)</ID>
     <ID>MaxLineLength:NewTabDialog.kt$handleCreateTab(TabType.URL, suggestion.url, onCreateTab, onDismiss)</ID>
+    <ID>MaxLineLength:NewTabDialog.kt$handleCreateTab(selectedType, inputText, onCreateTab, onDismiss)</ID>
+    <ID>MaxLineLength:NewTabDialog.kt$handleCreateTab(selectedType, suggestion.url, onCreateTab, onDismiss)</ID>
+    <ID>MaxLineLength:NewTabDialog.kt$handleCreateTab(selectedType, terminalCommand, onCreateTab, onDismiss)</ID>
     <ID>MaxLineLength:NewTabDialog.kt$hasChildren = loadedChildren.isNotEmpty()</ID>
     <ID>MaxLineLength:NewTabDialog.kt$if</ID>
+    <ID>MaxLineLength:NewTabDialog.kt$label = { Text("Notebook name (optional)", color = BossTheme.colors.textSecondary) }</ID>
     <ID>MaxLineLength:NewTabDialog.kt$logDirProbeFailure(child.path, e)</ID>
     <ID>MaxLineLength:NewTabDialog.kt$newTabDialogLogger.warn(LogCategory.FILE, "Error scanning directory", error = e)</ID>
     <ID>MaxLineLength:NewTabDialog.kt$newTabDialogLogger.warn(LogCategory.FILE, "File path validation failed", mapOf("path" to input.trim()))</ID>
+    <ID>MaxLineLength:NewTabDialog.kt$onDone = { handleCreateTab(selectedType, inputText, onCreateTab, onDismiss) }</ID>
+    <ID>MaxLineLength:NewTabDialog.kt$scannedNode.children</ID>
     <ID>MaxLineLength:NewTabDialog.kt$selectedSuggestionIndex = (selectedSuggestionIndex - 1).coerceAtLeast(-1)</ID>
+    <ID>MaxLineLength:NewTabDialog.kt$text = "No tab types available. Enable a tab plugin or install one from the Plugin Store."</ID>
+    <ID>MaxLineLength:NewTabDialog.kt$typeInfo.createTabInfo(pluginInput.trim(), NewTabContext(projectPath = projectPath, windowId = windowId))</ID>
     <ID>MaxLineLength:NewTabDialog.kt$urlSuggestions = urlSuggestions.filterNot { it.url == suggestion.url }</ID>
     <ID>MaxLineLength:NewTabDialog.kt$val targetNode = FileTreeUtils.findNodeByPath(currentTree, path)</ID>
+    <ID>MaxLineLength:NewTabDialog.kt$}</ID>
     <ID>MaxLineLength:NotificationProviderFactory.kt$actual</ID>
     <ID>MaxLineLength:PanelComponentStore.kt$PanelComponentStore$logger.warn(LogCategory.UI, "onBeforeReset failed during panel reset (continuing)", mapOf("panelId" to panelId.panelId), t)</ID>
     <ID>MaxLineLength:PasskeyAuthService.kt$PasskeyAuthService$logger.info(LogCategory.PASSKEY, "Starting passkey registration", mapOf("userId" to LogSanitizer.maskUserId(currentUser.id)))</ID>
@@ -739,6 +852,9 @@
     <ID>MaxLineLength:ScreenCaptureNotifier.kt$ScreenCaptureNotifier$logger.error(LogCategory.BROWSER, "Invalid window index", mapOf("index" to source.index, "size" to windows.size))</ID>
     <ID>MaxLineLength:ScreenCapturePickerDialog.kt$Icon(imageVector = fallbackIcon, contentDescription = null, tint = fallbackTint, modifier = Modifier.size(24.dp))</ID>
     <ID>MaxLineLength:ScreenCapturePickerDialog.kt$Row</ID>
+    <ID>MaxLineLength:ScreenCapturePickerDialog.kt$SourceList(sources = browsers, selectedSource = selectedSource, onSourceSelected = { selectedSource = it })</ID>
+    <ID>MaxLineLength:ScreenCapturePickerDialog.kt$SourceList(sources = screens, selectedSource = selectedSource, onSourceSelected = { selectedSource = it })</ID>
+    <ID>MaxLineLength:ScreenCapturePickerDialog.kt$SourceList(sources = windows, selectedSource = selectedSource, onSourceSelected = { selectedSource = it })</ID>
     <ID>MaxLineLength:ScreenCapturePickerDialog.kt$TabItem(title = "Tab", count = tabCount, isSelected = selectedTab == ShareTab.TAB, onClick = { onTabSelected(ShareTab.TAB) })</ID>
     <ID>MaxLineLength:ScreenCapturePickerDialog.kt$Text(text = message, fontSize = 14.sp, color = BossTheme.colors.textSecondary, textAlign = TextAlign.Center, lineHeight = 20.sp)</ID>
     <ID>MaxLineLength:ScreenCapturePickerDialog.kt$Text(text = subtitle, fontSize = 13.sp, color = BossTheme.colors.textSecondary, modifier = Modifier.padding(top = 2.dp))</ID>
@@ -771,6 +887,8 @@
     <ID>MaxLineLength:ShortcutTestRunner.kt$ShortcutTestRunner$logger.warn(LogCategory.UI, "Failed (no handler)", mapOf("description" to binding.description, "actionId" to binding.actionId))</ID>
     <ID>MaxLineLength:SidePanel.kt$onDragStart = { offset -&gt; startDragging(draggedItem, sourceSlot, headerWindowPos + offset) }</ID>
     <ID>MaxLineLength:SidebarSettings.kt$SidebarVisibilitySettings.FIXED_ICON_LIMIT_RANGE.first..SidebarVisibilitySettings.FIXED_ICON_LIMIT_RANGE.last</ID>
+    <ID>MaxLineLength:SingleInstanceManager.kt$SingleInstanceManager$"Unable to bind IPC server: All ports $IPC_PORT_BASE-${IPC_PORT_BASE + IPC_PORT_RANGE - 1} are in use. "</ID>
+    <ID>MaxLineLength:SingleInstanceManager.kt$SingleInstanceManager$logger.warn(LogCategory.SYSTEM, "Unexpected response from existing instance", mapOf("response" to (response ?: "null")))</ID>
     <ID>MaxLineLength:SplitView.kt$SplitViewState$collectAllTabsFromNode(state.rootNode, workspaceId, getWorkspaceName(workspaceId), windowId, result, seenTabIds)</ID>
     <ID>MaxLineLength:SplitView.kt$SplitViewState$fun</ID>
     <ID>MaxLineLength:SplitView.kt$SplitViewState$splitViewLogger.debug(LogCategory.UI, "Terminal tab created", if (command != null) mapOf("command" to command) else emptyMap())</ID>
@@ -797,7 +915,6 @@
     <ID>MaxLineLength:TrackingPluginContext.kt$PluginRegistrationTracker$fun</ID>
     <ID>MaxLineLength:TrackingPluginContext.kt$TrackingPluginContext$override val runConfigurationDataProvider: RunConfigurationDataProvider? get() = delegate.runConfigurationDataProvider</ID>
     <ID>MaxLineLength:URLHandlerService.kt$URLHandlerService$logger.debug(LogCategory.BROWSER, "Emitted URL open event", mapOf("url" to url, "windowId" to focusedWindowId))</ID>
-    <ID>MaxLineLength:UnifiedDiffParser.kt$UnifiedDiffParser$if</ID>
     <ID>MaxLineLength:UpdateDialogOwnership.desktop.kt$actual</ID>
     <ID>MaxLineLength:UpdateInstaller.kt$UpdateInstaller$"Downloaded file type '$fileName' is not valid for this platform. Expected: ${validExtensions.joinToString()}"</ID>
     <ID>MaxLineLength:UpdateInstaller.kt$UpdateInstaller$logger.debug(LogCategory.SYSTEM, "Found app bundle via directory traversal", mapOf("path" to currentFile.absolutePath))</ID>
@@ -807,6 +924,7 @@
     <ID>MaxLineLength:UserExistenceService.kt$UserExistenceService$logger.debug(LogCategory.AUTH, "Server passkeys check result", mapOf("hasPasskeys" to hasServerPasskeys))</ID>
     <ID>MaxLineLength:UserService.kt$UserService$logger.debug(LogCategory.AUTH, "Fetched users", mapOf("count" to actualUsers.size, "offset" to offset, "hasMore" to hasMore))</ID>
     <ID>MaxLineLength:UserService.kt$UserService$logger.error(LogCategory.AUTH, "Failed to fetch user", mapOf("userId" to userId, "error" to (e.message ?: "unknown")))</ID>
+    <ID>MaxLineLength:VersionSelectionDialog.kt$text = "Released: ${formatReleaseDate(versionInfo.releaseDate)} • ${formatFileSize(versionInfo.downloadSize)}"</ID>
     <ID>MaxLineLength:VersionVerifier.kt$VersionVerifier$logger.debug(LogCategory.SYSTEM, "Version verification passed", mapOf("version" to runtimeVersion.toString()))</ID>
     <ID>MaxLineLength:WebsiteMatchingUtil.kt$WebsiteMatchingUtil$val commonSubdomains = listOf("login", "accounts", "auth", "signin", "signup", "sso", "id", "portal", "app", "my")</ID>
     <ID>MaxLineLength:WindowAppearanceSettingsManager.kt$WindowAppearanceSettingsManager$logger.debug(LogCategory.SYSTEM, "Created default settings", mapOf("path" to settingsFile.absolutePath))</ID>
@@ -826,14 +944,19 @@
     <ID>MaxLineLength:WindowsDefaultBrowserHandler.kt$WindowsDefaultBrowserHandler$"""reg add "$REGISTERED_APPS" /v BOSS /d "SOFTWARE\\Clients\\StartMenuInternet\\BOSS\\Capabilities" /f"""</ID>
     <ID>MaxLineLength:WindowsDefaultBrowserHandler.kt$WindowsDefaultBrowserHandler$"""reg add "$START_MENU_KEY\Capabilities" /v ApplicationDescription /d "Business Operating System + Simulation - Intelligent service automation platform" /f"""</ID>
     <ID>MaxLineLength:WindowsDefaultBrowserHandler.kt$WindowsDefaultBrowserHandler$logger.error(LogCategory.BROWSER, "Critical registry key failed with exception, aborting registration")</ID>
+    <ID>MaxLineLength:WindowsProtocolHandler.kt$WindowsProtocolHandler$"""reg add "HKEY_CURRENT_USER\Software\Classes\boss\shell\open\command" /ve /d "\"$appPath\" \"%1\"" /f"""</ID>
     <ID>MaxLineLength:WindowsProtocolHandler.kt$WindowsProtocolHandler$logger.debug(LogCategory.SYSTEM, "Running in development mode - deep links require MSI installation")</ID>
+    <ID>MaxLineLength:WindowsProtocolHandler.kt$WindowsProtocolHandler$logger.warn(LogCategory.SYSTEM, "jpackage.app-path set but file doesn't exist", mapOf("path" to jpackagePath))</ID>
     <ID>MaxLineLength:WizardComponents.kt$color = if (isSelected || isHovered) BossTheme.colors.textPrimary else BossTheme.colors.textSecondary</ID>
     <ID>MaxLineLength:WorkspaceApplier.kt$createTabFromWorkspaceConfig(tabConfig, projectPath, splitViewState)?.let { tabsComponent?.addTab(it) }</ID>
     <ID>MaxLineLength:WorkspaceApplier.kt$val firstBottomTabInfo = getFirstTab(node.bottom)?.let { createTabFromWorkspaceConfig(it, projectPath, splitViewState) }</ID>
     <ID>MaxLineLength:WorkspaceApplier.kt$val firstRightTabInfo = getFirstTab(node.right)?.let { createTabFromWorkspaceConfig(it, projectPath, splitViewState) }</ID>
+    <ID>MaxLineLength:main.kt$logger.debug(LogCategory.SYSTEM, "API key availability", apiKeyStatus.mapValues { if (it.value) "set" else "not set" })</ID>
     <ID>NestedBlockDepth:BossDraggableComponent.kt$BossDraggableComponent$fun stopDragging()</ID>
     <ID>NestedBlockDepth:BossDraggableComponent.kt$BossDraggableComponent$private fun updateHoverTarget()</ID>
+    <ID>NestedBlockDepth:BrowserServiceImpl.kt$BrowserServiceImpl$override suspend fun disposeBrowser(handle: BrowserHandle)</ID>
     <ID>NestedBlockDepth:BrowserServiceImpl.kt$BrowserServiceImpl$private suspend fun attemptCreateBrowser( config: BrowserConfig, ownerWindowId: String, ): CreationOutcome</ID>
+    <ID>NestedBlockDepth:CLICommandHandler.kt$CLICommandHandler$private suspend fun executeCommand(command: CLICommand)</ID>
     <ID>NestedBlockDepth:CLIInstaller.kt$CLIInstaller$private fun installHomebrewStyle(): CLIInstallResult</ID>
     <ID>NestedBlockDepth:ChromiumAutoDownloader.kt$ChromiumAutoDownloader$internal suspend fun installFromCandidates( candidates: List&lt;EngineDownloadCandidate&gt;, version: String, targetDir: Path, staged: Boolean, onProgress: (DownloadProgress) -&gt; Unit, fetch: (String, Path) -&gt; Unit = { url, dest -&gt; downloadWithProgress(url, dest, onProgress) }, extract: (Path, Path) -&gt; Unit = { zip, dest -&gt; extractZip(zip, dest) }, ): Result&lt;Path&gt;</ID>
     <ID>NestedBlockDepth:ChromiumAutoDownloader.kt$ChromiumAutoDownloader$private fun downloadWithProgress( urlString: String, targetPath: Path, onProgress: (DownloadProgress) -&gt; Unit, )</ID>
@@ -844,6 +967,7 @@
     <ID>NestedBlockDepth:DesktopBrowserAccessor.kt$private fun findBrowserForTab( splitViewState: ai.rever.boss.components.window_panel.SplitViewState, tabId: String, ): LockedBrowser?</ID>
     <ID>NestedBlockDepth:DesktopMainFunctionDetector.kt$DesktopMainFunctionDetector$private fun findProjectRootInternal(startDir: File?): File?</ID>
     <ID>NestedBlockDepth:DesktopMainFunctionDetector.kt$DesktopMainFunctionDetector$private fun scanDirectory( directory: File, projectPath: String, configurations: MutableList&lt;RunConfiguration&gt;, )</ID>
+    <ID>NestedBlockDepth:DesktopProjectCreationService.kt$ProjectCreationService$actual fun validateProjectLocation( parentDirectory: String, projectName: String, ): ValidationResult</ID>
     <ID>NestedBlockDepth:DesktopUpdateService.kt$UpdateService$private suspend fun downloadFrom( url: String, assetName: String, assetSize: Long, sha256: String?, onProgress: (progress: Float) -&gt; Unit, ): String?</ID>
     <ID>NestedBlockDepth:DesktopUrlOpener.kt$actual fun openUrlInBrowser(url: String)</ID>
     <ID>NestedBlockDepth:DownloadDataProviderImpl.kt$DownloadDataProviderImpl$override suspend fun removeDownload(id: String): Result&lt;Unit&gt;</ID>
@@ -866,15 +990,16 @@
     <ID>NestedBlockDepth:RoleService.kt$RoleService$suspend fun canPerformAction( userId: String, permissionName: String, ): Result&lt;Boolean&gt;</ID>
     <ID>NestedBlockDepth:SplitView.kt$SplitViewState$fun collectAllActiveFluckTabs(windowId: String = "unknown"): List&lt;ActiveTab&gt;</ID>
     <ID>NestedBlockDepth:SplitView.kt$SplitViewState$fun collectAllActiveTabs( workspaceManager: ai.rever.boss.components.workspaces.WorkspaceManager? = null, windowId: String = "unknown", ): List&lt;ActiveTab&gt;</ID>
-    <ID>NestedBlockDepth:SplitView.kt$SplitViewState$fun splitPanel( panelId: String, orientation: SplitOrientation, tabToMove: TabInfo? = null, detachedTab: BossTabsComponent.DetachedTab? = null, /** * Put the new pane in the left or top half, moving the original over. * * Defaults to false, which is what every caller did before the split map could ask for * a direction: the original keeps its side and the new pane goes second. */ placeBefore: Boolean = false, ): String</ID>
+    <ID>NestedBlockDepth:UrlHistoryManager.kt$UrlHistoryManager$private fun loadHistory()</ID>
     <ID>NestedBlockDepth:UserExistenceService.kt$UserExistenceService$suspend fun checkUserExists(email: String): Result&lt;UserExistence&gt;</ID>
     <ID>NestedBlockDepth:WorkspaceApplier.kt$private suspend fun applyWorkspaceNode( node: SplitConfig, splitViewState: SplitViewState, currentPanelId: String, projectPath: String, )</ID>
     <ID>NestedBlockDepth:main.kt$fun main(args: Array&lt;String&gt;)</ID>
     <ID>NestedBlockDepth:main.kt$private fun extractPty4jNatives(targetDir: File)</ID>
-    <ID>PackageNaming:BarMenuItems.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PackageNaming:BarMenuItemsTest.kt$package ai.rever.boss.components.window_panel</ID>
-    <ID>PackageNaming:BarResizeTest.kt$package ai.rever.boss.components.window_panel</ID>
+    <ID>PackageNaming:TabMenuVisibilityReportTest.kt$package ai.rever.boss.components.window_panel</ID>
     <ID>PackageNaming:BookmarksDialogProviderImpl.kt$package ai.rever.boss.components.plugin.panels.left_top</ID>
+    <ID>PackageNaming:BarMenuItems.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
+    <ID>PackageNaming:VerticalTabBarResizeHandle.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PackageNaming:BossMainWindowPanel.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PackageNaming:BossPanelTopBar.kt$package ai.rever.boss.components.window_panel.components</ID>
     <ID>PackageNaming:BossPanelTopBarLayoutTest.kt$package ai.rever.boss.components.window_panel.components</ID>
@@ -894,31 +1019,31 @@
     <ID>PackageNaming:DesktopFileScannerTest.kt$package ai.rever.boss.components.plugin.panels.left_top</ID>
     <ID>PackageNaming:DesktopFluckTabComponent.kt$package ai.rever.boss.components.plugin.tab_types.fluck</ID>
     <ID>PackageNaming:DesktopFluckView.kt$package ai.rever.boss.components.plugin.tab_types.fluck</ID>
-    <ID>PackageNaming:DiffTabMatch.kt$package ai.rever.boss.components.window_panel</ID>
-    <ID>PackageNaming:DiffTabMatchTest.kt$package ai.rever.boss.components.window_panel</ID>
+    <ID>PackageNaming:DesktopLLMSettingsManager.kt$package ai.rever.boss.components.plugin.panels.right_top</ID>
     <ID>PackageNaming:DownloadDataProviderFactory.kt$package ai.rever.boss.components.plugin.panels.left_top</ID>
     <ID>PackageNaming:DownloadDataProviderImpl.kt$package ai.rever.boss.components.plugin.panels.left_top</ID>
     <ID>PackageNaming:DownloadDataProviderImplTest.kt$package ai.rever.boss.components.plugin.panels.left_top</ID>
     <ID>PackageNaming:DownloadManager.kt$package ai.rever.boss.components.plugin.tab_types.fluck</ID>
     <ID>PackageNaming:DownloadSettings.kt$package ai.rever.boss.components.plugin.tab_types.fluck</ID>
     <ID>PackageNaming:DownloadState.kt$package ai.rever.boss.components.plugin.tab_types.fluck</ID>
+    <ID>PackageNaming:EmptyContentScreen.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PackageNaming:FileIndexCache.kt$package ai.rever.boss.components.plugin.panels.left_top</ID>
     <ID>PackageNaming:Fluck.kt$package ai.rever.boss.components.plugin.tab_types.fluck</ID>
     <ID>PackageNaming:FluckView.kt$package ai.rever.boss.components.plugin.tab_types.fluck</ID>
     <ID>PackageNaming:JsDialogNotifier.kt$package ai.rever.boss.components.plugin.tab_types.fluck</ID>
+    <ID>PackageNaming:LLMModelFetcher.kt$package ai.rever.boss.components.plugin.panels.right_top</ID>
+    <ID>PackageNaming:LLMSettings.kt$package ai.rever.boss.components.plugin.panels.right_top</ID>
     <ID>PackageNaming:PaneGlyph.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PackageNaming:PaneGlyphTest.kt$package ai.rever.boss.components.window_panel</ID>
     <ID>PackageNaming:PaneTabStrip.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PackageNaming:PaneTabStripVisibilityTest.kt$package ai.rever.boss.components.window_panel</ID>
+    <ID>PackageNaming:BarResizeTest.kt$package ai.rever.boss.components.window_panel</ID>
     <ID>PackageNaming:PaneZoomTest.kt$package ai.rever.boss.components.window_panel</ID>
     <ID>PackageNaming:PanelHostTab.kt$package ai.rever.boss.components.plugin.tab_types</ID>
     <ID>PackageNaming:PromoteSidebarToTab.kt$package ai.rever.boss.components.window_panel</ID>
     <ID>PackageNaming:SecretChangeNotifier.kt$package ai.rever.boss.components.plugin.tab_types.fluck</ID>
     <ID>PackageNaming:SidePanel.kt$package ai.rever.boss.components.window_panel.components.side_panel</ID>
     <ID>PackageNaming:SkipListDriftTest.kt$package ai.rever.boss.components.plugin.panels.left_top</ID>
-    <ID>PackageNaming:SplitCreatorMap.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
-    <ID>PackageNaming:SplitCreatorMapTest.kt$package ai.rever.boss.components.window_panel</ID>
-    <ID>PackageNaming:SplitDirectionTest.kt$package ai.rever.boss.components.window_panel</ID>
     <ID>PackageNaming:SplitMap.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PackageNaming:SplitView.kt$package ai.rever.boss.components.window_panel</ID>
     <ID>PackageNaming:SplitViewStateRegistry.kt$package ai.rever.boss.components.window_panel</ID>
@@ -934,16 +1059,12 @@
     <ID>PackageNaming:TabGroupExpansion.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PackageNaming:TabGroupExpansionTest.kt$package ai.rever.boss.components.window_panel</ID>
     <ID>PackageNaming:TabMenuState.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
-    <ID>PackageNaming:TabMenuVisibilityReportTest.kt$package ai.rever.boss.components.window_panel</ID>
-    <ID>PackageNaming:TabPaths.kt$package ai.rever.boss.components.window_panel</ID>
-    <ID>PackageNaming:TabPathsTest.kt$package ai.rever.boss.components.window_panel</ID>
     <ID>PackageNaming:TabPinning.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PackageNaming:TabPinningTest.kt$package ai.rever.boss.components.window_panel</ID>
     <ID>PackageNaming:TabsNavigation.kt$package ai.rever.boss.components.tabs_navigation</ID>
     <ID>PackageNaming:TopOfMindProvider.kt$package ai.rever.boss.components.plugin.panels.left_bottom.TopOfMind</ID>
     <ID>PackageNaming:VerticalTabBarDrawer.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PackageNaming:VerticalTabBarLayoutTest.kt$package ai.rever.boss.components.window_panel</ID>
-    <ID>PackageNaming:VerticalTabBarResizeHandle.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PackageNaming:WindowTabBarGroupLayout.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PackageNaming:WindowTabBarGroupsTest.kt$package ai.rever.boss.components.window_panel</ID>
     <ID>PackageNaming:WindowVerticalTabBar.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
@@ -974,11 +1095,6 @@
     <ID>ReturnCount:ChromiumAutoDownloader.kt$ChromiumAutoDownloader$fun isChromiumInstalled(): Boolean</ID>
     <ID>ReturnCount:ChromiumAutoDownloader.kt$ChromiumAutoDownloader$internal fun promotePendingInstall( pending: File, target: File, backup: File, )</ID>
     <ID>ReturnCount:ChromiumReleaseSource.kt$ChromiumReleaseResolver.Companion$private fun comparePreRelease( a: List&lt;String&gt;, b: List&lt;String&gt;, ): Int</ID>
-    <ID>ReturnCount:ContentSearchService.kt$ContentSearchService$internal fun resolveFile( rawPath: String, projectPath: String, ): File?</ID>
-    <ID>ReturnCount:ContentSearchService.kt$ContentSearchService$override suspend fun replaceInProject( query: String, replacement: String, files: List&lt;String&gt;, isRegex: Boolean, caseSensitive: Boolean, wholeWord: Boolean, dryRun: Boolean, ): ReplaceSummary</ID>
-    <ID>ReturnCount:ContentSearchService.kt$ContentSearchService$override suspend fun searchInProject( query: String, pathPattern: String?, excludePattern: String?, isRegex: Boolean, caseSensitive: Boolean, wholeWord: Boolean, maxResults: Int, ): List&lt;FileMatch&gt;</ID>
-    <ID>ReturnCount:ContentSearchService.kt$ContentSearchService$private suspend fun replaceInBuffer( file: File, text: String, version: Long, regex: Regex, replacement: String, isRegex: Boolean, dryRun: Boolean, isCancelled: () -&gt; Boolean, ): FileReplaceResult</ID>
-    <ID>ReturnCount:ContentSearchService.kt$ContentSearchService$private suspend fun replaceInOneFile( file: File, projectRoot: String, regex: Regex, replacement: String, isRegex: Boolean, dryRun: Boolean, isCancelled: () -&gt; Boolean, ): FileReplaceResult</ID>
     <ID>ReturnCount:CrashHandler.kt$CrashHandler$internal fun attributePluginId(throwable: Throwable): String?</ID>
     <ID>ReturnCount:CrossDeviceAuthService.kt$CrossDeviceAuthService$suspend fun handleCrossDeviceAuthentication( exception: CrossDeviceAuthenticationRequired, onAuthenticationComplete: suspend (PasskeyAuthenticationResult) -&gt; Result&lt;Unit&gt;, ): Result&lt;Unit&gt;</ID>
     <ID>ReturnCount:CrossDeviceAuthService.kt$CrossDeviceAuthService$suspend fun pollForAuthenticationCompletion( challenge: String, sessionId: String? = null, ): Result&lt;PasskeyAuthenticationResult&gt;</ID>
@@ -990,7 +1106,7 @@
     <ID>ReturnCount:DesktopBrowserAccessor.kt$BrowserAccessor$actual fun getActiveBrowserIntegration(): BrowserIntegration?</ID>
     <ID>ReturnCount:DesktopBrowserAccessor.kt$actual fun createFluckTabInfo(activeTab: Any): FluckTabInfo?</ID>
     <ID>ReturnCount:DesktopBrowserAccessor.kt$private fun findBrowserForTab( splitViewState: ai.rever.boss.components.window_panel.SplitViewState, tabId: String, ): LockedBrowser?</ID>
-    <ID>ReturnCount:DesktopGitService.kt$GitService$internal fun isSafeRefName(ref: String): Boolean</ID>
+    <ID>ReturnCount:DesktopLLMSettingsManager.kt$actual fun getEnvironmentVariable(name: String): String?</ID>
     <ID>ReturnCount:DesktopMainFunctionDetector.kt$DesktopMainFunctionDetector$private fun findProjectRootInternal(startDir: File?): File?</ID>
     <ID>ReturnCount:DesktopMainFunctionDetector.kt$DesktopMainFunctionDetector$private fun generateJavaCommand( detected: DetectedMainFunction, projectDir: File, ): String</ID>
     <ID>ReturnCount:DesktopMainFunctionDetector.kt$DesktopMainFunctionDetector$private fun generateKotlinCommand( detected: DetectedMainFunction, projectDir: File, ): String</ID>
@@ -1006,20 +1122,26 @@
     <ID>ReturnCount:DynamicPluginManager.kt$DynamicPluginManager.Companion$private suspend fun hotSwapApiLayerOrchestration(pluginDir: java.io.File): Result&lt;Int&gt;</ID>
     <ID>ReturnCount:DynamicPluginManager.kt$internal fun pluginAccessAllowed( isAdmin: Boolean, userPermissions: Set&lt;String&gt;, requiresAdmin: Boolean, requiredPermissions: List&lt;String&gt;, ): Boolean</ID>
     <ID>ReturnCount:FaviconCache.kt$FaviconCache$fun loadFavicon(cacheKey: String): ai.rever.boss.plugin.api.TabIcon.Image?</ID>
+    <ID>ReturnCount:FaviconCache.kt$FaviconCache$fun saveFavicon( url: String, imageBitmap: ImageBitmap, ): String?</ID>
     <ID>ReturnCount:FluckEngine.kt$FluckEngine$internal fun runningInContainer(): Boolean</ID>
     <ID>ReturnCount:FluckEngine.kt$FluckEngine$private fun cleanupStaleLockFiles(profileDir: java.nio.file.Path): Boolean</ID>
     <ID>ReturnCount:FluckEngine.kt$FluckEngine$private fun getMacOSBundledChromiumPath(): java.nio.file.Path?</ID>
     <ID>ReturnCount:FluckEngine.kt$FluckEngine$private fun getWindowsBundledChromiumPath(): java.nio.file.Path?</ID>
+    <ID>ReturnCount:FluckEngine.kt$FluckEngine.BrowserFindBar$private fun performFind(backward: Boolean)</ID>
     <ID>ReturnCount:FontManager.kt$FontManager$fun isFontAvailable(fontName: String): Boolean</ID>
     <ID>ReturnCount:FormFieldDetector.kt$FormFieldDetector$private fun determineFieldType( inputType: String, fieldName: String, fieldId: String, placeholder: String, autocomplete: String, className: String, ariaLabel: String, ): FieldType</ID>
     <ID>ReturnCount:FuzzyMatcher.kt$FuzzyMatcher$fun match( pattern: String, target: String, targetLower: String = target.lowercase(), ): MatchResult?</ID>
     <ID>ReturnCount:FuzzyMatcher.kt$FuzzyMatcher$private fun isWordBoundary( text: String, index: Int, ): Boolean</ID>
     <ID>ReturnCount:GitHubUpdateSource.kt$GitHubUpdateSource$private suspend fun makeGitHubRequest( url: String, authContext: GitHubConfig.GitHubAuthContext, ): HttpResponse</ID>
+    <ID>ReturnCount:HighQualityFaviconService.kt$HighQualityFaviconService$private fun loadFromCache(cacheKey: String): ai.rever.boss.plugin.api.TabIcon.Image?</ID>
     <ID>ReturnCount:IpcCompatibility.kt$IpcCompatibility$fun status(minIpcVersion: String): Status</ID>
     <ID>ReturnCount:IpcCompatibility.kt$IpcCompatibility$private fun parse(version: String): Triple&lt;Int, Int, Int&gt;?</ID>
     <ID>ReturnCount:KeymapMatcher.kt$KeymapMatcher$fun match( event: KeyEvent, context: ShortcutContext, ): KeyBinding?</ID>
+    <ID>ReturnCount:KeymapMatcher.kt$KeymapMatcher$private fun matchesBinding( event: KeyEvent, binding: KeyBinding, ): Boolean</ID>
+    <ID>ReturnCount:LLMSettings.kt$LLMSettings$fun getApiKey(provider: LLMProvider): String?</ID>
     <ID>ReturnCount:MacOSDefaultBrowserHandler.kt$MacOSDefaultBrowserHandler$private fun getDefaultHandlersViaSwift(): Map&lt;String, String&gt;</ID>
     <ID>ReturnCount:MacOSDefaultBrowserHandler.kt$MacOSDefaultBrowserHandler$private fun setDefaultHandlerForSchemeViaSwift(scheme: String): Boolean</ID>
+    <ID>ReturnCount:McpToolRegistryImpl.kt$McpToolRegistryCore$private fun permitted(def: McpToolDefinition): Boolean</ID>
     <ID>ReturnCount:MenuShortcutBridge.kt$MenuShortcutBridge$fun getKeyShortcut(actionId: String): androidx.compose.ui.input.key.KeyShortcut?</ID>
     <ID>ReturnCount:NewTabDialog.kt$private fun validateFilePath( path: String, basePath: String? = null, ): String?</ID>
     <ID>ReturnCount:OsOpenArguments.kt$OsOpenArguments$fun deepLinksFrom( args: Array&lt;String&gt;, kindOf: (String) -&gt; OpenTargetKind = ::openTargetKindOf, ): List&lt;String&gt;</ID>
@@ -1048,17 +1170,19 @@
     <ID>ReturnCount:SecretModels.kt$UpdateSecretRequest$fun validate(): Result&lt;Unit&gt;</ID>
     <ID>ReturnCount:SessionManager.kt$SessionManager$suspend fun establishSession( accessToken: String, refreshToken: String, userInfo: UserInfo, authMethod: AuthMethod, expiresIn: Long = 3600L, ): Result&lt;Unit&gt;</ID>
     <ID>ReturnCount:SessionManager.kt$SessionManager$suspend fun loadSession(): Result&lt;UserInfo?&gt;</ID>
+    <ID>ReturnCount:ShortcutTestRunner.kt$ShortcutTestRunner$private fun validateKeyName(keyName: String): Pair&lt;Boolean, String&gt;</ID>
     <ID>ReturnCount:ShortcutTestRunner.kt$ShortcutTestRunner$suspend fun testShortcut(binding: KeyBinding): ShortcutTestResult</ID>
     <ID>ReturnCount:SplitView.kt$SplitViewState$fun setActivePanel(panelId: String)</ID>
     <ID>ReturnCount:SplitView.kt$SplitViewState$private fun openUrlInActivePanelNow( url: String, title: String, forceNewTab: Boolean, )</ID>
     <ID>ReturnCount:StoreVersionInstaller.kt$StoreVersionInstaller$private suspend fun activate( request: StoreVersionRequest, target: File, unload: suspend (String) -&gt; Result&lt;Unit&gt;, load: suspend (String) -&gt; Result&lt;Boolean&gt;, ): Result&lt;String&gt;</ID>
+    <ID>ReturnCount:StoreVersionInstaller.kt$StoreVersionInstaller$suspend fun install( store: PluginRepository, request: StoreVersionRequest, unload: suspend (String) -&gt; Result&lt;Unit&gt;, load: suspend (String) -&gt; Result&lt;Boolean&gt;, onProgress: ((Float) -&gt; Unit)? = null, onInstalling: (() -&gt; Unit)? = null, ): Result&lt;String&gt;</ID>
     <ID>ReturnCount:SupabasePasskeyService.kt$SupabasePasskeyService$suspend fun getUserPasskeys(userId: String): Result&lt;List&lt;PasskeyCredential&gt;&gt;</ID>
     <ID>ReturnCount:SupabasePasskeyService.kt$SupabasePasskeyService$suspend fun requestRegistrationChallenge( userId: String, displayName: String, authenticatorSelection: AuthenticatorSelectionCriteria?, ): Result&lt;PasskeyChallenge&gt;</ID>
     <ID>ReturnCount:TabDraggableComponent.kt$TabDraggableComponent$private fun checkEdgeScroll()</ID>
+    <ID>ReturnCount:TabDraggableComponent.kt$TabDraggableComponent$private fun updateDropTarget()</ID>
     <ID>ReturnCount:TabTypeAvailability.kt$TabTypeAvailability$private fun promptFor( typeId: TabTypeId, pluginId: String, purpose: String, ): MissingHandlerPluginPrompt?</ID>
     <ID>ReturnCount:TabTypeAvailability.kt$TabTypeAvailability$suspend fun require( registry: TabRegistry, typeId: TabTypeId, purpose: String, bus: MissingHandlerPluginBus = MissingHandlerPluginEventBus, ): Boolean</ID>
     <ID>ReturnCount:TabUpdateRegistry.kt$TabUpdateRegistry$private fun resolveProvider( tabId: String, typeId: TabTypeId, ): TabUpdateProvider?</ID>
-    <ID>ReturnCount:UnifiedDiffParser.kt$UnifiedDiffParser$private fun splitSides(s: String): Pair&lt;String, String&gt;?</ID>
     <ID>ReturnCount:UpdateInstaller.kt$UpdateInstaller$fun getCurrentApplicationPath(): String?</ID>
     <ID>ReturnCount:UpdateInstaller.kt$UpdateInstaller$private fun detectLinuxDistroType(): String</ID>
     <ID>ReturnCount:UpdateInstaller.kt$UpdateInstaller$private fun findInstalledAppViaSpotlight(): String?</ID>
@@ -1075,14 +1199,9 @@
     <ID>ReturnCount:WindowsRegistryScript.kt$WindowsRegistryScript$private fun userChoiceExtensionOf(keyLine: String): String?</ID>
     <ID>ReturnCount:WorkspacePlaceholders.kt$WorkspacePlaceholders$private fun getGitRemoteUrl(projectPath: String): String</ID>
     <ID>SpreadOperator:CrashHandler.kt$CrashHandler$(javaBin, *getRestartArgs())</ID>
-    <ID>SpreadOperator:DesktopGitService.kt$GitService$(projectPath, "restore", "--staged", "--", *paths.toTypedArray())</ID>
-    <ID>SpreadOperator:DesktopGitService.kt$GitService$(projectPath, *args)</ID>
     <ID>SpreadOperator:DesktopGitService.kt$GitService$(projectPath, *args.toTypedArray())</ID>
     <ID>SpreadOperator:DesktopGitService.kt$GitService$(projectPath, *diffArgs.toTypedArray())</ID>
     <ID>SpreadOperator:FilePickerProviderFactory.kt$DesktopFilePickerProvider$( filters.joinToString(", ") { "*.$it" }, *filters.toTypedArray(), )</ID>
-    <ID>SwallowedException:ContentSearchService.kt$ContentSearchService$e: Exception</ID>
-    <ID>SwallowedException:ContentSearchService.kt$ContentSearchService$e: java.nio.file.AtomicMoveNotSupportedException</ID>
-    <ID>SwallowedException:TabPaths.kt$TabPaths$e: Exception</ID>
     <ID>ThrowsCount:UpdateInstaller.kt$UpdateInstaller$internal fun validateDownloadFile( downloadFile: File, expectedExtension: String, stagingDir: File = defaultStagingDir(), )</ID>
     <ID>ThrowsCount:UpdatePathValidator.kt$UpdatePathValidator$fun validatePath( path: String, description: String, )</ID>
     <ID>TooGenericExceptionCaught:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$e: Exception</ID>
@@ -1102,6 +1221,7 @@
     <ID>TooGenericExceptionCaught:BrowserHandleImpl.kt$BrowserHandleImpl$e: Exception</ID>
     <ID>TooGenericExceptionCaught:BrowserHandleImpl.kt$BrowserHandleImpl.Companion$e: Exception</ID>
     <ID>TooGenericExceptionCaught:BrowserInjectDispatcher.kt$BrowserInjectDispatcher$e: Throwable</ID>
+    <ID>TooGenericExceptionCaught:BrowserPageCard.kt$e: Exception</ID>
     <ID>TooGenericExceptionCaught:BrowserProviders.kt$DesktopScreenCaptureProvider$e: Exception</ID>
     <ID>TooGenericExceptionCaught:BrowserServiceImpl.kt$BrowserServiceImpl$e: Exception</ID>
     <ID>TooGenericExceptionCaught:BrowserServiceImpl.kt$BrowserServiceImpl$e: Throwable</ID>
@@ -1124,7 +1244,6 @@
     <ID>TooGenericExceptionCaught:CoBrowseScripts.kt$CoBrowseScripts$e: Exception</ID>
     <ID>TooGenericExceptionCaught:CodeBase.kt$ProjectState$e: Exception</ID>
     <ID>TooGenericExceptionCaught:ConfigLoader.kt$ConfigLoader$e: Exception</ID>
-    <ID>TooGenericExceptionCaught:ContentSearchService.kt$ContentSearchService$e: Exception</ID>
     <ID>TooGenericExceptionCaught:CoreAuthService.kt$CoreAuthService$e: Exception</ID>
     <ID>TooGenericExceptionCaught:CrashHandler.kt$CrashHandler$e: Exception</ID>
     <ID>TooGenericExceptionCaught:CrashHandler.kt$CrashHandler$e: Throwable</ID>
@@ -1148,6 +1267,8 @@
     <ID>TooGenericExceptionCaught:DesktopFileScanner.kt$e: Exception</ID>
     <ID>TooGenericExceptionCaught:DesktopGitService.kt$GitService$cleanupError: Exception</ID>
     <ID>TooGenericExceptionCaught:DesktopGitService.kt$GitService$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:DesktopLLMSettingsManager.kt$LLMSettingsManager$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:DesktopLLMSettingsManager.kt$e: Exception</ID>
     <ID>TooGenericExceptionCaught:DesktopMainFunctionDetector.kt$DesktopMainFunctionDetector$e: Exception</ID>
     <ID>TooGenericExceptionCaught:DesktopPasskeyBrowserView.kt$e: Exception</ID>
     <ID>TooGenericExceptionCaught:DesktopPasskeyService.kt$DesktopPasskeyService$e: Exception</ID>
@@ -1186,6 +1307,7 @@
     <ID>TooGenericExceptionCaught:FluckEngine.kt$FluckEngine$e2: Exception</ID>
     <ID>TooGenericExceptionCaught:FluckEngine.kt$FluckEngine$e: Exception</ID>
     <ID>TooGenericExceptionCaught:FluckEngine.kt$FluckEngine$e: Throwable</ID>
+    <ID>TooGenericExceptionCaught:FluckEngine.kt$FluckEngine.BrowserFindBar$e: Exception</ID>
     <ID>TooGenericExceptionCaught:FluckPanelProviders.kt$FluckPanelContentProviderImpl$e: Throwable</ID>
     <ID>TooGenericExceptionCaught:FluckTabInfoTest.kt$FluckTabInfoTest$e: Throwable</ID>
     <ID>TooGenericExceptionCaught:FocusModeSettingsManager.kt$FocusModeSettingsManager$e: Exception</ID>
@@ -1199,6 +1321,9 @@
     <ID>TooGenericExceptionCaught:KernelBootstrap.kt$KernelBootstrap$e: Exception</ID>
     <ID>TooGenericExceptionCaught:KeyboardEventBus.kt$KeyboardEventBus$e: Exception</ID>
     <ID>TooGenericExceptionCaught:KeymapSettingsManager.kt$KeymapSettingsManager$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:LLMModelFetcher.kt$LLMModelFetcher$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:LLMProvidersSettings.kt$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:LLMSettings.kt$LLMSettings$e: Exception</ID>
     <ID>TooGenericExceptionCaught:LastSessionCoordinator.kt$LastSessionCoordinator$e: Exception</ID>
     <ID>TooGenericExceptionCaught:LaunchServices.kt$LaunchServices$e: Throwable</ID>
     <ID>TooGenericExceptionCaught:LinuxDefaultBrowserHandler.kt$LinuxDefaultBrowserHandler$e: Exception</ID>
@@ -1207,6 +1332,8 @@
     <ID>TooGenericExceptionCaught:MacOSCamera.kt$MacOSCamera$e: Exception</ID>
     <ID>TooGenericExceptionCaught:MacOSDefaultBrowserHandler.kt$MacOSDefaultBrowserHandler$e: Exception</ID>
     <ID>TooGenericExceptionCaught:MacOSGestureHandler.kt$MacOSGestureHandler$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:MacOSScreenCapture.kt$CoreGraphics.Companion$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:MacOSScreenCapture.kt$MacOSScreenCapture$e: Exception</ID>
     <ID>TooGenericExceptionCaught:MacOSTouchIDAuth.kt$MacOSTouchIDAuth$e: Exception</ID>
     <ID>TooGenericExceptionCaught:MagicLinkWaitingScreen.kt$e: Exception</ID>
     <ID>TooGenericExceptionCaught:McpToolRegistryCoreTest.kt$McpToolRegistryCoreTest$t: Throwable</ID>
@@ -1245,20 +1372,23 @@
     <ID>TooGenericExceptionCaught:PowerShellExecutor.kt$PowerShellExecutor$e: Exception</ID>
     <ID>TooGenericExceptionCaught:RecentBrowserPagesManager.kt$RecentBrowserPagesManager$e: Exception</ID>
     <ID>TooGenericExceptionCaught:RecentFilesManager.kt$RecentFilesManager$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:RemotePanelComponent.kt$RemotePanelComponent$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:RemoteTabComponent.kt$RemoteTabComponent$e: Exception</ID>
     <ID>TooGenericExceptionCaught:RoleCreationService.kt$RoleCreationService$e: Exception</ID>
     <ID>TooGenericExceptionCaught:RoleService.kt$RoleService$e: Exception</ID>
     <ID>TooGenericExceptionCaught:ScreenCaptureNotifier.kt$ScreenCaptureNotifier$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:ScreenCapturePickerDialog.kt$e: Exception</ID>
     <ID>TooGenericExceptionCaught:SecretService.kt$SecretService$e: Exception</ID>
     <ID>TooGenericExceptionCaught:SecuritySettings.kt$e: Exception</ID>
     <ID>TooGenericExceptionCaught:SessionManager.kt$SessionManager$e: Exception</ID>
     <ID>TooGenericExceptionCaught:ShortcutLifecycleManager.kt$ShortcutLifecycleManager$e: Exception</ID>
     <ID>TooGenericExceptionCaught:SidebarVisibilitySettingsManager.kt$SidebarVisibilitySettingsManager$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:SingleInstanceManager.kt$SingleInstanceManager$e: Exception</ID>
     <ID>TooGenericExceptionCaught:SupabaseConfig.kt$SupabaseConfig$e: Exception</ID>
     <ID>TooGenericExceptionCaught:SupabaseDataProviderImpl.kt$SupabaseDataProviderImpl$e: Exception</ID>
     <ID>TooGenericExceptionCaught:SupabasePasskeyService.kt$SupabasePasskeyService$e: Exception</ID>
     <ID>TooGenericExceptionCaught:SwiftScriptExecutor.kt$SwiftScriptExecutor$e: Exception</ID>
     <ID>TooGenericExceptionCaught:SystemPluginManifestService.kt$SystemPluginManifestService$e: Exception</ID>
-    <ID>TooGenericExceptionCaught:TabPaths.kt$TabPaths$e: Exception</ID>
     <ID>TooGenericExceptionCaught:TerminalAPIAccess.kt$TerminalAPIAccess$e: Exception</ID>
     <ID>TooGenericExceptionCaught:URLHandlerService.kt$URLHandlerService$e: Exception</ID>
     <ID>TooGenericExceptionCaught:UpdateInstaller.kt$UpdateInstaller$e: Exception</ID>
@@ -1303,7 +1433,6 @@
     <ID>TooManyFunctions:ChromiumAutoDownloader.kt$ChromiumAutoDownloader</ID>
     <ID>TooManyFunctions:ChromiumFlagsSection.kt$ai.rever.boss.components.settings.sections.ChromiumFlagsSection.kt</ID>
     <ID>TooManyFunctions:CommonConditions.kt$Conditions</ID>
-    <ID>TooManyFunctions:ContentSearchService.kt$ContentSearchService : ProjectSearchProvider</ID>
     <ID>TooManyFunctions:CrashHandler.kt$CrashHandler</ID>
     <ID>TooManyFunctions:DeepLinkHandler.kt$DeepLinkHandler</ID>
     <ID>TooManyFunctions:DefaultPlugin.kt$ApiActiveTabsProviderAdapter : ActiveTabsProvider</ID>
@@ -1315,7 +1444,6 @@
     <ID>TooManyFunctions:DesktopUpdateService.kt$UpdateService</ID>
     <ID>TooManyFunctions:DownloadManager.kt$DownloadManager</ID>
     <ID>TooManyFunctions:DynamicPluginManager.kt$DynamicPluginManager</ID>
-    <ID>TooManyFunctions:EditorAPIAccess.kt$EditorAPIAccess</ID>
     <ID>TooManyFunctions:FileSystemDataProviderImpl.kt$FileSystemDataProviderImpl : FileSystemDataProvider</ID>
     <ID>TooManyFunctions:Fluck.kt$FluckTabInfo : TabInfo</ID>
     <ID>TooManyFunctions:Fluck.kt$ai.rever.boss.components.plugin.tab_types.fluck.Fluck.kt</ID>
@@ -1327,6 +1455,7 @@
     <ID>TooManyFunctions:GitServiceBridge.kt$GitServiceBridge : GitServiceCoroutineImplBase</ID>
     <ID>TooManyFunctions:GlobalSearchDialog.kt$ai.rever.boss.components.dialogs.GlobalSearchDialog.kt</ID>
     <ID>TooManyFunctions:GlobalSearchService.kt$GlobalSearchService</ID>
+    <ID>TooManyFunctions:LLMModelFetcher.kt$LLMModelFetcher</ID>
     <ID>TooManyFunctions:LinuxDefaultBrowserHandler.kt$LinuxDefaultBrowserHandler</ID>
     <ID>TooManyFunctions:LogSanitizer.kt$LogSanitizer</ID>
     <ID>TooManyFunctions:MacOSDefaultBrowserHandler.kt$MacOSDefaultBrowserHandler</ID>
@@ -1339,7 +1468,6 @@
     <ID>TooManyFunctions:PluginPersistence.kt$PluginPersistence</ID>
     <ID>TooManyFunctions:PluginStorageFactoryProvider.kt$PluginStorageProviderImpl : PluginStorageProvider</ID>
     <ID>TooManyFunctions:PluginStoreSetup.kt$PluginStoreSetup</ID>
-    <ID>TooManyFunctions:PopupWindowContextMenu.kt$ai.rever.boss.plugin.browser.PopupWindowContextMenu.kt</ID>
     <ID>TooManyFunctions:RoleCreationService.kt$RoleCreationService</ID>
     <ID>TooManyFunctions:RoleManagementProviderImpl.kt$RoleManagementProviderImpl : RoleManagementProvider</ID>
     <ID>TooManyFunctions:RoleManagementServiceBridge.kt$RoleManagementServiceBridge : RoleManagementServiceCoroutineImplBase</ID>
@@ -1358,6 +1486,9 @@
     <ID>TooManyFunctions:UpdateManager.kt$UpdateManager</ID>
     <ID>TooManyFunctions:WindowManager.kt$WindowManager</ID>
     <ID>TooManyFunctions:WorkspaceManager.kt$WorkspaceManager</ID>
+    <ID>UnusedParameter:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$matcher: KeymapMatcher</ID>
+    <ID>UnusedParameter:Dashboard.kt$onActivatePlugin: (String) -&gt; Unit</ID>
+    <ID>UnusedParameter:Dashboard.kt$onNewTerminal: () -&gt; Unit</ID>
     <ID>UnusedParameter:KeymapValidator.kt$KeymapValidator$settings: KeymapSettings</ID>
     <ID>UnusedParameter:LoginFormScreen.kt$onLoginSuccess: () -&gt; Unit</ID>
     <ID>UnusedParameter:PasskeyAuthViewModel.kt$PasskeyAuthViewModel$email: String</ID>
@@ -1395,6 +1526,9 @@
     <ID>WildcardImport:ActiveTabsServiceBridge.kt$import ai.rever.boss.ipc.proto.services.*</ID>
     <ID>WildcardImport:AdvancedSettings.kt$import androidx.compose.foundation.layout.*</ID>
     <ID>WildcardImport:AdvancedSettings.kt$import androidx.compose.runtime.*</ID>
+    <ID>WildcardImport:AuthFormComponents.kt$import androidx.compose.foundation.layout.*</ID>
+    <ID>WildcardImport:AuthFormComponents.kt$import androidx.compose.material.*</ID>
+    <ID>WildcardImport:AuthFormComponents.kt$import androidx.compose.runtime.*</ID>
     <ID>WildcardImport:AuthScreenContainer.kt$import androidx.compose.runtime.*</ID>
     <ID>WildcardImport:AuthService.kt$import ai.rever.boss.services.auth.*</ID>
     <ID>WildcardImport:AuthService.kt$import ai.rever.boss.services.supabase.models.*</ID>
@@ -1493,6 +1627,11 @@
     <ID>WildcardImport:EditableKeymapSettings.kt$import androidx.compose.foundation.layout.*</ID>
     <ID>WildcardImport:EditableKeymapSettings.kt$import androidx.compose.material.*</ID>
     <ID>WildcardImport:EditableKeymapSettings.kt$import androidx.compose.runtime.*</ID>
+    <ID>WildcardImport:EmptyContentScreen.kt$import androidx.compose.animation.*</ID>
+    <ID>WildcardImport:EmptyContentScreen.kt$import androidx.compose.animation.core.*</ID>
+    <ID>WildcardImport:EmptyContentScreen.kt$import androidx.compose.foundation.layout.*</ID>
+    <ID>WildcardImport:EmptyContentScreen.kt$import androidx.compose.material.icons.outlined.*</ID>
+    <ID>WildcardImport:EmptyContentScreen.kt$import androidx.compose.runtime.*</ID>
     <ID>WildcardImport:FaviconLoader.kt$import androidx.compose.runtime.*</ID>
     <ID>WildcardImport:Fluck.kt$import ai.rever.boss.components.registery.*</ID>
     <ID>WildcardImport:Fluck.kt$import androidx.compose.foundation.layout.*</ID>
@@ -1540,7 +1679,16 @@
     <ID>WildcardImport:KeymapSettings.kt$import androidx.compose.foundation.layout.*</ID>
     <ID>WildcardImport:KeymapSettings.kt$import androidx.compose.material.*</ID>
     <ID>WildcardImport:KeymapSettings.kt$import androidx.compose.runtime.*</ID>
+    <ID>WildcardImport:LLMProvidersSettings.kt$import ai.rever.boss.components.plugin.panels.right_top.*</ID>
+    <ID>WildcardImport:LLMProvidersSettings.kt$import androidx.compose.foundation.layout.*</ID>
+    <ID>WildcardImport:LLMProvidersSettings.kt$import androidx.compose.material.*</ID>
+    <ID>WildcardImport:LLMProvidersSettings.kt$import androidx.compose.material.icons.outlined.*</ID>
+    <ID>WildcardImport:LLMProvidersSettings.kt$import androidx.compose.runtime.*</ID>
     <ID>WildcardImport:LogServiceBridge.kt$import ai.rever.boss.ipc.proto.services.*</ID>
+    <ID>WildcardImport:LoginFormScreen.kt$import ai.rever.boss.components.auth.forms.*</ID>
+    <ID>WildcardImport:LoginFormScreen.kt$import androidx.compose.foundation.layout.*</ID>
+    <ID>WildcardImport:LoginFormScreen.kt$import androidx.compose.material.*</ID>
+    <ID>WildcardImport:LoginFormScreen.kt$import androidx.compose.runtime.*</ID>
     <ID>WildcardImport:LoginViewModel.kt$import ai.rever.boss.services.supabase.models.*</ID>
     <ID>WildcardImport:LogoutConfirmationDialog.kt$import androidx.compose.foundation.layout.*</ID>
     <ID>WildcardImport:LogoutConfirmationDialog.kt$import androidx.compose.material.*</ID>
@@ -1602,6 +1750,8 @@
     <ID>WildcardImport:ProjectSelectionDialog.kt$import androidx.compose.material.*</ID>
     <ID>WildcardImport:ProjectSelectionDialog.kt$import androidx.compose.runtime.*</ID>
     <ID>WildcardImport:ProjectSelectionDialog.kt$import androidx.compose.ui.input.key.*</ID>
+    <ID>WildcardImport:RemotePanelComponent.kt$import androidx.compose.runtime.*</ID>
+    <ID>WildcardImport:RemoteTabComponent.kt$import androidx.compose.runtime.*</ID>
     <ID>WildcardImport:RemoteWidgetRenderer.kt$import ai.rever.boss.ui.sdk.*</ID>
     <ID>WildcardImport:RemoteWidgetRenderer.kt$import androidx.compose.foundation.layout.*</ID>
     <ID>WildcardImport:RemoteWidgetRenderer.kt$import androidx.compose.material.*</ID>
@@ -1698,5 +1848,21 @@
     <ID>WildcardImport:WorkspaceSelectionDialog.kt$import androidx.compose.runtime.*</ID>
     <ID>WildcardImport:WorkspaceSettings.kt$import androidx.compose.foundation.layout.*</ID>
     <ID>WildcardImport:WorkspaceSettings.kt$import androidx.compose.runtime.*</ID>
+    <ID>CyclomaticComplexMethod:NewTabDialog.kt$@Composable fun NewTabDialog( onDismiss: () -&gt; Unit, onCreateTab: (type: TabType, path: String) -&gt; Unit, tabRegistry: TabRegistry, initialTabType: TabType? = null, /** * Opens a [TabInfo] built by a plugin tab type's [TabTypeInfo.createTabInfo]. * When null, plugin-registered tab types are not offered (legacy callers). */ onCreateTabInfo: ((TabInfo) -&gt; Unit)? = null, projectPath: String? = null, windowId: String? = null, /** * Where the new tab goes: null for the pane it would land in anyway, or the side a new pane * should be created on. * * Hoisted rather than owned here because the split map opens this dialog with a direction * already chosen - clicking a trapezoid IS asking for a tab in that direction - and a picker * that reset itself to "this pane" would throw that away in front of the user. */ splitDirection: SplitDirection? = null, /** Null when this caller cannot split (no split view to split), which hides the picker. */ onSplitDirectionChange: ((SplitDirection?) -&gt; Unit)? = null, )</ID>
+    <ID>CyclomaticComplexMethod:SplitView.kt$SplitViewState$fun splitPanel( panelId: String, orientation: SplitOrientation, tabToMove: TabInfo? = null, detachedTab: BossTabsComponent.DetachedTab? = null, /** * Put the new pane in the left or top half, moving the original over. * * Defaults to false, which is what every caller did before the split map could ask for * a direction: the original keeps its side and the new pane goes second. */ placeBefore: Boolean = false, ): String</ID>
+    <ID>LongMethod:NewTabDialog.kt$@Composable fun NewTabDialog( onDismiss: () -&gt; Unit, onCreateTab: (type: TabType, path: String) -&gt; Unit, tabRegistry: TabRegistry, initialTabType: TabType? = null, /** * Opens a [TabInfo] built by a plugin tab type's [TabTypeInfo.createTabInfo]. * When null, plugin-registered tab types are not offered (legacy callers). */ onCreateTabInfo: ((TabInfo) -&gt; Unit)? = null, projectPath: String? = null, windowId: String? = null, /** * Where the new tab goes: null for the pane it would land in anyway, or the side a new pane * should be created on. * * Hoisted rather than owned here because the split map opens this dialog with a direction * already chosen - clicking a trapezoid IS asking for a tab in that direction - and a picker * that reset itself to "this pane" would throw that away in front of the user. */ splitDirection: SplitDirection? = null, /** Null when this caller cannot split (no split view to split), which hides the picker. */ onSplitDirectionChange: ((SplitDirection?) -&gt; Unit)? = null, )</ID>
+    <ID>LongMethod:SplitView.kt$SplitViewState$fun splitPanel( panelId: String, orientation: SplitOrientation, tabToMove: TabInfo? = null, detachedTab: BossTabsComponent.DetachedTab? = null, /** * Put the new pane in the left or top half, moving the original over. * * Defaults to false, which is what every caller did before the split map could ask for * a direction: the original keeps its side and the new pane goes second. */ placeBefore: Boolean = false, ): String</ID>
+    <ID>NestedBlockDepth:SplitView.kt$SplitViewState$fun splitPanel( panelId: String, orientation: SplitOrientation, tabToMove: TabInfo? = null, detachedTab: BossTabsComponent.DetachedTab? = null, /** * Put the new pane in the left or top half, moving the original over. * * Defaults to false, which is what every caller did before the split map could ask for * a direction: the original keeps its side and the new pane goes second. */ placeBefore: Boolean = false, ): String</ID>
+    <ID>PackageNaming:SplitCreatorMap.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
+    <ID>PackageNaming:SplitCreatorMapTest.kt$package ai.rever.boss.components.window_panel</ID>
+    <ID>PackageNaming:SplitDirectionTest.kt$package ai.rever.boss.components.window_panel</ID>
+    <ID>PackageNaming:DiffTabMatch.kt$package ai.rever.boss.components.window_panel</ID>
+    <ID>PackageNaming:DiffTabMatchTest.kt$package ai.rever.boss.components.window_panel</ID>
+    <ID>LongParameterList:ContentSearchService.kt$ContentSearchService$( file: File, projectRoot: String, regex: Regex, replacement: String, isRegex: Boolean, dryRun: Boolean, isCancelled: () -> Boolean, )</ID>
+    <ID>LongParameterList:ContentSearchService.kt$ContentSearchService$( file: File, regex: Regex, replacement: String, isRegex: Boolean, dryRun: Boolean, isCancelled: () -> Boolean, )</ID>
+    <ID>LongParameterList:ContentSearchService.kt$ContentSearchService$( file: File, text: String, version: Long, regex: Regex, replacement: String, isRegex: Boolean, dryRun: Boolean, isCancelled: () -> Boolean, )</ID>
+    <ID>ReturnCount:ContentSearchService.kt$ContentSearchService$private suspend fun replaceInOneFile( file: File, regex: Regex, replacement: String, isRegex: Boolean, dryRun: Boolean, isCancelled: () -> Boolean, ): FileReplaceResult</ID>
+    <ID>ReturnCount:ContentSearchService.kt$ContentSearchService$private suspend fun replaceInOneFile( file: File, projectRoot: String, regex: Regex, replacement: String, isRegex: Boolean, dryRun: Boolean, isCancelled: () -&gt; Boolean, ): FileReplaceResult</ID>
+    <ID>ReturnCount:ContentSearchService.kt$ContentSearchService$private suspend fun replaceInBuffer( file: File, text: String, version: Long, regex: Regex, replacement: String, isRegex: Boolean, dryRun: Boolean, isCancelled: () -> Boolean, ): FileReplaceResult</ID>
   </CurrentIssues>
 </SmellBaseline>

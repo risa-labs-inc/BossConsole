@@ -947,7 +947,7 @@ object BrowserServiceImpl : BrowserService {
         profile: Profile,
         auth: BrowserAuthSpec,
     ) {
-        val tmp = profile.newBrowser()
+        val tmp = profile.newBrowser().also { installDefaultBrowserChrome(it) }
         try {
             seedAndAwait(profile, auth)
         } finally {

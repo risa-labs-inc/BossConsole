@@ -7,11 +7,9 @@ import ai.rever.boss.plugin.browser.FluckEngine
 import ai.rever.boss.plugin.browser.LocalAwtWindow
 import ai.rever.boss.plugin.browser.NativeFileDialogs
 import ai.rever.boss.plugin.browser.installDefaultBrowserChrome
-import ai.rever.boss.plugin.browser.installPopupWindowChrome
 import ai.rever.boss.plugin.browser.showPopupInWindow
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
-import ai.rever.boss.window.BossWindowIcon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -24,7 +22,6 @@ import com.teamdev.jxbrowser.event.Subscription
 import com.teamdev.jxbrowser.navigation.event.LoadStarted
 import com.teamdev.jxbrowser.ui.Rect
 import com.teamdev.jxbrowser.view.compose.BrowserViewState
-import com.teamdev.jxbrowser.view.swing.BrowserView
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -34,8 +31,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.awt.Window
 import java.util.concurrent.atomic.AtomicBoolean
-import javax.swing.JFrame
-import javax.swing.SwingUtilities
 
 private val logger = BossLogger.forComponent("BrowserFunctions")
 

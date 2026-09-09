@@ -2,6 +2,7 @@
 <SmellBaseline>
   <ManuallySuppressedIssues/>
   <CurrentIssues>
+    <ID>CyclomaticComplexMethod:EditorServiceImpl.kt$EditorServiceImpl$private fun detectLanguage(ext: String): String</ID>
     <ID>LongMethod:EditorServiceMain.kt$fun main()</ID>
     <ID>MaxLineLength:EditorServiceMain.kt$"""{"type":"object","properties":{"content":{"type":"string"},"language":{"type":"string"}}}"""</ID>
     <ID>MaxLineLength:EditorServiceMain.kt$.</ID>
