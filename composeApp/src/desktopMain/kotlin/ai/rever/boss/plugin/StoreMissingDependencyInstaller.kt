@@ -278,8 +278,9 @@ class StoreMissingDependencyInstaller(
      *
      * Deliberately not back through [PluginLoaderDelegateImpl.loadPlugin], so a dependency
      * that has dependencies of its own does not chain prompts: the user answered one question
-     * and should not be handed a second dialog as its consequence. Anything still missing
-     * shows up the next time that plugin is installed or updated.
+     * and should not be handed a second dialog as its consequence. What that plugin needs in
+     * turn was resolved by [planFor] and shown before the question was asked, so by the time
+     * this runs there is nothing left to chain.
      */
     private suspend fun vetAndLoad(
         pluginId: String,

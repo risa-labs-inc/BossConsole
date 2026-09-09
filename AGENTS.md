@@ -191,10 +191,34 @@ Reporting is gated to the install entry point. `doReloadPlugin` finishes by call
 the evolver's hot reload - none of which is a user asking to install anything, and re-offering a
 dependency someone declined on every reload would be worse than silence.
 
+**Transitive dependencies are resolved before the question is asked, not after.** The dialog
+calls `MissingDependencyInstaller.planFor`, which on the store-backed installer walks the store's
+`dependencies` column through `PluginDependencyResolution.installPlan` - dependencies first, each
+plugin asked about once, cycles and a size cap tolerated and logged - and shows the extra ids as
+an "Also installs" line under the plugin id. Install then runs `installAll` over that plan and
+stops at the first failure, leaving what came before it. The dependency still loads through the
+manager directly rather than `loadPlugin`, and for the same reason as before: answering one
+question must never produce a second dialog. What changed is that the first question now covers
+the whole closure, where it used to cover one plugin and stay silent about the rest.
+
+Three properties of the plan are worth knowing before touching it. The plugin the user was asked
+about is always in the plan and always last, even if it turns out to be present, because the
+Install guard already answers that and an empty plan has no sensible reading. A store that cannot
+describe a plugin contributes null, and that plugin is installed but not expanded, so the plan
+never does less than today's single install. And `planFor` has a default of "the plugin alone" on
+the interface, because `PluginLoadGateRecovery` and `PluginStoreVersionBridge` install a plugin the
+user named and were never shown a closure to consent to; only the dialog asks for a plan.
+
 Deliberately out of scope, so nobody assumes more than exists:
 
-- **Transitive dependencies are not chased.** The dependency loads through the manager directly,
-  so answering one question never produces a second dialog.
+- **Optionality is not followed across the store.** `PluginInfo.dependencies` is a list of ids;
+  the `optional` flag lives in the jar's own manifest, which is not available before a download
+  the user has not agreed to. Every transitive edge is therefore treated as required. A plugin
+  whose jar declares a dependency its store row did not is logged, not prompted for and not
+  installed - consent was for the list shown.
+- **A failed plan is not rolled back.** A dependency installed on its own is harmless and may
+  already be wanted by something else; deleting it to tidy up a failure would be the one outcome
+  worse than the failure.
 - **`PluginDependency.version` is ignored.** Presence is by id, matching `checkCanUnload`. A
   plugin needing 2.x is satisfied by 1.x, and a prompt could not usefully fix a wrong-version
   install anyway.
