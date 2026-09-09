@@ -57,7 +57,7 @@ internal object TabPaths {
     }
 
     /**
-     * Collapse repeated separators and drop a trailing one.
+     * Collapse repeated separators and drop a trailing one, except on roots.
      *
      * Internal so the two deliberate choices in here are pinnable: backslash is only
      * a separator on Windows, and a leading `//` (UNC host) survives the collapse.
@@ -79,6 +79,13 @@ internal object TabPaths {
         // makes two tabs on different servers compare equal.
         val uncPrefix = if (unified.startsWith("//")) "/" else ""
         val collapsed = uncPrefix + unified.replace(Regex("/{2,}"), "/")
-        return if (collapsed.length > 1) collapsed.trimEnd('/') else collapsed
+        // C:/ is a drive root, but C: resolves against that drive's working
+        // directory. Separator-only paths must not become the empty path either.
+        val isDriveRoot =
+            separatorChar == '\\' &&
+                collapsed.length == 3 &&
+                (collapsed[0] in 'A'..'Z' || collapsed[0] in 'a'..'z') &&
+                collapsed.endsWith(":/")
+        return if (isDriveRoot || collapsed.all { it == '/' }) collapsed else collapsed.trimEnd('/')
     }
 }

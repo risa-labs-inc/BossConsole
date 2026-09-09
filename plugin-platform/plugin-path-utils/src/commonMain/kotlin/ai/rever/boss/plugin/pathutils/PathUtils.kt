@@ -46,13 +46,14 @@ fun String.extractFileName(): String = this.substringAfterLast('/').substringAft
  * - "C:\Users\Documents\file.txt" -> "Documents"
  * - "C:/mixed\path/file.txt" -> "path"
  *
- * Implementation: Normalizes to forward slashes, then extracts the parent folder name.
+ * Implementation: Normalizes to forward slashes, then extracts the parent folder name,
+ * ignoring repeated separators before the filename.
  * Returns the parent path itself if no parent folder can be determined.
  *
  * Note: Does not handle edge cases like UNC paths (\\server\share) or root files correctly.
  */
 fun String.extractParentName(): String {
     val normalized = this.replace('\\', '/')
-    val parentPath = normalized.substringBeforeLast('/')
-    return parentPath.substringAfterLast('/').ifEmpty { parentPath }
+    val parentPath = normalized.substringBeforeLast('/').trimEnd('/')
+    return parentPath.substringAfterLast('/')
 }

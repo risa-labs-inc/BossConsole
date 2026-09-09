@@ -112,4 +112,31 @@ class TabPathsTest {
     fun `on the posix branch a backslash stays a filename character`() {
         assertEquals("/x/a\\bak.kt", TabPaths.lexicalClean("/x/a\\bak.kt", '/'))
     }
+
+    @Test
+    fun `windows drive roots keep their separator`() {
+        assertEquals("C:/", TabPaths.lexicalClean("C:\\", '\\'))
+        assertEquals("d:/", TabPaths.lexicalClean("d:////", '\\'))
+        assertNotEquals(TabPaths.lexicalClean("C:", '\\'), TabPaths.lexicalClean("C:/", '\\'))
+        assertEquals("C:/folder", TabPaths.lexicalClean("C:\\folder\\", '\\'))
+        // A colon is an ordinary filename character on POSIX.
+        assertEquals("C:", TabPaths.lexicalClean("C:/", '/'))
+    }
+
+    @Test
+    fun `separator only paths never collapse to an empty path`() {
+        for (separator in listOf('/', '\\')) {
+            assertEquals("/", TabPaths.lexicalClean("/", separator))
+            assertEquals("//", TabPaths.lexicalClean("//", separator))
+            assertEquals("//", TabPaths.lexicalClean("////", separator))
+        }
+        assertEquals("//", TabPaths.lexicalClean("\\\\", '\\'))
+    }
+
+    @Test
+    fun `normalizing a windows drive root does not resolve the drive working directory`() {
+        if (File.separatorChar != '\\') return
+        val root = File(System.getProperty("user.dir")).toPath().root.toString()
+        assertEquals(File(root).canonicalPath, TabPaths.normalize(root))
+    }
 }

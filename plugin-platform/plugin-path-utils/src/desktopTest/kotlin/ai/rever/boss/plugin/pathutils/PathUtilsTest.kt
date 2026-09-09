@@ -64,6 +64,15 @@ class PathUtilsTest {
         }
 
         @Test
+        fun `repeated separators do not become part of the parent name`() {
+            assertEquals("to", "/path/to//file.txt".extractParentName())
+            assertEquals("Documents", "C:\\Users\\Documents\\\\file.txt".extractParentName())
+            assertEquals("Documents", "C:/Users/Documents/\\/file.txt".extractParentName())
+            assertEquals("share", "\\\\server\\share\\\\file.txt".extractParentName())
+            assertEquals("", "///file.txt".extractParentName())
+        }
+
+        @Test
         fun `handles edge cases`() {
             assertEquals("", "".extractParentName())
             assertEquals("", "/file.txt".extractParentName())
