@@ -507,6 +507,66 @@ class SingleInstanceChannelTest {
         assertTrue(SingleInstanceManager.acquireLock())
     }
 
+    @Test
+    fun `invalid base64 never invokes a tool with empty arguments`() {
+        var called = false
+        SingleInstanceManager.mcpInvokeHandlerOverride = { _, _ ->
+            called = true
+            ai.rever.boss.plugin.api.McpToolResult("unexpected")
+        }
+        assertTrue(SingleInstanceManager.acquireLock())
+        val descriptor = assertNotNull(readPublishedDescriptor())
+        val response = exchange(descriptor, "$PROTOCOL_VERSION ${descriptor.token} MCP_INVOKE destructive !!!")
+        assertEquals(RESPONSE_REJECTED, response)
+        assertFalse(called)
+    }
+
+    @Test
+    fun `status JSON escapes platform strings`() {
+        val previous = System.getProperty("os.arch")
+        val unusual = "C:\\Users\\name\"quoted\nline"
+        try {
+            System.setProperty("os.arch", unusual)
+            assertTrue(SingleInstanceManager.acquireLock())
+            val status = Json.parseToJsonElement(SingleInstanceManager.queryStatus().getOrThrow()).jsonObject
+            assertEquals(unusual, status["arch"]?.jsonPrimitive?.content)
+        } finally {
+            System.setProperty("os.arch", previous)
+        }
+    }
+
+    @Test
+    fun `tool names are escaped in result envelopes and cannot inject wire lines`() {
+        assertTrue(SingleInstanceManager.acquireLock())
+        SingleInstanceManager.mcpInvokeHandlerOverride = { _, _ -> ai.rever.boss.plugin.api.McpToolResult("ok") }
+        val name = "tool\"quoted"
+        val result = SingleInstanceManager.invokeMcpTool(name).getOrThrow()
+        assertEquals(name, Json.parseToJsonElement(result).jsonObject["tool"]?.jsonPrimitive?.content)
+        assertTrue(SingleInstanceManager.invokeMcpTool("tool\nOTHER").isFailure)
+    }
+
+    @Test
+    fun `arguments at the client limit fit the base64 wire budget`() {
+        SingleInstanceManager.mcpInvokeHandlerOverride = { _, args -> ai.rever.boss.plugin.api.McpToolResult(args.length.toString()) }
+        assertTrue(SingleInstanceManager.acquireLock())
+        val args = "{\"x\":\"" + "a".repeat(MAX_ARGUMENT_BYTES - 8) + "\"}"
+        assertEquals(MAX_ARGUMENT_BYTES, args.toByteArray().size)
+        assertTrue(SingleInstanceManager.invokeMcpTool("echo", args).isSuccess)
+        assertTrue(SingleInstanceManager.invokeMcpTool("echo", args + " ").isFailure)
+    }
+
+    @Test
+    fun `tool discovery preserves structured input schema`() {
+        val schema = """{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"""
+        val definition = ai.rever.boss.plugin.api.McpToolDefinition(
+            name = "read_file", description = "Reads a file", inputSchema = schema,
+            handler = { ai.rever.boss.plugin.api.McpToolResult("ok") },
+        )
+        val tool = ai.rever.boss.plugin.api.RegisteredMcpTool("test", definition)
+        val tools = Json.parseToJsonElement(encodeMcpTools(listOf(tool))) as kotlinx.serialization.json.JsonArray
+        assertEquals(Json.parseToJsonElement(schema), tools.single().jsonObject["inputSchema"])
+    }
+
     // ==================== Helpers ====================
 
     private fun runtimeDirPath(): Path = File(tempDir.toFile(), "run").toPath()

@@ -2,9 +2,9 @@ package ai.rever.boss.cli
 
 import ai.rever.boss.utils.DeepLinkHandler
 import ai.rever.boss.utils.DeepLinkOrigin
+import ai.rever.boss.utils.MAX_ARGUMENT_BYTES
 import ai.rever.boss.utils.SingleInstanceManager
 import com.github.ajalt.clikt.completion.CompletionCandidates
-import com.github.ajalt.clikt.completion.CompletionCommand
 import com.github.ajalt.clikt.completion.CompletionGenerator
 import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.Context
@@ -217,8 +217,8 @@ class BossMcpCommand : CliktCommand(name = "mcp") {
     val timeout by option(
         "-t",
         "--timeout",
-        help = "Timeout in seconds for tool invocation (default: 30)",
-    ).default("30")
+        help = "Client wait in seconds (1-60; server execution limit: 30 seconds)",
+    ).default("35")
     val filter by option("-f", "--filter", help = "Filter tools by substring in name, description, or plugin ID")
     val raw by option(
         "-r",
@@ -337,7 +337,7 @@ class BossMcpCommand : CliktCommand(name = "mcp") {
     private fun resolveArgumentsJson(): String {
         if (stdin || args == "-") {
             return try {
-                readBoundedStdin(SingleInstanceManager.MAX_REQUEST_BYTES)
+                readBoundedStdin(MAX_ARGUMENT_BYTES)
             } catch (e: ProgramResult) {
                 throw e
             } catch (e: Exception) {
@@ -387,7 +387,7 @@ class BossMcpCommand : CliktCommand(name = "mcp") {
         } catch (e: ProgramResult) {
             throw e
         } catch (_: Exception) {
-            echo(responseJson)
+            fail("Error: Malformed MCP invocation response from BOSS.")
         }
     }
 
@@ -403,7 +403,11 @@ class BossMcpCommand : CliktCommand(name = "mcp") {
         val argumentsJson = resolveArgumentsJson()
         validateArgumentsJson(argumentsJson)
 
-        val timeoutMs = (timeout.toLongOrNull() ?: 30L) * 1000L
+        val timeoutSeconds = timeout.toLongOrNull()
+        if (timeoutSeconds == null || timeoutSeconds !in 1L..60L) {
+            fail("Error: Timeout must be an integer between 1 and 60 seconds.")
+        }
+        val timeoutMs = timeoutSeconds * 1000L
         val result = SingleInstanceManager.invokeMcpTool(toolName, argumentsJson, timeoutMs = timeoutMs)
         result.fold(
             onSuccess = { responseJson ->
@@ -518,6 +522,11 @@ class BossMcpCommand : CliktCommand(name = "mcp") {
             appendLine()
             appendLine("Description:")
             appendLine(desc.prependIndent("  "))
+            obj["inputSchema"]?.let {
+                appendLine()
+                appendLine("Input schema:")
+                appendLine(it.toString().prependIndent("  "))
+            }
         }
 }
 

@@ -1,11 +1,13 @@
 package ai.rever.boss.cli
 
 import ai.rever.boss.plugin.api.McpToolResult
+import ai.rever.boss.utils.MAX_ARGUMENT_BYTES
 import ai.rever.boss.utils.SingleInstanceManager
 import com.github.ajalt.clikt.core.ProgramResult
 import com.github.ajalt.clikt.core.parse
 import java.io.ByteArrayOutputStream
 import java.io.PrintStream
+import java.nio.file.Files
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -16,12 +18,14 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class BossMcpCliTest {
+    private val runtimeDir = Files.createTempDirectory("boss-cli-test")
     private val originalIn = System.`in`
     private val originalOut = System.out
     private val originalErr = System.err
 
     @BeforeTest
     fun setUp() {
+        SingleInstanceManager.runtimeDirOverride = runtimeDir.toFile()
         SingleInstanceManager.statusProviderOverride = null
         SingleInstanceManager.mcpListProviderOverride = null
         SingleInstanceManager.mcpInvokeHandlerOverride = null
@@ -33,6 +37,25 @@ class BossMcpCliTest {
         System.setOut(originalOut)
         System.setErr(originalErr)
         SingleInstanceManager.release()
+        SingleInstanceManager.runtimeDirOverride = null
+        runtimeDir.toFile().deleteRecursively()
+    }
+
+    @Test
+    fun `invalid timeouts fail before invoking any tool`() {
+        var invoked = false
+        SingleInstanceManager.mcpInvokeHandlerOverride = { _, _ ->
+            invoked = true
+            McpToolResult("unexpected")
+        }
+        assertTrue(SingleInstanceManager.acquireLock())
+        for (timeout in listOf("0", "-1", "61", "garbage", Long.MAX_VALUE.toString())) {
+            val exit = assertFailsWith<ProgramResult> {
+                createBossCLI().parse(listOf("mcp", "invoke", "test", "--timeout", timeout))
+            }
+            assertEquals(1, exit.statusCode)
+        }
+        assertFalse(invoked)
     }
 
     @Test
@@ -348,7 +371,7 @@ class BossMcpCliTest {
 
     @Test
     fun `mcp invoke with oversized stdin input rejects with exit code 1 to stderr`() {
-        val oversizedData = ByteArray(SingleInstanceManager.MAX_REQUEST_BYTES + 4096) { 'a'.code.toByte() }
+        val oversizedData = ByteArray(MAX_ARGUMENT_BYTES + 4096) { 'a'.code.toByte() }
         System.setIn(java.io.ByteArrayInputStream(oversizedData))
 
         val cli = createBossCLI()

@@ -31,7 +31,9 @@ You can install or update the CLI symlinks inside BossConsole via **Toolbox → 
 
 ## CLI Agent Harness (`boss status` & `boss mcp`)
 
-The **CLI Agent Harness** bridges terminal coding agents directly into the running desktop harness via an authenticated local loopback channel. Terminal agents can inspect the workspace, drive the browser, run git operations, and trigger automation without running a heavy SSE or WebSocket client.
+The packaged executable is required. Set `BOSS_BIN` (macOS/Linux) or `BOSS_EXE` (Windows) for a nonstandard install. These commands do not start the desktop when it is closed.
+
+The **CLI Agent Harness** bridges terminal coding agents directly into the running desktop harness via an authenticated local Unix socket (macOS/Linux) or loopback TCP channel (Windows). Terminal agents can inspect the workspace, drive the browser, run git operations, and trigger automation without running a heavy SSE or WebSocket client.
 
 ### 1. `boss status`
 
@@ -84,19 +86,19 @@ boss mcp list -f terminal --json
 
 ### 3. `boss mcp describe <tool_name>`
 
-**Token Guardrail**: Dumping 100+ tool schemas into an LLM prompt can consume 15,000+ tokens. `boss mcp describe` queries only the exact tool schema needed.
+**Token Guardrail**: Dumping 100+ tool schemas into an LLM prompt can consume 15,000+ tokens. `boss mcp describe` prints only the selected tool and its input schema. Discovery currently transfers the accessible registry over local IPC before filtering. Use the exact registered name from `boss mcp list`; client-specific prefixes such as `mcp__boss__` are not part of registry names.
 
 ```bash
 # Human-readable tool details and required permissions
-boss mcp describe mcp__boss__browser_navigate
+boss mcp describe browser_navigate
 
 # Machine-readable JSON schema
-boss mcp describe mcp__boss__browser_navigate --json
+boss mcp describe browser_navigate --json
 ```
 
 **Sample Output**:
 ```
-MCP Tool: mcp__boss__browser_navigate
+MCP Tool: browser_navigate
 Plugin:   fluck-browser
 Access:   Standard
 
@@ -109,24 +111,25 @@ Description:
 
 ### 4. `boss mcp invoke <tool_name>`
 
-Invokes any exposed BossConsole MCP tool headlessly and securely.
+Invokes tools exposed by the host plugin registry. Built-in terminal MCP server tools are a separate surface and are not included. JSON arguments are bounded to 767 KiB so their Base64 framing fits the 1 MiB request limit.
 
 ```bash
 # 1. Direct arguments with JSON string
-boss mcp invoke mcp__boss__search_workspace --args '{"query":"SingleInstanceManager"}'
+boss mcp invoke search_workspace --args '{"query":"SingleInstanceManager"}'
 
 # 2. Raw output mode (-r) for shell scripts and piping
-boss mcp invoke mcp__boss__git_status -r | grep "modified"
+boss mcp invoke git_status -r | grep "modified"
 
 # 3. Piping multi-KB / multiline payloads from standard input
-cat query.json | boss mcp invoke mcp__boss__run_sql --stdin
-echo '{"path": "build.gradle.kts"}' | boss mcp invoke mcp__boss__read_file -a -
+cat query.json | boss mcp invoke run_sql --stdin
+echo '{"path": "build.gradle.kts"}' | boss mcp invoke read_file -a -
 
-# 4. Custom timeout (default: 30 seconds)
-boss mcp invoke mcp__boss__heavy_build -a '{"target":"desktopJar"}' --timeout 60
+# 4. Client wait timeout (default: 35 seconds, range: 1-60)
+# Server execution is limited to 30 seconds; a shorter client wait does not cancel work.
+boss mcp invoke heavy_build -a '{"target":"desktopJar"}' --timeout 60
 
 # 5. Full structured JSON envelope
-boss mcp invoke mcp__boss__workspace_info --json
+boss mcp invoke workspace_info --json
 ```
 
 ---
@@ -155,7 +158,7 @@ boss completion fish > ~/.config/fish/completions/boss.fish
 The CLI adheres to strict UNIX process exit codes and standard stream separation:
 
 - **Exit Code `0`**: Operation succeeded. `stdout` contains the tool output or JSON response.
-- **Exit Code `1`**: Tool execution failed (`isError == true`), invalid arguments, or desktop app offline. The error description is written strictly to `stderr`, leaving `stdout` clean so shell pipelines do not ingest corrupted data.
+- **Exit Code `1`**: Tool execution failed (`isError == true`), invalid tool arguments, or desktop app offline. Clikt usage errors use exit code `2`. The error description is written strictly to `stderr`, leaving `stdout` clean so shell pipelines do not ingest corrupted data.
 
 ### Offline Fail-Fast
 If BossConsole is not running, commands fail immediately without hanging:
@@ -170,6 +173,6 @@ $ echo $?
 
 ## Security & Governance
 
-1. **Local Authentication**: Uses a per-launch 32-byte cryptographically secure random token written to an owner-restricted runtime directory. Local unauthorized processes cannot trigger tools.
-2. **Non-Blocking Coroutines**: Tool execution is isolated on `Dispatchers.IO` with watchdog timeouts; neither the IPC listener nor the Compose Multiplatform UI thread can be wedged by long-running tools.
+1. **Local Authentication**: Uses a per-launch 32-byte cryptographically secure random token written to an owner-restricted runtime directory. Other OS users cannot read that token. Processes running as the same OS user can read it and are trusted by this channel.
+2. **Non-Blocking Coroutines**: Tool execution runs on a background client thread with a cooperative 30-second coroutine timeout. Socket watchdogs bound client waits; a blocking plugin handler may continue after a timeout.
 3. **RBAC & Kill-Switch**: All calls go through `McpToolRegistryImpl`, enforcing role-based permissions and per-tool user disable switches (`mcp-disabled-tools.json`).

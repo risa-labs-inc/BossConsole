@@ -33,6 +33,9 @@ jobs:
       - name: 🧪 Claude review authorization tests
         run: node --test .github/scripts/test-claude-review.cjs
 
+      - name: Headless CLI launcher tests
+        run: bash scripts/test/test-headless-cli.sh
+
       - name: 🧪 Release publish — TUS slice tests
         # Guards the byte-accurate chunk slicing in the release publish path
         # (regressed twice: #877 misaligned resume, and the SIGPIPE status bug).

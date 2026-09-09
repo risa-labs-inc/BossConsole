@@ -6,8 +6,12 @@ import ai.rever.boss.plugin.api.McpToolResult
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -93,6 +97,7 @@ private const val MCP_INVOKE_TIMEOUT_MS = 60000L
  * sized to accommodate Base64-encoded tool arguments and payloads.
  */
 internal const val MAX_REQUEST_BYTES = 1024 * 1024
+internal const val MAX_ARGUMENT_BYTES = 768 * 1024 - 1024
 
 /** A response is one short word; nothing legitimate approaches this. */
 private const val MAX_RESPONSE_BYTES = 256
@@ -231,7 +236,8 @@ internal fun parseRequestLine(line: String): SingleInstanceRequest? {
             if (parts.size >= 4) {
                 val toolName = parts[3].trim()
                 val base64Payload = if (parts.size == 5) parts[4].trim() else ""
-                val decodedArgs = decodeBase64Args(base64Payload)
+                val decodedArgs = decodeBase64Args(base64Payload) ?: return null
+                if (toolName.length > 256 || toolName.any { it.isWhitespace() || it.isISOControl() }) return null
                 SingleInstanceRequest(token, VERB_MCP_INVOKE, DeepLinkOrigin.OPERATOR_CLI, null, toolName, decodedArgs)
             } else {
                 null
@@ -245,13 +251,13 @@ internal fun parseRequestLine(line: String): SingleInstanceRequest? {
 }
 
 @Suppress("TooGenericExceptionCaught")
-private fun decodeBase64Args(base64Payload: String): String {
+private fun decodeBase64Args(base64Payload: String): String? {
     if (base64Payload.isEmpty()) return "{}"
     return try {
         val decoder = java.util.Base64.getDecoder()
         String(decoder.decode(base64Payload), StandardCharsets.UTF_8)
-    } catch (_: Exception) {
-        "{}"
+    } catch (_: IllegalArgumentException) {
+        null
     }
 }
 
@@ -697,10 +703,18 @@ private fun buildStatusResponse(statusProviderOverride: (() -> String)?): String
                     ai.rever.boss.git.GitService
                         .getCurrentProjectPath() ?: ""
 
-                val heapStr = String.format(java.util.Locale.US, "%.1f", heapPercent)
-                val mem = """{"usedMb":$usedMem,"maxMb":$maxMem,"heapPercent":$heapStr}"""
-                """{"running":true,"version":"$version","os":"$os","arch":"$arch",""" +
-                    """"activeProject":"$projectPath","memory":$mem}"""
+                buildJsonObject {
+                    put("running", true)
+                    put("version", version)
+                    put("os", os)
+                    put("arch", arch)
+                    put("activeProject", projectPath)
+                    put("memory", buildJsonObject {
+                        put("usedMb", usedMem)
+                        put("maxMb", maxMem)
+                        put("heapPercent", heapPercent)
+                    })
+                }.toString()
             } catch (e: Exception) {
                 return RESPONSE_ERROR_PREFIX + (e.message ?: "Failed to query status")
             }
@@ -720,37 +734,7 @@ private fun buildMcpListResponse(listProviderOverride: (() -> String)?): String 
         } else {
             try {
                 val tools = ai.rever.boss.mcp.McpToolRegistryImpl.tools.value
-                buildString {
-                    append("[")
-                    tools.forEachIndexed { index, registeredTool ->
-                        val def = registeredTool.definition
-                        if (index > 0) append(",")
-                        append("{")
-                        append("\"name\":")
-                            .append(
-                                kotlinx.serialization.json.Json
-                                    .encodeToString(def.name),
-                            ).append(",")
-                        append("\"description\":")
-                            .append(
-                                kotlinx.serialization.json.Json
-                                    .encodeToString(def.description),
-                            ).append(",")
-                        append(
-                            "\"pluginId\":",
-                        ).append(
-                            kotlinx.serialization.json.Json
-                                .encodeToString(registeredTool.providerId),
-                        ).append(",")
-                        append("\"requiresAdmin\":").append(def.requiresAdmin).append(",")
-                        append("\"requiredPermissions\":").append(
-                            kotlinx.serialization.json.Json
-                                .encodeToString(def.requiredPermissions),
-                        )
-                        append("}")
-                    }
-                    append("]")
-                }
+                encodeMcpTools(tools)
             } catch (e: Exception) {
                 return RESPONSE_ERROR_PREFIX + (e.message ?: "Failed to list MCP tools")
             }
@@ -772,34 +756,12 @@ private fun buildMcpInvokeResponse(
         return RESPONSE_ERROR_PREFIX + "Tool name must not be blank"
     }
 
-    if (argsJson.isNotBlank() && argsJson != "{}") {
-        try {
-            val parsed =
-                kotlinx.serialization.json.Json
-                    .parseToJsonElement(argsJson)
-            if (parsed !is kotlinx.serialization.json.JsonObject) {
-                val errPayload =
-                    """{"success":false,"isError":true,"tool":"$toolName",""" +
-                        """"content":"Arguments must be a valid JSON object"}"""
-                val base64 =
-                    java.util.Base64
-                        .getEncoder()
-                        .encodeToString(errPayload.toByteArray(StandardCharsets.UTF_8))
-                return RESPONSE_MCP_INVOKE_PREFIX + base64
-            }
-        } catch (e: Exception) {
-            val msg = e.message ?: "Invalid JSON syntax"
-            val safeError = "Malformed JSON arguments: $msg".replace('\n', ' ').replace('\r', ' ')
-            val encodedError =
-                kotlinx.serialization.json.Json
-                    .encodeToString<String>(safeError)
-            val errPayload = """{"success":false,"isError":true,"tool":"$toolName","content":$encodedError}"""
-            val base64 =
-                java.util.Base64
-                    .getEncoder()
-                    .encodeToString(errPayload.toByteArray(StandardCharsets.UTF_8))
-            return RESPONSE_MCP_INVOKE_PREFIX + base64
+    try {
+        if (Json.parseToJsonElement(argsJson) !is JsonObject) {
+            return encodeMcpResult(toolName, McpToolResult("Arguments must be a valid JSON object", isError = true))
         }
+    } catch (_: IllegalArgumentException) {
+        return encodeMcpResult(toolName, McpToolResult("Malformed JSON arguments", isError = true))
     }
 
     return try {
@@ -817,21 +779,44 @@ private fun buildMcpInvokeResponse(
                     isError = true,
                 )
             }
-        val encodedContent =
-            kotlinx.serialization.json.Json
-                .encodeToString<String>(result.text)
-        val success = !result.isError
-        val rawJson =
-            """{"success":$success,"isError":${result.isError},"tool":"$toolName","content":$encodedContent}"""
-        val base64 =
-            java.util.Base64
-                .getEncoder()
-                .encodeToString(rawJson.toByteArray(StandardCharsets.UTF_8))
-        RESPONSE_MCP_INVOKE_PREFIX + base64
+        encodeMcpResult(toolName, result)
     } catch (e: Exception) {
         val safeMessage = (e.message ?: "Failed to invoke tool $toolName").replace('\n', ' ').replace('\r', ' ')
         RESPONSE_ERROR_PREFIX + safeMessage
     }
+}
+
+internal fun encodeMcpTools(tools: List<ai.rever.boss.plugin.api.RegisteredMcpTool>): String =
+    JsonArray(
+        tools.map { registeredTool ->
+            val def = registeredTool.definition
+            buildJsonObject {
+                put("name", def.name)
+                put("description", def.description)
+                put("pluginId", registeredTool.providerId)
+                put("requiresAdmin", def.requiresAdmin)
+                put("requiredPermissions", JsonArray(def.requiredPermissions.map(::JsonPrimitive)))
+                put("inputSchema", Json.parseToJsonElement(def.inputSchema))
+            }
+        },
+    ).toString()
+
+internal fun encodeMcpResult(
+    toolName: String,
+    result: McpToolResult,
+): String {
+    val payload =
+        buildJsonObject {
+            put("success", !result.isError)
+            put("isError", result.isError)
+            put("tool", toolName)
+            put("content", result.text)
+        }
+    val encoded =
+        java.util.Base64
+            .getEncoder()
+            .encodeToString(payload.toString().toByteArray(StandardCharsets.UTF_8))
+    return RESPONSE_MCP_INVOKE_PREFIX + encoded
 }
 
 /**
@@ -901,7 +886,6 @@ private fun acceptNextClient(
  */
 @Suppress("TooManyFunctions")
 object SingleInstanceManager {
-    const val MAX_REQUEST_BYTES: Int = 1024 * 1024
     private var serverChannel: ServerSocketChannel? = null
     private var listenerThread: Thread? = null
 
@@ -1266,6 +1250,15 @@ object SingleInstanceManager {
         argsJson: String = "{}",
         timeoutMs: Long = MCP_INVOKE_TIMEOUT_MS,
     ): Result<String> {
+        if (toolName.isBlank() || toolName.length > 256 || toolName.any { it.isWhitespace() || it.isISOControl() }) {
+            return Result.failure(IllegalArgumentException("Tool name must be a single nonempty token"))
+        }
+        if (argsJson.toByteArray(StandardCharsets.UTF_8).size > MAX_ARGUMENT_BYTES) {
+            return Result.failure(IllegalArgumentException("Tool arguments exceed the IPC size limit"))
+        }
+        if (timeoutMs <= 0 || timeoutMs > MCP_INVOKE_TIMEOUT_MS) {
+            return Result.failure(IllegalArgumentException("Timeout must be between 1 and 60 seconds"))
+        }
         val target =
             SingleInstanceFiles.read()
                 ?: return Result.failure(IllegalStateException("BOSS is not running. Launch BOSS to invoke MCP tools."))

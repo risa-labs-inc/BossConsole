@@ -245,7 +245,7 @@ fun main(args: Array<String>) {
 
     // Headless CLI commands (status, mcp, completion, --help, -v) target the running
     // instance or generate output headlessly. Execute before AWT, plugins, Skiko,
-    // or acquiring the single-instance lock so they fail fast (<100ms) when BOSS is
+    // or acquiring the single-instance lock so they fail without GUI startup when BOSS is
     // closed without booting the GUI or corrupting standard output streams.
     val firstNonFlag = args.firstOrNull { !it.startsWith("-") }?.lowercase()
     val isHeadlessCli =
@@ -523,18 +523,6 @@ fun main(args: Array<String>) {
                 )
                 exitProcess(1)
             }
-        } else if (args.isNotEmpty()) {
-            // Standalone CLI commands (status, mcp, etc.) target the running instance
-            // via the single-instance IPC channel
-            try {
-                createBossCLI().main(args)
-            } catch (e: ProgramResult) {
-                exitProcess(e.statusCode)
-            } catch (e: Exception) {
-                System.err.println("Error: ${e.message ?: "Failed to execute CLI command"}")
-                exitProcess(1)
-            }
-            exitProcess(0)
         } else {
             logger.info(LogCategory.SYSTEM, "No URL to send - existing BOSS window should be visible")
             exitProcess(0)
@@ -783,11 +771,7 @@ fun main(args: Array<String>) {
     val engineLabel = "BOSS Browser Engine ${ChromiumAutoDownloader.effectiveVersion}"
 
     val chromiumNeedsDownload =
-        if (System.getProperty("boss.dev.mode") == "true") {
-            false
-        } else {
-            engineAction == ai.rever.boss.plugin.browser.FluckEngine.EngineStartupAction.Download
-        }
+        engineAction == ai.rever.boss.plugin.browser.FluckEngine.EngineStartupAction.Download
     when (engineAction) {
         ai.rever.boss.plugin.browser.FluckEngine.EngineStartupAction.BootAndReport -> {
             logger.error(
@@ -841,12 +825,10 @@ fun main(args: Array<String>) {
             val osOpenRequests = OsOpenArguments.deepLinksFrom(args)
 
             if (osOpenRequests.isEmpty()) {
+                // Not an OS open request, so it is the operator's CLI.
                 logger.debug(LogCategory.SYSTEM, "Processing CLI arguments", mapOf("args" to args.joinToString(" ")))
-                try {
-                    createBossCLI().main(args)
-                } catch (e: Exception) {
-                    logger.error(LogCategory.SYSTEM, "CLI error", error = e)
-                }
+                createBossCLI().main(args)
+                // Commands are queued, continue with app initialization
             }
             // Otherwise these are links and files the OS wants opened;
             // `DeepLinkHandler.processCommandLineArgs` below is the single place

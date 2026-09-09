@@ -115,20 +115,18 @@ start "" "boss://plugin?id=%ENCODED%"
 goto :eof
 
 :cmd_forward_exe
+REM Preserve literal exclamation marks in JSON arguments.
+setlocal DisableDelayedExpansion
 if not defined BOSS_EXE set "BOSS_EXE=%LOCALAPPDATA%\Programs\BOSS\BOSS.exe"
-if not exist "!BOSS_EXE!" set "BOSS_EXE=%ProgramFiles%\BOSS\BOSS.exe"
-if not exist "!BOSS_EXE!" set "BOSS_EXE=%~dp0..\composeApp\build\compose\binaries\main\app\BOSS\BOSS.exe"
-if exist "!BOSS_EXE!" (
-    "!BOSS_EXE!" %*
-    exit /b !ERRORLEVEL!
-)
-where pwsh >nul 2>nul
-if %ERRORLEVEL%==0 (
-    pwsh -NoProfile -ExecutionPolicy Bypass -File "%~dp0boss.ps1" %*
-) else (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0boss.ps1" %*
-)
-exit /b !ERRORLEVEL!
+if not exist "%BOSS_EXE%" set "BOSS_EXE=%ProgramFiles%\BOSS\BOSS.exe"
+if not exist "%BOSS_EXE%" set "BOSS_EXE=%~dp0..\composeApp\build\compose\binaries\main\app\BOSS\BOSS.exe"
+if not exist "%BOSS_EXE%" goto :cmd_missing_exe
+"%BOSS_EXE%" %*
+exit /b %ERRORLEVEL%
+
+:cmd_missing_exe
+>&2 echo Error: BOSS application binary not found. Set BOSS_EXE to the packaged executable.
+exit /b 1
 
 :cmd_version
 echo BOSS CLI version {{VERSION}}
