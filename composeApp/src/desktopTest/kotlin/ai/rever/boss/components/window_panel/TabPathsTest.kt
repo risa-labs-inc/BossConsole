@@ -1,10 +1,12 @@
 package ai.rever.boss.components.window_panel
 
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
+import kotlin.test.assertTrue
 
 /**
  * Path comparison for tab reuse.
@@ -135,14 +137,14 @@ class TabPathsTest {
 
     @Test
     fun `normalizing repeated POSIX root separators preserves root identity`() {
-        if (File.separatorChar != '/') return
+        assumeTrue(File.separatorChar == '/', "POSIX root canonicalization")
         assertEquals(File("/").canonicalPath, TabPaths.normalize("////"))
-        assertEquals(true, TabPaths.pathsMatch("/", "////"))
+        assertTrue(TabPaths.pathsMatch("/", "////"))
     }
 
     @Test
     fun `normalizing a windows drive root does not resolve the drive working directory`() {
-        if (File.separatorChar != '\\') return
+        assumeTrue(File.separatorChar == '\\', "Windows drive-root canonicalization")
         val root = File(System.getProperty("user.dir")).toPath().root.toString()
         assertEquals(File(root).canonicalPath, TabPaths.normalize(root))
     }

@@ -13,7 +13,8 @@ package ai.rever.boss.plugin.pathutils
  * 1. EDGE CASES NOT HANDLED:
  *    - UNC share roots are treated lexically, not as filesystem roots
  *    - Root-level files (/file.txt or C:\file.txt): Returns empty or drive letter
- *    - Both slash styles are separators, including literal backslashes in POSIX names
+ *    - Both slash styles are separators, including literal backslashes in POSIX names.
+ *      These display-label helpers differ deliberately from host-specific file identity rules.
  *    - Paths with trailing separators: Not normalized automatically
  *
  * 2. SIMPLE IMPLEMENTATION:
@@ -34,7 +35,8 @@ package ai.rever.boss.plugin.pathutils
  * - "/" -> "" (root path returns empty)
  * - "file.txt" -> "file.txt" (no path returns the string itself)
  *
- * Note: Does not handle edge cases like UNC paths (\\server\share) or root files correctly.
+ * This is lexical extraction: root-level files return their filename, UNC share roots
+ * return the share name, and a trailing separator returns an empty name.
  */
 fun String.extractFileName(): String = this.substringAfterLast('/').substringAfterLast('\\')
 

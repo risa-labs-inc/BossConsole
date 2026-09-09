@@ -59,8 +59,9 @@ internal object TabPaths {
     /**
      * Collapse repeated separators and drop a trailing one, except on roots.
      *
-     * Internal so the two deliberate choices in here are pinnable: backslash is only
-     * a separator on Windows, and a leading `//` (UNC host) survives the collapse.
+     * Internal so separator rules are pinnable: backslash is only a separator on
+     * Windows, a leading `//` (UNC host) survives the collapse, drive roots retain
+     * their separator, and separator-only roots never become empty.
      * [normalize] applies this before canonicalization on every platform.
      * The separator is a parameter so the Windows
      * branch is testable on the Linux/macOS runners too - with the default it is
