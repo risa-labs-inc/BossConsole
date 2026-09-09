@@ -48,14 +48,13 @@ class ContextMenuProviderProxy(
         LaunchedEffect(labels) {
             try {
                 val protoItems =
-                    labels.map { label ->
+                    labels.mapIndexed { index, label ->
                         ContextMenuItemProto
                             .newBuilder()
                             .setLabel(label)
-                            // TODO(#30): action id == label, so duplicate labels collide.
-                            // Stable per-item ids are part of the protocol work the
-                            // kernel bridge's KDoc describes.
-                            .setActionId(label)
+                            // Unique within this ordered menu, not across edits or menus.
+                            // The passive bridge still discards these advisory ids.
+                            .setActionId(advisoryActionId(label, index))
                             .build()
                     }
                 stub.registerContextMenu(
@@ -75,3 +74,8 @@ class ContextMenuProviderProxy(
         return modifier
     }
 }
+
+internal fun advisoryActionId(
+    label: String,
+    index: Int,
+): String = "${label}_$index"

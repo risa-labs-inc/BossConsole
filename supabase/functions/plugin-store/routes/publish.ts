@@ -13,7 +13,7 @@ import {
   PublishFromGitHubMetadataResponseSchema,
   ErrorResponseSchema
 } from "../types/schemas.ts"
-import { getPlugin, createPlugin, setPluginTags, getPluginById, getPluginOrgId, updatePlugin } from "../services/plugins.ts"
+import { getPluginForPublish, createPlugin, setPluginTags, getPluginById, getPluginOrgId, updatePlugin } from "../services/plugins.ts"
 import {
   authorizeExistingPluginPublish,
   authorizeNewPluginPublish,
@@ -138,8 +138,9 @@ publish.openapi(publishPluginRoute, async (ctx) => {
       return ctx.json({ success: false, error: permCheck.error }, 400)
     }
 
-    // Check if plugin ID already exists
-    const existing = await getPlugin(supabase, body.pluginId)
+    // Check if plugin ID already exists. Must see unpublished rows too: they still hold the
+    // unique plugin_id index, so missing one here turns a clean 400 into a 23505 on insert.
+    const existing = await getPluginForPublish(supabase, body.pluginId)
     if (existing) {
       return ctx.json({ success: false, error: 'Plugin ID already exists' }, 400)
     }
@@ -293,8 +294,9 @@ publish.openapi(publishVersionRoute, async (ctx) => {
     }
     const user = auth.user
 
-    // Get plugin
-    const plugin = await getPlugin(supabase, pluginId)
+    // Get plugin, unpublished rows included: gating on the storefront's published filter here
+    // made an unpublished plugin look absent and 404 its owner's version publishes.
+    const plugin = await getPluginForPublish(supabase, pluginId)
     if (!plugin) {
       return ctx.json({ success: false, error: 'Plugin not found' }, 404)
     }
@@ -706,8 +708,8 @@ publish.openapi(publishFromGitHubRoute, async (ctx) => {
       return ctx.json({ success: false, error: permCheck.error }, 400)
     }
 
-    // Check if plugin already exists
-    const existingPlugin = await getPlugin(supabase, manifest.pluginId)
+    // Check if plugin already exists, unpublished rows included - see getPluginForPublish.
+    const existingPlugin = await getPluginForPublish(supabase, manifest.pluginId)
     let pluginUuid: string
     let isNewPlugin = false
 
@@ -733,6 +735,16 @@ publish.openapi(publishFromGitHubRoute, async (ctx) => {
 
       pluginUuid = existingPlugin.id
 
+      // Publishing a version is an explicit request to be in the store, so an unpublished row is
+      // restored here. Without this the lookup fix alone would return 200 while leaving the
+      // plugin invisible, which is a worse failure than the 500 it replaced. Nothing in this
+      // function ever sets published = false (admin delete is a hard delete), so this cannot be
+      // undoing a moderation action taken through the product; it is logged so an out-of-band
+      // unpublish is not silently reversed.
+      if (!existingPlugin.published) {
+        console.log(`Re-publishing previously unpublished plugin ${manifest.pluginId}`)
+      }
+
       // Update plugin metadata from manifest
       await updatePlugin(supabase, pluginUuid, {
         displayName: manifest.displayName,
@@ -741,7 +753,8 @@ publish.openapi(publishFromGitHubRoute, async (ctx) => {
         iconUrl: manifest.iconUrl,
         type: (manifest.type as string || 'panel').toLowerCase(),
         apiVersion: manifest.apiVersion,
-        requiredPermissions: manifest.requiredPermissions || []
+        requiredPermissions: manifest.requiredPermissions || [],
+        published: true
       })
     } else {
       // Create new plugin
@@ -1023,8 +1036,8 @@ publish.openapi(publishFromGitHubMetadataRoute, async (ctx) => {
       return ctx.json({ success: false, error: permCheck.error }, 400)
     }
 
-    // Check if plugin already exists
-    const existingPlugin = await getPlugin(supabase, manifest.pluginId)
+    // Check if plugin already exists, unpublished rows included - see getPluginForPublish.
+    const existingPlugin = await getPluginForPublish(supabase, manifest.pluginId)
     let pluginUuid: string
     let isNewPlugin = false
 
@@ -1049,13 +1062,19 @@ publish.openapi(publishFromGitHubMetadataRoute, async (ctx) => {
 
       pluginUuid = existingPlugin.id
 
+      // Same republish rule as the /github path above.
+      if (!existingPlugin.published) {
+        console.log(`Re-publishing previously unpublished plugin ${manifest.pluginId}`)
+      }
+
       await updatePlugin(supabase, pluginUuid, {
         displayName: manifest.displayName,
         description: manifest.description,
         homepageUrl: body.githubUrl,
         type: ((manifest.type as string) || 'panel').toLowerCase(),
         apiVersion: manifest.apiVersion,
-        requiredPermissions: manifest.requiredPermissions || []
+        requiredPermissions: manifest.requiredPermissions || [],
+        published: true
       })
     } else {
       isNewPlugin = true
