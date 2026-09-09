@@ -5,6 +5,10 @@
 -- Description: Secures twofa_secret by storing it encrypted at rest using a
 --              'v1:' prefix to guarantee idempotence.
 --              Implements safe decryption and auto-encrypt triggers.
+-- Operational scope: UPDATE replaces visible rows, not old physical bytes.
+-- Dead tuples, WAL and existing backups/PITR may retain plaintext. This is not
+-- secure erasure; backup retention and physical storage reclamation are separate
+-- operator decisions. Logical reads after commit see encrypted storage.
 -- ============================================================================
 
 -- Function 1: safe_decrypt_twofa_secret
@@ -40,6 +44,11 @@ REVOKE EXECUTE ON FUNCTION "public"."safe_decrypt_twofa_secret"("encrypted_data"
 GRANT EXECUTE ON FUNCTION "public"."safe_decrypt_twofa_secret"("encrypted_data" "text") TO "postgres";
 
 -- Function 2: Trigger function to intercept and encrypt plaintext inserts/updates
+-- Writers must use plain INSERT or UPDATE for a changed twofa_secret.
+-- ON CONFLICT DO UPDATE SET twofa_secret = excluded.twofa_secret carries the
+-- BEFORE INSERT trigger's envelope into UPDATE and is rejected when it differs.
+-- Do not weaken envelope rejection to accommodate upserts: that permits a caller
+-- to import another row's ciphertext into a row they can decrypt via the RPC.
 CREATE OR REPLACE FUNCTION "public"."encrypt_twofa_secret_trigger_fn"() RETURNS trigger
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
@@ -189,3 +198,7 @@ END;
 $$;
 
 ALTER FUNCTION "public"."get_user_secrets_with_shared"(integer,integer) OWNER TO "postgres";
+
+-- Restate the existing RPC grants, as the paging migration does.
+GRANT EXECUTE ON FUNCTION public.get_user_secrets_with_shared(integer,integer)
+    TO authenticated, service_role;

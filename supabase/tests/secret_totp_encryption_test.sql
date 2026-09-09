@@ -19,6 +19,8 @@ DROP TRIGGER encrypt_twofa_secret_trigger ON public.secret_metadata;
 INSERT INTO public.secret_metadata (secret_id, twofa_enabled, twofa_type, twofa_secret)
 VALUES ('d1700000-0000-4000-8000-000000000011', true, 'app', 'JBSWY3DPEHPK3PXP');
 \ir .migration-fixtures/20260909000000_encrypt_totp.inc
+SELECT matches((SELECT twofa_secret FROM public.secret_metadata WHERE secret_id = 'd1700000-0000-4000-8000-000000000011'),
+    '^v1:', 'backfill uses the versioned storage format');
 SELECT isnt((SELECT twofa_secret FROM public.secret_metadata WHERE secret_id = 'd1700000-0000-4000-8000-000000000011'),
     'JBSWY3DPEHPK3PXP', 'upgrade removes the legacy plaintext');
 SELECT is((SELECT public.safe_decrypt_twofa_secret(twofa_secret) FROM public.secret_metadata WHERE secret_id = 'd1700000-0000-4000-8000-000000000011'),
@@ -40,7 +42,11 @@ SET LOCAL ROLE authenticated;
 SELECT is((SELECT metadata->>'twofa_secret' FROM public.get_user_secrets_with_shared() WHERE id = 'd1700000-0000-4000-8000-000000000011'),
     'JBSWY3DPEHPK3PXP', 'upgraded RPC returns plaintext to owner');
 SELECT throws_ok($$ SELECT public.safe_decrypt_twofa_secret('v1:corrupt') $$, '42501', NULL, 'direct helper execution is denied');
+SELECT throws_ok($$ INSERT INTO public.secret_metadata (secret_id, twofa_secret) VALUES ('d1700000-0000-4000-8000-000000000012', 'v1:plaintext') $$,
+    '22023', NULL, 'INSERT rejects caller supplied envelopes');
 INSERT INTO public.secret_metadata (secret_id, twofa_secret) VALUES ('d1700000-0000-4000-8000-000000000012', 'GEZDGNBVGY3TQOJQ');
+SELECT throws_ok($$ INSERT INTO public.secret_metadata (secret_id, twofa_secret) VALUES ('d1700000-0000-4000-8000-000000000012', 'MZXW6YTBOI') ON CONFLICT (secret_id) DO UPDATE SET twofa_secret = excluded.twofa_secret $$,
+    '22023', NULL, 'changed TOTP upserts are explicitly unsupported; use plain UPDATE');
 SELECT is((SELECT metadata->>'twofa_secret' FROM public.get_user_secrets_with_shared() WHERE id = 'd1700000-0000-4000-8000-000000000012'),
     'GEZDGNBVGY3TQOJQ', 'authenticated insert encrypts and RPC decrypts');
 UPDATE public.secret_metadata SET twofa_secret = 'MZXW6YTBOI' WHERE secret_id = 'd1700000-0000-4000-8000-000000000012';
