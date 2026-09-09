@@ -128,8 +128,7 @@ class ApiPackageDivergenceTest {
     private fun staticKind(modifiers: Int) = if (Modifier.isStatic(modifiers)) "static" else "instance"
 
     // Do not discard $default, value-class mangling, or serializer bridges: callers link to them.
-    private fun isComparableName(name: String) =
-        !name.endsWith("\$boss_plugin_api") && !name.contains("\$com_risaboss_")
+    private fun isComparableName(name: String) = !name.endsWith("\$boss_plugin_api") && !name.contains("\$com_risaboss_")
 
     internal fun comparableClassNames(
         jar: File,

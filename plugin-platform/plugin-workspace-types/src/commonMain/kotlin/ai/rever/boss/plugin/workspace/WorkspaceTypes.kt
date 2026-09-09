@@ -71,7 +71,7 @@ data class PanelConfig
         // Serializers compiled against the two-property API use this constructor.
         @Deprecated("Binary compatibility with the two-property plugin API", level = DeprecationLevel.HIDDEN)
         @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
-        @Suppress("INVISIBLE_REFERENCE", "INVISIBLE_MEMBER", "UNUSED_PARAMETER")
+        @Suppress("DEPRECATION_ERROR", "UNUSED_PARAMETER")
         constructor(
             seen: Int,
             id: String?,

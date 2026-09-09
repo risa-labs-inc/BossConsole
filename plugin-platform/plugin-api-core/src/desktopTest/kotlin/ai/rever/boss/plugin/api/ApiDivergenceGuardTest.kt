@@ -58,7 +58,9 @@ class ApiDivergenceGuardTest {
         }
     }
 
-    class WithDefaults(val value: String) {
+    class WithDefaults(
+        val value: String,
+    ) {
         fun call(value: String = "default") = value
     }
 
@@ -66,6 +68,8 @@ class ApiDivergenceGuardTest {
         fun call(value: String) = value
     }
 
+    // A class fixture is intentional: changing a static entry point to an instance method breaks callers.
+    @Suppress("UtilityClassWithPublicConstructor")
     class StaticMethod {
         companion object {
             @JvmStatic

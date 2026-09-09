@@ -1,8 +1,8 @@
 package ai.rever.boss.plugin.workspace
 
-import java.lang.reflect.InvocationTargetException
 import kotlinx.serialization.MissingFieldException
 import kotlinx.serialization.json.Json
+import java.lang.reflect.InvocationTargetException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -45,7 +45,10 @@ class PanelConfigCompatibilityTest {
             }
         val panel = constructor.newInstance(3, "restored", emptyList<TabConfig>(), null) as PanelConfig
         assertEquals(PanelConfig("restored", emptyList(), 0), panel)
-        val failure = assertFailsWith<InvocationTargetException> { constructor.newInstance(2, null, emptyList<TabConfig>(), null) }
+        val failure =
+            assertFailsWith<InvocationTargetException> {
+                constructor.newInstance(2, null, emptyList<TabConfig>(), null)
+            }
         assertIs<MissingFieldException>(failure.cause)
     }
 
