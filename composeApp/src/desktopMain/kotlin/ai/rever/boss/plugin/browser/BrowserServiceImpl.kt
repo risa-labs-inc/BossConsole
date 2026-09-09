@@ -574,12 +574,7 @@ object BrowserServiceImpl : BrowserService {
             }
 
             // Chrome setup is not an engine creation failure and must not trigger wedge recovery.
-            try {
-                installDefaultBrowserChrome(browser)
-            } catch (e: Throwable) {
-                runCatching { browser.close() }
-                throw e
-            }
+            installBrowserChromeOrClose(browser)
 
             // Enable swipe navigation for touchscreen devices.
             //

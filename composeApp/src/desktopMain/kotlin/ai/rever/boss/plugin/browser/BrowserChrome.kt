@@ -54,3 +54,16 @@ internal fun closeContextMenuQuietly(tell: ShowContextMenuCallback.Action) {
         logger.warn(LogCategory.BROWSER, "Could not answer the context-menu callback", error = e)
     }
 }
+
+/** A newly created browser has no owner yet; a failed setup must release it before propagating. */
+internal fun installBrowserChromeOrClose(
+    browser: Browser,
+    install: (Browser) -> Unit = ::installDefaultBrowserChrome,
+) {
+    try {
+        install(browser)
+    } catch (failure: Throwable) {
+        runCatching { browser.close() }
+        throw failure
+    }
+}
