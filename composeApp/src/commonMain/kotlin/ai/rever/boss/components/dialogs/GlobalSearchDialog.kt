@@ -310,7 +310,7 @@ fun GlobalSearchDialog(
                 dispatch("url", LogSanitizer.maskUriParams(result.url), result.url, onPageSelect)
             }
 
-            // Opens Toolbox (plugin-manager) for kill-switch management — invoking an MCP tool
+            // Opens Toolbox (plugin-manager) for kill-switch management - invoking an MCP tool
             // still needs arguments a search row cannot collect, but agent-less operators need a
             // path from "I found mcp__boss__X" to the toggle UI without an attached coding CLI
             // (BossConsole#380).

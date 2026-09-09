@@ -710,11 +710,15 @@ internal fun BossAppDialogs(state: BossAppState) {
                 state.showGlobalSearchDialog = false
                 // Same verb as onToolSelect: open Toolbox so kill-switches are reachable without a
                 // coding CLI attached (BossConsole#380). Does not invoke the MCP tool.
-                state.draggablePanelComponent.revealPlugin(PanelIds.PLUGIN_MANAGER.panelId)
-                StatusMessageManager.showMessage(
-                    "In Toolbox, select MCP and find ${mcp.name} to manage its kill-switch",
-                    durationMs = 8_000L,
-                )
+                val message =
+                    if (state.draggablePanelComponent.toolboxSidebarItem() != null) {
+                        state.draggablePanelComponent.revealPlugin(PanelIds.PLUGIN_MANAGER.panelId)
+                        "In Toolbox, select MCP and find ${mcp.name} to manage its kill-switch"
+                    } else {
+                        "Toolbox is unavailable in this window; the MCP tool was not run or changed"
+                    }
+                // Status messages are process-wide; only this window reveals Toolbox.
+                StatusMessageManager.showMessage(message, durationMs = 8_000L)
                 state.focusRequester.requestFocus()
             },
         )

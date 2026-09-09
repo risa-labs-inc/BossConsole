@@ -179,7 +179,7 @@ sealed class SearchResult {
     /**
      * An MCP tool, indexed so its name (and kill-switch state) can be found.
      *
-     * Selecting it does **not** invoke the tool — arguments cannot be collected in a search row.
+     * Selecting it does **not** invoke the tool - arguments cannot be collected in a search row.
      * Activation opens Toolbox (plugin-manager) so an agent-less operator can reach per-tool
      * kill-switches without an attached coding CLI (BossConsole#380). [enabled] and [providerId]
      * stay on the row because a disabled tool is precisely the one someone is looking for.

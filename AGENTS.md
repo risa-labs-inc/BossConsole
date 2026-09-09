@@ -1014,6 +1014,8 @@ the whole `TabTypeId`, whose equality includes `pluginId` and `defaultOrder`.
 
 ## Documentation
 
+- [MCP for agent-less operators](docs/mcp-agentless-operators.md) - Toolbox kill-switches and attach path
+
 - [Core Subsystems](docs/SUBSYSTEMS.md) - Auth, UI, keyboard shortcuts, threading, default applications, runner, BossTerm
 - [BossEditor](docs/BOSSEDITOR.md) - External editor dependency, LSP, PSI, editor features
 - [Application Features](docs/FEATURES.md) - Performance monitoring, dashboard, downloads, Chromium branding

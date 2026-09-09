@@ -13,6 +13,9 @@ reachable **without** those CLIs attached.
    for that name; the host does not select the tab or scroll to the toggle automatically. It does **not**
    invoke the tool (arguments cannot be collected from search).
 
+If Toolbox is unavailable in this window, selection reports that instead. The status hint is
+shared across windows, while Toolbox opens only in the window where you selected the row.
+
 Persisted disables live in the app data file `mcp-disabled-tools.json`. Fail-closed faults
 surface in the bottom status bar (`McpKillSwitchFault`).
 
