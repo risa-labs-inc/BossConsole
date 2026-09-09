@@ -225,11 +225,18 @@ fun BossRightBottomBar() {
         )
     }
 
+    val trustedTools by McpToolRegistryImpl.policyEngine.sessionTrustedTools.collectAsState()
+    if (trustedTools.isNotEmpty()) {
+        androidx.compose.material.TextButton(onClick = { McpToolRegistryImpl.policyEngine.clearSessionTrusts() }) {
+            Text("Revoke MCP session trust (${trustedTools.size})", color = BossTheme.colors.alert)
+        }
+    }
+
     val policyFault by McpToolRegistryImpl.policyFault.collectAsState()
     policyFault?.let { fault ->
         Text(
             text = "⚠ ${fault.message}",
-            color = BossTheme.colors.warn,
+            color = BossTheme.colors.alert,
             fontSize = 12.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,

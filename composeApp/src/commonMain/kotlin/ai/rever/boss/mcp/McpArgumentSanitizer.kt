@@ -46,23 +46,53 @@ object McpArgumentSanitizer {
             mapOf("arguments" to "[OMITTED: invalid JSON]")
         }
 
-    fun sanitize(args: Map<String, Any?>): Map<String, String> =
+    fun sanitize(args: Map<String, Any?>): Map<String, String> = sanitizeMap(args, 0)
+
+    private fun sanitizeMap(
+        args: Map<String, Any?>,
+        depth: Int,
+    ): Map<String, String> =
         args.mapValues { (key, value) ->
             if (sensitiveKeyWords.any { key.contains(it, ignoreCase = true) } || key.contains("auth", true)) {
                 "[REDACTED]"
             } else {
-                sanitizeValue(value).take(4096)
+                sanitizeValue(value, depth).take(4096)
             }
         }
 
-    private fun sanitizeValue(value: Any?): String =
-        when (value) {
-            is JsonObject -> sanitize(value.toMap()).toString()
-            is JsonArray -> value.joinToString(prefix = "[", postfix = "]") { sanitizeValue(it) }
-            is JsonPrimitive -> sanitizeMessage(value.content)
-            is Map<*, *> -> sanitize(value.entries.associate { it.key.toString() to it.value }).toString()
-            is Iterable<*> -> value.joinToString(prefix = "[", postfix = "]") { sanitizeValue(it) }
-            else -> sanitizeMessage(value?.toString() ?: "null")
+    private fun sanitizeValue(
+        value: Any?,
+        depth: Int,
+    ): String =
+        if (depth >= 8) {
+            "[OMITTED: too deeply nested]"
+        } else {
+            when (value) {
+                is JsonObject -> {
+                    sanitizeMap(value.toMap(), depth + 1).toString()
+                }
+
+                is JsonArray -> {
+                    value.joinToString(prefix = "[", postfix = "]") { sanitizeValue(it, depth + 1) }
+                }
+
+                is JsonPrimitive -> {
+                    sanitizeMessage(value.content)
+                }
+
+                is Map<*, *> -> {
+                    val nested = value.entries.associate { it.key.toString() to it.value }
+                    sanitizeMap(nested, depth + 1).toString()
+                }
+
+                is Iterable<*> -> {
+                    value.joinToString(prefix = "[", postfix = "]") { sanitizeValue(it, depth + 1) }
+                }
+
+                else -> {
+                    sanitizeMessage(value?.toString() ?: "null")
+                }
+            }
         }
 
     private val sensitiveAssignment =
@@ -73,9 +103,8 @@ object McpArgumentSanitizer {
     private val bearer = Regex("""(?i)Bearer\s+[^\s"',;}]+""")
 
     fun sanitizeMessage(text: String): String =
-        if (credentialShapePattern.containsMatchIn(text)) {
-            "[REDACTED]"
-        } else {
-            text.replace(sensitiveAssignment, "[REDACTED]").replace(bearer, "Bearer [REDACTED]")
-        }
+        text
+            .replace(credentialShapePattern, "[REDACTED]")
+            .replace(sensitiveAssignment, "[REDACTED]")
+            .replace(bearer, "Bearer [REDACTED]")
 }

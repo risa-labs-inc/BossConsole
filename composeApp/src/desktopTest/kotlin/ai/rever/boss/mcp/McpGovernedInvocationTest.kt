@@ -1,22 +1,16 @@
 package ai.rever.boss.mcp
 
-import ai.rever.boss.plugin.api.McpToolArgs
 import ai.rever.boss.plugin.api.McpToolDefinition
 import ai.rever.boss.plugin.api.McpToolHandler
 import ai.rever.boss.plugin.api.McpToolProvider
 import ai.rever.boss.plugin.api.McpToolResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
-import java.io.File
-import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /** Exercises policy precedence, real approval suspension and audit cancellation at the registry boundary. */
@@ -110,7 +104,7 @@ class McpGovernedInvocationTest {
             val deferredResult = async { core.invoke("k8s_delete", "{\"pod\":\"test-pod\"}") }
 
             // Receive request and approve
-            val req = approvalBus.requests.first()
+            val req = approvalBus.pendingList.first { it.isNotEmpty() }.first()
             assertEquals("k8s_delete", req.toolName)
             approvalBus.approve(req.id, trustForSession = false)
 
@@ -155,7 +149,7 @@ class McpGovernedInvocationTest {
 
             val deferredResult = async { core.invoke("docker_rm", "{}") }
 
-            val req = approvalBus.requests.first()
+            val req = approvalBus.pendingList.first { it.isNotEmpty() }.first()
             approvalBus.deny(req.id, "Container in use")
 
             val res = deferredResult.await()
@@ -203,6 +197,7 @@ class McpGovernedInvocationTest {
             assertEquals(1L, ledger.totalErrors.value)
             val record = ledger.recentOperations.value.first()
             assertTrue(record.isError)
+            assertEquals(McpApprovalDisposition.CANCELLED_IN_FLIGHT, record.approvalDisposition)
             assertEquals("Execution cancelled by caller", record.errorSnippet)
         }
 
@@ -220,7 +215,7 @@ class McpGovernedInvocationTest {
             assertTrue(bus.pendingList.value.isEmpty())
             assertFalse(bus.approve(request.id))
             assertEquals(
-                McpApprovalDisposition.CANCELLED,
+                McpApprovalDisposition.CANCELLED_AWAITING_APPROVAL,
                 ledger.recentOperations.value
                     .single()
                     .approvalDisposition,

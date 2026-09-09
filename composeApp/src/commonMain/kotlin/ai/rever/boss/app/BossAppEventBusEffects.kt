@@ -28,6 +28,7 @@ import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.dashboard.DashboardStatsManager
 import ai.rever.boss.git.GitTerminalService
 import ai.rever.boss.mcp.McpToolRegistryImpl
+import ai.rever.boss.mcp.consumeApprovals
 import ai.rever.boss.plugin.api.NewTabContext
 import ai.rever.boss.plugin.api.Panel.Companion.bottom
 import ai.rever.boss.plugin.api.Panel.Companion.left
@@ -127,14 +128,11 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
         // just like URL handler, to prevent terminals from being destroyed by clearAllPanels()
     }
 
-    // Listen for MCP tool approval requests from background AI agents (Governed Autonomy).
-    // Driven directly by pendingList StateFlow so multiple windows receive shared updates,
-    // queued approvals advance automatically in FIFO order, and timed-out requests dismiss immediately.
+    // A delivered security prompt belongs to exactly one window.
     LaunchedEffect(Unit) {
-        McpToolRegistryImpl.approvalBus.pendingList
-            .onEach { list ->
-                state.pendingMcpApproval = list.firstOrNull()
-            }.launchIn(this)
+        McpToolRegistryImpl.approvalBus.consumeApprovals { request ->
+            state.pendingMcpApproval = request
+        }
     }
 
     // Listen for runner terminal events (Issue #347 - Runner in terminal sidebar)

@@ -22,7 +22,7 @@ sealed interface McpPolicyFault {
         val error: String,
     ) : McpPolicyFault {
         override val message: String
-            get() = "MCP policy file could not be read ($error): all tools withheld until policy recovery."
+            get() = "MCP policy file could not be read ($error): all tools withheld. Repair $path and restart BOSS."
     }
 
     data class PolicyPersistFailed(
@@ -38,7 +38,7 @@ sealed interface McpPolicyFault {
  * Manages MCP tool execution policies (ALLOW / ASK / DENY).
  *
  * Persisted to `~/.boss/mcp-tool-policy.json`. A damaged or unreadable file
- * degrades to fail-closed defaults (mutating tools require ASK).
+ * degrades to fail-closed defaults (all tools are denied).
  *
  * In-memory session trust ([trustForSession]) allows an operator to approve a tool
  * for the duration of the current application run without writing a permanent rule.
@@ -128,7 +128,7 @@ class McpPolicyEngine(
             if (error != null) {
                 val faultObj = McpPolicyFault.PolicyPersistFailed(toolName, error)
                 if (_fault.value !is McpPolicyFault.PersistedPolicyUnreadable) _fault.value = faultObj
-                onFault(faultObj)
+                notifyFault(faultObj)
                 logger.warn(
                     LogCategory.SYSTEM,
                     "Failed to persist MCP policy update",
@@ -159,17 +159,25 @@ class McpPolicyEngine(
             val errorMsg = t::class.simpleName ?: "unknown error"
             val faultObj = McpPolicyFault.PersistedPolicyUnreadable(file.path, errorMsg)
             _fault.value = faultObj
-            onFault(faultObj)
             logger.error(
                 LogCategory.SYSTEM,
                 "Failed to parse MCP policy file - defaulting to fail-closed configuration",
                 mapOf("path" to file.path, "error" to errorMsg),
             )
-            // Fail closed: enforce ASK on mutating tools
+            // Fail closed: withhold every tool until policy recovery.
             McpToolPolicyConfig(
                 defaultMutatingAction = McpPolicyAction.DENY,
                 defaultReadOnlyAction = McpPolicyAction.DENY,
             )
+        }
+    }
+
+    @Suppress("TooGenericExceptionCaught") // UI notification failure must not disable policy enforcement.
+    private fun notifyFault(fault: McpPolicyFault) {
+        try {
+            onFault(fault)
+        } catch (_: Exception) {
+            logger.warn(LogCategory.SYSTEM, "MCP policy fault notification failed")
         }
     }
 

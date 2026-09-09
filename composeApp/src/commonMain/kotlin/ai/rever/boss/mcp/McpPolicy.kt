@@ -26,14 +26,17 @@ enum class McpApprovalDisposition {
     DENIED_BY_OPERATOR,
     TIMEOUT,
     POLICY_DENIED,
-    CANCELLED,
+    CANCELLED, // Legacy ledger value.
+    CANCELLED_AWAITING_APPROVAL,
+    CANCELLED_IN_FLIGHT,
+    QUEUE_FULL,
 }
 
 /**
  * Persisted policy configuration for MCP tool execution.
  *
  * Saved to `~/.boss/mcp-tool-policy.json`. A damaged or unparseable file causes the
- * system to fail closed, defaulting all mutating tools to [McpPolicyAction.ASK].
+ * system to fail closed, defaulting all tools to [McpPolicyAction.DENY].
  */
 @Serializable
 data class McpToolPolicyConfig(

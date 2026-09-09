@@ -653,6 +653,7 @@ internal class McpToolRegistryCore(
     /** Mirrors host RBAC. The rule itself is [mcpToolPermitted], which is where it is tested. */
     private fun permitted(def: McpToolDefinition): Boolean = mcpToolPermitted(def, isAdmin, permissions)
 
+    @Suppress("LongMethod") // Keep authorization and execution inside the same cancellation audit boundary.
     suspend fun invoke(
         toolName: String,
         arguments: String,
@@ -665,6 +666,7 @@ internal class McpToolRegistryCore(
         val startTime = System.nanoTime()
         var disposition = McpApprovalDisposition.AUTO_ALLOWED
         var result: McpToolResult? = null
+        var executionStarted = false
         try {
             val authorization = authorizeInvocation(tool, args, policy)
             disposition = authorization.first
@@ -685,12 +687,18 @@ internal class McpToolRegistryCore(
                         if (disposition == McpApprovalDisposition.SESSION_TRUSTED) {
                             policyEngine.trustForSession(toolName)
                         }
+                        executionStarted = true
                         executeAuthorized(tool, args)
                     }
                 }
             return requireNotNull(result)
         } catch (cancelled: CancellationException) {
-            disposition = McpApprovalDisposition.CANCELLED
+            disposition =
+                if (executionStarted) {
+                    McpApprovalDisposition.CANCELLED_IN_FLIGHT
+                } else {
+                    McpApprovalDisposition.CANCELLED_AWAITING_APPROVAL
+                }
             throw cancelled
         } finally {
             withContext(NonCancellable + Dispatchers.IO) {
@@ -749,6 +757,10 @@ internal class McpToolRegistryCore(
                     is McpApprovalDecision.Denied -> {
                         McpApprovalDisposition.DENIED_BY_OPERATOR to
                             "MCP tool rejected by operator: ${decision.reason}"
+                    }
+
+                    McpApprovalDecision.QueueFull -> {
+                        McpApprovalDisposition.QUEUE_FULL to "MCP approval queue is full; no operator decision was made"
                     }
 
                     McpApprovalDecision.Timeout -> {

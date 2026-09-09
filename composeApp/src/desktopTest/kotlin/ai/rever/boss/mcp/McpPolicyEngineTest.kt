@@ -83,7 +83,7 @@ class McpPolicyEngineTest {
         var reportedFault: McpPolicyFault? = null
         val engine = McpPolicyEngine(policyFile = file, onFault = { reportedFault = it })
 
-        assertIs<McpPolicyFault.PersistedPolicyUnreadable>(reportedFault)
+        assertEquals(null, reportedFault)
         assertIs<McpPolicyFault.PersistedPolicyUnreadable>(engine.fault.value)
 
         // Defaults to fail-closed: all tools are denied

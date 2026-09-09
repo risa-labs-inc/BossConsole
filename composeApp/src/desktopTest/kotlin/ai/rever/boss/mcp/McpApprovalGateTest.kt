@@ -26,7 +26,7 @@ class McpApprovalGateTest {
                 }
 
             // Wait for request to appear on channel
-            val request = bus.requests.first()
+            val request = bus.pendingList.first { it.isNotEmpty() }.first()
             assertEquals("k8s_delete", request.toolName)
             assertEquals("kubernetes", request.providerId)
             assertEquals("web-api", request.arguments["pod"])
@@ -54,7 +54,7 @@ class McpApprovalGateTest {
                     )
                 }
 
-            val request = bus.requests.first()
+            val request = bus.pendingList.first { it.isNotEmpty() }.first()
             val denied = bus.deny(request.id, "Cannot delete DB container in production")
             assertTrue(denied)
 
@@ -95,7 +95,7 @@ class McpApprovalGateTest {
                     )
                 }
 
-            val request = bus.requests.first()
+            val request = bus.pendingList.first { it.isNotEmpty() }.first()
             val decision = deferredDecision.await()
             assertIs<McpApprovalDecision.Timeout>(decision)
 
@@ -119,8 +119,7 @@ class McpApprovalGateTest {
 
             // Third request exceeds capacity (2)
             val overflowDecision = bus.requestApproval("tool_3", "p1", emptyMap())
-            assertIs<McpApprovalDecision.Denied>(overflowDecision)
-            assertTrue(overflowDecision.reason.contains("Too many pending"))
+            assertEquals(McpApprovalDecision.QueueFull, overflowDecision)
 
             // Clean up by approving d1 and d2
             val list = bus.pendingList.value

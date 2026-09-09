@@ -238,7 +238,7 @@ fun McpApprovalDialog(
                         },
                         colors = ButtonDefaults.buttonColors(backgroundColor = colors.alert),
                     ) {
-                        Text("Deny", color = colors.signalText, fontSize = 12.sp)
+                        Text("Deny", color = colors.onSignal, fontSize = 12.sp)
                     }
 
                     Spacer(modifier = Modifier.width(8.dp))
@@ -257,7 +257,7 @@ fun McpApprovalDialog(
                         onClick = { onApprove(false) },
                         colors = ButtonDefaults.buttonColors(backgroundColor = colors.signal),
                     ) {
-                        Text("Approve Once", color = colors.signalText, fontSize = 12.sp)
+                        Text("Approve Once", color = colors.onSignal, fontSize = 12.sp)
                     }
                 }
             }

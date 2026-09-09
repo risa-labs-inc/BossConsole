@@ -3,12 +3,13 @@ package ai.rever.boss.mcp
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
@@ -27,6 +28,8 @@ sealed interface McpApprovalDecision {
     ) : McpApprovalDecision
 
     data object Timeout : McpApprovalDecision
+
+    data object QueueFull : McpApprovalDecision
 }
 
 /**
@@ -55,8 +58,8 @@ open class McpApprovalBus(
     private val logger = BossLogger.forComponent("McpApprovalBus")
     private val lock = Any()
 
-    private val _requests = MutableSharedFlow<McpApprovalRequest>(extraBufferCapacity = 64)
-    val requests: SharedFlow<McpApprovalRequest> = _requests.asSharedFlow()
+    private val _requests = Channel<McpApprovalRequest>(maxPendingRequests)
+    val requests: Flow<McpApprovalRequest> = _requests.receiveAsFlow()
 
     private val activeRequests = ConcurrentHashMap<String, McpApprovalRequest>()
     private val _pendingList = MutableStateFlow<List<McpApprovalRequest>>(emptyList())
@@ -68,6 +71,7 @@ open class McpApprovalBus(
      * Suspends the calling coroutine until the operator answers via the UI
      * or [timeoutMs] elapses (in which case it fails closed).
      */
+    @Suppress("ReturnCount") // Both active and delivery queues must reject overflow before awaiting an answer.
     suspend fun requestApproval(
         toolName: String,
         providerId: String,
@@ -89,13 +93,19 @@ open class McpApprovalBus(
                     "Approval request dropped - buffer full",
                     mapOf("tool" to toolName),
                 )
-                return McpApprovalDecision.Denied("Too many pending approval requests")
+                return McpApprovalDecision.QueueFull
             }
             activeRequests[request.id] = request
             _pendingList.update { it + request }
         }
 
-        _requests.tryEmit(request)
+        if (_requests.trySend(request).isFailure) {
+            synchronized(lock) {
+                activeRequests.remove(request.id)
+                _pendingList.update { list -> list.filterNot { it.id == request.id } }
+            }
+            return McpApprovalDecision.QueueFull
+        }
 
         logger.info(
             LogCategory.SYSTEM,
@@ -163,5 +173,20 @@ open class McpApprovalBus(
             )
         }
         return completed
+    }
+}
+
+/** Each delivered request belongs to one window until answered, timed out or that window closes. */
+suspend fun McpApprovalBus.consumeApprovals(show: (McpApprovalRequest?) -> Unit) {
+    requests.collect { request ->
+        if (!request.deferred.isCompleted) {
+            try {
+                show(request)
+                request.deferred.await()
+            } finally {
+                request.deferred.complete(McpApprovalDecision.Denied("Approval window closed"))
+                show(null)
+            }
+        }
     }
 }
