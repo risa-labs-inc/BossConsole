@@ -768,6 +768,10 @@ interface BrowserHandle {
      * After calling this, [isValid] will return false and
      * all other methods will be no-ops.
      *
+     * Native close may finish asynchronously after already-admitted renderer calls drain.
+     * Caller cancellation does not abort those calls; a wedged renderer can defer native
+     * resource release until recovery. The handle becomes invalid immediately.
+     *
      * If this browser owns a fullscreen rendering surface, disposal may wait
      * briefly for UI-thread detachment. Do not call while holding a lock that
      * the UI thread may need.

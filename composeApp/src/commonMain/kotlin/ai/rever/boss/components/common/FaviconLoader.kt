@@ -20,10 +20,21 @@ private val faviconLogger = BossLogger.forComponent("FaviconLoader")
  * - Error handling with logging
  * - Efficient caching with remember
  */
+
+/**
+ * The standard-cache key for [tabInfo], or null when it has none.
+ *
+ * Separate from [rememberFaviconLoader] because a caller that resolves through
+ * `loadHighQualityFavicon` wants the key, not a second decode of the same file - and a plain
+ * `as? FluckTabInfo` is not the same answer: a dynamic plugin tab carries its key on a class this
+ * module cannot see, which is what the reflection branch is for.
+ */
 @Composable
-fun rememberFaviconLoader(tabInfo: TabInfo): ai.rever.boss.plugin.api.TabIcon.Image? {
-    // Extract faviconCacheKey - first check built-in FluckTabInfo, then try reflection for dynamic plugins
-    val faviconCacheKey =
+fun rememberFaviconCacheKey(tabInfo: TabInfo): String? =
+    // Actually remembered, which the inline version this was extracted from was not: the else
+    // branch is kotlin-reflect over every member of the tab's class, and this runs once per tab in
+    // the tab bar and once per row in the capture picker, where hover and selection recompose.
+    remember(tabInfo) {
         when (tabInfo) {
             is FluckTabInfo -> {
                 tabInfo.faviconCacheKey
@@ -44,6 +55,11 @@ fun rememberFaviconLoader(tabInfo: TabInfo): ai.rever.boss.plugin.api.TabIcon.Im
                 }
             }
         }
+    }
+
+@Composable
+fun rememberFaviconLoader(tabInfo: TabInfo): ai.rever.boss.plugin.api.TabIcon.Image? {
+    val faviconCacheKey = rememberFaviconCacheKey(tabInfo)
 
     // State to hold the loaded favicon
     var loadedFavicon by remember(faviconCacheKey) {

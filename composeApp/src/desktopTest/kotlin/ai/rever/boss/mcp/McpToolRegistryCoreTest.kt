@@ -124,6 +124,75 @@ class McpToolRegistryCoreTest {
         assertTrue(core.tools.value.any { it.definition.name == "admin_tool" })
     }
 
+    // ---------------------------------------------------------------------
+    // permittedTools() — the third answer, and the one the global search reads
+    // ---------------------------------------------------------------------
+
+    /**
+     * `permittedTools()` sits between `allTools` and `tools`, and the double-shift search is what
+     * reads it. Getting it wrong in either direction is a real fault rather than a cosmetic one:
+     * too permissive leaks the names and full descriptions of admin-only tools to anyone typing
+     * into the search, and too strict hides the switched-off tool that someone is searching for
+     * precisely because they switched it off.
+     */
+    @Test
+    fun `permittedTools keeps a disabled tool but drops an unpermitted one`() {
+        val core = McpToolRegistryCore(disabledFile = null)
+        core.registerProvider(
+            provider(
+                "p1",
+                echoTool("open_tool"),
+                echoTool("gated_tool", requiredPermissions = listOf("secret.read")),
+            ),
+        )
+        core.setToolEnabled("open_tool", enabled = false)
+
+        val names = core.permittedTools().map { it.definition.name }
+
+        assertTrue("open_tool" in names, "a switched-off tool is exactly what someone searches for")
+        assertFalse("gated_tool" in names, "a tool this user may not run must not be enumerable")
+        // And the distinction from the exposed set is the whole reason this method exists.
+        assertFalse(core.tools.value.any { it.definition.name == "open_tool" })
+    }
+
+    @Test
+    fun `permittedTools drops a requiresAdmin tool for a non-admin`() {
+        val core = McpToolRegistryCore(disabledFile = null)
+        core.registerProvider(provider("p1", echoTool("admin_tool", requiresAdmin = true)))
+
+        core.updateAccess(isAdmin = false, permissions = setOf("secret.read"))
+
+        assertTrue(core.permittedTools().isEmpty(), "no permission set makes an admin-only tool visible")
+    }
+
+    @Test
+    fun `permittedTools gives an admin everything, disabled included`() {
+        val core = McpToolRegistryCore(disabledFile = null)
+        core.registerProvider(provider("p1", echoTool("admin_tool", requiresAdmin = true), echoTool("open_tool")))
+        core.setToolEnabled("open_tool", enabled = false)
+
+        core.updateAccess(isAdmin = true, permissions = emptySet())
+
+        assertEquals(2, core.permittedTools().size)
+    }
+
+    @Test
+    fun `permittedTools hides everything gated from a signed-out user`() {
+        // The default posture: isAdmin false, permissions empty. This is the population the search
+        // is open to before anyone signs in.
+        val core = McpToolRegistryCore(disabledFile = null)
+        core.registerProvider(
+            provider(
+                "p1",
+                echoTool("admin_tool", requiresAdmin = true),
+                echoTool("gated_tool", requiredPermissions = listOf("secret.read")),
+                echoTool("open_tool"),
+            ),
+        )
+
+        assertEquals(listOf("open_tool"), core.permittedTools().map { it.definition.name })
+    }
+
     /**
      * Admin bypasses every *permission* check, so for an admin operator the
      * kill-switch is the only access control left — the README's security section
@@ -561,5 +630,6 @@ class McpToolRegistryCoreTest {
         // still be present here.
         assertTrue(core.allTools.value.isEmpty(), "no provider should remain registered: ${core.allTools.value}")
         assertTrue(core.tools.value.isEmpty())
+        assertTrue(core.permittedTools().isEmpty(), "permittedTools reads the same snapshot")
     }
 }

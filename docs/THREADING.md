@@ -470,6 +470,68 @@ viewModelScope.launch {
 
 JxBrowser uses internal RPC (Remote Procedure Call) requiring careful threading.
 
+### Never make a renderer round trip on the EDT or the RPC thread
+
+`Frame.executeJavaScript` and `JsObject.putProperty` **block until the renderer
+answers**, and a renderer is entitled not to answer: one parked on a modal
+`window.prompt` cannot run script until the dialog is dismissed, and one being
+swapped out mid-navigation never answers at all. Nothing can interrupt the wait -
+the call has no suspension point, so `withTimeoutOrNull` wrapped *around* it is
+not a bound.
+
+Two threads must never make that call:
+
+- **The EDT** (`Dispatchers.Main`). It parks forever, the AppKit main thread parks
+  behind it inside `menuWillOpen:`, and the window *and* the macOS menu bar freeze
+  together. Force quit is the only way out.
+- **JxBrowser's RPC thread**, where `NavigationFinished` / `InjectJsCallback` are
+  delivered. A blocking call there re-enters `RpcThreadCallExecutor` and parks on a
+  queue only the thread it is blocking could drain, so the reply can never arrive.
+
+Route it through `BoundedBrowserCall` instead, which owns both halves of the rule:
+the blocking call goes on a dedicated single daemon thread, and the *wait* is
+bounded from a **different** one. Both on one thread and the timeout cannot fire -
+resuming the awaiting continuation needs a dispatch onto the very thread the call
+is holding.
+
+```kotlin
+// ❌ Freezes the whole app when the page stops answering
+withContext(Dispatchers.Main) {
+    browser.mainFrame().map { it.executeJavaScript<Any?>(script) }.orElse(null)
+}
+
+// ✅ One parked daemon thread per tab, and an answer either way
+private val handleCall = BoundedBrowserCall("boss-browser-call-$id")
+
+suspend fun executeJavaScript(script: String): Any? =
+    handleCall.call { browser.mainFrame().map { it.executeJavaScript<Any?>(script) }.orElse(null) }
+```
+
+Notes:
+
+- **Give each thing that can wedge independently its own instance** - a tab, a
+  peer, an integration. A shared one turns "this tab stopped answering" into
+  "every call in the process costs a full deadline", for as long as a dialog
+  nobody knows about stays open.
+- **Do not `await` a call from a coroutine running on that instance's own
+  dispatcher.** It works until a renderer wedges and then hangs forever, because
+  resuming needs the thread the call is holding. `BoundedBrowserCall` warns at
+  runtime when it sees this.
+- **A non-suspend caller uses `post`, not an inline call.** A `fun` that returns
+  Unit and blocks on the renderer inline runs on whatever thread its caller is on,
+  and for a plugin-facing API that can be the EDT one module away - which no source
+  guard can see. `post` puts it on the instance's thread and returns immediately.
+- **Fire-and-forget streams must drop, not enqueue.** The queue is unbounded, and
+  nothing cancels work that is never awaited. Check `backlog` first - and if the
+  caller holds a queue of its own upstream (ops buffered until a page is ready),
+  cap that too, or the check reads zero in exactly the state it was written for.
+- Browser-*process* calls (`loadUrl`, `browser.url()`, `browser.dispatch`) are not
+  this hazard - they are answered by a process page JS cannot block.
+
+`BrowserMainThreadRoundTripTest` enforces this across the repo, including one hop
+through a local helper. It is a source check, because reproducing the failure
+needs a real page that stops answering.
+
 ### Browser Disposal
 
 ```kotlin
