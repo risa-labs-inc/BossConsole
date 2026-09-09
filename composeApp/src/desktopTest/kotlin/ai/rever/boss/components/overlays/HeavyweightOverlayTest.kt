@@ -270,8 +270,11 @@ class HeavyweightOverlayTest {
      */
     @AfterTest
     fun resetOverlayConfig() {
+        resetOverlayFieldForTest("useHeavyweightOverlays")
         OverlayConfig.useHeavyweightPopups = false
+        resetOverlayFieldForTest("popupRenderer")
         OverlayConfig.heavyweightPopup = null
+        resetOverlayFieldForTest("modalRenderer")
         OverlayConfig.heavyweightModal = null
         OverlayConfig.heavyweightTooltip = null
         OverlayConfig.hideHeavyweightTooltip = null
@@ -304,6 +307,7 @@ class HeavyweightOverlayTest {
         // what plugin-drawn dialogs read. If that forwarding is ever replaced by a second backing
         // field, the host would route heavyweight while every plugin dialog silently stayed behind
         // the page - the exact bug this path exists to fix, and invisible from either side.
+        resetOverlayFieldForTest("useHeavyweightOverlays")
         OverlayConfig.useHeavyweightPopups = true
         assertTrue(BossOverlayHost.useHeavyweightOverlays)
 
