@@ -1,13 +1,19 @@
 package ai.rever.boss.cli
 
+import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import java.net.URLClassLoader
+import java.nio.file.Files
+import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class HeadlessLoggingTest {
+    @TempDir
+    lateinit var tempDir: Path
+
     @Test
     fun `headless logging remains on stderr after main class initialization`() {
         val urls =
@@ -21,7 +27,12 @@ class HeadlessLoggingTest {
                 .distinct()
                 .joinToString(File.pathSeparator)
         val java = File(System.getProperty("java.home"), "bin/java").absolutePath
-        val process = ProcessBuilder(java, "-cp", classpath, HeadlessLoggingProbe::class.java.name).start()
+        // The dependency classpath exceeds Windows CreateProcess's command-line limit.
+        // Keep it in a launcher argument file, quoting spaces and escaping Windows backslashes.
+        val argumentsFile = tempDir.resolve("headless logging.args")
+        val quotedClasspath = classpath.replace("\\", "\\\\").replace("\"", "\\\"")
+        Files.writeString(argumentsFile, "-cp\n\"$quotedClasspath\"\n${HeadlessLoggingProbe::class.java.name}\n")
+        val process = ProcessBuilder(java, "@${argumentsFile.toAbsolutePath()}").start()
         try {
             assertTrue(process.waitFor(20, TimeUnit.SECONDS), "logging probe must finish")
             assertEquals(0, process.exitValue())
