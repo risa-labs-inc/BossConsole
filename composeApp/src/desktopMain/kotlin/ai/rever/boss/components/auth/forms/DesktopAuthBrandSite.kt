@@ -120,9 +120,7 @@ internal actual fun AuthBrandSite(
             // the same lock.
             created =
                 withContext(Dispatchers.IO) {
-                    FluckEngine.engine.newBrowser().also {
-                        installDefaultBrowserChrome(it)
-                    }
+                    FluckEngine.engine.newBrowser().also { installDefaultBrowserChrome(it) }
                 }
             created.navigation().on(LoadFinished::class.java) {
                 scope.launch(Dispatchers.Main) { loaded = true }
