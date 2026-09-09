@@ -115,40 +115,6 @@ fun LoginFormScreen(
                 enabled = !isLoading && !checkingUserExists && emailLooksValid(email),
                 isLoading = checkingUserExists,
             )
-
-            Spacer(modifier = Modifier.height(BossTheme.space.sm))
-            OutlinedButton(
-                onClick = {
-                    ai.rever.boss.services.auth.AuthStateManager.setCurrentUser(
-                        ai.rever.boss.services.supabase.models.UserInfo(
-                            id = "local-developer",
-                            email = email.ifBlank { "dev@bossconsole.ai" },
-                            createdAt = "",
-                            roleClaims = null,
-                        ),
-                    )
-                    ai.rever.boss.services.auth.AuthStateManager.setAuthState(
-                        ai.rever.boss.services.supabase.AuthService.AuthState.Authenticated,
-                    )
-                    onLoginSuccess()
-                },
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .height(AuthButtonHeight),
-                shape = BossTheme.radius.buttonShape,
-                colors =
-                    ButtonDefaults.outlinedButtonColors(
-                        contentColor = BossTheme.colors.textPrimary,
-                    ),
-                border = BorderStroke(1.dp, BossTheme.colors.line),
-            ) {
-                Text(
-                    text = "Continue in Offline / Dev Mode",
-                    style = BossTheme.type.title,
-                    fontWeight = FontWeight.Medium,
-                )
-            }
         }
 
         // Authentication Options (after email validation)

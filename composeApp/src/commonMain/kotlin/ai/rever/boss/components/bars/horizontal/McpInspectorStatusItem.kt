@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.sp
  * Clicking opens the full [McpMissionControlDialog].
  */
 @Composable
+@Suppress("LongMethod") // Declarative Compose layout.
 fun McpInspectorStatusItem() {
     val stats by McpTelemetryRecorder.stats.collectAsState()
     val globalSafeMode by McpTelemetryRecorder.globalSafeMode.collectAsState()
@@ -41,33 +42,37 @@ fun McpInspectorStatusItem() {
     val colors = BossTheme.colors
     val radii = BossTheme.radius
 
-    val label = when {
-        stats.activeInFlight > 0 -> "⚡ MCP: ${stats.activeInFlight} running"
-        stats.totalCalls > 0 -> "⚡ MCP: ${stats.totalCalls} calls"
-        globalSafeMode -> "⚡ MCP: Safe Mode"
-        else -> "⚡ MCP: Idle"
-    }
+    val label =
+        when {
+            stats.activeInFlight > 0 -> "⚡ MCP: ${stats.activeInFlight} running"
+            stats.totalCalls > 0 -> "⚡ MCP: ${stats.totalCalls} calls"
+            globalSafeMode -> "⚡ MCP: Safe Mode"
+            else -> "⚡ MCP: Idle"
+        }
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
-        modifier = Modifier
-            .clickable { showDialog = true }
-            .padding(horizontal = 6.dp, vertical = 2.dp),
+        modifier =
+            Modifier
+                .clickable { showDialog = true }
+                .padding(horizontal = 6.dp, vertical = 2.dp),
     ) {
         // Active pulsing / idle dot
-        val dotColor = when {
-            stats.pendingApprovalsCount > 0 -> colors.warn
-            stats.activeInFlight > 0 -> colors.signal
-            stats.errorCount > 0 -> colors.alert
-            else -> colors.ok
-        }
+        val dotColor =
+            when {
+                stats.pendingApprovalsCount > 0 -> colors.warn
+                stats.activeInFlight > 0 -> colors.signal
+                stats.errorCount > 0 -> colors.alert
+                else -> colors.ok
+            }
 
         Box(
-            modifier = Modifier
-                .size(6.dp)
-                .clip(CircleShape)
-                .background(dotColor),
+            modifier =
+                Modifier
+                    .size(6.dp)
+                    .clip(CircleShape)
+                    .background(dotColor),
         )
 
         Text(
@@ -80,10 +85,11 @@ fun McpInspectorStatusItem() {
         // Pending approval badge
         if (stats.pendingApprovalsCount > 0) {
             Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(radii.button))
-                    .background(colors.warn)
-                    .padding(horizontal = 4.dp, vertical = 1.dp),
+                modifier =
+                    Modifier
+                        .clip(RoundedCornerShape(radii.button))
+                        .background(colors.warn)
+                        .padding(horizontal = 4.dp, vertical = 1.dp),
             ) {
                 Text(
                     text = "${stats.pendingApprovalsCount} wait",
@@ -97,10 +103,11 @@ fun McpInspectorStatusItem() {
         // Error badge if errors present
         if (stats.errorCount > 0 && stats.pendingApprovalsCount == 0) {
             Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(radii.button))
-                    .background(colors.alert.copy(alpha = 0.2f))
-                    .padding(horizontal = 4.dp, vertical = 1.dp),
+                modifier =
+                    Modifier
+                        .clip(RoundedCornerShape(radii.button))
+                        .background(colors.alert.copy(alpha = 0.2f))
+                        .padding(horizontal = 4.dp, vertical = 1.dp),
             ) {
                 Text(
                     text = "${stats.errorCount} err",

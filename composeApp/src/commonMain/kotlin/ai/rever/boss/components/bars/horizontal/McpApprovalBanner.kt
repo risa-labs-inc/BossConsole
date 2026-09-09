@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.sp
  * Allows the operator to approve, deny, or inspect the action before execution.
  */
 @Composable
+@Suppress("LongMethod") // Declarative Compose layout.
 fun McpApprovalBanner(
     onInspectRequested: () -> Unit = {},
     modifier: Modifier = Modifier,
@@ -63,14 +64,15 @@ fun McpApprovalBanner(
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 6.dp)
-                .shadow(elevation = 6.dp, shape = RoundedCornerShape(radii.card))
-                .clip(RoundedCornerShape(radii.card))
-                .background(colors.panel)
-                .border(1.dp, colors.warn.copy(alpha = 0.6f), RoundedCornerShape(radii.card))
-                .padding(horizontal = 16.dp, vertical = 10.dp),
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp)
+                    .shadow(elevation = 6.dp, shape = RoundedCornerShape(radii.card))
+                    .clip(RoundedCornerShape(radii.card))
+                    .background(colors.panel)
+                    .border(1.dp, colors.warn.copy(alpha = 0.6f), RoundedCornerShape(radii.card))
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -124,9 +126,10 @@ fun McpApprovalBanner(
             ) {
                 OutlinedButton(
                     onClick = onInspectRequested,
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = colors.textSecondary,
-                    ),
+                    colors =
+                        ButtonDefaults.outlinedButtonColors(
+                            contentColor = colors.textSecondary,
+                        ),
                     shape = RoundedCornerShape(radii.button),
                 ) {
                     Text("Inspect", fontSize = 12.sp)
@@ -139,10 +142,11 @@ fun McpApprovalBanner(
                             ApprovalDecision.Denied("Denied by operator via approval banner"),
                         )
                     },
-                    colors = ButtonDefaults.buttonColors(
-                        backgroundColor = colors.alert,
-                        contentColor = colors.signalText,
-                    ),
+                    colors =
+                        ButtonDefaults.buttonColors(
+                            backgroundColor = colors.alert,
+                            contentColor = colors.signalText,
+                        ),
                     shape = RoundedCornerShape(radii.button),
                 ) {
                     Text("Deny", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
@@ -155,10 +159,11 @@ fun McpApprovalBanner(
                             ApprovalDecision.Approved(),
                         )
                     },
-                    colors = ButtonDefaults.buttonColors(
-                        backgroundColor = colors.ok,
-                        contentColor = colors.signalText,
-                    ),
+                    colors =
+                        ButtonDefaults.buttonColors(
+                            backgroundColor = colors.ok,
+                            contentColor = colors.signalText,
+                        ),
                     shape = RoundedCornerShape(radii.button),
                 ) {
                     Text("Approve", fontSize = 12.sp, fontWeight = FontWeight.Bold)

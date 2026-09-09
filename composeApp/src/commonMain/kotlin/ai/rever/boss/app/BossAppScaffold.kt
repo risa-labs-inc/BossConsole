@@ -1,9 +1,9 @@
 package ai.rever.boss.app
 
 import ai.rever.boss.components.bars.horizontal.BossBottomBar
-import ai.rever.boss.components.bars.horizontal.McpApprovalBanner
 import ai.rever.boss.components.bars.horizontal.BossTitleBar
 import ai.rever.boss.components.bars.horizontal.BossTopBar
+import ai.rever.boss.components.bars.horizontal.McpApprovalBanner
 import ai.rever.boss.components.bars.isBarVisible
 import ai.rever.boss.components.bars.vertical.BossLeftSideBar
 import ai.rever.boss.components.bars.vertical.BossRightSideBar

@@ -3,6 +3,7 @@ package ai.rever.boss.mcp
 import ai.rever.boss.plugin.api.McpToolResult
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -85,8 +86,13 @@ data class McpTelemetryStats(
  * Operator's decision on an approval-gated tool call.
  */
 sealed interface ApprovalDecision {
-    data class Approved(val modifiedArgs: String? = null) : ApprovalDecision
-    data class Denied(val reason: String = "Execution denied by operator") : ApprovalDecision
+    data class Approved(
+        val modifiedArgs: String? = null,
+    ) : ApprovalDecision
+
+    data class Denied(
+        val reason: String = "Execution denied by operator",
+    ) : ApprovalDecision
 }
 
 /**
@@ -106,9 +112,15 @@ data class ApprovalRequest(
  * All operations are thread-safe and non-blocking: records are stored in a bounded ring-buffer
  * to guarantee zero memory leaks and predictable JVM performance during long-running agent tasks.
  */
+@Suppress("TooManyFunctions") // Cohesive lifecycle API for one recorder and its approval state.
 object McpTelemetryRecorder {
     private val logger = BossLogger.forComponent("McpTelemetryRecorder")
-    private val json = Json { ignoreUnknownKeys = true; isLenient = true; prettyPrint = true }
+    private val json =
+        Json {
+            ignoreUnknownKeys = true
+            isLenient = true
+            prettyPrint = true
+        }
 
     /** Maximum records retained in memory. Oldest evicted first. */
     const val MAX_RECORDS = 200
@@ -146,7 +158,10 @@ object McpTelemetryRecorder {
         return toolName in _toolsRequiringApproval.value
     }
 
-    fun setToolRequiresApproval(toolName: String, required: Boolean) {
+    fun setToolRequiresApproval(
+        toolName: String,
+        required: Boolean,
+    ) {
         _toolsRequiringApproval.update { current ->
             if (required) current + toolName else current - toolName
         }
@@ -177,17 +192,18 @@ object McpTelemetryRecorder {
         requiresApproval: Boolean = false,
     ): McpCallRecord {
         val sanitizedArgs = maskSecrets(arguments)
-        val record = McpCallRecord(
-            callId = callId,
-            toolName = toolName,
-            providerId = providerId,
-            arguments = sanitizedArgs,
-            startTimeEpochMs = System.currentTimeMillis(),
-            status = McpCallStatus.RUNNING,
-            requiresApproval = requiresApproval,
-        )
+        val record =
+            McpCallRecord(
+                callId = callId,
+                toolName = toolName,
+                providerId = providerId,
+                arguments = sanitizedArgs,
+                startTimeEpochMs = System.currentTimeMillis(),
+                status = McpCallStatus.RUNNING,
+                requiresApproval = requiresApproval,
+            )
         synchronized(lock) {
-            val updated = (listOf(record) + _records.value).take(MAX_RECORDS)
+            val updated = (listOf(record) + _records.value.filterNot { it.callId == callId }).take(MAX_RECORDS)
             _records.value = updated
             recomputeStats()
         }
@@ -203,17 +219,18 @@ object McpTelemetryRecorder {
         arguments: String,
         reason: String,
     ) {
-        val record = McpCallRecord(
-            callId = callId,
-            toolName = toolName,
-            arguments = maskSecrets(arguments),
-            startTimeEpochMs = System.currentTimeMillis(),
-            durationMs = 0L,
-            status = McpCallStatus.BLOCKED,
-            errorMessage = reason,
-        )
+        val record =
+            McpCallRecord(
+                callId = callId,
+                toolName = toolName,
+                arguments = maskSecrets(arguments),
+                startTimeEpochMs = System.currentTimeMillis(),
+                durationMs = 0L,
+                status = McpCallStatus.BLOCKED,
+                errorMessage = reason,
+            )
         synchronized(lock) {
-            val updated = (listOf(record) + _records.value).take(MAX_RECORDS)
+            val updated = (listOf(record) + _records.value.filterNot { it.callId == callId }).take(MAX_RECORDS)
             _records.value = updated
             recomputeStats()
         }
@@ -230,63 +247,93 @@ object McpTelemetryRecorder {
         timeoutMs: Long = DEFAULT_APPROVAL_TIMEOUT_MS,
     ): ApprovalDecision {
         val deferred = CompletableDeferred<ApprovalDecision>()
-        val request = ApprovalRequest(
-            callId = callId,
-            toolName = toolName,
-            arguments = maskSecrets(arguments),
-            timestampMs = System.currentTimeMillis(),
-            deferredResponse = deferred,
-        )
+        val request =
+            ApprovalRequest(
+                callId = callId,
+                toolName = toolName,
+                arguments = maskSecrets(arguments),
+                timestampMs = System.currentTimeMillis(),
+                deferredResponse = deferred,
+            )
 
         // Mark record as AWAITING_APPROVAL in list
-        val awaitingRecord = McpCallRecord(
-            callId = callId,
-            toolName = toolName,
-            arguments = request.arguments,
-            startTimeEpochMs = request.timestampMs,
-            status = McpCallStatus.AWAITING_APPROVAL,
-            requiresApproval = true,
-        )
+        val awaitingRecord =
+            McpCallRecord(
+                callId = callId,
+                toolName = toolName,
+                arguments = request.arguments,
+                startTimeEpochMs = request.timestampMs,
+                status = McpCallStatus.AWAITING_APPROVAL,
+                requiresApproval = true,
+            )
 
         synchronized(lock) {
+            if (_pendingApprovals.value.size >= 16) {
+                return ApprovalDecision.Denied("Too many pending approval requests")
+            }
             _pendingApprovals.update { it + request }
             _records.value = (listOf(awaitingRecord) + _records.value).take(MAX_RECORDS)
             recomputeStats()
         }
 
-        val decision = withTimeoutOrNull(timeoutMs) {
-            deferred.await()
-        } ?: ApprovalDecision.Denied("Approval timed out after ${timeoutMs / 1000}s (Fail-Closed)")
+        val decision =
+            try {
+                withTimeoutOrNull(timeoutMs) { deferred.await() }
+                    ?: ApprovalDecision.Denied("Approval timed out after ${timeoutMs / 1000}s")
+            } catch (cancelled: CancellationException) {
+                recordCancelled(callId, System.currentTimeMillis() - request.timestampMs)
+                throw cancelled
+            } finally {
+                deferred.complete(ApprovalDecision.Denied("Approval request expired"))
+                synchronized(lock) {
+                    _pendingApprovals.update { list -> list.filterNot { it.callId == callId } }
+                    recomputeStats()
+                }
+            }
 
-        // Remove from pending
-        _pendingApprovals.update { list -> list.filterNot { it.callId == callId } }
+        recordApprovalDecision(callId, decision)
 
+        return decision
+    }
+
+    private fun recordApprovalDecision(
+        callId: String,
+        decision: ApprovalDecision,
+    ) {
         // Update record status with approval outcome
         synchronized(lock) {
             _records.update { list ->
                 list.map { r ->
                     if (r.callId == callId) {
                         when (decision) {
-                            is ApprovalDecision.Approved -> r.copy(status = McpCallStatus.APPROVED)
-                            is ApprovalDecision.Denied -> r.copy(
-                                status = McpCallStatus.DENIED,
-                                errorMessage = decision.reason,
-                                durationMs = System.currentTimeMillis() - r.startTimeEpochMs,
-                            )
+                            is ApprovalDecision.Approved -> {
+                                r.copy(status = McpCallStatus.APPROVED)
+                            }
+
+                            is ApprovalDecision.Denied -> {
+                                r.copy(
+                                    status = McpCallStatus.DENIED,
+                                    errorMessage = "Approval denied by operator",
+                                    durationMs = System.currentTimeMillis() - r.startTimeEpochMs,
+                                )
+                            }
                         }
-                    } else r
+                    } else {
+                        r
+                    }
                 }
             }
             recomputeStats()
         }
-
-        return decision
     }
 
     /**
      * Called by UI to resolve a pending approval.
      */
-    fun resolveApproval(callId: String, decision: ApprovalDecision) {
+    fun resolveApproval(
+        callId: String,
+        decision: ApprovalDecision,
+    ) {
         val pending = _pendingApprovals.value.firstOrNull { it.callId == callId }
         if (pending != null) {
             pending.deferredResponse.complete(decision)
@@ -302,7 +349,7 @@ object McpTelemetryRecorder {
         durationMs: Long,
     ) {
         val status = if (result.isError) McpCallStatus.ERROR else McpCallStatus.SUCCESS
-        val truncatedPayload = truncate(result.text, MAX_PAYLOAD_CHARS)
+        val truncatedPayload = "[Tool output omitted from shared history]"
         synchronized(lock) {
             _records.update { list ->
                 list.map { r ->
@@ -313,7 +360,9 @@ object McpTelemetryRecorder {
                             resultPayload = truncatedPayload,
                             errorMessage = if (result.isError) truncatedPayload else null,
                         )
-                    } else r
+                    } else {
+                        r
+                    }
                 }
             }
             recomputeStats()
@@ -337,7 +386,9 @@ object McpTelemetryRecorder {
                             durationMs = durationMs,
                             errorMessage = timeoutMessage,
                         )
-                    } else r
+                    } else {
+                        r
+                    }
                 }
             }
             recomputeStats()
@@ -360,7 +411,9 @@ object McpTelemetryRecorder {
                             durationMs = durationMs,
                             errorMessage = "Invocation cancelled by caller",
                         )
-                    } else r
+                    } else {
+                        r
+                    }
                 }
             }
             recomputeStats()
@@ -375,7 +428,7 @@ object McpTelemetryRecorder {
         throwable: Throwable,
         durationMs: Long,
     ) {
-        val err = throwable.message ?: throwable::class.simpleName ?: "Unknown error"
+        val err = "Tool handler failed (${throwable::class.simpleName ?: "unknown error"})"
         synchronized(lock) {
             _records.update { list ->
                 list.map { r ->
@@ -385,7 +438,9 @@ object McpTelemetryRecorder {
                             durationMs = durationMs,
                             errorMessage = err,
                         )
-                    } else r
+                    } else {
+                        r
+                    }
                 }
             }
             recomputeStats()
@@ -405,11 +460,10 @@ object McpTelemetryRecorder {
     /**
      * Export all retained records as formatted JSON.
      */
-    fun exportAsJson(): String {
-        return synchronized(lock) {
+    fun exportAsJson(): String =
+        synchronized(lock) {
             json.encodeToString(_records.value)
         }
-    }
 
     private fun recomputeStats() {
         val snapshot = _records.value
@@ -420,61 +474,103 @@ object McpTelemetryRecorder {
         val pending = _pendingApprovals.value.size
 
         val completed = snapshot.filter { it.durationMs > 0L }
-        val avg = if (completed.isNotEmpty()) {
-            completed.map { it.durationMs }.average()
-        } else {
-            0.0
-        }
+        val avg =
+            if (completed.isNotEmpty()) {
+                completed.map { it.durationMs }.average()
+            } else {
+                0.0
+            }
 
-        _stats.value = McpTelemetryStats(
-            totalCalls = total,
-            successCount = success,
-            errorCount = errors,
-            activeInFlight = inFlight,
-            pendingApprovalsCount = pending,
-            avgDurationMs = avg,
-        )
-    }
-
-    private fun truncate(text: String?, max: Int): String? {
-        if (text == null) return null
-        return if (text.length <= max) text else text.take(max) + "\n... [truncated ${text.length - max} chars]"
+        _stats.value =
+            McpTelemetryStats(
+                totalCalls = total,
+                successCount = success,
+                errorCount = errors,
+                activeInFlight = inFlight,
+                pendingApprovalsCount = pending,
+                avgDurationMs = avg,
+            )
     }
 
     /**
      * Redact known secret and credential keys from JSON arguments for safe operator display.
      */
+    @Suppress("TooGenericExceptionCaught", "ReturnCount") // Invalid or oversized JSON is omitted before publication.
     fun maskSecrets(rawJson: String): String {
+        if (rawJson.length > MAX_PAYLOAD_CHARS) return "[Arguments omitted: too large]"
         if (rawJson.isBlank()) return rawJson
         return try {
             val element = json.parseToJsonElement(rawJson)
             val masked = maskElement(element)
             json.encodeToString(masked)
-        } catch (_: Throwable) {
-            rawJson
+        } catch (_: Exception) {
+            "[Arguments omitted: invalid JSON]"
         }
     }
 
-    private val SENSITIVE_KEY_PATTERNS = setOf(
-        "password", "secret", "token", "apikey", "api_key", "credential", "auth", "privatekey", "private_key"
-    )
+    private val SENSITIVE_KEY_PATTERNS =
+        setOf(
+            "password",
+            "secret",
+            "token",
+            "apikey",
+            "api_key",
+            "credential",
+            "auth",
+            "privatekey",
+            "private_key",
+        )
 
-    private fun maskElement(element: JsonElement): JsonElement {
-        return when (element) {
+    private fun maskElement(element: JsonElement): JsonElement =
+        when (element) {
             is JsonObject -> {
                 val newMap = mutableMapOf<String, JsonElement>()
                 for ((key, value) in element) {
                     val isSensitive = SENSITIVE_KEY_PATTERNS.any { key.lowercase().contains(it) }
-                    newMap[key] = if (isSensitive && value is JsonPrimitive) {
-                        JsonPrimitive("***REDACTED***")
-                    } else {
-                        maskElement(value)
-                    }
+                    newMap[key] =
+                        if (isSensitive) {
+                            JsonPrimitive("***REDACTED***")
+                        } else {
+                            maskElement(value)
+                        }
                 }
                 JsonObject(newMap)
             }
-            is JsonArray -> JsonArray(element.map { maskElement(it) })
-            else -> element
+
+            is JsonArray -> {
+                JsonArray(element.map { maskElement(it) })
+            }
+
+            is JsonPrimitive -> {
+                if (element.isString) JsonPrimitive(sanitizeArgumentText(element.content)) else element
+            }
+
+            else -> {
+                element
+            }
         }
-    }
+
+    private val credentialShape =
+        Regex(
+            """(?i)(?:Bearer\s+[^\s"',;}]+|""" +
+                """(?:gh[pousr]_|github_pat_|sk[-_]|pk[-_])[A-Za-z0-9_-]{8,}|""" +
+                """eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*)""",
+        )
+    private val credentialAssignment =
+        Regex(
+            """(?i)(?:password|token|secret|api[_-]?key|authorization|credential)""" +
+                """\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s&,;}]+)""",
+        )
+
+    private fun sanitizeArgumentText(text: String): String =
+        text.replace(credentialShape, "[REDACTED]").replace(credentialAssignment, "[REDACTED]")
+
+    @Suppress("TooGenericExceptionCaught") // Reject invalid operator edits without dispatching a tool.
+    fun canUseEditedArguments(arguments: String): Boolean =
+        try {
+            json.parseToJsonElement(arguments) is JsonObject &&
+                !arguments.contains("REDACTED") && !arguments.contains("[Arguments omitted:")
+        } catch (_: Exception) {
+            false
+        }
 }

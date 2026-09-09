@@ -631,6 +631,7 @@ internal class McpToolRegistryCore(
     /** Mirrors host RBAC. The rule itself is [mcpToolPermitted], which is where it is tested. */
     private fun permitted(def: McpToolDefinition): Boolean = mcpToolPermitted(def, isAdmin, permissions)
 
+    @Suppress("LongMethod", "ReturnCount") // Keep interception and lifecycle outcomes in one dispatch boundary.
     suspend fun invoke(
         toolName: String,
         arguments: String,
@@ -649,18 +650,22 @@ internal class McpToolRegistryCore(
         var effectiveArguments = arguments
         val needsApproval = McpTelemetryRecorder.isApprovalRequired(toolName)
         if (needsApproval) {
-            when (val decision = McpTelemetryRecorder.requestApproval(callId, toolName, arguments)) {
-                is ApprovalDecision.Approved -> {
-                    if (decision.modifiedArgs != null) {
-                        effectiveArguments = decision.modifiedArgs
-                    }
-                }
-                is ApprovalDecision.Denied -> {
-                    return McpToolResult(decision.reason, isError = true)
-                }
+            val decision = McpTelemetryRecorder.requestApproval(callId, toolName, arguments)
+            if (decision is ApprovalDecision.Denied) return McpToolResult(decision.reason, isError = true)
+            val edited = (decision as ApprovalDecision.Approved).modifiedArgs
+            if (edited != null && !McpTelemetryRecorder.canUseEditedArguments(edited)) {
+                val error = McpToolResult("Use valid JSON and replace omitted values before approval", isError = true)
+                McpTelemetryRecorder.recordComplete(callId, error, 0)
+                return error
             }
+            effectiveArguments = edited ?: arguments
         }
 
+        if (_tools.value.none { it.providerId == tool.providerId && it.definition === tool.definition }) {
+            val reason = "MCP tool became unavailable while awaiting approval: $toolName"
+            McpTelemetryRecorder.recordBlocked(callId, toolName, arguments, reason)
+            return McpToolResult(reason, isError = true)
+        }
         McpTelemetryRecorder.recordStart(
             callId = callId,
             toolName = toolName,

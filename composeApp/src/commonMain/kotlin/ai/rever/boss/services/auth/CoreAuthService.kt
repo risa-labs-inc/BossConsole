@@ -135,21 +135,6 @@ internal object CoreAuthService {
         // Stop any running auto-retry since we're now initializing
         NetworkMonitorService.stopAutoRetry()
 
-        if (ai.rever.boss.services.supabase.getSupabaseUrl().isBlank()) {
-            logger.info(LogCategory.AUTH, "Supabase credentials not configured - running in local development mode without auth")
-            _isSessionResolved.value = true
-            AuthStateManager.setCurrentUser(
-                UserInfo(
-                    id = "local-developer",
-                    email = "dev@bossconsole.ai",
-                    createdAt = "",
-                    roleClaims = null,
-                ),
-            )
-            AuthStateManager.setAuthState(AuthService.AuthState.Authenticated)
-            return
-        }
-
         try {
             // Initialize Supabase with build-time configuration
             if (!SupabaseConfig.isInitialized.value) {

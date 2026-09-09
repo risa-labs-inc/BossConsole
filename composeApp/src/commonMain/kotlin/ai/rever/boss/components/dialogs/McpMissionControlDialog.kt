@@ -64,14 +64,20 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.launch
 
+private val errorStatuses = setOf(McpCallStatus.ERROR, McpCallStatus.TIMEOUT, McpCallStatus.DENIED)
+
 private enum class FilterTab {
-    ALL, PENDING, ERRORS, SUCCESS
+    ALL,
+    PENDING,
+    ERRORS,
+    SUCCESS,
 }
 
 /**
  * Full Mission Control Dialog: Real-Time MCP Call Inspector & HITL Guardrail Engine.
  */
 @Composable
+@Suppress("LongMethod", "CyclomaticComplexMethod", "TooGenericExceptionCaught") // Declarative Compose layout.
 fun McpMissionControlDialog(onDismiss: () -> Unit) {
     val colors = BossTheme.colors
     val radii = BossTheme.radius
@@ -92,38 +98,43 @@ fun McpMissionControlDialog(onDismiss: () -> Unit) {
     var replayResult by remember { mutableStateOf<String?>(null) }
     var isReplaying by remember { mutableStateOf(false) }
 
-    val filteredRecords = remember(records, searchQuery, selectedFilter) {
-        records.filter { r ->
-            val matchesSearch = searchQuery.isBlank() ||
-                r.toolName.contains(searchQuery, ignoreCase = true) ||
-                r.arguments.contains(searchQuery, ignoreCase = true) ||
-                (r.errorMessage?.contains(searchQuery, ignoreCase = true) == true)
+    val filteredRecords =
+        remember(records, searchQuery, selectedFilter) {
+            records.filter { r ->
+                val matchesSearch =
+                    searchQuery.isBlank() ||
+                        r.toolName.contains(searchQuery, ignoreCase = true) ||
+                        r.arguments.contains(searchQuery, ignoreCase = true) ||
+                        (r.errorMessage?.contains(searchQuery, ignoreCase = true) == true)
 
-            val matchesFilter = when (selectedFilter) {
-                FilterTab.ALL -> true
-                FilterTab.PENDING -> r.status == McpCallStatus.AWAITING_APPROVAL
-                FilterTab.ERRORS -> r.status in setOf(McpCallStatus.ERROR, McpCallStatus.TIMEOUT, McpCallStatus.DENIED)
-                FilterTab.SUCCESS -> r.status == McpCallStatus.SUCCESS
+                val matchesFilter =
+                    when (selectedFilter) {
+                        FilterTab.ALL -> true
+                        FilterTab.PENDING -> r.status == McpCallStatus.AWAITING_APPROVAL
+                        FilterTab.ERRORS -> r.status in errorStatuses
+                        FilterTab.SUCCESS -> r.status == McpCallStatus.SUCCESS
+                    }
+                matchesSearch && matchesFilter
             }
-            matchesSearch && matchesFilter
         }
-    }
 
     val selectedRecord = records.firstOrNull { it.callId == selectedCallId } ?: filteredRecords.firstOrNull()
 
     BossDialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(
-            dismissOnClickOutside = false,
-            dismissOnBackPress = true,
-            usePlatformDefaultWidth = false,
-        ),
+        properties =
+            DialogProperties(
+                dismissOnClickOutside = false,
+                dismissOnBackPress = true,
+                usePlatformDefaultWidth = false,
+            ),
     ) {
         Surface(
-            modifier = Modifier
-                .width(920.dp)
-                .height(640.dp)
-                .clip(RoundedCornerShape(radii.dialog)),
+            modifier =
+                Modifier
+                    .width(920.dp)
+                    .height(640.dp)
+                    .clip(RoundedCornerShape(radii.dialog)),
             color = colors.panel,
             shape = RoundedCornerShape(radii.dialog),
             elevation = 12.dp,
@@ -131,7 +142,6 @@ fun McpMissionControlDialog(onDismiss: () -> Unit) {
             Column(modifier = Modifier.fillMaxSize()) {
                 // Header Bar
                 HeaderSection(
-                    stats = stats,
                     globalSafeMode = globalSafeMode,
                     onSafeModeToggled = { McpTelemetryRecorder.setGlobalSafeMode(it) },
                     onClearHistory = { McpTelemetryRecorder.clear() },
@@ -173,7 +183,7 @@ fun McpMissionControlDialog(onDismiss: () -> Unit) {
                     // Right Pane: Inspector & Guardrail Actions
                     InspectorDetailPane(
                         record = selectedRecord,
-                        isApprovalRequired = selectedRecord != null && (selectedRecord.toolName in toolsRequiringApproval),
+                        isApprovalRequired = selectedRecord?.toolName in toolsRequiringApproval,
                         onToggleApproval = { toolName, required ->
                             McpTelemetryRecorder.setToolRequiresApproval(toolName, required)
                         },
@@ -184,7 +194,7 @@ fun McpMissionControlDialog(onDismiss: () -> Unit) {
                             McpTelemetryRecorder.resolveApproval(callId, ApprovalDecision.Approved())
                         },
                         onDeny = { callId ->
-                            McpTelemetryRecorder.resolveApproval(callId, ApprovalDecision.Denied("Denied by operator in Mission Control"))
+                            McpTelemetryRecorder.resolveApproval(callId, ApprovalDecision.Denied())
                         },
                         isReplayMode = isReplayMode,
                         onToggleReplay = {
@@ -199,14 +209,24 @@ fun McpMissionControlDialog(onDismiss: () -> Unit) {
                         replayResult = replayResult,
                         isReplaying = isReplaying,
                         onExecuteReplay = {
-                            if (selectedRecord != null) {
+                            if (!McpTelemetryRecorder.canUseEditedArguments(replayArgs)) {
+                                replayResult = "Use a JSON object and replace omitted values before execution."
+                            } else if (selectedRecord?.status == McpCallStatus.AWAITING_APPROVAL) {
+                                McpTelemetryRecorder.resolveApproval(
+                                    selectedRecord.callId,
+                                    ApprovalDecision.Approved(modifiedArgs = replayArgs),
+                                )
+                                isReplayMode = false
+                            } else if (selectedRecord != null && !isReplaying) {
                                 scope.launch {
                                     isReplaying = true
                                     try {
                                         val res = McpToolRegistryImpl.invoke(selectedRecord.toolName, replayArgs)
-                                        replayResult = if (res.isError) "ERROR: ${res.text}" else res.text
-                                    } catch (t: Throwable) {
-                                        replayResult = "EXCEPTION: ${t.message}"
+                                        replayResult = if (res.isError) "Replay failed" else "Replay completed"
+                                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                                        throw cancelled
+                                    } catch (t: Exception) {
+                                        replayResult = "Replay failed: ${t::class.simpleName}"
                                     } finally {
                                         isReplaying = false
                                     }
@@ -222,8 +242,8 @@ fun McpMissionControlDialog(onDismiss: () -> Unit) {
 }
 
 @Composable
+@Suppress("LongMethod") // Declarative Compose layout.
 private fun HeaderSection(
-    stats: ai.rever.boss.mcp.McpTelemetryStats,
     globalSafeMode: Boolean,
     onSafeModeToggled: (Boolean) -> Unit,
     onClearHistory: () -> Unit,
@@ -231,9 +251,10 @@ private fun HeaderSection(
 ) {
     val colors = BossTheme.colors
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 18.dp, vertical = 12.dp),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -274,10 +295,11 @@ private fun HeaderSection(
                 Switch(
                     checked = globalSafeMode,
                     onCheckedChange = onSafeModeToggled,
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = colors.warn,
-                        checkedTrackColor = colors.warn.copy(alpha = 0.4f),
-                    ),
+                    colors =
+                        SwitchDefaults.colors(
+                            checkedThumbColor = colors.warn,
+                            checkedTrackColor = colors.warn.copy(alpha = 0.4f),
+                        ),
                 )
             }
 
@@ -303,6 +325,7 @@ private fun HeaderSection(
 }
 
 @Composable
+@Suppress("LongMethod") // Declarative Compose layout.
 private fun FilterSection(
     searchQuery: String,
     onSearchQueryChanged: (String) -> Unit,
@@ -312,10 +335,11 @@ private fun FilterSection(
 ) {
     val colors = BossTheme.colors
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(colors.raised.copy(alpha = 0.5f))
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .background(colors.raised.copy(alpha = 0.5f))
+                .padding(horizontal = 16.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -333,13 +357,14 @@ private fun FilterSection(
                 )
             },
             singleLine = true,
-            colors = TextFieldDefaults.outlinedTextFieldColors(
-                textColor = colors.textPrimary,
-                backgroundColor = colors.panel,
-                cursorColor = colors.signal,
-                focusedBorderColor = colors.signal,
-                unfocusedBorderColor = colors.line,
-            ),
+            colors =
+                TextFieldDefaults.outlinedTextFieldColors(
+                    textColor = colors.textPrimary,
+                    backgroundColor = colors.panel,
+                    cursorColor = colors.signal,
+                    focusedBorderColor = colors.signal,
+                    unfocusedBorderColor = colors.line,
+                ),
             modifier = Modifier.width(280.dp).height(44.dp),
         )
 
@@ -381,16 +406,16 @@ private fun FilterChip(
     val colors = BossTheme.colors
     val radii = BossTheme.radius
     Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(radii.button))
-            .background(if (selected) colors.signalWash else colors.panel)
-            .border(
-                1.dp,
-                if (selected) colors.signal else colors.line.copy(alpha = 0.5f),
-                RoundedCornerShape(radii.button),
-            )
-            .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 6.dp),
+        modifier =
+            Modifier
+                .clip(RoundedCornerShape(radii.button))
+                .background(if (selected) colors.signalWash else colors.panel)
+                .border(
+                    1.dp,
+                    if (selected) colors.signal else colors.line.copy(alpha = 0.5f),
+                    RoundedCornerShape(radii.button),
+                ).clickable(onClick = onClick)
+                .padding(horizontal = 10.dp, vertical = 6.dp),
     ) {
         Text(
             text = label,
@@ -445,11 +470,12 @@ private fun CallListItem(
 ) {
     val colors = BossTheme.colors
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(if (isSelected) colors.raised else Color.Transparent)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .background(if (isSelected) colors.raised else Color.Transparent)
+                .clickable(onClick = onClick)
+                .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
@@ -491,23 +517,25 @@ private fun CallListItem(
 @Composable
 private fun StatusBadge(status: McpCallStatus) {
     val colors = BossTheme.colors
-    val (label, bg, fg) = when (status) {
-        McpCallStatus.SUCCESS -> Triple("OK", colors.ok.copy(alpha = 0.2f), colors.ok)
-        McpCallStatus.ERROR -> Triple("ERR", colors.alert.copy(alpha = 0.2f), colors.alert)
-        McpCallStatus.TIMEOUT -> Triple("TIME", colors.alert.copy(alpha = 0.2f), colors.alert)
-        McpCallStatus.AWAITING_APPROVAL -> Triple("WAIT", colors.warn.copy(alpha = 0.25f), colors.warn)
-        McpCallStatus.APPROVED -> Triple("APP", colors.ok.copy(alpha = 0.2f), colors.ok)
-        McpCallStatus.DENIED -> Triple("DENY", colors.alert.copy(alpha = 0.2f), colors.alert)
-        McpCallStatus.BLOCKED -> Triple("BLOCK", colors.textMuted.copy(alpha = 0.2f), colors.textMuted)
-        McpCallStatus.RUNNING -> Triple("RUN", colors.signal.copy(alpha = 0.2f), colors.signal)
-        McpCallStatus.CANCELLED -> Triple("CANC", colors.textMuted.copy(alpha = 0.2f), colors.textMuted)
-    }
+    val (label, bg, fg) =
+        when (status) {
+            McpCallStatus.SUCCESS -> Triple("OK", colors.ok.copy(alpha = 0.2f), colors.ok)
+            McpCallStatus.ERROR -> Triple("ERR", colors.alert.copy(alpha = 0.2f), colors.alert)
+            McpCallStatus.TIMEOUT -> Triple("TIME", colors.alert.copy(alpha = 0.2f), colors.alert)
+            McpCallStatus.AWAITING_APPROVAL -> Triple("WAIT", colors.warn.copy(alpha = 0.25f), colors.warn)
+            McpCallStatus.APPROVED -> Triple("APP", colors.ok.copy(alpha = 0.2f), colors.ok)
+            McpCallStatus.DENIED -> Triple("DENY", colors.alert.copy(alpha = 0.2f), colors.alert)
+            McpCallStatus.BLOCKED -> Triple("BLOCK", colors.textMuted.copy(alpha = 0.2f), colors.textMuted)
+            McpCallStatus.RUNNING -> Triple("RUN", colors.signal.copy(alpha = 0.2f), colors.signal)
+            McpCallStatus.CANCELLED -> Triple("CANC", colors.textMuted.copy(alpha = 0.2f), colors.textMuted)
+        }
 
     Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(4.dp))
-            .background(bg)
-            .padding(horizontal = 5.dp, vertical = 2.dp),
+        modifier =
+            Modifier
+                .clip(RoundedCornerShape(4.dp))
+                .background(bg)
+                .padding(horizontal = 5.dp, vertical = 2.dp),
     ) {
         Text(
             text = label,
@@ -519,6 +547,7 @@ private fun StatusBadge(status: McpCallStatus) {
 }
 
 @Composable
+@Suppress("LongMethod") // Declarative Compose layout.
 private fun InspectorDetailPane(
     record: McpCallRecord?,
     isApprovalRequired: Boolean,
@@ -553,9 +582,10 @@ private fun InspectorDetailPane(
     }
 
     Column(
-        modifier = modifier
-            .padding(18.dp)
-            .verticalScroll(rememberScrollState()),
+        modifier =
+            modifier
+                .padding(18.dp)
+                .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         // Top Tool Title & Status
@@ -594,19 +624,29 @@ private fun InspectorDetailPane(
                     modifier = Modifier.size(14.dp),
                 )
                 Spacer(Modifier.width(4.dp))
-                Text(if (isReplayMode) "Close Scratchpad" else "Replay Tool", fontSize = 12.sp)
+                Text(
+                    if (isReplayMode) {
+                        "Close Scratchpad"
+                    } else if (record.status == McpCallStatus.AWAITING_APPROVAL) {
+                        "Edit Arguments"
+                    } else {
+                        "Replay Tool"
+                    },
+                    fontSize = 12.sp,
+                )
             }
         }
 
         // Pending Human Approval Callout (if awaiting)
         if (record.status == McpCallStatus.AWAITING_APPROVAL) {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(radii.card))
-                    .background(colors.warn.copy(alpha = 0.15f))
-                    .border(1.dp, colors.warn, RoundedCornerShape(radii.card))
-                    .padding(12.dp),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(radii.card))
+                        .background(colors.warn.copy(alpha = 0.15f))
+                        .border(1.dp, colors.warn, RoundedCornerShape(radii.card))
+                        .padding(12.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -637,11 +677,12 @@ private fun InspectorDetailPane(
 
         // Governance Policy Row
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(radii.card))
-                .background(colors.raised)
-                .padding(12.dp),
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(radii.card))
+                    .background(colors.raised)
+                    .padding(12.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -649,10 +690,11 @@ private fun InspectorDetailPane(
                 Switch(
                     checked = isApprovalRequired,
                     onCheckedChange = { onToggleApproval(record.toolName, it) },
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = colors.warn,
-                        checkedTrackColor = colors.warn.copy(alpha = 0.4f),
-                    ),
+                    colors =
+                        SwitchDefaults.colors(
+                            checkedThumbColor = colors.warn,
+                            checkedTrackColor = colors.warn.copy(alpha = 0.4f),
+                        ),
                 )
                 Spacer(Modifier.width(8.dp))
                 Column {
@@ -682,12 +724,13 @@ private fun InspectorDetailPane(
         // Replay Scratchpad Area
         if (isReplayMode) {
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(radii.card))
-                    .background(colors.raised)
-                    .border(1.dp, colors.signal.copy(alpha = 0.5f), RoundedCornerShape(radii.card))
-                    .padding(12.dp),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(radii.card))
+                        .background(colors.raised)
+                        .border(1.dp, colors.signal.copy(alpha = 0.5f), RoundedCornerShape(radii.card))
+                        .padding(12.dp),
             ) {
                 Text(
                     text = "🛠️ Instant Replay Scratchpad",
@@ -700,11 +743,12 @@ private fun InspectorDetailPane(
                     value = replayArgs,
                     onValueChange = onReplayArgsChanged,
                     label = { Text("Arguments (JSON)", fontSize = 11.sp) },
-                    textStyle = androidx.compose.ui.text.TextStyle(
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 11.sp,
-                        color = colors.textPrimary,
-                    ),
+                    textStyle =
+                        androidx.compose.ui.text.TextStyle(
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            color = colors.textPrimary,
+                        ),
                     modifier = Modifier.fillMaxWidth().height(100.dp),
                 )
                 Spacer(Modifier.height(8.dp))
@@ -714,7 +758,17 @@ private fun InspectorDetailPane(
                     colors = ButtonDefaults.buttonColors(backgroundColor = colors.signal),
                     shape = RoundedCornerShape(radii.button),
                 ) {
-                    Text(if (isReplaying) "Executing..." else "Execute Replay Now", fontSize = 11.sp, color = colors.onSignal)
+                    Text(
+                        if (isReplaying) {
+                            "Executing..."
+                        } else if (record.status == McpCallStatus.AWAITING_APPROVAL) {
+                            "Approve Edited Arguments"
+                        } else {
+                            "Execute Replay Now"
+                        },
+                        fontSize = 11.sp,
+                        color = colors.onSignal,
+                    )
                 }
 
                 if (replayResult != null) {
@@ -725,10 +779,11 @@ private fun InspectorDetailPane(
                             fontFamily = FontFamily.Monospace,
                             fontSize = 11.sp,
                             color = colors.ok,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(colors.panel)
-                                .padding(8.dp),
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .background(colors.panel)
+                                    .padding(8.dp),
                         )
                     }
                 }
@@ -750,11 +805,12 @@ private fun InspectorDetailPane(
                     fontFamily = FontFamily.Monospace,
                     fontSize = 11.sp,
                     color = colors.textPrimary,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(radii.card))
-                        .background(colors.raised)
-                        .padding(10.dp),
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(radii.card))
+                            .background(colors.raised)
+                            .padding(10.dp),
                 )
             }
         }
@@ -774,11 +830,12 @@ private fun InspectorDetailPane(
                     fontFamily = FontFamily.Monospace,
                     fontSize = 11.sp,
                     color = if (record.errorMessage != null) colors.alert else colors.textPrimary,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(radii.card))
-                        .background(colors.raised)
-                        .padding(10.dp),
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(radii.card))
+                            .background(colors.raised)
+                            .padding(10.dp),
                 )
             }
         }
