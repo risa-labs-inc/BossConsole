@@ -75,15 +75,6 @@ private fun clipboardUnavailable(e: Exception): Boolean {
  * is called from a `finally` on a JxBrowser thread, so an escaping exception there would be exactly
  * the kind of uncaught, off-EDT throw this file exists to remove.
  */
-@Suppress("TooGenericExceptionCaught") // See installPopupWindowContextMenu - Error must propagate.
-private fun closeQuietly(tell: ShowContextMenuCallback.Action) {
-    try {
-        tell.close()
-    } catch (e: Exception) {
-        logger.warn(LogCategory.BROWSER, "Could not answer the context-menu callback", error = e)
-    }
-}
-
 /**
  * The menu for a right-click, decided entirely from the click target.
  *
@@ -263,7 +254,7 @@ internal fun installPopupWindowContextMenu(
                 // in turn because close() can itself throw - already answered, or the browser torn
                 // down mid-callback - and this runs on a JxBrowser thread, where an escaping
                 // exception is the same failure class the whole file exists to remove.
-                closeQuietly(tell)
+                closeContextMenuQuietly(tell)
             }
 
             val target = frame
@@ -285,27 +276,6 @@ internal fun installPopupWindowContextMenu(
             }
         },
     )
-}
-
-/**
- * Installs a suppressing [ShowContextMenuCallback] on [browser].
- *
- * Calling `tell.close()` suppresses JxBrowser's built-in Swing menu (`SuggestionsPopup`),
- * which otherwise attempts to resolve its position via `getLocationOnScreen()` on the EDT
- * and throws [java.awt.IllegalComponentStateException] if the hosting view stops showing or is disposed.
- */
-@Suppress("TooGenericExceptionCaught")
-internal fun installSuppressingContextMenu(browser: Browser) {
-    try {
-        browser.set(
-            ShowContextMenuCallback::class.java,
-            ShowContextMenuCallback { _, tell ->
-                closeQuietly(tell)
-            },
-        )
-    } catch (e: Exception) {
-        logger.warn(LogCategory.BROWSER, "Could not install default suppressing context-menu callback", error = e)
-    }
 }
 
 /**

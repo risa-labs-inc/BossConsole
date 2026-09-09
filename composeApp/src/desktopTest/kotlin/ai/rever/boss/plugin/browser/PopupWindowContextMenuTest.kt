@@ -432,5 +432,4 @@ class PopupWindowContextMenuTest {
         callback.on(params, tell)
         assertTrue(tell.isClosed)
     }
-
 }
