@@ -230,6 +230,42 @@ object LogSanitizer {
     private val emailPattern = Regex("""[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}""")
 
     /**
+     * A bare hostname with no protocol/path around it - the shape `UnknownHostException.getMessage()`
+     * and every DNS/proxy-connect failure produces (BossConsole#109). [filePathPattern] needs a `/`,
+     * [urlPattern] needs `http`, [emailPattern] needs `@` - none of them fire on this shape, so
+     * `proxy.corp.internal:3128` or a bare `api.risaboss.com` passed through every prior revision of
+     * this file untouched, and for a user behind a corporate proxy the failing hostname *is* the
+     * sensitive part - it names an employer and an internal topology.
+     *
+     * Deliberately narrow: labels are lowercase-hostname-shaped (`[a-z0-9-]`), and the trailing label
+     * must be one of a short, explicit list of real TLDs or `internal`/`local` - not "any 2-6 letter
+     * word," which would eat ordinary lowercase prose. The lowercase requirement is also what keeps a
+     * fully-qualified Kotlin/Java exception class name (`ai.rever.boss.services.supabase.SecretService`)
+     * from matching: its trailing segment is PascalCase, and no legitimate exception class happens to
+     * end in a bare `.com`/`.io`/etc. word.
+     *
+     * `internal` and `io` are also real lowercase package-name segments
+     * (`kotlinx.coroutines.internal.ScopeCoroutine`, `kotlinx.io.EOFException`), and the lowercase
+     * rule alone does not rule those out - a package path is lowercase right up to the class name.
+     * What distinguishes them is what follows: a hostname's TLD is the end of the token, while a
+     * package segment is immediately followed by `.NextSegment`. The trailing
+     * `(?!\.[A-Za-z])` is that check - measured directly against a realistic stack trace
+     * (`sanitizeStackTrace leaves a realistic Kotlin trace intact`) after the first version of this
+     * pattern redacted `kotlinx.coroutines.internal` out of one.
+     *
+     * Coverage limits: multi-level public suffixes such as `.co.uk` are rejected by that same
+     * guard. Matching is case-sensitive: `Acme.corp.internal` retains `Acme.` while a fully
+     * mixed-case `Proxy.Corp.Internal` is untouched. Unlisted suffixes and IP literals also
+     * remain unchanged. This is selected lowercase-host redaction, not complete DNS redaction.
+     */
+    private val hostnamePattern =
+        Regex(
+            """\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+""" +
+                """(?:internal|local|com|net|org|io|dev|app|co|ai|gov|edu|mil|info|biz)\b""" +
+                """(?::\d{1,5})?(?!\.[A-Za-z])""",
+        )
+
+    /**
      * Runs of text that are a credential by their own structure, wherever they
      * appear: a JWT (three base64url segments — the first is the base64url of a
      * JSON header, which is why every JWT begins `eyJ`), a GitHub token prefix,
@@ -382,6 +418,7 @@ object LogSanitizer {
                 .replace(filePathPattern, "[PATH]")
                 .replace(urlPattern, "[URL]")
                 .replace(emailPattern, "[EMAIL]")
+                .replace(hostnamePattern, "[HOST]")
 
         val withMaskedAssignments =
             assignmentPattern.replace(withoutLocations) { match ->
@@ -403,6 +440,7 @@ object LogSanitizer {
      * - File paths (Unix and Windows)
      * - URLs
      * - Email addresses
+     * - Bare hostnames (no protocol/path around them - DNS and proxy-connect failures)
      * - Credentials recognisable by shape: JWTs, GitHub tokens, `sk_`/`pk_` keys
      * - The value of a `name=value` pair whose name marks it sensitive
      *
