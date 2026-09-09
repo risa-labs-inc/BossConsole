@@ -42,16 +42,20 @@ object WorkspaceBaselineCapturer {
                     val normalizedRel = SafePathResolver.normalizeRelativePath(relPath)
 
                     if (child.isDirectory) {
-                        scanDir(child, normalizedRel)
+                        if (SafePathResolver.isSafeDirectoryToRecurse(child, rootCanonical)) {
+                            scanDir(child, normalizedRel)
+                        }
                     } else if (child.isFile) {
-                        val sha256 = calculateSha256(child)
-                        filesMap[normalizedRel] =
-                            FileSnapshotMeta(
-                                relativePath = normalizedRel,
-                                sha256 = sha256,
-                                sizeBytes = child.length(),
-                                lastModified = child.lastModified(),
-                            )
+                        if (SafePathResolver.isContainedFile(child, rootCanonical)) {
+                            val sha256 = calculateSha256(child)
+                            filesMap[normalizedRel] =
+                                FileSnapshotMeta(
+                                    relativePath = normalizedRel,
+                                    sha256 = sha256,
+                                    sizeBytes = child.length(),
+                                    lastModified = child.lastModified(),
+                                )
+                        }
                     }
                 }
             }

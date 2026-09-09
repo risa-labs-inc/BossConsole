@@ -67,4 +67,42 @@ class SafePathResolverTest {
         assertFalse(SafePathResolver.isExcluded("src", exclusions))
         assertFalse(SafePathResolver.isExcluded("README.md", exclusions))
     }
+
+    @Test
+    fun `isSafeDirectoryToRecurse accepts contained valid directories`() {
+        val validSubdir = File(tempProjectRoot, "src/main").also { it.mkdirs() }
+        val rootCanonical = SafePathResolver.canonicalRoot(tempProjectRoot)
+
+        assertTrue(SafePathResolver.isSafeDirectoryToRecurse(validSubdir, rootCanonical))
+        assertTrue(SafePathResolver.isSafeDirectoryToRecurse(rootCanonical, rootCanonical))
+    }
+
+    @Test
+    fun `isSafeDirectoryToRecurse rejects directory outside project root`() {
+        val externalDir = kotlin.io.path.createTempDirectory("outside-dir").toFile()
+        try {
+            val rootCanonical = SafePathResolver.canonicalRoot(tempProjectRoot)
+            assertFalse(SafePathResolver.isSafeDirectoryToRecurse(externalDir, rootCanonical))
+        } finally {
+            externalDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `isContainedFile validates contained files and rejects external files`() {
+        val internalFile = File(tempProjectRoot, "src/Main.kt").also {
+            it.parentFile.mkdirs()
+            it.writeText("code")
+        }
+        val externalDir = kotlin.io.path.createTempDirectory("outside-file-dir").toFile()
+        val externalFile = File(externalDir, "Secret.kt").also { it.writeText("secret") }
+
+        try {
+            val rootCanonical = SafePathResolver.canonicalRoot(tempProjectRoot)
+            assertTrue(SafePathResolver.isContainedFile(internalFile, rootCanonical))
+            assertFalse(SafePathResolver.isContainedFile(externalFile, rootCanonical))
+        } finally {
+            externalDir.deleteRecursively()
+        }
+    }
 }

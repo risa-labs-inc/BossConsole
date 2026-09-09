@@ -97,4 +97,50 @@ object SafePathResolver {
     ): Boolean {
         return excludedPatterns.contains(name) || name.startsWith(".git")
     }
+
+    /**
+     * Checks if [dir] is a safe directory to recurse into during scanning.
+     * Prevents infinite loops from cyclical symlinks and prevents traversing outside [rootCanonical].
+     */
+    fun isSafeDirectoryToRecurse(
+        dir: File,
+        rootCanonical: File,
+    ): Boolean {
+        if (java.nio.file.Files.isSymbolicLink(dir.toPath())) {
+            return false
+        }
+        val canonical =
+            try {
+                dir.canonicalFile
+            } catch (_: Exception) {
+                return false
+            }
+        val rootPathStr = rootCanonical.path
+        val childPathStr = canonical.path
+        return childPathStr == rootPathStr ||
+            childPathStr.startsWith(rootPathStr + File.separator) ||
+            childPathStr.startsWith(rootPathStr + "/")
+    }
+
+    /**
+     * Checks if [file] is contained within [rootCanonical] and is not an escaping symlink.
+     */
+    fun isContainedFile(
+        file: File,
+        rootCanonical: File,
+    ): Boolean {
+        if (java.nio.file.Files.isSymbolicLink(file.toPath())) {
+            return false
+        }
+        val canonical =
+            try {
+                file.canonicalFile
+            } catch (_: Exception) {
+                return false
+            }
+        val rootPathStr = rootCanonical.path
+        val childPathStr = canonical.path
+        return childPathStr.startsWith(rootPathStr + File.separator) ||
+            childPathStr.startsWith(rootPathStr + "/")
+    }
 }

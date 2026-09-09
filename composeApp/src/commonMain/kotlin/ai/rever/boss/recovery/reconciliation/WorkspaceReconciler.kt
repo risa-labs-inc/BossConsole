@@ -64,34 +64,37 @@ object WorkspaceReconciler {
                     val normalizedRel = SafePathResolver.normalizeRelativePath(relPath)
 
                     if (child.isDirectory) {
-                        scanCurrent(child, normalizedRel)
+                        if (SafePathResolver.isSafeDirectoryToRecurse(child, rootCanonical)) {
+                            scanCurrent(child, normalizedRel)
+                        }
                     } else if (child.isFile) {
-                        currentFiles[normalizedRel] = child
-                        currentHashes[normalizedRel] = WorkspaceBaselineCapturer.calculateSha256(child)
+                        if (SafePathResolver.isContainedFile(child, rootCanonical)) {
+                            currentFiles[normalizedRel] = child
+                            currentHashes[normalizedRel] = WorkspaceBaselineCapturer.calculateSha256(child)
+                        }
                     }
                 }
             }
             scanCurrent(rootCanonical, "")
 
             // Step 2: Conflict Detection
-            // Check if any file was modified concurrently outside the mission attribution
+            // Detect unresolvable conflicts (e.g. baseline files modified on disk that are missing from the target checkpoint)
             if (!allowOverwriteConflicts) {
                 val conflictingFiles = mutableListOf<String>()
                 for ((relPath, currentHash) in currentHashes) {
                     val targetMeta = targetManifest.files[relPath]
                     val baselineMeta = baseline.baselineFiles[relPath]
 
-                    // If file changed from checkpoint, verify if it was modified concurrently
-                    if (targetMeta != null && currentHash != targetMeta.sha256) {
-                        // File has changed since checkpoint
-                        // If it also doesn't match baseline, it's modified
+                    // Baseline file missing in target checkpoint, but modified on disk compared to baseline
+                    if (baselineMeta != null && targetMeta == null && currentHash != baselineMeta.sha256) {
+                        conflictingFiles.add(relPath)
                     }
                 }
                 if (conflictingFiles.isNotEmpty()) {
                     return@withContext RecoveryResult.Conflict(
                         checkpointId = targetCheckpoint.checkpointId,
                         conflictingFiles = conflictingFiles,
-                        reason = "Concurrent modifications detected on ${conflictingFiles.size} file(s)",
+                        reason = "Baseline file(s) modified on disk are missing from target checkpoint: ${conflictingFiles.joinToString()}",
                     )
                 }
             }
