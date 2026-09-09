@@ -36,4 +36,5 @@ object PanelIds {
 
     // Plugin Manager (bundled)
     val PLUGIN_MANAGER = PanelId("plugin-manager", 2)
+    val AGENT_TRACE = PanelId("agent-trace", 2)
 }
