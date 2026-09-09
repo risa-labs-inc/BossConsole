@@ -52,6 +52,10 @@ internal object ApiSurface {
         val methods =
             klass.methods
                 .filter { member -> internalSuffixes.none { member.name.endsWith(it) } }
+                // Kotlin emits public synthetic access$ helpers for private implementation state.
+                // Their names change with local lambda numbering; they are not plugin entry points.
+                // Do not exclude all synthetic methods: plugins call default-argument bridges.
+                .filterNot { it.isSynthetic && it.name.startsWith("access\$") }
                 .map { m ->
                     val parameters = m.parameterTypes.joinToString(",") { it.name }
                     "${staticKind(m.modifiers)} fun ${m.name}($parameters):${m.returnType.name}"

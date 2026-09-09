@@ -16,6 +16,15 @@ class ApiDivergenceGuardTest {
     }
 
     @Test
+    fun `private state accessors are excluded but explicit similarly named methods remain`() {
+        val klass = WithPrivateState::class.java
+        assertTrue(klass.methods.any { it.isSynthetic && it.name.startsWith("access\$") })
+        val members = ApiSurface.publicMemberSignatures(klass)
+        assertFalse(members.any { "access\$getSecret" in it })
+        assertTrue(members.any { "access\$explicit(" in it })
+    }
+
+    @Test
     fun `changed constructor is detected`() {
         val required = ApiSurface.publicMemberSignatures(WithDefaults::class.java)
         val available = ApiSurface.publicMemberSignatures(WithoutDefaults::class.java)
@@ -90,6 +99,17 @@ class ApiDivergenceGuardTest {
         val value: String,
     ) {
         fun call(value: String = "default") = value
+    }
+
+    class WithPrivateState {
+        private val secret = "private"
+
+        inner class Reader {
+            fun read() = secret
+        }
+
+        @JvmName("access\$explicit")
+        fun explicitEntryPoint() = Unit
     }
 
     class WithoutDefaults {
