@@ -88,7 +88,16 @@ object CrashReportService {
             val message: String,
         ) : SubmitResult() {
             companion object {
-                operator fun invoke(message: String): Error = Error(LogSanitizer.sanitizeExceptionMessage(message.take(4_000)))
+                operator fun invoke(message: String): Error {
+                    // Drop a cut token: truncating inside a hostname or credential can defeat its matcher.
+                    val bounded =
+                        if (message.length > 4_000) {
+                            message.take(4_000).dropLastWhile { !it.isWhitespace() }
+                        } else {
+                            message
+                        }
+                    return Error(LogSanitizer.sanitizeExceptionMessage(bounded))
+                }
             }
         }
     }

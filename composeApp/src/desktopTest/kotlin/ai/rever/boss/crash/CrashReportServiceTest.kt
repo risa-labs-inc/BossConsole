@@ -16,6 +16,14 @@ import kotlin.test.assertTrue
  */
 class CrashReportServiceTest {
     @Test
+    fun `bounding does not expose a partially cut private hostname`() {
+        val diagnostic = "timeout ".repeat(499)
+        val error = CrashReportService.SubmitResult.Error(diagnostic + "employer.corp.internal")
+
+        assertEquals(diagnostic, error.message)
+    }
+
+    @Test
     fun `oversized input is bounded before construction sanitizes it`() {
         val error =
             CrashReportService.SubmitResult.Error(
