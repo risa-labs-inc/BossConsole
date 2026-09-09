@@ -117,7 +117,6 @@ private val RAIL_BUTTON_SIZE = NEW_TAB_BUTTON_SIZE
  * here a tab's width IS the bar's width, so there is no budget, no measured trailing reserve
  * and no integer-pixel rounding to get wrong. What is left is a [LazyColumn] that scrolls.
  *
-
  * The "New Tab" row is the FIRST item of this list rather than a slot beneath it, directly under
  * the bar's header - which is where Arc puts it, and the one row whose position should not depend
  * on how many tabs there are. That is also why this takes no trailing slot: the horizontal strip
@@ -170,10 +169,7 @@ fun ColumnScope.BossVerticalTabStrip(
  *
  * @param groups one per pane, from `rememberWindowTabGroups`.
  * @param onNewTab the "+" at the foot, which opens a tab in the pane that owns the bar's chrome.
- * @param belowTabs window chrome for the very bottom of the rail, under the "+". The host's own
- *   actions - Sign Out, Settings, Tools, Search - land here when nothing else is left to hold
- *   them, which is the whole reason a collapsed bar no longer sends them to a floating overlay.
- *   See `focusQuickActionsPlacement`. Renders nothing when there is nothing to put there.
+ * @param belowTabs window chrome for the very bottom of the rail, under the "+". Renders nothing when there is nothing to put there.
  */
 @Composable
 fun BossTabRail(
@@ -196,17 +192,12 @@ fun BossTabRail(
         Box(Modifier.fillMaxWidth(0.6f).height(1.dp).background(colors.line))
         Spacer(Modifier.height(6.dp))
 
-        // A plain verticalScroll rather than a LazyColumn: a rail tab is 24dp of icon, so
-        // virtualising them buys less than the subcomposition costs, and the rail is the case
-        // where the whole list is meant to be visible at once.
         Column(
             modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(RAIL_ITEM_GAP),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             groups.forEachIndexed { groupIndex, group ->
-                // The rule between panes is wider than the one between a pane's pinned and open
-                // tabs, so the two divisions cannot be mistaken for each other at this size.
                 if (groupIndex > 0) {
                     Box(
                         Modifier
@@ -227,9 +218,6 @@ fun BossTabRail(
             contentDescription = "New Tab",
             onClick = onNewTab,
         )
-        // Below the "+", not above it: that button belongs to the tabs this rail is a list of,
-        // and these belong to the app. The slot draws its own rule, so a rail with nothing to put
-        // here ends at the "+" exactly as it always did.
         belowTabs()
     }
 }
@@ -250,13 +238,8 @@ private fun RailGroupDots(
     val tabs = group.state.tabs
     val pinnedCount = group.state.pinnedCount
     tabs.forEachIndexed { index, tab ->
-        // Guarded rather than indexed blindly: the rail renders from the same snapshot it was
-        // passed, but a menu is built on a later frame and a tab can close in between.
         val menuItems = tabs.getOrNull(index)?.let { group.state.tabMenuItems(index, it) }.orEmpty()
 
-        // The rail keeps the section break too, as a short rule between the two groups.
-        // Without it the rail is the one place where pinning is invisible, and the whole point of
-        // pinning something is that you can find it again.
         if (showPinnedRule && pinnedCount in 1 until tabs.size && index == pinnedCount) {
             Box(
                 Modifier
@@ -267,12 +250,9 @@ private fun RailGroupDots(
         }
         TabFaviconChip(
             tab = tab,
-            // Marked only in the pane the user is working in: with several panes on the rail, one
-            // mark per pane would be several claims to be the current tab.
             isActive = index == group.state.activeIndex && group.isActive,
             onClick = { group.state.activateTab(index) },
             size = RAIL_CHIP_SIZE,
-            // The rail's contract: taking the labels away must not take the actions with them.
             contextMenuItems = menuItems,
         )
     }
