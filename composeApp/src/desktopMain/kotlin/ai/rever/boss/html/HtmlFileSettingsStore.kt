@@ -19,7 +19,11 @@ internal class HtmlFileSettingsStore(
     private var loaded = false
     private val state = MutableStateFlow(HtmlFileSettings())
     val currentSettings = state.asStateFlow()
-    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+    private val json =
+        Json {
+            ignoreUnknownKeys = true
+            encodeDefaults = true
+        }
 
     suspend fun awaitSettings(): HtmlFileSettings = withContext(Dispatchers.IO) {
         mutex.withLock {

@@ -3,25 +3,25 @@ package ai.rever.boss.html
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
-import org.junit.Rule
-import org.junit.rules.TemporaryFolder
+import org.junit.jupiter.api.io.TempDir
+import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class HtmlFileSettingsStoreTest {
-    @get:Rule
-    val temporary = TemporaryFolder()
+    @TempDir
+    lateinit var temporary: File
 
     @Test
     fun `first routing read waits for the persisted preference`() = runBlocking {
-        val file = temporary.newFile().apply { writeText("""{"openMode":"BROWSER"}""") }
+        val file = File(temporary, "settings.json").apply { writeText("""{"openMode":"BROWSER"}""") }
         val store = HtmlFileSettingsStore(file) { throw it }
         assertEquals(HtmlFileOpenMode.BROWSER, store.awaitSettings().openMode)
     }
 
     @Test
     fun `update before initial load is never overwritten by old disk settings`() = runBlocking {
-        val file = temporary.newFile().apply { writeText("""{"openMode":"BROWSER"}""") }
+        val file = File(temporary, "settings.json").apply { writeText("""{"openMode":"BROWSER"}""") }
         val store = HtmlFileSettingsStore(file) { throw it }
         store.update(HtmlFileSettings(HtmlFileOpenMode.EDITOR))
         assertEquals(HtmlFileOpenMode.EDITOR, store.awaitSettings().openMode)
@@ -30,7 +30,7 @@ class HtmlFileSettingsStoreTest {
 
     @Test
     fun `concurrent writes leave a complete document matching published state`() = runBlocking {
-        val file = temporary.newFile().apply { writeText("{}") }
+        val file = File(temporary, "settings.json").apply { writeText("{}") }
         val store = HtmlFileSettingsStore(file) { throw it }
         (1..30).map { index ->
             async { store.update(HtmlFileSettings(HtmlFileOpenMode.entries[index % 3])) }
@@ -40,7 +40,7 @@ class HtmlFileSettingsStoreTest {
 
     @Test
     fun `corrupt settings fall back to asking and can be repaired by a new choice`() = runBlocking {
-        val file = temporary.newFile().apply { writeText("{broken") }
+        val file = File(temporary, "settings.json").apply { writeText("{broken") }
         val failures = mutableListOf<Exception>()
         val store = HtmlFileSettingsStore(file) { failures.add(it) }
         assertEquals(HtmlFileOpenMode.ALWAYS_ASK, store.awaitSettings().openMode)
@@ -51,7 +51,7 @@ class HtmlFileSettingsStoreTest {
 
     @Test
     fun `reset persists always ask`() = runBlocking {
-        val file = temporary.newFile().apply { writeText("""{"openMode":"EDITOR"}""") }
+        val file = File(temporary, "settings.json").apply { writeText("""{"openMode":"EDITOR"}""") }
         val store = HtmlFileSettingsStore(file) { throw it }
         store.update(HtmlFileSettings())
         assertEquals(HtmlFileSettings(), HtmlFileSettingsStore(file) { throw it }.awaitSettings())

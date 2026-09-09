@@ -213,6 +213,12 @@ private fun updatesEntries() =
         setting("Include Pre-release Versions", "Update Settings", "beta", "alpha", "rc")
     }
 
+private fun EntryScope.htmlFileEntries() {
+    group("HTML Files")
+    setting("Open HTML files with", "HTML Files", "html", "htm", "webpage", "code editor")
+    setting("Reset HTML File Behavior", "HTML Files")
+}
+
 private fun browserEntries() =
     section(SettingsSection.FLUCK) {
         group("Default Browser")
@@ -243,9 +249,7 @@ private fun browserEntries() =
         group("User Agent")
         setting("Browser Identity", "User Agent", "user agent", "ua", "spoof")
         setting("Custom User Agent String", "User Agent", "ua string")
-        group("HTML Files")
-        setting("Open HTML files with", "HTML Files", "html", "htm", "webpage", "code editor")
-        setting("Reset HTML File Behavior", "HTML Files")
+        htmlFileEntries()
         group("Terminal Links")
         setting("Open links with", "Terminal Links", "terminal link", "click", "url handler")
         setting("Target panel", "Terminal Links")

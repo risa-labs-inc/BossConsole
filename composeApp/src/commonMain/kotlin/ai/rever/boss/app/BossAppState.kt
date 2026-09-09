@@ -22,6 +22,7 @@ import ai.rever.boss.components.window_panel.rememberSplitViewState
 import ai.rever.boss.components.wizard.plugin.WizardPluginInfo
 import ai.rever.boss.components.workspaces.LayoutWorkspace
 import ai.rever.boss.components.workspaces.workspaceManager
+import ai.rever.boss.html.HtmlFileOpenRequest
 import ai.rever.boss.services.FileHandlerService
 import ai.rever.boss.services.TerminalHandlerService
 import ai.rever.boss.services.URLHandlerService
@@ -36,7 +37,6 @@ import ai.rever.boss.window.WindowProjectState
 import ai.rever.boss.window.WindowProjectStateRegistry
 import ai.rever.boss.window.WindowRunnerState
 import ai.rever.boss.window.WindowRunnerStateRegistry
-import ai.rever.boss.html.HtmlFileOpenRequest
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue

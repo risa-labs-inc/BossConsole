@@ -27,6 +27,8 @@ import ai.rever.boss.components.workspaces.requiresProject
 import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.dashboard.DashboardStatsManager
 import ai.rever.boss.git.GitTerminalService
+import ai.rever.boss.html.HtmlFileOpenMode
+import ai.rever.boss.html.HtmlFileSettingsManager
 import ai.rever.boss.plugin.api.NewTabContext
 import ai.rever.boss.plugin.api.Panel.Companion.bottom
 import ai.rever.boss.plugin.api.Panel.Companion.left
@@ -51,8 +53,6 @@ import ai.rever.boss.utils.awaitRegistryCondition
 import ai.rever.boss.utils.logging.ComponentLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.window.WindowProjectState
-import ai.rever.boss.html.HtmlFileOpenMode
-import ai.rever.boss.html.HtmlFileSettingsManager
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
