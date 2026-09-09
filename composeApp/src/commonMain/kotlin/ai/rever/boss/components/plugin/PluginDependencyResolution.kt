@@ -409,6 +409,39 @@ interface MissingDependencyInstaller {
 
     /** Downloads and loads the plugin. The message on failure is shown to the user. */
     suspend fun install(pluginId: String): Result<Unit>
+
+    /**
+     * Everything Install will download and load if the user says yes to [pluginId].
+     *
+     * Defaults to the plugin alone, which is today's behaviour and what every caller other than
+     * the dependency dialog still wants: `PluginLoadGateRecovery` and `PluginStoreVersionBridge`
+     * install a plugin the user picked by name, not one whose closure was shown to them. Only
+     * the store-backed installer overrides this, and only the dialog asks.
+     */
+    suspend fun planFor(pluginId: String): DependencyInstallPlan =
+        DependencyInstallPlan(
+            order = listOf(pluginId),
+            unresolved = emptySet(),
+            cyclic = false,
+            truncated = false,
+        )
+
+    /**
+     * Installs [order] front to back and stops at the first failure.
+     *
+     * Sequential on purpose: the order is dependencies first, and a dependency still downloading
+     * when its dependent loads is the failure the plan exists to prevent. What installed before
+     * the failure stays installed - a dependency on its own is harmless and may already be wanted
+     * by something else - and the failure returned is the one for the plugin that stopped the
+     * run, which is the one the user can act on.
+     */
+    suspend fun installAll(order: List<String>): Result<Unit> {
+        for (pluginId in order) {
+            val result = install(pluginId)
+            if (result.isFailure) return result
+        }
+        return Result.success(Unit)
+    }
 }
 
 /**

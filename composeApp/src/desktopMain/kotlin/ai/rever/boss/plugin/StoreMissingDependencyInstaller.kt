@@ -1,5 +1,6 @@
 package ai.rever.boss.plugin
 
+import ai.rever.boss.components.plugin.DependencyInstallPlan
 import ai.rever.boss.components.plugin.MissingDependencyInstaller
 import ai.rever.boss.components.plugin.PluginDependencyResolution
 import ai.rever.boss.downloads.DownloadCenter
@@ -74,6 +75,53 @@ class StoreMissingDependencyInstaller(
         }
         // No early return needed for the failure: getOrNull() is null in that case anyway.
         return lookup?.getOrNull()?.displayName?.takeIf { it.isNotBlank() }
+    }
+
+    /**
+     * The closure over the store's dependency column, so the dialog can say what Install will do.
+     *
+     * The store's `dependencies` are ids only. The `optional` flag lives in the jar's own
+     * manifest, which is not available before the download the user has not yet agreed to, so
+     * every edge is followed as if required. A store that cannot describe a plugin - no row, a
+     * decode failure, a transport error - contributes null and the walk carries on without
+     * expanding that plugin: today's behaviour, and the plan never does less than that.
+     *
+     * Anything the walk found odd is logged here, once: a cycle or a cap hit is a store data
+     * problem someone should be able to find, and an unresolved plugin is exactly the silence
+     * this method exists to remove.
+     */
+    override suspend fun planFor(pluginId: String): DependencyInstallPlan {
+        val store = repository() ?: return super.planFor(pluginId)
+        val plan =
+            PluginDependencyResolution.installPlan(
+                rootId = pluginId,
+                isPresent = ::isInstalled,
+                dependenciesOf = { id ->
+                    val lookup = runCatching { store.getPlugin(id) }.getOrElse { Result.failure(it) }
+                    lookup.exceptionOrNull()?.let { error ->
+                        logger.warn(
+                            LogCategory.SYSTEM,
+                            "Could not read a plugin's dependencies from the store; it will install alone",
+                            mapOf("pluginId" to id),
+                            error = error,
+                        )
+                    }
+                    lookup.getOrNull()?.dependencies
+                },
+            )
+        if (plan.cyclic || plan.truncated || plan.unresolved.isNotEmpty()) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Dependency install plan has gaps",
+                mapOf(
+                    "root" to pluginId,
+                    "cyclic" to plan.cyclic.toString(),
+                    "truncated" to plan.truncated.toString(),
+                    "unresolved" to plan.unresolved.joinToString(","),
+                ),
+            )
+        }
+        return plan
     }
 
     override suspend fun install(pluginId: String): Result<Unit> =
@@ -330,8 +378,6 @@ class StoreMissingDependencyInstaller(
         runCatching { PluginSignatureSidecar.delete(jarPath) }
     }
 
-    private fun failure(message: String): Result<Unit> = Result.failure(IllegalStateException(message))
-
     /**
      * Move the downloaded jar and its signature onto the final name.
      *
@@ -415,3 +461,6 @@ class InstallerHooks(
  * survive because versions are full of them and, with separators gone, cannot traverse.
  */
 private fun safe(part: String) = part.replace(Regex("[^A-Za-z0-9.-]"), "_")
+
+/** A user-facing failure: the message is what the dialog shows, so it names a plugin, not a transport. */
+private fun failure(message: String): Result<Unit> = Result.failure(IllegalStateException(message))
