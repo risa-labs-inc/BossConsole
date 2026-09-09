@@ -817,43 +817,7 @@ internal fun BossAppDialogs(state: BossAppState) {
         )
     }
 
-    state.pendingHtmlFileOpen?.let { request ->
-        key(request) {
-            HtmlFileOpenDialog(
-                fileName = request.fileName,
-                filePath = request.filePath,
-                onDismiss = { state.pendingHtmlFileOpen = null },
-                onOpenChoice = { mode, rememberChoice ->
-                    coroutineScope.launch {
-                        try {
-                            if (rememberChoice) {
-                                HtmlFileSettingsManager.setOpenMode(mode)
-                            }
-                            when (mode) {
-                                HtmlFileOpenMode.EDITOR -> {
-                                    splitViewState.openFileInEditorTab(request.filePath, request.fileName)
-                                }
-
-                                HtmlFileOpenMode.BROWSER -> {
-                                    splitViewState.openFileInBrowserTab(request.filePath, request.fileName)
-                                }
-
-                                HtmlFileOpenMode.ALWAYS_ASK -> {
-                                    Unit
-                                }
-                            }
-                        } catch (e: kotlinx.coroutines.CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            logger.error(LogCategory.FILE, "Unable to open HTML file", error = e)
-                        } finally {
-                            state.pendingHtmlFileOpen = null
-                        }
-                    }
-                },
-            )
-        }
-    }
+    HtmlFilePrompt(state)
 
     // An unload is waiting on this answer: other plugins depend on the one being updated or
     // removed. Both handlers complete the prompt's `answer` before clearing the field - the
@@ -1156,4 +1120,48 @@ internal fun BossAppDialogs(state: BossAppState) {
 
     // Generic dialog host for plugin dialogs
     GenericDialogHostContent()
+}
+
+@Composable
+private fun HtmlFilePrompt(state: BossAppState) {
+    val coroutineScope = state.coroutineScope
+    val splitViewState = state.splitViewState
+    val logger = state.logger
+    state.pendingHtmlFileOpen?.let { request ->
+        key(request) {
+            HtmlFileOpenDialog(
+                fileName = request.fileName,
+                filePath = request.filePath,
+                onDismiss = { state.pendingHtmlFileOpen = null },
+                onOpenChoice = { mode, rememberChoice ->
+                    coroutineScope.launch {
+                        try {
+                            if (rememberChoice) {
+                                HtmlFileSettingsManager.setOpenMode(mode)
+                            }
+                            when (mode) {
+                                HtmlFileOpenMode.EDITOR -> {
+                                    splitViewState.openFileInEditorTab(request.filePath, request.fileName)
+                                }
+
+                                HtmlFileOpenMode.BROWSER -> {
+                                    splitViewState.openFileInBrowserTab(request.filePath, request.fileName)
+                                }
+
+                                HtmlFileOpenMode.ALWAYS_ASK -> {
+                                    Unit
+                                }
+                            }
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            logger.error(LogCategory.FILE, "Unable to open HTML file", error = e)
+                        } finally {
+                            state.pendingHtmlFileOpen = null
+                        }
+                    }
+                },
+            )
+        }
+    }
 }
