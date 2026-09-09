@@ -46,6 +46,13 @@ class PathUtilsTest {
     @Nested
     inner class ExtractParentNameTests {
         @Test
+        fun `files without a path have no parent`() {
+            assertEquals("", "README.md".extractParentName())
+            assertEquals("", "Dockerfile".extractParentName())
+            assertEquals("", ".gitignore".extractParentName())
+        }
+
+        @Test
         fun `handles Unix paths`() {
             assertEquals("to", "/path/to/file.txt".extractParentName())
             assertEquals("bin", "/usr/local/bin/script.sh".extractParentName())
