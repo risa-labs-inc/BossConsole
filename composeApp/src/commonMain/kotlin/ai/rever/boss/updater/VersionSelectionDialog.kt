@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.filled.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -26,9 +27,15 @@ import androidx.compose.ui.window.DialogProperties
 
 private val logger = BossLogger.forComponent("VersionSelectionDialog")
 
+enum class VersionSelectionMode {
+    INSTALL,
+    BROWSE,
+}
+
 /**
- * Dialog for selecting a specific version to install
+ * Dialog for browsing release notes or selecting a specific version to install.
  */
+@Suppress("LongMethod")
 @Composable
 fun VersionSelectionDialog(
     currentVersion: Version,
@@ -37,6 +44,7 @@ fun VersionSelectionDialog(
     error: String? = null,
     onVersionSelected: (VersionInfo) -> Unit,
     onDismiss: () -> Unit,
+    mode: VersionSelectionMode = VersionSelectionMode.INSTALL,
 ) {
     var searchQuery by remember { mutableStateOf("") }
     var showStableOnly by remember { mutableStateOf(true) }
@@ -80,7 +88,12 @@ fun VersionSelectionDialog(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = "Select Version",
+                        text =
+                            if (mode == VersionSelectionMode.BROWSE) {
+                                "Release history"
+                            } else {
+                                "Select Version"
+                            },
                         fontSize = 18.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = BossTheme.colors.textPrimary,
@@ -157,7 +170,7 @@ fun VersionSelectionDialog(
                 }
 
                 // Version list
-                if (isLoading) {
+                if (isLoading && versions.isEmpty()) {
                     Box(
                         modifier =
                             Modifier
@@ -202,6 +215,7 @@ fun VersionSelectionDialog(
                                 versionInfo = versionInfo,
                                 isCurrent = versionInfo.version == currentVersion,
                                 isLatest = versionInfo.version == latestStableVersion,
+                                mode = mode,
                                 onClick = { onVersionSelected(versionInfo) },
                             )
                         }
@@ -215,11 +229,13 @@ fun VersionSelectionDialog(
 /**
  * Individual version item in the list
  */
+@Suppress("LongMethod")
 @Composable
 private fun VersionItem(
     versionInfo: VersionInfo,
     isCurrent: Boolean,
     isLatest: Boolean = false,
+    mode: VersionSelectionMode,
     onClick: () -> Unit,
 ) {
     Card(
@@ -305,15 +321,31 @@ private fun VersionItem(
                 Spacer(modifier = Modifier.height(4.dp))
 
                 Text(
-                    text = "Released: ${formatReleaseDate(versionInfo.releaseDate)} • ${formatFileSize(versionInfo.downloadSize)}",
+                    text =
+                        if (mode == VersionSelectionMode.BROWSE) {
+                            "Released: ${formatReleaseDate(versionInfo.releaseDate)}"
+                        } else {
+                            "Released: ${formatReleaseDate(versionInfo.releaseDate)} • " +
+                                formatFileSize(versionInfo.downloadSize)
+                        },
                     fontSize = 12.sp,
                     color = BossTheme.colors.textSecondary,
                 )
             }
 
             Icon(
-                imageVector = Icons.Default.CloudDownload,
-                contentDescription = "Download",
+                imageVector =
+                    if (mode == VersionSelectionMode.BROWSE) {
+                        Icons.AutoMirrored.Filled.Article
+                    } else {
+                        Icons.Default.CloudDownload
+                    },
+                contentDescription =
+                    if (mode == VersionSelectionMode.BROWSE) {
+                        "View release notes"
+                    } else {
+                        "Download"
+                    },
                 tint = BossTheme.colors.signalText,
             )
         }

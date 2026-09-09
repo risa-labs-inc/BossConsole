@@ -31,7 +31,7 @@ import androidx.compose.ui.unit.dp
 /**
  * Width of the form column itself, independent of the pane it sits in.
  *
- * The house card width, matching `BossDialog`'s `AlertWidth` and `ConfirmationDialog`.
+ * The house card width, matching `BossDialog`'s `ALERT_WIDTH` and `ConfirmationDialog`.
  */
 private val AuthColumnWidth: Dp = 400.dp
 

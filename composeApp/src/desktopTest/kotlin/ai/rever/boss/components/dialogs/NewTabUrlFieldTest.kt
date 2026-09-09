@@ -1,6 +1,7 @@
 package ai.rever.boss.components.dialogs
 
 import ai.rever.boss.components.overlays.OverlayConfig
+import ai.rever.boss.components.overlays.resetOverlayFieldForTest
 import ai.rever.boss.plugin.api.TabComponentWithUI
 import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.plugin.api.TabRegistry
@@ -88,7 +89,9 @@ class NewTabUrlFieldTest {
         // Render the modal in place instead of in a separate always-on-top window, so the
         // dialog's own content belongs to this composition. The window itself is platform
         // code with its own tests; what is under test here is the field inside it.
+        resetOverlayFieldForTest("useHeavyweightOverlays")
         OverlayConfig.useHeavyweightPopups = true
+        resetOverlayFieldForTest("modalRenderer")
         OverlayConfig.heavyweightModal = { _, _, content -> content() }
 
         // Run the suggestion lookup on the composition's own dispatcher. On
@@ -103,7 +106,9 @@ class NewTabUrlFieldTest {
     @After
     fun tearDown() {
         urlSuggestionContext = previousSuggestionContext
+        resetOverlayFieldForTest("modalRenderer")
         OverlayConfig.heavyweightModal = previousModal
+        resetOverlayFieldForTest("useHeavyweightOverlays")
         OverlayConfig.useHeavyweightPopups = previousUseHeavyweight
         // UrlHistoryManager is a process-global store; a scratch file left in it would leak
         // into any other test that reads history.

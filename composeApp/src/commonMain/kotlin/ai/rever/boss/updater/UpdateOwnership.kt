@@ -3,6 +3,7 @@ package ai.rever.boss.updater
 import ai.rever.boss.utils.Version
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -101,13 +102,26 @@ interface UpdateHandle {
  * This mirrors the shape the Rust port settled on (`UpdateCoordinator` owns
  * `shutdown`, windows hold an `UpdateHandle` that does not).
  */
+// App-wide actions and window capabilities deliberately share this single lifecycle owner.
+@Suppress("TooManyFunctions")
 class UpdateCoordinator internal constructor(
     internal val manager: UpdateManager,
 ) {
     private val logger = BossLogger.forComponent("UpdateCoordinator")
 
+    // Shared process-wide release cache used by Settings and the home screen.
+    internal val versionListManager: VersionListManager by lazy {
+        VersionListManager(manager.updateService)
+    }
+    private val _lastSeenReleaseVersion =
+        MutableStateFlow(UpdateSettings.lastSeenReleaseVersion)
+
+    internal val lastSeenReleaseVersion: StateFlow<String?> =
+        _lastSeenReleaseVersion
+
     private val handles = ConcurrentHashMap<String, WindowUpdateHandle>()
     private val startMutex = Mutex()
+    private val seenReleaseMutex = Mutex()
     private val shutDown = AtomicBoolean(false)
 
     /** Number of windows currently holding a live handle. */
@@ -256,6 +270,30 @@ class UpdateCoordinator internal constructor(
         manager.launchInBackground { manager.installUpdate(downloadPath) }
     }
 
+    // Advisory badge state: process shutdown may cancel a pending disk write, so opening notes
+    // immediately before quitting can show NEW again. It never changes install/dismiss state.
+    internal fun markReleaseSeenInBackground(version: Version) {
+        if (isShutDown) return
+
+        manager.launchInBackground {
+            seenReleaseMutex.withLock {
+                val nextVersion =
+                    advanceLastSeenReleaseVersion(
+                        currentVersion = _lastSeenReleaseVersion.value,
+                        viewedVersion = version,
+                    )
+
+                if (nextVersion == _lastSeenReleaseVersion.value) {
+                    return@withLock
+                }
+
+                UpdateSettings.lastSeenReleaseVersion = nextVersion
+                _lastSeenReleaseVersion.value = nextVersion
+                UpdateSettingsManager.saveSettings()
+            }
+        }
+    }
+
     /**
      * App-level teardown: stop periodic checks and cancel in-flight update work.
      * Idempotent. Call this exactly once, from the process exit path.
@@ -363,6 +401,11 @@ class UpdateCoordinator internal constructor(
 
     companion object {
         /** The app's owner of [UpdateManager.instance]. */
-        val instance = UpdateCoordinator(UpdateManager.instance)
+        val instance = createUpdateCoordinator()
     }
+}
+
+private fun createUpdateCoordinator(): UpdateCoordinator {
+    UpdateSettingsManager.ensureLoaded()
+    return UpdateCoordinator(UpdateManager.instance)
 }

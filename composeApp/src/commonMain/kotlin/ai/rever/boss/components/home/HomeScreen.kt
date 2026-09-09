@@ -100,6 +100,8 @@ fun HomeScreen(modifier: Modifier = Modifier) {
                 onSearch = actions::openSearch,
             )
 
+            WhatsNewSection()
+
             JumpBackInSection(
                 recentProjects = recentProjects,
                 windowHoldsProject = selectedProject.path.isNotEmpty(),

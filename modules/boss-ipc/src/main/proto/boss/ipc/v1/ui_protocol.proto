@@ -18,6 +18,11 @@ option java_multiple_files = true;
 service PluginUIService {
   // Register a UI surface (panel or tab) with the kernel.
   //
+  // Every UI call carries boss-process-token metadata minted for the child at spawn.
+  // The kernel derives process identity from that token, not from process_id in the body.
+  // Surface names remain reserved for that stable identity for the host registry lifetime,
+  // including disconnects, unregisters and kernel restarts while host components may remain.
+  //
   // Required before StreamUI. A surface_id already held by a *different* process is refused, with the
   // holder named in error_message. A surface_id held by the SAME process with no stream open is taken
   // over, which is what a respawn after a crash looks like.
@@ -36,6 +41,7 @@ service PluginUIService {
   // different surface_id are ignored; use one call per surface.
   //
   // The first update is the only attempt at binding, and the status says what to do about it:
+  //   PERMISSION_DENIED    the authenticated process does not own this surface
   //   NOT_FOUND            the surface_id is not registered — call RegisterUI, then open a NEW StreamUI
   //                        (later updates on this call are ignored, so retrying on it will not work)
   //   FAILED_PRECONDITION  another call already streams that surface, and always will

@@ -1,5 +1,8 @@
 package ai.rever.boss.utils
 
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -109,6 +112,29 @@ class SingleInstanceChannelTest {
         val spaced = assertNotNull(parseRequestLine(formatOpenRequest(token, DeepLinkOrigin.OPERATOR_CLI, spacedUrl)))
         assertEquals(spacedUrl, spaced.url)
         assertEquals(DeepLinkOrigin.OPERATOR_CLI, spaced.origin)
+
+        val status = assertNotNull(parseRequestLine(formatStatusRequest(token)))
+        assertEquals(VERB_STATUS, status.verb)
+        assertEquals(token, status.token)
+
+        val mcpList = assertNotNull(parseRequestLine(formatMcpListRequest(token)))
+        assertEquals(VERB_MCP_LIST, mcpList.verb)
+        assertEquals(token, mcpList.token)
+
+        val multilineArgs = "{\n  \"path\": \"foo.kt\",\n  \"content\": \"line 1\\nline 2\\nline 3\"\n}"
+        val invokeReq = formatMcpInvokeRequest(token, "mcp__boss__write_file", multilineArgs)
+        val mcpInvoke = assertNotNull(parseRequestLine(invokeReq))
+        assertEquals(VERB_MCP_INVOKE, mcpInvoke.verb)
+        assertEquals(token, mcpInvoke.token)
+        assertEquals("mcp__boss__write_file", mcpInvoke.toolName)
+        assertEquals(multilineArgs, mcpInvoke.argsJson)
+
+        val largeContent = "x".repeat(10_000)
+        val largeArgs = "{\"data\":\"$largeContent\"}"
+        val largeInvokeReq = formatMcpInvokeRequest(token, "test_tool", largeArgs)
+        val largeInvoke = assertNotNull(parseRequestLine(largeInvokeReq))
+        assertEquals(VERB_MCP_INVOKE, largeInvoke.verb)
+        assertEquals(largeArgs, largeInvoke.argsJson)
     }
 
     @Test
@@ -185,7 +211,7 @@ class SingleInstanceChannelTest {
         // A request well past the read budget. The read gives up rather than
         // growing, so the request is never acted on — the connection either
         // comes back refused or is simply dropped.
-        val padding = "a".repeat(20 * 1024)
+        val padding = "a".repeat(MAX_REQUEST_BYTES + 4096)
         val oversized = formatOpenRequest(descriptor.token, DeepLinkOrigin.EXTERNAL, "boss://url?url=$padding")
         assertNotEquals(RESPONSE_OK, exchangeTolerantly(descriptor, oversized))
 
@@ -243,6 +269,200 @@ class SingleInstanceChannelTest {
     }
 
     @Test
+    fun `status query receives status json from running instance`() {
+        val fakeStatus = """{"running":true,"version":"9.5.7","os":"Windows","memory":{"usedMb":128,"maxMb":1024}}"""
+        SingleInstanceManager.statusProviderOverride = { fakeStatus }
+        assertTrue(SingleInstanceManager.acquireLock())
+
+        val status = SingleInstanceManager.queryStatus().getOrThrow()
+        assertEquals(fakeStatus, status)
+    }
+
+    @Test
+    fun `status query without running instance returns safe failure`() {
+        val error = assertNotNull(SingleInstanceManager.queryStatus().exceptionOrNull())
+        assertTrue(error.message.orEmpty().contains("BOSS is not running"))
+    }
+
+    @Test
+    fun `mcp list query receives tools json from running instance`() {
+        val fakeTools = """[{"name":"mcp__boss__read_file","description":"Read a file","pluginId":"editor-tab"}]"""
+        SingleInstanceManager.mcpListProviderOverride = { fakeTools }
+        assertTrue(SingleInstanceManager.acquireLock())
+
+        val tools = SingleInstanceManager.queryMcpList().getOrThrow()
+        assertEquals(fakeTools, tools)
+    }
+
+    @Test
+    fun `mcp invoke executes tool with multiline args and returns structured json`() {
+        SingleInstanceManager.mcpInvokeHandlerOverride = { toolName, argsJson ->
+            ai.rever.boss.plugin.api
+                .McpToolResult(text = "Executed $toolName with args: $argsJson", isError = false)
+        }
+        assertTrue(SingleInstanceManager.acquireLock())
+
+        val multilineArgs = "{\n  \"query\": \"test\\nvalue\"\n}"
+        val resultJson = SingleInstanceManager.invokeMcpTool("mcp__boss__search", multilineArgs).getOrThrow()
+        assertTrue(resultJson.contains("\"success\":true"))
+        assertTrue(resultJson.contains("\"isError\":false"))
+        val element = Json.parseToJsonElement(resultJson).jsonObject
+        val content = element["content"]?.jsonPrimitive?.content
+        assertEquals("Executed mcp__boss__search with args: $multilineArgs", content)
+    }
+
+    @Test
+    fun `mcp invoke with error flag is surfaced correctly in payload`() {
+        SingleInstanceManager.mcpInvokeHandlerOverride = { toolName, _ ->
+            ai.rever.boss.plugin.api
+                .McpToolResult(text = "Permission denied for $toolName", isError = true)
+        }
+        assertTrue(SingleInstanceManager.acquireLock())
+
+        val resultJson = SingleInstanceManager.invokeMcpTool("mcp__boss__delete_root", "{}").getOrThrow()
+        assertTrue(resultJson.contains("\"success\":false"))
+        assertTrue(resultJson.contains("\"isError\":true"))
+        assertTrue(resultJson.contains("Permission denied for mcp__boss__delete_root"))
+    }
+
+    @Test
+    fun `mcp requests without the channel token are refused`() {
+        SingleInstanceManager.mcpListProviderOverride = { "[{\"name\":\"secret_tool\"}]" }
+        assertTrue(SingleInstanceManager.acquireLock())
+        val descriptor = assertNotNull(readPublishedDescriptor())
+
+        val wrongToken = "f".repeat(TOKEN_HEX_LENGTH)
+        val response = exchange(descriptor, formatMcpListRequest(wrongToken))
+
+        assertEquals(RESPONSE_REJECTED, response)
+        assertFalse(response.orEmpty().contains("secret_tool"))
+    }
+
+    @Test
+    fun `single-instance channel handles requests with CRLF without Base64 decode errors`() {
+        SingleInstanceManager.mcpInvokeHandlerOverride = { tool, args ->
+            ai.rever.boss.plugin.api
+                .McpToolResult("Echo: $tool -> $args")
+        }
+        assertTrue(SingleInstanceManager.acquireLock())
+        val descriptor = assertNotNull(readPublishedDescriptor())
+
+        val base64Args =
+            java.util.Base64
+                .getEncoder()
+                .encodeToString("{\"test\":1}".toByteArray(StandardCharsets.UTF_8))
+        val rawCrlfLine = "$PROTOCOL_VERSION ${descriptor.token} $VERB_MCP_INVOKE echo_tool $base64Args\r"
+        val response = exchange(descriptor, rawCrlfLine)
+        assertNotNull(response)
+        assertTrue(response.startsWith(RESPONSE_MCP_INVOKE_PREFIX))
+        val base64Resp = response.removePrefix(RESPONSE_MCP_INVOKE_PREFIX).trim()
+        val decoded =
+            String(
+                java.util.Base64
+                    .getDecoder()
+                    .decode(base64Resp),
+                StandardCharsets.UTF_8,
+            )
+        assertTrue(decoded.contains("\"success\":true"))
+        val element = Json.parseToJsonElement(decoded).jsonObject
+        val content = element["content"]?.jsonPrimitive?.content
+        assertEquals("Echo: echo_tool -> {\"test\":1}", content)
+    }
+
+    @Test
+    fun `mcp invoke with malformed JSON arguments returns isError true without crashing channel`() {
+        SingleInstanceManager.mcpInvokeHandlerOverride = { tool, _ ->
+            ai.rever.boss.plugin.api
+                .McpToolResult("Executed $tool")
+        }
+        assertTrue(SingleInstanceManager.acquireLock())
+
+        val resultJson = SingleInstanceManager.invokeMcpTool("any_tool", "{bad json").getOrThrow()
+        assertTrue(resultJson.contains("\"success\":false"))
+        assertTrue(resultJson.contains("\"isError\":true"))
+        assertTrue(resultJson.contains("Malformed JSON arguments"))
+
+        // Channel must stay open and alive
+        val resultJson2 = SingleInstanceManager.invokeMcpTool("any_tool", "{}").getOrThrow()
+        assertTrue(resultJson2.contains("\"success\":true"))
+    }
+
+    @Test
+    fun `mcp invoke coroutine dispatch allows switching dispatchers`() {
+        SingleInstanceManager.mcpInvokeHandlerOverride = { tool, _ ->
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                ai.rever.boss.plugin.api
+                    .McpToolResult("Async result for $tool")
+            }
+        }
+        assertTrue(SingleInstanceManager.acquireLock())
+
+        val resultJson = SingleInstanceManager.invokeMcpTool("async_tool", "{}").getOrThrow()
+        assertTrue(resultJson.contains("Async result for async_tool"))
+    }
+
+    @Test
+    fun `benchmark roundtrip latency of 100 consecutive status and mcp list queries`() {
+        SingleInstanceManager.mcpListProviderOverride = {
+            """[{"name":"mcp__boss__browser_navigate","description":"Navigates browser tab"}]"""
+        }
+        assertTrue(SingleInstanceManager.acquireLock())
+
+        val warmupIterations = 10
+        val iterations = 100
+
+        // Warm up JIT and socket connection
+        repeat(warmupIterations) {
+            SingleInstanceManager.queryStatus().getOrThrow()
+            SingleInstanceManager.queryMcpList().getOrThrow()
+        }
+
+        val statusLatenciesMs = mutableListOf<Double>()
+        val mcpListLatenciesMs = mutableListOf<Double>()
+        val roundtripLatenciesMs = mutableListOf<Double>()
+
+        repeat(iterations) {
+            val startStatus = System.nanoTime()
+            val statusResult = SingleInstanceManager.queryStatus().getOrThrow()
+            val elapsedStatusMs = (System.nanoTime() - startStatus) / 1_000_000.0
+            statusLatenciesMs.add(elapsedStatusMs)
+            assertTrue(statusResult.contains("running"))
+
+            val startMcpList = System.nanoTime()
+            val mcpListResult = SingleInstanceManager.queryMcpList().getOrThrow()
+            val elapsedMcpListMs = (System.nanoTime() - startMcpList) / 1_000_000.0
+            mcpListLatenciesMs.add(elapsedMcpListMs)
+            assertTrue(mcpListResult.contains("mcp__boss__browser_navigate"))
+
+            roundtripLatenciesMs.add(elapsedStatusMs + elapsedMcpListMs)
+        }
+
+        fun median(list: List<Double>): Double {
+            val sorted = list.sorted()
+            return if (sorted.size % 2 == 0) {
+                (sorted[sorted.size / 2 - 1] + sorted[sorted.size / 2]) / 2.0
+            } else {
+                sorted[sorted.size / 2]
+            }
+        }
+
+        val medianStatusMs = median(statusLatenciesMs)
+        val medianMcpListMs = median(mcpListLatenciesMs)
+        val medianRoundtripMs = median(roundtripLatenciesMs)
+
+        val statusFmt = String.format(java.util.Locale.US, "%.2f", medianStatusMs)
+        val mcpListFmt = String.format(java.util.Locale.US, "%.2f", medianMcpListMs)
+        val roundtripFmt = String.format(java.util.Locale.US, "%.2f", medianRoundtripMs)
+        println("\n=== Loopback IPC Benchmark Results (100 Iterations) ===")
+        println("STATUS query median latency:       $statusFmt ms")
+        println("MCP_LIST query median latency:     $mcpListFmt ms")
+        println("Combined roundtrip median latency: $roundtripFmt ms")
+        println("=======================================================\n")
+
+        // Timing is diagnostic only: loaded CI machines must not fail a correctness suite.
+    }
+
+    @Test
     fun `a credential is refused when it would not survive the line format`() {
         // A response line carrying CR or LF would let the gateway inject a second
         // line. Deliberately not a vendor-prefix check: see isSingleLineCredential.
@@ -284,6 +504,126 @@ class SingleInstanceChannelTest {
         assertFalse(Files.exists(descriptorPath()))
         assertFalse(SingleInstanceManager.isAnotherInstanceRunning())
         assertTrue(SingleInstanceManager.acquireLock())
+    }
+
+    @Test
+    fun `invalid base64 never invokes a tool with empty arguments`() {
+        var called = false
+        SingleInstanceManager.mcpInvokeHandlerOverride = { _, _ ->
+            called = true
+            ai.rever.boss.plugin.api
+                .McpToolResult("unexpected")
+        }
+        assertTrue(SingleInstanceManager.acquireLock())
+        val descriptor = assertNotNull(readPublishedDescriptor())
+        val response = exchange(descriptor, "$PROTOCOL_VERSION ${descriptor.token} MCP_INVOKE destructive !!!")
+        assertEquals(RESPONSE_REJECTED, response)
+        assertFalse(called)
+    }
+
+    @Test
+    fun `status JSON escapes platform strings`() {
+        val previous = System.getProperty("os.arch")
+        val unusual = "C:\\Users\\name\"quoted\nline"
+        try {
+            System.setProperty("os.arch", unusual)
+            assertTrue(SingleInstanceManager.acquireLock())
+            val status = Json.parseToJsonElement(SingleInstanceManager.queryStatus().getOrThrow()).jsonObject
+            assertEquals(unusual, status["arch"]?.jsonPrimitive?.content)
+        } finally {
+            previous?.let { System.setProperty("os.arch", it) } ?: System.clearProperty("os.arch")
+        }
+    }
+
+    @Test
+    fun `tool names are escaped in result envelopes and cannot inject wire lines`() {
+        assertTrue(SingleInstanceManager.acquireLock())
+        SingleInstanceManager.mcpInvokeHandlerOverride = { _, _ ->
+            ai.rever.boss.plugin.api
+                .McpToolResult("ok")
+        }
+        val name = "tool\"quoted"
+        val result = SingleInstanceManager.invokeMcpTool(name).getOrThrow()
+        assertEquals(
+            name,
+            Json
+                .parseToJsonElement(result)
+                .jsonObject["tool"]
+                ?.jsonPrimitive
+                ?.content,
+        )
+        assertTrue(SingleInstanceManager.invokeMcpTool("tool\nOTHER").isFailure)
+    }
+
+    @Test
+    fun `arguments at the client limit fit the base64 wire budget`() {
+        SingleInstanceManager.mcpInvokeHandlerOverride = { _, args ->
+            ai.rever.boss.plugin.api
+                .McpToolResult(args.length.toString())
+        }
+        assertTrue(SingleInstanceManager.acquireLock())
+        val args = "{\"x\":\"" + "a".repeat(MAX_ARGUMENT_BYTES - 8) + "\"}"
+        assertEquals(MAX_ARGUMENT_BYTES, args.toByteArray().size)
+        val longestName = "界".repeat(MAX_TOOL_NAME_LENGTH)
+        val wire = formatMcpInvokeRequest("f".repeat(TOKEN_HEX_LENGTH), longestName, args)
+        assertTrue(wire.toByteArray(StandardCharsets.UTF_8).size <= MAX_REQUEST_BYTES)
+        assertTrue(SingleInstanceManager.invokeMcpTool(longestName, args).isSuccess)
+        assertTrue(SingleInstanceManager.invokeMcpTool("echo", args + " ").isFailure)
+    }
+
+    @Test
+    fun `tool discovery preserves structured input schema`() {
+        val schema = """{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"""
+        val definition =
+            ai.rever.boss.plugin.api.McpToolDefinition(
+                name = "read_file",
+                description = "Reads a file",
+                inputSchema = schema,
+                handler = {
+                    ai.rever.boss.plugin.api
+                        .McpToolResult("ok")
+                },
+            )
+        val tool =
+            ai.rever.boss.plugin.api
+                .RegisteredMcpTool("test", definition)
+        val tools = Json.parseToJsonElement(encodeMcpTools(listOf(tool))) as kotlinx.serialization.json.JsonArray
+        assertEquals(Json.parseToJsonElement(schema), tools.single().jsonObject["inputSchema"])
+    }
+
+    @Test
+    fun `one malformed schema does not hide other tools`() {
+        val tools =
+            listOf("", "{invalid", "{\"type\":\"object\"}").mapIndexed { index, schema ->
+                ai.rever.boss.plugin.api.RegisteredMcpTool(
+                    "test",
+                    ai.rever.boss.plugin.api.McpToolDefinition(
+                        name = "tool_$index",
+                        description = "test",
+                        inputSchema = schema,
+                        handler = {
+                            ai.rever.boss.plugin.api
+                                .McpToolResult("ok")
+                        },
+                    ),
+                )
+            }
+        val encoded = Json.parseToJsonElement(encodeMcpTools(tools)) as kotlinx.serialization.json.JsonArray
+        assertEquals(3, encoded.size)
+        assertEquals("", encoded[0].jsonObject["inputSchema"]?.jsonPrimitive?.content)
+        assertEquals("{invalid", encoded[1].jsonObject["inputSchema"]?.jsonPrimitive?.content)
+        assertTrue(encoded[2].jsonObject["inputSchema"] is kotlinx.serialization.json.JsonObject)
+    }
+
+    @Test
+    fun `oversized tool result reports size limit rather than offline desktop`() {
+        SingleInstanceManager.mcpInvokeHandlerOverride = { _, _ ->
+            ai.rever.boss.plugin.api
+                .McpToolResult("x".repeat(4 * 1024 * 1024))
+        }
+        assertTrue(SingleInstanceManager.acquireLock())
+        val failure = SingleInstanceManager.invokeMcpTool("large").exceptionOrNull()
+        assertTrue(assertNotNull(failure).message.orEmpty().contains("response size limit"))
     }
 
     // ==================== Helpers ====================

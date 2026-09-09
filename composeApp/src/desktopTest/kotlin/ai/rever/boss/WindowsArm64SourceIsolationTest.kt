@@ -45,13 +45,14 @@ class WindowsArm64SourceIsolationTest {
             "/plugin/PluginStateBridge.kt",
         )
 
-    /** The `desktopTest` mirror: the two directories, plus two tests naming boss-ipc types. */
+    /** The `desktopTest` mirror: the two directories, plus tests naming boss-ipc types. */
     private val desktopTestExclusions =
         listOf(
             "/kernel/",
             "/plugin/remote/",
             "/plugin/IpcCompatibilityTest.kt",
             "/plugin/PluginStoreSetupIpcGateTest.kt",
+            "/plugin/PluginStateDeltaTest.kt",
         )
 
     /** Excluded for reasons unrelated to the platform, so not part of the mirror. */

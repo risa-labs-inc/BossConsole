@@ -1,3 +1,5 @@
+@file:Suppress("TooManyFunctions")
+
 package ai.rever.boss.app
 
 import ai.rever.boss.components.buttons.BossActionButton
@@ -38,10 +40,9 @@ import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 
 /**
- * Hard upper bound on the quick-actions overlay: its size before measurement, and the ceiling every
- * later measurement is taken against.
+ * First-frame size of the quick-actions overlay; later measurements use the parent region.
  *
- * A bound, not an estimate - content that would exceed it is CLIPPED. Three `BossActionButton`s at
+ * Content can grow beyond this placeholder. Three `BossActionButton`s at
  * 28.dp square in `imageVector` mode come to ~94x30dp with `space.xs` on each end of the row and
  * the 1.dp border. Kept close to that rather than round, because until measurement lands this is
  * also the region the overlay swallows clicks in - the same reason `TOAST_OVERLAY_INITIAL_SIZE`
@@ -57,7 +58,7 @@ import androidx.compose.ui.unit.dp
 internal val QUICK_ACTIONS_OVERLAY_SIZE = DpSize(132.dp, 34.dp)
 
 /**
- * The same bound with the tools launcher in the row, when both icon strips are gone.
+ * The same first-frame estimate with the tools launcher, when both icon strips are gone.
  *
  * See `toolLauncherPlacement` for when that happens, and [QUICK_ACTIONS_OVERLAY_SIZE] for why the
  * two are separate rather than one number wide enough for both.
@@ -207,7 +208,7 @@ internal enum class FocusQuickActionsPlacement {
  * nowhere. It reads as "permanent" for the same reason `hides(RIGHT)` does, so it belongs in the
  * same test rather than in the reveal flags.
  */
-// Six inputs, and each one is a different way the answer changes: whether these are wanted at
+// Seven inputs, and each one is a different way the answer changes: whether these are wanted at
 // all, then each host that could take them in turn. Folding them into a holder would put every
 // caller and every test through a builder to ask one question.
 @Suppress("LongParameterList")
@@ -246,6 +247,7 @@ internal fun focusQuickActionsPlacement(
      * panel is too small keeps the cluster, which is what it had before this.
      */
     panelFootAvailable: Boolean = false,
+    railActionsFit: Boolean = true,
 ): FocusQuickActionsPlacement =
     when {
         !focusQuickActionsVisible(settings, topBarHidden, showTopBar) -> FocusQuickActionsPlacement.NONE
@@ -261,7 +263,7 @@ internal fun focusQuickActionsPlacement(
         // Then that same bar collapsed, whose rail has room at the bottom. This case used to fall
         // through to the cluster, which is how asking for MORE content width ended up putting an
         // overlay in the content.
-        verticalBar == VerticalBarHost.RAIL -> FocusQuickActionsPlacement.TAB_BAR_RAIL
+        verticalBar == VerticalBarHost.RAIL && railActionsFit -> FocusQuickActionsPlacement.TAB_BAR_RAIL
 
         // No vertical bar at all, so nothing above can host them. The right panel's foot while
         // that panel is open and big enough to hold one, the corner of the content otherwise. See
@@ -340,6 +342,20 @@ internal fun focusQuickActionsRailRows(
     } else {
         0
     }
+
+/** Whether the rendered rail column, including its separator and themed gaps, fits. */
+internal fun railFitsActions(
+    availableHeight: Dp,
+    actionCount: Int,
+    gap: Dp,
+): Boolean {
+    if (actionCount == 0) return true
+
+    // The separator is a child too: there is a gap between it and the first action,
+    // plus one between each pair of actions and padding at both ends.
+    val actionsHeight = SIDEBAR_ICON_SIZE * actionCount + gap * (actionCount + 2) + 1.dp
+    return actionsHeight <= availableHeight
+}
 
 /**
  * Whether there is a right rail to put the actions on: focus mode is not clearing it and it is not

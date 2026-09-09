@@ -1,5 +1,6 @@
 package ai.rever.boss.kernel
 
+import ai.rever.boss.ipc.auth.ProcessTokenRegistry
 import ai.rever.boss.process.ManagedProcess
 import ai.rever.boss.process.ProcessConfig
 import ai.rever.boss.process.ProcessMonitor
@@ -36,6 +37,9 @@ class ReapChildrenTest {
     private class FakeProcess(
         private val pidValue: Long,
         private val ignoreDestroys: Int = 0,
+        private val onDestroy: () -> Unit = {},
+        private val ignoreForce: Boolean = false,
+        private val delayedForce: Boolean = false,
     ) : Process() {
         private var alive = true
         private var destroys = 0
@@ -57,6 +61,7 @@ class ReapChildrenTest {
             // Blocks for the whole timeout while alive, exactly as the real Process does. A fake
             // that returned immediately would make the shared-deadline test unable to fail: with no
             // blocking, per-process waiting costs the same as one shared budget.
+            if (delayedForce && forciblyKilled) alive = false
             if (!alive) return true
             Thread.sleep(unit.toMillis(timeout))
             return !alive
@@ -65,13 +70,14 @@ class ReapChildrenTest {
         override fun exitValue(): Int = if (alive) throw IllegalThreadStateException() else 0
 
         override fun destroy() {
+            onDestroy()
             destroys++
             if (destroys > ignoreDestroys) alive = false
         }
 
         override fun destroyForcibly(): Process {
             forciblyKilled = true
-            alive = false
+            if (!ignoreForce && !delayedForce) alive = false
             return this
         }
 
@@ -105,6 +111,61 @@ class ReapChildrenTest {
         reapChildren(monitor = null, registry = registry)
 
         assertTrue(processes.none { it.isAlive }, "a surviving child is an orphan")
+    }
+
+    @Test
+    fun `reaping removes dead handles but preserves a replacement generation`() {
+        val registry = ProcessRegistry()
+        val replacement = managed("replaced", FakeProcess(102))
+        val old = FakeProcess(101, onDestroy = { registry.register("replaced", replacement) })
+        registry.register("replaced", managed("replaced", old))
+        registry.register("dead", managed("dead", FakeProcess(103)))
+
+        reapChildren(monitor = null, registry = registry)
+
+        assertEquals(replacement, registry.getProcess("replaced"))
+        assertEquals(null, registry.getProcess("dead"))
+        replacement.process.destroy()
+    }
+
+    @Test
+    fun `a force-killed child is unregistered after asynchronous exit completes`() {
+        val registry = ProcessRegistry()
+        val child = managed("delayed", FakeProcess(106, ignoreDestroys = Int.MAX_VALUE, delayedForce = true))
+        registry.register("delayed", child)
+
+        reapChildren(monitor = null, registry = registry, gracePeriodMs = 0)
+
+        assertFalse(child.isAlive)
+        assertEquals(null, registry.getProcess("delayed"))
+    }
+
+    @Test
+    fun `a child that survives termination stays registered for later cleanup`() {
+        val registry = ProcessRegistry()
+        val child = managed("survivor", FakeProcess(105, ignoreDestroys = Int.MAX_VALUE, ignoreForce = true))
+        registry.register("survivor", child)
+
+        reapChildren(monitor = null, registry = registry, gracePeriodMs = 0)
+
+        assertEquals(child, registry.getProcess("survivor"))
+    }
+
+    @Test
+    fun `finishing a nested reap does not clear the outer reap flag`() {
+        val registry = ProcessRegistry()
+        var remainedReaping = false
+        val child =
+            FakeProcess(104, onDestroy = {
+                reapChildren(monitor = null, registry = ProcessRegistry())
+                remainedReaping = isReaping()
+            })
+        registry.register("outer", managed("outer", child))
+
+        reapChildren(monitor = null, registry = registry)
+
+        assertTrue(remainedReaping)
+        assertFalse(isReaping())
     }
 
     @Test
@@ -255,5 +316,28 @@ class ReapChildrenTest {
         reapChildren(monitor = null, registry = ProcessRegistry())
         reapChildren(monitor = null, registry = null)
         assertEquals(0, ProcessRegistry().getAllProcesses().size)
+    }
+
+    @Test
+    fun `a reaped child's IPC credential is revoked - it must not outlive the process (BossConsole#53)`() {
+        val registry = ProcessRegistry()
+        val tokenRegistry = ProcessTokenRegistry()
+        val token = tokenRegistry.issue("plugin-under-test")
+        registry.register("plugin-under-test", managed("plugin-under-test", FakeProcess(1)))
+
+        reapChildren(monitor = null, registry = registry, tokenRegistry = tokenRegistry)
+
+        assertEquals(null, tokenRegistry.identityFor(token), "a dead process's credential must stop resolving")
+    }
+
+    @Test
+    fun `reaping with no tokenRegistry behaves exactly as before - null is not a crash`() {
+        val registry = ProcessRegistry()
+        val process = FakeProcess(1)
+        registry.register("plugin-under-test", managed("plugin-under-test", process))
+
+        reapChildren(monitor = null, registry = registry)
+
+        assertFalse(process.isAlive, "omitting tokenRegistry must not stop the reap itself from working")
     }
 }

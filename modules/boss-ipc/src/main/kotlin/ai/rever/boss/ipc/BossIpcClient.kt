@@ -1,5 +1,6 @@
 package ai.rever.boss.ipc
 
+import io.grpc.ClientInterceptor
 import io.grpc.ConnectivityState
 import io.grpc.ManagedChannel
 import kotlinx.coroutines.delay
@@ -21,6 +22,13 @@ import java.util.concurrent.TimeUnit
 class BossIpcClient(
     private val address: String,
     private val usePlaintext: Boolean = true,
+    /**
+     * Applied to every call this client's channel makes, in order. Empty by default, which changes
+     * nothing about how this class behaves — the one caller that populates it today is
+     * [ChildProcessBootstrap], attaching a [ai.rever.boss.ipc.auth.ProcessTokenClientInterceptor] so
+     * the kernel can verify who is calling (BossConsole#53).
+     */
+    private val interceptors: List<ClientInterceptor> = emptyList(),
 ) {
     private val logger = LoggerFactory.getLogger(BossIpcClient::class.java)
 
@@ -28,6 +36,9 @@ class BossIpcClient(
         val builder = IpcAddressResolver.configureChannelBuilder(address)
         if (usePlaintext) {
             builder.usePlaintext()
+        }
+        if (interceptors.isNotEmpty()) {
+            builder.intercept(interceptors)
         }
         builder.build().also {
             logger.info("IPC client connected to: {}", address)
