@@ -617,7 +617,7 @@ BEGIN
             SELECT jsonb_build_object(
                 'twofa_enabled', sm.twofa_enabled,
                 'twofa_type', sm.twofa_type,
-                'twofa_secret', sm.twofa_secret,
+                'twofa_secret', public.safe_decrypt_twofa_secret(sm.twofa_secret),
                 'recovery_codes', CASE WHEN sm.recovery_codes_encrypted IS NOT NULL
                     THEN public.decrypt_text(sm.recovery_codes_encrypted)::jsonb ELSE '[]'::jsonb END
             )
