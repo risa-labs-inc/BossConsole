@@ -122,6 +122,18 @@ an update-shaped verb (or an intent parameter) on the api rather than a change t
   dependency) and `PluginUpdateBridge` (an update can add a dependency the installed version
   never declared). A **reload** must not report: `resetPluginInstances`, the Toolbox reload and
   the evolver's hot reload all end in a load, and none is a user asking for anything.
+  **Re-enable is a user action in a way a reload is not.** `enablePlugin` and `handleAccessChange`
+  (RBAC un-hide) never go through those three install reporters, and after #178 a required
+  dependency can be removed while its dependent sits disabled. Both paths therefore raise the
+  same prompt via `DynamicPluginManager.onPluginActivated`, wired by `PluginLoaderDelegateSetup`
+  to `MissingDependencyReporter.report`. A redundant enable (already enabled) does not re-offer.
+  `PluginAccessTransitions` reconciles the first access snapshot, login and account changes
+  silently; only subsequent access changes for the same authenticated user can report.
+  An authenticated user with no permissions still establishes a baseline, so their first
+  real grant reports. Notification queues `reportPluginActivation` on the manager's scope,
+  checks files on `Dispatchers.IO` outside the registration lock, and uses the captured manifest.
+  The Enable caller never suspends on this advisory work before persisting its enabled flag;
+  cancellation belongs to the manager lifecycle. Manifests without dependencies skip reporting.
 - **Optional dependencies are reported, flagged, not dropped.** An optional dependency is how a
   plugin says "this feature needs that plugin". Dropping them would leave this reporting
   nothing for the case it was built for.
@@ -562,6 +574,39 @@ logger.error(LogCategory.NETWORK, "Request failed", error = exception)
 - `maskEmail()`, `maskToken()`, `maskCredentialId()`, `maskUserId()`, `maskUriParams()`
 
 **Config**: Set `BOSS_LOG_LEVEL` env var or `boss.log.level` system property (TRACE/DEBUG/INFO/WARN/ERROR)
+
+## Browser native disposal
+
+`BrowserHandleImpl.dispose()` invalidates the handle and detaches its UI, then
+`BrowserNativeDisposal` closes the browser only after its owned renderer-call
+executors drain. Direct plugin disposal and host window teardown share this
+boundary. Never replace the drain with a fixed timeout followed by `browser.close()`:
+cancelling a caller's coroutine does not stop a JxBrowser round trip.
+
+`DrainingBrowserExecutor` signals actual executor termination, including failed
+calls and cancelled queued jobs. Waiting suspends in a host-owned scope without
+parking another thread. Keep `executeJavaScript` on `BoundedBrowserCall`: the
+JxBrowser async Consumer overload does not invoke its consumer on RPC error, so
+that callback alone cannot settle a native-operation count.
+
+Profile release must follow `awaitNativeDisposal`, through `disposeBrowserResources`.
+Its cleanup outlives cancellation of the caller. Both service entry points return
+without awaiting native close. A drain pending after ten seconds warns once with
+the handle id, then continues waiting safely.
+
+A genuinely wedged call retains its browser/profile until it returns or engine
+recovery releases it; native-close failure retains the potentially live profile
+and is logged. Keep its fence and `inUse` protection: dropping both would let a
+new browser reuse it or LRU eviction delete it. Named-profile creation/seeding
+waits at most ten seconds to acquire the fence, then reports that it is still in
+use rather than suspending indefinitely.
+
+The process-wide cleanup scopes use daemon threads. The shutdown hook does not
+drain them before forced engine close/process exit, so pending native close and
+profile cleanup can be abandoned at exit. Ephemeral leftovers are reclaimed on
+the next managed-profile creation. This is not a guaranteed shutdown flush. This
+is not an engine-abort mechanism and does not coordinate external raw-JxBrowser
+callers or engine-level forced closure.
 
 ## Browser telemetry, and how to turn it off
 

@@ -494,6 +494,60 @@ class LogSanitizerTest {
         assertEquals("[no message]", LogSanitizer.sanitizeExceptionMessage(""))
     }
 
+    // BossConsole#109: a bare hostname (no protocol, no path) survived every prior revision
+    // of this file, and that shape is exactly what UnknownHostException.getMessage() produces -
+    // every DNS failure - and what a proxy-connect failure looks like too.
+    @Test
+    fun `sanitizeExceptionMessage masks a bare hostname DNS failure`() {
+        assertEquals(
+            "Failed to submit crash report: [HOST]",
+            LogSanitizer.sanitizeExceptionMessage("Failed to submit crash report: api.risaboss.com"),
+        )
+    }
+
+    @Test
+    fun `sanitizeExceptionMessage masks a bare hostname with a port, proxy-connect shape`() {
+        assertEquals(
+            "Failed to submit crash report: Connect to [HOST] failed",
+            LogSanitizer.sanitizeExceptionMessage(
+                "Failed to submit crash report: Connect to proxy.corp.internal:3128 failed",
+            ),
+        )
+    }
+
+    @Test
+    fun `sanitizeExceptionMessage masks a bare hostname ending in dot-local`() {
+        assertEquals("Could not reach [HOST]", LogSanitizer.sanitizeExceptionMessage("Could not reach printer.local"))
+    }
+
+    @Test
+    fun `sanitizeExceptionMessage still masks a hostname carried in a URL`() {
+        // Already covered before #109 - pinned again here so the new bare-hostname pass is
+        // proven not to leave a URL's host raw when the existing URL/path passes already
+        // consumed it.
+        val result =
+            LogSanitizer.sanitizeExceptionMessage(
+                "[url=https://api.risaboss.com/functions/v1/crash-report, …]",
+            )
+        assertFalse(result.contains("api.risaboss.com"), "hostname leaked through a URL: $result")
+    }
+
+    @Test
+    fun `sanitizeExceptionMessage does not mistake a fully-qualified class name for a hostname`() {
+        // The exact false-positive risk a naive hostname pattern would create: Kotlin/Java
+        // exception messages are full of dotted package.Class names, and none of them may be
+        // redacted - that would throw away the one thing an exception message is for.
+        val message =
+            "ai.rever.boss.services.supabase.SecretService threw kotlinx.coroutines.TimeoutCancellationException"
+        assertEquals(message, LogSanitizer.sanitizeExceptionMessage(message))
+    }
+
+    @Test
+    fun `sanitizeExceptionMessage does not mistake a version number for a hostname`() {
+        val message = "requires gradle 9.5.8 or newer"
+        assertEquals(message, LogSanitizer.sanitizeExceptionMessage(message))
+    }
+
     // =========================================================================
     // sanitizeStackTrace Tests
     // =========================================================================
