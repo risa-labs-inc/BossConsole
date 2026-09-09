@@ -80,7 +80,11 @@ internal object UrlOpenValidation {
         return authority.substring(0, colon).ifEmpty { null }
     }
 
-    /** A port from 0 through 65535, or `:`, which browsers accept as "default port". */
+    /**
+     * A numeric port from 0 through 65535, or `:` for the default port.
+     * Zero is deliberately accepted as a numeric value, not rewritten to the default.
+     * This syntax gate leaves unsafe-port policy and reachability to the browser.
+     */
     private fun isValidPortSuffix(suffix: String): Boolean {
         if (!suffix.startsWith(':')) return false
         // Leading zeros do not affect the port value, even when their count

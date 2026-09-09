@@ -71,6 +71,9 @@ class UrlOpenValidationTest {
     @Test
     fun `leading zeros do not change whether a port is valid`() {
         val zeros = "0".repeat(100)
+        accepts("http://localhost:007/")
+        refuses("http://localhost:0x50/")
+        refuses("http://[::1]:0-1/")
         accepts("http://localhost:${zeros}65535/")
         accepts("http://[::1]:$zeros/")
         refuses("http://localhost:${zeros}65536/")
