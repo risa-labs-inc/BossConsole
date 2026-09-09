@@ -377,4 +377,31 @@ class PopupWindowContextMenuTest {
         val menu = buildPopupWindowMenu(stubFrame(), entries(editable = true, selection = "x"))
         assertFalse(menu.isLightWeightPopupEnabled)
     }
+
+    @Test
+    fun `installSuppressingContextMenu registers ShowContextMenuCallback`() {
+        val installed = mutableListOf<String>()
+        var callback: ShowContextMenuCallback? = null
+        installSuppressingContextMenu(
+            recordingBrowser(installed, captureMenuCallback = { callback = it }),
+        )
+        assertEquals(listOf("ShowContextMenuCallback"), installed)
+
+        val tell = ShowContextMenuCallback.Action { }
+        callback?.on(
+            Proxy.newProxyInstance(
+                ShowContextMenuCallback.Params::class.java.classLoader,
+                arrayOf(ShowContextMenuCallback.Params::class.java),
+            ) { _, _, _ -> null } as ShowContextMenuCallback.Params,
+            tell,
+        )
+        assertTrue(tell.isClosed, "Suppressing callback must call tell.close()")
+    }
+
+    @Test
+    fun `installDefaultBrowserChrome installs suppressing context menu and page-click dismiss`() {
+        val installed = mutableListOf<String>()
+        installDefaultBrowserChrome(recordingBrowser(installed))
+        assertEquals(listOf("ShowContextMenuCallback", "PressMouseCallback"), installed)
+    }
 }

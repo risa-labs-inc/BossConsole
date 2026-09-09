@@ -6,7 +6,9 @@ import ai.rever.boss.plugin.browser.EngineInitError
 import ai.rever.boss.plugin.browser.FluckEngine
 import ai.rever.boss.plugin.browser.LocalAwtWindow
 import ai.rever.boss.plugin.browser.NativeFileDialogs
+import ai.rever.boss.plugin.browser.installDefaultBrowserChrome
 import ai.rever.boss.plugin.browser.installPopupWindowChrome
+import ai.rever.boss.plugin.browser.showPopupInWindow
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.window.BossWindowIcon
@@ -259,71 +261,7 @@ private fun configureBrowserPopupHandler(
                     popupBrowser.close()
                 }
             } else {
-                SwingUtilities.invokeLater {
-                    try {
-                        val frame = JFrame()
-                        val subscriptions = mutableListOf<Subscription>()
-
-                        frame.title = "Popup"
-                        frame.defaultCloseOperation = JFrame.DISPOSE_ON_CLOSE
-                        frame.iconImages = BossWindowIcon.images
-                        frame.setLocation(initialBounds.origin().x(), initialBounds.origin().y())
-                        frame.setSize(initialBounds.size().width(), initialBounds.size().height())
-
-                        // Same reason as the BrowserHandleImpl popup path: a popup browser
-                        // is never configured by the tab flow, so claim its file dialogs
-                        // before the Swing view installs the JFileChooser ones.
-                        NativeFileDialogs.installOn(popupBrowser)
-
-                        val browserView = BrowserView.newInstance(popupBrowser)
-                        frame.contentPane.add(browserView)
-
-                        // Same crash as the BrowserHandleImpl popup path: JxBrowser's built-in
-                        // Swing menu resolves its position from a component that the popup may
-                        // already have disposed (BossConsole-Releases#17). The dismiss handler is
-                        // paired with the menu inside installPopupWindowChrome.
-                        installPopupWindowChrome(popupBrowser, browserView)
-
-                        subscriptions +=
-                            popupBrowser.on(com.teamdev.jxbrowser.browser.event.TitleChanged::class.java) { event ->
-                                SwingUtilities.invokeLater {
-                                    frame.title = event.title()
-                                }
-                            }
-
-                        subscriptions +=
-                            popupBrowser.on(BrowserClosed::class.java) {
-                                SwingUtilities.invokeLater {
-                                    subscriptions.forEach { it.unsubscribe() }
-                                    frame.dispose()
-                                }
-                            }
-
-                        frame.addWindowListener(
-                            object : java.awt.event.WindowAdapter() {
-                                override fun windowClosing(e: java.awt.event.WindowEvent?) {
-                                    subscriptions.forEach {
-                                        try {
-                                            it.unsubscribe()
-                                        } catch (_: Exception) {
-                                            // Intentional: ignore errors during cleanup
-                                        }
-                                    }
-                                    if (!popupBrowser.isClosed) {
-                                        popupBrowser.close()
-                                    }
-                                }
-                            },
-                        )
-
-                        frame.isVisible = true
-                    } catch (e: Exception) {
-                        logger.error(LogCategory.BROWSER, "Error creating popup window", error = e)
-                        if (!popupBrowser.isClosed) {
-                            popupBrowser.close()
-                        }
-                    }
-                }
+                showPopupInWindow(popupBrowser, initialBounds)
             }
 
             com.teamdev.jxbrowser.browser.callback.OpenPopupCallback.Response
@@ -338,7 +276,7 @@ actual fun createBrowser(): Any {
     FluckEngine.setupBrowserDownloadHandler(browser as com.teamdev.jxbrowser.browser.Browser)
     FluckEngine.setupCaptureSessionHandler(browser)
     FluckEngine.setupKeyboardInterceptor(browser)
-    FluckEngine.setupSwingPopupDismissOnPageClick(browser)
+    installDefaultBrowserChrome(browser)
     return browser
 }
 

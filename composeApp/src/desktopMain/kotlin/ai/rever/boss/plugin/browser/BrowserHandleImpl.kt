@@ -3271,65 +3271,7 @@ internal class BrowserHandleImpl(
         popupBrowser: Browser,
         bounds: Rect,
     ) {
-        SwingUtilities.invokeLater {
-            try {
-                val frame = JFrame()
-                val subscriptions = mutableListOf<Subscription>()
-
-                frame.title = "Popup"
-                frame.defaultCloseOperation = JFrame.DISPOSE_ON_CLOSE
-                frame.iconImages = BossWindowIcon.images
-
-                placePopOut(frame, bounds, null)
-
-                // A popup browser has no handle of its own, so it never went through
-                // setupBrowserHandlers. Claim its file dialogs before the Swing view below
-                // installs the JFileChooser ones.
-                NativeFileDialogs.installOn(popupBrowser)
-
-                val browserView =
-                    com.teamdev.jxbrowser.view.swing.BrowserView
-                        .newInstance(popupBrowser)
-                frame.contentPane.add(browserView)
-
-                // Replaces JxBrowser's built-in Swing context menu, which crashes the EDT here: it
-                // positions itself from getLocationOnScreen() inside an invokeLater, and a popup
-                // can close itself the moment its flow completes, so a right-click landing on that
-                // boundary asks a disposed component where it is (BossConsole-Releases#17).
-                installPopupWindowChrome(popupBrowser, browserView)
-
-                subscriptions +=
-                    popupBrowser.on(TitleChanged::class.java) { event ->
-                        SwingUtilities.invokeLater { frame.title = event.title() }
-                    }
-
-                subscriptions +=
-                    popupBrowser.on(BrowserClosed::class.java) {
-                        SwingUtilities.invokeLater {
-                            subscriptions.forEach { runCatching { it.unsubscribe() } }
-                            frame.dispose()
-                        }
-                    }
-
-                frame.addWindowListener(
-                    object : java.awt.event.WindowAdapter() {
-                        override fun windowClosing(e: java.awt.event.WindowEvent?) {
-                            subscriptions.forEach { runCatching { it.unsubscribe() } }
-                            if (!popupBrowser.isClosed) {
-                                popupBrowser.close()
-                            }
-                        }
-                    },
-                )
-
-                frame.isVisible = true
-            } catch (e: Exception) {
-                logger.error(LogCategory.BROWSER, "Error creating popup window", error = e)
-                if (!popupBrowser.isClosed) {
-                    popupBrowser.close()
-                }
-            }
-        }
+        ai.rever.boss.plugin.browser.showPopupInWindow(popupBrowser, bounds)
     }
 
     /**

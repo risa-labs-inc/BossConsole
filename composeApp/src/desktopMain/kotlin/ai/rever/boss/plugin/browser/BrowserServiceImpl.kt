@@ -544,7 +544,9 @@ object BrowserServiceImpl : BrowserService {
                         }
                     }
                     try {
-                        newBrowserTimeBoxed { if (m != null) m.profile.newBrowser() else engine.newBrowser() }
+                        newBrowserTimeBoxed { if (m != null) m.profile.newBrowser() else engine.newBrowser() }.also {
+                            installDefaultBrowserChrome(it)
+                        }
                     } catch (e: Throwable) {
                         engineCallFailed = true
                         throw e

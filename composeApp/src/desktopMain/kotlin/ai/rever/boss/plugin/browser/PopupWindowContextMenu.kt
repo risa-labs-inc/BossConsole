@@ -288,6 +288,38 @@ internal fun installPopupWindowContextMenu(
 }
 
 /**
+ * Installs a suppressing [ShowContextMenuCallback] on [browser].
+ *
+ * Calling `tell.close()` suppresses JxBrowser's built-in Swing menu (`SuggestionsPopup`),
+ * which otherwise attempts to resolve its position via `getLocationOnScreen()` on the EDT
+ * and throws [java.awt.IllegalComponentStateException] if the hosting view stops showing or is disposed.
+ */
+@Suppress("TooGenericExceptionCaught")
+internal fun installSuppressingContextMenu(browser: Browser) {
+    try {
+        browser.set(
+            ShowContextMenuCallback::class.java,
+            ShowContextMenuCallback { _, tell ->
+                closeQuietly(tell)
+            },
+        )
+    } catch (e: Exception) {
+        logger.warn(LogCategory.BROWSER, "Could not install default suppressing context-menu callback", error = e)
+    }
+}
+
+/**
+ * Default chrome setup for every browser BOSS creates.
+ *
+ * Bundles [installSuppressingContextMenu] (to prevent EDT crashes from JxBrowser's built-in menu)
+ * with `FluckEngine.setupSwingPopupDismissOnPageClick` (to ensure page clicks dismiss Swing popups).
+ */
+internal fun installDefaultBrowserChrome(browser: Browser) {
+    installSuppressingContextMenu(browser)
+    FluckEngine.setupSwingPopupDismissOnPageClick(browser)
+}
+
+/**
  * Everything a popup window's browser needs before it is shown.
  *
  * **Call this after `BrowserView.newInstance(popupBrowser)`.** The view anchors the menu, and
@@ -314,19 +346,77 @@ internal fun installPopupWindowChrome(
     try {
         installPopupWindowContextMenu(popupBrowser, view)
     } catch (e: Exception) {
-        // WARN, not debug: if this install fails the built-in menu stays, and with it the EDT crash
-        // this file exists to remove - live for that popup, for the rest of its life. That is a
-        // different order of failure from the dismissal handler's (a menu that sticks) and needs to
-        // be visible in a log a user would actually send.
+        // WARN, not debug: if this install fails we suppress the menu to avoid the EDT crash.
         logger.warn(
             LogCategory.BROWSER,
-            "Could not install the popup context menu - keeping JxBrowser's built-in one",
+            "Could not install the popup context menu - suppressing context menu",
             error = e,
         )
+        installSuppressingContextMenu(popupBrowser)
     }
-    // Deliberately outside the catch above: if the menu failed to install, the built-in menu is
-    // still there and still needs dismissing on an in-page click.
+    // Deliberately outside the catch above: if the menu failed to install, page clicks still need dismissing.
     FluckEngine.setupSwingPopupDismissOnPageClick(popupBrowser)
+}
+
+/**
+ * Opens a Swing window ([javax.swing.JFrame]) to display a popup browser (e.g. OAuth / payment).
+ * Used by both `BrowserHandleImpl` and `BrowserFunctions`.
+ */
+@Suppress("TooGenericExceptionCaught")
+internal fun showPopupInWindow(
+    popupBrowser: Browser,
+    bounds: com.teamdev.jxbrowser.ui.Rect,
+) {
+    SwingUtilities.invokeLater {
+        try {
+            val frame = javax.swing.JFrame()
+            val subscriptions = mutableListOf<com.teamdev.jxbrowser.event.Subscription>()
+
+            frame.title = "Popup"
+            frame.defaultCloseOperation = javax.swing.JFrame.DISPOSE_ON_CLOSE
+            frame.iconImages = ai.rever.boss.window.BossWindowIcon.images
+            frame.setLocation(bounds.origin().x(), bounds.origin().y())
+            frame.setSize(bounds.size().width(), bounds.size().height())
+
+            NativeFileDialogs.installOn(popupBrowser)
+
+            val browserView = com.teamdev.jxbrowser.view.swing.BrowserView.newInstance(popupBrowser)
+            frame.contentPane.add(browserView)
+
+            installPopupWindowChrome(popupBrowser, browserView)
+
+            subscriptions +=
+                popupBrowser.on(com.teamdev.jxbrowser.browser.event.TitleChanged::class.java) { event ->
+                    SwingUtilities.invokeLater { frame.title = event.title() }
+                }
+
+            subscriptions +=
+                popupBrowser.on(com.teamdev.jxbrowser.browser.event.BrowserClosed::class.java) {
+                    SwingUtilities.invokeLater {
+                        subscriptions.forEach { runCatching { it.unsubscribe() } }
+                        frame.dispose()
+                    }
+                }
+
+            frame.addWindowListener(
+                object : java.awt.event.WindowAdapter() {
+                    override fun windowClosing(e: java.awt.event.WindowEvent?) {
+                        subscriptions.forEach { runCatching { it.unsubscribe() } }
+                        if (!popupBrowser.isClosed) {
+                            popupBrowser.close()
+                        }
+                    }
+                },
+            )
+
+            frame.isVisible = true
+        } catch (e: Exception) {
+            logger.error(LogCategory.BROWSER, "Error creating popup window", error = e)
+            if (!popupBrowser.isClosed) {
+                popupBrowser.close()
+            }
+        }
+    }
 }
 
 /** Renders [entries] against the frame the click resolved to. */
