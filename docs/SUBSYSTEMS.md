@@ -96,11 +96,8 @@ The tests are gated by `.github/workflows/edge-functions.yml` (`deno check` + `d
 - User Display (email)
 - Sign Out, Settings
 
-**Disabled Features** (commented out with tracking issues):
-- Global Search (#92)
-- Lanager Plugin (#93)
-
 **Implemented Features**:
+- Global Search - Search across the application from the top bar or double-shift shortcut
 - Git Integration (#90) - Branch browser, pull/push, merge/rebase
 - Run/Debug Controls (#347) - Runner terminal system with run/stop/re-run
 - Performance Monitoring - Real-time CPU/memory metrics in bottom panel

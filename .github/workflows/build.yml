@@ -2,9 +2,9 @@ name: 🔨 Build & Test
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main, develop, dev ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, dev ]
   workflow_dispatch:
 
 env:
@@ -29,6 +29,9 @@ jobs:
           # at the default depth of 1 that base is unreachable, so the diff fails
           # and the guard passes every PR. Reproduced in a depth-1 clone.
           fetch-depth: 0
+
+      - name: 🧪 Claude review authorization tests
+        run: node --test .github/scripts/test-claude-review.cjs
 
       - name: 🧪 Release publish — TUS slice tests
         # Guards the byte-accurate chunk slicing in the release publish path
