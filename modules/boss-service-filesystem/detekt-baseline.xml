@@ -9,7 +9,6 @@
     <ID>MaxLineLength:FileSystemServiceMain.kt$.</ID>
     <ID>SpreadOperator:FileSystemServiceImpl.kt$FileSystemServiceImpl$(watchService, *kinds)</ID>
     <ID>TooGenericExceptionCaught:FileSystemServiceImpl.kt$FileSystemServiceImpl$e: Exception</ID>
-    <ID>UseCheckOrError:FileSystemServiceImpl.kt$FileSystemServiceImpl$throw IllegalStateException("Destination already exists: ${request.destinationPath}")</ID>
     <ID>VariableNaming:FileSystemServiceImpl.kt$FileSystemServiceImpl$/** Paths that must not be accessed via IPC — prevents privilege-escalation via path injection. */ private val BLOCKED_PATH_PREFIXES = listOf("/etc", "/sys", "/proc")</ID>
     <ID>WildcardImport:FileSystemServiceImpl.kt$import ai.rever.boss.ipc.proto.services.*</ID>
     <ID>WildcardImport:FileSystemServiceMain.kt$import ai.rever.boss.ipc.proto.*</ID>

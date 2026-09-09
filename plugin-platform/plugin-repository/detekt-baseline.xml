@@ -2,7 +2,6 @@
 <SmellBaseline>
   <ManuallySuppressedIssues/>
   <CurrentIssues>
-    <ID>ForbiddenComment:PluginStoreClient.kt$PluginDetailResponse$// TODO: Implement proper timestamp parsing if needed</ID>
     <ID>LongMethod:RemotePluginRepository.kt$RemotePluginRepository$override suspend fun downloadPlugin( pluginId: String, version: String?, targetPath: String, onProgress: ((Float) -&gt; Unit)?, ): Result&lt;String&gt;</ID>
     <ID>LongParameterList:RemotePluginRepository.kt$RemotePluginRepository$( sha256: String, signature: String?, pluginId: String, versionLabel: String, requestedVersion: String?, onVerificationFailure: () -&gt; Unit, )</ID>
     <ID>MaxLineLength:PluginStoreRealtimeService.kt$PluginStoreRealtimeService$logger.warn(LogCategory.NETWORK, "Plugins subscription lost, reconnecting in ${backoffMs}ms", error = e)</ID>
@@ -21,7 +20,6 @@
     <ID>TooManyFunctions:PluginRepositoryManager.kt$PluginRepositoryManager</ID>
     <ID>TooManyFunctions:PluginStoreClient.kt$PluginStoreClient</ID>
     <ID>TooManyFunctions:RemotePluginRepository.kt$RemotePluginRepository : PluginRepository</ID>
-    <ID>UnusedParameter:PluginStoreClient.kt$PluginDetailResponse$timestamp: String</ID>
     <ID>UseCheckOrError:PluginStoreConfig.kt$PluginStoreConfig$throw IllegalStateException("PluginStoreConfig not initialized. Call initialize() first.")</ID>
     <ID>WildcardImport:DesktopHttpClient.kt$import io.ktor.client.*</ID>
     <ID>WildcardImport:DesktopHttpClient.kt$import io.ktor.client.engine.cio.*</ID>

@@ -858,6 +858,7 @@ jxbrowser {
 }
 
 kotlin {
+    jvmToolchain(17)
     // Suppress expect/actual classes beta warning (KT-61573)
     compilerOptions {
         freeCompilerArgs.add("-Xexpect-actual-classes")

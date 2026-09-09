@@ -380,7 +380,9 @@ internal fun showPopupInWindow(
 
             NativeFileDialogs.installOn(popupBrowser)
 
-            val browserView = com.teamdev.jxbrowser.view.swing.BrowserView.newInstance(popupBrowser)
+            val browserView =
+                com.teamdev.jxbrowser.view.swing.BrowserView
+                    .newInstance(popupBrowser)
             frame.contentPane.add(browserView)
 
             installPopupWindowChrome(popupBrowser, browserView)

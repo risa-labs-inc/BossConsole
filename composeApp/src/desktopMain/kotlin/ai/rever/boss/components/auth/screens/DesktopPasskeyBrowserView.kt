@@ -49,9 +49,10 @@ actual fun PasskeyBrowserView(
             val engine = FluckEngine.engine
 
             // Create new browser instance for WebAuthn
-            val newBrowser = engine.newBrowser().also {
-                installDefaultBrowserChrome(it)
-            }
+            val newBrowser =
+                engine.newBrowser().also {
+                    installDefaultBrowserChrome(it)
+                }
             browser = newBrowser
 
             logger.debug(LogCategory.BROWSER, "JxBrowser initialized successfully")

@@ -118,11 +118,12 @@ internal actual fun AuthBrandSite(
             // long as the boot took. The startup prewarm does not save it: that is skipped entirely on a
             // first-ever launch, when no browser profile exists yet, and mid-prewarm this would block on
             // the same lock.
-            created = withContext(Dispatchers.IO) {
-                FluckEngine.engine.newBrowser().also {
-                    installDefaultBrowserChrome(it)
+            created =
+                withContext(Dispatchers.IO) {
+                    FluckEngine.engine.newBrowser().also {
+                        installDefaultBrowserChrome(it)
+                    }
                 }
-            }
             created.navigation().on(LoadFinished::class.java) {
                 scope.launch(Dispatchers.Main) { loaded = true }
             }

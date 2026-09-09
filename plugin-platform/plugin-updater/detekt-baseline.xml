@@ -2,13 +2,12 @@
 <SmellBaseline>
   <ManuallySuppressedIssues/>
   <CurrentIssues>
-    <ID>ReturnCount:PluginUpdateManager.kt$PluginUpdateManager$private suspend fun swapPlugin( pluginId: String, update: UpdateInfo, downloadedPath: String, unloadPlugin: suspend (String) -&gt; Result&lt;Unit&gt;, loadPlugin: suspend (String) -&gt; Result&lt;Unit&gt;, ): Result&lt;Unit&gt;</ID>
-    <ID>LongParameterList:PluginUpdateManager.kt$PluginUpdateManager$( pluginId: String, downloadPath: String, unloadPlugin: suspend (String) -&gt; Result&lt;Unit&gt;, loadPlugin: suspend (String) -&gt; Result&lt;Unit&gt;, onProgress: ((Float) -&gt; Unit)? = null, onInstalling: (() -&gt; Unit)? = null, )</ID>
     <ID>CyclomaticComplexMethod:PluginUpdateManager.kt$PluginUpdateManager$suspend fun checkForUpdates(installedPlugins: Map&lt;String, String&gt;): UpdateCheckResult</ID>
     <ID>LongMethod:PluginUpdateManager.kt$PluginUpdateManager$suspend fun checkForUpdates(installedPlugins: Map&lt;String, String&gt;): UpdateCheckResult</ID>
+    <ID>LongParameterList:PluginUpdateManager.kt$PluginUpdateManager$( pluginId: String, downloadPath: String, unloadPlugin: suspend (String) -&gt; Result&lt;Unit&gt;, loadPlugin: suspend (String) -&gt; Result&lt;Unit&gt;, onProgress: ((Float) -&gt; Unit)? = null, onInstalling: (() -&gt; Unit)? = null, )</ID>
     <ID>NestedBlockDepth:PluginUpdateManager.kt$PluginUpdateManager$suspend fun checkForUpdates(installedPlugins: Map&lt;String, String&gt;): UpdateCheckResult</ID>
     <ID>ReturnCount:PluginUpdateManager.kt$PluginUpdateManager$private fun isNewerVersion( version1: String, version2: String, ): Boolean</ID>
-    <ID>ReturnCount:PluginUpdateManager.kt$PluginUpdateManager$private fun satisfiesFloor( required: String, installed: String, ): Boolean</ID>
+    <ID>ReturnCount:PluginUpdateManager.kt$PluginUpdateManager$private suspend fun swapPlugin( pluginId: String, update: UpdateInfo, downloadedPath: String, unloadPlugin: suspend (String) -&gt; Result&lt;Unit&gt;, loadPlugin: suspend (String) -&gt; Result&lt;Unit&gt;, ): Result&lt;Unit&gt;</ID>
     <ID>ReturnCount:PluginUpdateManager.kt$PluginUpdateManager$suspend fun updatePlugin( pluginId: String, downloadPath: String, unloadPlugin: suspend (String) -&gt; Result&lt;Unit&gt;, loadPlugin: suspend (String) -&gt; Result&lt;Unit&gt;, onProgress: ((Float) -&gt; Unit)? = null, onInstalling: (() -&gt; Unit)? = null, ): Result&lt;Unit&gt;</ID>
     <ID>TooGenericExceptionCaught:PluginUpdateManager.kt$PluginUpdateManager$e: Exception</ID>
     <ID>TooManyFunctions:PluginUpdateManager.kt$PluginUpdateManager</ID>

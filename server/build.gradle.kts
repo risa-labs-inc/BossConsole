@@ -4,6 +4,10 @@ plugins {
     application
 }
 
+kotlin {
+    jvmToolchain(17)
+}
+
 group = "ai.rever.boss"
 version = "1.0.0"
 application {
