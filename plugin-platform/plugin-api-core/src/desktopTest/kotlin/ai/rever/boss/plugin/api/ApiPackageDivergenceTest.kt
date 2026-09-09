@@ -37,27 +37,10 @@ import kotlin.test.assertTrue
  * `ai.rever.boss.plugin.bundled` (the api module's own plugin-registration singleton) is api-only
  * and was never duplicated, so it is excluded too.
  *
- * ## Scope: only the public, non-synthetic surface
- *
- * A class is compared only if its simple name has no `$`, or ends in `$Companion` - a real
- * top-level type or a Kotlin `companion object`, either of which a plugin can reference by name.
- * Everything else the Kotlin compiler emits under a dollar (lambda classes, `WhenMappings`,
- * `DefaultImpls`, coroutine continuations, ...) is compiler-internal wiring that shifts with
- * unrelated source changes on either side and that plugin bytecode never names directly - diffing
- * it would turn this test into churn instead of a signal.
- *
- * Within a compared class, only public methods and fields count, and two more differences are
- * allow-listed as benign, matching what a member-by-member `javap` diff against the api jar found
- * for the one field this already covers:
- *
- * - **`internal` Kotlin declarations**, module-name-mangled onto a public JVM member
- *   (`log$boss_plugin_api` here vs. this module's own mangled suffix) - unreachable from plugin
- *   bytecode either way, so a mismatch is not a real divergence. Detected as "contains `$`
- *   anywhere but is not exactly `$stable`", which also absorbs `$default` overload bridges and
- *   other compiler-synthesized member names for the same reason: none of them are names a
- *   plugin's own compiled bytecode invokes directly.
- * - **Extra private members on the host side** - not a divergence a plugin can observe, and
- *   already outside this test's scope since only public members are enumerated.
+ * Public JVM classes, constructors, methods and fields are compared, including nested types,
+ * default-argument bridges and Compose stability fields referenced by compiled Kotlin callers.
+ * Only module-mangled internal methods are excluded. Generic signatures and Kotlin source-level
+ * compatibility are outside this erased JVM linkage check.
  */
 class ApiPackageDivergenceTest {
     private val apiJar: File by lazy {
@@ -89,22 +72,14 @@ class ApiPackageDivergenceTest {
         val apiClassNames = comparableClassNames(apiJar, duplicatedPackages)
         assertTrue(apiClassNames.isNotEmpty(), "Found no classes to compare - package list or jar is wrong")
 
-        val apiLoader = IsolatedPackageClassLoader(apiJar, duplicatedPackages, javaClass.classLoader)
         val mismatches = mutableListOf<String>()
 
-        for (className in apiClassNames) {
-            val apiClass = apiLoader.loadClass(className)
-            val hostClass =
-                try {
-                    Class.forName(className, false, javaClass.classLoader)
-                } catch (e: ClassNotFoundException) {
-                    mismatches += "$className: exists in boss-plugin-api but not in the host at all"
-                    continue
+        IsolatedPackageClassLoader(apiJar, duplicatedPackages, javaClass.classLoader).use { apiLoader ->
+            for (className in apiClassNames) {
+                val apiClass = apiLoader.loadClass(className)
+                if (Modifier.isPublic(apiClass.modifiers) && !apiClass.isSynthetic) {
+                    mismatches += classMismatches(apiClass)
                 }
-
-            val onlyInApi = publicMemberSignatures(apiClass) - publicMemberSignatures(hostClass)
-            if (onlyInApi.isNotEmpty()) {
-                mismatches += "$className: host is missing ${onlyInApi.sorted()}"
             }
         }
 
@@ -117,25 +92,46 @@ class ApiPackageDivergenceTest {
         )
     }
 
-    /** Public methods and fields, as name+descriptor strings so overloads compare distinctly. */
-    private fun publicMemberSignatures(klass: Class<*>): Set<String> {
-        val methods =
-            klass.declaredMethods
-                .filter { Modifier.isPublic(it.modifiers) && isComparableName(it.name) }
-                .map { m -> "fun ${m.name}(${m.parameterTypes.joinToString(",") { it.name }}):${m.returnType.name}" }
-
-        val fields =
-            klass.declaredFields
-                .filter { Modifier.isPublic(it.modifiers) && isComparableName(it.name) }
-                .map { f -> "val ${f.name}:${f.type.name}" }
-
-        return (methods + fields).toSet()
+    private fun classMismatches(apiClass: Class<*>): List<String> {
+        val hostClass =
+            try {
+                Class.forName(apiClass.name, false, javaClass.classLoader)
+            } catch (e: ClassNotFoundException) {
+                return listOf("${apiClass.name}: exists in boss-plugin-api but not in the host: ${e.message}")
+            }
+        return buildList {
+            if (!Modifier.isPublic(hostClass.modifiers)) add("${apiClass.name}: host class is not public")
+            val missing = publicMemberSignatures(apiClass) - publicMemberSignatures(hostClass)
+            if (missing.isNotEmpty()) add("${apiClass.name}: host is missing ${missing.sorted()}")
+        }
     }
 
-    /** `$stable` is a real, required part of the contract; anything else with a `$` is not. */
-    private fun isComparableName(name: String) = name == "\$stable" || "$" !in name
+    /** Public methods and fields, as name+descriptor strings so overloads compare distinctly. */
+    internal fun publicMemberSignatures(klass: Class<*>): Set<String> {
+        val methods =
+            klass.methods
+                .filter { Modifier.isPublic(it.modifiers) && isComparableName(it.name) }
+                .map { m ->
+                    val parameters = m.parameterTypes.joinToString(",") { it.name }
+                    "${staticKind(m.modifiers)} fun ${m.name}($parameters):${m.returnType.name}"
+                }
 
-    private fun comparableClassNames(
+        val fields =
+            klass.fields
+                .filter { Modifier.isPublic(it.modifiers) && isComparableName(it.name) }
+                .map { f -> "${staticKind(f.modifiers)} val ${f.name}:${f.type.name}" }
+
+        val constructors = klass.constructors.map { c -> "init(${c.parameterTypes.joinToString(",") { it.name }})" }
+        return (methods + fields + constructors).toSet()
+    }
+
+    private fun staticKind(modifiers: Int) = if (Modifier.isStatic(modifiers)) "static" else "instance"
+
+    // Do not discard $default, value-class mangling, or serializer bridges: callers link to them.
+    private fun isComparableName(name: String) =
+        !name.endsWith("\$boss_plugin_api") && !name.contains("\$com_risaboss_")
+
+    internal fun comparableClassNames(
         jar: File,
         packages: List<String>,
     ): List<String> {
@@ -147,10 +143,7 @@ class ApiPackageDivergenceTest {
                 .map { it.name }
                 .filter { name -> name.endsWith(".class") && prefixes.any { name.startsWith(it) } }
                 .map { it.removeSuffix(".class").replace('/', '.') }
-                .filter { fqcn ->
-                    val simpleName = fqcn.substringAfterLast('.')
-                    "$" !in simpleName || simpleName.endsWith("\$Companion")
-                }.toList()
+                .toList()
         }
     }
 }
@@ -174,8 +167,7 @@ private class IsolatedPackageClassLoader(
         if (packages.none { name.startsWith("$it.") }) return super.loadClass(name, resolve)
 
         synchronized(getClassLoadingLock(name)) {
-            findLoadedClass(name)?.let { return it }
-            val loaded = findClass(name)
+            val loaded = findLoadedClass(name) ?: findClass(name)
             if (resolve) resolveClass(loaded)
             return loaded
         }

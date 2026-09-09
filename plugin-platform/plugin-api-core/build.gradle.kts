@@ -183,5 +183,6 @@ kotlin {
 // Reuses fetchApiPluginJar's output rather than re-downloading it.
 tasks.named<Test>("desktopTest") {
     dependsOn(fetchApiPluginJar)
+    inputs.file(apiPluginJar).withPropertyName("apiContractJar").withPathSensitivity(PathSensitivity.NONE)
     systemProperty("boss.api.contract.jar", apiPluginJar.get().asFile.absolutePath)
 }

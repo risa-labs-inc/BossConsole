@@ -59,7 +59,38 @@ data class PanelConfig
         val id: String,
         val tabs: List<TabConfig>,
         val pinnedCount: Int = 0,
-    )
+    ) {
+        // The pinned plugin API still has the two-property data class. Keep its copy and
+        // copy$default descriptors while preserving the host-only pinned tab count.
+        @Deprecated("Binary compatibility with the two-property plugin API", level = DeprecationLevel.HIDDEN)
+        fun copy(
+            id: String = this.id,
+            tabs: List<TabConfig> = this.tabs,
+        ): PanelConfig = PanelConfig(id, tabs, pinnedCount)
+
+        // Serializers compiled against the two-property API use this constructor.
+        @Deprecated("Binary compatibility with the two-property plugin API", level = DeprecationLevel.HIDDEN)
+        @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+        @Suppress("INVISIBLE_REFERENCE", "INVISIBLE_MEMBER", "UNUSED_PARAMETER")
+        constructor(
+            seen: Int,
+            id: String?,
+            tabs: List<TabConfig>?,
+            marker: kotlinx.serialization.internal.SerializationConstructorMarker?,
+        ) : this(
+            id =
+                if (seen and 3 != 3) {
+                    throw kotlinx.serialization.MissingFieldException(
+                        listOfNotNull("id".takeIf { seen and 1 == 0 }, "tabs".takeIf { seen and 2 == 0 }),
+                        "ai.rever.boss.plugin.workspace.PanelConfig",
+                    )
+                } else {
+                    requireNotNull(id)
+                },
+            tabs = requireNotNull(tabs),
+            pinnedCount = 0,
+        )
+    }
 
 /**
  * Represents a split layout configuration.
