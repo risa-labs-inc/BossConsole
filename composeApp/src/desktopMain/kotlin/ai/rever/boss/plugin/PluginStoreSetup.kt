@@ -235,7 +235,10 @@ object PluginStoreSetup {
                     hostBossVersion = AppVersion.currentVersionString(),
                     // Gate by minApiVersion: lambda because the api layer resolves
                     // later in startup (initializeApiLayer publishes the property).
-                    hostApiVersion = { System.getProperty("boss.api.version") ?: "" },
+                    // No `?: ""`: null means the api layer has not published its version yet,
+                    // and PluginUpdateManager needs that distinct from the empty string it
+                    // publishes when it resolved and found no api jar.
+                    hostApiVersion = { System.getProperty("boss.api.version") },
                 )
 
             // Create and start realtime service for live updates
