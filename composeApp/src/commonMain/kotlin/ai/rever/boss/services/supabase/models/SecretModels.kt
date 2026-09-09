@@ -33,7 +33,7 @@ data class SecretMetadata(
     @SerialName("twofa_type")
     val twofaType: String? = null, // 'app', 'sms', 'email', 'hardware'
     @SerialName("twofa_secret")
-    val twofaSecret: String? = null, // Encrypted 2FA secret (for TOTP apps)
+    val twofaSecret: String? = null, // Plaintext TOTP seed returned by the authorized RPC; encrypted in storage
     @SerialName("recovery_codes")
     val recoveryCodes: List<String> = emptyList(),
 )

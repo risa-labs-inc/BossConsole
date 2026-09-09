@@ -15,7 +15,9 @@ INSERT INTO public.secrets (id, user_id, website, username, password_encrypted) 
 -- Reconstruct the deployed RPC and plaintext storage, then apply ONLY the new
 -- migration. This catches edits to historical migrations that fresh resets hide.
 \ir .migration-fixtures/20260907000000_secrets_paging_tiebreaker.inc
-DROP TRIGGER encrypt_twofa_secret_trigger ON public.secret_metadata;
+SELECT has_trigger('public', 'secret_metadata', 'encrypt_twofa_secret_trigger',
+    'fresh migrations install the encryption trigger');
+DROP TRIGGER IF EXISTS encrypt_twofa_secret_trigger ON public.secret_metadata;
 INSERT INTO public.secret_metadata (secret_id, twofa_enabled, twofa_type, twofa_secret)
 VALUES ('d1700000-0000-4000-8000-000000000011', true, 'app', 'JBSWY3DPEHPK3PXP');
 \ir .migration-fixtures/20260909000000_encrypt_totp.inc
@@ -30,6 +32,7 @@ CREATE TEMP TABLE totp_before AS SELECT twofa_secret FROM public.secret_metadata
 SELECT is((SELECT twofa_secret FROM public.secret_metadata WHERE secret_id = 'd1700000-0000-4000-8000-000000000011'),
     (SELECT twofa_secret FROM totp_before), 'reapplying migration does not double encrypt');
 
+SELECT ok(NOT has_function_privilege('anon', 'public.get_user_secrets_with_shared(integer,integer)', 'EXECUTE'), 'anonymous role has no shared-secret RPC grant');
 SELECT ok(NOT has_function_privilege('anon', 'public.safe_decrypt_twofa_secret(text)', 'EXECUTE'), 'anonymous role cannot call helper despite default grants');
 SELECT ok(NOT has_function_privilege('authenticated', 'public.safe_decrypt_twofa_secret(text)', 'EXECUTE'), 'authenticated role cannot call helper despite default grants');
 SELECT ok(NOT has_function_privilege('service_role', 'public.safe_decrypt_twofa_secret(text)', 'EXECUTE'), 'service role cannot directly call helper');
@@ -80,7 +83,7 @@ RESET ROLE;
 SELECT set_config('request.jwt.claims', '{"role":"anon"}', true);
 SET LOCAL ROLE anon;
 SELECT throws_ok($$ SELECT * FROM public.get_user_secrets_with_shared() $$,
-    '42501', 'permission denied for function get_user_secrets_with_shared', 'anonymous RPC execution is denied');
+    '42501', NULL, 'anonymous RPC execution is denied');
 RESET ROLE;
 SELECT * FROM finish();
 ROLLBACK;

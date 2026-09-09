@@ -9,6 +9,12 @@
 -- Dead tuples, WAL and existing backups/PITR may retain plaintext. This is not
 -- secure erasure; backup retention and physical storage reclamation are separate
 -- operator decisions. Logical reads after commit see encrypted storage.
+-- Data-only COPY restores into a schema with this trigger enabled reject v1:
+-- envelopes. A trusted operator must disable this specific trigger in an isolated
+-- restore target for that load, then re-enable it before application writes and
+-- verify decryption with the matching Vault key. Full schema restores commonly
+-- create triggers after loading data; inspect actual ordering. Default ORIGIN
+-- triggers do not fire during logical replication apply.
 -- ============================================================================
 
 -- Function 1: safe_decrypt_twofa_secret
@@ -39,7 +45,8 @@ $$;
 ALTER FUNCTION "public"."safe_decrypt_twofa_secret"("encrypted_data" "text") OWNER TO "postgres";
 COMMENT ON FUNCTION "public"."safe_decrypt_twofa_secret"("encrypted_data" "text") IS 'Safely decrypt v1: prefixed 2FA TOTP secret, returning NULL on failure';
 
--- Prevent this from acting as an open generic decryption oracle for authenticated users
+-- Prevent this from acting as an open generic decryption oracle for authenticated users.
+-- Service-key callers also use an authorized RPC, not this raw decrypt helper.
 REVOKE EXECUTE ON FUNCTION "public"."safe_decrypt_twofa_secret"("encrypted_data" "text") FROM PUBLIC, anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION "public"."safe_decrypt_twofa_secret"("encrypted_data" "text") TO "postgres";
 
@@ -49,6 +56,9 @@ GRANT EXECUTE ON FUNCTION "public"."safe_decrypt_twofa_secret"("encrypted_data" 
 -- BEFORE INSERT trigger's envelope into UPDATE and is rejected when it differs.
 -- Do not weaken envelope rejection to accommodate upserts: that permits a caller
 -- to import another row's ciphertext into a row they can decrypt via the RPC.
+-- PostgREST writers should use ordinary POST/PATCH, not merge-duplicates for a
+-- changed seed. A custom SQL upsert assigning plaintext instead of EXCLUDED
+-- does not carry the generated envelope and is a different, supported case.
 CREATE OR REPLACE FUNCTION "public"."encrypt_twofa_secret_trigger_fn"() RETURNS trigger
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
