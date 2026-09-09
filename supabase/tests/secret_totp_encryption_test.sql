@@ -73,7 +73,8 @@ SELECT is((SELECT count(*) FROM public.get_user_secrets_with_shared() WHERE id =
 RESET ROLE;
 SELECT set_config('request.jwt.claims', '{"role":"anon"}', true);
 SET LOCAL ROLE anon;
-SELECT is((SELECT count(*) FROM public.get_user_secrets_with_shared() WHERE id = 'd1700000-0000-4000-8000-000000000011'), 0::bigint, 'anonymous RPC returns no seed');
+SELECT throws_ok($$ SELECT * FROM public.get_user_secrets_with_shared() $$,
+    '42501', 'permission denied for function get_user_secrets_with_shared', 'anonymous RPC execution is denied');
 RESET ROLE;
 SELECT * FROM finish();
 ROLLBACK;
