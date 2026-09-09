@@ -128,4 +128,46 @@ class WorkspaceReconcilerTest {
         assertEquals("cp-valid", result.checkpointId)
         assertFalse(result.isSuccessful)
     }
+
+    @Test
+    fun `rewind detects Conflict when modified baseline file is missing from target checkpoint`() = runBlocking {
+        // Step 1: Baseline contains config.json and app.kt
+        val configFile = File(tempProjectRoot, "config.json").also { it.writeText("{\"v\": 1}") }
+        val appFile = File(tempProjectRoot, "app.kt").also { it.writeText("fun app() = 1") }
+        val baseline = WorkspaceBaselineCapturer.captureBaseline("m-conf", tempProjectRoot)
+
+        // Step 2: Delete config.json before taking checkpoint 1 (so checkpoint does not have it)
+        configFile.delete()
+        appFile.writeText("fun app() = 2")
+        val cp1 = storage.createCheckpoint("m-conf", "cp-1", "No Config", tempProjectRoot)
+
+        // Step 3: User recreated/modified config.json on disk with new changes
+        configFile.writeText("{\"v\": 99, \"user_secret\": true}")
+
+        // Step 4: Rewind with allowOverwriteConflicts = false -> should detect CONFLICT
+        val conflictResult = WorkspaceReconciler.rewind(
+            baseline = baseline,
+            targetCheckpoint = cp1,
+            projectRoot = tempProjectRoot,
+            storage = storage,
+            allowOverwriteConflicts = false
+        )
+
+        assertIs<RecoveryResult.Conflict>(conflictResult)
+        assertEquals("cp-1", conflictResult.checkpointId)
+        assertTrue(conflictResult.conflictingFiles.contains("config.json"))
+        assertFalse(conflictResult.isSuccessful)
+
+        // Step 5: Rewind with allowOverwriteConflicts = true -> should succeed and overwrite/reconcile
+        val forceResult = WorkspaceReconciler.rewind(
+            baseline = baseline,
+            targetCheckpoint = cp1,
+            projectRoot = tempProjectRoot,
+            storage = storage,
+            allowOverwriteConflicts = true
+        )
+
+        assertIs<RecoveryResult.Success>(forceResult)
+        assertTrue(forceResult.isSuccessful)
+    }
 }

@@ -110,7 +110,7 @@ object IndependentVerifier {
             val duration = System.currentTimeMillis() - startTime
 
             if (!completed) {
-                process.destroyForcibly()
+                terminateProcessTree(process)
                 stdoutReader.interrupt()
                 stderrReader.interrupt()
 
@@ -122,7 +122,7 @@ object IndependentVerifier {
                     stderrSnippet = "Execution timed out after ${timeoutMs}ms",
                     durationMs = duration,
                     agentClaim = agentClaim,
-                    evidenceSummary = "Verification timed out after ${timeoutMs}ms (Process destroyed)",
+                    evidenceSummary = "Verification timed out after ${timeoutMs}ms (Process tree destroyed)",
                 )
             }
 
@@ -155,4 +155,26 @@ object IndependentVerifier {
                 evidenceSummary = evidenceSummary,
             )
         }
+
+    private fun terminateProcessTree(process: Process) {
+        try {
+            process.descendants().forEach { handle ->
+                try {
+                    handle.destroyForcibly()
+                } catch (_: Exception) {}
+            }
+        } catch (_: Exception) {}
+
+        try {
+            process.destroyForcibly()
+        } catch (_: Exception) {}
+
+        val isWindows = System.getProperty("os.name").lowercase().contains("win")
+        if (isWindows && process.isAlive) {
+            try {
+                val pid = process.pid()
+                ProcessBuilder("taskkill", "/F", "/T", "/PID", pid.toString()).start().waitFor(1, TimeUnit.SECONDS)
+            } catch (_: Exception) {}
+        }
+    }
 }

@@ -71,22 +71,26 @@ class WorkspaceCheckpointStorage(
                     val normalizedRel = SafePathResolver.normalizeRelativePath(relPath)
 
                     if (child.isDirectory) {
-                        copyAndRecord(child, normalizedRel)
+                        if (SafePathResolver.isSafeDirectoryToRecurse(child, rootCanonical)) {
+                            copyAndRecord(child, normalizedRel)
+                        }
                     } else if (child.isFile) {
-                        val sha256 = WorkspaceBaselineCapturer.calculateSha256(child)
-                        val meta =
-                            FileSnapshotMeta(
-                                relativePath = normalizedRel,
-                                sha256 = sha256,
-                                sizeBytes = child.length(),
-                                lastModified = child.lastModified(),
-                            )
-                        filesMap[normalizedRel] = meta
+                        if (SafePathResolver.isContainedFile(child, rootCanonical)) {
+                            val sha256 = WorkspaceBaselineCapturer.calculateSha256(child)
+                            val meta =
+                                FileSnapshotMeta(
+                                    relativePath = normalizedRel,
+                                    sha256 = sha256,
+                                    sizeBytes = child.length(),
+                                    lastModified = child.lastModified(),
+                                )
+                            filesMap[normalizedRel] = meta
 
-                        // Copy file to snapshot store
-                        val destFile = File(filesDir, normalizedRel)
-                        destFile.parentFile?.mkdirs()
-                        child.copyTo(destFile, overwrite = true)
+                            // Copy file to snapshot store
+                            val destFile = File(filesDir, normalizedRel)
+                            destFile.parentFile?.mkdirs()
+                            child.copyTo(destFile, overwrite = true)
+                        }
                     }
                 }
             }
