@@ -71,9 +71,13 @@ class BrowserChromeTest {
                             if (registrations == failedRegistration) throw failure
                         }
 
-                        "close" -> closes++
+                        "close" -> {
+                            closes++
+                        }
 
-                        else -> error("unexpected browser access: ${method.name}")
+                        else -> {
+                            error("unexpected browser access: ${method.name}")
+                        }
                     }
                     null
                 } as Browser
