@@ -26,7 +26,11 @@ expect fun readFileContentSafe(
 ): FileReadOutcome
 
 /**
- * Writes [content] to [filePath], creating parent directories.
+ * Writes [content] to [filePath], creating parent directories. Desktop writes
+ * stage the complete content before atomically replacing the target; a failed
+ * write leaves the previous file intact and returns false.
+ * Replacement changes file identity, so hard-linked aliases retain their old
+ * content. Filesystems without atomic replacement support report a save failure.
  *
  * Named `...Safe` for the same reason [readFileContentSafe] is, and it is not
  * cosmetic: `EditorContentProviderImpl` overrides a plugin-api member called

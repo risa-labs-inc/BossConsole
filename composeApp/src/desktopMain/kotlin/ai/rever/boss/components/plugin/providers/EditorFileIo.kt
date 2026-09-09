@@ -38,10 +38,7 @@ actual fun writeFileContentSafe(
     content: String,
 ): Boolean =
     try {
-        val file = File(filePath)
-        // Create parent directories if they don't exist
-        file.parentFile?.mkdirs()
-        file.writeText(content)
+        EditorFileWriter().write(filePath, content)
         true
     } catch (e: Exception) {
         fileIoLogger.warn(LogCategory.EDITOR, "Error writing file", error = e)
