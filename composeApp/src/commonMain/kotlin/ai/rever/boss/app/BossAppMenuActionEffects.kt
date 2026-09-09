@@ -21,6 +21,8 @@ import ai.rever.boss.components.workspaces.applyWorkspace
 import ai.rever.boss.components.workspaces.extractCurrentWorkspace
 import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.focusmode.FocusModeSettingsManager
+
+import ai.rever.boss.layout.ChromeDensity
 import ai.rever.boss.plugin.browser.ActiveBrowserRegistry
 import ai.rever.boss.plugin.tab.terminal.TerminalTabInfo
 import ai.rever.boss.plugin.tab.terminal.TerminalTabType
@@ -321,6 +323,25 @@ internal fun BossAppMenuActionEffects(
                 if (eventWindowId == windowId) {
                     coroutineScope.launch {
                         FocusModeSettingsManager.toggleFocusMode()
+                    }
+                }
+            }.launchIn(this)
+    }
+
+    LaunchedEffect(windowId) {
+        MenuActionsHandler.chromeDensityCycleEvents
+            .onEach { eventWindowId ->
+                if (eventWindowId == windowId) {
+                    coroutineScope.launch {
+                        val settings = WindowAppearanceSettingsManager.currentSettings.value
+                        val nextDensity = when (settings.density) {
+                            ChromeDensity.COMPACT -> ChromeDensity.COMFORTABLE
+                            ChromeDensity.COMFORTABLE -> ChromeDensity.SPACIOUS
+                            ChromeDensity.SPACIOUS -> ChromeDensity.COMPACT
+                        }
+                        WindowAppearanceSettingsManager.updateSettings(
+                            settings.copy(density = nextDensity),
+                        )
                     }
                 }
             }.launchIn(this)

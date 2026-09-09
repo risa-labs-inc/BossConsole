@@ -643,6 +643,10 @@ internal fun BossAppDialogs(state: BossAppState) {
                         MenuActionsHandler.triggerToggleFocusMode(windowId)
                     }
 
+                    KeymapActions.CHROME_DENSITY_CYCLE -> {
+                        MenuActionsHandler.triggerChromeDensityCycle(windowId)
+                    }
+
                     KeymapActions.SETTINGS_OPEN -> {
                         MenuActionsHandler.triggerOpenSettings(windowId)
                     }
