@@ -31,6 +31,17 @@ Progress-shaped: modalities are fuel. The product moves the pair from **problem 
 (pain, stuck) to **progress space** (pain removed or possibility sharp enough to want
 tomorrow). Score every pass by whether pain fell or possibility rose.
 
+## Terms used in this proposal
+
+- **Astra-class / Atlas-class:** shorthand for an agent seat and a spatial world
+  respectively, not supported integration names or compatibility promises.
+- **Fluck / Arcade:** the browser and mock-world examples used to illustrate the
+  proposed shared stage; “pass made visible” describes the intended handoff UX.
+- **Outer mouth:** the chat or CLI harness through which the pair enters a nest.
+- **Commission / omit:** what the design should include / leave out.
+- **Brakes / OTP:** explicit stop or approval points, including a one-time-password
+  challenge that needs human participation.
+
 ## Token spine (unchanging)
 
 ```text
@@ -116,9 +127,12 @@ changes; hunk hunt links do not.)
 
 1. **Bot chats** - input mouth / harness
 2. **Machine 1** - agents run this boss, pair work ready
-3. **Machine 2** - for me - solo boss instance (current Boss version)
+3. **Machine 2** - the human's own seat, modeled on a standalone Boss instance
 
-**Call Boss** only when the task is complex and needs parallelisation (State 0 stays single-stream; dim Machine 1 until then). Nest mouths are local. Same Boss follows home (not “chrome only”). Always expose exit / brake.
+In this proposal, **State 0** is the initial single-stream session. **Call Boss**
+only when the task is complex and needs parallelisation; dim Machine 1 until then.
+Nest mouths are local. Same Boss follows home (not “chrome only”). Always expose
+exit / brake.
 
 Also:
 
@@ -137,17 +151,17 @@ Also:
 
 - Agent-less MCP kill-switch discoverability: [issue #380](https://github.com/risa-labs-inc/BossConsole/issues/380) / [PR #382](https://github.com/risa-labs-inc/BossConsole/pull/382).
   That work concerns navigation to existing tool controls; it does not implement Hunt mode.
-- Token spine teaching: adoption wraps the stream
 
 ## Visual
 
 Concept diagrams, not application screenshots. Each nest repeats Bot chats on the
-left, Machine 1 at the upper right (teal), and Machine 2 at the lower right
-(amber). The text-free version repeats that structure without seat labels.
+left, Machine 1 at the upper right, and Machine 2 at the lower right. Machine 2
+is amber; Machine 1 and Bot chats are teal. The text-free version repeats that
+structure without seat labels.
 
 Labeled Depth (Hunt mode seats):
 
-![Hunt mode](ha-hunt-visual-flow.png)
+[![Hunt mode nested seats](ha-hunt-visual-flow.png)](ha-hunt-visual-flow.png)
 
 Structure only (no text):
 
