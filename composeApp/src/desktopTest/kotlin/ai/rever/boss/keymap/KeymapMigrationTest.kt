@@ -6,7 +6,9 @@ import ai.rever.boss.keymap.model.KeyStroke
 import ai.rever.boss.keymap.model.KeymapActions
 import ai.rever.boss.keymap.model.KeymapSettings
 import ai.rever.boss.keymap.model.ShortcutContext
+import ai.rever.boss.keymap.model.canonicalKeyName
 import ai.rever.boss.keymap.presets.KeymapPresets
+import androidx.compose.ui.input.key.Key
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -230,6 +232,86 @@ class KeymapMigrationTest {
 
         assertNotNull(migrated.getBinding(KeymapActions.TAB_REOPEN_CLOSED), "Cmd+Shift+T should be added")
         assertNotNull(migrated.getBinding(KeymapActions.TAB_SELECT_1))
+    }
+
+    @Test
+    fun `a keycode written by the Shortcuts screen is repaired to a key name`() {
+        // Everything the capture dialog saved before #329: a packed `Key.keyCode`, which the
+        // Shortcuts list then renders as a fifteen-digit "key".
+        val legacy = legacySettings()
+        val uiRebound =
+            assertNotNull(legacy.getBinding(KeymapActions.PANEL_NAVIGATE_RIGHT))
+                .copy(key = Key.DirectionRight.keyCode.toString(), modifiers = listOf("Cmd", "Alt"))
+        val settings = legacy.copy(shortcuts = legacy.shortcuts + (uiRebound.actionId to uiRebound))
+
+        val migrated = KeymapSettingsManager.migrateSettings(settings)
+
+        val repaired = assertNotNull(migrated.getBinding(KeymapActions.PANEL_NAVIGATE_RIGHT))
+        assertEquals(
+            canonicalKeyName("DirectionRight"),
+            canonicalKeyName(repaired.key),
+            "the stored keyCode should have been rewritten to the key it stands for",
+        )
+        assertTrue(
+            repaired.key.any { !it.isDigit() },
+            "the file should no longer hold a raw keyCode: '${repaired.key}'",
+        )
+        assertEquals(listOf("Cmd", "Alt"), repaired.modifiers, "the user's chord is otherwise untouched")
+    }
+
+    @Test
+    fun `a chord rebound through the UI is seen by the drop-on-conflict guard`() {
+        // The same scenario as `a new action is dropped when the stored keymap already claims its
+        // chord`, with the rebind made in the Shortcuts screen rather than by hand - which is the
+        // only way most people make one. It is also the reason the repair runs BEFORE the chord
+        // arithmetic instead of after it: `chordHolders` signs a numeric key into a signature no
+        // preset chord can equal, so this keymap read as NOT holding Cmd+3 and the guard handed
+        // tab.select_3 straight onto it. Hand-edited files were protected and the ones made in
+        // the app were not, which is the opposite of who needs it.
+        val legacy = legacySettings()
+        val uiRebound =
+            assertNotNull(legacy.getBinding(KeymapActions.PANEL_NAVIGATE_RIGHT))
+                .copy(key = Key.Three.keyCode.toString(), modifiers = listOf("Cmd"))
+        val customised =
+            legacy.copy(shortcuts = legacy.shortcuts + (KeymapActions.PANEL_NAVIGATE_RIGHT to uiRebound))
+
+        val migrated = KeymapSettingsManager.migrateSettings(customised)
+
+        assertEquals(
+            canonicalKeyName("Three"),
+            canonicalKeyName(assertNotNull(migrated.getBinding(KeymapActions.PANEL_NAVIGATE_RIGHT)).key),
+            "the user's own binding is untouched apart from the repair",
+        )
+        assertNull(
+            migrated.getBinding(KeymapActions.TAB_SELECT_BY_INDEX[2]),
+            "Cmd+3 was taken by a UI rebind, so the new action is dropped rather than shipped as a conflict",
+        )
+        // The rest of the batch still lands: dropping is per action, not all-or-nothing.
+        assertNotNull(migrated.getBinding(KeymapActions.TAB_SELECT_BY_INDEX[0]))
+        assertNotNull(migrated.getBinding(KeymapActions.TAB_REOPEN_CLOSED))
+    }
+
+    @Test
+    fun `a repaired alternate keeps its chord`() {
+        // keymap-settings.json is documented as hand-editable, so an alternate can carry a
+        // keyCode too. Repairing only the primary would leave the binding half readable.
+        val legacy = legacySettings()
+        val withAlternate =
+            assertNotNull(legacy.getBinding(KeymapActions.BROWSER_ZOOM_IN))
+                .copy(alternateKeystrokes = listOf(KeyStroke(Key.Equals.keyCode.toString(), listOf("Cmd", "Shift"))))
+        val settings = legacy.copy(shortcuts = legacy.shortcuts + (withAlternate.actionId to withAlternate))
+
+        val migrated = KeymapSettingsManager.migrateSettings(settings)
+
+        val zoomIn = assertNotNull(migrated.getBinding(KeymapActions.BROWSER_ZOOM_IN))
+        assertTrue(
+            zoomIn.alternateKeystrokes.any { canonicalKeyName(it.key) == canonicalKeyName("Equals") },
+            "the alternate should have been repaired too: ${zoomIn.alternateKeystrokes}",
+        )
+        assertTrue(
+            zoomIn.alternateKeystrokes.none { stroke -> stroke.key.all { it.isDigit() } },
+            "no alternate should still hold a raw keyCode",
+        )
     }
 
     @Test

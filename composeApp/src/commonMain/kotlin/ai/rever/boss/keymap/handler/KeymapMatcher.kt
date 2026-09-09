@@ -6,6 +6,7 @@ import ai.rever.boss.keymap.model.KeymapSettings
 import ai.rever.boss.keymap.model.ShortcutContext
 import ai.rever.boss.keymap.model.canonicalKeyName
 import ai.rever.boss.keymap.model.canonicalModifiers
+import ai.rever.boss.keymap.model.composeKeyName
 import ai.rever.boss.utils.SystemUtils
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
@@ -233,17 +234,10 @@ class KeymapMatcher(
         eventKey: Key,
         bindingKeyName: String,
     ): Boolean {
-        // Extract key name from the Key object
-        // Key.toString() format is "Key: X" where X is the key name
-        val eventKeyString = eventKey.toString()
-        val eventKeyName =
-            if (eventKeyString.startsWith("Key: ")) {
-                eventKeyString.substring(5).trim()
-            } else {
-                eventKey.keyCode.toString()
-            }
-
-        val eventKeyNormalized = normalizeKeyName(eventKeyName)
+        // The name comes from `composeKeyName` rather than a copy of the "Key: " parse that used
+        // to live here. It is the same three lines, and having two of them is how this path came
+        // to be the one that knew about a spelling the other did not.
+        val eventKeyNormalized = normalizeKeyName(composeKeyName(eventKey))
         val bindingKeyNormalized = normalizeKeyName(bindingKeyName)
 
         return eventKeyNormalized.equals(bindingKeyNormalized, ignoreCase = true)

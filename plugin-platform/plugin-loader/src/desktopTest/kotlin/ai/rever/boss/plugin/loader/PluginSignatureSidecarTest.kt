@@ -1,12 +1,15 @@
 package ai.rever.boss.plugin.loader
 
 import java.io.File
+import java.io.IOException
 import kotlin.io.path.createTempDirectory
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class PluginSignatureSidecarTest {
     private val tempDir = createTempDirectory("sidecar-test").toFile()
@@ -27,6 +30,14 @@ class PluginSignatureSidecarTest {
     fun `read returns null when no sidecar exists`() {
         val jar = File(tempDir, "unsigned.jar").apply { writeText("jar") }
         assertNull(PluginSignatureSidecar.read(jar.absolutePath))
+    }
+
+    @Test
+    fun `a sidecar read failure is not treated as an absent signature`() {
+        val jar = File(tempDir, "unreadable.jar").apply { writeText("jar") }
+        // A directory deterministically fails reading without relying on OS permission grants.
+        assertTrue(File(PluginSignatureSidecar.pathFor(jar.absolutePath)).mkdir())
+        assertFailsWith<IOException> { PluginSignatureSidecar.read(jar.absolutePath) }
     }
 
     @Test

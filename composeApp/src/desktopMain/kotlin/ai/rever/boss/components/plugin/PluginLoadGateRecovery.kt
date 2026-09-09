@@ -149,15 +149,10 @@ internal object PluginLoadGateRecovery {
      * so clearing it would remove the only explanation of why the plugin is missing during the
      * window between downloading and restarting.
      */
+    // In-flight states acknowledge the existing update; the gate stays recorded until restart.
     private suspend fun updateHost(remedy: PluginLoadRemedy.UpdateHost): Result<String> {
         val updater = UpdateManager.instance
-        val info =
-            (updater.updateState.value as? UpdateState.UpdateAvailable)?.updateInfo
-                ?: return Result.failure(
-                    IllegalStateException("The update to ${remedy.availableVersion} is no longer available."),
-                )
-        updater.downloadUpdateInBackground(info)
-        return Result.success("Downloading BOSS ${remedy.availableVersion}. The plugin loads after the restart.")
+        return applyHostUpdateRemedy(remedy, updater.updateState.value, updater::downloadUpdateInBackground)
     }
 
     /**
@@ -185,6 +180,7 @@ internal object PluginLoadGateRecovery {
                         version = remedy.availableVersion,
                         sourceUrl = null,
                         runningJarPath = manager.getPluginInfo(ApiClassLoader.API_PLUGIN_ID)?.jarPath,
+                        hasLiveInstance = false,
                     ),
                 unload = { id -> manager.uninstallPlugin(id, force = true).map { } },
                 load = { path -> manager.installPlugin(path).map { true } },
@@ -258,6 +254,7 @@ internal object PluginLoadGateRecovery {
                         // them on disk, which is what makes the gate fire again next launch and is
                         // the outcome we want from a failed repair.
                         runningJarPath = refused,
+                        hasLiveInstance = false,
                     ),
                 unload = { id ->
                     runCatching { manager.uninstallPlugin(id, force = true) }

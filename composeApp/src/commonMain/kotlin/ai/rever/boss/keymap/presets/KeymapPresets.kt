@@ -258,6 +258,14 @@ object KeymapPresets {
                     category = KeymapActions.Categories.VIEW,
                     description = KeymapActions.getDescription(KeymapActions.SETTINGS_OPEN),
                 ),
+                KeyBinding(
+                    actionId = KeymapActions.CHROME_DENSITY_CYCLE,
+                    key = "D",
+                    modifiers = listOf("Cmd", "Shift"),
+                    context = ShortcutContext.GLOBAL,
+                    category = KeymapActions.Categories.VIEW,
+                    description = KeymapActions.getDescription(KeymapActions.CHROME_DENSITY_CYCLE),
+                ),
                 // Help
                 KeyBinding(
                     actionId = KeymapActions.HELP_SHORTCUTS,
@@ -541,6 +549,16 @@ object KeymapPresets {
                     category = KeymapActions.Categories.VIEW,
                     description = KeymapActions.getDescription(KeymapActions.SETTINGS_OPEN),
                 ),
+                KeyBinding(
+                    actionId = KeymapActions.CHROME_DENSITY_CYCLE,
+                    key = "D",
+                    // Opt-in: leave familiar editor/debug chords to the focused plugin.
+                    enabled = false,
+                    modifiers = listOf("Cmd", "Shift"),
+                    context = ShortcutContext.GLOBAL,
+                    category = KeymapActions.Categories.VIEW,
+                    description = KeymapActions.getDescription(KeymapActions.CHROME_DENSITY_CYCLE),
+                ),
                 // Help - VS Code uses ? for keyboard shortcuts cheatsheet
                 KeyBinding(
                     actionId = KeymapActions.HELP_SHORTCUTS,
@@ -823,6 +841,16 @@ object KeymapPresets {
                     context = ShortcutContext.GLOBAL,
                     category = KeymapActions.Categories.VIEW,
                     description = KeymapActions.getDescription(KeymapActions.SETTINGS_OPEN),
+                ),
+                KeyBinding(
+                    actionId = KeymapActions.CHROME_DENSITY_CYCLE,
+                    key = "D",
+                    // Opt-in: leave familiar editor/debug chords to the focused plugin.
+                    enabled = false,
+                    modifiers = listOf("Cmd", "Shift"),
+                    context = ShortcutContext.GLOBAL,
+                    category = KeymapActions.Categories.VIEW,
+                    description = KeymapActions.getDescription(KeymapActions.CHROME_DENSITY_CYCLE),
                 ),
                 // Help - IntelliJ style
                 KeyBinding(

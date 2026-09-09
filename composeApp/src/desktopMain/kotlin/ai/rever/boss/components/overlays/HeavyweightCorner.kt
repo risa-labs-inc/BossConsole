@@ -70,8 +70,8 @@ internal const val MEASURE_ATTEMPTS = 100
  * Two things here are deliberately not the obvious implementation, both because the obvious one
  * fails silently:
  *
- *  - Content is measured against a ceiling ([initialSize], clamped to the parent by
- *    [clampCeiling]), **never against the window's current size** (see [measuredAgainst]).
+ *  - Content is measured against a ceiling sized to the parent region (see [regionCeiling]),
+ *    **never against the window's current size** (see [measuredAgainst]).
  *    Measuring against the window makes the size a one-way ratchet: the window shrinks to fit what
  *    is showing, the next toast is then measured inside that smaller window, measures clipped, and
  *    the overlay can never grow back.
@@ -114,13 +114,15 @@ fun HeavyweightCorner(
     // array every recomposition would re-run the placement effect, and with it a native
     // setLocation, for nothing.
     val region = remember(bounds, inset, regionInWindow) { resolveRegion(bounds, inset, regionInWindow) }
-    // Clamp the ceiling to the region. The ceiling is a hard clip, not a soft start, and toast text
-    // is arbitrary plugin content: three wordy toasts can exceed a fixed height, and because the
-    // window is CONTENT-sized the overflow is not cosmetic - the bottom toast's dismiss button ends
-    // up outside the window, unclickable, on the INDEFINITE path where dismissing is the only way
-    // out. Clamping to the region keeps the overlay inside it without reintroducing any dependency
-    // on the overlay's OWN size, which is what the ratchet was.
-    val ceiling = clampCeiling(initialSize, region)
+    // The measurement ceiling is the REGION itself - the whole parent content pane - not the
+    // first-frame [initialSize]. The ceiling is a hard clip, and toast text is arbitrary plugin
+    // content: three wordy toasts can exceed a fixed height like 600dp, and because the window is
+    // CONTENT-sized the overflow is not cosmetic - the bottom toast's dismiss button ends up outside
+    // the window, unclickable, on the INDEFINITE path where dismissing is the only way out. Sizing
+    // the ceiling to the region lets content grow to whatever the parent can actually show while
+    // [initialSize] stays a small first-frame placeholder; the two were one number before (#154). It
+    // never depends on the overlay's OWN size, which is what the ratchet was.
+    val ceiling = regionCeiling(region, initialSize)
 
     val state =
         rememberWindowState(
@@ -492,19 +494,28 @@ internal fun shouldKeepMeasuring(
 ): Boolean = bounds == null && attempts < MEASURE_ATTEMPTS
 
 /**
- * [initialSize], reduced to fit inside [bounds] when the parent is smaller.
+ * The measurement ceiling: the parent [region] itself, in dp - or [fallback] when the parent could
+ * not be measured.
  *
- * Only ever shrinks, and never consults the overlay's own current size - that dependency is exactly
- * the ratchet [measuredAgainst] exists to break. A null [bounds] leaves the ceiling alone, since an
- * unmeasurable parent says nothing about how big the content may be.
+ * The ceiling is a HARD clip on content (see [measuredAgainst]), so it must be as large as the
+ * parent can actually show. It is deliberately NOT the overlay's first-frame size: tying the two
+ * together clipped content at that size, and because the window is content-sized the clip pushed a
+ * toast's dismiss button outside the window on the INDEFINITE path, where it was unclickable and the
+ * toast was stuck (#154). It never consults the overlay's own current size - that dependency is the
+ * ratchet [measuredAgainst] exists to break. A null [region] falls back to [fallback], since an
+ * unmeasurable parent says nothing about how big the content may be - the choice the previous clamp
+ * made too.
+ *
+ * [region] is `[x, y, width, height]` in AWT logical units, which map 1:1 to dp, so width and height
+ * carry straight across with no density conversion - the same unit contract [cornerPosition] relies
+ * on. A taller stack also owns a taller click-catching region. Content beyond the parent height
+ * still requires a scrolling or bounded toast layout; raising this ceiling alone cannot expose it.
+ * The null fallback is defensive: HeavyweightCorner returns before composing when bounds are absent.
  */
-internal fun clampCeiling(
-    initialSize: DpSize,
-    bounds: IntArray?,
+internal fun regionCeiling(
+    region: IntArray?,
+    fallback: DpSize,
 ): DpSize {
-    if (bounds == null) return initialSize
-    return DpSize(
-        minOf(initialSize.width.value, bounds[2].toFloat()).dp,
-        minOf(initialSize.height.value, bounds[3].toFloat()).dp,
-    )
+    if (region == null) return fallback
+    return DpSize(region[2].dp, region[3].dp)
 }

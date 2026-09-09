@@ -1,10 +1,12 @@
 package ai.rever.boss.components.plugin
 
+import ai.rever.boss.components.bars.horizontal.StatusMessageManager
 import ai.rever.boss.plugin.PluginPersistence
 import ai.rever.boss.plugin.api.PluginManifest
 import ai.rever.boss.plugin.loader.PluginManifestReader
 import ai.rever.boss.plugin.loader.PluginSignatureSidecar
 import ai.rever.boss.plugin.repository.PluginRepository
+import ai.rever.boss.plugin.requireDeferredVersion
 import ai.rever.boss.utils.atomicMoveFrom
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -44,6 +46,13 @@ class StoreVersionHooks(
                 installedVersion = version,
             )
         },
+    /**
+     * The passive notice a deferred (not-hot-reloadable, BossConsole#71) install shows instead
+     * of the running instance simply picking up the new version.
+     */
+    val notifyDeferred: (displayName: String) -> Unit = { displayName ->
+        StatusMessageManager.showMessage("$displayName was updated - restart BOSS to apply it", durationMs = 5000)
+    },
 )
 
 /**
@@ -57,6 +66,7 @@ data class StoreVersionRequest(
     val version: String,
     val sourceUrl: String?,
     val runningJarPath: String?,
+    val hasLiveInstance: Boolean,
 )
 
 /**
@@ -152,6 +162,56 @@ internal class StoreVersionInstaller(
         return activate(request, target, unload, load)
     }
 
+    private fun stageForRestart(
+        request: StoreVersionRequest,
+        target: File,
+        declared: PluginManifest,
+    ): Result<String> {
+        val valid =
+            runCatching {
+                requireDeferredVersion(
+                    declared,
+                    pluginDir()
+                        .listFiles()
+                        .orEmpty()
+                        .filter { it.isFile && it.extension == "jar" }
+                        .mapNotNull { hooks.readManifest(it.absolutePath) },
+                )
+            }
+        if (valid.isFailure) {
+            hooks.discardFiles(target.absolutePath)
+            return failure(valid.exceptionOrNull()?.message ?: "Cannot stage this version for restart.")
+        }
+        return persistDeferred(request, target, declared)
+    }
+
+    private fun persistDeferred(
+        request: StoreVersionRequest,
+        target: File,
+        declared: PluginManifest,
+    ): Result<String> {
+        val pluginId = request.pluginId
+        val version = request.version
+        val persisted =
+            runCatching { hooks.persist(pluginId, target.absolutePath, declared.version, request.sourceUrl) }
+        if (persisted.isFailure) {
+            hooks.discardFiles(target.absolutePath)
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Could not record a deferred plugin update",
+                mapOf("pluginId" to pluginId, "error" to (persisted.exceptionOrNull()?.message ?: "unknown")),
+            )
+            return failure("Downloaded v$version but could not record it for the next restart.")
+        }
+        logger.info(
+            LogCategory.SYSTEM,
+            "Deferred a store install to the next restart - this plugin owns a native surface",
+            mapOf("pluginId" to pluginId, "version" to version),
+        )
+        hooks.notifyDeferred(declared.displayName)
+        return Result.success(declared.version)
+    }
+
     /**
      * Vet the downloaded jar, drop the running build and put the new one in its place.
      *
@@ -181,6 +241,16 @@ internal class StoreVersionInstaller(
                 mapOf("expected" to pluginId, "declared" to (declaredId ?: "unreadable")),
             )
             return failure("The store copy did not install as $pluginId. The store entry may be wrong.")
+        }
+
+        // This plugin owns a native OS peer bound to the classloader that created it
+        // (BossConsole#71) - force-unloading that loader to swap in the update leaves every
+        // open (and every future) surface unable to attach a view. Stage the new jar for the
+        // next restart instead of touching the running instance. The old jar is deliberately
+        // left in place too (unlike the normal path below, which lets PluginJarReconciler clean
+        // it up next launch): the still-running classloader still has it open.
+        if (request.hasLiveInstance && HotReloadPolicy.requiresRestartInsteadOfHotReload(pluginId)) {
+            return stageForRestart(request, target, declared)
         }
 
         // Force, because this is a deliberate replacement: the point is to drop the local build.

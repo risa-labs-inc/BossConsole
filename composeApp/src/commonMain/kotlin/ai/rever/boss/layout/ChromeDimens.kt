@@ -150,6 +150,19 @@ data class ChromeDimens(
 }
 
 /**
+ * How this density reads to the user. On the enum's own file rather than beside a settings
+ * screen, matching where `TabBarPosition.displayName` lives relative to `TabBarPosition` -
+ * one copy for every surface that names a density.
+ */
+val ChromeDensity.displayName: String
+    get() =
+        when (this) {
+            ChromeDensity.COMPACT -> "Compact"
+            ChromeDensity.COMFORTABLE -> "Comfortable"
+            ChromeDensity.SPACIOUS -> "Spacious"
+        }
+
+/**
  * The chrome metrics in force for this window.
  *
  * Defaults to [ChromeDimens.Comfortable] — the shipped values — so every bar renders exactly as it

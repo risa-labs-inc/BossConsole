@@ -1,22 +1,27 @@
 package ai.rever.boss.mcp
 
 import ai.rever.boss.components.bars.horizontal.StatusMessageManager
+import ai.rever.boss.mcp.sandbox.DefaultMcpRiskEvaluator
 import ai.rever.boss.plugin.api.McpToolArgs
 import ai.rever.boss.plugin.api.McpToolDefinition
 import ai.rever.boss.plugin.api.McpToolProvider
 import ai.rever.boss.plugin.api.McpToolRegistry
 import ai.rever.boss.plugin.api.McpToolResult
 import ai.rever.boss.plugin.api.RegisteredMcpTool
+import ai.rever.boss.plugin.logging.LogSanitizer
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -93,6 +98,19 @@ object McpToolRegistryImpl : McpToolRegistry {
     /** How long a kill-switch fault sits in the bottom bar — longer than a routine status message. */
     private const val FAULT_MESSAGE_MS = 10_000L
 
+    val policyEngine =
+        McpPolicyEngine(
+            policyFile = BossDirectories.resolve("mcp-tool-policy.json"),
+            onFault = { StatusMessageManager.showMessage(it.message, durationMs = FAULT_MESSAGE_MS) },
+        )
+
+    val approvalBus = McpApprovalBus()
+
+    val ledger =
+        McpOperationLedger(
+            ledgerFile = BossDirectories.resolve("mcp-calls.jsonl"),
+        )
+
     private val core =
         McpToolRegistryCore(
             disabledFile = BossDirectories.resolve("mcp-disabled-tools.json"),
@@ -100,6 +118,9 @@ object McpToolRegistryImpl : McpToolRegistry {
             // without an api release, so the host announces the event itself. The
             // durable surface is the flow below, read by the status bar.
             onFault = { StatusMessageManager.showMessage(it.message, durationMs = FAULT_MESSAGE_MS) },
+            policyEngine = policyEngine,
+            approvalBus = approvalBus,
+            ledger = ledger,
         )
 
     override val allTools: StateFlow<List<RegisteredMcpTool>> get() = core.allTools
@@ -115,6 +136,9 @@ object McpToolRegistryImpl : McpToolRegistry {
      * before anyone looked. See [McpKillSwitchFault].
      */
     val killSwitchFault: StateFlow<McpKillSwitchFault?> get() = core.fault
+
+    /** Non-null when the policy engine degraded to fail-closed state. */
+    val policyFault: StateFlow<McpPolicyFault?> get() = core.policyEngine.fault
 
     /** See `Core.permittedTools`. */
     fun permittedTools(): List<RegisteredMcpTool> = core.permittedTools()
@@ -255,6 +279,78 @@ internal fun mcpToolPermitted(
     }
 
 /**
+ * Hard ceiling, in characters, on what [McpToolRegistryCore.invoke] hands back for one
+ * plugin tool call.
+ *
+ * **A backstop against catastrophe, not a substitute for per-tool limits.** An MCP result
+ * is re-sent as cached prefix on every later request for the rest of the session, so one
+ * oversized answer is a recurring cost, not a one-off: a single `console_search` was
+ * measured at 234,000 tokens on a real host. Tools are still expected to bound their own
+ * output - page it, summarise it, say what they left out. Returning 149,000 characters
+ * because the cap permits it is a bug in the tool, not compliance with this.
+ *
+ * The number mirrors BossTerm's `mcpMaxAnswerChars` (TerminalSettings, default 150_000),
+ * which is what its private `shorten()` enforces over its own built-in handlers. It is
+ * duplicated rather than read because the host cannot reach that setting: bossterm-compose
+ * is bundled privately inside the terminal-tab plugin's JAR and resolved by that plugin's
+ * classloader, so BossConsole has no compile- or run-time handle on it. Change one and
+ * change the other; two ceilings for one product is worse than either number alone.
+ */
+internal const val MAX_MCP_RESULT_CHARS: Int = 150_000
+
+/**
+ * Cut [text] to at most [cap] characters and append a marker saying so.
+ *
+ * A free function next to [mcpToolPermitted], for the same reason: the rule is testable
+ * without constructing the singleton.
+ *
+ * Three things a bare `take(cap)` gets wrong here:
+ * - **Silence.** A cut prefix reads as a complete answer and the agent acts on it, so the
+ *   marker is appended *after* the cut: a truncated result always ends with its own
+ *   explanation.
+ * - **The tool's own trailing note.** Several tools close with something like
+ *   `[504 older matching lines omitted...]`, which is precisely what cutting the tail
+ *   destroys. The marker names that loss rather than leaving a reader to assume the tool
+ *   reported everything it had.
+ * - **Surrogate pairs.** Cutting between a high and a low surrogate leaves a lone
+ *   surrogate, so the boundary backs off one character when the last kept char is a high
+ *   surrogate.
+ *
+ * The return is `<= cap` characters, marker included: the marker is first sized against
+ * its worst case (nothing kept, so the largest digit count its numbers can carry) and that
+ * length reserved out of the budget. The one exception is a [cap] smaller than the marker
+ * itself, which only a test would set - a slightly over-cap explanation still beats an
+ * unexplained blob. A [cap] of zero or less disables the cap, matching `shorten()`.
+ */
+internal fun capMcpResultText(
+    text: String,
+    cap: Int = MAX_MCP_RESULT_CHARS,
+): String {
+    if (cap <= 0 || text.length <= cap) return text
+    // Worst case is "nothing kept", the most digits `dropped` can carry; the real marker is
+    // therefore never longer than this, so reserving its length cannot overflow the cap.
+    val reserved = truncationMarker(total = text.length, dropped = text.length, cap = cap).length
+    val budget = (cap - reserved).coerceAtLeast(0)
+    // Never end on a high surrogate: its low partner is in the part being dropped.
+    val keep = if (budget > 0 && text[budget - 1].isHighSurrogate()) budget - 1 else budget
+    return text.take(keep) + truncationMarker(total = text.length, dropped = text.length - keep, cap = cap)
+}
+
+/**
+ * The note [capMcpResultText] leaves in place of the cut tail. Worded to stand on its own,
+ * because it may be the only thing left where the tool had written its own "omitted" line.
+ */
+private fun truncationMarker(
+    total: Int,
+    dropped: Int,
+    cap: Int,
+): String =
+    "\n\n[BOSS host cap: this tool result was $total characters, over the $cap-character " +
+        "limit, so the last $dropped characters were cut. Whatever the tool put at the end is " +
+        "gone, including any note it appended about content it had already left out. Re-run " +
+        "with a narrower query, a filter, or a smaller range to get the rest.]"
+
+/**
  * Testable core behind [McpToolRegistryImpl]. Extracted so unit tests can
  * exercise the registration/permission/persistence/dispatch logic against a
  * throwaway instance and a temp file, instead of the process-wide singleton
@@ -265,13 +361,25 @@ internal fun mcpToolPermitted(
  * in-memory), which is convenient for tests that don't care about it.
  * [invokeTimeoutMs] defaults to production's 60s but is overridable so tests
  * can exercise the timeout path in milliseconds instead of actually waiting.
+ * [maxResultChars] is the same story for the result-size backstop: production
+ * gets [MAX_MCP_RESULT_CHARS], tests get a number they can overshoot in a line.
  * [onFault] is how a kill-switch persistence failure reaches the operator (the
  * façade turns it into a status-bar message); it is also mirrored into [fault].
  */
+// 7 of these arrived with the governance work (policy engine, approval bus, ledger); this
+// change adds the 8th, `maxResultChars`, purely as a test seam alongside `invokeTimeoutMs`.
+// Suppressed rather than hidden behind mutable state: the count is a real signal that this
+// class wants its collaborators grouped into a config object, and that should stay visible
+// to whoever adds the ninth.
+@Suppress("LongParameterList")
 internal class McpToolRegistryCore(
     private val disabledFile: File?,
     private val invokeTimeoutMs: Long = 60_000L,
+    private val maxResultChars: Int = MAX_MCP_RESULT_CHARS,
     private val onFault: (McpKillSwitchFault) -> Unit = {},
+    val policyEngine: McpPolicyEngine = McpPolicyEngine(),
+    val approvalBus: McpApprovalBus = McpApprovalBus(),
+    val ledger: McpOperationLedger = McpOperationLedger(),
 ) {
     private val logger = BossLogger.forComponent("McpToolRegistry")
 
@@ -627,42 +735,170 @@ internal class McpToolRegistryCore(
     /** Mirrors host RBAC. The rule itself is [mcpToolPermitted], which is where it is tested. */
     private fun permitted(def: McpToolDefinition): Boolean = mcpToolPermitted(def, isAdmin, permissions)
 
+    @Suppress("LongMethod") // Keep authorization and execution inside the same cancellation audit boundary.
     suspend fun invoke(
         toolName: String,
         arguments: String,
     ): McpToolResult {
-        // Only enabled tools are reachable (the bridge exposes exactly _tools).
         val tool =
             _tools.value.firstOrNull { it.definition.name == toolName }
                 ?: return McpToolResult("Unknown or disabled MCP tool: $toolName", isError = true)
         val args = parseArgs(arguments)
-        return try {
-            withTimeout(invokeTimeoutMs) { tool.definition.handler.call(args) }
-        } catch (t: TimeoutCancellationException) {
-            logger.warn(
-                LogCategory.SYSTEM,
-                "MCP tool handler timed out",
-                mapOf("tool" to toolName, "providerId" to tool.providerId, "timeoutMs" to invokeTimeoutMs),
-                error = t,
-            )
-            McpToolResult("Tool '$toolName' timed out after ${invokeTimeoutMs / 1000}s", isError = true)
-        } catch (t: CancellationException) {
-            // Caller cancellation (not our timeout) must propagate — swallowing it
-            // would break structured concurrency during request cancel/shutdown.
-            throw t
-        } catch (t: Throwable) {
-            logger.warn(
-                LogCategory.SYSTEM,
-                "MCP tool handler failed",
-                mapOf(
-                    "tool" to toolName,
-                    "providerId" to tool.providerId,
-                    "error" to (t.message ?: t::class.simpleName),
-                ),
-            )
-            McpToolResult("Tool '$toolName' failed: ${t.message ?: t::class.simpleName}", isError = true)
+        val policy = policyEngine.policyFor(toolName)
+        val startTime = System.nanoTime()
+        var disposition = McpApprovalDisposition.AUTO_ALLOWED
+        var result: McpToolResult? = null
+        var executionStarted = false
+        try {
+            val authorization = authorizeInvocation(tool, args, policy)
+            disposition = authorization.first
+            val denial = authorization.second
+            result =
+                when {
+                    denial != null -> {
+                        McpToolResult(denial, isError = true)
+                    }
+
+                    _tools.value.none { it.providerId == tool.providerId && it.definition === tool.definition } ||
+                        policyEngine.policyFor(toolName) == McpPolicyAction.DENY -> {
+                        disposition = McpApprovalDisposition.POLICY_DENIED
+                        McpToolResult("MCP tool access revoked while awaiting approval", isError = true)
+                    }
+
+                    else -> {
+                        if (disposition == McpApprovalDisposition.SESSION_TRUSTED) {
+                            policyEngine.trustForSession(toolName)
+                        }
+                        executionStarted = true
+                        executeAuthorized(tool, args)
+                    }
+                }
+            return requireNotNull(result)
+        } catch (cancelled: CancellationException) {
+            disposition =
+                if (executionStarted) {
+                    McpApprovalDisposition.CANCELLED_IN_FLIGHT
+                } else {
+                    McpApprovalDisposition.CANCELLED_AWAITING_APPROVAL
+                }
+            throw cancelled
+        } finally {
+            withContext(NonCancellable + Dispatchers.IO) {
+                ledger.record(
+                    toolName = toolName,
+                    providerId = tool.providerId,
+                    policyApplied = policy,
+                    approvalDisposition = disposition,
+                    durationMs = (System.nanoTime() - startTime) / 1_000_000L,
+                    isError = result?.isError ?: true,
+                    rawArgs = McpArgumentSanitizer.parseArguments(args.raw),
+                    errorSnippet =
+                        when {
+                            result == null -> "Execution cancelled by caller"
+                            result?.isError == true -> result?.text
+                            else -> null
+                        },
+                )
+            }
         }
     }
+
+    private suspend fun authorizeInvocation(
+        tool: RegisteredMcpTool,
+        args: McpToolArgs,
+        policy: McpPolicyAction,
+    ): Pair<McpApprovalDisposition, String?> =
+        when (policy) {
+            McpPolicyAction.DENY -> {
+                McpApprovalDisposition.POLICY_DENIED to "MCP tool rejected by policy (DENY)"
+            }
+
+            McpPolicyAction.ALLOW -> {
+                McpApprovalDisposition.AUTO_ALLOWED to null
+            }
+
+            McpPolicyAction.ASK -> {
+                when (
+                    val decision =
+                        approvalBus.requestApproval(
+                            tool.definition.name,
+                            tool.providerId,
+                            McpArgumentSanitizer.parseArguments(args.raw),
+                            riskAssessment = DefaultMcpRiskEvaluator().evaluateRisk(tool.definition.name, args),
+                        )
+                ) {
+                    is McpApprovalDecision.Approved -> {
+                        val disposition =
+                            if (decision.trustForSession) {
+                                McpApprovalDisposition.SESSION_TRUSTED
+                            } else {
+                                McpApprovalDisposition.APPROVED_ONCE
+                            }
+                        disposition to null
+                    }
+
+                    is McpApprovalDecision.Denied -> {
+                        McpApprovalDisposition.DENIED_BY_OPERATOR to
+                            "MCP tool rejected by operator: ${decision.reason}"
+                    }
+
+                    McpApprovalDecision.QueueFull -> {
+                        McpApprovalDisposition.QUEUE_FULL to "MCP approval queue is full; no operator decision was made"
+                    }
+
+                    McpApprovalDecision.Timeout -> {
+                        McpApprovalDisposition.TIMEOUT to "MCP tool timed out waiting for operator approval"
+                    }
+                }
+            }
+        }
+
+    private suspend fun executeAuthorized(
+        tool: RegisteredMcpTool,
+        args: McpToolArgs,
+    ): McpToolResult = capResult(tool.definition.name, executeUncapped(tool, args))
+
+    /**
+     * Bound the text a plugin answers with, whatever it asked to say.
+     *
+     * This sits on the execution path rather than on [invoke] so that every caller is
+     * covered - the MCP server bridge (terminal-tab's `McpDynamicTools`, which hands
+     * `result.text` straight to `TextContent` with no length check of its own), the in-app
+     * voice agent (`BossVoiceToolSource`), and flow-tab's `BossRegistryToolSource`, all of
+     * which are LLM contexts. Placing it here rather than around [invoke] also keeps the
+     * host's own short strings - a policy denial, a revoked-access message - off the path,
+     * and means the ledger records the capped text rather than a megabyte it will never use.
+     *
+     * Errors are capped on the same terms as successes, deliberately: the bridge does not
+     * distinguish them (both become one `TextContent`), and a plugin is perfectly able to
+     * return a megabyte of stack trace or echo back a failed payload.
+     */
+    private fun capResult(
+        toolName: String,
+        result: McpToolResult,
+    ): McpToolResult {
+        if (result.text.length <= maxResultChars) return result
+        logger.warn(
+            LogCategory.SYSTEM,
+            "MCP tool result exceeded the host cap and was truncated",
+            mapOf("tool" to toolName, "chars" to result.text.length, "cap" to maxResultChars),
+        )
+        return result.copy(text = capMcpResultText(result.text, maxResultChars))
+    }
+
+    @Suppress("TooGenericExceptionCaught") // Plugin handlers may throw any implementation-specific exception.
+    private suspend fun executeUncapped(tool: RegisteredMcpTool, args: McpToolArgs): McpToolResult =
+        try {
+            withTimeout(invokeTimeoutMs) { tool.definition.handler.call(args) }
+        } catch (_: TimeoutCancellationException) {
+            McpToolResult("Tool '${tool.definition.name}' timed out after ${invokeTimeoutMs / 1000}s", isError = true)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            // The tool caller receives a sanitized failure; never log the raw plugin exception.
+            val reason = LogSanitizer.sanitizeExceptionMessage(failure.message ?: failure::class.simpleName)
+            McpToolResult("Tool '${tool.definition.name}' failed: $reason", isError = true)
+        }
 
     /**
      * Read the persisted disabled set. "Absent" and "unparseable" are NOT the same

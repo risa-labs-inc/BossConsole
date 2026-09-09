@@ -41,11 +41,13 @@ class BossAlertDialogComposeTest {
     @Before
     fun forceLightweightPath() {
         savedUseHeavyweight = BossOverlayHost.useHeavyweightOverlays
+        resetOverlayFieldForTest("useHeavyweightOverlays")
         BossOverlayHost.useHeavyweightOverlays = false
     }
 
     @After
     fun restoreOverlayMode() {
+        resetOverlayFieldForTest("useHeavyweightOverlays")
         BossOverlayHost.useHeavyweightOverlays = savedUseHeavyweight
     }
 

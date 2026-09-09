@@ -39,11 +39,15 @@ class DependencyPromptOnInstallOnlyTest {
         // non-reporting one. Deliberately not a count of `reportDependencies = false` - a second
         // legitimate non-reporting caller is allowed, and a test that forbade one would be
         // deleted rather than understood.
+        val reload =
+            source()
+                .substringAfter("private suspend fun doReloadPlugin")
+                .substringBefore("\n    private fun ")
         assertTrue(
             Regex(
-                """fun\s+doReloadPlugin[\s\S]{0,4000}?loadPlugin\(\s*jarPath\s*,""" +
+                """loadPlugin\(\s*jarPath\s*,""" +
                     """\s*reportDependencies\s*=\s*false\s*\)""",
-            ).containsMatchIn(source()),
+            ).containsMatchIn(reload),
             "doReloadPlugin must load without reporting missing dependencies",
         )
     }

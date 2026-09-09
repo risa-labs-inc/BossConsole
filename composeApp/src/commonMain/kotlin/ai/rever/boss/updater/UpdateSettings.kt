@@ -32,12 +32,23 @@ expect object UpdateSettings {
      * is dismissed.
      */
     var lastDismissedVersion: String?
+
+    /**
+     * The newest release whose notes the user has viewed.
+     * Null when no release has been seen yet.
+     */
+    var lastSeenReleaseVersion: String?
 }
 
 /**
  * Platform-specific settings manager for persisting update preferences
  */
 expect object UpdateSettingsManager {
+    /**
+     * Ensures persisted settings are loaded before they are read.
+     */
+    fun ensureLoaded()
+
     /**
      * Save current settings to persistent storage
      */

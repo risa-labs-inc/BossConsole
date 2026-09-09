@@ -413,17 +413,10 @@ fun UpdateSettingsSection(updateCoordinator: UpdateCoordinator = UpdateCoordinat
     var showDowngradeWarning by remember { mutableStateOf(false) }
     var selectedVersion by remember { mutableStateOf<VersionInfo?>(null) }
 
-    val versionListManager = remember { VersionListManager(updateCoordinator.updateService) }
+    val versionListManager = updateCoordinator.versionListManager
     val versions by versionListManager.versions.collectAsState()
     val isLoadingVersions by versionListManager.isLoading.collectAsState()
     val versionError by versionListManager.error.collectAsState()
-
-    // Cleanup VersionListManager when composable leaves composition
-    DisposableEffect(versionListManager) {
-        onDispose {
-            versionListManager.cleanup()
-        }
-    }
 
     // Prefetch version list on Settings load to avoid 2-5 second delay on button click
     // Uses cache if available (1 hour expiry), so this is cheap on repeated visits
