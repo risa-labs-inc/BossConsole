@@ -90,8 +90,8 @@ class TabPathsTest {
     @Test
     fun `lexical cleanup keeps a UNC host prefix while collapsing inner separators`() {
         // //server/share must not flatten to /server/share - two tabs on different
-        // servers would compare equal. Exercised directly: on POSIX normalize() only
-        // reaches the lexical path when canonicalPath throws.
+        // servers would compare equal. Exercise the lexical form directly because
+        // canonicalization of UNC paths depends on the host platform.
         assertEquals("//server/share/x", TabPaths.lexicalClean("//server/share//x"))
         assertNotEquals(TabPaths.lexicalClean("//server/share"), TabPaths.lexicalClean("/server/share"))
     }
@@ -131,6 +131,13 @@ class TabPathsTest {
             assertEquals("//", TabPaths.lexicalClean("////", separator))
         }
         assertEquals("//", TabPaths.lexicalClean("\\\\", '\\'))
+    }
+
+    @Test
+    fun `normalizing repeated POSIX root separators preserves root identity`() {
+        if (File.separatorChar != '/') return
+        assertEquals(File("/").canonicalPath, TabPaths.normalize("////"))
+        assertEquals(true, TabPaths.pathsMatch("/", "////"))
     }
 
     @Test

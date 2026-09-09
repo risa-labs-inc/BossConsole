@@ -61,8 +61,8 @@ internal object TabPaths {
      *
      * Internal so the two deliberate choices in here are pinnable: backslash is only
      * a separator on Windows, and a leading `//` (UNC host) survives the collapse.
-     * On POSIX [normalize] reaches this only when canonicalPath throws, so the
-     * tests exercise it directly. The separator is a parameter so the Windows
+     * [normalize] applies this before canonicalization on every platform.
+     * The separator is a parameter so the Windows
      * branch is testable on the Linux/macOS runners too - with the default it is
      * unreachable there (`File.separatorChar == '/'`).
      */
