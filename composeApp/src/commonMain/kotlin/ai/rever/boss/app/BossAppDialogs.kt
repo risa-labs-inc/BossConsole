@@ -77,6 +77,7 @@ import androidx.compose.material.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -816,40 +817,28 @@ internal fun BossAppDialogs(state: BossAppState) {
         )
     }
 
-    // HTML file open dialog
-    if (state.showHtmlFileOpenDialog) {
-        HtmlFileOpenDialog(
-            fileName = state.pendingHtmlFileName,
-            filePath = state.pendingHtmlFilePath,
-            onDismiss = {
-                state.showHtmlFileOpenDialog = false
-                state.pendingHtmlFilePath = ""
-                state.pendingHtmlFileName = ""
-            },
-            onOpenChoice = { mode, rememberChoice ->
-                state.showHtmlFileOpenDialog = false
-                val filePath = state.pendingHtmlFilePath
-                val fileName = state.pendingHtmlFileName
-                state.pendingHtmlFilePath = ""
-                state.pendingHtmlFileName = ""
-
-                if (rememberChoice) {
+    state.pendingHtmlFileOpen?.let { request ->
+        key(request) {
+            HtmlFileOpenDialog(
+                fileName = request.fileName,
+                filePath = request.filePath,
+                onDismiss = { state.pendingHtmlFileOpen = null },
+                onOpenChoice = { mode, rememberChoice ->
                     coroutineScope.launch {
-                        HtmlFileSettingsManager.setOpenMode(mode)
+                        if (rememberChoice) {
+                            HtmlFileSettingsManager.setOpenMode(mode)
+                        }
+                        when (mode) {
+                            HtmlFileOpenMode.EDITOR, HtmlFileOpenMode.ALWAYS_ASK ->
+                                splitViewState.openFileInEditorTab(request.filePath, request.fileName)
+                            HtmlFileOpenMode.BROWSER ->
+                                splitViewState.openFileInBrowserTab(request.filePath, request.fileName)
+                        }
+                        state.pendingHtmlFileOpen = null
                     }
-                }
-
-                when (mode) {
-                    HtmlFileOpenMode.EDITOR, HtmlFileOpenMode.ALWAYS_ASK -> {
-                        splitViewState.openFileInEditorTab(filePath, fileName)
-                    }
-
-                    HtmlFileOpenMode.BROWSER -> {
-                        splitViewState.openFileInBrowserTab(filePath, fileName)
-                    }
-                }
-            },
-        )
+                },
+            )
+        }
     }
 
     // An unload is waiting on this answer: other plugins depend on the one being updated or

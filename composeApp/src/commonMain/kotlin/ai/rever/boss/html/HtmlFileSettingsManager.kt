@@ -10,6 +10,9 @@ expect object HtmlFileSettingsManager {
     /** Current settings as a reactive StateFlow */
     val currentSettings: StateFlow<HtmlFileSettings>
 
+    /** Wait for initial disk loading before routing a file. */
+    suspend fun awaitSettings(): HtmlFileSettings
+
     /** Save current settings to disk */
     suspend fun saveSettings()
 

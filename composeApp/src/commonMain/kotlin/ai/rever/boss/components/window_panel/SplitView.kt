@@ -26,9 +26,7 @@ import ai.rever.boss.components.window_panel.components.main_window_panels.remem
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberTabGroupExpansion
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberToggleCollapseAction
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberWindowTabGroups
-import ai.rever.boss.components.events.HtmlFileEventBus
-import ai.rever.boss.html.HtmlFileOpenMode
-import ai.rever.boss.html.HtmlFileSettingsManager
+import ai.rever.boss.html.HtmlFileOpenQueue
 import ai.rever.boss.icons.FileIcons
 import ai.rever.boss.platform.bossFileDropTarget
 import ai.rever.boss.plugin.api.Panel
@@ -224,6 +222,7 @@ class SplitViewState(
      * Compose state.
      */
     private val openScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    internal val htmlFileOpens = HtmlFileOpenQueue()
 
     /**
      * Cancels the deferred opens. Called when this state leaves the composition.
@@ -236,6 +235,7 @@ class SplitViewState(
      */
     internal fun dispose() {
         openScope.cancel()
+        htmlFileOpens.close()
     }
 
     /**
@@ -568,24 +568,10 @@ class SplitViewState(
 
         // Route .html / .htm files based on user preference
         if (isHtmlFile(fileName)) {
-            when (HtmlFileSettingsManager.currentSettings.value.openMode) {
-                HtmlFileOpenMode.EDITOR -> {
-                    openFileInEditorTab(filePath, fileName)
-                    return
-                }
-
-                HtmlFileOpenMode.BROWSER -> {
-                    openFileInBrowserTab(filePath, fileName)
-                    return
-                }
-
-                HtmlFileOpenMode.ALWAYS_ASK -> {
-                    openScope.launch {
-                        HtmlFileEventBus.emitOpenPrompt(filePath, fileName, windowId)
-                    }
-                    return
-                }
+            openScope.launch {
+                htmlFileOpens.enqueue(filePath, fileName)
             }
+            return
         }
 
         // Route .ipynb to the notebook editor — but only when the jupyter-notebook

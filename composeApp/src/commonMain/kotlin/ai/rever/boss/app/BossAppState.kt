@@ -36,6 +36,7 @@ import ai.rever.boss.window.WindowProjectState
 import ai.rever.boss.window.WindowProjectStateRegistry
 import ai.rever.boss.window.WindowRunnerState
 import ai.rever.boss.window.WindowRunnerStateRegistry
+import ai.rever.boss.html.HtmlFileOpenRequest
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -137,9 +138,7 @@ internal class BossAppState(
     var pendingTerminalSourceId by mutableStateOf<String?>(null)
 
     // HTML file open dialog
-    var showHtmlFileOpenDialog by mutableStateOf(false)
-    var pendingHtmlFilePath by mutableStateOf("")
-    var pendingHtmlFileName by mutableStateOf("")
+    var pendingHtmlFileOpen by mutableStateOf<HtmlFileOpenRequest?>(null)
 
     /**
      * A dependency a just-installed plugin declares but which is absent.

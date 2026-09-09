@@ -62,9 +62,17 @@ fun HtmlFileOpenDialog(
     onOpenChoice: (mode: HtmlFileOpenMode, rememberChoice: Boolean) -> Unit,
 ) {
     var rememberChoice by remember { mutableStateOf(false) }
+    var submitted by remember { mutableStateOf(false) }
+    val dismiss = { if (!submitted) onDismiss() }
+    val choose: (HtmlFileOpenMode) -> Unit = { mode ->
+        if (!submitted) {
+            submitted = true
+            onOpenChoice(mode, rememberChoice)
+        }
+    }
 
     BossDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = dismiss,
         properties =
             DialogProperties(
                 dismissOnBackPress = true,
@@ -78,7 +86,7 @@ fun HtmlFileOpenDialog(
                     .width(380.dp)
                     .onKeyEvent { event ->
                         if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
-                            onDismiss()
+                            dismiss()
                             true
                         } else {
                             false
@@ -117,7 +125,7 @@ fun HtmlFileOpenDialog(
                     icon = Icons.Outlined.Code,
                     title = "Code Editor",
                     description = "Open as source code in code editor",
-                    onClick = { onOpenChoice(HtmlFileOpenMode.EDITOR, rememberChoice) },
+                    onClick = { choose(HtmlFileOpenMode.EDITOR) },
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -126,7 +134,7 @@ fun HtmlFileOpenDialog(
                     icon = Icons.Outlined.Language,
                     title = "Webpage",
                     description = "Open rendered in a browser tab",
-                    onClick = { onOpenChoice(HtmlFileOpenMode.BROWSER, rememberChoice) },
+                    onClick = { choose(HtmlFileOpenMode.BROWSER) },
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -166,7 +174,7 @@ fun HtmlFileOpenDialog(
                     horizontalArrangement = Arrangement.End,
                 ) {
                     TextButton(
-                        onClick = onDismiss,
+                        onClick = dismiss,
                         colors =
                             ButtonDefaults.textButtonColors(
                                 contentColor = BossTheme.colors.textSecondary,

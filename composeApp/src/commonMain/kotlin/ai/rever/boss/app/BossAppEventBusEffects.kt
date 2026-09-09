@@ -6,7 +6,6 @@ import ai.rever.boss.components.events.DashboardEventBus
 import ai.rever.boss.components.events.DashboardOpenTabTypeEvent
 import ai.rever.boss.components.events.FileEventBus
 import ai.rever.boss.components.events.GitTerminalEventBus
-import ai.rever.boss.components.events.HtmlFileEventBus
 import ai.rever.boss.components.events.NavigationTargetBus
 import ai.rever.boss.components.events.PanelEventBus
 import ai.rever.boss.components.events.RunEventBus
@@ -52,6 +51,8 @@ import ai.rever.boss.utils.awaitRegistryCondition
 import ai.rever.boss.utils.logging.ComponentLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.window.WindowProjectState
+import ai.rever.boss.html.HtmlFileOpenMode
+import ai.rever.boss.html.HtmlFileSettingsManager
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
@@ -357,13 +358,20 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
 
     // Listen for HTML file open prompt events
     LaunchedEffect(splitViewState, windowId) {
-        HtmlFileEventBus.openPromptEvents
-            .filter { event -> event.sourceWindowId == windowId }
-            .onEach { event ->
-                state.pendingHtmlFilePath = event.filePath
-                state.pendingHtmlFileName = event.fileName
-                state.showHtmlFileOpenDialog = true
-            }.launchIn(this)
+        splitViewState.htmlFileOpens.events.collect { event ->
+            // Await persisted preferences even on the first open after startup. Re-read for
+            // each queued file so Remember my choice also applies to the remaining batch.
+            when (HtmlFileSettingsManager.awaitSettings().openMode) {
+                HtmlFileOpenMode.EDITOR ->
+                    splitViewState.openFileInEditorTab(event.filePath, event.fileName)
+                HtmlFileOpenMode.BROWSER ->
+                    splitViewState.openFileInBrowserTab(event.filePath, event.fileName)
+                HtmlFileOpenMode.ALWAYS_ASK -> {
+                    state.pendingHtmlFileOpen = event
+                    snapshotFlow { state.pendingHtmlFileOpen }.first { it == null }
+                }
+            }
+        }
     }
 
     // Listen for run execute events (Issue #321 - Run functionality)
