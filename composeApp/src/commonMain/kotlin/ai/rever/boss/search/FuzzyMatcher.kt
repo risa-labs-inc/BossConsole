@@ -8,7 +8,7 @@ import kotlin.math.max
  * Implements a scoring algorithm similar to VS Code's quick open:
  * - Characters must match in order (but not consecutively)
  * - Consecutive matches score higher
- * - Word boundary matches (camelCase, underscore, path separator) score higher
+ * - Word boundary matches (camelCase, path separators, underscore, hyphen, colon, dot, space) score higher
  * - Earlier matches score higher than later matches
  */
 object FuzzyMatcher {
@@ -23,9 +23,14 @@ object FuzzyMatcher {
     /**
      * Attempt to fuzzy match a pattern against a target string.
      *
-     * @param pattern The search query (lowercase for case-insensitive matching)
+     * Matching is case insensitive; exact-case bonuses deliberately apply to both lowercase and uppercase.
+     * An all-lowercase query therefore favors lowercase targets when other scoring factors are equal.
+     * Smartcase would make lowercase queries neutral and change this exact-case preference.
+     *
+     * @param pattern The original search query
      * @param target The string to match against
-     * @param targetLower The lowercase version of target (for performance)
+     * @param targetLower Must equal `target.lowercase()`; accepted precomputed to reuse cached values.
+     * Rebuilt with simple casing if full lowercase changes its length.
      * @return MatchResult if pattern matches, null otherwise
      */
     fun match(
@@ -36,15 +41,16 @@ object FuzzyMatcher {
         if (pattern.isEmpty()) return MatchResult(0, emptyList())
         if (pattern.length > target.length) return null
 
-        val patternLower = pattern.lowercase()
+        val patternLower = lowercasePreservingIndices(pattern, pattern.lowercase())
+        val indexedTargetLower = lowercasePreservingIndices(target, targetLower)
         val matchIndices = mutableListOf<Int>()
 
         var patternIdx = 0
         var targetIdx = 0
 
         // First pass: find if all characters match in order
-        while (patternIdx < patternLower.length && targetIdx < targetLower.length) {
-            if (patternLower[patternIdx] == targetLower[targetIdx]) {
+        while (patternIdx < patternLower.length && targetIdx < indexedTargetLower.length) {
+            if (patternLower[patternIdx] == indexedTargetLower[targetIdx]) {
                 matchIndices.add(targetIdx)
                 patternIdx++
             }
@@ -55,18 +61,37 @@ object FuzzyMatcher {
         if (patternIdx < patternLower.length) return null
 
         // Calculate score based on match quality
-        val score = calculateScore(target, targetLower, matchIndices)
+        val score = calculateScore(pattern, target, matchIndices)
         val matchRanges = collapseToRanges(matchIndices)
 
         return MatchResult(score, matchRanges)
     }
 
     /**
+     * Full-string casing can expand characters (for example İ), invalidating highlight indices.
+     * The fallback rebuilds even a cached lowercase value using simple per-character casing. This preserves
+     * UTF-16 indices but can differ from contextual whole-string casing, such as Greek final sigma.
+     * It does not provide grapheme-aware matching or prevent a range from splitting a surrogate pair.
+     */
+    private fun lowercasePreservingIndices(
+        original: String,
+        lowercase: String,
+    ): String =
+        if (lowercase.length == original.length) {
+            lowercase
+        } else {
+            buildString(original.length) {
+                for (char in original) append(char.lowercaseChar())
+            }
+        }
+
+    /**
      * Calculate the match score based on various factors.
+     * [match] guarantees one index per pattern character, with every index inside the original target.
      */
     private fun calculateScore(
+        pattern: String,
         target: String,
-        targetLower: String,
         matchIndices: List<Int>,
     ): Int {
         if (matchIndices.isEmpty()) return 0
@@ -94,7 +119,7 @@ object FuzzyMatcher {
             }
 
             // Bonus for exact case match
-            if (i < target.length && target[idx] == targetLower[idx].uppercaseChar()) {
+            if (pattern[i] == target[idx]) {
                 score += 1
             }
 
@@ -126,9 +151,9 @@ object FuzzyMatcher {
      * Word boundaries are:
      * - Start of string
      * - After a path separator (/ or \)
-     * - After an underscore or hyphen
+     * - After an underscore, hyphen, colon, or dot
      * - Transition from lowercase to uppercase (camelCase)
-     * - After a dot
+     * - After a space
      */
     private fun isWordBoundary(
         text: String,
@@ -140,10 +165,9 @@ object FuzzyMatcher {
         val prevChar = text[index - 1]
         val currChar = text[index]
 
-        return when {
-            prevChar in listOf('/', '\\', '_', '-', '.', ' ') -> true
-            prevChar.isLowerCase() && currChar.isUpperCase() -> true
-            else -> false
+        return when (prevChar) {
+            '/', '\\', '_', '-', '.', ' ', ':' -> true
+            else -> prevChar.isLowerCase() && currChar.isUpperCase()
         }
     }
 

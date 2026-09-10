@@ -292,15 +292,21 @@ object CrashHandler {
             // ~/.boss/crash-reports and sweepOldReports would delete the developer's
             // actual reports — the exact hazard the override exists to prevent.
             val dir = containedReportDir()
+            // Preserve a live calling-thread scope across the writer hop. Normal
+            // exception handlers run after the boundary unwinds and use its tag;
+            // a caller reporting before unwinding instead needs this ThreadLocal.
+            // Capture only the scope so the expensive classloader scan stays off
+            // the EDT. This cannot identify an originally unscoped callback.
+            val scopedPluginId = PluginExecutionBoundary.currentPluginId()
             // Inline when the caller is about to end the process. The writer is a
             // daemon thread with nothing draining it at shutdown, so a queued task
             // is dropped or killed mid-write by the exit that follows - and the one
             // caller that passes true does so precisely because the record is the
             // justification for that branch existing.
             if (writeInline) {
-                writeContainedReport(dir, signature, throwable)
+                writeContainedReport(dir, signature, throwable, scopedPluginId)
             } else {
-                containedWriter.execute { writeContainedReport(dir, signature, throwable) }
+                containedWriter.execute { writeContainedReport(dir, signature, throwable, scopedPluginId) }
             }
         } catch (e: Exception) {
             // Reporting a contained fault must never itself become a fault.
@@ -313,14 +319,18 @@ object CrashHandler {
         }
     }
 
-    /** Off the EDT — see [containedWriter]. [dir] is resolved by the caller. */
+    /**
+     * Off the EDT — see [containedWriter]. [dir] and [scopedPluginId] are resolved
+     * by the caller, both because this thread cannot resolve them correctly.
+     */
     private fun writeContainedReport(
         dir: File,
         signature: String,
         throwable: Throwable,
+        scopedPluginId: String?,
     ) {
         try {
-            val report = createCrashReport(throwable)
+            val report = createCrashReport(throwable, attributePluginId(throwable, scopedPluginId))
             // Owner-only on the directory *and* the file. Directory perms alone are
             // not enough — 0711 still lets others traverse to a predictable path.
             makeOwnerOnlyDir(dir)
@@ -893,24 +903,33 @@ object CrashHandler {
      *
      * Host crashes return null. Best-effort — attribution must never make crash
      * handling itself fail.
+     *
+     * Source 2 is the only thread-affine one, so [scopedPluginId] exists for the
+     * caller that must read it on a different thread from the one that resolves the
+     * rest ([recordContained], whose writer runs off the EDT). The default argument
+     * samples the calling thread's scope before this function runs, even when a tag
+     * will answer. Passing it explicitly preserves the ladder and moves only where
+     * rank 2 was sampled. An explicit null skips rank 2 entirely; it never falls
+     * back to the evaluating thread's scope.
      */
-    internal fun attributePluginId(throwable: Throwable): String? {
-        PluginExecutionBoundary.attributionFor(throwable)?.let { return it }
-        PluginExecutionBoundary.currentPluginId()?.let { return it }
-        return try {
-            // Root cause first: the crash origin outranks the layers that wrapped it.
-            for (cause in throwable.chainOfCauses().asReversed()) {
-                (cause.javaClass.classLoader as? PluginClassLoader)?.let { return it.pluginId }
-                for (frame in cause.stackTrace) {
-                    PluginClassLoader.findPluginForClass(frame.className)?.let { return it }
+    internal fun attributePluginId(
+        throwable: Throwable,
+        scopedPluginId: String? = PluginExecutionBoundary.currentPluginId(),
+    ): String? =
+        PluginExecutionBoundary.attributionFor(throwable)
+            ?: scopedPluginId
+            ?: try {
+                // Root cause first: the crash origin outranks the layers that wrapped it.
+                throwable.chainOfCauses().asReversed().firstNotNullOfOrNull { cause ->
+                    (cause.javaClass.classLoader as? PluginClassLoader)?.pluginId
+                        ?: cause.stackTrace.firstNotNullOfOrNull { frame ->
+                            PluginClassLoader.findPluginForClass(frame.className)
+                        }
                 }
+            } catch (e: Throwable) {
+                logger.warn(LogCategory.SYSTEM, "Plugin attribution failed: ${e.message}")
+                null
             }
-            null
-        } catch (e: Throwable) {
-            logger.warn(LogCategory.SYSTEM, "Plugin attribution failed: ${e.message}")
-            null
-        }
-    }
 
     /**
      * Get the full stack trace as a string.

@@ -1,5 +1,6 @@
 package ai.rever.boss.crash
 
+import ai.rever.boss.plugin.sandbox.PluginExecutionBoundary
 import java.io.File
 import java.nio.file.Files
 import java.util.concurrent.CountDownLatch
@@ -31,6 +32,16 @@ import kotlin.test.assertTrue
  * stops a task that outlives `tearDown` from resolving the real data root.
  */
 class ContainedCrashReportTest {
+    private companion object {
+        /**
+         * Any id will do: [PluginExecutionBoundary.runAttributed] takes the id as a
+         * string and does not resolve it, so the attribution tests need no real jar
+         * or classloader. Only the classloader-scan rank does, and these exercise the
+         * two ranks above it.
+         */
+        const val PROBE_PLUGIN = "probe.plugin"
+    }
+
     /** Mirrors CrashHandler.CONTAINED_REPORT_RETENTION, which is private. */
     private val retention = 20
 
@@ -166,6 +177,91 @@ class ContainedCrashReportTest {
             "expected at most $retention reports kept, found $kept of $distinctFaults written",
         )
     }
+
+    /**
+     * The regression this path existed to have.
+     *
+     * The fault is reported *inside* the scope and never escapes it, which is what a
+     * contained render fault is: the host caught it, so nothing propagated out of a
+     * `runAttributed` frame to be tagged on the way out. That leaves the thread's
+     * plugin scope as the only source that can answer, and it is a ThreadLocal - so
+     * resolving attribution on the writer thread found nothing and wrote
+     * "(unattributed)" for every plugin fault that took this path.
+     *
+     * Letting the throwable escape the block instead would tag it, and the tag
+     * survives the thread hop, so the test would pass with or without the fix.
+     */
+    @Test
+    fun `a fault reported inside a plugin scope is attributed on the async path`() {
+        PluginExecutionBoundary.runAttributed(PROBE_PLUGIN) {
+            CrashHandler.recordContained(uniqueThrowable("scope-async"))
+        }
+        awaitFiles(1)
+
+        assertEquals(
+            PROBE_PLUGIN,
+            attributionOf(reports().single().readText()),
+            "the plugin scope held at the fault must survive the hop to the writer thread",
+        )
+    }
+
+    /**
+     * The same fault must not attribute differently depending on which branch took
+     * it. `writeInline = true` runs on the calling thread, so it read the scope
+     * correctly by accident while the async branch - the one every caller but the
+     * about-to-exit path uses - did not.
+     */
+    @Test
+    fun `inline and async report the same attribution for one fault`() {
+        PluginExecutionBoundary.runAttributed(PROBE_PLUGIN) {
+            // Distinct markers: one signature would dedupe to a single file and
+            // there would be nothing to compare.
+            CrashHandler.recordContained(uniqueThrowable("scope-inline"), writeInline = true)
+            CrashHandler.recordContained(uniqueThrowable("scope-deferred"))
+        }
+        awaitFiles(2)
+
+        val attributions =
+            reports()
+                .map { it.readText() }
+                .associate { text -> markerOf(text) to attributionOf(text) }
+
+        assertEquals(
+            mapOf("scope-inline" to PROBE_PLUGIN, "scope-deferred" to PROBE_PLUGIN),
+            attributions,
+            "inline and deferred writes must agree about who to blame",
+        )
+    }
+
+    /**
+     * The other direction, and the one that matters more: attribution must not start
+     * inventing a plugin for a host bug. A captured scope of null has to stay
+     * indistinguishable from resolving no scope at all.
+     */
+    @Test
+    fun `a host fault outside any plugin scope stays unattributed`() {
+        CrashHandler.recordContained(uniqueThrowable("host-fault"))
+        awaitFiles(1)
+
+        val text = reports().single().readText()
+        assertEquals("(unattributed)", attributionOf(text), "a host fault must not be blamed on a plugin")
+    }
+
+    /** The `plugin:` field of a rendered report, whitespace trimmed. */
+    private fun attributionOf(reportText: String): String =
+        reportText
+            .lineSequence()
+            .first { it.startsWith("plugin:") }
+            .removePrefix("plugin:")
+            .trim()
+
+    /** The [uniqueThrowable] marker a report was written for. */
+    private fun markerOf(reportText: String): String =
+        reportText
+            .lineSequence()
+            .first { it.startsWith("message:") }
+            .substringAfter("contained-report-test ")
+            .trim()
 
     /** The write is handed to a background thread, so poll rather than sleep a fixed span. */
     private fun awaitFiles(count: Int) {

@@ -962,7 +962,6 @@
     <ID>NestedBlockDepth:ChromiumAutoDownloader.kt$ChromiumAutoDownloader$private fun downloadWithProgress( urlString: String, targetPath: Path, onProgress: (DownloadProgress) -&gt; Unit, )</ID>
     <ID>NestedBlockDepth:ChromiumAutoDownloader.kt$ChromiumAutoDownloader$private fun extractWithJava( zipPath: Path, targetDir: Path, )</ID>
     <ID>NestedBlockDepth:ConfigLoader.kt$ConfigLoader$private fun loadLocalProperties()</ID>
-    <ID>NestedBlockDepth:CrashHandler.kt$CrashHandler$internal fun attributePluginId(throwable: Throwable): String?</ID>
     <ID>NestedBlockDepth:CrossDeviceAuthService.kt$CrossDeviceAuthService$suspend fun pollForAuthenticationCompletion( challenge: String, sessionId: String? = null, ): Result&lt;PasskeyAuthenticationResult&gt;</ID>
     <ID>NestedBlockDepth:DesktopBrowserAccessor.kt$private fun findBrowserForTab( splitViewState: ai.rever.boss.components.window_panel.SplitViewState, tabId: String, ): LockedBrowser?</ID>
     <ID>NestedBlockDepth:DesktopMainFunctionDetector.kt$DesktopMainFunctionDetector$private fun findProjectRootInternal(startDir: File?): File?</ID>
@@ -1095,7 +1094,6 @@
     <ID>ReturnCount:ChromiumAutoDownloader.kt$ChromiumAutoDownloader$fun isChromiumInstalled(): Boolean</ID>
     <ID>ReturnCount:ChromiumAutoDownloader.kt$ChromiumAutoDownloader$internal fun promotePendingInstall( pending: File, target: File, backup: File, )</ID>
     <ID>ReturnCount:ChromiumReleaseSource.kt$ChromiumReleaseResolver.Companion$private fun comparePreRelease( a: List&lt;String&gt;, b: List&lt;String&gt;, ): Int</ID>
-    <ID>ReturnCount:CrashHandler.kt$CrashHandler$internal fun attributePluginId(throwable: Throwable): String?</ID>
     <ID>ReturnCount:CrossDeviceAuthService.kt$CrossDeviceAuthService$suspend fun handleCrossDeviceAuthentication( exception: CrossDeviceAuthenticationRequired, onAuthenticationComplete: suspend (PasskeyAuthenticationResult) -&gt; Result&lt;Unit&gt;, ): Result&lt;Unit&gt;</ID>
     <ID>ReturnCount:CrossDeviceAuthService.kt$CrossDeviceAuthService$suspend fun pollForAuthenticationCompletion( challenge: String, sessionId: String? = null, ): Result&lt;PasskeyAuthenticationResult&gt;</ID>
     <ID>ReturnCount:DeepLinkHandler.kt$DeepLinkHandler$actual fun extractVerificationToken(uri: String): String?</ID>

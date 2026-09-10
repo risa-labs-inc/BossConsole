@@ -1,5 +1,6 @@
 package ai.rever.boss.plugin
 
+import ai.rever.boss.plugin.loader.PluginBundledTrust
 import ai.rever.boss.plugin.loader.PluginSignatureSidecar
 import java.io.File
 
@@ -40,7 +41,10 @@ internal fun purgeJarsFor(
     pluginDir: File,
     manifestIdOf: (File) -> String?,
     deleteJar: (File) -> Boolean = { it.delete() },
-    deleteSidecar: (File) -> Unit = { runCatching { PluginSignatureSidecar.delete(it.absolutePath) } },
+    deleteSidecar: (File) -> Unit = {
+        runCatching { PluginSignatureSidecar.delete(it.absolutePath) }
+        runCatching { PluginBundledTrust.delete(it.absolutePath) }
+    },
 ): Boolean {
     fun jars() =
         pluginDir

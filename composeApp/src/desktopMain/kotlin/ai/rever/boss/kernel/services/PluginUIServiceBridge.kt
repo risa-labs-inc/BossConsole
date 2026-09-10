@@ -368,8 +368,8 @@ class PluginUIServiceBridge(
     /**
      * Everything a registration declares beyond identity.
      *
-     * Kept on the surface for the follow-up that places it in the window, which is what needs
-     * `surface_type` to choose panel vs tab and `default_slot` to position a panel.
+     * Placement uses the type, name, icon and slot; the renderer and receiving event queue use
+     * wantsKeys to gate unclaimed raw keys. All fields belong to this registration.
      */
     private fun UIRegistration.descriptor(): RemoteUiSurfaceDescriptor =
         RemoteUiSurfaceDescriptor(
@@ -377,6 +377,7 @@ class PluginUIServiceBridge(
             displayName = displayName,
             iconName = iconName,
             defaultSlot = defaultSlot,
+            wantsKeys = wantsKeys,
         )
 
     private fun registrationResponse(

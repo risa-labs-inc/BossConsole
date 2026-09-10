@@ -2,6 +2,7 @@ package ai.rever.boss.plugin
 
 import ai.rever.boss.components.plugin.MicrokernelRuntime
 import ai.rever.boss.plugin.api.PluginManifest
+import ai.rever.boss.plugin.loader.PluginBundledTrust
 import ai.rever.boss.plugin.loader.PluginManifestReader
 import ai.rever.boss.plugin.loader.PluginSignatureSidecar
 import ai.rever.boss.utils.Version
@@ -83,8 +84,13 @@ object PluginJarReconciler {
                     deleted.add(loser.file.name)
                     // A `.sig` must never outlive the JAR it describes: left behind
                     // it is an orphan now, and a hard load failure later if a JAR of
-                    // the same name lands on the path.
+                    // the same name lands on the path. A bundled-trust marker is
+                    // harmless to leave (BossConsole#102 - it's content-addressed,
+                    // so it only ever matches bytes it was actually written for),
+                    // but cleaning it up here means one less file to explain if
+                    // someone goes looking.
                     runCatching { PluginSignatureSidecar.delete(loser.file.absolutePath) }
+                    runCatching { PluginBundledTrust.delete(loser.file.absolutePath) }
                 }
                 logger.info(
                     LogCategory.SYSTEM,

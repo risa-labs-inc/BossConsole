@@ -192,4 +192,33 @@ class CrashHandlerAttributionTest {
 
         assertEquals(BOUNDARY_PLUGIN_ID, CrashHandler.attributePluginId(crash))
     }
+
+    @Test
+    fun `a boundary tag outranks an explicitly captured scope`() {
+        val crash = throwFromPlugin("boom")
+        PluginExecutionBoundary.tag(crash, BOUNDARY_PLUGIN_ID)
+
+        assertEquals(BOUNDARY_PLUGIN_ID, CrashHandler.attributePluginId(crash, "other.plugin.scope"))
+    }
+
+    @Test
+    fun `captured scope outranks plugin frames`() {
+        val crash = throwFromPlugin("boom")
+        assertEquals(BOUNDARY_PLUGIN_ID, CrashHandler.attributePluginId(crash, BOUNDARY_PLUGIN_ID))
+    }
+
+    @Test
+    fun `captured null scans plugin frames without sampling the writer scope`() {
+        val crash = throwFromPlugin("boom")
+        PluginExecutionBoundary.runAttributed("writer.plugin") {
+            assertEquals(PLUGIN_ID, CrashHandler.attributePluginId(crash, null))
+        }
+    }
+
+    @Test
+    fun `captured null leaves a host fault unattributed despite the writer scope`() {
+        PluginExecutionBoundary.runAttributed("writer.plugin") {
+            assertNull(CrashHandler.attributePluginId(RuntimeException("host fault"), null))
+        }
+    }
 }

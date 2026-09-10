@@ -11,10 +11,11 @@ import androidx.compose.runtime.Composable
 internal fun RemoteSurfaceContent(
     tree: WidgetTree?,
     connected: Boolean,
+    wantsKeys: Boolean = false,
     onEvent: (String, WidgetEvent) -> Unit,
 ) {
     Column {
         if (!connected) Text("Remote surface disconnected")
-        tree?.let { RemoteWidgetRenderer(tree = it, onEvent = onEvent) }
+        tree?.let { RemoteWidgetRenderer(tree = it, onEvent = onEvent, wantsKeys = wantsKeys) }
     }
 }

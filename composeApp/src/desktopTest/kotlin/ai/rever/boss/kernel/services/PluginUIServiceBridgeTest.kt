@@ -148,6 +148,16 @@ class PluginUIServiceBridgeTest {
     }
 
     @Test
+    fun `wire registration preserves key opt in and defaults older registrations closed`() =
+        runBlocking {
+            assertTrue(plugin.registerUI(registration(PANEL)).success)
+            assertFalse(assertNotNull(registry.surfaceOf(PANEL)).descriptor.wantsKeys)
+            val optedIn = registration(PANEL).toBuilder().setWantsKeys(true).build()
+            assertTrue(plugin.registerUI(optedIn).success)
+            assertTrue(assertNotNull(registry.surfaceOf(PANEL)).descriptor.wantsKeys)
+        }
+
+    @Test
     fun `a widget tree streamed by a plugin reaches the attached host component`() =
         runBlocking {
             val host = RecordingHost()

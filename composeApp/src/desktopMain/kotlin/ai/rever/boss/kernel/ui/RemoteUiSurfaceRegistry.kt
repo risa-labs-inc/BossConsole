@@ -9,8 +9,8 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * The host-side renderer of one remote surface, as the transport sees it.
  *
- * Implemented by `RemotePanelComponent` / `RemoteTabComponent`. Both callbacks arrive on whichever thread
- * gRPC delivered the message on, never the UI thread, and both are invoked **while the surface's publish
+ * Implemented by `RemotePanelComponent` / `RemoteTabComponent`. Callbacks arrive on whichever thread
+ * gRPC delivered the message on, never the UI thread, and are invoked **while the surface's publish
  * lock is held** — which is what makes the sequence a host observes monotonic. So an implementation must:
  *
  * - touch only thread-safe state (Compose snapshot state is — writing it from any thread is fine);
@@ -20,6 +20,9 @@ import java.util.concurrent.ConcurrentHashMap
  * Anything heavier belongs on the far side of a state write the UI observes.
  */
 interface RemoteUiSurfaceHost {
+    /** The publishing surface's key declaration, delivered without a registry lookup by the host. */
+    fun onKeyCapabilityChanged(wantsKeys: Boolean) {}
+
     /** A new widget tree to render. */
     fun onTreeUpdated(tree: WidgetTree)
 
@@ -30,14 +33,21 @@ interface RemoteUiSurfaceHost {
 /**
  * What a plugin declared about a surface when it registered it.
  *
- * Carried, not acted on: placing a remote surface in the window is the follow-up this transport unblocks,
- * and it is what will read these. Mirrors the corresponding `UIRegistration` fields.
+ * Mirrors `UIRegistration`: placement consumes the type/name/icon/slot, and the renderer and
+ * receiving event queue enforce the key declaration.
  */
 data class RemoteUiSurfaceDescriptor(
     val surfaceType: String = "",
     val displayName: String = "",
     val iconName: String = "",
     val defaultSlot: String = "",
+    /**
+     * Whether the plugin declared it wants unclaimed [ai.rever.boss.ipc.proto.KeyEvent]s
+     * (the security note in docs/KEYBOARD_SHORTCUTS.md). False by default and for
+     * every plugin built against a proto before this field existed - the renderer that reads it
+     * must fail closed on a plugin that never sends it.
+     */
+    val wantsKeys: Boolean = false,
 )
 
 /** Outcome of a plugin's `RegisterUI`. */
@@ -175,10 +185,21 @@ class RemoteUiSurfaceRegistry {
                 processId = processId,
                 descriptor = descriptor,
                 publishTree = { from, tree ->
-                    if (surfaces.stillOwnedBy(from)) hosts[surfaceId]?.onTreeUpdated(tree)
+                    if (surfaces.stillOwnedBy(from)) {
+                        hosts[surfaceId]?.apply {
+                            onKeyCapabilityChanged(from.descriptor.wantsKeys)
+                            onTreeUpdated(tree)
+                        }
+                    }
                 },
                 publishConnected = { from, connected ->
-                    if (surfaces.stillOwnedBy(from)) hosts[surfaceId]?.onConnectionChanged(connected)
+                    if (surfaces.stillOwnedBy(from)) {
+                        hosts[surfaceId]?.apply {
+                            // A false publication comes from close(); reset the tap on teardown.
+                            onKeyCapabilityChanged(connected && from.descriptor.wantsKeys)
+                            onConnectionChanged(connected)
+                        }
+                    }
                 },
             )
         val stale = claim(surfaceId, created)
@@ -333,10 +354,12 @@ class RemoteUiSurfaceRegistry {
                 "A second component attached to a surface already being rendered - the first is detached",
                 mapOf("surfaceId" to surfaceId),
             )
+            displaced.onKeyCapabilityChanged(false)
             displaced.onConnectionChanged(false)
         }
         val surface = surfaces[surfaceId]
         if (surface == null) {
+            host.onKeyCapabilityChanged(false)
             host.onConnectionChanged(false)
         } else {
             surface.replayTo(host)
@@ -371,8 +394,8 @@ class RemoteUiSurfaceRegistry {
     /**
      * Queue a user event for the plugin behind [surfaceId].
      *
-     * @return `false` when there is nothing to deliver to — no registered surface, or one already closed.
-     *   Callers log and move on; a click that lands during teardown is not an error condition.
+     * @return `false` when no surface is registered, the receiving surface is closed, or a key
+     *   was not requested by its declaration. Callers drop the event rather than retry a policy refusal.
      */
     fun emit(
         surfaceId: String,
