@@ -916,7 +916,9 @@ internal fun BossAppDialogs(state: BossAppState) {
                                 state.currentDefaultPlugin?.pluginToastState?.show(
                                     ToastMessage(
                                         type = ToastType.SUCCESS,
-                                        title = if (plan.order.size > 1) "Plugins installed" else "Plugin installed",
+                                        // Neutral for a plan, because an element that became present between
+                                        // consent and install is a no-op success and "Plugins" would overstate.
+                                        title = if (plan.order.size > 1) "Install complete" else "Plugin installed",
                                         message =
                                             "${prompt.missing.dependentDisplayName} can use it now. " +
                                                 "Relaunch BOSS if a feature still reports it missing.",

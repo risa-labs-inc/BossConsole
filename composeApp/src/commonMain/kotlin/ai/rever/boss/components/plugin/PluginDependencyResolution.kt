@@ -174,13 +174,10 @@ object PluginDependencyResolution {
     ): List<MissingPluginDependency> =
         manifest.dependencies
             .filterNot { dependency -> dependency.pluginId in installedPluginIds }
-            // A plugin depending on itself is a manifest mistake, not something to offer to
-            // install: the prompt would ask the user to install what they just installed.
-            .filterNot { dependency -> dependency.pluginId == manifest.pluginId }
-            .filterNot { dependency -> dependency.pluginId in NOT_USER_INSTALLABLE }
-            // A blank id is a manifest typo, and it reads as one: "Flow works without , but
-            // some of its features need it", then " was not found in the plugin store."
-            .filterNot { dependency -> dependency.pluginId.isBlank() }
+            // The shape filters live in one place so the direct prompt and the transitive plan
+            // cannot disagree about what may be offered. Presence stays here: it is a question
+            // about the host, not about the id.
+            .filter { dependency -> offerable(dependency.pluginId, parent = manifest.pluginId) }
             .groupBy { dependency -> dependency.pluginId }
             // One prompt per plugin, and when a manifest declares the same dependency twice
             // with different flags the stricter one wins: calling something "Recommended"
@@ -267,13 +264,28 @@ object PluginDependencyResolution {
     /**
      * Whether a declared dependency id is something the dialog may offer at all.
      *
-     * Presence is checked separately by the caller: this is the shape of the id, and matches the
-     * three filters [missingFor] applies for the same reasons.
+     * The one definition for both the direct prompt ([missingFor]) and the transitive plan
+     * ([installPlan]), so they cannot drift. Presence is checked separately by each caller: this
+     * is the shape of the id, not a question about the host.
+     *
+     * - A blank id is a manifest typo, and it reads as one: "Flow works without , but some of
+     *   its features need it", then " was not found in the plugin store."
+     * - A plugin depending on itself is a manifest mistake, not something to offer to install:
+     *   the prompt would ask the user to install what they just installed.
+     * - [NOT_USER_INSTALLABLE] must not be smuggled past a two-button dialog by any declaration.
+     *
+     * Retired ids ([RetiredPluginIds]) are deliberately not filtered here. That filter is
+     * conditional on the replacement's installed version and is applied on the offer surfaces
+     * with an injected lookup; whether a dependency on a retired plugin counts as satisfied by
+     * its replacement is a policy question, tracked as a follow-up to #429.
      */
     private fun offerable(
         child: String,
         parent: String,
-    ): Boolean = child.isNotEmpty() && child != parent && child !in NOT_USER_INSTALLABLE
+    ): Boolean {
+        val id = child.trim()
+        return id.isNotEmpty() && id != parent && id !in NOT_USER_INSTALLABLE
+    }
 
     /**
      * Every loaded, enabled plugin that declares a dependency on [pluginId] - optional ones
@@ -404,6 +416,10 @@ interface MissingDependencyInstaller {
      *
      * Separate from [install] so the prompt can appear immediately with the id and improve
      * itself when the lookup lands, rather than blocking on the network to say anything.
+     *
+     * Cancellation is the one exception to "degrade to null": a `CancellationException`, whether
+     * thrown by the lookup or returned inside its `Result`, propagates, so a dismissed dialog does
+     * not read as a store outage in the log. Every other failure degrades to null.
      */
     suspend fun displayNameFor(pluginId: String): String?
 
@@ -436,9 +452,20 @@ interface MissingDependencyInstaller {
      * run, which is the one the user can act on.
      */
     suspend fun installAll(order: List<String>): Result<Unit> {
+        val root = order.lastOrNull()
         for (pluginId in order) {
-            val result = install(pluginId)
-            if (result.isFailure) return result
+            val error = install(pluginId).exceptionOrNull() ?: continue
+            // A dependency's failure is shown under a title about the root, so say which plugin
+            // did not arrive and that a dependency is the reason. The root's own failure already
+            // names it. Ids rather than names: the dialog shows the id, and a name lookup is a
+            // network call this path must not wait on.
+            val reported =
+                if (pluginId == root) {
+                    error
+                } else {
+                    IllegalStateException("Could not install $root: ${error.message}", error)
+                }
+            return Result.failure(reported)
         }
         return Result.success(Unit)
     }

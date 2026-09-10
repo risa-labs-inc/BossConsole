@@ -225,7 +225,23 @@ class MissingDependencyInstallerPlanTest {
 
             assertTrue(result.isFailure)
             assertEquals(listOf("d"), installer.installed)
-            assertEquals("c did not install", result.exceptionOrNull()?.message)
+            // The dialog's title is about the root, so the message says which plugin did not
+            // arrive and that a dependency is why; the dependency's own message is kept intact.
+            assertEquals("Could not install b: c did not install", result.exceptionOrNull()?.message)
+            assertEquals("c did not install", result.exceptionOrNull()?.cause?.message)
+        }
+
+    @Test
+    fun `the root's own failure is reported as it is`() =
+        runTest {
+            // Nothing to add: the failing plugin is the one the dialog is already about, and
+            // "Could not install b: b did not install" would say it twice.
+            val installer = RecordingInstaller(failOn = "b")
+
+            val result = installer.installAll(listOf("d", "c", "b"))
+
+            assertEquals(listOf("d", "c"), installer.installed)
+            assertEquals("b did not install", result.exceptionOrNull()?.message)
         }
 
     @Test
