@@ -571,6 +571,16 @@ calling `create_secret` puts the new password in them.
 - Formatting is gated by ktlint (`./gradlew ktlintCheck`; fix with
   `./gradlew ktlintFormat`). Static analysis is gated by detekt with
   per-module baselines.
+- **Before every commit or push that changes Kotlin**, run the relevant module's
+  `ktlintCheck`, `detekt`, and focused tests. For Compose app work, use
+  `./gradlew :composeApp:ktlintCheck :composeApp:detekt` plus the affected
+  desktop tests. `git diff --check` catches whitespace only; it does not replace
+  ktlint. Before a PR or when changes span modules, run CI's full static gate:
+  `./gradlew detekt ktlintCheck`.
+- **When CI reports a failure**, reproduce the named Gradle task locally, fix the
+  root cause, and rerun that task plus the affected regression tests before any
+  follow-up push. Do not treat a passing compile or test task as evidence that
+  formatting or static analysis passed.
 - **Blame**: the tree-wide ktlint reformat is listed in
   `.git-blame-ignore-revs`; run
   `git config blame.ignoreRevsFile .git-blame-ignore-revs` once per clone so
@@ -1109,3 +1119,14 @@ no second sandbox prompt. Explicit policies and session trust retain precedence.
 HIGH/CRITICAL names use the mutating default, while unknown names remain allowed
 by default. Risk reasons and sanitized arguments appear together in the existing
 approval dialog. #362 is closed pending extraction into a management plugin.
+
+## MCP activity timeline
+
+`View > MCP Activity` shows the process-wide last 100 completed host executions.
+It stores identifiers, completion time, execution duration and outcome only. It does
+not replace the separate governance audit ledger, which can persist sanitized call
+details. Clear view empties only this in-memory history, across all windows.
+Execution time excludes approval wait; the bottom-bar ledger duration includes it.
+Unknown, disabled, permission-denied and pre-execution rejected calls, approval
+wait timeouts, and transport failures are absent. This is not an agent attribution
+surface. Plugin placement remains a review consideration under issue #416.

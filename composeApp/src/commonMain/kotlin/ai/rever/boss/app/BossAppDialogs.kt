@@ -6,6 +6,7 @@ import ai.rever.boss.components.dialogs.ConfirmationDialog
 import ai.rever.boss.components.dialogs.GlobalSearchDialog
 import ai.rever.boss.components.dialogs.HtmlFileOpenDialog
 import ai.rever.boss.components.dialogs.LogoutConfirmationDialog
+import ai.rever.boss.components.dialogs.McpActivityDialog
 import ai.rever.boss.components.dialogs.McpApprovalDialog
 import ai.rever.boss.components.dialogs.NewProjectWizardDialog
 import ai.rever.boss.components.dialogs.NewTabDialog
@@ -459,6 +460,14 @@ internal fun BossAppDialogs(state: BossAppState) {
         // In the MAIN composition, not inside whichever chrome raised it - see BossAppState.
         state.draggablePanelComponent.ToolLauncherDialog(
             onDismiss = { state.showToolLauncherDialog = false },
+        )
+    }
+
+    if (state.showMcpActivityDialog) {
+        McpActivityDialog(
+            eventsFlow = McpToolRegistryImpl.activityEvents,
+            onClear = McpToolRegistryImpl::clearActivity,
+            onDismiss = { state.showMcpActivityDialog = false },
         )
     }
 

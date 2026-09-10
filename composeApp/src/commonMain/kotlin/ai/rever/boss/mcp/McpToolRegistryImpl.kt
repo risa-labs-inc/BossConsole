@@ -123,6 +123,11 @@ object McpToolRegistryImpl : McpToolRegistry {
             ledger = ledger,
         )
 
+    /** Host-only local activity metadata; never exposed through the plugin API. */
+    internal val activityEvents: StateFlow<List<McpActivityEvent>> get() = core.activityEvents
+
+    internal fun clearActivity() = core.clearActivity()
+
     override val allTools: StateFlow<List<RegisteredMcpTool>> get() = core.allTools
     override val disabledToolNames: StateFlow<Set<String>> get() = core.disabledToolNames
     override val tools: StateFlow<List<RegisteredMcpTool>> get() = core.tools
@@ -366,12 +371,7 @@ private fun truncationMarker(
  * [onFault] is how a kill-switch persistence failure reaches the operator (the
  * façade turns it into a status-bar message); it is also mirrored into [fault].
  */
-// 7 of these arrived with the governance work (policy engine, approval bus, ledger); this
-// change adds the 8th, `maxResultChars`, purely as a test seam alongside `invokeTimeoutMs`.
-// Suppressed rather than hidden behind mutable state: the count is a real signal that this
-// class wants its collaborators grouped into a config object, and that should stay visible
-// to whoever adds the ninth.
-@Suppress("LongParameterList")
+@Suppress("LongParameterList") // Host services, governance, result cap and activity clocks are injected.
 internal class McpToolRegistryCore(
     private val disabledFile: File?,
     private val invokeTimeoutMs: Long = 60_000L,
@@ -380,6 +380,7 @@ internal class McpToolRegistryCore(
     val policyEngine: McpPolicyEngine = McpPolicyEngine(),
     val approvalBus: McpApprovalBus = McpApprovalBus(),
     val ledger: McpOperationLedger = McpOperationLedger(),
+    private val activity: McpActivityTracker = McpActivityTracker(),
 ) {
     private val logger = BossLogger.forComponent("McpToolRegistry")
 
@@ -413,6 +414,9 @@ internal class McpToolRegistryCore(
      * truth to keep on screen. See [McpKillSwitchFault].
      */
     val fault: StateFlow<McpKillSwitchFault?> = _fault.asStateFlow()
+    val activityEvents: StateFlow<List<McpActivityEvent>> = activity.events
+
+    fun clearActivity() = activity.clear()
 
     /**
      * Set when [loadDisabled] found a file it could not parse. While it is up,
@@ -735,7 +739,8 @@ internal class McpToolRegistryCore(
     /** Mirrors host RBAC. The rule itself is [mcpToolPermitted], which is where it is tested. */
     private fun permitted(def: McpToolDefinition): Boolean = mcpToolPermitted(def, isAdmin, permissions)
 
-    @Suppress("LongMethod") // Keep authorization and execution inside the same cancellation audit boundary.
+    @Suppress("LongMethod", "CyclomaticComplexMethod")
+    // Keep authorization and execution inside the same cancellation audit boundary.
     suspend fun invoke(
         toolName: String,
         arguments: String,
@@ -749,6 +754,8 @@ internal class McpToolRegistryCore(
         var disposition = McpApprovalDisposition.AUTO_ALLOWED
         var result: McpToolResult? = null
         var executionStarted = false
+        var activityOutcome: McpActivityOutcome? = null
+        var activityStartedAtNs = 0L
         try {
             val authorization = authorizeInvocation(tool, args, policy)
             disposition = authorization.first
@@ -770,7 +777,8 @@ internal class McpToolRegistryCore(
                             policyEngine.trustForSession(toolName)
                         }
                         executionStarted = true
-                        executeAuthorized(tool, args)
+                        activityStartedAtNs = activity.nowNs()
+                        executeAuthorized(tool, args).also { activityOutcome = it.second }.first
                     }
                 }
             return requireNotNull(result)
@@ -781,8 +789,12 @@ internal class McpToolRegistryCore(
                 } else {
                     McpApprovalDisposition.CANCELLED_AWAITING_APPROVAL
                 }
+            if (executionStarted) activityOutcome = McpActivityOutcome.CANCELLED
             throw cancelled
         } finally {
+            activityOutcome?.let { outcome ->
+                recordActivity(tool, outcome, activityStartedAtNs)
+            }
             withContext(NonCancellable + Dispatchers.IO) {
                 ledger.record(
                     toolName = toolName,
@@ -800,6 +812,24 @@ internal class McpToolRegistryCore(
                         },
                 )
             }
+        }
+    }
+
+    /** Activity telemetry is observational: ordinary store failures cannot change tool behavior. */
+    private fun recordActivity(
+        tool: RegisteredMcpTool,
+        outcome: McpActivityOutcome,
+        startedAtNs: Long,
+    ) {
+        try {
+            activity.record(
+                toolName = tool.definition.name,
+                providerId = tool.providerId,
+                outcome = outcome,
+                startedAtNs = startedAtNs,
+            )
+        } catch (_: Exception) {
+            logger.warn(LogCategory.SYSTEM, "Could not record MCP activity")
         }
     }
 
@@ -843,7 +873,8 @@ internal class McpToolRegistryCore(
                     }
 
                     McpApprovalDecision.QueueFull -> {
-                        McpApprovalDisposition.QUEUE_FULL to "MCP approval queue is full; no operator decision was made"
+                        McpApprovalDisposition.QUEUE_FULL to
+                            "MCP approval queue is full; no operator decision was made"
                     }
 
                     McpApprovalDecision.Timeout -> {
@@ -856,7 +887,10 @@ internal class McpToolRegistryCore(
     private suspend fun executeAuthorized(
         tool: RegisteredMcpTool,
         args: McpToolArgs,
-    ): McpToolResult = capResult(tool.definition.name, executeUncapped(tool, args))
+    ): Pair<McpToolResult, McpActivityOutcome> {
+        val (result, outcome) = executeUncapped(tool, args)
+        return capResult(tool.definition.name, result) to outcome
+    }
 
     /**
      * Bound the text a plugin answers with, whatever it asked to say.
@@ -887,17 +921,26 @@ internal class McpToolRegistryCore(
     }
 
     @Suppress("TooGenericExceptionCaught") // Plugin handlers may throw any implementation-specific exception.
-    private suspend fun executeUncapped(tool: RegisteredMcpTool, args: McpToolArgs): McpToolResult =
+    private suspend fun executeUncapped(
+        tool: RegisteredMcpTool,
+        args: McpToolArgs,
+    ): Pair<McpToolResult, McpActivityOutcome> =
         try {
-            withTimeout(invokeTimeoutMs) { tool.definition.handler.call(args) }
+            withTimeout(invokeTimeoutMs) { tool.definition.handler.call(args) }.let {
+                it to if (it.isError) McpActivityOutcome.ERROR else McpActivityOutcome.SUCCESS
+            }
         } catch (_: TimeoutCancellationException) {
-            McpToolResult("Tool '${tool.definition.name}' timed out after ${invokeTimeoutMs / 1000}s", isError = true)
+            McpToolResult(
+                "Tool '${tool.definition.name}' timed out after ${invokeTimeoutMs / 1000}s",
+                isError = true,
+            ) to
+                McpActivityOutcome.TIMEOUT
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Throwable) {
             // The tool caller receives a sanitized failure; never log the raw plugin exception.
             val reason = LogSanitizer.sanitizeExceptionMessage(failure.message ?: failure::class.simpleName)
-            McpToolResult("Tool '${tool.definition.name}' failed: $reason", isError = true)
+            McpToolResult("Tool '${tool.definition.name}' failed: $reason", isError = true) to McpActivityOutcome.ERROR
         }
 
     /**

@@ -707,6 +707,15 @@ fun ApplicationScope.BossWindow(
                 Separator()
 
                 Item(
+                    "MCP Activity…",
+                    onClick = {
+                        MenuActionsHandler.triggerShowMcpActivity(windowState.id)
+                    },
+                )
+
+                Separator()
+
+                Item(
                     "Split Vertically",
                     shortcut = shortcutBridge.getKeyShortcut(KeymapActions.PANEL_SPLIT_VERTICAL),
                     onClick = {

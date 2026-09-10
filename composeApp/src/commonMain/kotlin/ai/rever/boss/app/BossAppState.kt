@@ -85,6 +85,7 @@ internal class BossAppState(
     var newTabDialogInitialType by mutableStateOf<TabType?>(null)
     var showTopOfMindDialog by mutableStateOf(false)
     var showGlobalSearchDialog by mutableStateOf(false)
+    var showMcpActivityDialog by mutableStateOf(false)
 
     /**
      * The tools launcher's dialog.

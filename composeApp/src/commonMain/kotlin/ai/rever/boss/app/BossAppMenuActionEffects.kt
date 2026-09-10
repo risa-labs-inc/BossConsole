@@ -552,6 +552,13 @@ internal fun BossAppMenuActionEffects(
             }.launchIn(this)
     }
 
+    LaunchedEffect(windowId) {
+        MenuActionsHandler.showMcpActivityEvents
+            .onEach { eventWindowId ->
+                if (eventWindowId == windowId) state.showMcpActivityDialog = true
+            }.launchIn(this)
+    }
+
     // Handle Panel Navigation menu events (consolidated)
     LaunchedEffect(windowId) {
         val navigationFlows =
