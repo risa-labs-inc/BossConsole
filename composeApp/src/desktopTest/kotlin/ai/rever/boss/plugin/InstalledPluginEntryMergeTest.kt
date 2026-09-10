@@ -137,6 +137,35 @@ class InstalledPluginEntryMergeTest {
         assertNull(decoded.installedAt)
         assertNull(decoded.buildStamp)
         assertNull(decoded.buildTag)
+        assertNull(decoded.failureReason)
+        assertNull(decoded.failureTimestamp)
+        assertNull(decoded.failureRestartAttempts)
+    }
+
+    @Test
+    fun `re-enable clears restart disable and preserves manual disables`() {
+        val disabled = PluginPersistence.restartLimitFailureEntry(hotRow, 3, NOW)
+        val recovered = PluginPersistence.restartLimitRecoveryEntry(disabled)
+        assertEquals(true, recovered.enabled)
+        assertNull(recovered.failureReason)
+        assertNull(recovered.failureTimestamp)
+        assertNull(recovered.failureRestartAttempts)
+        assertEquals(hotRow.jarPath, recovered.jarPath)
+        val manual = hotRow.copy(enabled = false)
+        assertEquals(manual, PluginPersistence.restartLimitRecoveryEntry(manual))
+    }
+
+    @Test
+    fun `restart-limit failure keeps plugin metadata and records the automatic disable details`() {
+        val failure = PluginPersistence.restartLimitFailureEntry(hotRow, restartAttempts = 3, timestamp = NOW)
+
+        assertEquals(false, failure.enabled)
+        assertEquals(PluginPersistence.MAX_RESTART_ATTEMPTS_FAILURE_REASON, failure.failureReason)
+        assertEquals(NOW, failure.failureTimestamp)
+        assertEquals(3, failure.failureRestartAttempts)
+        assertEquals(hotRow.jarPath, failure.jarPath)
+        assertEquals(hotRow.installedVersion, failure.installedVersion)
+        assertEquals(hotRow.sourceUrl, failure.sourceUrl)
     }
 
     @Test

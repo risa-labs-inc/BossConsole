@@ -378,6 +378,11 @@ class DefaultPlugin(
     private val notificationService =
         BossPluginNotificationService(
             toastController = pluginToastState,
+            displayNameOf = { id ->
+                dynamicPluginManager.pluginStates.value[id]
+                    ?.manifest
+                    ?.displayName ?: id
+            },
             onDisablePlugin = { pluginId ->
                 pluginScope.launch {
                     sandboxManager.disablePlugin(pluginId)

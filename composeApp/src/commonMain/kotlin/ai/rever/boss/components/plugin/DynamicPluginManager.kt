@@ -353,6 +353,16 @@ class DynamicPluginManager(
         var pluginRemovalVeto: ((pluginId: String) -> String?)? = null
 
         /**
+         * Desktop-owned persistence for a watchdog restart-budget exhaustion.
+         * The platform reports the event, but never needs to know how the app stores it.
+         */
+        @Volatile
+        var restartLimitFailureRecorder: ((pluginId: String, restartAttempts: Int) -> Unit)? = null
+
+        @Volatile
+        var restartLimitRecoveryRecorder: ((pluginId: String) -> Unit)? = null
+
+        /**
          * Runs swaps decoupled from the caller. The trigger usually fires
          * from a PLUGIN's own coroutine (Toolbox update runs on
          * plugin-manager's scope, evolver hot-reload on terminal-tab's) and
@@ -751,6 +761,17 @@ class DynamicPluginManager(
                 managerScope.launch(Dispatchers.Main) {
                     runCatching { reregisterAfterRestart(pluginId) }
                 }
+            }
+
+            override fun onPluginEnabled(pluginId: String) {
+                restartLimitRecoveryRecorder?.invoke(pluginId)
+            }
+
+            override fun onPluginRestartLimitExceeded(
+                pluginId: String,
+                restartAttempts: Int,
+            ) {
+                restartLimitFailureRecorder?.invoke(pluginId, restartAttempts)
             }
         }
 
@@ -1220,6 +1241,9 @@ class DynamicPluginManager(
         // hops to the UI thread, which may re-enter manager operations (same
         // reasoning as pluginTabsTeardown in uninstallPlugin).
         result.getOrNull()?.takeIf { it.state == PluginState.LOADED }?.let { info ->
+            recordRestartRecoveryIfRunning(info, sandboxManager.isPluginDisabled(info.manifest.pluginId)) { pluginId ->
+                restartLimitRecoveryRecorder?.invoke(pluginId)
+            }
             notifyPanelsRefresh(info.manifest.pluginId)
         }
         // Which build is now running. Every install path lands here (cold start, update, reload,

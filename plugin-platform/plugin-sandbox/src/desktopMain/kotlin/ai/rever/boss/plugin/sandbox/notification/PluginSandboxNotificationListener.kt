@@ -35,6 +35,9 @@ class PluginSandboxNotificationListener(
     // Track restart attempts for showing attempt number in notifications
     private val restartAttempts = mutableMapOf<String, Int>()
 
+    // The sandbox emits this event immediately before its existing generic disable event.
+    private val restartLimitNotified = mutableSetOf<String>()
+
     override fun onPluginRestarting(pluginId: String) {
         val attempt = restartAttempts.getOrDefault(pluginId, 0) + 1
         restartAttempts[pluginId] = attempt
@@ -70,6 +73,10 @@ class PluginSandboxNotificationListener(
         // Clear attempt counter
         restartAttempts.remove(pluginId)
 
+        // The restart-limit event already showed the actionable, detailed toast.
+        // Consume its marker so a later user disable follows the normal path.
+        if (restartLimitNotified.remove(pluginId)) return
+
         logger.debug(
             LogCategory.SYSTEM,
             "Plugin disabled notification",
@@ -79,6 +86,14 @@ class PluginSandboxNotificationListener(
         )
 
         notificationService.notifyPluginDisabled(pluginId)
+    }
+
+    override fun onPluginRestartLimitExceeded(
+        pluginId: String,
+        restartAttempts: Int,
+    ) {
+        restartLimitNotified.add(pluginId)
+        notificationService.notifyPluginRestartLimitExceeded(pluginId, restartAttempts)
     }
 
     override fun onPluginError(

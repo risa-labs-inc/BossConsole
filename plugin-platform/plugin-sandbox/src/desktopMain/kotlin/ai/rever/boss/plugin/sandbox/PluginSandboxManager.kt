@@ -102,7 +102,8 @@ interface PluginSandboxManager {
     suspend fun restartPlugin(pluginId: String): Result<Unit>
 
     /**
-     * Disable a plugin. It will be stopped and won't auto-restart.
+     * Disable an existing plugin. It will be stopped and won't auto-restart.
+     * A missing sandbox is already stopped and is a no-op.
      * @param pluginId Plugin identifier
      * @return Result indicating success or failure
      */
@@ -157,6 +158,19 @@ interface PluginSandboxListener {
      * Called when a plugin has been disabled due to too many failures.
      */
     fun onPluginDisabled(pluginId: String) {}
+
+    /** Called after a user successfully re-enables a sandbox. */
+    fun onPluginEnabled(pluginId: String) {}
+
+    /**
+     * Called only when the watchdog disables a plugin after it has exhausted
+     * its automatic restart budget. This is intentionally separate from
+     * [onPluginDisabled], which also represents a user-requested disable.
+     */
+    fun onPluginRestartLimitExceeded(
+        pluginId: String,
+        restartAttempts: Int,
+    ) {}
 
     /**
      * Called when a plugin encounters an error.
@@ -321,8 +335,8 @@ class PluginSandboxManagerImpl(
     override fun getSandbox(pluginId: String): PluginSandbox? = sandboxes[pluginId]
 
     /**
-     * Note the watchdog-then-sandbox order here, in [disablePlugin] and in
-     * [fullyUnloadPlugin]. It is safe at these three sites only because none of
+     * Note the watchdog-then-sandbox order here and in [fullyUnloadPlugin].
+     * It is safe at these two sites only because neither of
      * them is reached from inside a watchdog coroutine. The same order in
      * [handleRestartRequest] stopped the coroutine that was executing it and so
      * skipped the suspending pool teardown entirely - see the comment there
@@ -343,7 +357,11 @@ class PluginSandboxManagerImpl(
 
         // Stop and remove sandbox
         sandboxes[pluginId]?.stop()
-        sandboxes.remove(pluginId)
+        synchronized(sandboxes) {
+            sandboxes.remove(pluginId)
+            // Disable state belongs to the removed instance, not its future replacement.
+            disabledPlugins.remove(pluginId)
+        }
 
         // Unregister from health monitor
         healthMonitor.unregisterSandbox(pluginId)
@@ -381,10 +399,11 @@ class PluginSandboxManagerImpl(
 
             // 3. Stop sandbox
             sandboxes[pluginId]?.stop()
-            sandboxes.remove(pluginId)
-
-            // 4. Remove from disabled set if present
-            disabledPlugins.remove(pluginId)
+            synchronized(sandboxes) {
+                sandboxes.remove(pluginId)
+                // 4. Remove from disabled set if present
+                disabledPlugins.remove(pluginId)
+            }
 
             // 5. Unregister from health monitor
             healthMonitor.unregisterSandbox(pluginId)
@@ -450,19 +469,23 @@ class PluginSandboxManagerImpl(
                 ),
             )
 
-            disabledPlugins.add(pluginId)
-
+            // Missing/removed instances must not leave a disable flag for a future replacement.
             val sandbox = sandboxes[pluginId]
-            if (sandbox != null) {
-                // Stop the watchdog to prevent auto-restart
-                watchdogs[pluginId]?.stop()
-
-                // Stop the sandbox and set state to DISABLED
-                sandbox.stop()
-                sandbox.setDisabled()
+            if (sandbox == null) {
+                logger.debug(
+                    LogCategory.SYSTEM,
+                    "Disable skipped: sandbox already removed",
+                    mapOf("pluginId" to pluginId),
+                )
+                return@runCatching
             }
-
-            notifyListeners { it.onPluginDisabled(pluginId) }
+            val watchdog = watchdogs[pluginId]
+            sandbox.stop()
+            if (markDisabledIfCurrent(sandbox)) {
+                // Guard the watchdog too: a replacement may have arrived between the map reads.
+                watchdog?.stop()
+                notifyListeners { it.onPluginDisabled(pluginId) }
+            }
         }
 
     override suspend fun enablePlugin(pluginId: String): Result<Unit> =
@@ -492,12 +515,25 @@ class PluginSandboxManagerImpl(
 
                 // Start the sandbox
                 sandbox.start()
+                notifyListeners { it.onPluginEnabled(pluginId) }
             }
         }
 
     override fun isPluginDisabled(pluginId: String): Boolean = disabledPlugins.contains(pluginId)
 
     override fun getDisabledPlugins(): Set<String> = disabledPlugins.toSet()
+
+    /** A cancelled watchdog must not publish disable state for a removed or replaced instance. */
+    internal fun markDisabledIfCurrent(sandbox: InProcessPluginSandbox): Boolean =
+        synchronized(sandboxes) {
+            if (sandboxes[sandbox.pluginId] !== sandbox) {
+                false
+            } else {
+                sandbox.setDisabled()
+                disabledPlugins.add(sandbox.pluginId)
+                true
+            }
+        }
 
     /**
      * What the watchdog asks for when a plugin looks dead. Internal rather than
@@ -526,6 +562,13 @@ class PluginSandboxManagerImpl(
                     "attempts" to metrics.restartAttempts,
                 ),
             )
+            // Report the detected budget failure while this instance is still current. The
+            // later generic disable notification remains after teardown, preserving toast suppression.
+            synchronized(sandboxes) {
+                if (sandboxes[pluginId] === sandbox) {
+                    notifyListeners { it.onPluginRestartLimitExceeded(pluginId, metrics.restartAttempts) }
+                }
+            }
             // Order matters, and it is the opposite of what reads naturally.
             // This runs inside the watchdog's own coroutine (checkHealth ->
             // triggerRestart -> onRestartRequested), so stopping the watchdog
@@ -536,12 +579,13 @@ class PluginSandboxManagerImpl(
             // plugin disabled this way stranded a two-thread non-daemon pool
             // for the life of the process. So: tear the sandbox down first,
             // and stop the watchdog once nothing is left that needs to suspend.
+            val watchdog = watchdogs[pluginId]
             sandbox.stop()
-            sandbox.setDisabled()
-            disabledPlugins.add(pluginId)
-            notifyListeners { it.onPluginDisabled(pluginId) }
-            // Last: prevents further restart attempts, and cancels us.
-            watchdogs[pluginId]?.stop()
+            if (markDisabledIfCurrent(sandbox)) {
+                notifyListeners { it.onPluginDisabled(pluginId) }
+                // Last: stop this instance's watchdog, never a replacement's.
+                watchdog?.stop()
+            }
             return
         }
 

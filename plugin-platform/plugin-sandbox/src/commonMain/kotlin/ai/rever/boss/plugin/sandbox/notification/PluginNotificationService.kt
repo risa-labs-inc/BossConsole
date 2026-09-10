@@ -37,6 +37,14 @@ interface PluginNotificationService {
     )
 
     /**
+     * Notify that automatic restarts exhausted the plugin's restart budget.
+     */
+    fun notifyPluginRestartLimitExceeded(
+        pluginId: String,
+        restartAttempts: Int,
+    ) {}
+
+    /**
      * Notify that a plugin has been disabled.
      */
     fun notifyPluginDisabled(pluginId: String)

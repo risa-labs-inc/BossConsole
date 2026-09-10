@@ -99,6 +99,32 @@ class PluginSandboxManagerTest {
             }
 
         @Test
+        fun `removing disabled sandbox clears recovery bookkeeping before replacement`() =
+            runTest {
+                val old = manager.createSandbox("plugin-1")
+                manager.disablePlugin("plugin-1").getOrThrow()
+                assertTrue(manager.isPluginDisabled("plugin-1"))
+                manager.removeSandbox("plugin-1")
+                assertFalse(manager.isPluginDisabled("plugin-1"))
+                val replacement = manager.createSandbox("plugin-1")
+                assertTrue(old !== replacement)
+                assertFalse(manager.isPluginDisabled("plugin-1"))
+            }
+
+        @Test
+        fun `late watchdog disable cannot mark a replacement sandbox disabled`() =
+            runTest {
+                val old = manager.createSandbox("plugin-1") as InProcessPluginSandbox
+                manager.removeSandbox("plugin-1")
+                manager.createSandbox("plugin-1")
+                assertFalse(manager.markDisabledIfCurrent(old))
+                assertFalse(manager.isPluginDisabled("plugin-1"))
+                val current = manager.getSandbox("plugin-1") as InProcessPluginSandbox
+                assertTrue(manager.markDisabledIfCurrent(current))
+                assertTrue(manager.isPluginDisabled("plugin-1"))
+            }
+
+        @Test
         fun `removeSandbox is safe for unknown plugin`() =
             runTest {
                 // Should not throw
@@ -144,6 +170,17 @@ class PluginSandboxManagerTest {
 
     @Nested
     inner class DisableEnableTests {
+        @Test
+        fun `disable after removal cannot poison a future sandbox`() =
+            runTest {
+                manager.createSandbox("plugin-1")
+                manager.removeSandbox("plugin-1")
+                manager.disablePlugin("plugin-1").getOrThrow()
+                assertFalse(manager.isPluginDisabled("plugin-1"))
+                manager.createSandbox("plugin-1")
+                assertFalse(manager.isPluginDisabled("plugin-1"))
+            }
+
         @Test
         fun `disablePlugin marks plugin as disabled`() =
             runTest {
@@ -246,10 +283,18 @@ class PluginSandboxManagerTest {
         fun `listener receives onPluginDisabled event`() =
             runTest {
                 var receivedPluginId: String? = null
+                var restartLimitReported = false
                 val listener =
                     object : PluginSandboxListener {
                         override fun onPluginDisabled(pluginId: String) {
                             receivedPluginId = pluginId
+                        }
+
+                        override fun onPluginRestartLimitExceeded(
+                            pluginId: String,
+                            restartAttempts: Int,
+                        ) {
+                            restartLimitReported = true
                         }
                     }
                 manager.addListener(listener)
@@ -258,6 +303,7 @@ class PluginSandboxManagerTest {
                 manager.disablePlugin("plugin-1")
 
                 assertEquals("plugin-1", receivedPluginId)
+                assertFalse(restartLimitReported, "a normal disable is not a restart-limit failure")
             }
 
         @Test
@@ -288,6 +334,25 @@ class PluginSandboxManagerTest {
 
                 assertTrue(result.isSuccess, "a throwing listener must not fail the restart")
                 assertEquals("plugin-1", secondListenerSaw, "later listeners were skipped")
+            }
+
+        @Test
+        fun `successful enable reports recovery but missing sandboxes do not`() =
+            runTest {
+                val enabled = mutableListOf<String>()
+                val listener =
+                    object : PluginSandboxListener {
+                        override fun onPluginEnabled(pluginId: String) {
+                            assertFalse(manager.isPluginDisabled(pluginId))
+                            enabled += pluginId
+                        }
+                    }
+                manager.addListener(listener)
+                manager.createSandbox("plugin-1")
+                manager.disablePlugin("plugin-1")
+                assertTrue(manager.enablePlugin("plugin-1").isSuccess)
+                manager.enablePlugin("missing")
+                assertEquals(listOf("plugin-1"), enabled)
             }
 
         @Test
@@ -376,10 +441,18 @@ class PluginSandboxManagerTest {
                 val budgetManager = PluginSandboxManagerImpl(config)
                 try {
                     val disabledNotification = CompletableDeferred<String>()
+                    val restartLimitNotification = CompletableDeferred<Pair<String, Int>>()
                     val listener =
                         object : PluginSandboxListener {
                             override fun onPluginDisabled(pluginId: String) {
                                 disabledNotification.complete(pluginId)
+                            }
+
+                            override fun onPluginRestartLimitExceeded(
+                                pluginId: String,
+                                restartAttempts: Int,
+                            ) {
+                                restartLimitNotification.complete(pluginId to restartAttempts)
                             }
                         }
                     budgetManager.addListener(listener)
@@ -405,6 +478,10 @@ class PluginSandboxManagerTest {
                     // Await notification instead of racing that thread through an unsynchronized variable.
                     assertEquals("plugin-1", withTimeout(10_000) { disabledNotification.await() })
                     assertTrue(budgetManager.isPluginDisabled("plugin-1"))
+                    assertEquals(
+                        "plugin-1" to 0,
+                        withTimeout(10_000) { restartLimitNotification.await() },
+                    )
 
                     val terminated =
                         withTimeoutOrNull(5_000) {

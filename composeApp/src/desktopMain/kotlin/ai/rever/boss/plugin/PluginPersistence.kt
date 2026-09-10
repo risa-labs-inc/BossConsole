@@ -29,7 +29,7 @@ object PluginPersistence {
      * [installedVersion]: that one feeds store update checks (`isNewerVersion`) and the
      * `pluginId|version|sha256` signing anchor, so a suffixed string must never land in it.
      *
-     * All three are nullable with defaults, and the reader sets `ignoreUnknownKeys`, so a file
+     * These optional fields have defaults, and the reader sets `ignoreUnknownKeys`, so a file
      * written by this build still loads on an older host (it ignores them) and a file written by
      * an older host still loads here (they come back null).
      */
@@ -46,6 +46,12 @@ object PluginPersistence {
         val buildStamp: Long? = null,
         /** "debug" for an unvetted local jar, "hot" once its bytes were replaced under us. */
         val buildTag: String? = null,
+        /** Why the host automatically disabled this plugin, if applicable. */
+        val failureReason: String? = null,
+        /** When the automatic disable happened, in epoch millis. */
+        val failureTimestamp: Long? = null,
+        /** Number of restart attempts recorded when the automatic disable happened. */
+        val failureRestartAttempts: Int? = null,
     )
 
     @Serializable
@@ -441,6 +447,39 @@ object PluginPersistence {
     }
 
     /**
+     * Persist the one automatic-disable outcome that callers may surface later.
+     * Manual enables/disables deliberately continue to use [setPluginEnabled]
+     * and therefore do not create or overwrite failure details.
+     */
+    fun recordRestartLimitExceeded(
+        pluginId: String,
+        restartAttempts: Int,
+        timestamp: Long = System.currentTimeMillis(),
+    ): Boolean {
+        synchronized(configLock) {
+            val cfg = loadConfigInternal()
+            val entry = cfg.plugins.find { it.pluginId == pluginId } ?: return false
+            val index = cfg.plugins.indexOf(entry)
+            cfg.plugins[index] = restartLimitFailureEntry(entry, restartAttempts, timestamp)
+            saveConfigInternal()
+            return true
+        }
+    }
+
+    /** Pure entry update used by [recordRestartLimitExceeded] and its persistence-focused tests. */
+    fun restartLimitFailureEntry(
+        entry: InstalledPluginEntry,
+        restartAttempts: Int,
+        timestamp: Long,
+    ): InstalledPluginEntry =
+        entry.copy(
+            enabled = false,
+            failureReason = MAX_RESTART_ATTEMPTS_FAILURE_REASON,
+            failureTimestamp = timestamp,
+            failureRestartAttempts = restartAttempts,
+        )
+
+    /**
      * Get all installed plugins.
      */
     fun getInstalledPlugins(): List<InstalledPluginEntry> {
@@ -468,4 +507,24 @@ object PluginPersistence {
             saveConfigInternal()
         }
     }
+
+    /** A successful Re-enable must survive the next launch as well as this session. */
+    fun recordRestartLimitRecovery(pluginId: String) {
+        synchronized(configLock) {
+            val cfg = loadConfigInternal()
+            val index = cfg.plugins.indexOfFirst { it.pluginId == pluginId }
+            if (index < 0) return
+            cfg.plugins[index] = restartLimitRecoveryEntry(cfg.plugins[index])
+            saveConfigInternal()
+        }
+    }
+
+    internal fun restartLimitRecoveryEntry(entry: InstalledPluginEntry): InstalledPluginEntry =
+        if (entry.failureReason == MAX_RESTART_ATTEMPTS_FAILURE_REASON) {
+            entry.copy(enabled = true, failureReason = null, failureTimestamp = null, failureRestartAttempts = null)
+        } else {
+            entry
+        }
+
+    const val MAX_RESTART_ATTEMPTS_FAILURE_REASON = "Maximum restart attempts exceeded"
 }
