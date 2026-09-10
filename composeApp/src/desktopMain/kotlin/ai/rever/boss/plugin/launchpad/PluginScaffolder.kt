@@ -8,7 +8,7 @@ import java.nio.file.attribute.PosixFilePermission
 /**
  * Scaffolds third-party plugin projects with standard structure, Gradle wrapper, build, and tests.
  */
-@Suppress("LongMethod", "TooManyFunctions", "ComplexCondition")
+@Suppress("LongMethod", "TooManyFunctions", "ComplexCondition", "LargeClass")
 object PluginScaffolder {
     enum class Template(
         val type: String,
@@ -36,6 +36,7 @@ object PluginScaffolder {
         val filesCreated: List<File>,
     )
 
+    @Suppress("CyclomaticComplexMethod", "LongMethod")
     fun scaffold(
         name: String,
         templateName: String = "mcp-tool",
@@ -44,8 +45,16 @@ object PluginScaffolder {
     ): ScaffoldResult {
         val template = Template.fromString(templateName)
 
-        if (targetDir.exists() && targetDir.isDirectory && (targetDir.listFiles()?.isNotEmpty() == true) && !force) {
-            error("Target directory '${targetDir.absolutePath}' exists and is not empty. Use --force to overwrite.")
+        if (targetDir.exists() && targetDir.isDirectory) {
+            val existingFiles = targetDir.listFiles()
+            if (existingFiles?.isNotEmpty() == true) {
+                if (!force) {
+                    val path = targetDir.absolutePath
+                    error("Target directory '$path' exists and is not empty. Use --force to overwrite.")
+                }
+                assertSafeToPurge(targetDir)
+                existingFiles.forEach { it.deleteRecursively() }
+            }
         }
 
         if (!targetDir.exists() && !targetDir.mkdirs()) {
@@ -53,13 +62,23 @@ object PluginScaffolder {
         }
 
         val pluginId =
-            name
-                .trim()
-                .lowercase()
-                .replace(Regex("[^a-z0-9-]"), "-")
-                .replace(Regex("-+"), "-")
-                .trim('-')
-                .ifBlank { "custom-plugin" }
+            if (name.contains('.')) {
+                name
+                    .trim()
+                    .lowercase()
+                    .replace(Regex("[^a-z0-9._-]"), "-")
+                    .replace(Regex("-+"), "-")
+                    .trim('-', '.')
+                    .ifBlank { "custom-plugin" }
+            } else {
+                name
+                    .trim()
+                    .lowercase()
+                    .replace(Regex("[^a-z0-9-]"), "-")
+                    .replace(Regex("-+"), "-")
+                    .trim('-')
+                    .ifBlank { "custom-plugin" }
+            }
 
         val className = sanitizeClassIdentifier(name)
         val packageSuffix = sanitizePackageIdentifier(pluginId)
@@ -93,28 +112,43 @@ object PluginScaffolder {
 
         val manifest =
             PluginManifest(
-                id = pluginId,
-                name = name,
+                pluginId = pluginId,
+                displayName = name,
                 version = "0.1.0",
                 description = "BossConsole plugin for $name ($templateName template)",
                 author = "Boss Developer",
-                minApiVersion = HostMeta.CURRENT_API_VERSION,
-                entrypointClass = "$packageName.$className",
+                apiVersion = HostMeta.CURRENT_API_VERSION,
+                mainClass = "$packageName.$className",
+                manifestVersion = 1,
+                systemPlugin = false,
+                canUnload = true,
                 permissions = permissions,
                 mcpTools = mcpTools,
             )
 
         val filesCreated = mutableListOf<File>()
 
-        // 1. plugin.json
+        // 1. Root plugin.json
         val manifestFile = File(targetDir, "plugin.json")
-        manifestFile.writeText(launchpadJson.encodeToString(manifest))
+        val manifestContent = launchpadJson.encodeToString(manifest)
+        manifestFile.writeText(manifestContent)
         filesCreated += manifestFile
+
+        // 1b. Resource manifest: src/main/resources/META-INF/boss-plugin/plugin.json
+        val metaInfDir = File(targetDir, "src/main/resources/META-INF/boss-plugin")
+        metaInfDir.mkdirs()
+        val resourceManifest = File(metaInfDir, "plugin.json")
+        resourceManifest.writeText(manifestContent)
+        filesCreated += resourceManifest
 
         // 2. build.gradle.kts
         val gradleFile = File(targetDir, "build.gradle.kts")
         gradleFile.writeText(generateBuildGradle(HostMeta.CURRENT_API_VERSION))
         filesCreated += gradleFile
+
+        // 2b. libs directory for local development fallback
+        val libsDir = File(targetDir, "libs")
+        libsDir.mkdirs()
 
         // 3. settings.gradle.kts
         val settingsFile = File(targetDir, "settings.gradle.kts")
@@ -144,33 +178,26 @@ object PluginScaffolder {
         gradlewBatFile.writeText(generateGradlewBat())
         filesCreated += gradlewBatFile
 
-        // 7. Base contract: src/main/kotlin/ai/rever/boss/plugin/launchpad/BossPlugin.kt
-        val contractDir = File(targetDir, "src/main/kotlin/ai/rever/boss/plugin/launchpad")
-        contractDir.mkdirs()
-        val contractFile = File(contractDir, "BossPlugin.kt")
-        contractFile.writeText(generateContractFile())
-        filesCreated += contractFile
-
-        // 8. Entrypoint source file: src/main/kotlin/<package-path>/<PluginName>.kt
+        // 7. Entrypoint source file: src/main/kotlin/<package-path>/<PluginName>.kt
         val srcDir = File(targetDir, "src/main/kotlin/$packageDirRel")
         srcDir.mkdirs()
         val entrypointFile = File(srcDir, "$className.kt")
         entrypointFile.writeText(generateSourceFile(packageName, className, name, pluginId, template))
         filesCreated += entrypointFile
 
-        // 9. Sample test file: src/test/kotlin/<package-path>/<PluginName>Test.kt
+        // 8. Sample test file: src/test/kotlin/<package-path>/<PluginName>Test.kt
         val testDir = File(targetDir, "src/test/kotlin/$packageDirRel")
         testDir.mkdirs()
         val testFile = File(testDir, "${className}Test.kt")
-        testFile.writeText(generateTestFile(packageName, className))
+        testFile.writeText(generateTestFile(packageName, className, name, pluginId))
         filesCreated += testFile
 
-        // 10. .gitignore
+        // 9. .gitignore
         val gitignoreFile = File(targetDir, ".gitignore")
         gitignoreFile.writeText(generateGitignore())
         filesCreated += gitignoreFile
 
-        // 11. README.md
+        // 10. README.md
         val readmeFile = File(targetDir, "README.md")
         readmeFile.writeText(generateReadme(name, pluginId, template.type, HostMeta.CURRENT_API_VERSION))
         filesCreated += readmeFile
@@ -200,21 +227,13 @@ object PluginScaffolder {
     }
 
     private fun copyOrGenerateWrapperJar(targetJar: File) {
-        val candidates =
-            listOf(
-                File("gradle/wrapper/gradle-wrapper.jar"),
-                File("../gradle/wrapper/gradle-wrapper.jar"),
-                File("../../gradle/wrapper/gradle-wrapper.jar"),
-            )
-        for (candidate in candidates) {
-            if (candidate.exists() && candidate.isFile && candidate.length() > 0) {
-                candidate.copyTo(targetJar, overwrite = true)
-                return
+        val resourceStream =
+            PluginScaffolder::class.java.getResourceAsStream("/launcher/gradle-wrapper.jar")
+                ?: error("Resource /launcher/gradle-wrapper.jar not found in host resources")
+        resourceStream.use { input ->
+            targetJar.outputStream().use { output ->
+                input.copyTo(output)
             }
-        }
-        // Minimal fallback stub: empty or placeholder if host wrapper jar not found
-        if (!targetJar.exists()) {
-            targetJar.writeBytes(ByteArray(0))
         }
     }
 
@@ -227,70 +246,33 @@ object PluginScaffolder {
         zipStorePath=wrapper/dists
         """.trimIndent() + "\n"
 
-    private fun generateGradlew(): String {
-        val candidates =
-            listOf(
-                File("gradlew"),
-                File("../gradlew"),
-                File("../../gradlew"),
-            )
-        for (candidate in candidates) {
-            if (candidate.exists() && candidate.isFile && candidate.length() > 0) {
-                return candidate.readText().replace("\r\n", "\n").replace("\r", "\n")
-            }
-        }
-        return """
-            #!/bin/sh
-            # Minimal gradlew launcher
-            set -e
-            PRG="${'$'}0"
-            while [ -h "${'$'}PRG" ]; do
-                link="${'$'}(readlink "${'$'}PRG" 2>/dev/null || true)"
-                if [ -z "${'$'}link" ]; then
-                    break
-                fi
-                case "${'$'}link" in
-                    /*) PRG="${'$'}link" ;;
-                    *) PRG="${'$'}(dirname "${'$'}PRG")/${'$'}link" ;;
-                esac
-            done
-            APP_HOME="${'$'}(cd "${'$'}(dirname "${'$'}PRG")" >/dev/null 2>&1 && pwd)"
-            exec java -jar "${'$'}APP_HOME/gradle/wrapper/gradle-wrapper.jar" "${'$'}@"
-            """.trimIndent() + "\n"
-    }
-
-    private fun generateGradlewBat(): String {
-        val hostGradlewBat = File("gradlew.bat")
-        if (hostGradlewBat.exists() && hostGradlewBat.isFile) {
-            return hostGradlewBat.readText()
-        }
-        return """
-            @rem Minimal gradlew.bat launcher
-            @if "%DEBUG%"=="" @echo off
-            set DIRNAME=%~dp0
-            if "%DIRNAME%"=="" set DIRNAME=.
-            java -jar "%DIRNAME%gradle\wrapper\gradle-wrapper.jar" %*
-            """.trimIndent() + "\n"
-    }
-
-    private fun generateContractFile(): String =
+    private fun generateGradlew(): String =
         """
-        package ai.rever.boss.plugin.launchpad
+        #!/bin/sh
+        # Minimal gradlew launcher
+        set -e
+        PRG="${'$'}0"
+        while [ -h "${'$'}PRG" ]; do
+            link="${'$'}(readlink "${'$'}PRG" 2>/dev/null || true)"
+            if [ -z "${'$'}link" ]; then
+                break
+            fi
+            case "${'$'}link" in
+                /*) PRG="${'$'}link" ;;
+                *) PRG="${'$'}(dirname "${'$'}PRG")/${'$'}link" ;;
+            esac
+        done
+        APP_HOME="${'$'}(cd "${'$'}(dirname "${'$'}PRG")" >/dev/null 2>&1 && pwd)"
+        exec java -jar "${'$'}APP_HOME/gradle/wrapper/gradle-wrapper.jar" "${'$'}@"
+        """.trimIndent() + "\n"
 
-        import kotlinx.coroutines.CoroutineScope
-
-        /**
-         * Core lifecycle interface implemented by BossConsole plugins.
-         */
-        interface BossPlugin {
-            fun onStart(context: PluginContext)
-            fun onStop() {}
-        }
-
-        data class PluginContext(
-            val coroutineScope: CoroutineScope? = null,
-            val hostContext: Any? = null,
-        )
+    private fun generateGradlewBat(): String =
+        """
+        @rem Minimal gradlew.bat launcher
+        @if "%DEBUG%"=="" @echo off
+        set DIRNAME=%~dp0
+        if "%DIRNAME%"=="" set DIRNAME=.
+        java -jar "%DIRNAME%gradle\wrapper\gradle-wrapper.jar" %*
         """.trimIndent() + "\n"
 
     private fun generateBuildGradle(apiVersion: String): String =
@@ -301,13 +283,31 @@ object PluginScaffolder {
             `java-library`
         }
 
+        kotlin {
+            compilerOptions {
+                freeCompilerArgs.add("-Xskip-metadata-version-check")
+            }
+        }
+
         repositories {
             mavenCentral()
+            mavenLocal()
+            ivy {
+                url = uri("https://github.com/risa-labs-inc/boss-plugin-api/releases/download")
+                patternLayout {
+                    artifact("v[revision]/[artifact]-[revision].[ext]")
+                    artifact("[revision]/[artifact]-[revision].[ext]")
+                }
+                metadataSources { artifact() }
+            }
+            flatDir {
+                dirs("libs")
+            }
         }
 
         dependencies {
-            // Target Host API Contract: ai.rever.boss:boss-plugin-api:$apiVersion
-            compileOnly(fileTree("libs") { include("*.jar") })
+            compileOnly("ai.rever.boss:boss-plugin-api:$apiVersion")
+            testImplementation("ai.rever.boss:boss-plugin-api:$apiVersion")
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
             implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
             testImplementation(kotlin("test"))
@@ -319,51 +319,275 @@ object PluginScaffolder {
         }
         """.trimIndent() + "\n"
 
+    private fun escapeString(raw: String): String =
+        raw
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+            .replace("$", "\\$")
+            .replace("\r", "")
+            .replace("\n", " ")
+
     private fun generateSourceFile(
         packageName: String,
         className: String,
         pluginName: String,
         pluginId: String,
         template: Template,
-    ): String =
-        """
-        package $packageName
+    ): String {
+        val escapedName = escapeString(pluginName)
+        val sanitizedToolName = pluginId.replace('-', '_').replace('.', '_')
 
-        import ai.rever.boss.plugin.launchpad.BossPlugin
-        import ai.rever.boss.plugin.launchpad.PluginContext
+        return when (template) {
+            Template.MCP_TOOL -> {
+                """
+                package $packageName
 
-        class $className : BossPlugin {
-            override fun onStart(context: PluginContext) {
-                println("Starting $pluginName plugin ($pluginId) [template: ${template.type}]")
+                import ai.rever.boss.plugin.api.McpToolDefinition
+                import ai.rever.boss.plugin.api.McpToolHandler
+                import ai.rever.boss.plugin.api.McpToolProvider
+                import ai.rever.boss.plugin.api.McpToolResult
+                import ai.rever.boss.plugin.api.Plugin
+                import ai.rever.boss.plugin.api.PluginContext
+
+                class $className : Plugin {
+                    override val pluginId: String = "$pluginId"
+                    override val displayName: String = "$escapedName"
+
+                    private var toolProvider: McpToolProvider? = null
+
+                    override fun register(context: PluginContext) {
+                        val provider =
+                            object : McpToolProvider {
+                                override val providerId: String = pluginId
+
+                                override fun tools(): List<McpToolDefinition> =
+                                    listOf(
+                                        McpToolDefinition(
+                                            name = "mcp__${sanitizedToolName}__action",
+                                            description = "Executes $escapedName action tool",
+                                            handler =
+                                                McpToolHandler { _ ->
+                                                    McpToolResult("Action executed successfully for $escapedName")
+                                                },
+                                        ),
+                                    )
+                            }
+                        toolProvider = provider
+                        context.registerMcpToolProvider(provider)
+                    }
+
+                    override fun dispose() {
+                        toolProvider = null
+                        println("Disposed $escapedName ($pluginId)")
+                    }
+                }
+                """.trimIndent() + "\n"
             }
 
-            override fun onStop() {
-                println("Stopping $pluginName plugin ($pluginId)")
+            Template.UI_PANEL -> {
+                """
+                package $packageName
+
+                import ai.rever.boss.plugin.api.PanelId
+                import ai.rever.boss.plugin.api.PanelMenuContribution
+                import ai.rever.boss.plugin.api.PanelMenuItem
+                import ai.rever.boss.plugin.api.Plugin
+                import ai.rever.boss.plugin.api.PluginContext
+
+                class $className : Plugin {
+                    override val pluginId: String = "$pluginId"
+                    override val displayName: String = "$escapedName"
+
+                    private var menuContribution: PanelMenuContribution? = null
+
+                    override fun register(context: PluginContext) {
+                        val contribution =
+                            object : PanelMenuContribution {
+                                override val contributionId: String = "$pluginId.menu"
+                                override val targetPanels: Set<String> = emptySet()
+
+                                override fun items(panelId: PanelId): List<PanelMenuItem> =
+                                    listOf(
+                                        PanelMenuItem(
+                                            id = "$pluginId.action",
+                                            label = "$escapedName Action",
+                                        ),
+                                    )
+
+                                override fun onItemClick(
+                                    panelId: PanelId,
+                                    itemId: String,
+                                    windowId: String?,
+                                ) {
+                                    println("Panel menu item clicked: ${'$'}itemId for $escapedName")
+                                }
+                            }
+                        menuContribution = contribution
+                        context.registerPanelMenuContribution(contribution)
+                    }
+
+                    override fun dispose() {
+                        menuContribution = null
+                        println("Disposed $escapedName ($pluginId)")
+                    }
+                }
+                """.trimIndent() + "\n"
+            }
+
+            Template.BACKGROUND_SERVICE -> {
+                """
+                package $packageName
+
+                import ai.rever.boss.plugin.api.Plugin
+                import ai.rever.boss.plugin.api.PluginContext
+                import kotlinx.coroutines.Job
+                import kotlinx.coroutines.delay
+                import kotlinx.coroutines.isActive
+                import kotlinx.coroutines.launch
+
+                class $className : Plugin {
+                    override val pluginId: String = "$pluginId"
+                    override val displayName: String = "$escapedName"
+
+                    private var workerJob: Job? = null
+
+                    override fun register(context: PluginContext) {
+                        workerJob =
+                            context.pluginScope.launch {
+                                println("Background service started for $escapedName ($pluginId)")
+                                while (isActive) {
+                                    delay(30_000)
+                                    println("Background heartbeat for $escapedName")
+                                }
+                            }
+                    }
+
+                    override fun dispose() {
+                        workerJob?.cancel()
+                        workerJob = null
+                        println("Background service stopped for $escapedName ($pluginId)")
+                    }
+                }
+                """.trimIndent() + "\n"
+            }
+
+            Template.FULL -> {
+                """
+                package $packageName
+
+                import ai.rever.boss.plugin.api.McpToolDefinition
+                import ai.rever.boss.plugin.api.McpToolHandler
+                import ai.rever.boss.plugin.api.McpToolProvider
+                import ai.rever.boss.plugin.api.McpToolResult
+                import ai.rever.boss.plugin.api.PanelId
+                import ai.rever.boss.plugin.api.PanelMenuContribution
+                import ai.rever.boss.plugin.api.PanelMenuItem
+                import ai.rever.boss.plugin.api.Plugin
+                import ai.rever.boss.plugin.api.PluginContext
+                import kotlinx.coroutines.Job
+                import kotlinx.coroutines.delay
+                import kotlinx.coroutines.isActive
+                import kotlinx.coroutines.launch
+
+                class $className : Plugin {
+                    override val pluginId: String = "$pluginId"
+                    override val displayName: String = "$escapedName"
+
+                    private var toolProvider: McpToolProvider? = null
+                    private var menuContribution: PanelMenuContribution? = null
+                    private var workerJob: Job? = null
+
+                    override fun register(context: PluginContext) {
+                        val provider =
+                            object : McpToolProvider {
+                                override val providerId: String = pluginId
+
+                                override fun tools(): List<McpToolDefinition> =
+                                    listOf(
+                                        McpToolDefinition(
+                                            name = "mcp__${sanitizedToolName}__action",
+                                            description = "Executes $escapedName action tool",
+                                            handler =
+                                                McpToolHandler { _ ->
+                                                    McpToolResult("Action executed successfully for $escapedName")
+                                                },
+                                        ),
+                                    )
+                            }
+                        toolProvider = provider
+                        context.registerMcpToolProvider(provider)
+
+                        val contribution =
+                            object : PanelMenuContribution {
+                                override val contributionId: String = "$pluginId.menu"
+                                override val targetPanels: Set<String> = emptySet()
+
+                                override fun items(panelId: PanelId): List<PanelMenuItem> =
+                                    listOf(
+                                        PanelMenuItem(
+                                            id = "$pluginId.action",
+                                            label = "$escapedName Action",
+                                        ),
+                                    )
+
+                                override fun onItemClick(
+                                    panelId: PanelId,
+                                    itemId: String,
+                                    windowId: String?,
+                                ) {
+                                    println("Panel menu item clicked: ${'$'}itemId for $escapedName")
+                                }
+                            }
+                        menuContribution = contribution
+                        context.registerPanelMenuContribution(contribution)
+
+                        workerJob =
+                            context.pluginScope.launch {
+                                println("Full plugin service started for $escapedName ($pluginId)")
+                                while (isActive) {
+                                    delay(30_000)
+                                }
+                            }
+                    }
+
+                    override fun dispose() {
+                        workerJob?.cancel()
+                        workerJob = null
+                        toolProvider = null
+                        menuContribution = null
+                        println("Disposed full plugin $escapedName ($pluginId)")
+                    }
+                }
+                """.trimIndent() + "\n"
             }
         }
-        """.trimIndent() + "\n"
+    }
 
     private fun generateTestFile(
         packageName: String,
         className: String,
-    ): String =
-        """
-        package $packageName
+        pluginName: String,
+        pluginId: String,
+    ): String {
+        val escapedName = escapeString(pluginName)
+        return """
+            package $packageName
 
-        import ai.rever.boss.plugin.launchpad.PluginContext
-        import kotlin.test.Test
-        import kotlin.test.assertNotNull
+            import kotlin.test.Test
+            import kotlin.test.assertEquals
+            import kotlin.test.assertNotNull
 
-        class ${className}Test {
-            @Test
-            fun testPluginInitialization() {
-                val plugin = $className()
-                plugin.onStart(PluginContext())
-                assertNotNull(plugin)
-                plugin.onStop()
+            class ${className}Test {
+                @Test
+                fun testPluginMetadata() {
+                    val plugin = $className()
+                    assertNotNull(plugin)
+                    assertEquals("$pluginId", plugin.pluginId)
+                    assertEquals("$escapedName", plugin.displayName)
+                }
             }
-        }
-        """.trimIndent() + "\n"
+            """.trimIndent() + "\n"
+    }
 
     private fun generateGitignore(): String =
         """
@@ -462,5 +686,34 @@ object PluginScaffolder {
                 .ifBlank { "Custom" }
         val base = if (pascal.first().isDigit()) "Plugin$pascal" else pascal
         return if (base.endsWith("Plugin")) base else "${base}Plugin"
+    }
+
+    /**
+     * Prevents catastrophic directory deletion in --force mode by ensuring the directory is not a
+     * system root, user home, git repository, or arbitrary non-plugin directory.
+     */
+    fun assertSafeToPurge(targetDir: File) {
+        val canonicalTarget = targetDir.canonicalFile
+        val userHome = System.getProperty("user.home")?.let { File(it).canonicalFile }
+        require(userHome == null || canonicalTarget != userHome) {
+            "Refusing to purge user home directory in --force mode: ${targetDir.absolutePath}"
+        }
+        val roots = File.listRoots()?.map { it.canonicalFile } ?: emptyList()
+        require(roots.none { it == canonicalTarget }) {
+            "Refusing to purge system root directory in --force mode: ${targetDir.absolutePath}"
+        }
+        val gitDir = File(targetDir, ".git")
+        require(!gitDir.exists()) {
+            "Refusing to purge directory containing a .git repository in --force mode: ${targetDir.absolutePath}"
+        }
+        val hasPluginJson =
+            File(targetDir, "plugin.json").exists() ||
+                File(targetDir, "src/main/resources/META-INF/boss-plugin/plugin.json").exists()
+        val hasGradleBuild =
+            File(targetDir, "build.gradle.kts").exists() || File(targetDir, "build.gradle").exists()
+        require(hasPluginJson || hasGradleBuild) {
+            "Refusing to purge non-plugin directory in --force mode: ${targetDir.absolutePath}. " +
+                "Directory does not contain plugin.json or build.gradle.kts. Clear it manually if intended."
+        }
     }
 }

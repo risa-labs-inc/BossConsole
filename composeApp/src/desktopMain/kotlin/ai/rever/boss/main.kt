@@ -891,6 +891,16 @@ fun main(args: Array<String>) {
         PluginStoreSetup.loadPersistedPlugins(manager)
     }
 
+    // Set up single-instance development reload handler
+    ai.rever.boss.utils.SingleInstanceManager.pluginReloadHandlerOverride = { pluginId ->
+        kotlinx.coroutines.runBlocking {
+            ai.rever.boss.plugin.launchpad.DevPluginReloader
+                .reload(pluginId)
+                .getOrThrow()
+            true
+        }
+    }
+
     // Note: no PSI or ProjectIndexer lifecycle here. The PSI stack lives in
     // the editor-tab plugin's bundled BossEditor now — the plugin warms it up
     // on register and shuts it down on dispose. (Indexing user.dir at startup

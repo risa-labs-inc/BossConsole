@@ -17,6 +17,7 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
+import java.net.ConnectException
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.StandardProtocolFamily
@@ -76,6 +77,10 @@ internal const val VERB_PLUGIN_DEV_RELOAD = "PLUGIN_DEV_RELOAD"
 
 sealed interface ReloadResult {
     data object Success : ReloadResult
+
+    data class HostOffline(
+        val message: String = "BossConsole is not running",
+    ) : ReloadResult
 
     data class Failed(
         val reason: String,
@@ -228,16 +233,6 @@ internal data class SingleInstanceRequest(
 internal fun parseRequestLine(line: String): SingleInstanceRequest? {
     val trimmed = line.trim()
     val parts = trimmed.split(' ', limit = 5)
-
-    if (parts.size >= 3 && parts[1] == VERB_PLUGIN_DEV_RELOAD) {
-        return SingleInstanceRequest(
-            token = parts[0],
-            verb = VERB_PLUGIN_DEV_RELOAD,
-            origin = DeepLinkOrigin.OPERATOR_CLI,
-            url = null,
-            toolName = parts[2],
-        )
-    }
 
     if (parts.size < 3 || parts[0] != PROTOCOL_VERSION) return null
 
@@ -1449,21 +1444,45 @@ object SingleInstanceManager {
     ): ReloadResult {
         val target =
             SingleInstanceFiles.read()
-                ?: return ReloadResult.Failed("BossConsole is not running.")
-        val message = "${target.token} $VERB_PLUGIN_DEV_RELOAD $pluginId"
-        val response =
-            SingleInstanceWire.exchange(
-                target,
-                message,
-                timeoutMs = timeoutMs.toLong(),
-                maxResponseBytes = MAX_RESPONSE_BYTES,
-            ) ?: return ReloadResult.Failed("Host closed connection unexpectedly or timed out")
+                ?: return ReloadResult.HostOffline("BossConsole is not running.")
+        val message = "$PROTOCOL_VERSION ${target.token} $VERB_PLUGIN_DEV_RELOAD $pluginId"
+        return try {
+            val response =
+                SingleInstanceWire.exchange(
+                    target,
+                    message,
+                    timeoutMs = timeoutMs.toLong(),
+                    maxResponseBytes = MAX_RESPONSE_BYTES,
+                ) ?: return ReloadResult.HostOffline("BossConsole is offline or connection timed out")
 
-        return when {
-            response.startsWith("RELOAD_OK") -> ReloadResult.Success
-            response.startsWith("RELOAD_FAILED") -> ReloadResult.Failed(response.removePrefix("RELOAD_FAILED").trim())
-            response == RESPONSE_OK -> ReloadResult.Success
-            else -> ReloadResult.Failed("Malformed IPC response: $response")
+            when {
+                response.startsWith("RELOAD_OK") -> {
+                    ReloadResult.Success
+                }
+
+                response.startsWith("RELOAD_FAILED") -> {
+                    ReloadResult.Failed(response.removePrefix("RELOAD_FAILED").trim())
+                }
+
+                response == RESPONSE_OK -> {
+                    ReloadResult.Success
+                }
+
+                else -> {
+                    ReloadResult.Failed("Malformed IPC response: $response")
+                }
+            }
+        } catch (
+            @Suppress("SwallowedException") e: ConnectException,
+        ) {
+            logger.debug(
+                LogCategory.SYSTEM,
+                "IPC host connection refused; host is offline",
+                mapOf("pluginId" to pluginId),
+            )
+            ReloadResult.HostOffline("BossConsole is offline (connection refused)")
+        } catch (e: Exception) {
+            ReloadResult.Failed("IPC communication error: ${e.message}")
         }
     }
 

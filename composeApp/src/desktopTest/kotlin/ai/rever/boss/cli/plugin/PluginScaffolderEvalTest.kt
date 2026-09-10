@@ -109,6 +109,8 @@ class PluginScaffolderEvalTest {
             val gradleContent = gradleFile.readText()
             assertTrue(gradleContent.contains("kotlin(\"jvm\")"))
             assertTrue(gradleContent.contains("ai.rever.boss:boss-plugin-api:${HostMeta.CURRENT_API_VERSION}"))
+            assertTrue(gradleContent.contains("https://github.com/risa-labs-inc/boss-plugin-api/releases/download"))
+            assertTrue(gradleContent.contains("artifact(\"[revision]/[artifact]-[revision].[ext]\")"))
 
             // Verify standard source sets (src/main/kotlin/ and src/test/kotlin/)
             val entrypointClassPath = manifest.entrypointClass.replace('.', File.separatorChar) + ".kt"
@@ -123,14 +125,22 @@ class PluginScaffolderEvalTest {
                     targetFolder,
                     "src" + File.separator + "test" + File.separator + "kotlin" + File.separator + testClassName,
                 )
-            val contractPath =
-                listOf("src", "main", "kotlin", "ai", "rever", "boss", "plugin", "launchpad", "BossPlugin.kt")
-                    .joinToString(File.separator)
-            val contractFile = File(targetFolder, contractPath)
+            val resourceManifest =
+                File(
+                    targetFolder,
+                    listOf(
+                        "src",
+                        "main",
+                        "resources",
+                        "META-INF",
+                        "boss-plugin",
+                        "plugin.json",
+                    ).joinToString(File.separator),
+                )
 
             assertTrue(srcFile.exists(), "Source file missing: ${srcFile.absolutePath}")
             assertTrue(testFile.exists(), "Test file missing: ${testFile.absolutePath}")
-            assertTrue(contractFile.exists(), "Contract file missing: ${contractFile.absolutePath}")
+            assertTrue(resourceManifest.exists(), "Resource manifest missing: ${resourceManifest.absolutePath}")
         }
     }
 
@@ -138,6 +148,7 @@ class PluginScaffolderEvalTest {
     fun `asserts non-empty collisions fail fast without force`() {
         val targetFolder = File(tempDir.toFile(), "collision-test")
         targetFolder.mkdirs()
+        File(targetFolder, "plugin.json").writeText("{}")
         val dummy = File(targetFolder, "existing.txt")
         dummy.writeText("blocking")
 
@@ -195,6 +206,43 @@ class PluginScaffolderEvalTest {
             assertTrue(manifestFile.exists(), "Manifest should exist for $input")
             val manifest = launchpadJson.decodeFromString<PluginManifest>(manifestFile.readText())
             assertEquals("com.example.$expectedPkgSuffix.$expectedClass", manifest.entrypointClass)
+        }
+    }
+
+    @Test
+    fun `assertSafeToPurge protects git repos, user home, and arbitrary non-plugin directories`() {
+        val safeDir = File(tempDir.toFile(), "valid-plugin-dir")
+        safeDir.mkdirs()
+        File(safeDir, "plugin.json").writeText("{}")
+        // Should succeed without throwing
+        PluginScaffolder.assertSafeToPurge(safeDir)
+
+        val gitRepoDir = File(tempDir.toFile(), "fake-git-repo")
+        gitRepoDir.mkdirs()
+        File(gitRepoDir, ".git").mkdirs()
+        File(gitRepoDir, "plugin.json").writeText("{}")
+        val gitEx =
+            assertFailsWith<IllegalArgumentException> {
+                PluginScaffolder.assertSafeToPurge(gitRepoDir)
+            }
+        assertTrue(gitEx.message?.contains(".git") == true)
+
+        val nonPluginDir = File(tempDir.toFile(), "random-docs-folder")
+        nonPluginDir.mkdirs()
+        File(nonPluginDir, "important.docx").writeText("data")
+        val nonPluginEx =
+            assertFailsWith<IllegalArgumentException> {
+                PluginScaffolder.assertSafeToPurge(nonPluginDir)
+            }
+        assertTrue(nonPluginEx.message?.contains("Refusing to purge non-plugin directory") == true)
+
+        val userHome = System.getProperty("user.home")?.let { File(it) }
+        if (userHome != null && userHome.exists()) {
+            val homeEx =
+                assertFailsWith<IllegalArgumentException> {
+                    PluginScaffolder.assertSafeToPurge(userHome)
+                }
+            assertTrue(homeEx.message?.contains("user home") == true)
         }
     }
 }

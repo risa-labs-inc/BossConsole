@@ -209,7 +209,7 @@ case "$1" in
     plugin)
         subcommand="${2:-}"
         case "$subcommand" in
-            init|validate|link|list|package|--help|-h|help|"")
+            init|validate|link|--help|-h|help|"")
                 forward_to_boss "$@"
                 ;;
             *)

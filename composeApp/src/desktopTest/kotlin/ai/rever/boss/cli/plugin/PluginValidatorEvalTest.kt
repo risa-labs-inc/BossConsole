@@ -28,13 +28,13 @@ class PluginValidatorEvalTest {
 
         val manifest =
             PluginManifest(
-                id = "valid-plugin",
-                name = "Valid Plugin",
+                pluginId = "valid-plugin",
+                displayName = "Valid Plugin",
                 version = "1.0.0",
                 description = "A valid test plugin",
                 author = "Test Author",
-                minApiVersion = HostMeta.CURRENT_API_VERSION,
-                entrypointClass = "com.example.ValidPlugin",
+                apiVersion = HostMeta.CURRENT_API_VERSION,
+                mainClass = "com.example.ValidPlugin",
                 permissions = listOf("mcp", "terminal"),
             )
         File(dir, "plugin.json").writeText(launchpadJson.encodeToString(manifest))
@@ -80,13 +80,13 @@ class PluginValidatorEvalTest {
 
         val manifest =
             PluginManifest(
-                id = "future-plugin",
-                name = "Future Plugin",
+                pluginId = "future-plugin",
+                displayName = "Future Plugin",
                 version = "1.0.0",
                 description = "Needs future API",
                 author = "Time Traveler",
-                minApiVersion = "999.0.0",
-                entrypointClass = "com.example.FuturePlugin",
+                apiVersion = "999.0.0",
+                mainClass = "com.example.FuturePlugin",
             )
         File(incompatibleDir, "plugin.json").writeText(launchpadJson.encodeToString(manifest))
 
@@ -104,11 +104,11 @@ class PluginValidatorEvalTest {
         val jarFile = File(tempDir.toFile(), "missing-class.jar")
         val manifest =
             PluginManifest(
-                id = "test-jar-plugin",
-                name = "Test Jar Plugin",
+                pluginId = "test-jar-plugin",
+                displayName = "Test Jar Plugin",
                 version = "0.2.0",
-                minApiVersion = HostMeta.CURRENT_API_VERSION,
-                entrypointClass = "com.example.MissingClass",
+                apiVersion = HostMeta.CURRENT_API_VERSION,
+                mainClass = "com.example.MissingClass",
             )
         val manifestBytes = launchpadJson.encodeToString(manifest).toByteArray(StandardCharsets.UTF_8)
 
@@ -130,31 +130,114 @@ class PluginValidatorEvalTest {
         val jarFile = File(tempDir.toFile(), "valid-class.jar")
         val manifest =
             PluginManifest(
-                id = "test-jar-plugin",
-                name = "Test Jar Plugin",
+                pluginId = "test-jar-plugin",
+                displayName = "Test Jar Plugin",
                 version = "0.2.0",
-                minApiVersion = HostMeta.CURRENT_API_VERSION,
-                entrypointClass = "com.example.PresentClass",
+                apiVersion = HostMeta.CURRENT_API_VERSION,
+                mainClass = ValidatorTestFixturePlugin::class.java.name,
             )
         val manifestBytes = launchpadJson.encodeToString(manifest).toByteArray(StandardCharsets.UTF_8)
-        val dummyClassBytes = byteArrayOf(0xCA.toByte(), 0xFE.toByte(), 0xBA.toByte(), 0xBE.toByte())
+        val classEntryPath = ValidatorTestFixturePlugin::class.java.name.replace('.', '/') + ".class"
+        val realClassBytes =
+            ValidatorTestFixturePlugin::class.java.classLoader
+                .getResourceAsStream(classEntryPath)!!
+                .readBytes()
 
-        // Create JAR with plugin.json and com/example/PresentClass.class
+        // Create JAR with plugin.json and real class bytes
         createJar(
             jarFile,
             mapOf(
-                "plugin.json" to manifestBytes,
-                "com/example/PresentClass.class" to dummyClassBytes,
+                "META-INF/boss-plugin/plugin.json" to manifestBytes,
+                classEntryPath to realClassBytes,
             ),
         )
 
         val result = PluginValidator.validate(jarFile)
-        assertTrue(result.isValid, "JAR with present bytecode entry must pass validation")
+        val failedMessages = result.checks.filter { !it.passed }.map { it.message }
+        assertTrue(
+            result.isValid,
+            "JAR with present bytecode entry must pass validation: $failedMessages",
+        )
 
         val bytecodeCheck = result.checks.firstOrNull { it.name == "bytecode-entrypoint" }
         assertNotNull(bytecodeCheck)
         assertTrue(bytecodeCheck.passed)
         assertTrue(bytecodeCheck.message.contains("verified in archive"))
+
+        val implementsCheck = result.checks.firstOrNull { it.name == "bytecode-implements-plugin" }
+        assertNotNull(implementsCheck)
+        assertTrue(implementsCheck.passed)
+    }
+
+    @Test
+    fun `tests synthetic JAR with class not implementing Plugin fails bytecode verification`() {
+        val jarFile = File(tempDir.toFile(), "non-plugin-class.jar")
+        val manifest =
+            PluginManifest(
+                pluginId = "non-plugin",
+                displayName = "Non Plugin",
+                version = "0.2.0",
+                apiVersion = HostMeta.CURRENT_API_VERSION,
+                mainClass = NonPluginFixture::class.java.name,
+            )
+        val manifestBytes = launchpadJson.encodeToString(manifest).toByteArray(StandardCharsets.UTF_8)
+        val classEntryPath = NonPluginFixture::class.java.name.replace('.', '/') + ".class"
+        val realClassBytes =
+            NonPluginFixture::class.java.classLoader
+                .getResourceAsStream(classEntryPath)!!
+                .readBytes()
+
+        createJar(
+            jarFile,
+            mapOf(
+                "META-INF/boss-plugin/plugin.json" to manifestBytes,
+                classEntryPath to realClassBytes,
+            ),
+        )
+
+        val result = PluginValidator.validate(jarFile)
+        assertFalse(result.isValid, "JAR with non-Plugin class must fail validation")
+
+        val implementsCheck = result.checks.firstOrNull { it.name == "bytecode-implements-plugin" }
+        assertNotNull(implementsCheck)
+        assertFalse(implementsCheck.passed)
+        assertTrue(implementsCheck.message.contains("must implement ai.rever.boss.plugin.api.Plugin"))
+    }
+
+    @Test
+    fun `tests reverse-domain dotted IDs pass validation`() {
+        val dir = File(tempDir.toFile(), "dotted-id-dir")
+        dir.mkdirs()
+        val manifest =
+            PluginManifest(
+                pluginId = "com.example.my.awesome.tool",
+                displayName = "Awesome Tool",
+                version = "1.0.0",
+                apiVersion = HostMeta.CURRENT_API_VERSION,
+                mainClass = "com.example.AwesomeTool",
+            )
+        File(dir, "plugin.json").writeText(launchpadJson.encodeToString(manifest))
+        val result = PluginValidator.validate(dir)
+        val idCheck = result.checks.firstOrNull { it.name == "id-format" }
+        assertNotNull(idCheck)
+        assertTrue(idCheck.passed, "com.example.my.awesome.tool must pass id-format check")
+    }
+
+    @Test
+    fun `tests directory with resource manifest passes validation`() {
+        val dir = File(tempDir.toFile(), "resource-manifest-dir")
+        val metaInf = File(dir, "src/main/resources/META-INF/boss-plugin").apply { mkdirs() }
+        val manifest =
+            PluginManifest(
+                pluginId = "com.example.resource.plugin",
+                displayName = "Resource Plugin",
+                version = "1.0.0",
+                apiVersion = HostMeta.CURRENT_API_VERSION,
+                mainClass = "com.example.ResourcePlugin",
+            )
+        File(metaInf, "plugin.json").writeText(launchpadJson.encodeToString(manifest))
+        val result = PluginValidator.validate(dir)
+        assertTrue(result.isValid, "Directory with resource manifest must pass validation")
     }
 
     @Test
@@ -165,11 +248,11 @@ class PluginValidatorEvalTest {
             dir.mkdirs()
             val manifest =
                 PluginManifest(
-                    id = "semver-plugin",
-                    name = "SemVer Plugin",
+                    pluginId = "semver-plugin",
+                    displayName = "SemVer Plugin",
                     version = versionStr,
-                    minApiVersion = HostMeta.CURRENT_API_VERSION,
-                    entrypointClass = "com.example.ValidPlugin",
+                    apiVersion = HostMeta.CURRENT_API_VERSION,
+                    mainClass = "com.example.ValidPlugin",
                 )
             File(dir, "plugin.json").writeText(launchpadJson.encodeToString(manifest))
             val result = PluginValidator.validate(dir)
@@ -200,11 +283,11 @@ class PluginValidatorEvalTest {
             )
         val manifest =
             PluginManifest(
-                id = "perms-plugin",
-                name = "Permissions Plugin",
+                pluginId = "perms-plugin",
+                displayName = "Permissions Plugin",
                 version = "1.0.0",
-                minApiVersion = HostMeta.CURRENT_API_VERSION,
-                entrypointClass = "com.example.ValidPlugin",
+                apiVersion = HostMeta.CURRENT_API_VERSION,
+                mainClass = "com.example.ValidPlugin",
                 permissions = allCanonical,
             )
         File(dir, "plugin.json").writeText(launchpadJson.encodeToString(manifest))
@@ -238,4 +321,17 @@ class PluginValidatorEvalTest {
             }
         }
     }
+}
+
+class ValidatorTestFixturePlugin : ai.rever.boss.plugin.api.Plugin {
+    override val pluginId = "test-jar-plugin"
+    override val displayName = "Test Jar Plugin"
+
+    override fun register(context: ai.rever.boss.plugin.api.PluginContext) {
+        // No-op for test fixture
+    }
+}
+
+class NonPluginFixture {
+    val someProperty = "not a plugin"
 }

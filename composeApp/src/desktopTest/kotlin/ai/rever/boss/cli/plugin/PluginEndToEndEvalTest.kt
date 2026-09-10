@@ -44,6 +44,7 @@ class PluginEndToEndEvalTest {
         val runtimeDir = File(tempDir.toFile(), "run")
         SingleInstanceManager.runtimeDirOverride = runtimeDir
         SingleInstanceManager.pluginReloadHandlerOverride = null
+        ai.rever.boss.plugin.launchpad.DevPluginArtifacts.stagingRootOverride = File(tempDir.toFile(), "dev")
     }
 
     @AfterTest
@@ -53,6 +54,7 @@ class PluginEndToEndEvalTest {
         SingleInstanceManager.release()
         SingleInstanceManager.pluginReloadHandlerOverride = null
         SingleInstanceManager.runtimeDirOverride = null
+        ai.rever.boss.plugin.launchpad.DevPluginArtifacts.stagingRootOverride = null
     }
 
     @Test
@@ -302,7 +304,7 @@ class PluginEndToEndEvalTest {
         assertTrue(File(targetDir, "gradle/wrapper/gradle-wrapper.jar").exists(), "gradle-wrapper.jar must exist")
         assertTrue(File(targetDir, "src/main/kotlin/com/example/evaltesttool/EvalTestToolPlugin.kt").exists())
         assertTrue(File(targetDir, "src/test/kotlin/com/example/evaltesttool/EvalTestToolPluginTest.kt").exists())
-        assertTrue(File(targetDir, "src/main/kotlin/ai/rever/boss/plugin/launchpad/BossPlugin.kt").exists())
+        assertTrue(File(targetDir, "src/main/resources/META-INF/boss-plugin/plugin.json").exists())
     }
 
     @Test
@@ -364,32 +366,31 @@ class PluginEndToEndEvalTest {
         libsDir.mkdirs()
         val jarFile = File(libsDir, "$pluginId-0.1.0.jar")
 
-        val manifestFile = File(pluginDir, "plugin.json")
+        val classEntryPath = EndToEndFixturePlugin::class.java.name.replace('.', '/') + ".class"
+        val realClassBytes =
+            EndToEndFixturePlugin::class.java.classLoader
+                .getResourceAsStream(classEntryPath)!!
+                .readBytes()
+
         val manifest =
-            if (manifestFile.exists()) {
-                launchpadJson.decodeFromString<PluginManifest>(manifestFile.readText())
-            } else {
-                PluginManifest(
-                    id = pluginId,
-                    name = pluginId,
-                    version = "0.1.0",
-                    minApiVersion = HostMeta.CURRENT_API_VERSION,
-                    entrypointClass = "com.example.TestPlugin",
-                )
-            }
+            PluginManifest(
+                pluginId = pluginId,
+                displayName = pluginId,
+                version = "0.1.0",
+                apiVersion = HostMeta.CURRENT_API_VERSION,
+                mainClass = EndToEndFixturePlugin::class.java.name,
+            )
         val manifestBytes = launchpadJson.encodeToString(manifest).toByteArray(StandardCharsets.UTF_8)
-        val dummyClassBytes = byteArrayOf(0xCA.toByte(), 0xFE.toByte(), 0xBA.toByte(), 0xBE.toByte())
-        val classEntryPath = manifest.entrypointClass.replace('.', '/') + ".class"
 
         JarOutputStream(FileOutputStream(jarFile)).use { jos ->
-            val mEntry = JarEntry("plugin.json")
+            val mEntry = JarEntry("META-INF/boss-plugin/plugin.json")
             jos.putNextEntry(mEntry)
             jos.write(manifestBytes)
             jos.closeEntry()
 
             val cEntry = JarEntry(classEntryPath)
             jos.putNextEntry(cEntry)
-            jos.write(dummyClassBytes)
+            jos.write(realClassBytes)
             jos.closeEntry()
         }
     }
@@ -410,5 +411,14 @@ class PluginEndToEndEvalTest {
             System.setErr(prevErr)
         }
         return Pair(outBaos.toString("UTF-8"), errBaos.toString("UTF-8"))
+    }
+}
+
+class EndToEndFixturePlugin : ai.rever.boss.plugin.api.Plugin {
+    override val pluginId: String = "test-fixture"
+    override val displayName: String = "Test Fixture Plugin"
+
+    override fun register(context: ai.rever.boss.plugin.api.PluginContext) {
+        // No-op for test fixture
     }
 }

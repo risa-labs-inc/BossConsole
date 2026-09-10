@@ -109,8 +109,6 @@ if "%~2"=="" goto :cmd_forward_exe
 if /i "%~2"=="init" goto :cmd_forward_exe
 if /i "%~2"=="validate" goto :cmd_forward_exe
 if /i "%~2"=="link" goto :cmd_forward_exe
-if /i "%~2"=="list" goto :cmd_forward_exe
-if /i "%~2"=="package" goto :cmd_forward_exe
 if /i "%~2"=="--help" goto :cmd_forward_exe
 if /i "%~2"=="-h" goto :cmd_forward_exe
 if /i "%~2"=="help" goto :cmd_forward_exe
@@ -124,10 +122,14 @@ goto :eof
 REM Preserve literal exclamation marks in JSON arguments.
 setlocal DisableDelayedExpansion
 if defined BOSS_EXE if not exist "%BOSS_EXE%" goto :cmd_missing_exe
-if not defined BOSS_EXE set "BOSS_EXE=%LOCALAPPDATA%\Programs\BOSS\BOSS.exe"
-if not exist "%BOSS_EXE%" set "BOSS_EXE=%ProgramFiles%\BOSS\BOSS.exe"
-if not exist "%BOSS_EXE%" set "BOSS_EXE=%~dp0..\composeApp\build\compose\binaries\main\app\BOSS\BOSS.exe"
-if not exist "%BOSS_EXE%" goto :cmd_missing_exe
+if not defined BOSS_EXE if exist "%LOCALAPPDATA%\Programs\BOSS\BOSS.exe" set "BOSS_EXE=%LOCALAPPDATA%\Programs\BOSS\BOSS.exe"
+if not defined BOSS_EXE if exist "%ProgramFiles%\BOSS\BOSS.exe" set "BOSS_EXE=%ProgramFiles%\BOSS\BOSS.exe"
+if not defined BOSS_EXE if exist "%~dp0..\composeApp\build\compose\binaries\main\app\BOSS\BOSS.exe" set "BOSS_EXE=%~dp0..\composeApp\build\compose\binaries\main\app\BOSS\BOSS.exe"
+if not defined BOSS_EXE goto :cmd_missing_exe
+if exist "%~dp0boss.ps1" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0boss.ps1" %*
+    exit /b !ERRORLEVEL!
+)
 "%BOSS_EXE%" %*
 exit /b %ERRORLEVEL%
 

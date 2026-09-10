@@ -1,13 +1,14 @@
 package ai.rever.boss.cli
 
-import ai.rever.boss.plugin.launchpad.PluginLifecycleManager
+import ai.rever.boss.plugin.launchpad.DevPluginArtifacts
 import ai.rever.boss.plugin.launchpad.PluginManifest
 import ai.rever.boss.plugin.launchpad.PluginScaffolder
 import ai.rever.boss.plugin.launchpad.PluginValidator
 import ai.rever.boss.plugin.launchpad.launchpadJson
-import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.ReloadResult
 import ai.rever.boss.utils.SingleInstanceManager
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.Context
 import com.github.ajalt.clikt.core.ProgramResult
@@ -22,9 +23,11 @@ import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.io.File
+import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.nio.file.StandardCopyOption
 
 /**
  * Scaffolds a new third-party plugin project.
@@ -33,6 +36,8 @@ import java.nio.file.Paths
 @Suppress("TooGenericExceptionCaught")
 class BossPluginInitCommand : CliktCommand(name = "init") {
     override fun help(context: Context) = "Scaffolds a new plugin project"
+
+    private val logger = BossLogger.forComponent("BossPluginInitCommand")
 
     val name by argument(help = "Plugin name (e.g. 'my-tools')")
     val template by option(
@@ -82,6 +87,7 @@ class BossPluginInitCommand : CliktCommand(name = "init") {
             }
         } catch (e: Exception) {
             val errorMsg = e.message ?: "Failed to scaffold plugin"
+            logger.error(LogCategory.SYSTEM, "Failed to scaffold plugin: $errorMsg", error = e)
             if (json) {
                 val errPayload =
                     buildJsonObject {
@@ -90,7 +96,7 @@ class BossPluginInitCommand : CliktCommand(name = "init") {
                     }
                 echo(errPayload.toString())
             } else {
-                System.err.println("Error: $errorMsg")
+                echo("Error: $errorMsg", err = true)
             }
             throw ProgramResult(1)
         }
@@ -103,6 +109,8 @@ class BossPluginInitCommand : CliktCommand(name = "init") {
  */
 class BossPluginValidateCommand : CliktCommand(name = "validate") {
     override fun help(context: Context) = "Validates a plugin manifest and bytecode structure"
+
+    private val logger = BossLogger.forComponent("BossPluginValidateCommand")
 
     val path by argument(help = "Path to plugin directory or JAR/ZIP archive")
         .path(canBeDir = true, canBeFile = true)
@@ -129,8 +137,12 @@ class BossPluginValidateCommand : CliktCommand(name = "validate") {
             if (report.success) {
                 echo("\n[✓] Validation passed (${report.checksPassed}/${report.totalChecks} checks passed)")
             } else {
-                System.err.println("\nValidation failed with ${report.failures.size} errors:")
-                report.failures.forEach { System.err.println("  [✗] ${it.checkName}: ${it.message}") }
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Validation failed with ${report.failures.size} errors at ${target.absolutePath}",
+                )
+                echo("\nValidation failed with ${report.failures.size} errors:", err = true)
+                report.failures.forEach { echo("  [✗] ${it.checkName}: ${it.message}", err = true) }
                 throw ProgramResult(1)
             }
         }
@@ -145,6 +157,8 @@ class BossPluginValidateCommand : CliktCommand(name = "validate") {
 class BossPluginLinkCommand : CliktCommand(name = "link") {
     override fun help(context: Context) = "Links a local plugin into BossConsole development environment"
 
+    private val logger = BossLogger.forComponent("BossPluginLinkCommand")
+
     val path by argument(help = "Path to plugin directory or JAR/ZIP archive")
         .path(canBeDir = true, canBeFile = true)
         .default(Paths.get("."))
@@ -155,6 +169,7 @@ class BossPluginLinkCommand : CliktCommand(name = "link") {
 
         if (!Files.exists(inputPath)) {
             val msg = "Target path does not exist: $inputPath"
+            logger.error(LogCategory.SYSTEM, msg)
             if (json) {
                 echo(
                     buildJsonObject {
@@ -163,7 +178,7 @@ class BossPluginLinkCommand : CliktCommand(name = "link") {
                     }.toString(),
                 )
             } else {
-                System.err.println("Error: $msg")
+                echo("Error: $msg", err = true)
             }
             throw ProgramResult(1)
         }
@@ -173,6 +188,7 @@ class BossPluginLinkCommand : CliktCommand(name = "link") {
                 PluginValidator.resolveStagingTarget(inputPath)
             } catch (e: Exception) {
                 val msg = e.message ?: "Failed to resolve staging target JAR"
+                logger.error(LogCategory.SYSTEM, msg, error = e)
                 if (json) {
                     echo(
                         buildJsonObject {
@@ -181,7 +197,7 @@ class BossPluginLinkCommand : CliktCommand(name = "link") {
                         }.toString(),
                     )
                 } else {
-                    System.err.println("Error: $msg")
+                    echo("Error: $msg", err = true)
                 }
                 throw ProgramResult(1)
             }
@@ -189,13 +205,15 @@ class BossPluginLinkCommand : CliktCommand(name = "link") {
         val targetJarFile = targetJarPath.toFile()
         val validation = PluginValidator.validate(targetJarFile)
         if (!validation.isValid) {
+            val errMsg = "Cannot link invalid plugin at ${targetJarFile.absolutePath}"
+            logger.error(LogCategory.SYSTEM, errMsg)
             val report = PluginValidator.toReport(targetJarFile.absolutePath, validation)
             if (json) {
                 echo(launchpadJson.encodeToString(report))
             } else {
-                System.err.println("Cannot link invalid plugin at ${targetJarFile.absolutePath}:")
+                echo("$errMsg:", err = true)
                 validation.checks.filter { !it.passed }.forEach {
-                    System.err.println("  [✗] ${it.name}: ${it.message}")
+                    echo("  [✗] ${it.name}: ${it.message}", err = true)
                 }
             }
             throw ProgramResult(1)
@@ -206,6 +224,7 @@ class BossPluginLinkCommand : CliktCommand(name = "link") {
                 PluginValidator.readManifestFromJar(targetJarFile)
             } catch (e: Exception) {
                 val msg = "Failed to extract plugin manifest from JAR: ${e.message}"
+                logger.error(LogCategory.SYSTEM, msg, error = e)
                 if (json) {
                     echo(
                         buildJsonObject {
@@ -214,26 +233,19 @@ class BossPluginLinkCommand : CliktCommand(name = "link") {
                         }.toString(),
                     )
                 } else {
-                    System.err.println("Error: $msg")
+                    echo("Error: $msg", err = true)
                 }
                 throw ProgramResult(1)
             }
-        val pluginId = manifest.id
+        val pluginId = manifest.pluginId
 
         // Version-rotated staging to prevent Windows file locking collisions
-        val bossHome =
-            System.getenv("BOSS_HOME")?.takeIf { it.isNotBlank() }?.let { File(it) }
-                ?: BossDirectories.rootDir
-        val pluginDevBase = File(bossHome, "plugins" + File.separator + "dev" + File.separator + pluginId)
+        val pluginDevBase = File(DevPluginArtifacts.stagingRoot(), pluginId)
         val timestamp = System.currentTimeMillis()
         val versionDir = File(pluginDevBase, "v$timestamp")
-        versionDir.mkdirs()
-        val stagedJar = File(versionDir, "$pluginId.jar")
-
-        try {
-            targetJarFile.copyTo(stagedJar, overwrite = true)
-        } catch (e: Exception) {
-            val msg = "Failed to stage plugin in ${stagedJar.absolutePath}: ${e.message}"
+        if (!versionDir.exists() && !versionDir.mkdirs()) {
+            val msg = "Failed to create version staging directory: ${versionDir.absolutePath}"
+            logger.error(LogCategory.SYSTEM, msg)
             if (json) {
                 echo(
                     buildJsonObject {
@@ -242,93 +254,111 @@ class BossPluginLinkCommand : CliktCommand(name = "link") {
                     }.toString(),
                 )
             } else {
-                System.err.println("Error: $msg")
+                echo("Error: $msg", err = true)
+            }
+            throw ProgramResult(1)
+        }
+        val partJar = File(versionDir, "$pluginId.jar.part")
+        val stagedJar = File(versionDir, "$pluginId.jar")
+
+        try {
+            targetJarFile.copyTo(partJar, overwrite = true)
+            try {
+                Files.move(
+                    partJar.toPath(),
+                    stagedJar.toPath(),
+                    StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING,
+                )
+            } catch (
+                @Suppress("SwallowedException") e: AtomicMoveNotSupportedException,
+            ) {
+                logger.debug(
+                    LogCategory.SYSTEM,
+                    "ATOMIC_MOVE not supported, falling back to REPLACE_EXISTING",
+                    mapOf("pluginId" to pluginId),
+                )
+                Files.move(
+                    partJar.toPath(),
+                    stagedJar.toPath(),
+                    StandardCopyOption.REPLACE_EXISTING,
+                )
+            }
+        } catch (e: Exception) {
+            val msg = "Failed to stage plugin in ${stagedJar.absolutePath}: ${e.message}"
+            logger.error(LogCategory.SYSTEM, msg, error = e)
+            if (json) {
+                echo(
+                    buildJsonObject {
+                        put("status", "error")
+                        put("error", msg)
+                    }.toString(),
+                )
+            } else {
+                echo("Error: $msg", err = true)
             }
             throw ProgramResult(1)
         }
 
-        PluginLifecycleManager.pruneStagingHistory(pluginDevBase.toPath(), maxVersionsToKeep = 3)
+        DevPluginArtifacts.pruneStagingHistory(pluginDevBase, maxVersionsToKeep = 3)
 
-        val isRunning = SingleInstanceManager.isAnotherInstanceRunning()
-        if (isRunning) {
-            val reloadResult = SingleInstanceManager.reloadDevPlugin(pluginId)
-            when (reloadResult) {
-                is ReloadResult.Success -> {
-                    if (json) {
-                        val payload =
-                            buildJsonObject {
-                                put("status", "linked_and_reloaded")
-                                put("pluginId", pluginId)
-                                put("running", true)
-                                put("stagedPath", stagedJar.absolutePath.replace('\\', '/'))
-                            }
-                        echo(payload.toString())
-                    } else {
-                        echo(
-                            "[✓] Plugin '$pluginId' staged at ${stagedJar.absolutePath} " +
-                                "and reload signal confirmed by BossConsole.",
-                        )
-                    }
-                }
-
-                is ReloadResult.Failed -> {
-                    val isOffline =
-                        reloadResult.reason.contains("not running", ignoreCase = true) ||
-                            reloadResult.reason.contains("closed connection", ignoreCase = true) ||
-                            reloadResult.reason.contains("refused", ignoreCase = true) ||
-                            reloadResult.reason.contains("timed out", ignoreCase = true)
-
-                    if (isOffline) {
-                        if (json) {
-                            val payload =
-                                buildJsonObject {
-                                    put("status", "staged")
-                                    put("pluginId", pluginId)
-                                    put("running", false)
-                                    put("stagedPath", stagedJar.absolutePath.replace('\\', '/'))
-                                    put("notice", "BossConsole is offline; plugin staged for next launch")
-                                }
-                            echo(payload.toString())
-                        } else {
-                            echo(
-                                "[✓] Plugin '$pluginId' staged at ${stagedJar.absolutePath}. " +
-                                    "BossConsole is offline; plugin staged for next launch.",
-                            )
+        val reloadResult = SingleInstanceManager.reloadDevPlugin(pluginId)
+        when (reloadResult) {
+            is ReloadResult.Success -> {
+                if (json) {
+                    val payload =
+                        buildJsonObject {
+                            put("status", "linked_and_reloaded")
+                            put("pluginId", pluginId)
+                            put("running", true)
+                            put("stagedPath", stagedJar.absolutePath.replace('\\', '/'))
                         }
-                    } else {
-                        if (json) {
-                            val payload =
-                                buildJsonObject {
-                                    put("status", "linked_reload_failed")
-                                    put("pluginId", pluginId)
-                                    put("running", true)
-                                    put("error", reloadResult.reason)
-                                    put("stagedPath", stagedJar.absolutePath.replace('\\', '/'))
-                                }
-                            echo(payload.toString())
-                            throw ProgramResult(1)
-                        } else {
-                            System.err.println("Plugin '$pluginId' staged, but reload failed: ${reloadResult.reason}")
-                            throw ProgramResult(1)
-                        }
-                    }
+                    echo(payload.toString())
+                } else {
+                    echo(
+                        "[✓] Plugin '$pluginId' staged at ${stagedJar.absolutePath} " +
+                            "and reload signal confirmed by BossConsole.",
+                    )
                 }
             }
-        } else {
-            if (json) {
-                val payload =
-                    buildJsonObject {
-                        put("status", "staged")
-                        put("pluginId", pluginId)
-                        put("running", false)
-                        put("stagedPath", stagedJar.absolutePath.replace('\\', '/'))
-                    }
-                echo(payload.toString())
-            } else {
-                echo(
-                    "[✓] Plugin '$pluginId' staged in dev plugins (${stagedJar.absolutePath}). " +
-                        "BossConsole is offline; plugin staged for next launch.",
-                )
+
+            is ReloadResult.HostOffline -> {
+                if (json) {
+                    val payload =
+                        buildJsonObject {
+                            put("status", "staged")
+                            put("pluginId", pluginId)
+                            put("running", false)
+                            put("stagedPath", stagedJar.absolutePath.replace('\\', '/'))
+                            put("notice", "BossConsole is offline; plugin staged for next launch")
+                        }
+                    echo(payload.toString())
+                } else {
+                    echo(
+                        "[✓] Plugin '$pluginId' staged at ${stagedJar.absolutePath}. " +
+                            "BossConsole is offline; plugin staged for next launch.",
+                    )
+                }
+            }
+
+            is ReloadResult.Failed -> {
+                val msg = "Plugin '$pluginId' staged, but reload failed: ${reloadResult.reason}"
+                logger.error(LogCategory.SYSTEM, msg)
+                if (json) {
+                    val payload =
+                        buildJsonObject {
+                            put("status", "linked_reload_failed")
+                            put("pluginId", pluginId)
+                            put("running", true)
+                            put("error", reloadResult.reason)
+                            put("stagedPath", stagedJar.absolutePath.replace('\\', '/'))
+                        }
+                    echo(payload.toString())
+                    throw ProgramResult(1)
+                } else {
+                    echo(msg, err = true)
+                    throw ProgramResult(1)
+                }
             }
         }
     }

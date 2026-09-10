@@ -227,7 +227,7 @@ switch ($Command.ToLower()) {
     }
 
     "plugin" {
-        $subcommands = @("init", "validate", "link", "list", "package", "--help", "-h", "help")
+        $subcommands = @("init", "validate", "link", "--help", "-h", "help")
         if (-not [string]::IsNullOrEmpty($Argument) -and $Argument.ToLower() -notin $subcommands -and $args.Count -le 2) {
             $encoded = [System.Uri]::EscapeDataString($Argument)
             $deepLink = "boss://plugin?id=$encoded"
@@ -252,7 +252,7 @@ switch ($Command.ToLower()) {
                 if ($PSVersionTable.PSVersion -ge [Version]"7.3") {
                     $PSNativeCommandArgumentPassing = 'Standard'
                 }
-                & $bossExe @forwardArgs
+                & $bossExe @forwardArgs | Out-Host
                 exit $LASTEXITCODE
             }
             [Console]::Error.WriteLine("Error: BOSS application binary not found. Set BOSS_EXE to the packaged executable.")
@@ -280,7 +280,7 @@ switch ($Command.ToLower()) {
             if ($PSVersionTable.PSVersion -ge [Version]"7.3") {
                 $PSNativeCommandArgumentPassing = 'Standard'
             }
-            & $bossExe @forwardArgs
+            & $bossExe @forwardArgs | Out-Host
             exit $LASTEXITCODE
         }
         [Console]::Error.WriteLine("Error: BOSS application binary not found. Set BOSS_EXE to the packaged executable.")

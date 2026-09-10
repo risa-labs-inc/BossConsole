@@ -89,7 +89,7 @@ class PluginManifestTest {
 
         assertEquals(5, Files.list(pluginDevDir).use { it.count() })
 
-        PluginLifecycleManager.pruneStagingHistory(pluginDevDir, maxVersionsToKeep = 3)
+        DevPluginArtifacts.pruneStagingHistory(pluginDevDir.toFile(), maxVersionsToKeep = 3)
 
         val remaining =
             Files.list(pluginDevDir).use { stream ->
@@ -130,11 +130,11 @@ class PluginManifestTest {
             Files.writeString(vDir.resolve("my-tool.jar"), "content-$ts")
         }
 
-        val activeJar = PluginLifecycleManager.findActiveDevJar("my-tool", devRoot)
+        val activeJar = DevPluginArtifacts.findActiveDevJar("my-tool", devRoot.toFile())
         assertTrue(activeJar != null, "Active dev jar should be found")
         assertTrue(activeJar.toString().contains("v5000"), "Active dev jar must be newest timestamp (v5000)")
 
-        val allActive = PluginLifecycleManager.findAllActiveDevJars(devRoot)
+        val allActive = DevPluginArtifacts.findAllActiveDevJars(devRoot.toFile())
         assertEquals(1, allActive.size)
         assertEquals(activeJar, allActive.first())
     }
@@ -222,6 +222,53 @@ class PluginManifestTest {
         val deduplicated = DefaultPlugin.deduplicateJars(discovered)
         assertEquals(1, deduplicated.size)
         assertEquals(versionJar.absolutePath, deduplicated.single().absolutePath)
+    }
+
+    @Test
+    fun `DevPluginArtifacts isDevPluginJar avoids false positives on paths containing dev username`() {
+        val stagingBase = File(tempDir.toFile(), "staging-root")
+        stagingBase.mkdirs()
+        DevPluginArtifacts.stagingRootOverride = stagingBase
+
+        try {
+            // Path inside staging root with version folder: TRUE
+            val validDevJar = File(stagingBase, "my-plugin/v1700000000/my-plugin.jar")
+            validDevJar.parentFile.mkdirs()
+            validDevJar.writeText("fake-jar")
+            assertTrue(DevPluginArtifacts.isDevPluginJar(validDevJar))
+
+            // Normal installed plugin path on a machine where username has 'dev': FALSE
+            val installedDirWithDevUser = File(tempDir.toFile(), "Users/dev_user/AppData/Local/plugins/my-plugin.jar")
+            installedDirWithDevUser.parentFile.mkdirs()
+            installedDirWithDevUser.writeText("fake-jar")
+            assertFalse(DevPluginArtifacts.isDevPluginJar(installedDirWithDevUser))
+
+            // Sibling directory named 'dev' outside staging root: FALSE
+            val outsideDevDir = File(tempDir.toFile(), "some/dev/folder/my-plugin.jar")
+            outsideDevDir.parentFile.mkdirs()
+            outsideDevDir.writeText("fake-jar")
+            assertFalse(DevPluginArtifacts.isDevPluginJar(outsideDevDir))
+        } finally {
+            DevPluginArtifacts.stagingRootOverride = null
+        }
+    }
+
+    @Test
+    fun `SingleInstanceManager reloadDevPlugin returns HostOffline on stale descriptor with dead port`() {
+        // Find an unused loopback TCP port by binding and immediately closing
+        val deadPort = java.net.ServerSocket(0).use { it.localPort }
+
+        // Create a fake instance descriptor file pointing to this dead port
+        val runDir = File(tempDir.toFile(), "run")
+        runDir.mkdirs()
+        SingleInstanceManager.runtimeDirOverride = runDir
+
+        val descriptorFile = File(runDir, "boss-instance.txt")
+        val token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        descriptorFile.writeText("transport=TCP\nendpoint=$deadPort\ntoken=$token\n")
+
+        val result = SingleInstanceManager.reloadDevPlugin("my-plugin", timeoutMs = 1000)
+        assertIs<ReloadResult.HostOffline>(result, "Should report HostOffline when port connection is refused")
     }
 
     private fun writeSyntheticJar(

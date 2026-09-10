@@ -73,6 +73,26 @@ abstract class JxBrowserVersionValueSource : ValueSource<String, JxBrowserVersio
     }
 }
 
+// Configuration-cache-compatible ValueSource for reading Plugin API version from TOML (single source of truth)
+abstract class PluginApiVersionValueSource : ValueSource<String, PluginApiVersionValueSource.Parameters> {
+    interface Parameters : ValueSourceParameters {
+        val tomlFile: RegularFileProperty
+    }
+
+    override fun obtain(): String {
+        val file = parameters.tomlFile.get().asFile
+        if (!file.exists()) {
+            throw GradleException("libs.versions.toml not found at ${file.absolutePath}")
+        }
+        val content = file.readText()
+        return Regex("""boss-plugin-api\s*=\s*"([^"]+)"""")
+            .find(content)
+            ?.groupValues
+            ?.get(1)
+            ?: throw GradleException("Could not find boss-plugin-api version in libs.versions.toml")
+    }
+}
+
 // Load version from properties file using configuration-cache-compatible providers
 val versionPropsFile = layout.projectDirectory.file("../version.properties")
 val versionPropsProvider =
@@ -159,6 +179,13 @@ val jxBrowserVersion =
     project.findProperty("jxBrowserVersion")?.toString()
         ?: jxBrowserVersionProvider.get()
 
+// Configuration-cache-compatible provider for Plugin API contract version from libs.versions.toml
+val pluginApiVersionProvider =
+    providers.of(PluginApiVersionValueSource::class.java) {
+        parameters.tomlFile.set(libsVersionsFile)
+    }
+val pluginApiVersion = pluginApiVersionProvider.get()
+
 // local.properties (git-ignored) as a lazy, configuration-cache-tracked input.
 // Absent file → absent provider; callers must getOrElse/orNull.
 val localPropertiesProvider: Provider<Properties> =
@@ -239,10 +266,10 @@ val generateVersionConstants =
         val minorProvider = propsProvider.map { it.getProperty("app.version.minor", "8") }
         val patchProvider = propsProvider.map { it.getProperty("app.version.patch", "0") }
         val prereleaseProvider = propsProvider.map { it.getProperty("app.prerelease.suffix", "") }
-        val pluginApiVersionProvider = propsProvider.map { it.getProperty("pluginApiVersion", "1.0.88") }
+        val pluginApiProvider = pluginApiVersionProvider
         val jxVersionProvider = jxBrowserVersionProvider
 
-        // Track libs.versions.toml as an input for JxBrowser version
+        // Track libs.versions.toml as an input for JxBrowser and Plugin API versions
         inputs.file(libsVersionsFile)
 
         inputs.file(versionPropsFile)
@@ -257,7 +284,7 @@ val generateVersionConstants =
             val minor = minorProvider.get()
             val patch = patchProvider.get()
             val prerelease = prereleaseProvider.get().takeIf { it.isNotBlank() }
-            val pluginApiVersion = pluginApiVersionProvider.get()
+            val pluginApiVer = pluginApiProvider.get()
             val jxVersion = jxVersionProvider.get()
 
             // Generate PRERELEASE constant as nullable String
@@ -284,8 +311,8 @@ val generateVersionConstants =
                 |    /** JxBrowser version from gradle/libs.versions.toml */
                 |    const val JXBROWSER_VERSION = "$jxVersion"
                 |
-                |    /** Plugin API contract version from version.properties */
-                |    const val PLUGIN_API_VERSION = "$pluginApiVersion"
+                |    /** Plugin API contract version from gradle/libs.versions.toml */
+                |    const val PLUGIN_API_VERSION = "$pluginApiVer"
                 |}
                 |
                     """.trimMargin(),

@@ -1,7 +1,10 @@
 package ai.rever.boss.plugin.launchpad
 
+import ai.rever.boss.plugin.api.Plugin
 import java.io.File
 import java.io.IOException
+import java.net.URLClassLoader
+import java.nio.ByteBuffer
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.jar.JarFile
@@ -10,9 +13,16 @@ import java.util.zip.ZipException
 /**
  * Validates a plugin source directory or packaged archive (.jar / .zip).
  */
-@Suppress("ReturnCount", "TooGenericExceptionCaught", "LongMethod")
+@Suppress(
+    "ReturnCount",
+    "TooGenericExceptionCaught",
+    "LongMethod",
+    "ComplexMethod",
+    "NestedBlockDepth",
+    "TooManyFunctions",
+)
 object PluginValidator {
-    private val ID_REGEX = Regex("^[a-z0-9-]+$")
+    private val ID_REGEX = Regex("^[a-zA-Z0-9_.-]+$")
     private val MCP_TOOL_REGEX = Regex("^mcp__[a-z0-9_-]+__[a-z0-9_-]+$")
     private val CLASS_NAME_REGEX = Regex("""^[a-zA-Z_$][a-zA-Z0-9_$]*(?:\.[a-zA-Z_$][a-zA-Z0-9_$]*)+$""")
 
@@ -54,15 +64,37 @@ object PluginValidator {
         }
         val libsDir = inputPath.resolve("build").resolve("libs")
         if (Files.isDirectory(libsDir)) {
-            val candidateJar =
+            val candidates =
                 Files.list(libsDir).use { stream ->
                     stream
                         .filter {
                             val name = it.fileName.toString()
-                            name.endsWith(".jar") && !name.endsWith("-sources.jar") && !name.endsWith("-javadoc.jar")
-                        }.findFirst()
+                            name.endsWith(".jar") &&
+                                !name.endsWith("-sources.jar") &&
+                                !name.endsWith("-javadoc.jar") &&
+                                !name.endsWith("-plain.jar") &&
+                                !name.endsWith("-all.jar")
+                        }.toList()
                 }
-            if (candidateJar.isPresent) return candidateJar.get()
+            if (candidates.size == 1) {
+                return candidates.single()
+            }
+            if (candidates.size > 1) {
+                // Disambiguate by directory name or pick the newest modified build
+                val dirName =
+                    inputPath.fileName
+                        ?.toString()
+                        ?.lowercase()
+                        .orEmpty()
+                val matchingByName =
+                    candidates.filter {
+                        val name = it.fileName.toString().lowercase()
+                        dirName.isNotEmpty() && name.startsWith(dirName)
+                    }
+                val pool = if (matchingByName.isNotEmpty()) matchingByName else candidates
+                val newest = pool.maxByOrNull { Files.getLastModifiedTime(it) }
+                if (newest != null) return newest
+            }
         }
         error("No compiled JAR found in target directory. Run './gradlew build' before linking.")
     }
@@ -83,7 +115,8 @@ object PluginValidator {
     fun readManifestFromJar(file: File): PluginManifest {
         JarFile(file).use { jar ->
             val entry =
-                jar.getJarEntry("plugin.json")
+                jar.getJarEntry("META-INF/boss-plugin/plugin.json")
+                    ?: jar.getJarEntry("plugin.json")
                     ?: error("plugin.json missing in archive: ${file.name}")
             val content = jar.getInputStream(entry).bufferedReader().use { it.readText() }
             return launchpadJson.decodeFromString<PluginManifest>(content)
@@ -94,8 +127,16 @@ object PluginValidator {
         dir: File,
         checks: MutableList<ValidationCheck>,
     ): ValidationResult {
-        val manifestFile = File(dir, "plugin.json")
-        if (!manifestFile.exists() || !manifestFile.isFile) {
+        val resourceManifest = File(dir, "src/main/resources/META-INF/boss-plugin/plugin.json")
+        val rootManifest = File(dir, "plugin.json")
+        val manifestFile =
+            when {
+                resourceManifest.exists() && resourceManifest.isFile -> resourceManifest
+                rootManifest.exists() && rootManifest.isFile -> rootManifest
+                else -> null
+            }
+
+        if (manifestFile == null) {
             checks +=
                 ValidationCheck(
                     name = "manifest-exists",
@@ -109,7 +150,7 @@ object PluginValidator {
             ValidationCheck(
                 name = "manifest-exists",
                 passed = true,
-                message = "plugin.json found",
+                message = "plugin.json found at ${manifestFile.relativeTo(dir).path.replace('\\', '/')}",
             )
 
         val jsonContent =
@@ -135,7 +176,7 @@ object PluginValidator {
         file: File,
         checks: MutableList<ValidationCheck>,
     ): ValidationResult {
-        val (manifestContent, hasBytecodeEntry) =
+        val archiveData =
             try {
                 readArchive(file, checks)
             } catch (e: Exception) {
@@ -149,13 +190,13 @@ object PluginValidator {
             } ?: return ValidationResult(isValid = false, checks = checks)
 
         val manifest =
-            parseManifest(manifestContent, checks)
+            parseManifest(archiveData.manifestContent, checks)
                 ?: return ValidationResult(isValid = false, checks = checks)
         validateManifestFields(manifest, checks)
 
         // Bytecode verification for entrypointClass
-        val entrypointBytecodePath = manifest.entrypointClass.replace('.', '/') + ".class"
-        val entrypointExists = hasBytecodeEntry(entrypointBytecodePath)
+        val entrypointBytecodePath = manifest.mainClass.replace('.', '/') + ".class"
+        val entrypointExists = archiveData.hasEntry(entrypointBytecodePath)
         checks +=
             ValidationCheck(
                 name = "bytecode-entrypoint",
@@ -168,17 +209,39 @@ object PluginValidator {
                     },
             )
 
+        if (entrypointExists) {
+            val implementsPlugin = verifyImplementsPlugin(file, manifest.mainClass, archiveData)
+            checks +=
+                ValidationCheck(
+                    name = "bytecode-implements-plugin",
+                    passed = implementsPlugin,
+                    message =
+                        if (implementsPlugin) {
+                            "Entrypoint class '${manifest.mainClass}' implements ai.rever.boss.plugin.api.Plugin"
+                        } else {
+                            "Entrypoint class '${manifest.mainClass}' must implement ai.rever.boss.plugin.api.Plugin"
+                        },
+                )
+        }
+
         return ValidationResult(isValid = checks.all { it.passed }, checks = checks)
     }
+
+    private data class ArchiveData(
+        val manifestContent: String,
+        val hasEntry: (String) -> Boolean,
+        val readBytes: (String) -> ByteArray?,
+    )
 
     private fun readArchive(
         file: File,
         checks: MutableList<ValidationCheck>,
-    ): Pair<String, (String) -> Boolean>? {
-        return try {
-            val jar = JarFile(file)
-            jar.use { jarFile ->
-                val manifestEntry = jarFile.getJarEntry("plugin.json")
+    ): ArchiveData? =
+        try {
+            JarFile(file).use { jarFile ->
+                val manifestEntry =
+                    jarFile.getJarEntry("META-INF/boss-plugin/plugin.json")
+                        ?: jarFile.getJarEntry("plugin.json")
                 if (manifestEntry == null) {
                     checks +=
                         ValidationCheck(
@@ -186,23 +249,32 @@ object PluginValidator {
                             passed = false,
                             message = "plugin.json not found in archive: ${file.name}",
                         )
-                    return null
-                }
-                checks +=
-                    ValidationCheck(
-                        name = "manifest-exists",
-                        passed = true,
-                        message = "plugin.json found in archive",
-                    )
+                    null
+                } else {
+                    checks +=
+                        ValidationCheck(
+                            name = "manifest-exists",
+                            passed = true,
+                            message = "plugin.json found in archive",
+                        )
 
-                val manifestContent = jarFile.getInputStream(manifestEntry).bufferedReader().use { it.readText() }
-                val allEntries =
-                    jarFile
-                        .entries()
-                        .asSequence()
-                        .map { it.name }
-                        .toSet()
-                Pair(manifestContent) { entryName -> entryName in allEntries }
+                    val manifestContent = jarFile.getInputStream(manifestEntry).bufferedReader().use { it.readText() }
+                    val allEntries =
+                        jarFile
+                            .entries()
+                            .asSequence()
+                            .map { it.name }
+                            .toSet()
+
+                    ArchiveData(
+                        manifestContent = manifestContent,
+                        hasEntry = { entryName -> entryName in allEntries },
+                        readBytes = { entryName ->
+                            val e = jarFile.getJarEntry(entryName)
+                            e?.let { jarFile.getInputStream(it).use { stream -> stream.readBytes() } }
+                        },
+                    )
+                }
             }
         } catch (e: ZipException) {
             checks +=
@@ -213,6 +285,132 @@ object PluginValidator {
                 )
             null
         }
+
+    /**
+     * Verifies that [mainClass] implements [Plugin].
+     * Uses [Class.forName] with initialize = false to avoid running static initializers (<clinit>).
+     * Falls back to inspecting classfile bytes for direct interface declaration if dependencies are missing.
+     */
+    private fun verifyImplementsPlugin(
+        jarFile: File,
+        mainClass: String,
+        archiveData: ArchiveData,
+    ): Boolean {
+        try {
+            val parentLoader = Plugin::class.java.classLoader
+            val urlClassLoader = URLClassLoader(arrayOf(jarFile.toURI().toURL()), parentLoader)
+            // initialize = false ensures static initializers (<clinit>) are never executed
+            val clazz = Class.forName(mainClass, false, urlClassLoader)
+            return Plugin::class.java.isAssignableFrom(clazz)
+        } catch (_: Throwable) {
+            // Manual classfile fallback when classloading fails due to external dependencies.
+            // Note: Manual classfile parser supports direct implementations of ai.rever.boss.plugin.api.Plugin.
+            val classEntryPath = mainClass.replace('.', '/') + ".class"
+            val classBytes = archiveData.readBytes(classEntryPath) ?: return false
+            return checkDirectInterfaceImplementation(classBytes)
+        }
+    }
+
+    /**
+     * Parses the constant pool and interfaces of [classBytes] to determine if it directly implements
+     * ai.rever.boss.plugin.api.Plugin.
+     *
+     * Note: Manual classfile parser supports direct implementations of
+     * ai.rever.boss.plugin.api.Plugin when classloading is unavailable.
+     */
+    internal fun checkDirectInterfaceImplementation(classBytes: ByteArray): Boolean {
+        if (classBytes.size < 10) return false
+        val buffer = ByteBuffer.wrap(classBytes)
+        if (buffer.int != 0xCAFEBABE.toInt()) return false
+        buffer.short // minor
+        buffer.short // major
+        val cpCount = buffer.short.toInt() and 0xFFFF
+        val strings = arrayOfNulls<String>(cpCount)
+        val classRefs = IntArray(cpCount)
+
+        var i = 1
+        while (i < cpCount) {
+            when (buffer.get().toInt() and 0xFF) {
+                1 -> { // Utf8
+                    val length = buffer.short.toInt() and 0xFFFF
+                    val bytes = ByteArray(length)
+                    buffer.get(bytes)
+                    strings[i] = String(bytes, Charsets.UTF_8)
+                }
+
+                7 -> { // Class
+                    classRefs[i] = buffer.short.toInt() and 0xFFFF
+                }
+
+                8 -> {
+                    buffer.short
+                }
+
+                // String
+                3, 4 -> {
+                    buffer.int
+                }
+
+                // Integer, Float
+                5, 6 -> { // Long, Double (takes 2 CP slots)
+                    buffer.long
+                    i++
+                }
+
+                9, 10, 11 -> {
+                    buffer.short
+                    buffer.short
+                }
+
+                // Fieldref, Methodref, InterfaceMethodref
+                12 -> {
+                    buffer.short
+                    buffer.short
+                }
+
+                // NameAndType
+                15 -> {
+                    buffer.get()
+                    buffer.short
+                }
+
+                // MethodHandle
+                16 -> {
+                    buffer.short
+                }
+
+                // MethodType
+                17, 18 -> {
+                    buffer.short
+                    buffer.short
+                }
+
+                // Dynamic, InvokeDynamic
+                19, 20 -> {
+                    buffer.short
+                }
+
+                // Module, Package
+                else -> {
+                    return false
+                }
+            }
+            i++
+        }
+
+        buffer.short // access flags
+        buffer.short // this class
+        buffer.short // super class
+        val interfacesCount = buffer.short.toInt() and 0xFFFF
+        repeat(interfacesCount) {
+            val ifaceRef = buffer.short.toInt() and 0xFFFF
+            val nameIndex = classRefs.getOrNull(ifaceRef) ?: 0
+            val ifaceName = strings.getOrNull(nameIndex)
+            if (ifaceName == "ai/rever/boss/plugin/api/Plugin") {
+                return true
+            }
+        }
+        return false
     }
 
     private fun parseManifest(
@@ -242,17 +440,17 @@ object PluginValidator {
         manifest: PluginManifest,
         checks: MutableList<ValidationCheck>,
     ) {
-        // ID format
-        val idValid = ID_REGEX.matches(manifest.id)
+        // ID format (supports reverse-domain dotted IDs e.g. com.example.tool and kebab-case)
+        val idValid = ID_REGEX.matches(manifest.pluginId)
         checks +=
             ValidationCheck(
                 name = "id-format",
                 passed = idValid,
                 message =
                     if (idValid) {
-                        "Plugin ID '${manifest.id}' matches ^[a-z0-9-]+$"
+                        "Plugin ID '${manifest.pluginId}' matches ^[a-zA-Z0-9_.-]+$"
                     } else {
-                        "Plugin ID '${manifest.id}' must match pattern ^[a-z0-9-]+$"
+                        "Plugin ID '${manifest.pluginId}' must match pattern ^[a-zA-Z0-9_.-]+$"
                     },
             )
 
@@ -270,35 +468,35 @@ object PluginValidator {
                     },
             )
 
-        // minApiVersion compatibility
+        // apiVersion compatibility
         val minApiValid =
-            SemVerValidator.isValid(manifest.minApiVersion) &&
-                SemVerValidator.isCompatible(manifest.minApiVersion, HostMeta.CURRENT_API_VERSION)
+            SemVerValidator.isValid(manifest.apiVersion) &&
+                SemVerValidator.isCompatible(manifest.apiVersion, HostMeta.CURRENT_API_VERSION)
         checks +=
             ValidationCheck(
                 name = "min-api-version",
                 passed = minApiValid,
                 message =
                     if (minApiValid) {
-                        "minApiVersion '${manifest.minApiVersion}' is compatible " +
+                        "apiVersion '${manifest.apiVersion}' is compatible " +
                             "(host: ${HostMeta.CURRENT_API_VERSION})"
                     } else {
-                        "minApiVersion '${manifest.minApiVersion}' is incompatible or exceeds " +
+                        "apiVersion '${manifest.apiVersion}' is incompatible or exceeds " +
                             "host API version '${HostMeta.CURRENT_API_VERSION}'"
                     },
             )
 
-        // entrypointClass format
-        val entrypointValid = CLASS_NAME_REGEX.matches(manifest.entrypointClass)
+        // mainClass format
+        val entrypointValid = CLASS_NAME_REGEX.matches(manifest.mainClass)
         checks +=
             ValidationCheck(
                 name = "entrypoint-class",
                 passed = entrypointValid,
                 message =
                     if (entrypointValid) {
-                        "Entrypoint class '${manifest.entrypointClass}' is a valid fully-qualified class name"
+                        "Entrypoint class '${manifest.mainClass}' is a valid fully-qualified class name"
                     } else {
-                        "Entrypoint class '${manifest.entrypointClass}' must be a valid fully-qualified class name"
+                        "Entrypoint class '${manifest.mainClass}' must be a valid fully-qualified class name"
                     },
             )
 
