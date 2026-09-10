@@ -108,6 +108,37 @@ detect_and_route() {
     exit 1
 }
 
+forward_to_boss() {
+    BOSS_BIN="${BOSS_BIN:-}"
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+    if [ -z "$BOSS_BIN" ]; then
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            if [ -x "/Applications/BOSS.app/Contents/MacOS/BOSS" ]; then
+                BOSS_BIN="/Applications/BOSS.app/Contents/MacOS/BOSS"
+            elif [ -x "$HOME/Applications/BOSS.app/Contents/MacOS/BOSS" ]; then
+                BOSS_BIN="$HOME/Applications/BOSS.app/Contents/MacOS/BOSS"
+            elif [ -x "$SCRIPT_DIR/../composeApp/build/compose/binaries/main/app/BOSS.app/Contents/MacOS/BOSS" ]; then
+                BOSS_BIN="$SCRIPT_DIR/../composeApp/build/compose/binaries/main/app/BOSS.app/Contents/MacOS/BOSS"
+            fi
+        elif [[ "$OSTYPE" == "linux"* ]]; then
+            if command -v boss-desktop &> /dev/null; then
+                BOSS_BIN="boss-desktop"
+            elif [ -x "/opt/boss/bin/BOSS" ]; then
+                BOSS_BIN="/opt/boss/bin/BOSS"
+            elif [ -x "$SCRIPT_DIR/../composeApp/build/compose/binaries/main/app/bin/BOSS" ]; then
+                BOSS_BIN="$SCRIPT_DIR/../composeApp/build/compose/binaries/main/app/bin/BOSS"
+            fi
+        fi
+    fi
+
+    if [ -n "$BOSS_BIN" ] && command -v "$BOSS_BIN" >/dev/null 2>&1; then
+        exec "$BOSS_BIN" "$@"
+    else
+        echo "Error: BOSS application binary not found. Set BOSS_BIN to the packaged executable." >&2
+        exit 1
+    fi
+}
+
 # Main command handling
 case "$1" in
     url)
@@ -176,45 +207,25 @@ case "$1" in
         ;;
 
     plugin)
-        if [ -z "$2" ]; then
-            echo "Error: Plugin ID required"
-            echo "Usage: boss plugin <id>"
-            exit 1
-        fi
-        encoded_id=$(urlencode "$2")
-        deep_link="boss://plugin?id=${encoded_id}"
-        open_url "$deep_link"
+        subcommand="${2:-}"
+        case "$subcommand" in
+            init|validate|link|list|package|--help|-h|help|"")
+                forward_to_boss "$@"
+                ;;
+            *)
+                if [ $# -le 2 ]; then
+                    encoded_id=$(urlencode "$2")
+                    deep_link="boss://plugin?id=${encoded_id}"
+                    open_url "$deep_link"
+                else
+                    forward_to_boss "$@"
+                fi
+                ;;
+        esac
         ;;
 
     status|mcp|completion)
-        BOSS_BIN="${BOSS_BIN:-}"
-        SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
-        if [ -z "$BOSS_BIN" ]; then
-            if [[ "$OSTYPE" == "darwin"* ]]; then
-                if [ -x "/Applications/BOSS.app/Contents/MacOS/BOSS" ]; then
-                    BOSS_BIN="/Applications/BOSS.app/Contents/MacOS/BOSS"
-                elif [ -x "$HOME/Applications/BOSS.app/Contents/MacOS/BOSS" ]; then
-                    BOSS_BIN="$HOME/Applications/BOSS.app/Contents/MacOS/BOSS"
-                elif [ -x "$SCRIPT_DIR/../composeApp/build/compose/binaries/main/app/BOSS.app/Contents/MacOS/BOSS" ]; then
-                    BOSS_BIN="$SCRIPT_DIR/../composeApp/build/compose/binaries/main/app/BOSS.app/Contents/MacOS/BOSS"
-                fi
-            elif [[ "$OSTYPE" == "linux"* ]]; then
-                if command -v boss-desktop &> /dev/null; then
-                    BOSS_BIN="boss-desktop"
-                elif [ -x "/opt/boss/bin/BOSS" ]; then
-                    BOSS_BIN="/opt/boss/bin/BOSS"
-                elif [ -x "$SCRIPT_DIR/../composeApp/build/compose/binaries/main/app/bin/BOSS" ]; then
-                    BOSS_BIN="$SCRIPT_DIR/../composeApp/build/compose/binaries/main/app/bin/BOSS"
-                fi
-            fi
-        fi
-
-        if [ -n "$BOSS_BIN" ] && command -v "$BOSS_BIN" >/dev/null 2>&1; then
-            exec "$BOSS_BIN" "$@"
-        else
-            echo "Error: BOSS application binary not found. Set BOSS_BIN to the packaged executable." >&2
-            exit 1
-        fi
+        forward_to_boss "$@"
         ;;
 
     --version|-v|version)

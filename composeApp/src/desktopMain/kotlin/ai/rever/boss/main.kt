@@ -249,7 +249,7 @@ fun main(args: Array<String>) {
     // closed without booting the GUI or corrupting standard output streams.
     val firstNonFlag = args.firstOrNull { !it.startsWith("-") }?.lowercase()
     val isHeadlessCli =
-        firstNonFlag in setOf("status", "mcp", "completion") ||
+        firstNonFlag in setOf("status", "mcp", "completion", "plugin") ||
             (args.isNotEmpty() && args.all { it in setOf("-h", "--help") })
 
     if (isHeadlessCli) {

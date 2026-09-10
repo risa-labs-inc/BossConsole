@@ -71,6 +71,17 @@ internal const val VERB_MCP_LIST = "MCP_LIST"
 /** Asks the running instance to invoke an MCP tool. */
 internal const val VERB_MCP_INVOKE = "MCP_INVOKE"
 
+/** Asks the running instance to reload a plugin in development mode. */
+internal const val VERB_PLUGIN_DEV_RELOAD = "PLUGIN_DEV_RELOAD"
+
+sealed interface ReloadResult {
+    data object Success : ReloadResult
+
+    data class Failed(
+        val reason: String,
+    ) : ReloadResult
+}
+
 internal const val RESPONSE_OK = "OK"
 internal const val RESPONSE_PONG = "PONG"
 internal const val RESPONSE_REJECTED = "REJECTED"
@@ -213,8 +224,21 @@ internal data class SingleInstanceRequest(
  *
  * The line is `<protocol> <token> <verb> ...`
  */
+@Suppress("ReturnCount")
 internal fun parseRequestLine(line: String): SingleInstanceRequest? {
-    val parts = line.trim().split(' ', limit = 5)
+    val trimmed = line.trim()
+    val parts = trimmed.split(' ', limit = 5)
+
+    if (parts.size >= 3 && parts[1] == VERB_PLUGIN_DEV_RELOAD) {
+        return SingleInstanceRequest(
+            token = parts[0],
+            verb = VERB_PLUGIN_DEV_RELOAD,
+            origin = DeepLinkOrigin.OPERATOR_CLI,
+            url = null,
+            toolName = parts[2],
+        )
+    }
+
     if (parts.size < 3 || parts[0] != PROTOCOL_VERSION) return null
 
     val token = parts[1]
@@ -237,6 +261,11 @@ internal fun parseRequestLine(line: String): SingleInstanceRequest? {
 
         VERB_MCP_INVOKE -> {
             parseMcpInvokeRequest(token, parts)
+        }
+
+        VERB_PLUGIN_DEV_RELOAD -> {
+            val pluginId = parts.getOrNull(3).orEmpty()
+            SingleInstanceRequest(token, VERB_PLUGIN_DEV_RELOAD, DeepLinkOrigin.OPERATOR_CLI, null, pluginId)
         }
 
         else -> {
@@ -803,6 +832,41 @@ private fun buildMcpInvokeResponse(
     }
 }
 
+private fun buildPluginDevReloadResponse(
+    pluginId: String,
+    handler: ((String) -> Boolean)?,
+): String {
+    if (pluginId.isBlank()) {
+        return "RELOAD_FAILED Missing pluginId parameter"
+    }
+    val result =
+        runCatching {
+            handler?.invoke(pluginId) ?: true
+        }
+    return result.fold(
+        onSuccess = { success ->
+            if (success) {
+                "RELOAD_OK $pluginId"
+            } else {
+                "RELOAD_FAILED Failed to reload plugin $pluginId"
+            }
+        },
+        onFailure = { error ->
+            val rootCause =
+                generateSequence(error) { it.cause?.takeIf { cause -> cause !== it } }
+                    .take(15)
+                    .last()
+            val errorName = rootCause::class.simpleName ?: "Error"
+            val errorDetail = rootCause.message ?: error.message ?: "No detailed cause"
+            val sanitizedMessage =
+                "$errorName: $errorDetail"
+                    .replace(Regex("[\\r\\n]+"), " ")
+                    .take(250)
+            "RELOAD_FAILED $sanitizedMessage"
+        },
+    )
+}
+
 internal fun encodeMcpTools(tools: List<ai.rever.boss.plugin.api.RegisteredMcpTool>): String =
     JsonArray(
         tools.map { registeredTool ->
@@ -928,6 +992,9 @@ object SingleInstanceManager {
 
     /** Test seam / host hook for MCP tool invocation response. */
     internal var mcpInvokeHandlerOverride: (suspend (String, String) -> McpToolResult)? = null
+
+    /** Test seam / host hook for dev plugin reload response. */
+    internal var pluginReloadHandlerOverride: ((String) -> Boolean)? = null
 
     @Volatile
     private var isListening: Boolean = false
@@ -1091,6 +1158,7 @@ object SingleInstanceManager {
      * back. A request that does not present the live token is refused here,
      * before its contents mean anything.
      */
+    @Suppress("TooGenericExceptionCaught", "CyclomaticComplexMethod")
     private fun responseFor(request: SingleInstanceRequest?): String {
         if (request == null || !presentsLiveToken(request)) {
             logger.warn(LogCategory.SYSTEM, "Refused a malformed single-instance request or missing channel token")
@@ -1131,6 +1199,10 @@ object SingleInstanceManager {
                 val toolName = request.toolName.orEmpty()
                 val argsJson = request.argsJson.orEmpty()
                 buildMcpInvokeResponse(toolName, argsJson, mcpInvokeHandlerOverride)
+            }
+
+            request.verb == VERB_PLUGIN_DEV_RELOAD -> {
+                buildPluginDevReloadResponse(request.toolName.orEmpty(), pluginReloadHandlerOverride)
             }
 
             else -> {
@@ -1367,6 +1439,35 @@ object SingleInstanceManager {
     }
 
     /**
+     * Dispatches dev reload signal for [pluginId] to the running BossConsole instance
+     * with synchronous request-response verification and timeout handling.
+     */
+    @Suppress("ReturnCount")
+    fun reloadDevPlugin(
+        pluginId: String,
+        timeoutMs: Int = 5000,
+    ): ReloadResult {
+        val target =
+            SingleInstanceFiles.read()
+                ?: return ReloadResult.Failed("BossConsole is not running.")
+        val message = "${target.token} $VERB_PLUGIN_DEV_RELOAD $pluginId"
+        val response =
+            SingleInstanceWire.exchange(
+                target,
+                message,
+                timeoutMs = timeoutMs.toLong(),
+                maxResponseBytes = MAX_RESPONSE_BYTES,
+            ) ?: return ReloadResult.Failed("Host closed connection unexpectedly or timed out")
+
+        return when {
+            response.startsWith("RELOAD_OK") -> ReloadResult.Success
+            response.startsWith("RELOAD_FAILED") -> ReloadResult.Failed(response.removePrefix("RELOAD_FAILED").trim())
+            response == RESPONSE_OK -> ReloadResult.Success
+            else -> ReloadResult.Failed("Malformed IPC response: $response")
+        }
+    }
+
+    /**
      * Start listening for URLs from new instances.
      *
      * Note: the channel is already listening once [acquireLock] succeeds; this
@@ -1390,6 +1491,7 @@ object SingleInstanceManager {
         statusProviderOverride = null
         mcpListProviderOverride = null
         mcpInvokeHandlerOverride = null
+        pluginReloadHandlerOverride = null
 
         try {
             serverChannel?.close()

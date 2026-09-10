@@ -175,6 +175,55 @@ class DefaultPlugin(
         var loadPersistedPluginsInternal: suspend (DynamicPluginManager) -> Unit = { _ ->
             // Default no-op - platform-specific code should set this
         }
+
+        internal fun findActiveDevJars(devDir: File): List<File> {
+            val pluginDirs = devDir.takeIf { it.isDirectory } ?: return emptyList()
+            val flatDevJars = pluginDirs.listFiles { it.isFile && it.extension == "jar" }?.toList() ?: emptyList()
+            val versionDirs =
+                pluginDirs
+                    .listFiles { it.isDirectory }
+                    ?.mapNotNull { pDir ->
+                        val versionDirs =
+                            pDir.listFiles { it.isDirectory && it.name.startsWith("v") }
+                                ?: return@mapNotNull null
+                        val latestVersionDir =
+                            versionDirs.maxByOrNull { dir ->
+                                dir.name.removePrefix("v").toLongOrNull() ?: dir.lastModified()
+                            } ?: return@mapNotNull null
+                        latestVersionDir.listFiles { it.isFile && it.extension == "jar" }?.firstOrNull()
+                    } ?: emptyList()
+            return flatDevJars + versionDirs
+        }
+
+        internal fun extractPluginId(jarFile: File): String =
+            try {
+                java.util.jar.JarFile(jarFile).use { jar ->
+                    val entry =
+                        jar.getJarEntry("META-INF/boss-plugin/plugin.json")
+                            ?: jar.getJarEntry("plugin.json")
+                    if (entry != null) {
+                        val text = jar.getInputStream(entry).bufferedReader().readText()
+                        val match = Regex(""""(?:id|pluginId)"\s*:\s*"([^"]+)"""").find(text)
+                        match?.groupValues?.get(1)
+                    } else {
+                        null
+                    }
+                } ?: jarFile.nameWithoutExtension
+            } catch (_: Exception) {
+                jarFile.nameWithoutExtension
+            }
+
+        internal fun deduplicateJars(jars: List<File>): List<File> =
+            jars
+                .groupBy { extractPluginId(it) }
+                .mapValues { (_, group) ->
+                    group.maxByOrNull { file ->
+                        val isVersionRotated = file.parentFile?.name?.startsWith("v") == true
+                        val versionBonus = if (isVersionRotated) 10_000_000_000_000L else 0L
+                        versionBonus + file.lastModified()
+                    } ?: group.first()
+                }.values
+                .toList()
     }
 
     private val logger = BossLogger.forComponent("DefaultPlugin")
@@ -1167,12 +1216,15 @@ class DefaultPlugin(
                 // updater can replace jars while startup is in flight — a listing
                 // captured at init would try already-deleted files and never see
                 // freshly downloaded ones.
-                val jarFiles =
+                val standardJars =
                     pluginDir.listFiles { file ->
                         file.isFile && file.extension == "jar" &&
                             // Skip microkernel runtime — it's a classpath dependency for OOP plugins, not a loadable plugin
                             !file.name.startsWith(MicrokernelRuntime.ARTIFACT_PREFIX)
                     } ?: emptyArray()
+
+                val devJars = findActiveDevJars(File(pluginDir, "dev"))
+                val jarFiles = deduplicateJars(standardJars.toList() + devJars)
 
                 if (jarFiles.isEmpty()) {
                     logger.debug(

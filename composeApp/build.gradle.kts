@@ -239,6 +239,7 @@ val generateVersionConstants =
         val minorProvider = propsProvider.map { it.getProperty("app.version.minor", "8") }
         val patchProvider = propsProvider.map { it.getProperty("app.version.patch", "0") }
         val prereleaseProvider = propsProvider.map { it.getProperty("app.prerelease.suffix", "") }
+        val pluginApiVersionProvider = propsProvider.map { it.getProperty("pluginApiVersion", "1.0.88") }
         val jxVersionProvider = jxBrowserVersionProvider
 
         // Track libs.versions.toml as an input for JxBrowser version
@@ -256,6 +257,7 @@ val generateVersionConstants =
             val minor = minorProvider.get()
             val patch = patchProvider.get()
             val prerelease = prereleaseProvider.get().takeIf { it.isNotBlank() }
+            val pluginApiVersion = pluginApiVersionProvider.get()
             val jxVersion = jxVersionProvider.get()
 
             // Generate PRERELEASE constant as nullable String
@@ -281,6 +283,9 @@ val generateVersionConstants =
                 |
                 |    /** JxBrowser version from gradle/libs.versions.toml */
                 |    const val JXBROWSER_VERSION = "$jxVersion"
+                |
+                |    /** Plugin API contract version from version.properties */
+                |    const val PLUGIN_API_VERSION = "$pluginApiVersion"
                 |}
                 |
                     """.trimMargin(),

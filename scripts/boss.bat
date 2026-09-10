@@ -105,11 +105,17 @@ start "" "boss://terminal?command=%ENCODED%"
 goto :eof
 
 :cmd_plugin
-if "%~2"=="" (
-    echo Error: Plugin ID required
-    echo Usage: boss plugin ^<id^>
-    exit /b 1
-)
+if "%~2"=="" goto :cmd_forward_exe
+if /i "%~2"=="init" goto :cmd_forward_exe
+if /i "%~2"=="validate" goto :cmd_forward_exe
+if /i "%~2"=="link" goto :cmd_forward_exe
+if /i "%~2"=="list" goto :cmd_forward_exe
+if /i "%~2"=="package" goto :cmd_forward_exe
+if /i "%~2"=="--help" goto :cmd_forward_exe
+if /i "%~2"=="-h" goto :cmd_forward_exe
+if /i "%~2"=="help" goto :cmd_forward_exe
+if not "%~3"=="" goto :cmd_forward_exe
+
 call :urlencode "%~2" ENCODED
 start "" "boss://plugin?id=%ENCODED%"
 goto :eof
