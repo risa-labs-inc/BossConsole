@@ -34,7 +34,8 @@ class WebsiteMatchingHostnameRegressionTest {
 
     @Test
     fun `private suffix tenants retain their separate hostnames`() {
-        val matches = suggestions("https://attacker.github.io/login", "https://victim.github.io", "https://attacker.github.io")
+        val matches =
+            suggestions("https://attacker.github.io/login", "https://victim.github.io", "https://attacker.github.io")
         assertEquals(listOf("https://attacker.github.io"), matches.map { it.secret.website })
     }
 
@@ -53,14 +54,16 @@ class WebsiteMatchingHostnameRegressionTest {
 
     @Test
     fun `previously listed suffixes do not erase sibling hosts either`() {
-        val matches = suggestions("https://login.example.co.uk", "https://accounts.example.co.uk", "https://example.co.uk")
+        val matches =
+            suggestions("https://login.example.co.uk", "https://accounts.example.co.uk", "https://example.co.uk")
         assertEquals(listOf("https://example.co.uk"), matches.map { it.secret.website })
         assertEquals("subdomain", matches.single().matchReason)
     }
 
     @Test
     fun `www and bare saved authorities normalize without losing the rest of the host`() {
-        val matches = suggestions("https://www.login.example.com:8443/auth", "www.login.example.com", "accounts.example.com")
+        val matches =
+            suggestions("https://www.login.example.com:8443/auth", "www.login.example.com", "accounts.example.com")
         assertEquals(listOf("www.login.example.com"), matches.map { it.secret.website })
         assertEquals("exact", matches.single().matchReason)
     }

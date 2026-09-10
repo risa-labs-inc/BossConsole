@@ -34,8 +34,14 @@ class WebsiteMatchingAuthorRegressionTest {
         assertEquals(0.0f, WebsiteMatchingUtil.calculateMatchScore("foo.com", "bar.com").score)
 
         // attacker injecting domain prefix
-        assertEquals(0.0f, WebsiteMatchingUtil.calculateMatchScore("attacker.example.com.evil.com", "example.com").score)
-        assertEquals(0.0f, WebsiteMatchingUtil.calculateMatchScore("example.com", "attacker.example.com.evil.com").score)
+        assertEquals(
+            0.0f,
+            WebsiteMatchingUtil.calculateMatchScore("attacker.example.com.evil.com", "example.com").score,
+        )
+        assertEquals(
+            0.0f,
+            WebsiteMatchingUtil.calculateMatchScore("example.com", "attacker.example.com.evil.com").score,
+        )
 
         // multi-part TLD isolation
         assertEquals(0.0f, WebsiteMatchingUtil.calculateMatchScore("google.com.mx", "apple.com.mx").score)
