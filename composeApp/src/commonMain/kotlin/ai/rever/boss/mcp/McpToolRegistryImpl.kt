@@ -744,7 +744,9 @@ internal class McpToolRegistryCore(
             _tools.value.firstOrNull { it.definition.name == toolName }
                 ?: return McpToolResult("Unknown or disabled MCP tool: $toolName", isError = true)
         val args = parseArgs(arguments)
-        val policy = policyEngine.policyFor(toolName)
+        // The definition, not just the name: a tool that declares side effects is governed as
+        // mutating even when its name matches nothing in McpMutatingToolCatalog.
+        val policy = policyEngine.policyFor(toolName, tool.definition.readOnly)
         val startTime = System.nanoTime()
         var disposition = McpApprovalDisposition.AUTO_ALLOWED
         var result: McpToolResult? = null
@@ -760,7 +762,7 @@ internal class McpToolRegistryCore(
                     }
 
                     _tools.value.none { it.providerId == tool.providerId && it.definition === tool.definition } ||
-                        policyEngine.policyFor(toolName) == McpPolicyAction.DENY -> {
+                        policyEngine.policyFor(toolName, tool.definition.readOnly) == McpPolicyAction.DENY -> {
                         disposition = McpApprovalDisposition.POLICY_DENIED
                         McpToolResult("MCP tool access revoked while awaiting approval", isError = true)
                     }
@@ -825,6 +827,7 @@ internal class McpToolRegistryCore(
                             tool.providerId,
                             McpArgumentSanitizer.parseArguments(args.raw),
                             riskAssessment = DefaultMcpRiskEvaluator().evaluateRisk(tool.definition.name, args),
+                            declaredReadOnly = tool.definition.readOnly,
                         )
                 ) {
                     is McpApprovalDecision.Approved -> {

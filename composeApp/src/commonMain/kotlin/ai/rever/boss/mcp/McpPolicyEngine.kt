@@ -72,9 +72,19 @@ class McpPolicyEngine(
      *
      * Explicit DENY rules in configuration always win over session trust.
      * If [toolName] was trusted by the operator for this session, it returns [McpPolicyAction.ALLOW].
+     *
+     * [declaredReadOnly] is the invoked tool's own `McpToolDefinition.readOnly`. It reaches
+     * only the default branch, below every operator-set rule and session trust, so a
+     * declaration can never override a decision the operator made. See
+     * [McpMutatingToolCatalog.isMutating] for why a declared `false` is believed and a
+     * declared `true` is not. The `true` default keeps a caller that has no definition in
+     * hand on the previous name-only behaviour.
      */
     @Suppress("ReturnCount") // Ordered deny, trust and default policy precedence.
-    fun policyFor(toolName: String): McpPolicyAction {
+    fun policyFor(
+        toolName: String,
+        declaredReadOnly: Boolean = true,
+    ): McpPolicyAction {
         if (_fault.value is McpPolicyFault.PersistedPolicyUnreadable) return McpPolicyAction.DENY
         val configured = _config.value.rules[toolName]
         if (configured == McpPolicyAction.DENY) {
@@ -85,7 +95,7 @@ class McpPolicyEngine(
         }
         if (configured != null) return configured
         val risk = DefaultMcpRiskEvaluator().evaluateRisk(toolName, McpToolArgs(emptyMap())).level
-        return if (risk >= McpRiskLevel.HIGH || McpMutatingToolCatalog.isMutating(toolName)) {
+        return if (risk >= McpRiskLevel.HIGH || McpMutatingToolCatalog.isMutating(toolName, declaredReadOnly)) {
             _config.value.defaultMutatingAction
         } else {
             _config.value.defaultReadOnlyAction
