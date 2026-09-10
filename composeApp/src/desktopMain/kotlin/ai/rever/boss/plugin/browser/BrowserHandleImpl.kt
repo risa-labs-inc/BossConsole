@@ -248,7 +248,7 @@ internal fun ContextMenuTarget.toContextMenuInfo(
     return BrowserContextMenuInfo(
         linkUrl = linkUrl.takeIf { it.isNotBlank() },
         selectedText = selectedText.takeIf { it.isNotBlank() },
-        isEditable = isMainFrame && contentTypes.contains(ContextMenuContentType.EDITABLE),
+        isEditable = contentTypes.contains(ContextMenuContentType.EDITABLE),
         hasVideo = isVideo,
         hasImage = isImage,
         imageUrl = source.takeIf { isImage },

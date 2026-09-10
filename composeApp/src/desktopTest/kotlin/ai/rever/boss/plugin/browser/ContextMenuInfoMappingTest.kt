@@ -84,17 +84,16 @@ class ContextMenuInfoMappingTest {
     }
 
     @Test
-    fun `an editable field inside an iframe is not offered edit actions`() {
-        // cut/copy/paste/selectAll and fillCredentials all act on browser.mainFrame(), so
-        // offering them for a subframe field would act on the wrong frame — and in the
-        // credential case could fill a password into an unrelated main-frame input.
+    fun `an editable field inside an iframe is offered edit actions`() {
+        // Editor commands target the focused frame, and credential filling is owned by the
+        // caller that identified the clicked element, so the old main-frame gate is obsolete.
         val result =
             info(
                 contentTypes = listOf(ContextMenuContentType.EDITABLE),
                 isMainFrame = false,
             )
 
-        assertFalse(result.isEditable)
+        assertTrue(result.isEditable)
     }
 
     @Test
