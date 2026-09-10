@@ -450,6 +450,17 @@ fun main(args: Array<String>) {
             null
         } catch (_: NoClassDefFoundError) {
             null
+        } catch (e: Exception) {
+            logger.error(
+                LogCategory.SYSTEM,
+                "Failed to initialize microkernel infrastructure in KERNEL mode; falling back to MONOLITH mode",
+                error = e,
+            )
+            ai.rever.boss.components.bars.horizontal.StatusMessageManager.showMessage(
+                "Microkernel initialization failed: ${e.cause?.message ?: e.message}. Running in fallback mode.",
+                durationMs = 10_000,
+            )
+            null
         }
 
     // Single-instance check: ensure only one BOSS instance runs

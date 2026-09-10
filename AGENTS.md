@@ -437,6 +437,11 @@ MACOS_DEVELOPER_ID=Developer ID Application: ...  # Optional, signs local packag
 
 **Priority**: Environment variables > System properties > local.properties > Embedded build config
 
+For `BOSS_MODE` only, the UI-managed `BossDirectories.resolve("env_vars")` file sits
+below local.properties and above embedded config. Other keys are not imported from
+that file, and the saved mode is read once at startup; saving it does not change
+the running architecture.
+
 ### Credential brokers
 
 A provider whose credential nobody types in: the user is signed in to BOSS and an

@@ -85,7 +85,11 @@ class ChildProcessBootstrap {
                 interceptors = processToken?.let { listOf(ProcessTokenClientInterceptor(it)) } ?: emptyList(),
             )
         if (!kernelClient.waitForReady(30_000)) {
-            throw IllegalStateException("Failed to connect to kernel at $kernelAddress")
+            val hasToken = !processToken.isNullOrBlank()
+            error(
+                "Failed to connect to kernel at $kernelAddress " +
+                    "(processId=$processId, type=$processType, hasToken=$hasToken)",
+            )
         }
         logger.info("Connected to kernel")
 
@@ -101,8 +105,9 @@ class ChildProcessBootstrap {
             )
 
         if (!registerResponse.success) {
-            throw IllegalStateException(
-                "Failed to register with kernel: ${registerResponse.errorMessage}",
+            error(
+                "Failed to register process $processId with kernel at $kernelAddress: " +
+                    registerResponse.errorMessage,
             )
         }
         logger.info("Registered with kernel. Service addresses: {}", registerResponse.serviceAddressesMap)

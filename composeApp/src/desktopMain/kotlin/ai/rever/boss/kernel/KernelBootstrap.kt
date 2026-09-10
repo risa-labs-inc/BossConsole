@@ -1,5 +1,6 @@
 package ai.rever.boss.kernel
 
+import ai.rever.boss.components.bars.horizontal.StatusMessageManager
 import ai.rever.boss.config.SelfHealingSettingsManager
 import ai.rever.boss.ipc.BossIpcClient
 import ai.rever.boss.ipc.BossIpcServer
@@ -31,12 +32,35 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import org.slf4j.LoggerFactory
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+
+/** State of microkernel initialization and service readiness. */
+sealed interface KernelStartupState {
+    data object Initializing : KernelStartupState
+
+    data class SpawningServices(
+        val spawnedCount: Int,
+        val totalExpected: Int,
+    ) : KernelStartupState
+
+    data class Ready(
+        val runningServices: List<String>,
+        val missingJars: List<String>,
+        val failedServices: List<String> = emptyList(),
+    ) : KernelStartupState
+
+    data class Failed(
+        val error: String,
+    ) : KernelStartupState
+}
 
 /**
  * Find [jarName] in [dir], tolerating the version every `fatJar` task actually puts in the name.
@@ -232,6 +256,10 @@ internal fun respawnCandidate(
                 processId,
                 process.config.maxRestarts,
             )
+            notifyOperator(
+                processId,
+                "Exceeded max restarts (${process.config.maxRestarts}); check logs in \$BOSS_DATA_DIR/logs/$processId/",
+            )
             null
         }
 
@@ -355,6 +383,9 @@ class KernelBootstrap(
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
     // Infrastructure components (null when in MONOLITH mode)
+    private val _startupState = MutableStateFlow<KernelStartupState>(KernelStartupState.Initializing)
+    val startupState: StateFlow<KernelStartupState> = _startupState.asStateFlow()
+
     var ipcServer: BossIpcServer? = null
         private set
     var processRegistry: ProcessRegistry? = null
@@ -671,9 +702,15 @@ class KernelBootstrap(
                 } catch (_: Exception) {
                     "${System.getProperty("user.home")}/.boss"
                 }
-
         val orchestratorJar = resolveServiceJar(bossDataDir, "boss-orchestrator-all.jar")
         val authJar = resolveServiceJar(bossDataDir, "boss-service-auth-all.jar")
+        val masteryOrchestratorJar = resolveServiceJar(bossDataDir, "boss-mastery-orchestrator-all.jar")
+        val workspaceJar = resolveServiceJar(bossDataDir, "boss-service-workspace-all.jar")
+        val settingsJar = resolveServiceJar(bossDataDir, "boss-service-settings-all.jar")
+        val filesystemJar = resolveServiceJar(bossDataDir, "boss-service-filesystem-all.jar")
+        val terminalJar = resolveServiceJar(bossDataDir, "boss-app-terminal-all.jar")
+        val editorJar = resolveServiceJar(bossDataDir, "boss-app-editor-all.jar")
+        val browserJar = resolveServiceJar(bossDataDir, "boss-app-browser-all.jar")
 
         // Children inherit nothing useful about where BOSS keeps its data, and the orchestrator
         // writes snapshots there — say it explicitly rather than letting the child re-derive a
@@ -690,169 +727,144 @@ class KernelBootstrap(
             if (repairEnvironment.isEmpty()) "off" else "on (${repairEnvironment["AI_REPAIR_MODEL"]})",
         )
 
-        spawnIfJarExists(
-            spawner,
-            ProcessConfig(
-                processId = ORCHESTRATOR_PROCESS_ID,
-                processType = ProcessType.ORCHESTRATOR,
-                displayName = "BOSS Orchestrator",
-                mainClass = "ai.rever.boss.orchestrator.OrchestratorMainKt",
-                classpath = orchestratorJar,
-                restartPolicy = RestartPolicy.ON_FAILURE,
-                maxRestarts = 5,
-                environment = serviceEnvironment + repairEnvironment,
-            ),
-            orchestratorJar,
-        )
-
-        spawnIfJarExists(
-            spawner,
-            ProcessConfig(
-                processId = "boss-service-auth",
-                processType = ProcessType.SERVICE,
-                displayName = "BOSS Auth Service",
-                mainClass = "ai.rever.boss.service.auth.AuthServiceMainKt",
-                classpath = authJar,
-                restartPolicy = RestartPolicy.ON_FAILURE,
-                maxRestarts = 3,
-                environment = serviceEnvironment,
-            ),
-            authJar,
-        )
-
-        val masteryOrchestratorJar = resolveServiceJar(bossDataDir, "boss-mastery-orchestrator-all.jar")
-        spawnIfJarExists(
-            spawner,
-            ProcessConfig(
-                processId = "boss-mastery-orchestrator",
-                processType = ProcessType.SERVICE,
-                displayName = "BOSS Mastery Orchestrator",
-                mainClass = "ai.rever.boss.mastery.orchestrator.MasteryOrchestratorMainKt",
-                classpath = masteryOrchestratorJar,
-                restartPolicy = RestartPolicy.ON_FAILURE,
-                maxRestarts = 3,
-                environment = serviceEnvironment,
-            ),
-            masteryOrchestratorJar,
-        )
-
-        val workspaceJar = resolveServiceJar(bossDataDir, "boss-service-workspace-all.jar")
-        spawnIfJarExists(
-            spawner,
-            ProcessConfig(
-                processId = "boss-service-workspace",
-                processType = ProcessType.SERVICE,
-                displayName = "BOSS Workspace Service",
-                mainClass = "ai.rever.boss.service.workspace.WorkspaceServiceMainKt",
-                classpath = workspaceJar,
-                restartPolicy = RestartPolicy.ON_FAILURE,
-                maxRestarts = 3,
-                environment = serviceEnvironment,
-            ),
-            workspaceJar,
-        )
-
-        val settingsJar = resolveServiceJar(bossDataDir, "boss-service-settings-all.jar")
-        spawnIfJarExists(
-            spawner,
-            ProcessConfig(
-                processId = "boss-service-settings",
-                processType = ProcessType.SERVICE,
-                displayName = "BOSS Settings Service",
-                mainClass = "ai.rever.boss.service.settings.SettingsServiceMainKt",
-                classpath = settingsJar,
-                restartPolicy = RestartPolicy.ON_FAILURE,
-                maxRestarts = 3,
-                environment = serviceEnvironment,
-            ),
-            settingsJar,
-        )
-
-        val filesystemJar = resolveServiceJar(bossDataDir, "boss-service-filesystem-all.jar")
-        spawnIfJarExists(
-            spawner,
-            ProcessConfig(
-                processId = "boss-service-filesystem",
-                processType = ProcessType.SERVICE,
-                displayName = "BOSS FileSystem Service",
-                mainClass = "ai.rever.boss.service.filesystem.FileSystemServiceMainKt",
-                classpath = filesystemJar,
-                restartPolicy = RestartPolicy.ON_FAILURE,
-                maxRestarts = 3,
-                environment = serviceEnvironment,
-            ),
-            filesystemJar,
-        )
-
-        val terminalJar = resolveServiceJar(bossDataDir, "boss-app-terminal-all.jar")
-        spawnIfJarExists(
-            spawner,
-            ProcessConfig(
-                processId = "boss-app-terminal",
-                processType = ProcessType.APP,
-                displayName = "BOSS Terminal App",
-                mainClass = "ai.rever.boss.app.terminal.TerminalServiceMainKt",
-                classpath = terminalJar,
-                restartPolicy = RestartPolicy.ON_FAILURE,
-                maxRestarts = 5,
-                environment = serviceEnvironment,
-            ),
-            terminalJar,
-        )
-
-        val editorJar = resolveServiceJar(bossDataDir, "boss-app-editor-all.jar")
-        spawnIfJarExists(
-            spawner,
-            ProcessConfig(
-                processId = "boss-app-editor",
-                processType = ProcessType.APP,
-                displayName = "BOSS Editor App",
-                mainClass = "ai.rever.boss.app.editor.EditorServiceMainKt",
-                classpath = editorJar,
-                restartPolicy = RestartPolicy.ON_FAILURE,
-                maxRestarts = 5,
-                environment = serviceEnvironment,
-            ),
-            editorJar,
-        )
-
-        val browserJar = resolveServiceJar(bossDataDir, "boss-app-browser-all.jar")
-        spawnIfJarExists(
-            spawner,
-            ProcessConfig(
-                processId = "boss-app-browser",
-                processType = ProcessType.APP,
-                displayName = "BOSS Browser App",
-                mainClass = "ai.rever.boss.app.browser.BrowserServiceMainKt",
-                classpath = browserJar,
-                restartPolicy = RestartPolicy.ON_FAILURE,
-                maxRestarts = 5,
-                environment = serviceEnvironment,
-            ),
-            browserJar,
-        )
-    }
-
-    private fun spawnIfJarExists(
-        spawner: ProcessSpawner,
-        config: ProcessConfig,
-        jarPath: String,
-    ) {
-        if (java.io.File(jarPath).exists()) {
-            try {
-                spawner.spawn(config)
-                processMonitor?.startMonitoring(config.processId)
-                logger.info("Spawned service: {} at {}", config.processId, jarPath)
-            } catch (e: Exception) {
-                logger.warn("Failed to spawn {}: {}", config.processId, e.message)
-            }
-        } else {
-            logger.info(
-                "Service JAR not found for {} at {} - skipping spawn (build fat JARs first)",
-                config.processId,
-                jarPath,
+        val serviceConfigs =
+            listOf(
+                ProcessConfig(
+                    processId = ORCHESTRATOR_PROCESS_ID,
+                    processType = ProcessType.ORCHESTRATOR,
+                    displayName = "BOSS Orchestrator",
+                    mainClass = "ai.rever.boss.orchestrator.OrchestratorMainKt",
+                    classpath = orchestratorJar,
+                    restartPolicy = RestartPolicy.ON_FAILURE,
+                    maxRestarts = 5,
+                    environment = serviceEnvironment + repairEnvironment,
+                ),
+                ProcessConfig(
+                    processId = "boss-service-auth",
+                    processType = ProcessType.SERVICE,
+                    displayName = "BOSS Auth Service",
+                    mainClass = "ai.rever.boss.service.auth.AuthServiceMainKt",
+                    classpath = authJar,
+                    restartPolicy = RestartPolicy.ON_FAILURE,
+                    maxRestarts = 3,
+                    environment = serviceEnvironment,
+                ),
+                ProcessConfig(
+                    processId = "boss-mastery-orchestrator",
+                    processType = ProcessType.SERVICE,
+                    displayName = "BOSS Mastery Orchestrator",
+                    mainClass = "ai.rever.boss.mastery.orchestrator.MasteryOrchestratorMainKt",
+                    classpath = masteryOrchestratorJar,
+                    restartPolicy = RestartPolicy.ON_FAILURE,
+                    maxRestarts = 3,
+                    environment = serviceEnvironment,
+                ),
+                ProcessConfig(
+                    processId = "boss-service-workspace",
+                    processType = ProcessType.SERVICE,
+                    displayName = "BOSS Workspace Service",
+                    mainClass = "ai.rever.boss.service.workspace.WorkspaceServiceMainKt",
+                    classpath = workspaceJar,
+                    restartPolicy = RestartPolicy.ON_FAILURE,
+                    maxRestarts = 3,
+                    environment = serviceEnvironment,
+                ),
+                ProcessConfig(
+                    processId = "boss-service-settings",
+                    processType = ProcessType.SERVICE,
+                    displayName = "BOSS Settings Service",
+                    mainClass = "ai.rever.boss.service.settings.SettingsServiceMainKt",
+                    classpath = settingsJar,
+                    restartPolicy = RestartPolicy.ON_FAILURE,
+                    maxRestarts = 3,
+                    environment = serviceEnvironment,
+                ),
+                ProcessConfig(
+                    processId = "boss-service-filesystem",
+                    processType = ProcessType.SERVICE,
+                    displayName = "BOSS FileSystem Service",
+                    mainClass = "ai.rever.boss.service.filesystem.FileSystemServiceMainKt",
+                    classpath = filesystemJar,
+                    restartPolicy = RestartPolicy.ON_FAILURE,
+                    maxRestarts = 3,
+                    environment = serviceEnvironment,
+                ),
+                ProcessConfig(
+                    processId = "boss-app-terminal",
+                    processType = ProcessType.APP,
+                    displayName = "BOSS Terminal App",
+                    mainClass = "ai.rever.boss.app.terminal.TerminalServiceMainKt",
+                    classpath = terminalJar,
+                    restartPolicy = RestartPolicy.ON_FAILURE,
+                    maxRestarts = 5,
+                    environment = serviceEnvironment,
+                ),
+                ProcessConfig(
+                    processId = "boss-app-editor",
+                    processType = ProcessType.APP,
+                    displayName = "BOSS Editor App",
+                    mainClass = "ai.rever.boss.app.editor.EditorServiceMainKt",
+                    classpath = editorJar,
+                    restartPolicy = RestartPolicy.ON_FAILURE,
+                    maxRestarts = 5,
+                    environment = serviceEnvironment,
+                ),
+                ProcessConfig(
+                    processId = "boss-app-browser",
+                    processType = ProcessType.APP,
+                    displayName = "BOSS Browser App",
+                    mainClass = "ai.rever.boss.app.browser.BrowserServiceMainKt",
+                    classpath = browserJar,
+                    restartPolicy = RestartPolicy.ON_FAILURE,
+                    maxRestarts = 5,
+                    environment = serviceEnvironment,
+                ),
             )
+
+        val spawned = mutableListOf<String>()
+        val missing = mutableListOf<String>()
+        val failed = mutableListOf<String>()
+
+        _startupState.value = KernelStartupState.SpawningServices(0, serviceConfigs.size)
+
+        for (config in serviceConfigs) {
+            val jarPath = config.classpath
+            if (File(jarPath).exists()) {
+                try {
+                    spawner.spawn(config)
+                    processMonitor?.startMonitoring(config.processId)
+                    spawned += config.processId
+                    logger.info("Spawned service: {} at {}", config.processId, jarPath)
+                } catch (e: Exception) {
+                    failed += config.processId
+                    logger.warn("Failed to spawn {}: {}", config.processId, e.message)
+                }
+            } else {
+                missing += config.processId
+                logger.info(
+                    "Service JAR not found for {} at {} - skipping spawn (build fat JARs first)",
+                    config.processId,
+                    jarPath,
+                )
+            }
+            _startupState.value = KernelStartupState.SpawningServices(spawned.size, serviceConfigs.size)
         }
+
+        _startupState.value =
+            KernelStartupState.Ready(
+                runningServices = spawned,
+                missingJars = missing,
+                failedServices = failed,
+            )
+
+        val summary =
+            buildString {
+                append("Microkernel mode: ${spawned.size}/${serviceConfigs.size} service(s) running")
+                if (missing.isNotEmpty()) append(" (${missing.size} missing fat JARs)")
+                if (failed.isNotEmpty()) append(" (${failed.size} failed)")
+            }
+        logger.info(summary)
+        StatusMessageManager.showMessage(summary, durationMs = 6000)
     }
 
     /**

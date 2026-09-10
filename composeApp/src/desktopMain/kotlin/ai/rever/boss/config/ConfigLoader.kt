@@ -1,5 +1,6 @@
 package ai.rever.boss.config
 
+import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import java.io.File
@@ -14,6 +15,12 @@ object ConfigLoader {
     private val properties = Properties()
 
     /**
+     * Only BOSS_MODE is imported from the UI-managed env_vars file.
+     * Other settings retain their established config precedence.
+     */
+    private val envVarsProperties = Properties()
+
+    /**
      * Config baked into the app at build time by the generateEmbeddedConfig
      * Gradle task (from CI secrets or the developer's local.properties). This
      * is how packaged apps on end-user machines — which have no env vars or
@@ -24,7 +31,41 @@ object ConfigLoader {
 
     init {
         loadLocalProperties()
+        loadEnvVarsProperties()
         loadEmbeddedProperties()
+    }
+
+    /**
+     * Loads properties from ~/.boss/env_vars file if it exists.
+     */
+    private fun loadEnvVarsProperties() {
+        try {
+            envVarsProperties.clear()
+            val envFile = BossDirectories.resolve("env_vars")
+            if (envFile.exists()) {
+                envVarsProperties.putAll(parseEnvVars(envFile))
+                logger.debug(
+                    LogCategory.SYSTEM,
+                    "Loaded properties from env_vars",
+                    mapOf("count" to envVarsProperties.size),
+                )
+            }
+        } catch (e: Exception) {
+            logger.warn(LogCategory.SYSTEM, "Could not load env_vars", error = e)
+        }
+    }
+
+    internal fun parseEnvVars(file: File): Properties {
+        val result = Properties()
+        for (line in file.readLines(Charsets.UTF_8)) {
+            val trimmed = line.trim()
+            if (trimmed.isBlank() || trimmed.startsWith("#")) continue
+            val parts = trimmed.split("=", limit = 2)
+            if (parts.size == 2 && parts[0].trim() == "BOSS_MODE") {
+                result.setProperty("BOSS_MODE", parts[1].trim())
+            }
+        }
+        return result
     }
 
     /**
@@ -91,8 +132,9 @@ object ConfigLoader {
      * 1. System environment variable
      * 2. System property
      * 3. local.properties file
-     * 4. Embedded build config (baked in at build time from CI secrets)
-     * 5. Default value
+     * 4. UI-managed env_vars file (BOSS_MODE only)
+     * 5. Embedded build config (baked in at build time from CI secrets)
+     * 6. Default value
      */
     fun getConfig(
         key: String,
@@ -103,8 +145,9 @@ object ConfigLoader {
             defaultValue = defaultValue,
             envValue = System.getenv(key),
             sysPropValue = System.getProperty(key),
-            localProps = properties,
-            embeddedProps = embeddedProperties,
+            properties,
+            envVarsProperties,
+            embeddedProperties,
         )
 
     /**
@@ -116,13 +159,11 @@ object ConfigLoader {
         defaultValue: String?,
         envValue: String?,
         sysPropValue: String?,
-        localProps: Properties,
-        embeddedProps: Properties,
+        vararg propertySources: Properties,
     ): String? =
         envValue.orNullIfBlank()
             ?: sysPropValue.orNullIfBlank()
-            ?: localProps.getProperty(key).orNullIfBlank()
-            ?: embeddedProps.getProperty(key).orNullIfBlank()
+            ?: propertySources.firstNotNullOfOrNull { it.getProperty(key).orNullIfBlank() }
             // NOT blank-filtered: a caller that passes "" as its default has said so explicitly,
             // unlike an exported variable that merely happens to be empty.
             ?: defaultValue

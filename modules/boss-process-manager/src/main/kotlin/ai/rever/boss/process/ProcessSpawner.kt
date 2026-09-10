@@ -166,9 +166,18 @@ class ProcessSpawner
                 ) {
                     return currentCommand
                 }
+                val isWindows = System.getProperty("os.name").lowercase().contains("win")
+                val binaryName = if (isWindows) "java.exe" else "java"
                 // Not a JVM launcher — fall back to JAVA_HOME or java.home system property
-                System.getenv("JAVA_HOME")?.let { return "$it/bin/java" }
-                return System.getProperty("java.home")?.let { "$it/bin/java" } ?: "java"
+                System.getenv("JAVA_HOME")?.let {
+                    val candidate = File(it, "bin/$binaryName")
+                    if (candidate.exists()) return candidate.absolutePath
+                    return "$it/bin/$binaryName"
+                }
+                return System.getProperty("java.home")?.let {
+                    val candidate = File(it, "bin/$binaryName")
+                    if (candidate.exists()) candidate.absolutePath else "$it/bin/$binaryName"
+                } ?: binaryName
             }
         }
     }

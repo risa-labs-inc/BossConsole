@@ -1,7 +1,9 @@
 package ai.rever.boss.updater
 
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
+import java.io.IOException
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertFalse
@@ -62,7 +64,15 @@ class DiscardDownloadContainmentTest {
         val dir = createRestrictedDir(defaultStagingDir())
         val link = File(dir, "link-to-victim.dmg")
         link.delete()
-        Files.createSymbolicLink(link.toPath(), victim.toPath())
+        try {
+            Files.createSymbolicLink(link.toPath(), victim.toPath())
+        } catch (e: IOException) {
+            assumeTrue(false, "Could not create symlink: ${e.message}")
+        } catch (e: UnsupportedOperationException) {
+            assumeTrue(false, "Could not create symlink: ${e.message}")
+        } catch (e: SecurityException) {
+            assumeTrue(false, "Could not create symlink: ${e.message}")
+        }
 
         service.discardDownload(link.absolutePath)
 

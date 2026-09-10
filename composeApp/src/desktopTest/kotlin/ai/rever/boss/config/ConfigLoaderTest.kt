@@ -25,6 +25,7 @@ class ConfigLoaderTest {
         env: String? = null,
         sysProp: String? = null,
         local: String? = null,
+        envVars: String? = null,
         embedded: String? = null,
         default: String? = null,
     ) = ConfigLoader.resolve(
@@ -32,15 +33,16 @@ class ConfigLoaderTest {
         defaultValue = default,
         envValue = env,
         sysPropValue = sysProp,
-        localProps = props(local),
-        embeddedProps = props(embedded),
+        props(local),
+        props(envVars),
+        props(embedded),
     )
 
     @Test
     fun `env wins over all other tiers`() {
         assertEquals(
             "from-env",
-            resolve(env = "from-env", sysProp = "x", local = "x", embedded = "x", default = "x"),
+            resolve(env = "from-env", sysProp = "x", local = "x", envVars = "x", embedded = "x", default = "x"),
         )
     }
 
@@ -48,7 +50,7 @@ class ConfigLoaderTest {
     fun `system property wins below env`() {
         assertEquals(
             "from-sysprop",
-            resolve(sysProp = "from-sysprop", local = "x", embedded = "x", default = "x"),
+            resolve(sysProp = "from-sysprop", local = "x", envVars = "x", embedded = "x", default = "x"),
         )
     }
 
@@ -56,12 +58,20 @@ class ConfigLoaderTest {
     fun `local properties win below system property`() {
         assertEquals(
             "from-local",
-            resolve(local = "from-local", embedded = "x", default = "x"),
+            resolve(local = "from-local", envVars = "x", embedded = "x", default = "x"),
         )
     }
 
     @Test
-    fun `embedded build config wins below local properties`() {
+    fun `env_vars wins below local properties`() {
+        assertEquals(
+            "from-env-vars",
+            resolve(envVars = "from-env-vars", embedded = "x", default = "x"),
+        )
+    }
+
+    @Test
+    fun `embedded build config wins below env_vars`() {
         assertEquals(
             "from-embedded",
             resolve(embedded = "from-embedded", default = "x"),
@@ -105,24 +115,24 @@ class ConfigLoaderTest {
             assertEquals(
                 "from-sysprop",
                 ConfigLoader.resolve(
-                    "K",
-                    null,
+                    key = "K",
+                    defaultValue = null,
                     envValue = blank,
                     sysPropValue = "from-sysprop",
-                    localProps = local,
-                    embeddedProps = Properties(),
+                    local,
+                    Properties(),
                 ),
                 "blank env '$blank' must not shadow the system property",
             )
             assertEquals(
                 "from-local",
                 ConfigLoader.resolve(
-                    "K",
-                    null,
+                    key = "K",
+                    defaultValue = null,
                     envValue = blank,
                     sysPropValue = blank,
-                    localProps = local,
-                    embeddedProps = Properties(),
+                    local,
+                    Properties(),
                 ),
                 "blank env and sysprop '$blank' must both fall through",
             )
@@ -133,12 +143,12 @@ class ConfigLoaderTest {
         assertEquals(
             "from-embedded",
             ConfigLoader.resolve(
-                "K",
-                null,
+                key = "K",
+                defaultValue = null,
                 envValue = null,
                 sysPropValue = null,
-                localProps = blankLocal,
-                embeddedProps = embedded,
+                blankLocal,
+                embedded,
             ),
         )
     }
@@ -150,13 +160,44 @@ class ConfigLoaderTest {
         assertEquals(
             "",
             ConfigLoader.resolve(
-                "K",
+                key = "K",
                 defaultValue = "",
                 envValue = null,
                 sysPropValue = null,
-                localProps = Properties(),
-                embeddedProps = Properties(),
+                Properties(),
+                Properties(),
             ),
         )
+    }
+
+    @Test
+    fun `saved mode parser excludes unrelated configuration and honors the last assignment`() {
+        val file =
+            kotlin.io.path
+                .createTempFile("saved-mode-", ".env")
+                .toFile()
+        try {
+            file.writeText(
+                "SUPABASE_URL=https://example.invalid\n" +
+                    "SUPABASE_ANON_KEY=unrelated\nBOSS_MODE_EXTRA=keep\n" +
+                    "BOSS_MODE=MONOLITH\n  # BOSS_MODE=MONOLITH\nBOSS_MODE=KERNEL\n",
+            )
+            val parsed = ConfigLoader.parseEnvVars(file)
+            assertEquals(setOf("BOSS_MODE"), parsed.stringPropertyNames())
+            assertEquals("KERNEL", parsed.getProperty("BOSS_MODE"))
+            assertEquals(
+                "embedded",
+                ConfigLoader.resolve(
+                    "SUPABASE_URL",
+                    null,
+                    null,
+                    null,
+                    parsed,
+                    Properties().apply { setProperty("SUPABASE_URL", "embedded") },
+                ),
+            )
+        } finally {
+            file.delete()
+        }
     }
 }
