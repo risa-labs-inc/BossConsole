@@ -841,7 +841,7 @@ private fun buildPluginDevReloadResponse(
     }
     val result =
         runCatching {
-            handler?.invoke(pluginId) ?: true
+            checkNotNull(handler) { "Development plugin reload is not available in this host" }.invoke(pluginId)
         }
     return result.fold(
         onSuccess = { success ->

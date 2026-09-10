@@ -35,6 +35,16 @@ class PluginManifestTest {
     }
 
     @Test
+    fun `reload fails when the running host has no development reload handler`() {
+        assertTrue(SingleInstanceManager.acquireLock())
+
+        val result = SingleInstanceManager.reloadDevPlugin("sample-plugin")
+
+        assertIs<ReloadResult.Failed>(result)
+        assertTrue(result.reason.contains("not available"))
+    }
+
+    @Test
     fun `HostMeta CURRENT_API_VERSION decouples from desktop app version and matches 1 dot x`() {
         val apiVersion = HostMeta.CURRENT_API_VERSION
         assertTrue(
