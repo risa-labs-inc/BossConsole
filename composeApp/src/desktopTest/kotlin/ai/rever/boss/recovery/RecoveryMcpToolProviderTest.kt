@@ -1,5 +1,6 @@
 package ai.rever.boss.recovery
 
+import ai.rever.boss.mcp.McpToolRegistryImpl
 import ai.rever.boss.plugin.api.McpToolArgs
 import ai.rever.boss.recovery.mcp.RecoveryMcpToolProvider
 import ai.rever.boss.recovery.runtime.MissionRecoveryCoordinator
@@ -164,5 +165,26 @@ class RecoveryMcpToolProviderTest {
         // Confirm zero workspace modification occurred during preview
         assertEquals("broken v2", testFile.readText(), "Workspace file must remain unchanged after dry-run preview")
         assertTrue(junkFile.exists(), "Untracked file must not be removed during dry-run preview")
+    }
+
+    @Test
+    fun `recovery tools are automatically registered in McpToolRegistryImpl`() {
+        val allNames = McpToolRegistryImpl.allTools.value.map { it.definition.name }.toSet()
+        assertTrue(allNames.contains("recovery_start_mission"))
+        assertTrue(allNames.contains("recovery_create_checkpoint"))
+        assertTrue(allNames.contains("recovery_verify_claim"))
+        assertTrue(allNames.contains("recovery_preview_rewind"))
+        assertTrue(allNames.contains("recovery_rewind"))
+        assertTrue(allNames.contains("recovery_list_checkpoints"))
+
+        // Verify RBAC: non-admin permitted tools must exclude recovery_rewind
+        val nonAdminNames = McpToolRegistryImpl.tools.value.map { it.definition.name }.toSet()
+        assertFalse(nonAdminNames.contains("recovery_rewind"), "recovery_rewind must not be exposed without admin")
+        assertTrue(nonAdminNames.contains("recovery_preview_rewind"), "preview must be exposed without admin")
+
+        // Grant admin and verify recovery_rewind becomes permitted
+        McpToolRegistryImpl.updateAccess(isAdmin = true, permissions = emptySet())
+        val adminNames = McpToolRegistryImpl.tools.value.map { it.definition.name }.toSet()
+        assertTrue(adminNames.contains("recovery_rewind"), "recovery_rewind must be exposed when admin is granted")
     }
 }

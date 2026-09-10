@@ -121,7 +121,7 @@ class WorkspaceCheckpointStorage(
                     manifest = manifest,
                 )
 
-            // Persist JSON metadata atomically
+            // Persist JSON metadata
             val manifestJsonFile = File(cpDir, "manifest.json")
             val checkpointJsonFile = File(cpDir, "checkpoint.json")
 

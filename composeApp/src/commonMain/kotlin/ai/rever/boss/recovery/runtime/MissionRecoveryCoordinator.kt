@@ -173,29 +173,35 @@ class MissionRecoveryCoordinator(
         command: String,
         agentClaim: AgentClaim? = null,
         timeoutMs: Long = 60_000L,
-    ): VerificationResult {
-        val currentState = _state.value
-        val rootPath = currentState.projectRootPath ?: throw IllegalStateException("No active project root")
+    ): VerificationResult =
+        mutex.withLock {
+            val currentState = _state.value
+            val rootPath = currentState.projectRootPath ?: throw IllegalStateException("No active project root")
 
-        _state.update { it.copy(isBusy = true) }
-        val result =
-            IndependentVerifier.verify(
-                command = command,
-                projectRoot = File(rootPath),
-                agentClaim = agentClaim,
-                timeoutMs = timeoutMs,
-            )
+            _state.update { it.copy(isBusy = true) }
+            try {
+                val result =
+                    IndependentVerifier.verify(
+                        command = command,
+                        projectRoot = File(rootPath),
+                        agentClaim = agentClaim,
+                        timeoutMs = timeoutMs,
+                    )
 
-        _state.update {
-            it.copy(
-                latestVerification = result,
-                isBusy = false,
-            )
+                _state.update {
+                    it.copy(
+                        latestVerification = result,
+                        isBusy = false,
+                    )
+                }
+
+                _events.emit(RecoveryEvent.VerificationExecuted(result))
+                result
+            } catch (e: Exception) {
+                _state.update { it.copy(isBusy = false) }
+                throw e
+            }
         }
-
-        _events.emit(RecoveryEvent.VerificationExecuted(result))
-        return result
-    }
 
     /**
      * Rewinds workspace files to the target checkpoint.
