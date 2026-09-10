@@ -519,6 +519,14 @@ class BossMcpCommand : CliktCommand(name = "mcp") {
             } else {
                 appendLine("Access:   Standard")
             }
+            // A tool that predates the field, or a response from a list override, carries no
+            // claim at all. Say so rather than printing the api default as though the author
+            // had chosen it. "Declared" is deliberate wording: nothing checks the claim.
+            when (obj["readOnly"]?.jsonPrimitive?.booleanOrNull) {
+                true -> appendLine("Effect:   Declared read-only (hint, not verified)")
+                false -> appendLine("Effect:   Declares that it changes state")
+                null -> appendLine("Effect:   Not declared")
+            }
             appendLine()
             appendLine("Description:")
             appendLine(desc.prependIndent("  "))
