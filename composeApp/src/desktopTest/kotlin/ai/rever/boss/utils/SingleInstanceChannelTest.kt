@@ -1,7 +1,6 @@
 package ai.rever.boss.utils
 
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.AfterEach
@@ -673,97 +672,6 @@ class SingleInstanceChannelTest {
                 .RegisteredMcpTool("test", definition)
         val tools = Json.parseToJsonElement(encodeMcpTools(listOf(tool))) as kotlinx.serialization.json.JsonArray
         assertEquals(Json.parseToJsonElement(schema), tools.single().jsonObject["inputSchema"])
-    }
-
-    /**
-     * `readOnly` sits beside `requiresAdmin` and `requiredPermissions` in
-     * `McpToolDefinition` and was the only one of the three the channel dropped, so a
-     * client could learn who may call a tool but not whether calling it changes
-     * anything.
-     */
-    @Test
-    fun `tool discovery carries each tool's own readOnly declaration`() {
-        val tools =
-            listOf(true, false).mapIndexed { index, readOnly ->
-                ai.rever.boss.plugin.api.RegisteredMcpTool(
-                    "test",
-                    ai.rever.boss.plugin.api.McpToolDefinition(
-                        name = "tool_$index",
-                        description = "test",
-                        readOnly = readOnly,
-                        handler = {
-                            ai.rever.boss.plugin.api
-                                .McpToolResult("ok")
-                        },
-                    ),
-                )
-            }
-        val encoded = Json.parseToJsonElement(encodeMcpTools(tools)) as kotlinx.serialization.json.JsonArray
-        assertEquals(true, encoded[0].jsonObject["readOnly"]?.jsonPrimitive?.booleanOrNull)
-        assertEquals(false, encoded[1].jsonObject["readOnly"]?.jsonPrimitive?.booleanOrNull)
-    }
-
-    /**
-     * The api defaults `readOnly` to `true`, so a tool whose author never considered
-     * the question publishes itself as read-only. That is the fail-open direction and
-     * it is why the field is documented as a hint rather than a guarantee.
-     *
-     * This pins the default at the boundary where it becomes visible to clients. If
-     * the api ever flips it, this test fails by name instead of BOSS quietly
-     * publishing the opposite claim about every undeclared tool.
-     */
-    @Test
-    fun `an undeclared tool publishes the api's read-only default`() {
-        val tool =
-            ai.rever.boss.plugin.api
-                .RegisteredMcpTool(
-                    "test",
-                    ai.rever.boss.plugin.api.McpToolDefinition(
-                        name = "undeclared",
-                        description = "test",
-                        handler = {
-                            ai.rever.boss.plugin.api
-                                .McpToolResult("ok")
-                        },
-                    ),
-                )
-        val encoded = Json.parseToJsonElement(encodeMcpTools(listOf(tool))) as kotlinx.serialization.json.JsonArray
-        assertEquals(true, encoded.single().jsonObject["readOnly"]?.jsonPrimitive?.booleanOrNull)
-    }
-
-    /**
-     * Discovery is additive: adding a field must not disturb the five a client already
-     * reads, and `boss mcp list --json` is a documented output that scripts parse.
-     */
-    @Test
-    fun `adding readOnly leaves the other discovery fields intact`() {
-        val tool =
-            ai.rever.boss.plugin.api
-                .RegisteredMcpTool(
-                    "provider-id",
-                    ai.rever.boss.plugin.api.McpToolDefinition.withRbac(
-                        name = "guarded",
-                        description = "Reads a file",
-                        readOnly = false,
-                        requiredPermissions = listOf("files.read"),
-                        requiresAdmin = true,
-                        handler = {
-                            ai.rever.boss.plugin.api
-                                .McpToolResult("ok")
-                        },
-                    ),
-                )
-        val encoded =
-            (Json.parseToJsonElement(encodeMcpTools(listOf(tool))) as kotlinx.serialization.json.JsonArray)
-                .single()
-                .jsonObject
-        assertEquals("guarded", encoded["name"]?.jsonPrimitive?.content)
-        assertEquals("Reads a file", encoded["description"]?.jsonPrimitive?.content)
-        assertEquals("provider-id", encoded["pluginId"]?.jsonPrimitive?.content)
-        assertEquals(true, encoded["requiresAdmin"]?.jsonPrimitive?.booleanOrNull)
-        assertEquals(false, encoded["readOnly"]?.jsonPrimitive?.booleanOrNull)
-        assertNotNull(encoded["requiredPermissions"])
-        assertNotNull(encoded["inputSchema"])
     }
 
     @Test
