@@ -25,6 +25,16 @@ BOSS (Business Operating System Service) is a desktop application built with Kot
 
 **IMPORTANT**: Do NOT run `./gradlew run` in a blocking/foreground way just to test - the user runs and tests the app themselves. **Exception:** launching the app **in a dedicated bottom split pane is allowed** (backgrounded so it doesn't wedge the pane).
 
+### `composeApp` test home isolation
+
+Every `composeApp` `Test` task points `user.home` at its own fresh
+`composeApp/build/test-home/<task-name>` directory. Keep the redirect and the per-run deletion:
+`ProjectState` persists recent projects asynchronously and retains only ten, so tests using the
+real home can evict entries from a developer's project picker and a reused test home makes later
+runs race a stale `recent-projects.json` load. This guarantee is deliberately module-local;
+moving a test that reads `BossDirectories.rootDir` to another module requires equivalent isolation
+there.
+
 ### Running commands in a visible terminal pane
 
 When a terminal MCP server is available, prefer it over the plain `Bash` tool for commands worth showing - it runs in a visible BossTerm pane and still returns stdout/stderr/exit code. Two servers may be present depending on which app hosts the session; use whichever the session's `SessionStart` hook designates:
@@ -673,6 +683,19 @@ restart. There is no Settings row and no per-site exclusion.
   `window.__bossInteractionStarted`. The sanitizers bound what can be *smuggled*
   through; nothing bounds a site lying about its own usage. Treat these as
   indicative, not as measurements, wherever a site has an incentive to lie.
+- **Every project the user opens is now on the bus, not only plugin-initiated ones.**
+  `ProjectChangeEvent` used to be published from `ProjectDataProviderImpl.selectProject`
+  alone, so a path reached plugins only when a plugin had asked for the switch. It is
+  now announced from the window state's own `ProjectSelectionCallback`
+  (`WindowProjectStateRegistry.newState` / `ProjectChangeAnnouncer`), which covers the
+  startup restore, the top bar picker, the CLI, deep links and the KERNEL-mode gRPC
+  bridge. Project paths routinely contain usernames, so this widens *when* a filesystem
+  path reaches every installed plugin, not *what* - the same install-time-gating stance
+  as the bus above applies. In particular, `boss://` links can originate outside BOSS and
+  every non-terminal deep link currently bypasses `DeepLinkOrigin` confirmation, so an
+  externally opened project link can trigger this broadcast without operator confirmation.
+  It is recorded here because this paragraph is the canonical list of what a third-party
+  plugin can observe.
 - **`PluginContext.projectSearchProvider` is the first UNGATED WRITE surface.**
   Like the event bus it is available to every installed plugin, but where the
   bus is a read, its `replaceInProject` rewrites file contents anywhere inside
@@ -1069,9 +1092,6 @@ the whole `TabTypeId`, whose equality includes `pluginId` and `defaultOrder`.
 - [Role Creation](docs/ROLE_CREATION_GUIDE.md) - Creating and managing roles
 - [Windows Deep Link](docs/WINDOWS_DEEP_LINK_SETUP.md) - Windows protocol handler setup
 - [Release Rebuild](docs/RELEASE_REBUILD_GUIDE.md) - Re-running release builds
-
-
-
 ### Governed MCP invocation (#371)
 
 The host policy applies to registry invocation; it does not isolate installed JVM
