@@ -1,5 +1,6 @@
 package ai.rever.boss.components.plugin
 
+import ai.rever.boss.plugin.loader.PluginBundledTrust
 import ai.rever.boss.plugin.loader.PluginManifestReader
 import ai.rever.boss.plugin.loader.PluginSignatureSidecar
 import ai.rever.boss.utils.logging.BossLogger
@@ -106,6 +107,8 @@ internal object PluginRollbackStore {
             val target = jarFor(pluginDir, pluginId).absolutePath
             PluginSignatureSidecar.read(sourceJarPath)?.let { PluginSignatureSidecar.persist(target, it) }
                 ?: PluginSignatureSidecar.delete(target)
+            // An unsigned bundled copy needs its established provenance on an in-session rollback.
+            PluginBundledTrust.copyTrust(sourceJarPath, target)
         }.onFailure { e ->
             logger.warn(
                 LogCategory.SYSTEM,
@@ -159,6 +162,7 @@ internal object PluginRollbackStore {
                 // No signature for the restored bytes beats the WRONG one: a sidecar left from
                 // another version fails the load outright.
                 ?: PluginSignatureSidecar.delete(destination.absolutePath)
+            PluginBundledTrust.copyTrust(kept.absolutePath, destination.absolutePath)
             // Only now remove the version that would not load, and only if it is a different file -
             // a restore onto its own path would otherwise delete what it just wrote.
             currentJarPath
@@ -166,7 +170,7 @@ internal object PluginRollbackStore {
                 ?.takeIf { it.isFile && it.canonicalPath != destination.canonicalPath }
                 ?.let { broken ->
                     PluginSignatureSidecar.delete(broken.absolutePath)
-                    broken.delete()
+                    if (broken.delete()) PluginBundledTrust.delete(broken.absolutePath)
                 }
             destination
         }.onFailure { e ->
@@ -187,5 +191,6 @@ internal object PluginRollbackStore {
         runCatching { jarFor(pluginDir, pluginId).delete() }
         runCatching { versionFor(pluginDir, pluginId).delete() }
         runCatching { PluginSignatureSidecar.delete(jarFor(pluginDir, pluginId).absolutePath) }
+        runCatching { PluginBundledTrust.delete(jarFor(pluginDir, pluginId).absolutePath) }
     }
 }

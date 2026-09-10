@@ -9,8 +9,8 @@ import ai.rever.boss.utils.logging.LogCategory
  *
  * Handles:
  * - Domain extraction from URLs
- * - Subdomain normalization (login.google.com → google.com)
- * - Fuzzy matching between secret website and current domain
+ * - Full hostname preservation, with a leading www. removed
+ * - Exact and dot-boundary matching between secret website and current domain
  * - Scoring and ranking of matched secrets
  *
  * Used by Issue #56 - Secret Access Integration with Fluck Browser
@@ -24,7 +24,7 @@ object WebsiteMatchingUtil {
     data class MatchedSecret(
         val secret: SecretEntry,
         val matchScore: Float, // 0.0 - 1.0
-        val matchReason: String, // "exact", "subdomain", "partial", "domain"
+        val matchReason: String, // "exact", "subdomain"
     ) : Comparable<MatchedSecret> {
         override fun compareTo(other: MatchedSecret): Int {
             return other.matchScore.compareTo(this.matchScore) // Descending
@@ -32,15 +32,20 @@ object WebsiteMatchingUtil {
     }
 
     /**
-     * Extract the main domain from a URL.
+     * Extract the full hostname from a URL, removing a leading www.
+     *
+     * The historical function name is retained for callers. No registrable-domain or
+     * public-suffix guessing is performed: sibling hosts remain distinct.
      *
      * Examples:
      * - https://login.google.com/auth → login.google.com
      * - https://www.github.com/login → github.com
+     * - https://accounts.google.com → accounts.google.com
      * - http://localhost:3000 → localhost
+     * - https://example.co.uk → example.co.uk
      *
      * @param url The URL to extract domain from
-     * @return Cleaned domain, or null if invalid
+     * @return Cleaned hostname, or null if parsing fails
      */
     fun extractMainDomain(url: String): String? {
         return try {
@@ -85,6 +90,12 @@ object WebsiteMatchingUtil {
      * Matching logic:
      * - Exact match (google.com == google.com): score 1.0
      * - Subdomain match (login.google.com vs google.com): score 0.9
+     *
+     * Substrings and shared labels do not establish a domain relationship and must not
+     * produce credential suggestions. Only equality and a dot-delimited suffix qualify.
+     * [extractMainDomain] preserves the hostname rather than guessing a registrable domain.
+     * This scorer does not validate public suffixes. Explicit parent-domain entries still
+     * match subdomains in either direction; sibling hostnames do not match each other.
      *
      * @param domain Current website domain (e.g., "google.com")
      * @param secrets List of all available secrets
@@ -132,12 +143,20 @@ object WebsiteMatchingUtil {
         val domainNorm = currentDomain.lowercase().trim()
 
         return when {
+            // Without this, two blank sides (e.g. a secret with no recorded website, or a
+            // domain extraction failure that fell through to an empty string) would satisfy
+            // the exact-match check below vacuously: "" == "".
+            secretNorm.isEmpty() || domainNorm.isEmpty() -> {
+                MatchScore(0.0f, "no_match")
+            }
+
             // Exact match
             secretNorm == domainNorm -> {
                 MatchScore(1.0f, "exact")
             }
 
-            // Subdomain match (login.google.com vs google.com)
+            // Subdomain match (login.google.com vs google.com) - a real subdomain boundary,
+            // never a bare substring: "snapple.com".endsWith(".apple.com") is false.
             secretNorm.endsWith(".$domainNorm") || domainNorm.endsWith(".$secretNorm") -> {
                 MatchScore(0.9f, "subdomain")
             }
@@ -215,7 +234,9 @@ object WebsiteMatchingUtil {
                 // Generic formatting: example-site → Example Site
                 nameWithoutTld
                     .split("-", "_")
-                    .joinToString(" ") { it.replaceFirstChar { c -> if (c.isLowerCase()) c.titlecase() else c.toString() } }
+                    .joinToString(" ") {
+                        it.replaceFirstChar { c -> if (c.isLowerCase()) c.titlecase() else c.toString() }
+                    }
             }
         }
     }

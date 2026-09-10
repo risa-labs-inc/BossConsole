@@ -41,12 +41,17 @@ object KeymapValidator {
         settings: KeymapSettings,
         excludeActionId: String? = null,
     ): List<KeyBinding> {
-        val signature = binding.signature()
+        // allSignatures(), not signature(): every chord this binding answers to, alternates
+        // included, since both matchers now consult allKeystrokes. Signatures stay
+        // context-prefixed on purpose - a GLOBAL and a BROWSER binding on one chord is not a
+        // conflict, because both matchers resolve exact context ahead of GLOBAL deterministically,
+        // so reporting it would be a false positive on every shipped preset.
+        val signatures = binding.allSignatures().toHashSet()
 
         return settings.shortcuts.values
             .filter { it.actionId != excludeActionId } // Exclude binding being edited
             .filter { it.enabled && binding.enabled } // Both must be enabled
-            .filter { it.signature() == signature } // Same key combination
+            .filter { other -> other.allSignatures().any { it in signatures } } // Same chord+context
             .filter { contextsConflict(it.context, binding.context) } // Conflicting contexts
     }
 
@@ -66,12 +71,16 @@ object KeymapValidator {
     private fun findConflicts(settings: KeymapSettings): List<KeymapConflict> {
         val conflicts = mutableMapOf<String, MutableList<KeyBinding>>()
 
-        // Group enabled bindings by signature
+        // Group enabled bindings by EVERY signature they answer to. A binding with alternates
+        // appears under each of its chords, so an alternate that collides with another action's
+        // primary is reported - which is what the settings screen's conflict badge reads, and
+        // what a preset test asserting "no conflicts" needs in order to mean it.
         settings.shortcuts.values
             .filter { it.enabled }
             .forEach { binding ->
-                val signature = binding.signature()
-                conflicts.getOrPut(signature) { mutableListOf() }.add(binding)
+                binding.allSignatures().distinct().forEach { signature ->
+                    conflicts.getOrPut(signature) { mutableListOf() }.add(binding)
+                }
             }
 
         // Filter to only entries with conflicts (2+ bindings)
@@ -82,6 +91,18 @@ object KeymapValidator {
             .map { (signature, bindings) ->
                 KeymapConflict(signature, bindings)
             }
+            // One entry per colliding SET of actions. Now that alternates are grouped too, two
+            // bindings that share both a primary and an alternate would otherwise be reported
+            // twice, and conflictCount is what the settings badge shows the user - it is one
+            // thing to fix, not two.
+            //
+            // Deliberately lossy in one direction: if the same pair collides on two UNRELATED
+            // chords, only one is listed, and which signature survives follows shortcuts.values
+            // iteration order. Under-counting is the safer end of that trade (a badge that says
+            // 1 for one visible problem beats 2 for one), and reporting per chord is the only
+            // alternative while KeymapConflict carries a single signature. The visible symptom
+            // is that fixing the reported chord surfaces the second one with no prior warning.
+            .distinctBy { conflict -> conflict.bindings.map { it.actionId }.toSet() }
     }
 
     /**

@@ -5,16 +5,22 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.hasAnyDescendant
+import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.width
 import org.junit.Rule
 import org.junit.Test
 import kotlin.math.abs
@@ -244,7 +250,7 @@ class CrashReportDialogLayoutTest {
         // time waitForIdle() returns, measure has assigned maxValue and both forms agree. The
         // sentinel needs a paused clock; see theBodyScrollbarIsAbsentEvenOnTheFirstFrame.
         rule.onNodeWithTag(BODY_SCROLLBAR_TAG).assertDoesNotExist()
-        // The rule shares the gate, so it must be absent too — otherwise a stray line is drawn
+        // The rule also requires overflow, so it must be absent too - otherwise a stray line is drawn
         // across a dialog with nothing clipped.
         rule.onNodeWithTag(BOUNDARY_RULE_TAG).assertDoesNotExist()
 
@@ -253,6 +259,42 @@ class CrashReportDialogLayoutTest {
 
         rule.onNodeWithTag(BODY_SCROLLBAR_TAG).assertExists()
         rule.onNodeWithTag(BOUNDARY_RULE_TAG).assertExists()
+    }
+
+    @Test
+    fun theBoundaryRuleDisappearsAtTheBottomAndReturnsWhenScrollingBack() {
+        setDialogAtMinimumWindowSize()
+        rule.onNodeWithText("Technical Details").performClick()
+        rule.onNodeWithTag(BOUNDARY_RULE_TAG).assertExists()
+
+        val body =
+            rule.onNode(
+                hasScrollAction() and hasAnyDescendant(hasText("Include recent activity logs")),
+            )
+        body.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, 10_000f) }
+        rule.waitForIdle()
+
+        rule.onNodeWithTag(BOUNDARY_RULE_TAG).assertDoesNotExist()
+        rule.onNodeWithTag(BODY_SCROLLBAR_TAG).assertExists()
+        rule.onNodeWithText("Helps with debugging (logs are sanitized)").assertIsDisplayed()
+
+        body.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, -10_000f) }
+        rule.waitForIdle()
+        rule.onNodeWithTag(BOUNDARY_RULE_TAG).assertExists()
+    }
+
+    @Test
+    fun aLongSubmitFailureIsTruncatedBeforeBeingDisplayedAndStillSanitized() {
+        setDialogAtMinimumWindowSize(
+            CrashReportService.SubmitResult.Error(
+                "Request failed: https://private.example.com/secret " +
+                    "boom ".repeat(100_000) + "END_OF_OVERSIZED_MESSAGE",
+            ),
+        )
+
+        rule.onNodeWithText("Request failed:", substring = true).assertExists()
+        rule.onNodeWithText("private.example.com", substring = true).assertDoesNotExist()
+        rule.onNodeWithText("END_OF_OVERSIZED_MESSAGE", substring = true).assertDoesNotExist()
     }
 
     @Test
@@ -268,7 +310,7 @@ class CrashReportDialogLayoutTest {
         )
 
         rule.onNodeWithTag(BODY_SCROLLBAR_TAG).assertDoesNotExist()
-        // Shares the gate, so the sentinel would paint a stray rule on frame 1 too.
+        // The rule also needs the sentinel guard, even if canScrollForward initially reports true.
         rule.onNodeWithTag(BOUNDARY_RULE_TAG).assertDoesNotExist()
     }
 
@@ -316,8 +358,8 @@ class CrashReportDialogLayoutTest {
 
     @Test
     fun aSubmitFailureIsSanitizedBeforeItIsShown() {
-        // This card is selectable and the likeliest thing to be pasted into a public issue, and its
-        // text interpolates a raw exception message. maskUriParams — which this originally used —
+        // This selectable card is likely to be pasted into a public issue, so verify the rendered
+        // message stays sanitized. maskUriParams, which the original render site used,
         // only redacts named params inside a `?`/`#` segment, so it returned a ktor timeout message
         // carrying the request URL completely untouched.
         setDialogAtMinimumWindowSize(
@@ -412,6 +454,31 @@ class CrashReportDialogLayoutTest {
         // Collapsed, the pane isn't composed at all — so this also pins that the hoisted trace
         // scroll state's stale maxValue never leaks a thumb into the collapsed dialog.
         rule.onNodeWithTag(TRACE_SCROLLBAR_TAG).assertDoesNotExist()
+    }
+
+    @Test
+    fun theReportIssueButtonIsNotSqueezedAtTheMinimumWindowWidth() {
+        // #104: at the crash window's 450dp minimum, three buttons side by side used to
+        // over-subscribe the row, and Compose squeezed the shortfall into the *last* child
+        // instead of overflowing - down to ~88dp, well under either label's natural width. The
+        // fix stacks all three full-width below FooterActionsInlineMinWidth instead, so the
+        // primary button's width should now equal its stacked siblings', not be squeezed
+        // relative to them.
+        setDialogAtMinimumWindowSize()
+
+        val reportIssueWidth = rule.onNodeWithText("Report Issue").getUnclippedBoundsInRoot().width
+        val dismissWidth = rule.onNodeWithText("Don't Send").getUnclippedBoundsInRoot().width
+
+        assertTrue(
+            reportIssueWidth.value > 200f,
+            "\"Report Issue\" measured ${reportIssueWidth.value}dp wide - " +
+                "the pre-#104 squeeze produced ~88dp",
+        )
+        assertTrue(
+            abs(reportIssueWidth.value - dismissWidth.value) <= 1f,
+            "stacked buttons should be full-width siblings, not independently sized: " +
+                "\"Report Issue\" ${reportIssueWidth.value}dp vs \"Don't Send\" ${dismissWidth.value}dp",
+        )
     }
 
     @Test

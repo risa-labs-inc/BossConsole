@@ -2,7 +2,11 @@ package ai.rever.boss.plugin
 
 import ai.rever.boss.config.GitHubConfig
 import ai.rever.boss.config.SupabaseClientConfig
+import ai.rever.boss.plugin.loader.PluginBundledTrust
+import ai.rever.boss.plugin.loader.PluginManifestReader
+import ai.rever.boss.plugin.loader.PluginSignatureEnforcement
 import ai.rever.boss.plugin.loader.PluginSignatureSidecar
+import ai.rever.boss.plugin.loader.PluginStoreTrust
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.plugin.repository.LocalPluginRepository
 import ai.rever.boss.plugin.repository.PluginRepositoryManager
@@ -24,9 +28,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.net.URL
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Information about a system plugin that should always be installed.
@@ -53,6 +61,50 @@ data class SystemPluginInfo(
      *  the host dropped it, so older plugin JARs cannot run on this host. */
     val minVersion: String? = null,
 )
+
+/**
+ * Completes the post-promotion work for a background system-plugin download.
+ *
+ * A loadable plugin may still need the JAR that backed its current classloader,
+ * so its superseded artifact is deliberately left for startup reconciliation.
+ * A [SystemPluginInfo.downloadOnly] runtime is not reconciled or persisted, so
+ * it keeps the previous eager cleanup behavior instead.
+ */
+internal data class BackgroundSystemPluginUpdate(
+    val plugin: SystemPluginInfo,
+    val promotedJar: File,
+    val pluginDir: File,
+    val persistLoadablePlugin: (File) -> Unit,
+    val persistSignature: suspend (File) -> Unit,
+    val manifestIdOf: (File) -> String?,
+    val onSupersededArtifactProcessed: (File, Boolean) -> Unit,
+)
+
+internal suspend fun finishBackgroundSystemPluginUpdate(update: BackgroundSystemPluginUpdate) {
+    if (!update.plugin.downloadOnly) {
+        update.persistLoadablePlugin(update.promotedJar)
+        update.persistSignature(update.promotedJar)
+    }
+
+    if (!update.plugin.downloadOnly) return
+
+    // Download-only runtime artifacts are neither loaded as plugins nor handled
+    // by PluginJarReconciler. Keep their established single-artifact lifecycle so
+    // a later in-session check cannot select an arbitrary stale version.
+    update.pluginDir
+        .listFiles()
+        ?.filter {
+            it.name.endsWith(".jar") &&
+                it.name != update.promotedJar.name &&
+                update.manifestIdOf(it) == update.plugin.pluginId
+        }?.forEach { oldFile ->
+            val deleted = oldFile.delete()
+            // A signature belongs to exactly one JAR. Do not remove it if a
+            // Windows lock left the JAR in place.
+            if (deleted) runCatching { PluginSignatureSidecar.delete(oldFile.absolutePath) }
+            update.onSupersededArtifactProcessed(oldFile, deleted)
+        }
+}
 
 /**
  * Sets up the plugin store infrastructure including:
@@ -92,6 +144,14 @@ object PluginStoreSetup {
      */
     private val inFlightUpdateChecks =
         java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicBoolean>()
+
+    private val sidecarBackfill =
+        SidecarBackfillCoordinator(
+            scope = CoroutineScope(scope.coroutineContext + Dispatchers.IO),
+            sidecarExists = { jarFile -> PluginSignatureSidecar.read(jarFile.absolutePath) != null },
+            updateInFlight = { pluginId -> inFlightUpdateChecks[pluginId]?.get() == true },
+            persist = ::persistStoreSignatureSidecar,
+        )
 
     /**
      * Whether microkernel mode is active (OOP plugins need the runtime JAR).
@@ -235,7 +295,10 @@ object PluginStoreSetup {
                     hostBossVersion = AppVersion.currentVersionString(),
                     // Gate by minApiVersion: lambda because the api layer resolves
                     // later in startup (initializeApiLayer publishes the property).
-                    hostApiVersion = { System.getProperty("boss.api.version") ?: "" },
+                    // No `?: ""`: null means the api layer has not published its version yet,
+                    // and PluginUpdateManager needs that distinct from the empty string it
+                    // publishes when it resolved and found no api jar.
+                    hostApiVersion = { System.getProperty("boss.api.version") },
                 )
 
             // Create and start realtime service for live updates
@@ -304,13 +367,15 @@ object PluginStoreSetup {
                     )
                     PluginStoreConfig.accessToken = token
 
-                    // Signature backfill waits for this token: the store's
-                    // install-permission gate 403s an unauthenticated caller, so
-                    // running it earlier would fail forever for exactly the
-                    // plugins that need it. Once per process — see
-                    // drainSidecarBackfill.
-                    if (token != null && sidecarBackfillStarted.compareAndSet(false, true)) {
-                        scope.launch { drainSidecarBackfill() }
+                    // Signature backfill and store repair wait for this token because the
+                    // store's install-permission gate rejects unauthenticated callers.
+                    // Recording readiness also wakes JARs queued after an earlier
+                    // authenticated emission.
+                    sidecarBackfill.setAuthenticated(token != null)
+                    if (token == null) {
+                        storeRepairAuthenticationLosses.incrementAndGet()
+                    } else {
+                        scope.launch { maybeDrainStoreRepair() }
                     }
                 }
             }
@@ -447,7 +512,10 @@ object PluginStoreSetup {
                     if (installedIds.contains(systemPlugin.pluginId) && jarExists) {
                         val jarFile = File(existingEntry.jarPath)
                         val installedVersion =
-                            extractVersionFromJarFileName(jarFile.name, systemPlugin.artifactPrefix)
+                            PluginVersionComparator.extractVersionFromJarFileName(
+                                jarFile.name,
+                                systemPlugin.artifactPrefix,
+                            )
                                 ?: runCatching { readPluginManifest(jarFile)?.version }.getOrNull()
                         // Installed JAR is older than this host requires (or its
                         // version is unreadable, which only very old JARs are):
@@ -455,7 +523,8 @@ object PluginStoreSetup {
                         // contract-breaking version is never loaded. If the
                         // download fails (offline), the old JAR still loads and
                         // the update is retried next launch.
-                        val tooOldForHost = isTooOldForHost(installedVersion, systemPlugin.minVersion)
+                        val tooOldForHost =
+                            PluginVersionComparator.isTooOldForHost(installedVersion, systemPlugin.minVersion)
                         if (!tooOldForHost) {
                             // Plugin is on disk — proceed with startup using the
                             // current JAR. Kick off a background update check so
@@ -533,10 +602,11 @@ object PluginStoreSetup {
     /**
      * Kick off a non-blocking update check for a system plugin.
      *
-     * The existing JAR stays in use for the current session regardless — we
-     * never swap a JAR out from under a live classloader. A newer release is
-     * downloaded in the background and replaces the file on disk for the next
-     * startup. `PluginPersistence` is updated by [downloadSystemPluginFromGitHub]
+     * For a loadable plugin, the existing JAR stays in use for the current
+     * session — we never swap a JAR out from under a live classloader. A newer
+     * release is recorded for the next startup while that JAR remains on disk.
+     * Download-only runtime artifacts retain their established replace-and-cleanup
+     * lifecycle. `PluginPersistence` is updated by [downloadSystemPluginFromGitHub]
      * for non-downloadOnly plugins so the new path is picked up automatically.
      *
      * Runs on [scope] so it survives any caller that cancels mid-startup.
@@ -571,7 +641,7 @@ object PluginStoreSetup {
                 // every startup even though the fallback handles it. Manifest
                 // read is therefore only used when the filename lacks a version.
                 val installedVersion =
-                    extractVersionFromJarFileName(existingJar.name, systemPlugin.artifactPrefix)
+                    PluginVersionComparator.extractVersionFromJarFileName(existingJar.name, systemPlugin.artifactPrefix)
                         ?: runCatching { readPluginManifest(existingJar)?.version }.getOrNull()
                 val latestVersion = fetchLatestReleaseVersion(systemPlugin.githubRepo)
                 when {
@@ -609,12 +679,12 @@ object PluginStoreSetup {
                         )
                     }
 
-                    !isNewerVersion(latestVersion, installedVersion) -> {
+                    !PluginVersionComparator.isNewerVersion(latestVersion, installedVersion) -> {
                         // Installed version is NEWER than the latest published release —
                         // e.g. a local dev build ahead of the store. Do NOT downgrade:
-                        // downloadSystemPluginFromGitHub deletes other versions, which
-                        // would clobber the local build. Only update when the published
-                        // release is strictly newer (the else branch below).
+                        // a download-only runtime update removes older versions, while a
+                        // loadable update repoints the next launch. Only update when the
+                        // published release is strictly newer (the else branch below).
                         logger.debug(
                             LogCategory.SYSTEM,
                             "Local system plugin newer than published - keeping local build",
@@ -650,6 +720,7 @@ object PluginStoreSetup {
                 )
             } finally {
                 flag.set(false)
+                sidecarBackfill.onUpdateCheckCompleted(systemPlugin.pluginId)
             }
         }
     }
@@ -744,24 +815,6 @@ object PluginStoreSetup {
     }
 
     /**
-     * Extract the semver component from a plugin JAR filename.
-     * Handles the `{prefix}-{version}.jar` and `{prefix}-{version}-all.jar`
-     * patterns produced by Gradle. Returns null if the filename doesn't match.
-     */
-    internal fun extractVersionFromJarFileName(
-        fileName: String,
-        artifactPrefix: String,
-    ): String? {
-        val withoutPrefix = fileName.removePrefix("$artifactPrefix-")
-        if (withoutPrefix == fileName) return null
-        val version =
-            withoutPrefix
-                .removeSuffix(".jar")
-                .removeSuffix("-all")
-        return version.takeIf { it.matches(Regex("""\d+\.\d+\.\d+(?:[-+.][A-Za-z0-9.]+)*""")) }
-    }
-
-    /**
      * Bind the store's signature to a JAR fetched from GitHub releases, or clear
      * any stale sidecar when it can't be bound.
      *
@@ -805,8 +858,7 @@ object PluginStoreSetup {
             return
         }
 
-        val signature = fetchStoreSignature(manifest.pluginId, manifest.version, resolvedAgainstSha)
-        if (signature == null) return
+        val signature = resolveSignatureToBind(jarFile, manifest, resolvedAgainstSha) ?: return
 
         // Bind only if the bytes are still the ones we resolved against. Resolving
         // a signature involves a network round trip, and another path may replace
@@ -838,22 +890,101 @@ object PluginStoreSetup {
     }
 
     /**
-     * Ask the store for the signature covering [localSha256], or null to leave the
-     * JAR unsigned. Never writes; the caller decides what to do with the answer.
+     * What the store had to say about a JAR's bytes.
+     *
+     * The distinction that matters is settled versus unsettled, not signed versus
+     * unsigned: [Mismatch] is an answer that will not change until the JAR or the
+     * store row does, so it can be remembered, while [Unavailable] is the store
+     * failing to answer and must stay retryable. Collapsing both to null is what
+     * made the mismatch case re-cost a `getDownloadUrl` on every launch.
+     */
+    internal sealed interface StoreSignatureOutcome {
+        data class Signed(
+            val signatureBase64: String,
+        ) : StoreSignatureOutcome
+
+        /** The store has this version and vouches for different bytes. */
+        data object Mismatch : StoreSignatureOutcome
+
+        /** Unreachable, no row, published before signing, or a 403 from the gate. */
+        data object Unavailable : StoreSignatureOutcome
+    }
+
+    /**
+     * The signature to bind to [jarFile], or null to leave it unsigned.
+     *
+     * Split out from [persistStoreSignatureSidecar] because it owns one decision
+     * the caller should not have to re-derive: whether "no signature" is a settled
+     * answer worth remembering, or a transient one that must stay retryable.
+     */
+    internal suspend fun resolveSignatureToBind(
+        jarFile: File,
+        manifest: ai.rever.boss.plugin.api.PluginManifest,
+        localSha256: String,
+        fetch: suspend (String, String, String) -> StoreSignatureOutcome = ::fetchStoreSignature,
+    ): String? {
+        val anchor = PluginStoreTrust.versionAnchor(manifest.pluginId, manifest.version, localSha256)
+        // Enforcement makes a retry cheaper than leaving a corrected store row unreachable.
+        if (
+            !PluginSignatureEnforcement.enforceUnsigned &&
+            PluginSignatureSidecar.isKnownUnsignable(jarFile.absolutePath, anchor)
+        ) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "System plugin left unsigned - cached store artifact mismatch; remove the marker to retry",
+                mapOf(
+                    "pluginId" to manifest.pluginId,
+                    "version" to manifest.version,
+                    "marker" to PluginSignatureSidecar.unsignablePathFor(jarFile.absolutePath),
+                ),
+            )
+            return null
+        }
+
+        return when (val outcome = fetch(manifest.pluginId, manifest.version, localSha256)) {
+            is StoreSignatureOutcome.Signed -> {
+                outcome.signatureBase64
+            }
+
+            // Settled: remember it, so the next launch does not spend another
+            // getDownloadUrl (and another `plugin_downloads` row) re-learning it.
+            StoreSignatureOutcome.Mismatch -> {
+                // A replacement during the lookup merely leaves an inert old-digest marker.
+                // Unlike a signature, that cannot bind the wrong bytes or fail plugin loading.
+                PluginSignatureSidecar.markUnsignable(jarFile.absolutePath, anchor)
+                null
+            }
+
+            // Unsettled: stays retryable.
+            StoreSignatureOutcome.Unavailable -> {
+                null
+            }
+        }
+    }
+
+    /**
+     * Ask the store for the signature covering [localSha256]. Never writes; the
+     * caller decides what to do with the answer.
      */
     private suspend fun fetchStoreSignature(
         pluginId: String,
         version: String,
         localSha256: String,
-    ): String? =
+    ): StoreSignatureOutcome =
         try {
             val info = PluginStoreClient.getDownloadUrl(pluginId, version)
-            resolveSidecarSignature(
-                storeSha256 = info.sha256,
-                storeSignature = info.signature,
-                localSha256 = localSha256,
-            ).also {
-                if (it == null && info.signature != null) {
+            val resolved =
+                resolveSidecarSignature(
+                    storeSha256 = info.sha256,
+                    storeSignature = info.signature,
+                    localSha256 = localSha256,
+                )
+            when {
+                resolved != null -> {
+                    StoreSignatureOutcome.Signed(resolved)
+                }
+
+                info.signature != null -> {
                     logger.warn(
                         LogCategory.SYSTEM,
                         "System plugin left unsigned - GitHub asset differs from the store artifact",
@@ -864,6 +995,13 @@ object PluginStoreSetup {
                             "localSha256" to localSha256,
                         ),
                     )
+                    StoreSignatureOutcome.Mismatch
+                }
+
+                // A row with no signature at all: published before store signing.
+                // Signing it later is a store-side change, so this stays retryable.
+                else -> {
+                    StoreSignatureOutcome.Unavailable
                 }
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -883,7 +1021,7 @@ object PluginStoreSetup {
                 "System plugin left unsigned - no store signature available",
                 mapOf("pluginId" to pluginId, "version" to version, "error" to e.toString()),
             )
-            null
+            StoreSignatureOutcome.Unavailable
         }
 
     /**
@@ -903,18 +1041,10 @@ object PluginStoreSetup {
     ): String? = if (storeSha256.equals(localSha256, ignoreCase = true)) storeSignature else null
 
     /** True when [jarFile] still hashes to [expectedSha256]; false if it moved or is unreadable. */
-    private fun stillMatchesResolvedBytes(
+    internal fun stillMatchesResolvedBytes(
         jarFile: File,
         expectedSha256: String,
     ): Boolean = runCatching { sha256Of(jarFile).equals(expectedSha256, ignoreCase = true) }.getOrDefault(false)
-
-    /** JARs seen without a sidecar, drained once by [drainSidecarBackfill]. */
-    private val sidecarBackfillQueue = java.util.concurrent.ConcurrentLinkedQueue<Pair<String, File>>()
-
-    /** The drain runs at most once per process — see [drainSidecarBackfill]. */
-    private val sidecarBackfillStarted =
-        java.util.concurrent.atomic
-            .AtomicBoolean(false)
 
     /**
      * Note an already-installed system plugin whose sidecar is missing.
@@ -925,64 +1055,250 @@ object PluginStoreSetup {
      * exists. A user already up to date would stay unsigned forever and lose every
      * system plugin — Toolbox included — the moment enforcement flips.
      *
-     * Only queues. The work is deferred to [drainSidecarBackfill] because doing it
-     * here would run unauthenticated (see that function) and would race the update
-     * check launched immediately before it.
+     * The coordinator defers persistence until authentication is available and an
+     * update check is no longer replacing this JAR.
      */
     private fun backfillSidecarIfMissing(
         pluginId: String,
         jarFile: File,
     ) {
-        if (PluginSignatureSidecar.read(jarFile.absolutePath) != null) return
-        sidecarBackfillQueue.add(pluginId to jarFile)
+        sidecarBackfill.enqueue(pluginId, jarFile)
+    }
+
+    /** Match the manifest identity; artifact prefixes can also prefix a different plugin's name. */
+    private fun installedJarFor(plugin: SystemPluginInfo): File? =
+        _pluginDir.listFiles()?.firstOrNull { file ->
+            file.name.endsWith(".jar") &&
+                runCatching {
+                    PluginManifestReader.readFromJar(file.absolutePath).pluginId == plugin.pluginId
+                }.getOrDefault(false)
+        }
+
+    /** JARs the GitHub path could not supply, to retry through the store. */
+    private val storeRepairQueue = java.util.concurrent.ConcurrentLinkedQueue<Pair<SystemPluginInfo, String>>()
+
+    /** Serialises repair passes so two triggers cannot install the same JAR twice. */
+    private val storeRepairMutex = Mutex()
+    private val systemPluginDownloadLocks = ConcurrentHashMap<String, Mutex>()
+    private val storeRepairAuthenticationLosses = AtomicLong()
+
+    /**
+     * Plugin ids a store repair has already been spent on this process.
+     *
+     * Bounds the retries a repeatable drain allows. A plugin whose store row is
+     * genuinely absent must not re-cost a lookup every time something triggers the
+     * pass; the next launch tries again, which is the right cadence for a fault
+     * that is usually an outage.
+     */
+    private val storeRepairAttempted: MutableSet<String> =
+        java.util.concurrent.ConcurrentHashMap
+            .newKeySet()
+
+    /**
+     * Note that the GitHub path could not supply [plugin], with the concrete
+     * [reason], so the store can be tried instead.
+     *
+     * The GitHub miss is not the interesting failure. `system-plugins.json` routes
+     * the headline surfaces (Terminal Tab, Fluck Browser, Editor Tab) through
+     * GitHub Releases, and an unauthenticated host gets 60 API calls an hour
+     * shared across everything on its egress IP. A CI runner, an agent VM or an
+     * office NAT burns that quickly, and the same plugins install fine from the
+     * store moments later. Treating the miss as terminal is what leaves a
+     * signed-in BOSS without a terminal, a browser or an editor.
+     *
+     * This pass repairs missing plugins, not upgrades of JARs already on disk.
+     * Version/IPC refusals in the GitHub path retain their existing policy even
+     * when the plugin is absent: selecting an alternative compatible release is
+     * outside this availability fallback. Store downloads independently enforce
+     * those gates before publishing any bytes.
+     */
+    private fun noteStoreRepairable(
+        plugin: SystemPluginInfo,
+        reason: String,
+    ) {
+        if (!StoreRepairArtifact.supports(plugin)) return
+        storeRepairQueue.add(plugin to reason)
+        // Never await here: GitHub holds the per-plugin lock, and the drain takes
+        // storeRepairMutex before that lock. An inline drain would close a lock cycle.
+        scope.launch { maybeDrainStoreRepair() }
+    }
+
+    /** What [maybeDrainStoreRepair] should do with one queued plugin. */
+    internal enum class RepairDisposition {
+        /** Another path already put a JAR on disk; nothing to repair. */
+        ALREADY_PRESENT,
+
+        /** This plugin has already spent its one store attempt this process. */
+        ALREADY_ATTEMPTED,
+
+        /** Try the store. */
+        REPAIR,
     }
 
     /**
-     * Fetch signatures for queued JARs, once, after the store client is authenticated.
+     * The per-plugin decision, extracted so the ordering is pinned by tests rather
+     * than living inside a network call.
      *
-     * Deferred rather than run at startup for three reasons, all of which made the
-     * naive version fail exactly where it mattered:
-     *
-     * - **Auth.** [PluginStoreConfig.accessToken] starts null and is only set when
-     *   `sessionStatus` emits, while `ensureSystemPluginsInstalled` runs from
-     *   `initialize()`. The download route 403s an unauthenticated caller for any
-     *   plugin with non-empty `requiredPermissions`, so backfilling at startup would
-     *   deterministically fail for precisely the plugins it targets — every launch,
-     *   forever, never producing a sidecar.
-     * - **Cost.** `getDownloadUrl` is not read-only; it books a row in
-     *   `plugin_downloads`, which feeds the store's default `sortBy = "downloads"`
-     *   ranking. Retrying every launch would fabricate a download per system plugin
-     *   per user forever. Running at most once per process bounds that. A
-     *   signature-only store route would remove it entirely — worth doing, but it's
-     *   an edge-function change and is tracked on BossConsole#102 rather than here.
-     * - **Races.** Draining serially, skipping any plugin whose update check is
-     *   still in flight, keeps this off the JARs [scheduleBackgroundUpdateCheck] is
-     *   replacing underneath it.
+     * [jarPresent] is tested first and is re-read at drain time rather than when
+     * the entry was queued. Between the two, a background update check or a
+     * realtime manifest re-run can have installed the plugin by the ordinary
+     * route, and downloading a second copy would leave two versions in the plugin
+     * dir for `PluginJarReconciler` to clean up after. This prevents the store
+     * from duplicating a completed GitHub install; GitHub update callers may still
+     * publish a newer release after a store repair, for next-launch reconciliation.
      */
-    private suspend fun drainSidecarBackfill() {
-        withContext(Dispatchers.IO) {
-            generateSequence { sidecarBackfillQueue.poll() }
-                .filter { (pluginId, jarFile) -> stillNeedsSidecar(pluginId, jarFile) }
-                .forEach { (_, jarFile) -> persistStoreSignatureSidecar(jarFile) }
+    internal fun repairDisposition(
+        jarPresent: Boolean,
+        alreadyAttempted: Boolean,
+    ): RepairDisposition =
+        when {
+            jarPresent -> RepairDisposition.ALREADY_PRESENT
+            alreadyAttempted -> RepairDisposition.ALREADY_ATTEMPTED
+            else -> RepairDisposition.REPAIR
+        }
+
+    /**
+     * Install any system plugin the GitHub path could not supply from the store.
+     *
+     * Deferred rather than run inline at the point of failure, and that ordering is
+     * the whole point. [PluginStoreConfig.accessToken] is still null while
+     * `ensureSystemPluginsInstalled` runs from `initialize()`, and the store
+     * download route 403s an unauthenticated caller for any plugin with non-empty
+     * `requiredPermissions`, which is exactly the set this targets. An inline
+     * fallback would therefore fail for the same plugins on every launch and look
+     * like the fix was in. Confirmed on BossConsole#399 by a second reporter whose
+     * agent VM cannot hold a durable `GITHUB_TOKEN` at all, so for them the
+     * unauthenticated Releases path is the normal case rather than an edge one.
+     *
+     * Safe to call from anywhere, as often as you like: guarded by
+     * [storeRepairMutex], returns immediately while unauthenticated, and each
+     * plugin costs at most one store attempt per process.
+     */
+    private suspend fun maybeDrainStoreRepair() {
+        if (storeRepairQueue.isEmpty() || PluginStoreConfig.accessToken == null) return
+        storeRepairMutex.withLock {
+            withContext(Dispatchers.IO) {
+                // Re-read under the lock: a sign-out between the cheap pre-check and
+                // here would spend every plugin's one attempt on a guaranteed 403.
+                if (PluginStoreConfig.accessToken == null) return@withContext
+                generateSequence {
+                    if (PluginStoreConfig.accessToken != null) storeRepairQueue.poll() else null
+                }.forEach { (plugin, reason) ->
+                    val disposition =
+                        repairDisposition(
+                            jarPresent = installedJarFor(plugin) != null,
+                            alreadyAttempted = plugin.pluginId in storeRepairAttempted,
+                        )
+                    if (disposition == RepairDisposition.REPAIR) {
+                        storeRepairAttempted.add(plugin.pluginId)
+                        val authenticationGeneration = storeRepairAuthenticationLosses.get()
+                        try {
+                            systemPluginDownloadLocks.computeIfAbsent(plugin.pluginId) { Mutex() }.withLock {
+                                if (PluginStoreConfig.accessToken != null && installedJarFor(plugin) == null) {
+                                    repairFromStore(plugin, reason)
+                                }
+                            }
+                        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                            storeRepairAttempted.remove(plugin.pluginId)
+                            storeRepairQueue.add(plugin to reason)
+                            throw cancelled
+                        }
+                        val lostAuthentication =
+                            PluginStoreConfig.accessToken == null ||
+                                authenticationGeneration != storeRepairAuthenticationLosses.get()
+                        if (lostAuthentication && installedJarFor(plugin) == null) {
+                            storeRepairAttempted.remove(plugin.pluginId)
+                            storeRepairQueue.add(plugin to reason)
+                        }
+                    } else {
+                        logger.debug(
+                            LogCategory.SYSTEM,
+                            "Skipping store repair",
+                            mapOf("pluginId" to plugin.pluginId, "why" to disposition.name),
+                        )
+                    }
+                }
+            }
         }
     }
 
     /**
-     * Whether a queued JAR should still be backfilled, re-evaluated at drain time
-     * rather than when it was queued.
+     * Fetch [plugin] from the store and put it where the next launch will find it.
      *
-     * The update path signs whatever it installs, so a JAR it is currently
-     * replacing needs nothing from us — and touching one mid-replacement is
-     * exactly how an orphaned or mismatched sidecar gets created. The JAR may also
-     * have been removed, or signed by another path, since queueing.
+     * Reported at WARN on both outcomes, carrying the GitHub [reason] that sent us
+     * here. A silent success would hide that the GitHub channel is broken for this
+     * install, and a silent failure is the state BossConsole#399 was filed about:
+     * the wizard's own log said only "Some plugins failed to install", so an
+     * operator could not tell a rate limit from a missing asset from a signature
+     * refusal without reading the host log.
+     *
+     * The JAR is not loaded into the running app. Doing that needs a
+     * `DynamicPluginManager`, and those are per-window while this object is
+     * process-wide, so holding one here would pin a window's manager and its
+     * classloaders for the life of the process. That is the leak this repo already
+     * guards against elsewhere, and it is not worth introducing to save a restart.
+     * See the PR for the follow-up shape.
      */
-    private fun stillNeedsSidecar(
-        pluginId: String,
-        jarFile: File,
-    ): Boolean =
-        inFlightUpdateChecks[pluginId]?.get() != true &&
-            jarFile.exists() &&
-            PluginSignatureSidecar.read(jarFile.absolutePath) == null
+    private suspend fun repairFromStore(
+        plugin: SystemPluginInfo,
+        reason: String,
+    ) {
+        val manager = _remoteRepository
+        if (manager == null) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "System plugin left uninstalled - GitHub failed and no repository is available",
+                mapOf("pluginId" to plugin.pluginId, "githubReason" to reason),
+            )
+            return
+        }
+
+        var tmp: File? = null
+        try {
+            tmp = File.createTempFile("${plugin.pluginId}-store-repair-", ".jar.part", _pluginDir)
+            val info = manager.getPlugin(plugin.pluginId).getOrThrow() ?: error("no store row for ${plugin.pluginId}")
+            val downloaded = File(manager.downloadPlugin(plugin.pluginId, info.version, tmp.absolutePath).getOrThrow())
+            // Another install may have finished while the network call was suspended.
+            if (installedJarFor(plugin) != null) return
+            val manifest = readPluginManifest(downloaded) ?: error("Store JAR has no readable plugin manifest")
+            val dest = StoreRepairArtifact.promote(plugin, downloaded, manifest, info.version)
+            val existing = PluginPersistence.getInstalledPlugins().find { it.pluginId == plugin.pluginId }
+            PluginPersistence.addInstalledPlugin(
+                pluginId = plugin.pluginId,
+                jarPath = dest.absolutePath,
+                enabled = existing?.enabled ?: true,
+                sourceUrl = existing?.sourceUrl,
+                installedVersion = manifest.version,
+            )
+            logger.warn(
+                LogCategory.SYSTEM,
+                "System plugin repaired from the store after GitHub failed - active next launch",
+                mapOf("pluginId" to plugin.pluginId, "version" to manifest.version, "githubReason" to reason),
+            )
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (e: Exception) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "System plugin left uninstalled - GitHub failed and the store could not supply it",
+                mapOf("pluginId" to plugin.pluginId, "githubReason" to reason, "storeError" to e.toString()),
+            )
+        } finally {
+            tmp?.let {
+                it.delete()
+                PluginSignatureSidecar.delete(it.absolutePath)
+            }
+        }
+    }
+
+    /** Serialize both download channels per plugin while keeping network and file work on I/O. */
+    private suspend fun <T> withSystemPluginDownloadLock(
+        plugin: SystemPluginInfo,
+        action: suspend () -> T,
+    ): T =
+        systemPluginDownloadLocks.computeIfAbsent(plugin.pluginId) { Mutex() }.withLock {
+            withContext(Dispatchers.IO) { action() }
+        }
 
     /**
      * Download a system plugin from GitHub releases.
@@ -991,7 +1307,7 @@ object PluginStoreSetup {
      * @return true if download was successful, false otherwise
      */
     private suspend fun downloadSystemPluginFromGitHub(plugin: SystemPluginInfo): Boolean {
-        return withContext(Dispatchers.IO) {
+        return withSystemPluginDownloadLock(plugin) {
             try {
                 val apiUrl = "https://api.github.com/repos/${plugin.githubRepo}/releases/latest"
                 logger.debug(
@@ -1024,7 +1340,8 @@ object PluginStoreSetup {
                             "hint" to "set GITHUB_TOKEN in env or local.properties to raise the limit from 60/hr to 5000/hr",
                         ),
                     )
-                    return@withContext false
+                    noteStoreRepairable(plugin, "GitHub API rate limit (status $status)")
+                    return@withSystemPluginDownloadLock false
                 }
                 if (status !in 200..299) {
                     logger.warn(
@@ -1035,7 +1352,8 @@ object PluginStoreSetup {
                             "status" to status,
                         ),
                     )
-                    return@withContext false
+                    noteStoreRepairable(plugin, "GitHub releases API returned $status")
+                    return@withSystemPluginDownloadLock false
                 }
 
                 val responseText = connection.inputStream.bufferedReader().readText()
@@ -1051,7 +1369,10 @@ object PluginStoreSetup {
                 // contract-breaking JAR the gate exists to prevent. Keep
                 // whatever is on disk and retry next launch instead.
                 val requiredMin = plugin.minVersion
-                if (requiredMin != null && isTooOldForHost(tagName.removePrefix("v"), requiredMin)) {
+                val tooOldRelease =
+                    requiredMin != null &&
+                        PluginVersionComparator.isTooOldForHost(tagName.removePrefix("v"), requiredMin)
+                if (tooOldRelease) {
                     logger.error(
                         LogCategory.SYSTEM,
                         "Latest GitHub release is older than this host requires - not installing",
@@ -1062,12 +1383,12 @@ object PluginStoreSetup {
                             "minVersion" to requiredMin,
                         ),
                     )
-                    return@withContext false
+                    return@withSystemPluginDownloadLock false
                 }
 
                 // Find the JAR download URL (skips "-thin.jar" assets — see
                 // pickPluginJarUrl).
-                val jarUrl = pickPluginJarUrl(responseText, plugin.artifactPrefix)
+                val jarUrl = PluginVersionComparator.pickPluginJarUrl(responseText, plugin.artifactPrefix)
 
                 if (jarUrl == null) {
                     logger.warn(
@@ -1079,7 +1400,8 @@ object PluginStoreSetup {
                             "tag" to tagName,
                         ),
                     )
-                    return@withContext false
+                    noteStoreRepairable(plugin, "no JAR asset in GitHub release $tagName")
+                    return@withSystemPluginDownloadLock false
                 }
                 val jarFileName = jarUrl.substringAfterLast("/")
                 val destFile = File(_pluginDir, jarFileName)
@@ -1133,7 +1455,8 @@ object PluginStoreSetup {
                             "file" to tmpFile.absolutePath,
                         ),
                     )
-                    return@withContext false
+                    noteStoreRepairable(plugin, "GitHub downloaded an empty or missing JAR")
+                    return@withSystemPluginDownloadLock false
                 }
 
                 // IPC-compat gate: if the fetched JAR declares a minIpcVersion
@@ -1169,7 +1492,7 @@ object PluginStoreSetup {
                             "reason" to ipcReason,
                         ),
                     )
-                    return@withContext false
+                    return@withSystemPluginDownloadLock false
                 }
 
                 // Atomic rename onto the final path. Overwrite if the file
@@ -1202,25 +1525,6 @@ object PluginStoreSetup {
                     )
                 }
 
-                // Register in persistence (skip for download-only plugins like microkernel runtime).
-                // Preserve the user's existing `enabled` choice and `sourceUrl` —
-                // `addInstalledPlugin` does removeIf+add, so passing the defaults
-                // would silently re-enable a user-disabled plugin and wipe sourceUrl
-                // on every background update.
-                if (!plugin.downloadOnly) {
-                    val existing =
-                        PluginPersistence
-                            .getInstalledPlugins()
-                            .find { it.pluginId == plugin.pluginId }
-                    PluginPersistence.addInstalledPlugin(
-                        pluginId = plugin.pluginId,
-                        jarPath = destFile.absolutePath,
-                        enabled = existing?.enabled ?: true,
-                        sourceUrl = existing?.sourceUrl,
-                        installedVersion = tagName.removePrefix("v"),
-                    )
-                }
-
                 // Bind the store signature to these bytes. Every OTHER install path
                 // writes a `<jar>.sig` sidecar; this one never did, so system
                 // plugins — api, Toolbox, the microkernel runtime, terminal-tab,
@@ -1236,7 +1540,42 @@ object PluginStoreSetup {
                 // safety cost: the stale sidecar was already cleared before the
                 // move, so the intermediate state is *unsigned*, which is
                 // warn-and-allow by design.
-                persistStoreSignatureSidecar(destFile)
+                finishBackgroundSystemPluginUpdate(
+                    BackgroundSystemPluginUpdate(
+                        plugin = plugin,
+                        promotedJar = destFile,
+                        pluginDir = _pluginDir,
+                        persistLoadablePlugin = { promoted ->
+                            // Preserve the user's existing `enabled` choice and `sourceUrl` —
+                            // `addInstalledPlugin` does removeIf+add, so passing the defaults
+                            // would silently re-enable a user-disabled plugin and wipe sourceUrl
+                            // on every background update.
+                            val existing =
+                                PluginPersistence
+                                    .getInstalledPlugins()
+                                    .find { it.pluginId == plugin.pluginId }
+                            PluginPersistence.addInstalledPlugin(
+                                pluginId = plugin.pluginId,
+                                jarPath = promoted.absolutePath,
+                                enabled = existing?.enabled ?: true,
+                                sourceUrl = existing?.sourceUrl,
+                                installedVersion = tagName.removePrefix("v"),
+                            )
+                        },
+                        persistSignature = { persistStoreSignatureSidecar(it) },
+                        manifestIdOf = { readPluginManifest(it)?.pluginId },
+                        onSupersededArtifactProcessed = { oldFile, deleted ->
+                            logger.debug(
+                                LogCategory.SYSTEM,
+                                "Removed old version",
+                                mapOf(
+                                    "file" to oldFile.name,
+                                    "deleted" to deleted,
+                                ),
+                            )
+                        },
+                    ),
+                )
 
                 logger.info(
                     LogCategory.SYSTEM,
@@ -1248,39 +1587,6 @@ object PluginStoreSetup {
                         "size" to destFile.length(),
                     ),
                 )
-
-                // Clean up older versioned JARs *after* the new JAR is on disk
-                // and persistence is updated. Match by manifest pluginId, NOT
-                // filename prefix: artifact prefixes can be prefixes of each
-                // other (e.g. "boss-plugin-terminal" matches
-                // "boss-plugin-terminal-tab-*.jar" and would delete the other
-                // plugin's JAR). On Windows the JVM may hold a lock on a JAR
-                // loaded earlier in this process; delete() will return false
-                // silently. The new versioned JAR has a different filename so
-                // it's unaffected; the stale file just lingers.
-                _pluginDir
-                    .listFiles()
-                    ?.filter {
-                        it.name.endsWith(".jar") &&
-                            it.name != jarFileName &&
-                            readPluginManifest(it)?.pluginId == plugin.pluginId
-                    }?.forEach { oldFile ->
-                        val deleted = oldFile.delete()
-                        // Drop the sidecar with its JAR so it can't outlive it as an
-                        // orphan — but only when the JAR actually went. A delete
-                        // here fails when the JVM holds a lock (Windows, JAR still
-                        // loaded), and stripping the sidecar off a JAR that is
-                        // staying would turn a signed plugin into an unsigned one.
-                        if (deleted) runCatching { PluginSignatureSidecar.delete(oldFile.absolutePath) }
-                        logger.debug(
-                            LogCategory.SYSTEM,
-                            "Removed old version",
-                            mapOf(
-                                "file" to oldFile.name,
-                                "deleted" to deleted,
-                            ),
-                        )
-                    }
 
                 true
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -1299,6 +1605,7 @@ object PluginStoreSetup {
                     ),
                     e,
                 )
+                queueStoreRepairAfterGitHubFailure(e) { reason -> noteStoreRepairable(plugin, reason) }
                 false
             }
         }
@@ -1336,7 +1643,7 @@ object PluginStoreSetup {
                 //    installed.json at the kept JAR — different writers use different
                 //    filename conventions, so multiple versions can accumulate and an
                 //    older JAR could otherwise shadow a newer one at scan time.
-                runCatching { PluginJarReconciler.reconcilePluginDir(_pluginDir) }
+                runCatching { PluginJarReconciler.reconcilePluginDir(_pluginDir, pluginIds = null) }
                     .onFailure { e ->
                         logger.warn(
                             LogCategory.SYSTEM,
@@ -1611,10 +1918,15 @@ object PluginStoreSetup {
                     val existingManifest = readPluginManifest(existingJar)
                     if (existingManifest != null) {
                         val existingVersion = existingManifest.version
-                        if (highestExistingVersion == null || isNewerVersion(existingVersion, highestExistingVersion)) {
+                        if (highestExistingVersion == null ||
+                            PluginVersionComparator.isNewerVersion(existingVersion, highestExistingVersion)
+                        ) {
                             highestExistingVersion = existingVersion
                         }
-                        if (!isNewerVersion(bundledVersion, existingVersion)) {
+                        if (!PluginVersionComparator.isNewerVersion(bundledVersion, existingVersion)) {
+                            // Older hosts copied these bytes without a provenance marker. Bind
+                            // only an exact bundle match; store updates and side-loads stay untrusted.
+                            val bundledTrust = PluginBundledTrust.bindToBundle(existingJar.absolutePath, jarFile)
                             logger.info(
                                 LogCategory.SYSTEM,
                                 "Found existing JAR with same/newer version - skipping",
@@ -1623,10 +1935,12 @@ object PluginStoreSetup {
                                     "bundledVersion" to bundledVersion,
                                     "existingVersion" to existingVersion,
                                     "existingJar" to existingJar.name,
+                                    "bundledTrust" to bundledTrust,
                                 ),
                             )
                             shouldSkip = true
-                            break
+                            // Keep checking: reconciliation can keep a different same-version
+                            // copy, so every byte-identical candidate needs its own marker.
                         }
                     }
                 }
@@ -1640,7 +1954,10 @@ object PluginStoreSetup {
                     val existingJar = File(existingPlugin.jarPath)
                     if (existingJar.exists()) {
                         val existingManifest = readPluginManifest(existingJar)
-                        if (existingManifest != null && !isNewerVersion(bundledVersion, existingManifest.version)) {
+                        if (existingManifest != null &&
+                            !PluginVersionComparator.isNewerVersion(bundledVersion, existingManifest.version)
+                        ) {
+                            val bundledTrust = PluginBundledTrust.bindToBundle(existingJar.absolutePath, jarFile)
                             logger.info(
                                 LogCategory.SYSTEM,
                                 "Bundled plugin already installed with same/newer version - skipping",
@@ -1648,6 +1965,7 @@ object PluginStoreSetup {
                                     "pluginId" to pluginId,
                                     "bundledVersion" to bundledVersion,
                                     "installedVersion" to existingManifest.version,
+                                    "bundledTrust" to bundledTrust,
                                 ),
                             )
                             continue
@@ -1684,10 +2002,20 @@ object PluginStoreSetup {
                             "oldJar" to oldJar.name,
                         ),
                     )
-                    oldJar.delete()
+                    val oldJarDeleted = oldJar.delete()
                     // A sidecar outlives the JAR it describes unless it's removed
                     // with it, leaving orphaned `.sig` files in the plugin dir.
-                    runCatching { PluginSignatureSidecar.delete(oldJar.absolutePath) }
+                    //
+                    // Gated on the JAR actually going, like the download path's own
+                    // sweep. `File.delete` fails while the JVM holds the JAR open
+                    // (Windows, or a version still loaded this session), and dropping
+                    // the sidecar off a JAR that then stays turns a signed plugin
+                    // into an unsigned one — the exact regression this whole path
+                    // exists to prevent.
+                    if (oldJarDeleted) {
+                        runCatching { PluginSignatureSidecar.delete(oldJar.absolutePath) }
+                        runCatching { PluginBundledTrust.delete(oldJar.absolutePath) }
+                    }
                 }
 
                 // Copy to plugin directory
@@ -1708,10 +2036,24 @@ object PluginStoreSetup {
                 // left a sidecar behind. Clearing afterwards would leave a crash
                 // window pairing the old signature with new bytes, which is a hard
                 // load failure, unlike no sidecar at all. `copyTo` is not atomic
-                // either, so the window is real.
+                // either, so the window is real. The bundled-trust marker gets the
+                // same treatment for the same reason — a stale marker matching new
+                // bytes by coincidence is not a realistic risk, but nothing here
+                // depends on that being true.
                 runCatching { PluginSignatureSidecar.delete(destFile.absolutePath) }
+                runCatching { PluginBundledTrust.delete(destFile.absolutePath) }
 
                 jarFile.copyTo(destFile, overwrite = true)
+
+                // Anchor trust to the bundled source, not whatever happens to occupy the
+                // writable destination after copying. A later replacement invalidates the marker.
+                if (!PluginBundledTrust.bindToBundle(destFile.absolutePath, jarFile)) {
+                    logger.warn(
+                        LogCategory.SYSTEM,
+                        "Could not bind copied plugin to bundled bytes",
+                        mapOf("pluginId" to pluginId, "jarPath" to destFile.absolutePath),
+                    )
+                }
 
                 logger.info(
                     LogCategory.SYSTEM,
@@ -1836,64 +2178,4 @@ object PluginStoreSetup {
             null
         }
     }
-
-    /**
-     * Check if version1 is newer than version2.
-     *
-     * Numeric major.minor.patch comparison; a segment's non-numeric suffix
-     * counts only as its numeric prefix ("0-rc1" -> 0). On a numeric tie, a
-     * version WITH a pre-release suffix is OLDER than one without
-     * (1.4.0-rc1 < 1.4.0) — this comparator gates whether a system plugin
-     * satisfies the host's [SystemPluginInfo.minVersion], and a pre-release
-     * must not pass for its release. Internal for test access.
-     */
-    internal fun isNewerVersion(
-        version1: String,
-        version2: String,
-    ): Boolean {
-        fun numericParts(v: String) = v.split(".").map { seg -> seg.takeWhile { it.isDigit() }.toIntOrNull() ?: 0 }
-
-        fun hasPreReleaseSuffix(v: String) = v.split(".").any { seg -> seg.any { !it.isDigit() } }
-
-        val v1Parts = numericParts(version1)
-        val v2Parts = numericParts(version2)
-
-        for (i in 0 until maxOf(v1Parts.size, v2Parts.size)) {
-            val v1 = v1Parts.getOrElse(i) { 0 }
-            val v2 = v2Parts.getOrElse(i) { 0 }
-            if (v1 > v2) return true
-            if (v1 < v2) return false
-        }
-        // Numeric tie: a release is newer than its own pre-release.
-        return hasPreReleaseSuffix(version2) && !hasPreReleaseSuffix(version1)
-    }
-
-    /**
-     * True when the host mandates a minimum plugin version and the installed
-     * version is below it — or can't be determined at all (only very old JARs
-     * lack a readable version). Internal for test access.
-     */
-    internal fun isTooOldForHost(
-        installedVersion: String?,
-        minVersion: String?,
-    ): Boolean {
-        if (minVersion == null) return false
-        return installedVersion == null || isNewerVersion(minVersion, installedVersion)
-    }
-
-    /**
-     * Pick the plugin JAR asset URL from a GitHub release JSON payload.
-     * Skips "-thin.jar" assets — a module's default :jar output, missing
-     * everything buildPluginJar bundles (editor-tab's BossEditor,
-     * fluck-browser's tunnel deps, …) — which GitHub can list first.
-     * Internal for test access.
-     */
-    internal fun pickPluginJarUrl(
-        releaseJson: String,
-        artifactPrefix: String,
-    ): String? =
-        Regex(""""browser_download_url"\s*:\s*"([^"]+${Regex.escape(artifactPrefix)}[^"]*\.jar)"""")
-            .findAll(releaseJson)
-            .map { it.groupValues[1] }
-            .firstOrNull { !it.endsWith("-thin.jar") }
 }

@@ -136,4 +136,22 @@ class HeavyweightCornerTest {
         // the frame clock exists to remove.
         assertFalse(shouldKeepMeasuring(bounds = null, attempts = MEASURE_ATTEMPTS))
     }
+
+    // --- regionCeiling: the measurement ceiling is the parent, not the first-frame size ---
+
+    @Test
+    fun `the ceiling is the parent region, so content taller than the first-frame size is not clipped`() {
+        // The #154 bug: the ceiling was min(initialSize, region), so a 600dp first-frame height
+        // clipped content at 600 even when the pane was 800 tall - three verbose toasts lost their
+        // bottom dismiss button off the content-sized window. The ceiling is now the region itself,
+        // taller here (800) than the first-frame size (600).
+        assertEquals(DpSize(1000.dp, 800.dp), regionCeiling(parent, DpSize(432.dp, 600.dp)))
+    }
+
+    @Test
+    fun `an unmeasurable parent falls back to the first-frame size`() {
+        // A null region says nothing about how big the content may be, so the first-frame size is
+        // the only available bound - the same choice the previous clamp made.
+        assertEquals(DpSize(432.dp, 600.dp), regionCeiling(null, DpSize(432.dp, 600.dp)))
+    }
 }

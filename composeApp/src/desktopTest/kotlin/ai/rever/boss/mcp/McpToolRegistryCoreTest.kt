@@ -9,6 +9,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import java.io.File
 import kotlin.test.AfterTest
@@ -122,6 +123,75 @@ class McpToolRegistryCoreTest {
 
         core.updateAccess(isAdmin = true, permissions = emptySet())
         assertTrue(core.tools.value.any { it.definition.name == "admin_tool" })
+    }
+
+    // ---------------------------------------------------------------------
+    // permittedTools() — the third answer, and the one the global search reads
+    // ---------------------------------------------------------------------
+
+    /**
+     * `permittedTools()` sits between `allTools` and `tools`, and the double-shift search is what
+     * reads it. Getting it wrong in either direction is a real fault rather than a cosmetic one:
+     * too permissive leaks the names and full descriptions of admin-only tools to anyone typing
+     * into the search, and too strict hides the switched-off tool that someone is searching for
+     * precisely because they switched it off.
+     */
+    @Test
+    fun `permittedTools keeps a disabled tool but drops an unpermitted one`() {
+        val core = McpToolRegistryCore(disabledFile = null)
+        core.registerProvider(
+            provider(
+                "p1",
+                echoTool("open_tool"),
+                echoTool("gated_tool", requiredPermissions = listOf("secret.read")),
+            ),
+        )
+        core.setToolEnabled("open_tool", enabled = false)
+
+        val names = core.permittedTools().map { it.definition.name }
+
+        assertTrue("open_tool" in names, "a switched-off tool is exactly what someone searches for")
+        assertFalse("gated_tool" in names, "a tool this user may not run must not be enumerable")
+        // And the distinction from the exposed set is the whole reason this method exists.
+        assertFalse(core.tools.value.any { it.definition.name == "open_tool" })
+    }
+
+    @Test
+    fun `permittedTools drops a requiresAdmin tool for a non-admin`() {
+        val core = McpToolRegistryCore(disabledFile = null)
+        core.registerProvider(provider("p1", echoTool("admin_tool", requiresAdmin = true)))
+
+        core.updateAccess(isAdmin = false, permissions = setOf("secret.read"))
+
+        assertTrue(core.permittedTools().isEmpty(), "no permission set makes an admin-only tool visible")
+    }
+
+    @Test
+    fun `permittedTools gives an admin everything, disabled included`() {
+        val core = McpToolRegistryCore(disabledFile = null)
+        core.registerProvider(provider("p1", echoTool("admin_tool", requiresAdmin = true), echoTool("open_tool")))
+        core.setToolEnabled("open_tool", enabled = false)
+
+        core.updateAccess(isAdmin = true, permissions = emptySet())
+
+        assertEquals(2, core.permittedTools().size)
+    }
+
+    @Test
+    fun `permittedTools hides everything gated from a signed-out user`() {
+        // The default posture: isAdmin false, permissions empty. This is the population the search
+        // is open to before anyone signs in.
+        val core = McpToolRegistryCore(disabledFile = null)
+        core.registerProvider(
+            provider(
+                "p1",
+                echoTool("admin_tool", requiresAdmin = true),
+                echoTool("gated_tool", requiredPermissions = listOf("secret.read")),
+                echoTool("open_tool"),
+            ),
+        )
+
+        assertEquals(listOf("open_tool"), core.permittedTools().map { it.definition.name })
     }
 
     /**
@@ -561,5 +631,129 @@ class McpToolRegistryCoreTest {
         // still be present here.
         assertTrue(core.allTools.value.isEmpty(), "no provider should remain registered: ${core.allTools.value}")
         assertTrue(core.tools.value.isEmpty())
+        assertTrue(core.permittedTools().isEmpty(), "permittedTools reads the same snapshot")
+    }
+
+    // ---------------------------------------------------------------------
+    // Governed Autonomy - Policy, Approval Gate, and Operation Ledger
+    // ---------------------------------------------------------------------
+    // invoke(): the result-size backstop.
+    //
+    // An MCP result is re-read as cached prefix on every later request in the
+    // session, so one oversized answer keeps costing. Until [MAX_MCP_RESULT_CHARS]
+    // every plugin tool was unbounded here: the bridge hands `result.text` to
+    // TextContent without looking at its length.
+    // ---------------------------------------------------------------------
+
+    /** A core whose single tool answers with [text]. */
+    private fun payloadCore(
+        text: String,
+        cap: Int,
+        isError: Boolean = false,
+    ): McpToolRegistryCore =
+        McpToolRegistryCore(disabledFile = null, maxResultChars = cap).also {
+            it.registerProvider(
+                provider("p1", echoTool("big", handler = McpToolHandler { McpToolResult(text, isError) })),
+            )
+        }
+
+    @Test
+    fun `a result under the cap comes back byte-identical`() =
+        runBlocking {
+            val payload = "y".repeat(999) + "\n[504 older matching lines omitted...]"
+
+            val result = payloadCore(payload, cap = 100_000).invoke("big", "{}")
+
+            assertEquals(payload, result.text)
+            assertFalse(result.isError)
+        }
+
+    @Test
+    fun `a result of exactly the cap is untouched`() =
+        runBlocking {
+            // The boundary is `<=`, not `<`. A character of slack here would cut a result
+            // that fits and pay the marker's cost for nothing.
+            val cap = 1_000
+            val payload = "z".repeat(cap)
+
+            val result = payloadCore(payload, cap = cap).invoke("big", "{}")
+
+            assertEquals(payload, result.text)
+            assertEquals(cap, result.text.length)
+        }
+
+    @Test
+    fun `a result over the cap is cut and carries a marker saying so`() =
+        runBlocking {
+            val cap = 1_000
+            // Ends with a tool's own trailing note, which is exactly what cutting the tail
+            // destroys - so the marker has to say the tail is gone, not just that it cut.
+            val payload = "x".repeat(5_000) + "\n[504 older matching lines omitted...]"
+
+            val result = payloadCore(payload, cap = cap).invoke("big", "{}")
+
+            assertTrue(result.text.length <= cap, "cap holds marker included, got ${result.text.length}")
+            assertTrue(result.text.startsWith("x".repeat(100)), "the head of the answer survives")
+            assertTrue(
+                result.text.contains("BOSS host cap"),
+                "a silent cut reads as a complete answer; tail was: ${result.text.takeLast(60)}",
+            )
+            assertTrue(result.text.contains("was ${payload.length} characters"), "the marker says how big it was")
+            assertTrue(result.text.trimEnd().endsWith("]"), "the marker is the last thing in the result")
+            assertFalse(
+                result.text.contains("504 older matching lines omitted"),
+                "the tool's own trailing note is what got cut - the marker has to cover for it",
+            )
+        }
+
+    @Test
+    fun `an oversized error result is capped too and stays an error`() =
+        runBlocking {
+            // The bridge turns both into one TextContent, so an error costs the same context
+            // as a success; a plugin can return a megabyte of stack trace.
+            val cap = 1_000
+
+            val result = payloadCore("e".repeat(20_000), cap = cap, isError = true).invoke("big", "{}")
+
+            assertTrue(result.isError, "capping must not change the error flag")
+            assertTrue(result.text.length <= cap)
+            assertTrue(result.text.contains("BOSS host cap"))
+        }
+
+    @Test
+    fun `the production default is BossTerm's 150000 and invoke applies it with no override`() =
+        runBlocking {
+            assertEquals(150_000, MAX_MCP_RESULT_CHARS, "one number per product: BossTerm's mcpMaxAnswerChars")
+
+            // No maxResultChars argument: this is the production wiring.
+            val core = McpToolRegistryCore(disabledFile = null)
+            core.registerProvider(
+                provider("p1", echoTool("big", handler = McpToolHandler { McpToolResult("q".repeat(200_000)) })),
+            )
+
+            val result = core.invoke("big", "{}")
+
+            assertTrue(result.text.length <= MAX_MCP_RESULT_CHARS, "got ${result.text.length}")
+            assertTrue(result.text.contains("BOSS host cap"))
+        }
+
+    @Test
+    fun `cutting never leaves a lone surrogate, at either boundary parity`() {
+        // Every char is half of a surrogate pair, so the cut lands mid-pair at every other
+        // offset. Sweeping 21 consecutive caps walks the boundary through both parities: a
+        // cut that only backs off on even offsets fails about half of them.
+        val text = "\uD83D\uDE00".repeat(1_000)
+
+        for (cap in 600..620) {
+            val out = capMcpResultText(text, cap)
+            val kept = out.substringBefore("\n\n[BOSS host cap")
+
+            assertTrue(kept.isNotEmpty(), "cap=$cap left no payload; the sweep would prove nothing")
+            assertFalse(kept.last().isHighSurrogate(), "cap=$cap ends on a lone high surrogate")
+            // The concrete harm: a lone surrogate has no UTF-8 encoding, so the wire form
+            // substitutes '?' and the round trip stops matching.
+            val roundTripped = String(out.toByteArray(Charsets.UTF_8), Charsets.UTF_8)
+            assertEquals(out, roundTripped, "cap=$cap does not survive a UTF-8 round trip")
+        }
     }
 }

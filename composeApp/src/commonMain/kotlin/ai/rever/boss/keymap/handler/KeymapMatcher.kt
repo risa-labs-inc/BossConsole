@@ -1,8 +1,12 @@
 package ai.rever.boss.keymap.handler
 
 import ai.rever.boss.keymap.model.KeyBinding
+import ai.rever.boss.keymap.model.KeyStroke
 import ai.rever.boss.keymap.model.KeymapSettings
 import ai.rever.boss.keymap.model.ShortcutContext
+import ai.rever.boss.keymap.model.canonicalKeyName
+import ai.rever.boss.keymap.model.canonicalModifiers
+import ai.rever.boss.keymap.model.composeKeyName
 import ai.rever.boss.utils.SystemUtils
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
@@ -137,6 +141,31 @@ class KeymapMatcher(
     }
 
     /**
+     * Which modifiers a keystroke's modifier-name list actually asks for.
+     *
+     * Extracted so the modifier vocabulary ("Cmd"/"Meta", "Alt"/"Option", ...) is described in
+     * one place rather than re-parsed inline at every comparison.
+     */
+    private data class RequiredModifiers(
+        val cmd: Boolean,
+        val ctrl: Boolean,
+        val shift: Boolean,
+        val alt: Boolean,
+    ) {
+        companion object {
+            fun of(modifiers: List<String>): RequiredModifiers {
+                val canonical = canonicalModifiers(modifiers)
+                return RequiredModifiers(
+                    cmd = "cmd" in canonical,
+                    ctrl = "ctrl" in canonical,
+                    shift = "shift" in canonical,
+                    alt = "alt" in canonical,
+                )
+            }
+        }
+    }
+
+    /**
      * Check if a keyboard event matches a specific key binding.
      */
     private fun matchesBinding(
@@ -145,14 +174,23 @@ class KeymapMatcher(
     ): Boolean {
         if (!binding.enabled) return false
 
+        // Primary keystroke OR any alternate: a binding declaring alternateKeystrokes means
+        // "any of these fires this action" (Cmd+Plus alongside Cmd+Equals for zoom in).
+        return binding.allKeystrokes.any { matchesKeystroke(event, it) }
+    }
+
+    /**
+     * Check if a keyboard event matches one keystroke of a binding.
+     */
+    private fun matchesKeystroke(
+        event: KeyEvent,
+        keystroke: KeyStroke,
+    ): Boolean {
         // Check if key matches
-        if (!keyMatches(event.key, binding.key)) return false
+        if (!keyMatches(event.key, keystroke.key)) return false
 
         // Check modifiers
-        val hasCmd = binding.modifiers.any { it.equals("Cmd", true) || it.equals("Meta", true) }
-        val hasCtrl = binding.modifiers.any { it.equals("Ctrl", true) || it.equals("Control", true) }
-        val hasShift = binding.modifiers.any { it.equals("Shift", true) }
-        val hasAlt = binding.modifiers.any { it.equals("Alt", true) || it.equals("Option", true) }
+        val required = RequiredModifiers.of(keystroke.modifiers)
 
         // Platform-aware modifier matching:
         // - macOS: Cmd key sets isMetaPressed, Ctrl key sets isCtrlPressed
@@ -165,14 +203,14 @@ class KeymapMatcher(
 
         // Match logic: Handle platform-aware Cmd/Ctrl matching
         val primaryModifierMatch =
-            if (hasCmd || hasCtrl) {
+            if (required.cmd || required.ctrl) {
                 if (isMacOS) {
                     // macOS: Cmd matches Meta, Ctrl matches Ctrl
-                    (hasCmd && event.isMetaPressed) || (hasCtrl && event.isCtrlPressed)
+                    (required.cmd && event.isMetaPressed) || (required.ctrl && event.isCtrlPressed)
                 } else {
                     // Linux/Windows: Cmd matches Ctrl (since Ctrl is the primary modifier)
                     // Meta/Super key is rarely used for shortcuts
-                    (hasCmd && event.isCtrlPressed) || (hasCtrl && event.isMetaPressed)
+                    (required.cmd && event.isCtrlPressed) || (required.ctrl && event.isMetaPressed)
                 }
             } else {
                 // Binding doesn't require primary modifier
@@ -182,8 +220,8 @@ class KeymapMatcher(
 
         val modifierMatch =
             primaryModifierMatch &&
-                hasShift == eventShift &&
-                hasAlt == eventAlt
+                required.shift == eventShift &&
+                required.alt == eventAlt
 
         return modifierMatch
     }
@@ -196,204 +234,24 @@ class KeymapMatcher(
         eventKey: Key,
         bindingKeyName: String,
     ): Boolean {
-        // Extract key name from the Key object
-        // Key.toString() format is "Key: X" where X is the key name
-        val eventKeyString = eventKey.toString()
-        val eventKeyName =
-            if (eventKeyString.startsWith("Key: ")) {
-                eventKeyString.substring(5).trim()
-            } else {
-                eventKey.keyCode.toString()
-            }
-
-        val eventKeyNormalized = normalizeKeyName(eventKeyName)
+        // The name comes from `composeKeyName` rather than a copy of the "Key: " parse that used
+        // to live here. It is the same three lines, and having two of them is how this path came
+        // to be the one that knew about a spelling the other did not.
+        val eventKeyNormalized = normalizeKeyName(composeKeyName(eventKey))
         val bindingKeyNormalized = normalizeKeyName(bindingKeyName)
 
         return eventKeyNormalized.equals(bindingKeyNormalized, ignoreCase = true)
     }
 
     /**
-     * Normalize key names to handle variations.
-     * Examples: "Space"/"Spacebar", "Left"/"DirectionLeft", "Enter"/"Return"
-     * Also handles Compose's symbol representations (e.g., ␣ for space)
-     * Handles character-to-word mappings for numbers and symbols (e.g., "-" -> "Minus", "0" -> "Zero")
+     * Normalize key names to handle variations, delegated to the model's [canonicalKeyName].
+     *
+     * This used to be its own table, and the drift is what made Cmd+[ and Cmd+] report "no
+     * match" in the Shortcuts tester while firing perfectly through the AWT path: Compose renders
+     * `Key.RightBracket` as "Right Bracket" and the presets store "CloseBracket". One fold now
+     * serves this matcher, the AWT interceptor and `KeyStroke.signature`.
      */
-    private fun normalizeKeyName(keyName: String): String {
-        // Handle special symbol characters that Compose uses
-        return when (keyName) {
-            "␣" -> {
-                "Space"
-            }
-
-            // Compose renders space as ␣ (U+2423 OPEN BOX)
-            // Number character to word mappings
-            "0" -> {
-                "Zero"
-            }
-
-            "1" -> {
-                "One"
-            }
-
-            "2" -> {
-                "Two"
-            }
-
-            "3" -> {
-                "Three"
-            }
-
-            "4" -> {
-                "Four"
-            }
-
-            "5" -> {
-                "Five"
-            }
-
-            "6" -> {
-                "Six"
-            }
-
-            "7" -> {
-                "Seven"
-            }
-
-            "8" -> {
-                "Eight"
-            }
-
-            "9" -> {
-                "Nine"
-            }
-
-            // Symbol character to word mappings
-            "-" -> {
-                "Minus"
-            }
-
-            "=" -> {
-                "Equals"
-            }
-
-            "+" -> {
-                "Plus"
-            }
-
-            "[" -> {
-                "OpenBracket"
-            }
-
-            "]" -> {
-                "CloseBracket"
-            }
-
-            "/" -> {
-                "Slash"
-            }
-
-            "?" -> {
-                "Slash"
-            }
-
-            // Shift+/ produces "?" - map to Slash for matching
-            "\\" -> {
-                "Backslash"
-            }
-
-            ";" -> {
-                "Semicolon"
-            }
-
-            "'" -> {
-                "Apostrophe"
-            }
-
-            "," -> {
-                "Comma"
-            }
-
-            "." -> {
-                "Period"
-            }
-
-            "`" -> {
-                "Grave"
-            }
-
-            // Arrow character to word mappings
-            "←" -> {
-                "Left"
-            }
-
-            "→" -> {
-                "Right"
-            }
-
-            "↑" -> {
-                "Up"
-            }
-
-            "↓" -> {
-                "Down"
-            }
-
-            else -> {
-                when (keyName.lowercase()) {
-                    "spacebar", "space" -> {
-                        "Space"
-                    }
-
-                    "directionleft", "left" -> {
-                        "Left"
-                    }
-
-                    "directionright", "right" -> {
-                        "Right"
-                    }
-
-                    "directionup", "up" -> {
-                        "Up"
-                    }
-
-                    "directiondown", "down" -> {
-                        "Down"
-                    }
-
-                    "return", "enter" -> {
-                        "Enter"
-                    }
-
-                    "escape", "esc" -> {
-                        "Esc"
-                    }
-
-                    // Word names normalize to themselves (case-insensitive)
-                    "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine" -> {
-                        keyName.replaceFirstChar {
-                            it.uppercase()
-                        }
-                    }
-
-                    "minus", "equals", "plus" -> {
-                        keyName.replaceFirstChar { it.uppercase() }
-                    }
-
-                    "openbracket", "closebracket", "slash", "backslash" -> {
-                        keyName.replaceFirstChar { it.uppercase() }
-                    }
-
-                    "semicolon", "apostrophe", "comma", "period", "grave" -> {
-                        keyName.replaceFirstChar { it.uppercase() }
-                    }
-
-                    else -> {
-                        keyName
-                    }
-                }
-            }
-        }
-    }
+    private fun normalizeKeyName(keyName: String): String = canonicalKeyName(keyName)
 
     /**
      * Get all enabled bindings for a specific context.

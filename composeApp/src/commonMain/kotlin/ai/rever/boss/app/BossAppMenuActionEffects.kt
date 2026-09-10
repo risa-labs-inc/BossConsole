@@ -30,6 +30,7 @@ import ai.rever.boss.window.MenuActionsHandler
 import ai.rever.boss.window.WindowAppearanceSettings
 import ai.rever.boss.window.WindowAppearanceSettingsManager
 import ai.rever.boss.window.WindowOperations
+import ai.rever.boss.window.withNextDensity
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -185,6 +186,16 @@ internal fun BossAppMenuActionEffects(
                         comp?.commitTabCycle()
                         state.tabCycleOverlay = null
                     }
+
+                    // Discrete chords (Cmd+Opt+Arrow, Cmd+Shift+Bracket): step in tab-bar order
+                    // and leave the overlay alone - there is no cycle for it to describe.
+                    MenuActionsHandler.TabSwitchAction.NEXT_POSITIONAL -> {
+                        comp?.switchToNextTabPositional()
+                    }
+
+                    MenuActionsHandler.TabSwitchAction.PREVIOUS_POSITIONAL -> {
+                        comp?.switchToPreviousTabPositional()
+                    }
                 }
             }.launchIn(this)
     }
@@ -317,6 +328,20 @@ internal fun BossAppMenuActionEffects(
     }
 
     LaunchedEffect(windowId) {
+        // Only the originating window cycles. Re-read inside the handler so rapid presses
+        // see the previous update, which publishes its value before suspending to save.
+        MenuActionsHandler.chromeDensityCycleEvents
+            .onEach { eventWindowId ->
+                if (eventWindowId == windowId) {
+                    coroutineScope.launch {
+                        val settings = WindowAppearanceSettingsManager.currentSettings.value
+                        WindowAppearanceSettingsManager.updateSettings(settings.withNextDensity())
+                    }
+                }
+            }.launchIn(this)
+    }
+
+    LaunchedEffect(windowId) {
         MenuActionsHandler.splitVerticallyEvents
             .onEach { eventWindowId ->
                 if (eventWindowId == windowId) {
@@ -355,15 +380,25 @@ internal fun BossAppMenuActionEffects(
     // created purely via the OS menu).
     val activePanelId by splitViewState.activePanelIdState
     val activeTabsComponent = splitViewState.getActiveTabsComponent()
-    val hasActiveTabs =
+    // Read once and derive both flags from it: subscribeAsState has to be called from
+    // composition, not from inside the LaunchedEffects below.
+    val activePanelTabCount =
         if (activeTabsComponent != null) {
             val activeTabsState by activeTabsComponent.tabsState.subscribeAsState()
-            activeTabsState.tabs.isNotEmpty()
+            activeTabsState.tabs.size
         } else {
-            false
+            0
         }
+    val hasActiveTabs = activePanelTabCount > 0
     LaunchedEffect(windowId, activePanelId, hasActiveTabs) {
         MenuActionsHandler.updateSplitEnabled(windowId, hasActiveTabs)
+    }
+
+    // Drives the enabled flag on View > Next/Previous Tab, and the interceptor's gate for the
+    // same chords. Keyed on activePanelId too: moving focus between splits changes the answer
+    // without the tab list itself changing.
+    LaunchedEffect(windowId, activePanelId, activePanelTabCount) {
+        MenuActionsHandler.updateActivePanelTabCount(windowId, activePanelTabCount)
     }
 
     // Track panel count for navigation menu items
@@ -395,6 +430,72 @@ internal fun BossAppMenuActionEffects(
             .onEach { eventWindowId ->
                 if (eventWindowId == windowId) {
                     ActiveBrowserRegistry.activeIn(windowId)?.reload()
+                }
+            }.launchIn(this)
+    }
+
+    // Cmd+1..Cmd+9. The active panel owns the positions, the same way tab switching does.
+    LaunchedEffect(windowId) {
+        MenuActionsHandler.selectTabIndexEvents
+            .onEach { (eventWindowId, index) ->
+                if (eventWindowId != windowId) return@onEach
+                splitViewState
+                    .getPanelTabsComponent(splitViewState.activePanelId)
+                    ?.selectTabByPosition(index)
+            }.launchIn(this)
+    }
+
+    // Cmd+Shift+T. The history is window-scoped (see ClosedTabHistory) but the tab has to land
+    // in a panel, so it reopens into the active one. Works for every tab type - the entry is a
+    // TabInfo, rebuilt through its own tab-type factory.
+    //
+    // The liveness check is passed in because tab ids are unique across the WINDOW while a
+    // tabs component only knows its own panel: without the wider view, reopening an id that a
+    // sibling panel already holds would put the same id in two panels.
+    LaunchedEffect(windowId) {
+        MenuActionsHandler.reopenClosedTabEvents
+            .onEach { eventWindowId ->
+                if (eventWindowId != windowId) return@onEach
+                splitViewState
+                    .getPanelTabsComponent(splitViewState.activePanelId)
+                    ?.reopenLastClosedTab { tabId ->
+                        splitViewState.getAllPanels().any { panel ->
+                            panel.tabsComponent.tabsState.value.tabs
+                                .any { it.id == tabId }
+                        }
+                    }
+            }.launchIn(this)
+    }
+
+    // Browser history and DevTools. Same ActiveBrowserRegistry lookup, and for the same reason,
+    // as the zoom and reload handlers above.
+    LaunchedEffect(windowId) {
+        MenuActionsHandler.browserBackEvents
+            .onEach { eventWindowId ->
+                if (eventWindowId == windowId) {
+                    // No canGoBack() gate: goBack() already returns early when it cannot, and
+                    // canGoBack() is an untimed syncCall into the browser process. This collector
+                    // runs on the EDT, so the gate only doubled the blocking cross-process calls
+                    // per keypress.
+                    ActiveBrowserRegistry.activeIn(windowId)?.goBack()
+                }
+            }.launchIn(this)
+    }
+
+    LaunchedEffect(windowId) {
+        MenuActionsHandler.browserForwardEvents
+            .onEach { eventWindowId ->
+                if (eventWindowId == windowId) {
+                    ActiveBrowserRegistry.activeIn(windowId)?.goForward()
+                }
+            }.launchIn(this)
+    }
+
+    LaunchedEffect(windowId) {
+        MenuActionsHandler.browserDevToolsEvents
+            .onEach { eventWindowId ->
+                if (eventWindowId == windowId) {
+                    ActiveBrowserRegistry.activeIn(windowId)?.showDevTools()
                 }
             }.launchIn(this)
     }

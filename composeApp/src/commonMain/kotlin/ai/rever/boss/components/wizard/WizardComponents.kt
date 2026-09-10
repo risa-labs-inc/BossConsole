@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -37,6 +38,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.toggleableState
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -252,6 +259,8 @@ fun SelectionCard(
  * @param icon Optional icon
  * @param isChecked Whether this card is checked
  * @param onCheckedChange Callback when the checkbox state changes
+ * @param locked Prevent selection changes while preserving the enabled, selected appearance
+ * @param trailingLabel Short, single-line status shown beside the title
  * @param enabled Whether the card is enabled
  * @param modifier Modifier for the component
  */
@@ -264,6 +273,8 @@ fun CheckboxCard(
     onCheckedChange: (Boolean) -> Unit,
     enabled: Boolean = true,
     modifier: Modifier = Modifier,
+    trailingLabel: String? = null,
+    locked: Boolean = false,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
@@ -296,8 +307,7 @@ fun CheckboxCard(
                 .clip(RoundedCornerShape(12.dp))
                 .background(backgroundColor)
                 .border(1.dp, borderColor, RoundedCornerShape(12.dp))
-                .clickable(enabled = enabled) { onCheckedChange(!isChecked) }
-                .hoverable(interactionSource)
+                .checkboxCardInteraction(enabled, locked, isChecked, interactionSource, onCheckedChange)
                 .padding(12.dp),
     ) {
         Row(
@@ -305,7 +315,7 @@ fun CheckboxCard(
         ) {
             Checkbox(
                 checked = isChecked,
-                onCheckedChange = if (enabled) onCheckedChange else null,
+                onCheckedChange = if (enabled && !locked) onCheckedChange else null,
                 enabled = enabled,
                 colors =
                     CheckboxDefaults.colors(
@@ -318,46 +328,9 @@ fun CheckboxCard(
 
             Spacer(modifier = Modifier.width(8.dp))
 
-            if (icon != null) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    modifier = Modifier.size(20.dp),
-                    tint =
-                        if (enabled) {
-                            if (isChecked) BossTheme.colors.signal else BossTheme.colors.textSecondary
-                        } else {
-                            BossTheme.colors.textSecondary.copy(alpha = 0.5f)
-                        },
-                )
-                Spacer(modifier = Modifier.width(10.dp))
-            }
+            CheckboxCardIcon(icon, enabled, isChecked)
 
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = title,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium,
-                    color =
-                        if (enabled) {
-                            if (isChecked || isHovered) BossTheme.colors.textPrimary else BossTheme.colors.textSecondary
-                        } else {
-                            BossTheme.colors.textSecondary.copy(alpha = 0.5f)
-                        },
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                if (description.isNotEmpty()) {
-                    Text(
-                        text = description,
-                        fontSize = 11.sp,
-                        color = BossTheme.colors.textSecondary.copy(alpha = if (enabled) 0.7f else 0.4f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        lineHeight = 14.sp,
-                    )
-                }
-            }
+            CheckboxCardLabels(title, description, enabled, isChecked, isHovered, trailingLabel)
         }
     }
 }
@@ -389,3 +362,88 @@ fun WizardNote(
         )
     }
 }
+
+@Composable
+private fun RowScope.CheckboxCardLabels(
+    title: String,
+    description: String,
+    enabled: Boolean,
+    isChecked: Boolean,
+    isHovered: Boolean,
+    trailingLabel: String?,
+) {
+    Column(modifier = Modifier.weight(1f)) {
+        Text(
+            text = title,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
+            color =
+                if (enabled) {
+                    if (isChecked || isHovered) BossTheme.colors.textPrimary else BossTheme.colors.textSecondary
+                } else {
+                    BossTheme.colors.textSecondary.copy(alpha = 0.5f)
+                },
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (description.isNotEmpty()) {
+            Text(
+                text = description,
+                fontSize = 11.sp,
+                color = BossTheme.colors.textSecondary.copy(alpha = if (enabled) 0.7f else 0.4f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                lineHeight = 14.sp,
+            )
+        }
+    }
+    trailingLabel?.let { label ->
+        Text(
+            text = label,
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier.padding(start = 8.dp),
+            fontSize = 11.sp,
+            color = BossTheme.colors.textSecondary,
+        )
+    }
+}
+
+@Composable
+private fun CheckboxCardIcon(
+    icon: ImageVector?,
+    enabled: Boolean,
+    isChecked: Boolean,
+) {
+    if (icon != null) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            modifier = Modifier.size(20.dp),
+            tint =
+                if (enabled) {
+                    if (isChecked) BossTheme.colors.signal else BossTheme.colors.textSecondary
+                } else {
+                    BossTheme.colors.textSecondary.copy(alpha = 0.5f)
+                },
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+    }
+}
+
+private fun Modifier.checkboxCardInteraction(
+    enabled: Boolean,
+    locked: Boolean,
+    checked: Boolean,
+    interactionSource: MutableInteractionSource,
+    onCheckedChange: (Boolean) -> Unit,
+): Modifier =
+    if (locked) {
+        semantics(mergeDescendants = true) {
+            if (!enabled) disabled()
+            role = Role.Checkbox
+            toggleableState = ToggleableState(checked)
+        }
+    } else {
+        clickable(enabled = enabled) { onCheckedChange(!checked) }.hoverable(interactionSource)
+    }

@@ -3,6 +3,8 @@ package ai.rever.boss.keymap.menu
 import ai.rever.boss.keymap.model.KeyBinding
 import ai.rever.boss.keymap.model.KeymapActions
 import ai.rever.boss.keymap.model.KeymapSettings
+import ai.rever.boss.keymap.model.canonicalKeyName
+import ai.rever.boss.keymap.model.canonicalModifiers
 import androidx.compose.ui.input.key.Key
 import java.awt.event.KeyEvent as AwtKeyEvent
 
@@ -54,12 +56,16 @@ class MenuShortcutBridge(
         val binding = settings.getBinding(actionId) ?: return null
         if (!binding.enabled) return null
 
-        val key = keyNameToComposeKey(binding.key) ?: return null
+        val key = keyNameToComposeKey(canonicalKeyName(binding.key)) ?: return null
 
-        val hasCmd = binding.modifiers.any { it.equals("Cmd", true) || it.equals("Meta", true) }
-        val hasCtrl = binding.modifiers.any { it.equals("Ctrl", true) || it.equals("Control", true) }
-        val hasShift = binding.modifiers.any { it.equals("Shift", true) }
-        val hasAlt = binding.modifiers.any { it.equals("Alt", true) || it.equals("Option", true) }
+        // Shared canonicaliser, not a fourth private copy: this one only ever sees
+        // preset-authored spellings, so it was harmless, but "one definition" has to be true
+        // for the claim on canonicalModifiers to mean anything.
+        val modifiers = canonicalModifiers(binding.modifiers)
+        val hasCmd = "cmd" in modifiers
+        val hasCtrl = "ctrl" in modifiers
+        val hasShift = "shift" in modifiers
+        val hasAlt = "alt" in modifiers
 
         return androidx.compose.ui.input.key.KeyShortcut(
             key = key,

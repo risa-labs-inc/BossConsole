@@ -12,6 +12,7 @@ import ai.rever.boss.components.home.LocalPanelRegistry
 import ai.rever.boss.components.home.LocalPluginStates
 import ai.rever.boss.components.home.LocalRegistryAccess
 import ai.rever.boss.components.home.LocalTabRegistry
+import ai.rever.boss.components.model.BossDraggableComponent
 import ai.rever.boss.components.overlays.DraggingItemOverlay
 import ai.rever.boss.components.overlays.OverlayCorner
 import ai.rever.boss.components.overlays.TabDraggingOverlay
@@ -51,6 +52,7 @@ import ai.rever.boss.plugin.api.LocalWorkspaceDataProvider
 import ai.rever.boss.plugin.api.Panel
 import ai.rever.boss.plugin.api.Panel.Companion.bottom
 import ai.rever.boss.plugin.api.Panel.Companion.left
+import ai.rever.boss.plugin.api.Panel.Companion.right
 import ai.rever.boss.plugin.sandbox.notification.PluginToastHost
 import ai.rever.boss.plugin.sandbox.notification.PluginToastState
 import ai.rever.boss.plugin.ui.BossTheme
@@ -81,6 +83,7 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -103,14 +106,16 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /**
- * Hard upper bound on the toast overlay: its size before measurement, and the ceiling every later
- * measurement is taken against.
+ * The toast overlay's size before its content has been measured - a small first-frame placeholder,
+ * not a clip.
  *
- * A bound, not an estimate. The overlay measures its content against this rather than against its
- * own current size, so content that would exceed it is CLIPPED rather than merely starting small.
- * Width is `PluginToastHost`'s own `widthIn(max = 400.dp)` plus its 16.dp padding on each side;
- * height comfortably clears `PluginToastState`'s three-toast maximum. It is also the region the
- * overlay swallows clicks in until measurement lands, so it is kept no larger than it needs to be.
+ * It is the window's size for the one frame before measurement lands, and the region the overlay
+ * swallows clicks in until then, so it is kept no larger than it needs to be: `PluginToastHost`'s
+ * own `widthIn(max = 400.dp)` plus its 16.dp padding on each side, and the existing 600dp height to
+ * limit first-frame grow-in for typical stacks. It is NOT the measurement ceiling - that is the
+ * parent content pane (see `HeavyweightCorner` / `regionCeiling`), so content taller than this grows
+ * the window rather than being clipped. The two were one number until #154, which clipped three
+ * verbose toasts' dismiss buttons off the bottom of the content-sized window.
  */
 private val TOAST_OVERLAY_INITIAL_SIZE = DpSize(432.dp, 600.dp)
 
@@ -288,31 +293,83 @@ internal fun BossAppScaffold(
     // window is too narrow for a full one, and nothing in the settings says so.
     var barRailed by remember { mutableStateOf(appearance.tabBarCollapsed) }
 
+    // Read before the placement, which asks whether any panel is open; before the rule, which
+    // counts an open left panel as a column; and before the offsets, which need to know whether
+    // the panel or the bar is the one behind the strip.
+    val leftPanelOpen = state.draggablePanelComponent.isVisible(left)
+
+    // Whether the RIGHT plugin panel is open - the one column whose foot can take the host's
+    // actions, and the one an overlay in the bottom-right corner actually collides with. It
+    // decides whether those actions get a reserved row or that overlay, in a window with no
+    // vertical bar to put them in - see `focusQuickActionsPlacement`.
+    //
+    // Read here, in the scaffold body, so the state subscription lands in a restart scope rather
+    // than inside an inline content lambda. One question answers both halves: whether these
+    // actions land in a panel foot at all, and which column draws it - see hostActionsPanelEdge.
+    // What the bar can offer, read before the placement because the panel measurement below is
+    // gated on it: a bar that can host these means no panel is ever asked to.
+    val verticalBar =
+        verticalBarHost(
+            tabBarOnLeft = appearance.tabBarPosition == TabBarPosition.LEFT,
+            barCollapsed = barRailed,
+            drawerVisible = drawerVisible,
+        )
+
+    // Whether the collapsed tab-bar rail has enough height for its quick actions.
+    // Keep the measured answer while a hover drawer temporarily owns the actions. The rail
+    // stays composed behind that drawer and will not report again unless its fit changes.
+    var railActionsFit by remember { mutableStateOf(true) }
+
+    // Gated, so the measurement costs nothing in the configuration that will never use it. With
+    // the top bar up - the default, focus mode off - these actions are not homeless, and without
+    // this a right-panel drag would subcompose `PanelFooterHostActions` once per frame to answer
+    // a question whose answer is discarded. Nothing here reads `panelFootFits`, so gating it
+    // cannot close a loop.
+    val panelFooterEdge =
+        state.draggablePanelComponent.hostActionsPanelColumn(
+            needsAHome =
+                hostActionsNeedAPanel(
+                    settings = focusModeSettings,
+                    topBarHidden = !appearance.showTopBar,
+                    showTopBar = reveal.showTopBar,
+                    verticalBar = verticalBar,
+                    railActionsFit = railActionsFit,
+                ),
+        )
+
+    // Whether that column is big enough to hold the row, reported back out of layout by
+    // `PanelFooterHostActions` - the same shape `onBarRailedChange` has, and for the same reason:
+    // a panel is user-resizable down to a sliver, and how many lines four or five 32dp icons wrap
+    // to in it is not something settings can answer.
+    //
+    // Starts true so the common case - a panel at its 250dp default, where the row is one line
+    // under a plugin with 355dp - never flickers. The other order would create and tear down the
+    // cluster's native window on every right-panel open, which is the cost this placement exists
+    // to avoid paying.
+    //
+    // KEYED on the column, so closing the panel forgets the answer rather than leaving a
+    // sliver's "no" behind for the next panel opened at a perfectly good width. A remember key
+    // and not an effect: there is nothing to do on the reset except be true again.
+    var panelFootFits by remember(panelFooterEdge) { mutableStateOf(true) }
+
     // Where Settings / Search / Sign Out go while focus mode holds the top bar that owns them.
-    // One decision, two mutually exclusive renderings: the bottom of the right rail when that rail
-    // is on screen, a floating corner cluster when it is not. Read once here so the two call sites
-    // below cannot disagree about it and briefly show both.
+    // One decision, five mutually exclusive renderings - every piece of chrome the window already
+    // draws before the overlay is considered at all. Read once here so the call sites below cannot
+    // disagree about it and briefly show two of them.
     val quickActionsPlacement =
         focusQuickActionsPlacement(
             settings = focusModeSettings,
             topBarHidden = !appearance.showTopBar,
             rightStripHidden = !appearance.showRightStrip,
             showTopBar = reveal.showTopBar,
-            // Not merely "the bar is on the left". A COLLAPSED bar draws its rail and nothing
-            // else, so its foot does not exist and these four would render nowhere - they float
-            // instead. Hovering the rail opens the drawer, which IS a foot, so they go back into
-            // it for as long as it is up.
-            //
-            // The cost, stated because the neighbouring KDoc warns against exactly this: the
-            // floating overlay is a native always-on-top window, so it is torn down and rebuilt on
-            // each hover reveal rather than sitting there. Accepted deliberately - the alternative
-            // is a cluster in the corner while a bar with room for it is open on the left.
-            verticalTabBar =
-                verticalBarHasFoot(
-                    tabBarOnLeft = appearance.tabBarPosition == TabBarPosition.LEFT,
-                    barCollapsed = barRailed,
-                    drawerVisible = drawerVisible,
-                ),
+            // Three answers, not "is the bar on the left". A COLLAPSED bar has no foot under its
+            // split map, but it still has the bottom of its rail, which is where these go now;
+            // hovering it opens the drawer, which IS a full bar, so they move up into its foot for
+            // as long as it is up. Only TOP position leaves nothing at all.
+            verticalBar = verticalBar,
+            railActionsFit = railActionsFit,
+            // Only consulted once the bar has offered nothing, i.e. in TOP position.
+            panelFootAvailable = panelFootAvailable(panelFooterEdge, panelFootFits),
         )
 
     // Where the way into the plugins goes, when a strip that would normally hold their icons is
@@ -341,10 +398,6 @@ internal fun BossAppScaffold(
     val bannerVisible by remember(updateHandle) {
         updateHandle.updateState.map { it.drawsBanner() }.distinctUntilChanged()
     }.collectAsState(initial = false)
-
-    // Read before the rule, which counts it as a column, and before the offsets, which need to
-    // know whether the panel or the bar is the one behind the strip.
-    val leftPanelOpen = state.draggablePanelComponent.isVisible(left)
 
     val trafficLights =
         macTrafficLightInset(
@@ -669,6 +722,34 @@ internal fun BossAppScaffold(
                             // The panel itself is second when it is open, so the clearance moves
                             // onto it - this is what the lights were landing on.
                             leftPanelTopInset = trafficLights.columnInset(columns.panel),
+                            // Settings / Search / Sign Out at the foot of the open right panel's
+                            // column, for a TOP tab bar with no bar of its own to hold them. Empty
+                            // - and so no row at all - for every other placement.
+                            panelFooterEdge = panelFooterEdge,
+                            panelFooter = {
+                                PanelFooterHostActions(
+                                    // What the row WOULD hold, which the fit measurement needs
+                                    // while the list is empty - the state a "does not fit" answer
+                                    // puts it in. Counted as `focusQuickActionsRailRows` counts
+                                    // the rail's reserve: the four, plus the launcher when both
+                                    // strips are off and this group is where it landed.
+                                    actionCount =
+                                        hostActionsRowSize(
+                                            hasToolbox = hostToolbox != null,
+                                            hasLauncher = hostToolLauncher != null,
+                                        ),
+                                    actions =
+                                        focusQuickActionsPanelFooter(
+                                            placement = quickActionsPlacement,
+                                            onShowSettings = { state.settingsWindow.open() },
+                                            toolbox = hostToolbox,
+                                            onShowSearch = { state.showGlobalSearchDialog = true },
+                                            onSignOut = { state.showLogoutDialog = true },
+                                            toolLauncher = hostToolLauncher,
+                                        ),
+                                    onColumnFitsChange = { fits -> panelFootFits = fits },
+                                )
+                            },
                             onDrawerVisibleChange = { visible -> drawerVisible = visible },
                             onBarRailedChange = { railed -> barRailed = railed },
                             verticalBarBelowMap = {
@@ -682,6 +763,24 @@ internal fun BossAppScaffold(
                                             onSignOut = { state.showLogoutDialog = true },
                                             toolLauncher = hostToolLauncher,
                                         ),
+                                )
+                            },
+                            // The rail's own layout for the same actions, in its OWN slot: the
+                            // rail and the hover drawer are on screen together, so a slot handed
+                            // to both drew these twice - see `WindowVerticalTabBar.belowTabs`.
+                            verticalBarRailActions = {
+                                MeasuredRailHostActions(
+                                    actions =
+                                        focusQuickActionsTabRail(
+                                            placement = FocusQuickActionsPlacement.TAB_BAR_RAIL,
+                                            onShowSettings = { state.settingsWindow.open() },
+                                            toolbox = hostToolbox,
+                                            onShowSearch = { state.showGlobalSearchDialog = true },
+                                            onSignOut = { state.showLogoutDialog = true },
+                                            toolLauncher = hostToolLauncher,
+                                        ),
+                                    showActions = quickActionsPlacement == FocusQuickActionsPlacement.TAB_BAR_RAIL,
+                                    onFitsChange = { fits -> railActionsFit = fits },
                                 )
                             },
                             verticalBarFooter = {
@@ -835,3 +934,82 @@ internal fun BossAppScaffold(
         }
     }
 }
+
+/**
+ * Which plugin panel column takes the host's actions, or null when the right one is shut.
+ *
+ * The read; [hostActionsPanelEdge] is the rule, including why the left and bottom columns are not
+ * candidates. One state subscription added to this composable's restart scope, on top of the
+ * `isVisible(left)` the traffic-light rule already reads.
+ *
+ * Slightly broader than "the right panel opened or closed", stated exactly because the file is
+ * careful about this elsewhere: `isVisible` folds `right.top` and `right.bottom`, and
+ * `setPanelVisible` and `toggleVisibility` write a whole fresh `PanelData`, so any write to either
+ * half - a `sidebarItem` change that does not touch visibility included - recomposes this
+ * scaffold. Still user-scale in every case, and the same mechanism already behind the overlay
+ * teardown this placement documents; noted rather than narrowed because a `derivedStateOf` here
+ * would buy a comparison per write and cost a reader the ability to see what is subscribed.
+ *
+ * A plain function rather than a `@Composable`: it only reads snapshot state, so called during
+ * composition it subscribes its caller exactly as an inline chain would. Named at all because
+ * this composable is at detekt's cyclomatic ceiling.
+ */
+private fun BossDraggableComponent.hostActionsPanelColumn(needsAHome: Boolean): Panel? =
+    hostActionsPanelEdge(rightOpen = isVisible(right), needsAHome = needsAHome)
+
+/**
+ * Whether the host's actions are looking for a panel to live in at all.
+ *
+ * Both halves of "nothing above the panel can take them": focus mode has actually cleared the top
+ * bar that owns them, AND the vertical bar cannot host them. A collapsed rail that is too
+ * short yields to the panel too. See `focusQuickActionsPlacement` for the ladder itself.
+ *
+ * Reads the rail measurement, never the panel measurement it gates. The rail owns a separate
+ * column, so putting actions in the panel cannot change the rail fit and create a cycle.
+ */
+internal fun hostActionsNeedAPanel(
+    settings: FocusModeSettings,
+    topBarHidden: Boolean,
+    showTopBar: Boolean,
+    verticalBar: VerticalBarHost,
+    railActionsFit: Boolean,
+): Boolean =
+    focusQuickActionsVisible(settings, topBarHidden, showTopBar) &&
+        (verticalBar == VerticalBarHost.NONE || (verticalBar == VerticalBarHost.RAIL && !railActionsFit))
+
+/**
+ * Whether the host's actions have a panel foot to go in: there is a column, and it can hold the row.
+ *
+ * Both halves, because either one alone ships a bug. Without [edge] the row is drawn into a column
+ * nothing composes; without [fits] it is drawn into a 20dp sliver, where it wraps five lines deep
+ * and takes 188dp out of the plugin - see `panelFooterFitsColumn`, which is where [fits] comes
+ * from, and `PanelFooterHostActions`, which measures it.
+ *
+ * Named rather than written inline for the same reason [hostActionsPanelEdge] is: this composable
+ * is at detekt's cyclomatic ceiling, and one more `&&` in its body puts it over.
+ */
+private fun panelFootAvailable(
+    edge: Panel?,
+    fits: Boolean,
+): Boolean = edge != null && fits
+
+/**
+ * How many buttons the host's action row would hold.
+ *
+ * What `PanelFooterHostActions` measures its column against, and it has to be answerable while
+ * the list itself is empty - which is the state a "does not fit" answer puts that row in.
+ *
+ * EXACT, which is where this parts company with `focusQuickActionsRailRows`. That function
+ * over-counts on purpose: its number is a height reserve, and a reserve that tracked the rendered
+ * list would move the icons above it on every hover. This one answers a one-shot geometry
+ * question with no stability to protect, and over-counting only means a column that would have
+ * held the real row falls back to the overlay - `PanelFooterFitTest` shows the band where one
+ * button decides it. So `listOfNotNull` dropping an unregistered Toolbox has to be counted too.
+ *
+ * Named rather than inlined because [BossAppScaffold] is at detekt's cyclomatic ceiling and one
+ * more `if` in its body puts it over.
+ */
+private fun hostActionsRowSize(
+    hasToolbox: Boolean,
+    hasLauncher: Boolean,
+): Int = FOCUS_QUICK_ACTION_COUNT - (if (hasToolbox) 0 else 1) + (if (hasLauncher) 1 else 0)

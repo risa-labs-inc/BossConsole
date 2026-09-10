@@ -1,13 +1,11 @@
 package ai.rever.boss.plugin.browser
 
 import ai.rever.boss.cache.loadHighQualityFavicon
-import ai.rever.boss.components.common.rememberFaviconLoader
-import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
+import ai.rever.boss.components.common.rememberFaviconCacheKey
+import ai.rever.boss.components.overlays.LocalDismissModalOnFocusLoss
 import ai.rever.boss.plugin.api.TabIcon
 import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
-import ai.rever.boss.utils.logging.BossLogger
-import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
@@ -37,8 +35,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
 import com.teamdev.jxbrowser.capture.AudioCaptureMode
 
-private val logger = BossLogger.forComponent("ScreenCapturePickerDialog")
-
 /**
  * Screen capture picker dialog with Tab/Window/Screen tabs.
  */
@@ -62,83 +58,101 @@ fun ScreenCapturePickerDialog(
     var selectedSource by remember { mutableStateOf<ScreenCaptureNotifier.CaptureSourceItem?>(null) }
     var includeAudio by remember { mutableStateOf(true) }
 
-    BossDialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(dismissOnClickOutside = true, dismissOnBackPress = true),
-    ) {
-        Surface(
-            modifier = Modifier.width(500.dp).heightIn(min = 350.dp, max = 520.dp),
-            shape = RoundedCornerShape(12.dp),
-            color = BossTheme.colors.panel,
-            elevation = 8.dp,
+    // Opt out of focus-loss dismissal: onDismiss cancels the capture request. The picker lists the
+    // app's windows, so "switch to the window I want to share, to check which one it is" is a real
+    // flow and must not silently kill the share. Escape, the X and the Cancel button still cancel
+    // deliberately; clicking back onto the scrim does not. See LocalDismissModalOnFocusLoss and #152.
+    CompositionLocalProvider(LocalDismissModalOnFocusLoss provides false) {
+        BossDialog(
+            onDismissRequest = onDismiss,
+            properties = DialogProperties(dismissOnClickOutside = false, dismissOnBackPress = true),
         ) {
-            Column {
-                // Header
-                DialogHeader(title = "Share your screen", subtitle = "Choose what to share", onDismiss = onDismiss)
+            Surface(
+                modifier = Modifier.width(500.dp).heightIn(min = 350.dp, max = 520.dp),
+                shape = RoundedCornerShape(12.dp),
+                color = BossTheme.colors.panel,
+                elevation = 8.dp,
+            ) {
+                Column {
+                    // Header
+                    DialogHeader(title = "Share your screen", subtitle = "Choose what to share", onDismiss = onDismiss)
 
-                // Tab Bar
-                TabBar(
-                    selectedTab = selectedTab,
-                    onTabSelected = {
-                        selectedTab = it
-                        selectedSource = null
-                    },
-                    tabCount = browsers.size,
-                    windowCount = windows.size,
-                    screenCount = screens.size,
-                )
+                    // Tab Bar
+                    TabBar(
+                        selectedTab = selectedTab,
+                        onTabSelected = {
+                            selectedTab = it
+                            selectedSource = null
+                        },
+                        tabCount = browsers.size,
+                        windowCount = windows.size,
+                        screenCount = screens.size,
+                    )
 
-                Divider(color = BossTheme.colors.line, thickness = 1.dp)
+                    Divider(color = BossTheme.colors.line, thickness = 1.dp)
 
-                // Content based on selected tab
-                Box(
-                    modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                ) {
-                    when (selectedTab) {
-                        ShareTab.TAB -> {
-                            if (browsers.isEmpty()) {
-                                EmptyState(icon = Icons.Default.Tab, message = "No browser tabs available")
-                            } else {
-                                SourceList(sources = browsers, selectedSource = selectedSource, onSourceSelected = { selectedSource = it })
+                    // Content based on selected tab
+                    Box(
+                        modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                    ) {
+                        when (selectedTab) {
+                            ShareTab.TAB -> {
+                                if (browsers.isEmpty()) {
+                                    EmptyState(icon = Icons.Default.Tab, message = "No browser tabs available")
+                                } else {
+                                    SourceList(
+                                        sources = browsers,
+                                        selectedSource = selectedSource,
+                                        onSourceSelected = { selectedSource = it },
+                                    )
+                                }
                             }
-                        }
 
-                        ShareTab.WINDOW -> {
-                            if (windows.isEmpty()) {
-                                EmptyState(icon = Icons.Default.Window, message = "No windows available")
-                            } else {
-                                SourceList(sources = windows, selectedSource = selectedSource, onSourceSelected = { selectedSource = it })
+                            ShareTab.WINDOW -> {
+                                if (windows.isEmpty()) {
+                                    EmptyState(icon = Icons.Default.Window, message = "No windows available")
+                                } else {
+                                    SourceList(
+                                        sources = windows,
+                                        selectedSource = selectedSource,
+                                        onSourceSelected = { selectedSource = it },
+                                    )
+                                }
                             }
-                        }
 
-                        ShareTab.SCREEN -> {
-                            if (screens.isEmpty()) {
-                                EmptyState(
-                                    icon = Icons.Default.Monitor,
-                                    message = "No screens available.\nPlease grant screen recording permission.",
-                                )
-                            } else {
-                                SourceList(sources = screens, selectedSource = selectedSource, onSourceSelected = { selectedSource = it })
+                            ShareTab.SCREEN -> {
+                                if (screens.isEmpty()) {
+                                    EmptyState(
+                                        icon = Icons.Default.Monitor,
+                                        message = "No screens available.\nPlease grant screen recording permission.",
+                                    )
+                                } else {
+                                    SourceList(
+                                        sources = screens,
+                                        selectedSource = selectedSource,
+                                        onSourceSelected = { selectedSource = it },
+                                    )
+                                }
                             }
                         }
                     }
+
+                    Divider(color = BossTheme.colors.line, thickness = 1.dp)
+
+                    // Footer
+                    DialogFooter(
+                        includeAudio = includeAudio,
+                        onAudioToggle = { includeAudio = it },
+                        selectedSource = selectedSource,
+                        onDismiss = onDismiss,
+                        onShare = {
+                            selectedSource?.let { source ->
+                                val audioMode = if (includeAudio) AudioCaptureMode.CAPTURE else AudioCaptureMode.IGNORE
+                                onSelect(source, audioMode)
+                            }
+                        },
+                    )
                 }
-
-                Divider(color = BossTheme.colors.line, thickness = 1.dp)
-
-                // Footer
-                DialogFooter(
-                    includeAudio = includeAudio,
-                    onAudioToggle = { includeAudio = it },
-                    selectedSource = selectedSource,
-                    onDismiss = onDismiss,
-                    onShare = {
-                        selectedSource?.let { source ->
-                            val audioMode = if (includeAudio) AudioCaptureMode.CAPTURE else AudioCaptureMode.IGNORE
-                            onSelect(source, audioMode)
-                        }
-                    },
-                )
             }
         }
     }
@@ -266,16 +280,22 @@ private fun SourceListItem(
     val borderColor = if (isSelected) BossTheme.colors.signal else BossTheme.colors.line
     val isLoading = source.name == "Loading..."
 
-    // Get favicon cache key from FluckTabInfo
-    val faviconCacheKey = (source.tabInfo as? FluckTabInfo)?.faviconCacheKey
-
-    // Load immediate favicons first (synchronous or fast cache)
+    // The key, not a second decode of the file behind it: rememberFaviconLoader would read and
+    // decode exactly the PNG that resolution is about to read and decode, once per row. Using the
+    // key derivation rather than `as? FluckTabInfo` also keeps the dynamic-plugin tabs whose key
+    // only the reflection branch finds.
+    val faviconCacheKey = source.tabInfo?.let { rememberFaviconCacheKey(it) }
     val inMemoryFavicon = (source.tabInfo?.tabIcon as? ai.rever.boss.plugin.api.TabIcon.Image)
-    val cachedFavicon = source.tabInfo?.let { rememberFaviconLoader(it) }
-    val immediateFavicon = inMemoryFavicon ?: cachedFavicon
 
-    // Load HQ favicon (async from Google) - shows immediateFavicon while loading, then upgrades
-    val loadedFavicon = rememberHighQualityFavicon(source.url, faviconCacheKey, immediateFavicon)
+    val loadedFavicon =
+        if (inMemoryFavicon != null) {
+            // A live tab's CURRENT favicon. It outranks anything on disk, so resolving could only
+            // substitute a cached copy of the same icon or an older one - an if/else rather than
+            // an elvis because this skips the composable entirely rather than falling through it.
+            inMemoryFavicon
+        } else {
+            rememberResolvedFavicon(source.url, faviconCacheKey)
+        }
 
     // Determine fallback icon
     val (fallbackIcon, fallbackTint) =
@@ -407,33 +427,27 @@ private fun DialogFooter(
 }
 
 /**
- * Loads a high-quality favicon (128px from Google's service) asynchronously.
- * Returns the fallback immediately while HQ is loading, then upgrades to HQ when available.
+ * Resolves a row's favicon asynchronously; null until it arrives, and the row shows its category
+ * icon in the meantime.
+ *
+ * **The page's own icon comes first, not a host-level guess.** `loadHighQualityFavicon` reads the
+ * page's own cached favicon and only asks Google about the host when there is none, so a row whose
+ * icon is known cannot be downgraded to the icon of whatever parent domain Google resolves its
+ * host to. An earlier version of this deliberately "upgraded" to the guess, which for every
+ * `*.google.com` tab meant replacing the real icon with a generic "G".
  */
 @Composable
-private fun rememberHighQualityFavicon(
+private fun rememberResolvedFavicon(
     url: String?,
     standardCacheKey: String?,
-    fallback: ai.rever.boss.plugin.api.TabIcon.Image?,
 ): ai.rever.boss.plugin.api.TabIcon.Image? {
-    var hqFavicon by remember(url, standardCacheKey) { mutableStateOf<ai.rever.boss.plugin.api.TabIcon.Image?>(null) }
+    var resolved by remember(url, standardCacheKey) { mutableStateOf<ai.rever.boss.plugin.api.TabIcon.Image?>(null) }
 
+    // Unguarded: loadHighQualityFavicon does not throw, and a catch here would swallow the
+    // cancellation a dismissed dialog raises.
     LaunchedEffect(url, standardCacheKey) {
-        if (url != null) {
-            hqFavicon =
-                try {
-                    loadHighQualityFavicon(url, standardCacheKey)
-                } catch (e: Exception) {
-                    logger.debug(
-                        LogCategory.BROWSER,
-                        "HQ favicon load failed - using fallback icon",
-                        mapOf("error" to e.toString()),
-                    )
-                    null
-                }
-        }
+        resolved = loadHighQualityFavicon(url, standardCacheKey)
     }
 
-    // Return HQ if loaded, otherwise use fallback (in-memory or cached)
-    return hqFavicon ?: fallback
+    return resolved
 }

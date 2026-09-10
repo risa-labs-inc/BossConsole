@@ -47,7 +47,7 @@ class NamedSupabaseLogging(
         // The throwable is NOT handed to the logger. BossLogger writes `error.message` and a
         // stack trace to the log file, and what arrives here is whatever supabase-kt chose to
         // log: a RestException carries the PostgREST error body, which can echo column values.
-        // sanitizeSupabaseFailure would not help, as it rewrites only SerializationException.
+        // Other throwable types can still carry server data; keep only the type here.
         // The type is the diagnostic half worth keeping; the library's own text is in `message`.
         val fields =
             mapOf<String, Any?>(

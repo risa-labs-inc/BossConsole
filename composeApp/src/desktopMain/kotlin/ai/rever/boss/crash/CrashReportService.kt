@@ -5,6 +5,7 @@ import ai.rever.boss.config.SupabaseClientConfig
 import ai.rever.boss.utils.AppVersion
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.LogSanitizer
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.engine.cio.*
@@ -77,9 +78,32 @@ object CrashReportService {
             val isNewIssue: Boolean,
         ) : SubmitResult()
 
-        data class Error(
+        /**
+         * #110: the private constructor and companion factory sanitize every public construction.
+         * Keep copy visibility aligned with the constructor so copy cannot introduce a raw message.
+         * CrashReportServiceTest pins both entry points as private in compiled bytecode.
+         */
+        @ConsistentCopyVisibility
+        data class Error private constructor(
             val message: String,
-        ) : SubmitResult()
+        ) : SubmitResult() {
+            companion object {
+                // Bound regex work independently of the footer's maxLines. Sanitized placeholders
+                // can expand this input; the UI still owns the display-height limit.
+                private const val MAX_SANITIZER_INPUT_CHARS = 4_000
+
+                operator fun invoke(message: String): Error {
+                    // Drop a cut token: truncating inside a hostname or credential can defeat its matcher.
+                    val bounded =
+                        if (message.length > MAX_SANITIZER_INPUT_CHARS) {
+                            message.take(MAX_SANITIZER_INPUT_CHARS).dropLastWhile { !it.isWhitespace() }
+                        } else {
+                            message
+                        }
+                    return Error(LogSanitizer.sanitizeExceptionMessage(bounded))
+                }
+            }
+        }
     }
 
     /**

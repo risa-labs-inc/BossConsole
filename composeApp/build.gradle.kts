@@ -480,9 +480,9 @@ val downloadBundledPlugins =
                     // contains `boss-plugin-fluck-browser-1.2.24-thin.jar`,
                     // 1 MB of a 4 MB plugin, missing everything it needs to run.
                     //
-                    // This is exactly PluginStoreSetup.pickPluginJarUrl, which
+                    // This is exactly PluginVersionComparator.pickPluginJarUrl, which
                     // the host uses for the same decision and which
-                    // PluginStoreSetupMinVersionGateTest already guards against
+                    // PluginVersionComparatorTest already guards against
                     // picking a thin JAR. The two pickers must not disagree.
                     val jarUrl =
                         Regex(""""browser_download_url"\s*:\s*"([^"]+${Regex.escape(artifactPrefix)}[^"]*\.jar)"""")
@@ -930,6 +930,7 @@ kotlin {
             implementation(projects.pluginPlatform.pluginWorkspaceTypes)
             implementation(projects.pluginPlatform.pluginBookmarkTypes)
             implementation(projects.pluginPlatform.pluginIcons)
+            implementation(projects.pluginPlatform.pluginLanguageTypes)
             implementation(projects.pluginPlatform.pluginPathUtils)
             implementation(projects.pluginPlatform.pluginSandbox)
 
@@ -1085,6 +1086,9 @@ kotlin {
                 // Found by WindowsArm64SourceIsolationTest rather than by a build breaking.
                 "**/plugin/IpcCompatibilityTest.kt",
                 "**/plugin/PluginStoreSetupIpcGateTest.kt",
+                "**/plugin/PluginStateDeltaTest.kt",
+                // Its process registry and production ID helper belong to the excluded OOP runtime.
+                "**/plugin/PluginProcessIdTest.kt",
             )
         }
     }

@@ -80,13 +80,20 @@ internal object UrlOpenValidation {
         return authority.substring(0, colon).ifEmpty { null }
     }
 
-    /** `:1234`, or `:` with nothing after it, which browsers accept as "default port". */
+    /**
+     * A numeric port from 0 through 65535, or `:` for the default port.
+     * Zero is deliberately accepted as a numeric value, not rewritten to the default.
+     * This syntax gate leaves unsafe-port policy and reachability to the browser.
+     */
     private fun isValidPortSuffix(suffix: String): Boolean {
         if (!suffix.startsWith(':')) return false
+        // Leading zeros do not affect the port value, even when their count
+        // would overflow an integer parser. Empty and all-zero ports are valid.
+        val port = suffix.drop(1).trimStart('0')
         // `in '0'..'9'`, not Char.isDigit(): isDigit is true for every Unicode
         // decimal digit, so ":٣३" (Arabic-Indic and Devanagari threes)
         // validated as a port and the URL reached the browser. Verified with
         // Character.isDigit on the JDK in use.
-        return suffix.drop(1).all { it in '0'..'9' }
+        return port.isEmpty() || (port.all { it in '0'..'9' } && port.toIntOrNull()?.let { it <= 65535 } == true)
     }
 }

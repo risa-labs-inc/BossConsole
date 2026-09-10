@@ -1,8 +1,17 @@
+@file:Suppress("TooManyFunctions")
+
 package ai.rever.boss.utils
 
+import ai.rever.boss.plugin.api.McpToolResult
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -53,10 +62,22 @@ internal const val VERB_OPEN = "OPEN"
 /** Asks the signed-in BOSS process for a short-lived RISA LLM credential. */
 internal const val VERB_LLM_TOKEN = "LLM_TOKEN"
 
+/** Asks the running instance for status and workspace info. */
+internal const val VERB_STATUS = "STATUS"
+
+/** Asks the running instance for registered MCP tools. */
+internal const val VERB_MCP_LIST = "MCP_LIST"
+
+/** Asks the running instance to invoke an MCP tool. */
+internal const val VERB_MCP_INVOKE = "MCP_INVOKE"
+
 internal const val RESPONSE_OK = "OK"
 internal const val RESPONSE_PONG = "PONG"
 internal const val RESPONSE_REJECTED = "REJECTED"
 private const val RESPONSE_LLM_TOKEN_PREFIX = "LLM_TOKEN "
+internal const val RESPONSE_STATUS_PREFIX = "STATUS "
+internal const val RESPONSE_MCP_LIST_PREFIX = "MCP_LIST "
+internal const val RESPONSE_MCP_INVOKE_PREFIX = "MCP_INVOKE "
 private const val RESPONSE_ERROR_PREFIX = "ERROR "
 
 /** 32 random bytes, hex encoded. */
@@ -69,15 +90,28 @@ private const val TCP_BACKLOG = 5
 
 private const val CONNECTION_TIMEOUT_MS = 10000L // 10 seconds - important for auth deep links
 private const val LLM_TOKEN_TIMEOUT_MS = 90000L
+private const val MCP_INVOKE_TIMEOUT_MS = 60000L
+
+// Well under CONNECTION_TIMEOUT_MS: VERB_OPEN gets the default socket budget (it is
+// not a longer-budget candidate), so this wait must leave room for that budget to
+// still close a genuinely wedged connection rather than race it.
+private const val OPEN_ACTION_TIMEOUT_MS = 5000L
 
 /**
  * Ceiling on a single request. Bounds what one caller can make the app buffer,
- * and is far above the longest `boss://` URL the app produces.
+ * sized to accommodate Base64-encoded tool arguments and payloads.
  */
-private const val MAX_REQUEST_BYTES = 16 * 1024
+internal const val MAX_REQUEST_BYTES = 1024 * 1024
+
+// Reserve 1368 wire bytes for the protocol, token and up to 256 UTF-8 tool-name characters.
+internal const val MAX_ARGUMENT_BYTES = 768 * 1024 - 1024
+internal const val MAX_TOOL_NAME_LENGTH = 256
 
 /** A response is one short word; nothing legitimate approaches this. */
 private const val MAX_RESPONSE_BYTES = 256
+
+/** Ceiling on data responses (status, MCP tool list, Base64 tool invocation output). */
+private const val MAX_DATA_RESPONSE_BYTES = 4 * 1024 * 1024
 
 /**
  * macOS caps a Unix-domain socket path at 104 bytes and Linux at 108. A home
@@ -162,25 +196,27 @@ internal fun parseInstanceDescriptor(text: String): InstanceDescriptor? {
  *
  * @property token what the caller presented; compared against the live token
  *   before anything is acted on.
- * @property verb [VERB_PING] or [VERB_OPEN].
+ * @property verb [VERB_PING], [VERB_OPEN], [VERB_LLM_TOKEN], [VERB_STATUS], [VERB_MCP_LIST], or [VERB_MCP_INVOKE].
  * @property origin for [VERB_OPEN], what the caller says the URL's provenance is.
  *   Unrecognised labels become [DeepLinkOrigin.EXTERNAL].
- * @property url for [VERB_OPEN], the URL to process; null for [VERB_PING].
+ * @property url for [VERB_OPEN], the URL to process; null for other verbs.
+ * @property toolName for [VERB_MCP_INVOKE], the tool name to invoke.
+ * @property argsJson for [VERB_MCP_INVOKE], the decoded JSON arguments string.
  */
 internal data class SingleInstanceRequest(
     val token: String,
     val verb: String,
     val origin: DeepLinkOrigin,
     val url: String?,
+    val toolName: String? = null,
+    val argsJson: String? = null,
 )
 
 /**
  * Parses a request line, returning null for anything that is not a complete,
  * current-version request. A rejected line is never acted on.
  *
- * The line is `<protocol> <token> PING` or
- * `<protocol> <token> OPEN <origin> <url>`; the URL is the whole remainder, so a
- * URL containing spaces survives intact.
+ * The line is `<protocol> <token> <verb> ...`
  */
 internal fun parseRequestLine(line: String): SingleInstanceRequest? {
     val parts = line.trim().split(' ', limit = 5)
@@ -188,7 +224,7 @@ internal fun parseRequestLine(line: String): SingleInstanceRequest? {
 
     val token = parts[1]
     return when (parts[2]) {
-        VERB_PING, VERB_LLM_TOKEN -> {
+        VERB_PING, VERB_LLM_TOKEN, VERB_STATUS, VERB_MCP_LIST -> {
             if (parts.size == 3) {
                 SingleInstanceRequest(token, parts[2], DeepLinkOrigin.EXTERNAL, null)
             } else {
@@ -204,9 +240,39 @@ internal fun parseRequestLine(line: String): SingleInstanceRequest? {
             }
         }
 
+        VERB_MCP_INVOKE -> {
+            parseMcpInvokeRequest(token, parts)
+        }
+
         else -> {
             null
         }
+    }
+}
+
+private fun validMcpToolName(toolName: String): Boolean =
+    toolName.length in 1..MAX_TOOL_NAME_LENGTH && toolName.none { it.isWhitespace() || it.isISOControl() }
+
+private fun parseMcpInvokeRequest(
+    token: String,
+    parts: List<String>,
+): SingleInstanceRequest? {
+    if (parts.size < 4) return null
+    val toolName = parts[3].trim()
+    val base64Payload = parts.getOrNull(4)?.trim().orEmpty()
+    return decodeBase64Args(base64Payload)?.takeIf { validMcpToolName(toolName) }?.let { decodedArgs ->
+        SingleInstanceRequest(token, VERB_MCP_INVOKE, DeepLinkOrigin.OPERATOR_CLI, null, toolName, decodedArgs)
+    }
+}
+
+@Suppress("TooGenericExceptionCaught")
+private fun decodeBase64Args(base64Payload: String): String? {
+    if (base64Payload.isEmpty()) return "{}"
+    return try {
+        val decoder = java.util.Base64.getDecoder()
+        String(decoder.decode(base64Payload), StandardCharsets.UTF_8)
+    } catch (_: IllegalArgumentException) {
+        null
     }
 }
 
@@ -222,6 +288,25 @@ internal fun formatPingRequest(token: String): String = "$PROTOCOL_VERSION $toke
 
 /** Builds a credential request. Never log the result: it carries the channel token. */
 internal fun formatLlmTokenRequest(token: String): String = "$PROTOCOL_VERSION $token $VERB_LLM_TOKEN"
+
+/** Builds a status query line. Never log the result: it carries the token. */
+internal fun formatStatusRequest(token: String): String = "$PROTOCOL_VERSION $token $VERB_STATUS"
+
+/** Builds an MCP tool list request line. Never log the result: it carries the token. */
+internal fun formatMcpListRequest(token: String): String = "$PROTOCOL_VERSION $token $VERB_MCP_LIST"
+
+/** Builds an MCP tool invocation line with Base64 payload. Never log the result: it carries the token. */
+internal fun formatMcpInvokeRequest(
+    token: String,
+    toolName: String,
+    argsJson: String,
+): String {
+    val base64Payload =
+        java.util.Base64
+            .getEncoder()
+            .encodeToString(argsJson.toByteArray(StandardCharsets.UTF_8))
+    return "$PROTOCOL_VERSION $token $VERB_MCP_INVOKE $toolName $base64Payload"
+}
 
 private val secureRandom = SecureRandom()
 
@@ -471,13 +556,14 @@ private object SingleInstanceWire {
         descriptor: InstanceDescriptor,
         request: String,
         timeoutMs: Long = CONNECTION_TIMEOUT_MS,
+        maxResponseBytes: Int = MAX_RESPONSE_BYTES,
     ): String? {
         val channel = connect(descriptor) ?: return null
         val budget = closeAfterBudget(channel, timeoutMs)
         return try {
             channel.use {
                 writeLine(it, request)
-                readBoundedLine(BufferedInputStream(Channels.newInputStream(it)), MAX_RESPONSE_BYTES)
+                readBoundedLine(BufferedInputStream(Channels.newInputStream(it)), maxResponseBytes)
             }
         } catch (e: IOException) {
             logger.debug(
@@ -528,25 +614,26 @@ private object SingleInstanceWire {
     fun readBoundedLine(
         input: InputStream,
         maxBytes: Int,
-    ): String? {
-        val buffer = ByteArrayOutputStream()
-        var overBudget = false
-        var next = input.read()
-        while (next != -1 && next != '\n'.code) {
-            if (buffer.size() >= maxBytes) {
-                overBudget = true
-                break
+    ): String? =
+        ByteArrayOutputStream().use { buffer ->
+            var overBudget = false
+            var next = input.read()
+            while (next != -1 && next != '\n'.code) {
+                if (buffer.size() >= maxBytes) {
+                    overBudget = true
+                    break
+                }
+                buffer.write(next)
+                next = input.read()
             }
-            buffer.write(next)
-            next = input.read()
-        }
 
-        if (overBudget) {
-            logger.warn(LogCategory.SYSTEM, "Single-instance request exceeded its size budget, dropping")
-            return null
+            if (overBudget) {
+                logger.warn(LogCategory.SYSTEM, "Single-instance request exceeded its size budget, dropping")
+                null
+            } else {
+                buffer.toString(StandardCharsets.UTF_8).trimEnd('\r', '\n').takeIf { it.isNotEmpty() }
+            }
         }
-        return buffer.toString(StandardCharsets.UTF_8).takeIf { it.isNotEmpty() }
-    }
 
     fun writeLine(
         channel: SocketChannel,
@@ -609,6 +696,162 @@ private fun buildLlmTokenResponse(providerOverride: (() -> Result<String>)?): St
     )
 }
 
+@Suppress("TooGenericExceptionCaught")
+private fun buildStatusResponse(statusProviderOverride: (() -> String)?): String {
+    val rawJson =
+        if (statusProviderOverride != null) {
+            statusProviderOverride.invoke()
+        } else {
+            try {
+                val runtime = Runtime.getRuntime()
+                val totalMem = runtime.totalMemory() / (1024 * 1024)
+                val freeMem = runtime.freeMemory() / (1024 * 1024)
+                val maxMem = runtime.maxMemory() / (1024 * 1024)
+                val usedMem = totalMem - freeMem
+                val heapPercent = if (maxMem > 0) ((usedMem.toDouble() / maxMem.toDouble()) * 100.0) else 0.0
+                val os = System.getProperty("os.name") ?: "Unknown"
+                val arch = System.getProperty("os.arch") ?: "Unknown"
+                val version =
+                    ai.rever.boss.utils.AppVersion
+                        .currentVersionString()
+                val projectPath =
+                    ai.rever.boss.git.GitService
+                        .getCurrentProjectPath() ?: ""
+
+                buildJsonObject {
+                    put("running", true)
+                    put("version", version)
+                    put("os", os)
+                    put("arch", arch)
+                    put("activeProject", projectPath)
+                    put(
+                        "memory",
+                        buildJsonObject {
+                            put("usedMb", usedMem)
+                            put("maxMb", maxMem)
+                            put("heapPercent", heapPercent)
+                        },
+                    )
+                }.toString()
+            } catch (e: Exception) {
+                return RESPONSE_ERROR_PREFIX + (e.message ?: "Failed to query status")
+            }
+        }
+    val base64 =
+        java.util.Base64
+            .getEncoder()
+            .encodeToString(rawJson.toByteArray(StandardCharsets.UTF_8))
+    return RESPONSE_STATUS_PREFIX + base64
+}
+
+@Suppress("TooGenericExceptionCaught")
+private fun buildMcpListResponse(listProviderOverride: (() -> String)?): String {
+    val rawJson =
+        if (listProviderOverride != null) {
+            listProviderOverride.invoke()
+        } else {
+            try {
+                val tools = ai.rever.boss.mcp.McpToolRegistryImpl.tools.value
+                encodeMcpTools(tools)
+            } catch (e: Exception) {
+                return RESPONSE_ERROR_PREFIX + (e.message ?: "Failed to list MCP tools")
+            }
+        }
+    val base64 =
+        java.util.Base64
+            .getEncoder()
+            .encodeToString(rawJson.toByteArray(StandardCharsets.UTF_8))
+    return if (base64.length + RESPONSE_MCP_LIST_PREFIX.length > MAX_DATA_RESPONSE_BYTES) {
+        RESPONSE_ERROR_PREFIX + "Tool list exceeds the IPC response size limit"
+    } else {
+        RESPONSE_MCP_LIST_PREFIX + base64
+    }
+}
+
+@Suppress("ReturnCount", "TooGenericExceptionCaught", "LongMethod")
+private fun buildMcpInvokeResponse(
+    toolName: String,
+    argsJson: String,
+    invokeHandlerOverride: (suspend (String, String) -> McpToolResult)?,
+): String {
+    if (toolName.isBlank()) {
+        return RESPONSE_ERROR_PREFIX + "Tool name must not be blank"
+    }
+
+    try {
+        if (Json.parseToJsonElement(argsJson) !is JsonObject) {
+            return encodeMcpResult(toolName, McpToolResult("Arguments must be a valid JSON object", isError = true))
+        }
+    } catch (_: IllegalArgumentException) {
+        return encodeMcpResult(toolName, McpToolResult("Malformed JSON arguments", isError = true))
+    }
+
+    return try {
+        val result: McpToolResult =
+            kotlinx.coroutines.runBlocking {
+                kotlinx.coroutines.withTimeoutOrNull(30_000L) {
+                    if (invokeHandlerOverride != null) {
+                        invokeHandlerOverride.invoke(toolName, argsJson)
+                    } else {
+                        ai.rever.boss.mcp.McpToolRegistryImpl
+                            .invoke(toolName, argsJson)
+                    }
+                } ?: McpToolResult(
+                    text = "Tool '$toolName' timed out after 30s",
+                    isError = true,
+                )
+            }
+        encodeMcpResult(toolName, result)
+    } catch (e: Exception) {
+        val safeMessage = (e.message ?: "Failed to invoke tool $toolName").replace('\n', ' ').replace('\r', ' ')
+        RESPONSE_ERROR_PREFIX + safeMessage
+    }
+}
+
+internal fun encodeMcpTools(tools: List<ai.rever.boss.plugin.api.RegisteredMcpTool>): String =
+    JsonArray(
+        tools.map { registeredTool ->
+            val def = registeredTool.definition
+            buildJsonObject {
+                put("name", def.name)
+                put("description", def.description)
+                put("pluginId", registeredTool.providerId)
+                put("requiresAdmin", def.requiresAdmin)
+                put("requiredPermissions", JsonArray(def.requiredPermissions.map(::JsonPrimitive)))
+                put("inputSchema", parseToolSchema(def.inputSchema))
+            }
+        },
+    ).toString()
+
+private fun parseToolSchema(schema: String): kotlinx.serialization.json.JsonElement =
+    try {
+        Json.parseToJsonElement(schema)
+    } catch (_: IllegalArgumentException) {
+        JsonPrimitive(schema)
+    }
+
+internal fun encodeMcpResult(
+    toolName: String,
+    result: McpToolResult,
+): String {
+    val payload =
+        buildJsonObject {
+            put("success", !result.isError)
+            put("isError", result.isError)
+            put("tool", toolName)
+            put("content", result.text)
+        }
+    val encoded =
+        java.util.Base64
+            .getEncoder()
+            .encodeToString(payload.toString().toByteArray(StandardCharsets.UTF_8))
+    return if (encoded.length + RESPONSE_MCP_INVOKE_PREFIX.length > MAX_DATA_RESPONSE_BYTES) {
+        RESPONSE_ERROR_PREFIX + "Tool result exceeds the IPC response size limit"
+    } else {
+        RESPONSE_MCP_INVOKE_PREFIX + encoded
+    }
+}
+
 /**
  * Whether [token] can be sent as one response line.
  *
@@ -637,6 +880,20 @@ private fun acceptNextClient(
         }
         null
     }
+
+private fun pluginActionResponse(verdict: kotlinx.coroutines.Deferred<Boolean>?): String {
+    if (verdict == null) return RESPONSE_OK
+    val handled = kotlinx.coroutines.runBlocking { awaitPluginAction(verdict, OPEN_ACTION_TIMEOUT_MS) }
+    return when (handled) {
+        true -> RESPONSE_OK
+
+        false -> RESPONSE_ERROR_PREFIX + "Plugin action was not handled"
+
+        // The deadline cancels queued dispatch; an already-running synchronous
+        // handler cannot be interrupted, so its outcome remains unknown.
+        null -> RESPONSE_ERROR_PREFIX + "Plugin action outcome unknown (timed out); do not retry automatically"
+    }
+}
 
 /**
  * Manages single-instance application behavior.
@@ -674,12 +931,22 @@ private fun acceptNextClient(
  * }
  * ```
  */
+@Suppress("TooManyFunctions")
 object SingleInstanceManager {
     private var serverChannel: ServerSocketChannel? = null
     private var listenerThread: Thread? = null
 
     /** Test seam; production serves credentials from the running BOSS session. */
     internal var llmTokenProviderOverride: (() -> Result<String>)? = null
+
+    /** Test seam / host hook for status response. */
+    internal var statusProviderOverride: (() -> String)? = null
+
+    /** Test seam / host hook for MCP tool list response. */
+    internal var mcpListProviderOverride: (() -> String)? = null
+
+    /** Test seam / host hook for MCP tool invocation response. */
+    internal var mcpInvokeHandlerOverride: (suspend (String, String) -> McpToolResult)? = null
 
     @Volatile
     private var isListening: Boolean = false
@@ -802,9 +1069,11 @@ object SingleInstanceManager {
                     // budget: minting a credential is a round trip to the gateway,
                     // and nothing an unauthenticated caller sends should change what
                     // this process is willing to spend on it.
-                    if (request != null && request.verb == VERB_LLM_TOKEN && presentsLiveToken(request)) {
+                    if (request != null && isLongerBudgetCandidate(request)) {
                         budget.cancel(false)
-                        budget = SingleInstanceWire.closeAfterBudget(channel, LLM_TOKEN_TIMEOUT_MS)
+                        val timeout =
+                            if (request.verb == VERB_LLM_TOKEN) LLM_TOKEN_TIMEOUT_MS else MCP_INVOKE_TIMEOUT_MS
+                        budget = SingleInstanceWire.closeAfterBudget(channel, timeout)
                     }
                     SingleInstanceWire.writeLine(channel, responseFor(request))
                 }
@@ -819,6 +1088,11 @@ object SingleInstanceManager {
             }
         }
     }
+
+    private val isLongerBudgetCandidate: (SingleInstanceRequest) -> Boolean
+        get() = { request ->
+            (request.verb == VERB_LLM_TOKEN || request.verb == VERB_MCP_INVOKE) && presentsLiveToken(request)
+        }
 
     /**
      * Whether a request presented the token this process published. Reads as a
@@ -838,7 +1112,7 @@ object SingleInstanceManager {
      */
     private fun responseFor(request: SingleInstanceRequest?): String {
         if (request == null || !presentsLiveToken(request)) {
-            logger.warn(LogCategory.SYSTEM, "Refused a single-instance request that did not present the channel token")
+            logger.warn(LogCategory.SYSTEM, "Refused a malformed single-instance request or missing channel token")
             return RESPONSE_REJECTED
         }
 
@@ -856,12 +1130,32 @@ object SingleInstanceManager {
                 // The forwarding instance states the URL's provenance; it is not
                 // inferred from the caller having held the token, which says
                 // nothing about where the URL came from.
-                DeepLinkHandler.processDeepLink(requireNotNull(request.url), request.origin)
-                RESPONSE_OK
+                val verdict = DeepLinkHandler.processDeepLink(requireNotNull(request.url), request.origin)
+                // Every route but a plugin action link returns null here and
+                // keeps today's fire-and-forget behaviour: RESPONSE_OK means
+                // only "queued". An action link is the one case with a real
+                // answer to await, so its OK/ERROR reflects whether the
+                // registered handler reported the action handled, not just that a
+                // coroutine was launched for it.
+                pluginActionResponse(verdict)
             }
 
             request.verb == VERB_LLM_TOKEN -> {
                 buildLlmTokenResponse(llmTokenProviderOverride)
+            }
+
+            request.verb == VERB_STATUS -> {
+                buildStatusResponse(statusProviderOverride)
+            }
+
+            request.verb == VERB_MCP_LIST -> {
+                buildMcpListResponse(mcpListProviderOverride)
+            }
+
+            request.verb == VERB_MCP_INVOKE -> {
+                val toolName = request.toolName.orEmpty()
+                val argsJson = request.argsJson.orEmpty()
+                buildMcpInvokeResponse(toolName, argsJson, mcpInvokeHandlerOverride)
             }
 
             else -> {
@@ -911,12 +1205,165 @@ object SingleInstanceManager {
     }
 
     /**
+     * Queries status from the running BOSS process.
+     */
+    @Suppress("ReturnCount", "TooGenericExceptionCaught")
+    fun queryStatus(): Result<String> {
+        val target =
+            SingleInstanceFiles.read()
+                ?: return Result.failure(IllegalStateException("BOSS is not running. Launch BOSS to view status."))
+        val response =
+            SingleInstanceWire.exchange(
+                target,
+                formatStatusRequest(target.token),
+                timeoutMs = CONNECTION_TIMEOUT_MS,
+                maxResponseBytes = MAX_DATA_RESPONSE_BYTES,
+            ) ?: return Result.failure(
+                IllegalStateException("BOSS is not running or not responding on the single-instance channel."),
+            )
+
+        return when {
+            response.startsWith(RESPONSE_STATUS_PREFIX) -> {
+                val base64 = response.removePrefix(RESPONSE_STATUS_PREFIX).trim()
+                try {
+                    Result.success(
+                        String(
+                            java.util.Base64
+                                .getDecoder()
+                                .decode(base64),
+                            StandardCharsets.UTF_8,
+                        ),
+                    )
+                } catch (e: Exception) {
+                    Result.failure(IllegalStateException("Malformed status response from BOSS: ${e.message}"))
+                }
+            }
+
+            response.startsWith(RESPONSE_ERROR_PREFIX) -> {
+                Result.failure(IllegalStateException(response.removePrefix(RESPONSE_ERROR_PREFIX)))
+            }
+
+            else -> {
+                Result.failure(IllegalStateException("BOSS rejected the status query ($response)."))
+            }
+        }
+    }
+
+    /**
+     * Queries active MCP tools from the running BOSS process.
+     */
+    @Suppress("ReturnCount", "TooGenericExceptionCaught")
+    fun queryMcpList(): Result<String> {
+        val target =
+            SingleInstanceFiles.read()
+                ?: return Result.failure(IllegalStateException("BOSS is not running. Launch BOSS to list MCP tools."))
+        val response =
+            SingleInstanceWire.exchange(
+                target,
+                formatMcpListRequest(target.token),
+                timeoutMs = CONNECTION_TIMEOUT_MS,
+                maxResponseBytes = MAX_DATA_RESPONSE_BYTES,
+            ) ?: return Result.failure(
+                IllegalStateException("BOSS is not running or not responding on the single-instance channel."),
+            )
+
+        return when {
+            response.startsWith(RESPONSE_MCP_LIST_PREFIX) -> {
+                val base64 = response.removePrefix(RESPONSE_MCP_LIST_PREFIX).trim()
+                try {
+                    Result.success(
+                        String(
+                            java.util.Base64
+                                .getDecoder()
+                                .decode(base64),
+                            StandardCharsets.UTF_8,
+                        ),
+                    )
+                } catch (e: Exception) {
+                    Result.failure(IllegalStateException("Malformed MCP list response from BOSS: ${e.message}"))
+                }
+            }
+
+            response.startsWith(RESPONSE_ERROR_PREFIX) -> {
+                Result.failure(IllegalStateException(response.removePrefix(RESPONSE_ERROR_PREFIX)))
+            }
+
+            else -> {
+                Result.failure(IllegalStateException("BOSS rejected the MCP tool list request ($response)."))
+            }
+        }
+    }
+
+    /**
+     * Invokes an MCP tool in the running BOSS process.
+     */
+    @Suppress("ReturnCount", "TooGenericExceptionCaught")
+    fun invokeMcpTool(
+        toolName: String,
+        argsJson: String = "{}",
+        timeoutMs: Long = MCP_INVOKE_TIMEOUT_MS,
+    ): Result<String> {
+        if (!validMcpToolName(toolName)) {
+            return Result.failure(IllegalArgumentException("Tool name must be a single nonempty token"))
+        }
+        if (argsJson.toByteArray(StandardCharsets.UTF_8).size > MAX_ARGUMENT_BYTES) {
+            return Result.failure(IllegalArgumentException("Tool arguments exceed the IPC size limit"))
+        }
+        if (timeoutMs <= 0 || timeoutMs > MCP_INVOKE_TIMEOUT_MS) {
+            return Result.failure(IllegalArgumentException("Timeout must be between 1 and 60 seconds"))
+        }
+        val target =
+            SingleInstanceFiles.read()
+                ?: return Result.failure(IllegalStateException("BOSS is not running. Launch BOSS to invoke MCP tools."))
+        val response =
+            SingleInstanceWire.exchange(
+                target,
+                formatMcpInvokeRequest(target.token, toolName, argsJson),
+                timeoutMs = timeoutMs,
+                maxResponseBytes = MAX_DATA_RESPONSE_BYTES,
+            ) ?: return Result.failure(
+                IllegalStateException("BOSS is not running or not responding on the single-instance channel."),
+            )
+
+        return when {
+            response.startsWith(RESPONSE_MCP_INVOKE_PREFIX) -> {
+                val base64 = response.removePrefix(RESPONSE_MCP_INVOKE_PREFIX).trim()
+                try {
+                    Result.success(
+                        String(
+                            java.util.Base64
+                                .getDecoder()
+                                .decode(base64),
+                            StandardCharsets.UTF_8,
+                        ),
+                    )
+                } catch (e: Exception) {
+                    Result.failure(IllegalStateException("Malformed MCP invoke response from BOSS: ${e.message}"))
+                }
+            }
+
+            response.startsWith(RESPONSE_ERROR_PREFIX) -> {
+                Result.failure(IllegalStateException(response.removePrefix(RESPONSE_ERROR_PREFIX)))
+            }
+
+            else -> {
+                Result.failure(IllegalStateException("BOSS rejected the MCP invoke request ($response)."))
+            }
+        }
+    }
+
+    /**
      * Send a URL to the existing instance.
      *
      * @param origin what the caller knows about where [url] came from. Defaults to
      *   [DeepLinkOrigin.EXTERNAL], because a forwarded URL normally reached this
      *   process from the OS.
-     * @return true if the running instance acknowledged it.
+     * @return true if the running instance acknowledged it. For most links this
+     *   still means only "queued" (fire-and-forget, as before); for a
+     *   `boss://plugin?id=…&action=…` link it now means the registered handler
+     *   reported the action handled. An unregistered handler id, a declined
+     *   action, or an unknown outcome at timeout returns false. This is not a
+     *   guarantee that asynchronous work started by a handler has completed.
      */
     fun sendToExistingInstance(
         url: String,
@@ -969,6 +1416,10 @@ object SingleInstanceManager {
         isListening = false
         val descriptor = published
         published = null
+        llmTokenProviderOverride = null
+        statusProviderOverride = null
+        mcpListProviderOverride = null
+        mcpInvokeHandlerOverride = null
 
         try {
             serverChannel?.close()

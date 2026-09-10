@@ -454,6 +454,27 @@ class LogSanitizerTest {
     }
 
     @Test
+    fun `sanitizeExceptionMessage redacts a bare private hostname`() {
+        val result = LogSanitizer.sanitizeExceptionMessage("java.net.UnknownHostException: internal.service.local")
+
+        assertEquals("java.net.UnknownHostException: [HOST]", result)
+    }
+
+    @Test
+    fun `sanitizeExceptionMessage redacts a private hostname but preserves its port`() {
+        val result = LogSanitizer.sanitizeExceptionMessage("Connect to proxy.corp.internal:3128 failed")
+
+        assertEquals("Connect to [HOST]:3128 failed", result)
+    }
+
+    @Test
+    fun `sanitizeExceptionMessage preserves ordinary dotted diagnostics`() {
+        val message = "com.example.Client reported foo.bar in Version 1.2.3."
+
+        assertEquals(message, LogSanitizer.sanitizeExceptionMessage(message))
+    }
+
+    @Test
     fun `sanitizeExceptionMessage preserves an ordinary long identifier`() {
         // Well over the 20-character length that marks a map *value* as
         // sensitive. In message text a long run is normally just a name, and
@@ -494,6 +515,108 @@ class LogSanitizerTest {
         assertEquals("[no message]", LogSanitizer.sanitizeExceptionMessage(""))
     }
 
+    // BossConsole#109: a bare hostname (no protocol, no path) survived every prior revision
+    // of this file, and that shape is exactly what UnknownHostException.getMessage() produces -
+    // every DNS failure - and what a proxy-connect failure looks like too.
+    @Test
+    fun `sanitizeExceptionMessage masks a bare hostname DNS failure`() {
+        assertEquals(
+            "Failed to submit crash report: [HOST]",
+            LogSanitizer.sanitizeExceptionMessage("Failed to submit crash report: api.risaboss.com"),
+        )
+    }
+
+    @Test
+    fun `sanitizeExceptionMessage masks a bare hostname with a port, proxy-connect shape`() {
+        assertEquals(
+            "Failed to submit crash report: Connect to [HOST]:3128 failed",
+            LogSanitizer.sanitizeExceptionMessage(
+                "Failed to submit crash report: Connect to proxy.corp.internal:3128 failed",
+            ),
+        )
+    }
+
+    @Test
+    fun `sanitizeExceptionMessage masks a bare hostname ending in dot-local`() {
+        assertEquals("Could not reach [HOST]", LogSanitizer.sanitizeExceptionMessage("Could not reach printer.local"))
+    }
+
+    @Test
+    fun `sanitizeExceptionMessage still masks a hostname carried in a URL`() {
+        // Already covered before #109 - pinned again here so the new bare-hostname pass is
+        // proven not to leave a URL's host raw when the existing URL/path passes already
+        // consumed it.
+        val result =
+            LogSanitizer.sanitizeExceptionMessage(
+                "[url=https://api.risaboss.com/functions/v1/crash-report, …]",
+            )
+        assertFalse(result.contains("api.risaboss.com"), "hostname leaked through a URL: $result")
+    }
+
+    // BossConsole#109 (review comment): filePathPattern's `[^\s:]+` stops at a colon, so a
+    // sensitive query/fragment value containing one is only partly consumed and the tail
+    // survives verbatim - a genuine token-fragment leak, not a cosmetic gap.
+    @Test
+    fun `sanitizeExceptionMessage does not leak a token fragment when its value contains a colon`() {
+        val result =
+            LogSanitizer.sanitizeExceptionMessage(
+                "Failed: [url=https://api.example.com/cb?token=abc:def]",
+            )
+        assertFalse(result.contains("abc"), "token fragment leaked before the colon: $result")
+        assertFalse(result.contains("def"), "token fragment leaked after the colon: $result")
+        assertFalse(result.contains(":def"), "the exact reported leak shape: $result")
+    }
+
+    @Test
+    fun `sanitizeExceptionMessage redacts a colon-bearing secret in a URL fragment too`() {
+        val result =
+            LogSanitizer.sanitizeExceptionMessage(
+                "Deep link boss://auth#access_token=abc:def&type=recovery rejected",
+            )
+        assertFalse(result.contains("abc"), "fragment token leaked: $result")
+        assertFalse(result.contains(":def"), "fragment token leaked after colon: $result")
+    }
+
+    @Test
+    fun `sanitizeExceptionMessage leaves a non-sensitive query param untouched by the new pass`() {
+        // The new pre-pass only fires for names nameMarksSecret recognises. A non-sensitive
+        // param's colon is not this fix's scope - it must still hit filePathPattern's
+        // pre-existing colon boundary exactly as before, unchanged by this fix.
+        assertEquals(
+            "Redirected to https:[PATH]:b",
+            LogSanitizer.sanitizeExceptionMessage("Redirected to https://api.example.com/go?next=a:b"),
+        )
+    }
+
+    @Test
+    fun `sanitizeExceptionMessage still keeps a colon-free token carried in a URL redacted exactly as before`() {
+        // Regression guard: the new pre-pass must not change the already-pinned output for
+        // the ordinary (no-colon) case in `sanitizeExceptionMessage keeps a token carried in a
+        // URL redacted` above.
+        assertEquals(
+            "Request to https:[PATH] failed",
+            LogSanitizer.sanitizeExceptionMessage(
+                "Request to https://api.example.com/auth/v1/verify?access_token=eyJhbGciOiJIUzI1NiJ9.abc.def failed",
+            ),
+        )
+    }
+
+    @Test
+    fun `sanitizeExceptionMessage does not mistake a fully-qualified class name for a hostname`() {
+        // The exact false-positive risk a naive hostname pattern would create: Kotlin/Java
+        // exception messages are full of dotted package.Class names, and none of them may be
+        // redacted - that would throw away the one thing an exception message is for.
+        val message =
+            "ai.rever.boss.services.supabase.SecretService threw kotlinx.coroutines.TimeoutCancellationException"
+        assertEquals(message, LogSanitizer.sanitizeExceptionMessage(message))
+    }
+
+    @Test
+    fun `sanitizeExceptionMessage does not mistake a version number for a hostname`() {
+        val message = "requires gradle 9.5.8 or newer"
+        assertEquals(message, LogSanitizer.sanitizeExceptionMessage(message))
+    }
+
     // =========================================================================
     // sanitizeStackTrace Tests
     // =========================================================================
@@ -531,6 +654,13 @@ class LogSanitizerTest {
         // The frame either side of it is untouched.
         assertTrue(result.contains("ai.rever.boss.services.auth.SessionManager.refreshSession(SessionManager.kt:142)"))
         assertFalse(result.contains("IkpXVCJ9"))
+    }
+
+    @Test
+    fun `sanitizeStackTrace redacts a private hostname in a Caused by line`() {
+        val trace = "Caused by: java.net.UnknownHostException: internal.service.local"
+
+        assertEquals("Caused by: java.net.UnknownHostException: [HOST]", LogSanitizer.sanitizeStackTrace(trace))
     }
 
     @Test

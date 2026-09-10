@@ -30,9 +30,8 @@ class ProcessRegistry {
         val replaced = processes.put(id, process)
         // Replacing a *dead* handle is normal - that is what a respawn does. Replacing a live one
         // means two callers picked the same process id, and the evicted child becomes invisible to
-        // the shutdown hook while still running, i.e. an orphan. The known way to reach this is two
-        // windows spawning the same out-of-process plugin, since `plugin-<id>` carries no window
-        // discriminator while the registry is process-wide.
+        // the shutdown hook while still running, i.e. an orphan. Window-owned plugin spawners
+        // now use window-scoped identities; retain this diagnostic for any other colliding caller.
         if (replaced != null && replaced !== process && replaced.isAlive) {
             logger.warn(
                 "Registered id={} replaced a LIVE handle (pid={} -> {}); the evicted child will not be reaped",

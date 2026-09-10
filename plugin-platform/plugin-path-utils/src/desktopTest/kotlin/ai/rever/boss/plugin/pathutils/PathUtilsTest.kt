@@ -46,6 +46,13 @@ class PathUtilsTest {
     @Nested
     inner class ExtractParentNameTests {
         @Test
+        fun `files without a path have no parent`() {
+            assertEquals("", "README.md".extractParentName())
+            assertEquals("", "Dockerfile".extractParentName())
+            assertEquals("", ".gitignore".extractParentName())
+        }
+
+        @Test
         fun `handles Unix paths`() {
             assertEquals("to", "/path/to/file.txt".extractParentName())
             assertEquals("bin", "/usr/local/bin/script.sh".extractParentName())
@@ -61,6 +68,15 @@ class PathUtilsTest {
         fun `handles mixed separators`() {
             assertEquals("Documents", "C:/Users\\Documents/file.txt".extractParentName())
             assertEquals("app", "/home/user/projects/app/config.yml".extractParentName())
+        }
+
+        @Test
+        fun `repeated separators do not become part of the parent name`() {
+            assertEquals("to", "/path/to//file.txt".extractParentName())
+            assertEquals("Documents", "C:\\Users\\Documents\\\\file.txt".extractParentName())
+            assertEquals("Documents", "C:/Users/Documents/\\/file.txt".extractParentName())
+            assertEquals("share", "\\\\server\\share\\\\file.txt".extractParentName())
+            assertEquals("", "///file.txt".extractParentName())
         }
 
         @Test

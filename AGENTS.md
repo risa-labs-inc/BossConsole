@@ -122,6 +122,18 @@ an update-shaped verb (or an intent parameter) on the api rather than a change t
   dependency) and `PluginUpdateBridge` (an update can add a dependency the installed version
   never declared). A **reload** must not report: `resetPluginInstances`, the Toolbox reload and
   the evolver's hot reload all end in a load, and none is a user asking for anything.
+  **Re-enable is a user action in a way a reload is not.** `enablePlugin` and `handleAccessChange`
+  (RBAC un-hide) never go through those three install reporters, and after #178 a required
+  dependency can be removed while its dependent sits disabled. Both paths therefore raise the
+  same prompt via `DynamicPluginManager.onPluginActivated`, wired by `PluginLoaderDelegateSetup`
+  to `MissingDependencyReporter.report`. A redundant enable (already enabled) does not re-offer.
+  `PluginAccessTransitions` reconciles the first access snapshot, login and account changes
+  silently; only subsequent access changes for the same authenticated user can report.
+  An authenticated user with no permissions still establishes a baseline, so their first
+  real grant reports. Notification queues `reportPluginActivation` on the manager's scope,
+  checks files on `Dispatchers.IO` outside the registration lock, and uses the captured manifest.
+  The Enable caller never suspends on this advisory work before persisting its enabled flag;
+  cancellation belongs to the manager lifecycle. Manifests without dependencies skip reporting.
 - **Optional dependencies are reported, flagged, not dropped.** An optional dependency is how a
   plugin says "this feature needs that plugin". Dropping them would leave this reporting
   nothing for the case it was built for.
@@ -179,10 +191,40 @@ Reporting is gated to the install entry point. `doReloadPlugin` finishes by call
 the evolver's hot reload - none of which is a user asking to install anything, and re-offering a
 dependency someone declined on every reload would be worse than silence.
 
+**Transitive dependencies are resolved in the consent dialog, before installation.** The dialog
+calls `MissingDependencyInstaller.planFor`, which on the store-backed installer walks the store's
+`dependencies` column through `PluginDependencyResolution.installPlan` - dependencies first, each
+plugin asked about once, cycles and a size cap tolerated and logged - and shows the extra ids as
+a scrollable "Also installs" list under the plugin id. Every id stays readable; do not
+ellipsize consent to additional installs. Install then runs `installAll` over that plan and
+stops at the first failure, leaving what came before it. The dependency still loads through the
+manager directly rather than `loadPlugin`, and for the same reason as before: answering one
+question must never produce a second dialog. What changed is that the first question now covers
+the whole closure, where it used to cover one plugin and stay silent about the rest.
+
+Three properties of the plan are worth knowing before touching it. The plugin the user was asked
+about is always in the plan and always last, even if it turns out to be present, because the
+Install guard already answers that and an empty plan has no sensible reading. A store that cannot
+describe a plugin contributes null, and that plugin is attempted but not expanded. If it cannot
+install, the plan stops before its dependents, including the root; metadata failure is not proof
+that an unknown dependency is optional. Finally, `planFor` has a default of "the plugin alone" on
+the interface, because `PluginLoadGateRecovery` and `PluginStoreVersionBridge` install a plugin the
+user named and were never shown a closure to consent to; only the dialog asks for a plan.
+
+The entire accepted plan is detached from the window, so closing the observing window does not
+abandon later dependencies or the root. Different consent lists can run concurrently; ordering is
+guaranteed within each plan, not across windows that accepted different lists.
+
 Deliberately out of scope, so nobody assumes more than exists:
 
-- **Transitive dependencies are not chased.** The dependency loads through the manager directly,
-  so answering one question never produces a second dialog.
+- **Optionality is not followed across the store.** `PluginInfo.dependencies` is a list of ids;
+  the `optional` flag lives in the jar's own manifest, which is not available before a download
+  the user has not agreed to. Every transitive edge is therefore treated as required. A plugin
+  whose jar declares a dependency its store row did not is logged, not prompted for and not
+  installed - consent was for the list shown.
+- **A failed plan is not rolled back.** A dependency installed on its own is harmless and may
+  already be wanted by something else; deleting it to tidy up a failure would be the one outcome
+  worse than the failure.
 - **`PluginDependency.version` is ignored.** Presence is by id, matching `checkCanUnload`. A
   plugin needing 2.x is satisfied by 1.x, and a prompt could not usefully fix a wrong-version
   install anyway.
@@ -493,11 +535,16 @@ installed build at once. Note the wildcard `kotlinx.serialization.json.*` import
 files keeps `Json.Default` in scope, so the broken thing is what you get by not thinking
 about it.
 
-Leniency covers extra keys and nothing else. A null in a non-nullable slot still throws
-for the whole list, so **declare every projected column `T? = null`** except the key. Unlike
-the other two rules here, this one is **convention, upheld by review** - no test enforces it,
-and the existing models do not all follow it yet (they are safe only because the columns
-behind them are `NOT NULL` today).
+The decoder ignores extra keys and coerces nulls/unknown enums only for properties with
+defaults. This can hide genuine server bugs; required properties without defaults still
+fail. Continue to **declare every projected column `T? = null`** except the key; this
+model convention is upheld by review, and not all existing models follow it yet.
+
+Only the unpaginated `getSecretShares` list recovers individual malformed rows. It logs
+counts without payloads and fails if a nonempty response has no decodable rows. Paginated
+secret lists stay atomic because the pinned plugin API has no raw next-offset field and
+clients advance by returned `data.size`. Role/permission lists also stay atomic because
+authorization must distinguish an incomplete response from a valid denial.
 
 **Log `sanitizeSupabaseFailure(op, e)`, never the raw exception.** kotlinx appends the
 whole offending document to a malformed-input error, and these bodies carry passwords the
@@ -563,6 +610,39 @@ logger.error(LogCategory.NETWORK, "Request failed", error = exception)
 
 **Config**: Set `BOSS_LOG_LEVEL` env var or `boss.log.level` system property (TRACE/DEBUG/INFO/WARN/ERROR)
 
+## Browser native disposal
+
+`BrowserHandleImpl.dispose()` invalidates the handle and detaches its UI, then
+`BrowserNativeDisposal` closes the browser only after its owned renderer-call
+executors drain. Direct plugin disposal and host window teardown share this
+boundary. Never replace the drain with a fixed timeout followed by `browser.close()`:
+cancelling a caller's coroutine does not stop a JxBrowser round trip.
+
+`DrainingBrowserExecutor` signals actual executor termination, including failed
+calls and cancelled queued jobs. Waiting suspends in a host-owned scope without
+parking another thread. Keep `executeJavaScript` on `BoundedBrowserCall`: the
+JxBrowser async Consumer overload does not invoke its consumer on RPC error, so
+that callback alone cannot settle a native-operation count.
+
+Profile release must follow `awaitNativeDisposal`, through `disposeBrowserResources`.
+Its cleanup outlives cancellation of the caller. Both service entry points return
+without awaiting native close. A drain pending after ten seconds warns once with
+the handle id, then continues waiting safely.
+
+A genuinely wedged call retains its browser/profile until it returns or engine
+recovery releases it; native-close failure retains the potentially live profile
+and is logged. Keep its fence and `inUse` protection: dropping both would let a
+new browser reuse it or LRU eviction delete it. Named-profile creation/seeding
+waits at most ten seconds to acquire the fence, then reports that it is still in
+use rather than suspending indefinitely.
+
+The process-wide cleanup scopes use daemon threads. The shutdown hook does not
+drain them before forced engine close/process exit, so pending native close and
+profile cleanup can be abandoned at exit. Ephemeral leftovers are reclaimed on
+the next managed-profile creation. This is not a guaranteed shutdown flush. This
+is not an engine-abort mechanism and does not coordinate external raw-JxBrowser
+callers or engine-level forced closure.
+
 ## Browser telemetry, and how to turn it off
 
 The integrated browser reports which sites BOSS is used with and how - page views,
@@ -614,6 +694,44 @@ The recognizer is a port of Chrome's own (`history_swiper.mm`): three cancellati
 vertical measured as a path length and horizontal as net displacement. Chrome's absolute thresholds
 are fractions of the trackpad from `NSTouch.normalizedPosition`, which a page cannot see, so those
 carry over as the same fractions of the commit distance.
+
+**It commits at the end of the gesture, not on crossing the commit distance** - and "end of
+gesture" is literally `GESTURE_GAP_MS` (120ms) with no wheel event, because AWT does not surface
+NSEvent's scroll phases and a time gap is the only segmentation signal there is. So it is not
+release: holding past the line and simply STOPPING, fingers still down, commits after 120ms too.
+The window in which reversing still cancels is 120ms of continuous motion, not "until you lift".
+The decision reads the LAST horizontal position, so easing back below the line cancels.
+
+That makes `GESTURE_GAP_MS` do three jobs at once: segmenting one gesture from the next, setting a
+floor on commit latency, and (as the minimum possible gap between two gesture ends) bounding
+`SWIPE_NAV_DEBOUNCE_MS` from above. Raising or lowering it touches all three, and
+`BrowserSwipeNavTest` reads it out of the script so the third one fails loudly.
+
+**Past the commit distance, vertical drift stops cancelling** (`reachedCommit`). Vertical is a path
+length and only ever grows, so every event after the crossing was one more chance to cancel a swipe
+the user had already completed. Before the line the three tiers apply unchanged; after it, only
+easing back or reversing can still cancel. Native swipe-back behaves the same way.
+
+**Two host-side windows, for two different things** (`BrowserSwipeNavBridge.kt`).
+`SWIPE_NAV_DEBOUNCE_MS` (32ms, any direction) catches a double-dispatch bug in the bridge.
+`SWIPE_NAV_REPEAT_MS` (400ms, same direction only) is the paused-drag guard: a slow drag that
+hesitates past `GESTURE_GAP_MS` with the fingers down is two gestures to the script and would
+navigate back twice. That guard cannot live in the page - the first commit navigates the tab and
+the script's state dies with the document. The cost is that two intentional same-direction swipes
+under 400ms apart become one; that is the deliberate trade, because a dropped swipe is retryable
+and an extra step back may not be, since the forward entry need not survive a redirect. A reversal
+is never held for the repeat window.
+
+**Momentum phase costs latency and nothing else.** A `CGEvent` tap on this hardware (measured
+2026-09-02) shows macOS emitting momentum-phase scroll for 180-870ms after the fingers lift,
+carrying 325-2500px of horizontal travel. Whether Chromium forwards those to the renderer as
+`wheel` events is NOT confirmed: if it does, each one re-arms the end-of-gesture timer and a flick
+commits at end-of-momentum instead of at release. It cannot change the ANSWER - a tail runs the
+flick's own direction, so it can neither reverse nor ease back, and `reachedCommit` is what closed
+the remaining path, a tail's `deltaY` tripping the vertical tiers. Synthetic phase-tagged events
+cannot settle the forwarding question - `CGEventPost` from another process never reaches the
+layered native browser surface, and does not even enter the session event stream - so it needs one
+real flick against a recording `wheel` listener.
 
 **Off switch**: `Settings > Browser > Trackpad`, stored in `~/.boss/swipe-nav.json`, or
 `BOSS_BROWSER_SWIPE_NAV=false` (also `0` / `no` / `off`). The environment wins, and the Settings row
@@ -714,6 +832,15 @@ minted at startup, and listens on a Unix-domain socket in that directory (macOS,
 Linux) or a loopback port (Windows). Every request must present the token,
 "another instance is running" means something answered on the channel rather than
 a pid existing, and a descriptor nobody answers on is reclaimed.
+
+A forwarded plugin action (`boss://plugin?id=...&action=...`) is acknowledged
+only when its handler reports true. Missing ids, missing handlers, declined
+and throwing handlers report failure. The channel waits up to five seconds;
+a timeout reports an unknown outcome and cancels dispatch if it is still queued.
+An already-running synchronous handler cannot be interrupted. Startup therefore
+never retries plugin actions automatically, even after a lost response; auth and
+other open requests retain their existing retries. Panel-open links still only
+acknowledge queuing. The wire verdict does not change OS/CLI callers that ignore it.
 
 ## Every OS open request becomes a `boss://` link
 
@@ -931,6 +1058,8 @@ the whole `TabTypeId`, whose equality includes `pluginId` and `defaultOrder`.
 
 ## Documentation
 
+- [MCP for agent-less operators](docs/mcp-agentless-operators.md) - Toolbox kill-switches and attach path
+
 - [Core Subsystems](docs/SUBSYSTEMS.md) - Auth, UI, keyboard shortcuts, threading, default applications, runner, BossTerm
 - [BossEditor](docs/BOSSEDITOR.md) - External editor dependency, LSP, PSI, editor features
 - [Application Features](docs/FEATURES.md) - Performance monitoring, dashboard, downloads, Chromium branding
@@ -941,3 +1070,22 @@ the whole `TabTypeId`, whose equality includes `pluginId` and `defaultOrder`.
 - [Windows Deep Link](docs/WINDOWS_DEEP_LINK_SETUP.md) - Windows protocol handler setup
 - [Release Rebuild](docs/RELEASE_REBUILD_GUIDE.md) - Re-running release builds
 
+
+
+### Governed MCP invocation (#371)
+
+The host policy applies to registry invocation; it does not isolate installed JVM
+plugins. Unknown tool names default to ALLOW. Known mutations default to ASK with
+a 45-second timeout. Each queued prompt is delivered to exactly one window and
+window teardown denies its owned request. Session trust is process-wide and can
+be cleared using “Revoke MCP session trust” in the bottom bar; restore the bar if
+it is hidden. Persistent rules currently require editing ~/.boss/mcp-tool-policy.json
+and restarting. Preserve a backup before manual recovery of a damaged policy;
+the fault flow withholds all tools until recovery. No automatic quarantine UI is
+provided. Ledger redaction is bounded and best effort, not a guarantee for secrets
+under arbitrary keys. Queue overflow and cancellation before/after dispatch have
+distinct ledger dispositions. Risk classification from #336 feeds this same policy and approval path; there is
+no second sandbox prompt. Explicit policies and session trust retain precedence.
+HIGH/CRITICAL names use the mutating default, while unknown names remain allowed
+by default. Risk reasons and sanitized arguments appear together in the existing
+approval dialog. #362 is closed pending extraction into a management plugin.

@@ -22,11 +22,26 @@ The application features a comprehensive keyboard shortcuts system (Issue #201) 
 ### Event Flow
 
 1. **MenuBar** (native OS level) - Handles GLOBAL context shortcuts via native menu accelerators
-2. **KeyboardEventBus** - Central event distribution with priority-based handling:
+2. **AWTKeyboardInterceptor** - A `KeyEventDispatcher` installed on the `KeyboardFocusManager`,
+   so it sees the event before any Swing/AWT component does. This is what makes shortcuts work
+   while a terminal or browser holds focus: BossTerm consumes every key it is given for terminal
+   emulation, and JxBrowser's page surface is a heavyweight component, so without this the only
+   shortcuts that survived would be the ones the native menu carries an accelerator for. It reads
+   the keymap directly and, after handling double-shift and key releases, skips ordinary
+   chord matching unless Cmd, Ctrl or Alt is down.
+3. **KeyboardEventBus** - Central event distribution with priority-based handling:
    - **COMPONENT** (priority 0) - Terminal, browser, editor handle their own shortcuts first
    - **WORKSPACE** (priority 1) - Workspace-level shortcuts (panel navigation, workspace save)
    - **GLOBAL** (priority 2) - App-wide shortcuts (window management, settings, focus mode)
-3. **BossActionHandler** - Executes the actual action for each shortcut
+4. **BossActionHandler** - Executes the actual action for each shortcut
+
+**Two matchers, not one.** `AWTKeyboardInterceptor` answers from AWT key codes; `KeymapMatcher`
+answers from Compose `KeyEvent`s and serves `KeymapHandler.getMatchingBindings` and the
+remote-surface key tap. The Shortcuts screen's tester performs static configuration checks;
+it does not send a key event through either matcher. They read the same keymap but
+name keys from different sources, which is why the fold described under
+[Key names](#key-names) exists. A chord that works in one place and silently does nothing in
+another can indicate different key names, focus routing, modifiers or lifecycle conditions.
 
 ### Key Components
 
@@ -34,7 +49,12 @@ The application features a comprehensive keyboard shortcuts system (Issue #201) 
 - `ShortcutContext.kt` - Enum defining where shortcuts are active
 - `KeyBinding.kt` - Individual shortcut with key, modifiers, context, category, description
 - `KeymapSettings.kt` - Container for all shortcuts with preset tracking
-- `KeymapActions.kt` - Registry of 20 action IDs across 8 categories
+- `KeymapActions.kt` - Registry of 47 action IDs across 11 categories
+
+**AWT interception** (`composeApp/src/desktopMain/kotlin/ai/rever/boss/window/`):
+- `AWTKeyboardInterceptor.kt` - The `KeyboardFocusManager` dispatcher described above. Also owns
+  double-shift detection and the MRU tab cycle, both of which need key-up events that never reach
+  Compose.
 
 **Handler System** (`composeApp/src/commonMain/kotlin/ai/rever/boss/keymap/handler/`):
 - `KeymapMatcher.kt` - Matches keyboard events to configured bindings
@@ -56,21 +76,35 @@ The application features a comprehensive keyboard shortcuts system (Issue #201) 
 - `KeymapSettingsManager.kt` - Expect/actual pattern for platform-specific persistence
 - Desktop implementation saves to `~/.boss/keymap-settings.json`
 
-## Available Actions (20 total)
+## Available Actions (47 total)
 
 ### Window Management (2)
 - `window.new` - Create new window
 - `window.close` - Close current window
 
-### Tab Management (2)
+### Tab Management (16)
 - `tab.new` - Open new tab dialog
 - `tab.close` - Close current tab (or window if last tab)
+- `tab.next` / `tab.previous` - Step tabs following the configured tab-switch mode (MRU by
+  default, with the switcher overlay). Held-modifier driven: the MRU cycle commits when the
+  modifier is released.
+- `tab.reopen_closed` - Reopen the most recently closed tab. Works for every tab type; the
+  history is per window and holds 25 entries
+- `tab.next_positional` / `tab.previous_positional` - Step in tab-bar order regardless of the
+  tab-switch mode, and start no MRU cycle. Separate actions because these chords are discrete,
+  so an MRU cycle armed by one would never be committed
+- `tab.select_1` .. `tab.select_8` - Select the tab at that position
+- `tab.select_last` - Select the last tab, whatever its index (the browser meaning of Cmd+9)
 
-### Browser Controls (4)
-- `browser.reload` - Reload browser tab (BROWSER context only)
-- `browser.zoom_reset` - Reset zoom to 100% (BROWSER context only)
-- `browser.zoom_in` - Increase zoom (BROWSER context only)
-- `browser.zoom_out` - Decrease zoom (BROWSER context only)
+### Browser Controls (8)
+All BROWSER context only.
+- `browser.reload` - Reload browser tab
+- `browser.zoom_reset` - Reset zoom to 100%
+- `browser.zoom_in` - Increase zoom
+- `browser.zoom_out` - Decrease zoom
+- `browser.find` - Find text on page
+- `browser.back` / `browser.forward` - Browser history
+- `browser.devtools` - Open developer tools
 
 ### Navigation (7)
 - `panel.navigate_left` - Switch to left panel
@@ -84,15 +118,41 @@ The application features a comprehensive keyboard shortcuts system (Issue #201) 
 ### Workspace (1)
 - `workspace.save` - Save current workspace layout (WORKSPACE context)
 
+### Editor (7)
+All EDITOR context only. Several exist so the chord is listed and rebindable while the editor
+plugin serves it from its own key handling, `editor.go_to_line` among them; the AWT interceptor
+has no dispatch case for those and deliberately leaves the event to propagate.
+- `editor.save` / `editor.save_all` - Save the current file / all files
+- `editor.find` / `editor.replace` - Find, find and replace
+- `editor.find_next` / `editor.find_previous` - Step matches
+- `editor.go_to_line` - Go to line number
+
 ### Tools (1)
 - `codebase.open` - Open CodeBase panel
+
+### Search (1)
+- `search.open` - Open global search (Double-Shift)
 
 ### View/UI (2)
 - `view.focus_mode_toggle` - Toggle focus mode (hide/show UI bars)
 - `view.settings_open` - Open application settings (works in focus mode)
 
+### Help (1)
+- `help.shortcuts` - Show the keyboard shortcuts help dialog
+
 ### Debug (1)
 - `test.external_link` - Test external link handling (debug only)
+
+### Plugin-contributed actions
+
+Plugins can contribute their own global actions via `PluginContext.registerShortcutActionProvider`,
+under ids namespaced `plugin.<pluginId>.<name>`. These are GLOBAL only and are not listed above,
+because the set depends on which plugins are installed. A host binding always wins a chord
+collision, and a user rebind stored under the plugin's action id supersedes the plugin's default.
+
+The fluck browser contributes `Focus Address Bar` on Cmd+L, which is why `editor.go_to_line`
+shares that chord: the interceptor stops at a matched host binding rather than falling through to
+the plugin pass, so Cmd+L is Go To Line in an editor and Focus Address Bar in a browser.
 
 ## Preset Keymaps
 
@@ -106,15 +166,25 @@ Window Management:
 Tab Management:
   Cmd+T               - New tab
   Cmd+W               - Close tab
+  Cmd+Shift+T         - Reopen closed tab
+  Ctrl+Tab            - Next tab (MRU by default; see Tab switch mode)
+  Ctrl+Shift+Tab      - Previous tab
+  Cmd+Opt+Right/Left  - Next/previous tab in tab-bar order
+  Cmd+Shift+] / [     - Same, alternate chords
+  Cmd+1 .. Cmd+8      - Select tab by position
+  Cmd+9               - Select the last tab
 
 Browser Controls (in browser tabs only):
   Cmd+R               - Reload
   Cmd+0               - Reset zoom
-  Cmd+=               - Zoom in
+  Cmd+= / Cmd+Shift+= - Zoom in (the second is what a US layout reports for Cmd+Plus)
   Cmd+-               - Zoom out
+  Cmd+F               - Find on page
+  Cmd+[ / Cmd+]       - Back / forward
+  Cmd+Opt+I           - Developer tools
 
 Navigation:
-  Cmd+Arrow Keys      - Navigate between panels
+  Cmd+Arrow Keys      - Navigate between panels (only with a split open)
   Cmd+Shift+|         - Split current tab vertically
   Cmd+Shift+-         - Split current tab horizontally
   Ctrl+Space          - Quick switcher (Top of Mind)
@@ -132,6 +202,55 @@ View/UI:
 Debug:
   Cmd+Shift+G         - Test external link
 ```
+
+The standard browser chords above are shared by every preset rather than written out per preset,
+via `KeymapPresets.standardBrowserBindings()`. Merging is per keystroke: a chord the preset
+already claims is dropped and the first surviving keystroke becomes the primary. So VS Code and
+IntelliJ, which both put panel navigation on Cmd+Opt+Arrow, get positional tab stepping on
+Cmd+Shift+[ and Cmd+Shift+] instead; IntelliJ keeps Cmd+1 on the Project tool window and gets no
+Cmd+1 tab select.
+
+Existing installs pick these up through `KeymapSettingsManager.migrateSettings`, which adds
+actions missing from a stored keymap and tops up new alternates on bindings whose primary still
+matches the preset. A rebound chord is left alone. Chords are compared order- and
+case-insensitively on both halves, so a hand-edited `["Shift","Cmd"]` reads the same as
+`["Cmd","Shift"]`.
+
+Migration is chord-checked the same way the merge is: a new action whose chords a stored keymap
+already claims is dropped rather than added as a live conflict, which matters here because one
+migration lands twenty chords onto a keymap the user may have customised.
+
+Host bindings beat plugin defaults, and this is where that starts to bite: the new Cmd+1..Cmd+9
+entries permanently shadow any plugin GLOBAL default on those chords, and a host binding the
+interceptor matches but does not dispatch now stops there rather than falling through to the
+plugin pass. That is the documented rule working as intended, but Cmd+1..9 are popular plugin
+chords, and this is the change that closes them. A plugin wanting one has to be rebound by the
+user, which puts it in the keymap where it wins the earlier pass.
+
+### What these chords take from other surfaces
+
+One rule, applied everywhere: a chord is claimed when the action can act, and left alone when it
+cannot. It is NOT gated on focus, because the mechanism that fires these window-wide is a native
+menu accelerator, and a Compose `MenuBar` accelerator ignores the binding's `ShortcutContext`.
+Two consequences worth knowing before filing a bug:
+
+- **Cmd+[ and Cmd+]** become browser history whenever a browser is the visible surface of the
+  active main panel. With a browser there and focus in a sidebar editor, they navigate history
+  rather than outdent and indent. Narrowing further needs a focus signal the menu layer does not
+  have.
+- **Cmd+Opt+Left/Right** (and the Cmd+Shift+Bracket alternates) step tabs whenever the active
+  panel has two or more, whatever surface has focus - so a terminal or editor does not see them
+  in a multi-tab panel. This is the same rule as above, not a different one: the action can act,
+  so the chord is claimed. Cmd+1..Cmd+8 in a two-tab panel is the mirror image - the action
+  cannot act, so the chord goes through.
+
+A chord that cannot act is not claimed. Cmd+1..Cmd+8 with fewer tabs than that, Cmd+9 with no
+tabs, Cmd+Shift+T with an empty history, tab stepping in a single-tab panel and panel navigation
+in a single-panel window all propagate to whatever has focus instead of being swallowed. This
+matters because a native menu accelerator fires window-wide whatever the binding's context, so an
+always-enabled item would take Cmd+[ from an editor, where it is outdent. Browsers do consume
+Cmd+1..9 unconditionally; BOSS does not, because those chords reach surfaces a browser has no
+equivalent of.
 
 ### VS Code Preset
 
@@ -211,6 +330,59 @@ Configuration file location: `~/.boss/keymap-settings.json`
 }
 ```
 
+## Key names
+
+`keymap-settings.json` is documented above as hand-editable, so this is the vocabulary a `"key"`
+value is read against.
+
+**One key has several spellings, and all of them work.** Comparison folds through
+`canonicalKeyName` (`keymap/model/KeyBinding.kt`) before live events are matched, signed for conflict
+detection, or compared during preset migration. Case is not significant.
+
+| Key | Spellings that all mean the same key |
+|---|---|
+| Arrows | `DirectionLeft`, `Left`, `ArrowLeft`, `←` (and the same shape for Right/Up/Down) |
+| Space | `Spacebar`, `Space`, `␣`, `" "` (one literal space) |
+| Escape | `Escape`, `Esc` |
+| Enter | `Enter`, `Return` |
+| Brackets | `OpenBracket`, `Open Bracket`, `Left Bracket`, `LeftBracket`, `[` (and the closing pair) |
+| Equals | `Equals`, `Plus`, `+`, `=` |
+| Digits | `Zero`/`0` through `Nine`/`9` |
+| Punctuation | `Minus`/`-`, `Slash`/`/`/`?`, `Backslash`/`\`, `Semicolon`/`;`, `Apostrophe`/`'`, `Comma`/`,`, `Period`/`.`, `Grave`/`` ` `` |
+
+Prefer the first spelling in each row when editing by hand, such as `DirectionLeft` or
+`OpenBracket`. These follow the preset vocabulary where presets bind the key; the left column
+groups key types. Single-spelling names such as `F5`, `Tab`, `Home`, `End`, `Backspace` and
+`Delete` also work. The aliases are covered by
+[`CanonicalKeyNameTest`](../composeApp/src/desktopTest/kotlin/ai/rever/boss/keymap/CanonicalKeyNameTest.kt).
+
+**Why there is more than one spelling to fold.** These sources supply key names with different spellings:
+
+- **The presets**, which use names such as `DirectionLeft` and `OpenBracket` (not always
+  the literal Compose property name: Compose calls the bracket key `LeftBracket`).
+- **`AWTKeyboardInterceptor.getKeyName`**, a hand-maintained table over AWT key codes.
+- **`Key.toString()`**, which supplies the Compose matcher's event name.
+- **Legacy shortcut capture** wrote `Key.keyCode.toString()` instead of a name. Builds with
+  the capture fix store a folded name; older builds produce the numeric values discussed below.
+
+The third is worth knowing about before relying on it, because it is not stable.
+`Key.toString()` falls through to AWT's `KeyEvent.getKeyText`, which answers with a word while
+the AWT toolkit is cold and with the platform glyph once it is up. Measured on macOS, JDK 21:
+
+| `Key` | headless / toolkit cold | running app | preset spelling |
+|---|---|---|---|
+| `Key.Tab` | `Tab` | `⇥` | `Tab` |
+| `Key.DirectionLeft` | `Left` | `←` | `DirectionLeft` |
+| `Key.LeftBracket` | `Open Bracket` | `[` | `OpenBracket` |
+| `Key.RightBracket` | `Close Bracket` | `]` | `CloseBracket` |
+
+Every cell in a row is the same key. Which one you get depends on nothing the user did, and the
+spellings are platform-dependent on top of that.
+
+So a hand-written comparison against a key name is a bug waiting to happen, and has been one
+several times. Anything comparing key names should call `canonicalKeyName`, and anything
+persisting one should fold it first rather than storing what was rendered.
+
 ## Troubleshooting
 
 If shortcuts stop working:
@@ -220,14 +392,27 @@ If shortcuts stop working:
 4. Verify the correct preset is selected
 
 Common issues:
+- **A shortcut you rebound yourself does nothing.** Open the file and look at its `"key"`. If it
+  is a long number (`"key": "4294967333"`), that is a packed `Key.keyCode` rather than a name and
+  older builds cannot match it. Builds with the legacy-key repair convert recognised codes
+  during settings migration and at match time. Replace an unresolved value with a key name
+  from [Key names](#key-names). Re-recording is an option only on builds with the capture fix;
+  on older builds the Shortcuts UI writes the numeric code again.
+- **A shortcut works in one place but not another.** The two matchers name keys from different
+  sources (see [Key names](#key-names)). Compare focus routing, required modifiers and lifecycle
+  conditions as well as the stored name. A tester result is a configuration check, not proof
+  that an event was dispatched or an action executed. Older testers also reject working names
+  such as `F5`, `Left Bracket` and `←`; their FAILED verdict is not proof of a broken binding.
 - **Stale settings file**: Delete `~/.boss/keymap-settings.json` and restart
 - **Conflicts**: Settings UI shows visual warnings for conflicting shortcuts
 - **Focus mode**: Settings window and shortcuts work in focus mode (fixed in Issue #74)
 
-## Remote plugin surfaces are keystroke sinks while focused
+## Remote plugin surfaces declare raw key delivery
 
 A remote (out-of-process) plugin surface taps keys the host did not claim and forwards them to the
-plugin as `UIEvent.key`. Three things bound that, and one thing does not:
+plugin as `UIEvent.key` only when its registration declares `wants_keys = true`.
+Omitted or false declarations disable the tap and reject key events at the outgoing queue,
+including while a renderer still holds state from a previous registration. Three routing rules apply:
 
 - **The host keymap wins.** `AWTKeyboardInterceptor` runs at the `KeyboardFocusManager`, upstream of
   Compose, and consumes what it dispatches - so a bound shortcut never reaches a plugin surface. The
@@ -241,9 +426,11 @@ plugin as `UIEvent.key`. Three things bound that, and one thing does not:
 - **The tap never consumes.** It always returns `false`, so a plugin cannot swallow a shortcut or trap
   the user in a panel.
 
-**What is not bounded is which plugin may listen.** `Modifier.forwardUnclaimedKeys` ends in
-`.focusable()`, so a remote surface is a focus target in its own right - a surface made only of labels
-can still take focus and receive every unclaimed key-down, including plain typing when no widget inside
-it holds focus. There is no plugin capability model gating that today. The intended fix is a declared
-opt-in (a `wants_keys` flag on `UIRegistration`), which makes both the focus stop and the tap something
-a plugin asks for; it needs the same per-connection plugin identity as attributing `UnregisterUI`.
+The surface root is never a focus target of its own, even with `wants_keys = true`; an interactive
+child must hold focus. Text changes, clicks, scrolls and lifecycle events do not require this flag.
+
+The field is additive on the wire but changes behavior for older plugins: an omitted declaration
+now disables previously implicit raw key delivery. Plugin authors who need it must opt in.
+This is a declaration, not user consent: there is no prompt or user-managed permission, and a
+plugin can declare the flag itself. The existing authenticated process identity still determines
+which process may register and stream the surface.

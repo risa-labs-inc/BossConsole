@@ -170,12 +170,17 @@ fun ColumnScope.BossVerticalTabStrip(
  *
  * @param groups one per pane, from `rememberWindowTabGroups`.
  * @param onNewTab the "+" at the foot, which opens a tab in the pane that owns the bar's chrome.
+ * @param belowTabs window chrome for the very bottom of the rail, under the "+". The host's own
+ *   actions - Sign Out, Settings, Tools, Search - land here when nothing else is left to hold
+ *   them, which is the whole reason a collapsed bar no longer sends them to a floating overlay.
+ *   See `focusQuickActionsPlacement`. Renders nothing when there is nothing to put there.
  */
 @Composable
 fun BossTabRail(
     groups: List<TabBarGroup>,
     onExpand: () -> Unit,
     onNewTab: () -> Unit,
+    belowTabs: @Composable () -> Unit = {},
 ) {
     val colors = BossTheme.colors
     Column(
@@ -222,6 +227,10 @@ fun BossTabRail(
             contentDescription = "New Tab",
             onClick = onNewTab,
         )
+        // Below the "+", not above it: that button belongs to the tabs this rail is a list of,
+        // and these belong to the app. The slot draws its own rule, so a rail with nothing to put
+        // here ends at the "+" exactly as it always did.
+        belowTabs()
     }
 }
 

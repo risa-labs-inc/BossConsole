@@ -1,7 +1,13 @@
 package ai.rever.boss.services.supabase
 
+import ai.rever.boss.utils.logging.ComponentLogger
+import ai.rever.boss.utils.logging.LogCategory
+import io.github.jan.supabase.exceptions.RestException
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.decodeFromJsonElement
 
 /**
  * The Json instance for every Supabase payload in this package, in both directions.
@@ -23,9 +29,11 @@ import kotlinx.serialization.json.Json
  * but a WARN in the log.
  *
  * It lives here rather than inside one service on purpose: the hazard is a property of
- * the DEPLOYMENT, not of any single file, so every service that decodes a server response
- * is exposed to it equally. `RoleService` and `RoleCreationService` had not been bitten
- * only because `roles` and `permissions` had not been extended yet.
+ * the DEPLOYMENT, not of any single file, so every service decoding a server response
+ * is exposed equally. Keep the package on one configuration.
+ *
+ * Null coercion helps only properties with defaults. It also hides genuine server null
+ * and enum bugs; required fields without defaults still fail.
  *
  * ## What this buys, and what it costs
  *
@@ -39,7 +47,11 @@ import kotlinx.serialization.json.Json
  * as an alias until those builds age out. Do not read this instance as blanket tolerance
  * of schema drift.
  */
-internal val supabaseJson = Json { ignoreUnknownKeys = true }
+internal val supabaseJson =
+    Json {
+        ignoreUnknownKeys = true
+        coerceInputValues = true
+    }
 
 /**
  * The marker kotlinx puts before the offending document in a parse failure.
@@ -72,12 +84,13 @@ private const val JSON_INPUT_MARKER = "\nJSON input: "
  * is only the malformed-input path that appends the document. The distinction does not
  * matter to callers, so everything is sanitised uniformly.
  *
- * BOUNDED, and deliberately so: anything that is not a `SerializationException` passes
- * through untouched, because network and auth failures are not ours to rewrite and losing
- * their type would break callers that distinguish them. That is not the same as "nothing
- * else can leak" - supabase-kt's `RestException` carries the PostgREST error body, and a
- * constraint violation can echo column values back ("Key (col)=(value) already exists").
- * Do not read this helper as covering every way a payload can escape this package.
+ * BOUNDED, and deliberately so: anything that is not a `SerializationException` or
+ * `RestException` passes through untouched, because unrelated failures are not ours
+ * to rewrite. REST failures (including AuthRestException) lose their original type;
+ * these service callers receive a body-free failure with the HTTP status. That is not
+ * the same as "nothing else can leak" - a constraint violation can echo column values back
+ * ("Key (col)=(value) already exists"). Do not read this helper as covering every way a
+ * payload can escape this package.
  *
  * The diagnostic half of the message is kept deliberately. "Encountered an unknown key
  * 'org_id' at path: $" is exactly what identified this outage; discarding it to be safe
@@ -86,15 +99,26 @@ private const val JSON_INPUT_MARKER = "\nJSON input: "
 internal fun sanitizeSupabaseFailure(
     operation: String,
     error: Throwable,
-): Throwable {
-    if (error !is SerializationException) return error
-    val diagnostic =
-        error.message
-            ?.substringBefore(JSON_INPUT_MARKER)
-            ?.takeIf { it.isNotBlank() }
-            ?: "malformed response"
-    return SupabaseFailure("$operation: $diagnostic")
-}
+): Throwable =
+    when (error) {
+        is RestException -> {
+            // RestException carries the PostgREST error body which can echo column values.
+            SupabaseFailure("$operation: Supabase request failed (HTTP ${error.statusCode})")
+        }
+
+        is SerializationException -> {
+            val diagnostic =
+                error.message
+                    ?.substringBefore(JSON_INPUT_MARKER)
+                    ?.takeIf { it.isNotBlank() }
+                    ?: "malformed response"
+            SupabaseFailure("$operation: $diagnostic")
+        }
+
+        else -> {
+            error
+        }
+    }
 
 /**
  * A decode failure with the response body removed.
@@ -106,3 +130,39 @@ internal fun sanitizeSupabaseFailure(
 internal class SupabaseFailure(
     message: String,
 ) : Exception(message)
+
+/**
+ * Decodes a JSON array of objects, recovering from per-row failures.
+ *
+ * If a single row fails to decode (e.g. malformed null or unrecognized enum),
+ * it drops the bad row and logs it, rather than failing the entire array.
+ */
+internal inline fun <reified T : Any> decodeListRecovering(
+    jsonElement: JsonElement,
+    logger: ComponentLogger,
+    operationName: String,
+): List<T> {
+    val array = jsonElement as? JsonArray ?: throw SupabaseFailure("$operationName: expected response array")
+    var dropped = 0
+    val rows =
+        array.mapNotNull { element ->
+            try {
+                supabaseJson.decodeFromJsonElement<T>(element)
+            } catch (_: SerializationException) {
+                dropped++
+                null
+            }
+        }
+    if (dropped > 0) {
+        // Even a serialization diagnostic can quote a malformed scalar secret value.
+        logger.warn(
+            LogCategory.NETWORK,
+            "Supabase rows dropped in $operationName",
+            data = mapOf("rows_dropped" to dropped, "rows_total" to array.size),
+        )
+    }
+    if (dropped > 0 && rows.isEmpty()) {
+        throw SupabaseFailure("$operationName: no decodable rows")
+    }
+    return rows
+}

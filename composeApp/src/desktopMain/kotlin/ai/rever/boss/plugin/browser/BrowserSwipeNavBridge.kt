@@ -4,6 +4,7 @@ import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import com.teamdev.jxbrowser.js.JsAccessible
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 /** Which way a committed swipe was going. */
 internal enum class SwipeNavDirection { BACK, FORWARD }
@@ -92,19 +93,92 @@ internal fun parseSwipeNavDirection(raw: String?): SwipeNavDirection? =
         else -> null
     }
 
+/** A swipe that navigated: when, and which way. */
+internal data class SwipeNavCommit(
+    val atMs: Long,
+    val direction: SwipeNavDirection,
+)
+
 /**
- * Whether a swipe arriving at [nowMs] should navigate, given when the last one did.
+ * Whether a swipe arriving at [nowMs] should navigate, given the one that last did.
  *
- * The debounce is longer than the 100ms the aux mouse buttons use. A button click is a discrete
- * act; a swipe is a continuous one that a trackpad can re-trigger from the tail of the same finger
- * movement, and going back two pages when the user meant one is not obviously recoverable - the
- * forward entry may not survive the intervening page's redirect.
+ * Two windows, because two different things are being refused.
  *
- * Pure, so the window is pinned by a test rather than by trying to swipe twice quickly by hand.
+ * [SWIPE_NAV_DEBOUNCE_MS] catches a double-fire *bug* in this bridge or its caller, in either
+ * direction. The page cannot produce a real second gesture that fast: `swipe-nav.js`'s `decide()`
+ * calls this at most once per gesture END, and two gesture ends are always at least the script's
+ * own `GESTURE_GAP_MS` apart, because that quiet gap IS how the script tells one gesture from the
+ * next. So the value belongs strictly below that floor and above a same-frame double-dispatch,
+ * with enough headroom that host-side clock jitter cannot eat the difference.
+ *
+ * [SWIPE_NAV_REPEAT_MS] refuses a SAME-DIRECTION repeat, and it is the one guard against a paused
+ * drag. The script segments gestures on 120ms of quiet, and 120ms of quiet with the fingers still
+ * down is byte-identical to a lift: a slow deliberate drag that hesitates mid-swipe is two
+ * gestures to the script and would navigate back twice. That guard cannot live in the page,
+ * because the commit navigates the tab and the script's state dies with the document - the second
+ * half of the drag lands in a freshly loaded script that has never heard of the first.
+ *
+ * The trade is deliberate and it is not symmetric. Two intentional same-direction swipes less
+ * than [SWIPE_NAV_REPEAT_MS] apart are dropped, and the user swipes again. An unwanted extra step
+ * back may not be undoable at all, because the forward entry does not have to survive the
+ * intervening page's redirect. Dropping the recoverable one is the cheaper mistake.
+ *
+ * A REVERSAL is never held for the repeat window - only for the debounce. Swiping forward straight
+ * after a back is how someone undoes a navigation they did not mean, and a momentum tail cannot
+ * produce one (it runs the flick's own direction), so there is nothing to protect against there.
+ *
+ * The window incidentally rate-limits a hostile page looping `window.__bossSwipeNav.navigate()`,
+ * at roughly 30 calls a second. That is not a boundary and is not sized as one - what holds is the
+ * class KDoc's reasoning, that the page can already loop on `history.back()` with no bridge at all.
+ *
+ * Pure, so both windows are pinned by tests rather than by trying to swipe twice quickly by hand.
  */
 internal fun shouldAcceptSwipeNav(
     nowMs: Long,
-    lastNavigationMs: Long,
-): Boolean = nowMs - lastNavigationMs > SWIPE_NAV_DEBOUNCE_MS
+    previous: SwipeNavCommit?,
+    direction: SwipeNavDirection,
+): Boolean {
+    if (previous == null) return true
+    // The repeat window is the larger of the two - pinned in BrowserSwipeNavTest against the
+    // script's own gesture gap, which sits between them - so a same-direction swipe clearing it has
+    // cleared the debounce as well, and one window per case is the whole rule.
+    val window = if (direction == previous.direction) SWIPE_NAV_REPEAT_MS else SWIPE_NAV_DEBOUNCE_MS
+    return nowMs - previous.atMs > window
+}
 
-internal const val SWIPE_NAV_DEBOUNCE_MS = 400L
+/**
+ * Holds the last committed swipe for [shouldAcceptSwipeNav].
+ *
+ * The check and the record have to happen together. Two calls that genuinely raced would both read
+ * the same `previous`, both pass, and both navigate - `@Volatile` on a plain field gives visibility
+ * and not atomicity, so it would not have closed that. Today only one JxBrowser JS thread can get
+ * here (the script is injected into `mainFrame()` alone), which makes this cheap insurance rather
+ * than a fix for an observed race.
+ *
+ * The clock is [System.nanoTime] and not wall time on purpose: both windows are elapsed-time
+ * questions, and an NTP step backwards on a wall clock would refuse every swipe until real time
+ * caught up.
+ */
+internal class SwipeNavGate(
+    private val nowMs: () -> Long = { System.nanoTime() / NANOS_PER_MS },
+) {
+    private val lastCommit = AtomicReference<SwipeNavCommit?>(null)
+
+    /** True exactly once per accepted swipe; the loser of a race gets false. */
+    fun accept(direction: SwipeNavDirection): Boolean {
+        val now = nowMs()
+        val previous = lastCommit.get()
+        if (!shouldAcceptSwipeNav(now, previous, direction)) return false
+        return lastCommit.compareAndSet(previous, SwipeNavCommit(now, direction))
+    }
+
+    private companion object {
+        const val NANOS_PER_MS = 1_000_000L
+    }
+}
+
+/** Any direction, for a double-dispatch bug. Two frames, well clear of the script's 120ms floor. */
+internal const val SWIPE_NAV_DEBOUNCE_MS = 32L
+
+/** Same direction, for a drag that hesitated past the script's gesture gap. */
+internal const val SWIPE_NAV_REPEAT_MS = 400L

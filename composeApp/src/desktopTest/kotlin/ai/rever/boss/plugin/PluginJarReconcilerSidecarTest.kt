@@ -1,11 +1,14 @@
 package ai.rever.boss.plugin
 
+import ai.rever.boss.plugin.loader.PluginBundledTrust
 import ai.rever.boss.plugin.loader.PluginSignatureSidecar
+import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.util.jar.JarEntry
 import java.util.jar.JarOutputStream
 import kotlin.test.AfterTest
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -60,6 +63,107 @@ class PluginJarReconcilerSidecarTest {
     }
 
     @Test
+    fun `a persisted plugin update keeps its current jar and sidecar`() =
+        runBlocking {
+            val dir = tempPluginDir()
+            val pluginId = "ai.rever.boss.plugin.test.background"
+            val oldJar = manifestJar(dir, "test-plugin-1.0.0.jar", pluginId, "1.0.0")
+            val newJar = manifestJar(dir, "test-plugin-2.0.0.jar", pluginId, "2.0.0")
+            PluginSignatureSidecar.write(oldJar.absolutePath, "b2xkLXNpZw==")
+            var persistedJar: File? = null
+
+            finishBackgroundSystemPluginUpdate(
+                BackgroundSystemPluginUpdate(
+                    plugin = SystemPluginInfo(pluginId, "owner/repo", "test-plugin", 100),
+                    promotedJar = newJar,
+                    pluginDir = dir,
+                    persistLoadablePlugin = { persistedJar = it },
+                    persistSignature = { PluginSignatureSidecar.write(it.absolutePath, "bmV3LXNpZw==") },
+                    manifestIdOf = { file -> if (file == oldJar) pluginId else null },
+                    onSupersededArtifactProcessed = { _, _ -> error("loadable plugin must not be cleaned up") },
+                ),
+            )
+
+            assertEquals(newJar, persistedJar, "the promoted JAR must be selected for next launch")
+            assertTrue(newJar.exists(), "the promoted JAR must remain")
+            assertTrue(File(PluginSignatureSidecar.pathFor(newJar.absolutePath)).exists())
+            assertTrue(oldJar.exists(), "the current-session JAR must remain")
+            assertTrue(
+                File(PluginSignatureSidecar.pathFor(oldJar.absolutePath)).exists(),
+                "the current-session JAR's sidecar must remain",
+            )
+        }
+
+    @Test
+    fun `a download-only runtime update removes superseded artifacts`() =
+        runBlocking {
+            val dir = tempPluginDir()
+            val pluginId = "ai.rever.boss.plugin.test.runtime"
+            val oldJar = manifestJar(dir, "test-runtime-1.0.0.jar", pluginId, "1.0.0")
+            val newJar = manifestJar(dir, "test-runtime-2.0.0.jar", pluginId, "2.0.0")
+            PluginSignatureSidecar.write(oldJar.absolutePath, "b2xkLXNpZw==")
+
+            finishBackgroundSystemPluginUpdate(
+                BackgroundSystemPluginUpdate(
+                    plugin = SystemPluginInfo(pluginId, "owner/repo", "test-runtime", 100, downloadOnly = true),
+                    promotedJar = newJar,
+                    pluginDir = dir,
+                    persistLoadablePlugin = { error("download-only artifacts must not be persisted") },
+                    persistSignature = { error("download-only artifacts must not request a store signature") },
+                    manifestIdOf = { file -> if (file == oldJar) pluginId else null },
+                    onSupersededArtifactProcessed = { _, _ -> },
+                ),
+            )
+
+            assertTrue(newJar.exists(), "the promoted runtime artifact must remain")
+            assertFalse(File(PluginSignatureSidecar.pathFor(newJar.absolutePath)).exists())
+            assertFalse(oldJar.exists(), "the superseded runtime artifact must be cleaned up")
+            assertFalse(File(PluginSignatureSidecar.pathFor(oldJar.absolutePath)).exists())
+        }
+
+    @Test
+    fun `updating another plugin preserves a staged plugin's running artifacts`() {
+        val dir = tempPluginDir()
+        val stagedId = "test.staged"
+        val updatedId = "test.updated"
+        val old = manifestJar(dir, "staged-old.jar", stagedId, "1.0.0")
+        val staged = manifestJar(dir, "staged-new.jar", stagedId, "2.0.0")
+        PluginSignatureSidecar.write(old.absolutePath, "b2xkLXNpZw==")
+        val replaced = manifestJar(dir, "updated-old.jar", updatedId, "1.0.0")
+        manifestJar(dir, "updated-new.jar", updatedId, "2.0.0")
+
+        val result = PluginJarReconciler.reconcilePluginDir(dir, pluginIds = setOf(updatedId))
+        assertEquals(listOf("updated-new.jar"), result.winners.map { it.name })
+        assertTrue(result.skipped.isEmpty())
+
+        assertTrue(old.exists())
+        assertTrue(File(PluginSignatureSidecar.pathFor(old.absolutePath)).exists())
+        assertTrue(staged.exists())
+        assertFalse(replaced.exists())
+
+        PluginJarReconciler.reconcilePluginDir(dir, pluginIds = null)
+        assertFalse(old.exists(), "the next startup can remove the superseded artifact")
+        assertFalse(File(PluginSignatureSidecar.pathFor(old.absolutePath)).exists())
+    }
+
+    @Test
+    fun `an unknown version cannot justify deleting a staged artifact`() {
+        val dir = tempPluginDir()
+        val id = "test.unordered"
+        val old = manifestJar(dir, "old.jar", id, "1.0.0")
+        val staged = manifestJar(dir, "staged.jar", id, "2.0.0+build.1")
+        PluginSignatureSidecar.write(staged.absolutePath, "bmV3LXNpZw==")
+
+        val result = PluginJarReconciler.reconcilePluginDir(dir, pluginIds = null)
+
+        assertTrue(result.skipped.isEmpty(), "the manifest is valid; only version ordering is unavailable")
+        assertTrue(result.deleted.isEmpty())
+        assertTrue(old.exists())
+        assertTrue(staged.exists())
+        assertTrue(File(PluginSignatureSidecar.pathFor(staged.absolutePath)).exists())
+    }
+
+    @Test
     fun `the losing duplicate's sidecar is removed with its jar`() {
         val dir = tempPluginDir()
         val pluginId = "ai.rever.boss.plugin.test.reconcile"
@@ -67,11 +171,15 @@ class PluginJarReconcilerSidecarTest {
         val newer = manifestJar(dir, "test-plugin-2.0.0.jar", pluginId, "2.0.0")
         PluginSignatureSidecar.write(older.absolutePath, "b2xkLXNpZw==")
         PluginSignatureSidecar.write(newer.absolutePath, "bmV3LXNpZw==")
+        PluginBundledTrust.bindToBundle(older.absolutePath, older)
+        PluginBundledTrust.bindToBundle(newer.absolutePath, newer)
 
-        val result = PluginJarReconciler.reconcilePluginDir(dir)
+        val result = PluginJarReconciler.reconcilePluginDir(dir, pluginIds = null)
 
         assertTrue(result.deleted.contains(older.name), "expected the older JAR to be reconciled away")
         assertFalse(older.exists(), "older JAR should be gone")
+        assertFalse(File(PluginBundledTrust.pathFor(older.absolutePath)).exists())
+        assertTrue(PluginBundledTrust.isTrusted(newer.absolutePath))
         assertFalse(
             File(PluginSignatureSidecar.pathFor(older.absolutePath)).exists(),
             "the losing JAR's sidecar must not survive it",
@@ -89,12 +197,63 @@ class PluginJarReconcilerSidecarTest {
         val jar = manifestJar(dir, "solo-plugin-1.0.0.jar", "ai.rever.boss.plugin.test.solo", "1.0.0")
         PluginSignatureSidecar.write(jar.absolutePath, "c29sby1zaWc=")
 
-        PluginJarReconciler.reconcilePluginDir(dir)
+        PluginJarReconciler.reconcilePluginDir(dir, pluginIds = null)
 
         assertTrue(jar.exists())
         assertTrue(
             File(PluginSignatureSidecar.pathFor(jar.absolutePath)).exists(),
             "nothing was deleted, so nothing should have been unsigned",
         )
+    }
+
+    @Test
+    fun `retiring a formerly bundled plugin removes its trust marker`() {
+        val dir = tempPluginDir()
+        val id = "test.formerly.bundled"
+        val jar = manifestJar(dir, "former-bundle.jar", id, "1.0.0")
+        PluginBundledTrust.bindToBundle(jar.absolutePath, jar)
+        assertTrue(PluginBundledTrust.isTrusted(jar.absolutePath))
+
+        assertTrue(purgeJarsFor(id, dir, manifestIdOf = { id }))
+        assertFalse(jar.exists())
+        assertFalse(File(PluginBundledTrust.pathFor(jar.absolutePath)).exists())
+    }
+
+    @Test
+    fun `uninstall removes bundled trust with the jar without touching persistence`() {
+        val dir = tempPluginDir()
+        val id = "test.uninstall.bundled"
+        val jar = manifestJar(dir, "uninstall-bundle.jar", id, "1.0.0")
+        PluginBundledTrust.bindToBundle(jar.absolutePath, jar)
+        var forgotten: String? = null
+
+        PluginArtifactCleanup.remove(
+            id,
+            jar.absolutePath,
+            PluginArtifactCleanup.Hooks(forgetRow = { forgotten = it }),
+        )
+
+        assertEquals(id, forgotten)
+        assertFalse(jar.exists())
+        assertFalse(File(PluginBundledTrust.pathFor(jar.absolutePath)).exists())
+    }
+
+    @Test
+    fun `reconciliation keeps trust when it chooses the second identical copy`() {
+        val dir = tempPluginDir()
+        val id = "test.duplicate.bundle"
+        val first = manifestJar(dir, "first.jar", id, "1.0.0")
+        val second = first.copyTo(File(dir, "second.jar"))
+        assertTrue(first.setLastModified(1_000))
+        assertTrue(second.setLastModified(2_000))
+        // Startup must bind every matching candidate, not just the first skip decision.
+        listOf(first, second).forEach { PluginBundledTrust.bindToBundle(it.absolutePath, first) }
+
+        val result = PluginJarReconciler.reconcilePluginDir(dir, pluginIds = null)
+
+        assertEquals(listOf(second), result.winners)
+        assertFalse(first.exists())
+        assertFalse(File(PluginBundledTrust.pathFor(first.absolutePath)).exists())
+        assertTrue(PluginBundledTrust.isTrusted(second.absolutePath))
     }
 }

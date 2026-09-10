@@ -481,7 +481,11 @@ actual class UpdateService {
                 // refuses an OS-incompatible release here, and that reason has to
                 // reach the dialog or it reads as an unexplained failure.
                 logger.error(LogCategory.SYSTEM, "Update installation failed", mapOf("error" to result.message))
-                InstallOutcome(succeeded = false, errorMessage = result.message)
+                InstallOutcome(
+                    succeeded = false,
+                    errorMessage = result.message,
+                    failureReason = result.failureReason,
+                )
             }
         }
     }

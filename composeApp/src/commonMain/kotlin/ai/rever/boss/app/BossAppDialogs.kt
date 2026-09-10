@@ -4,7 +4,9 @@ import ai.rever.boss.components.bars.horizontal.StatusMessageManager
 import ai.rever.boss.components.dialogs.CloneProjectDialog
 import ai.rever.boss.components.dialogs.ConfirmationDialog
 import ai.rever.boss.components.dialogs.GlobalSearchDialog
+import ai.rever.boss.components.dialogs.HtmlFileOpenDialog
 import ai.rever.boss.components.dialogs.LogoutConfirmationDialog
+import ai.rever.boss.components.dialogs.McpApprovalDialog
 import ai.rever.boss.components.dialogs.NewProjectWizardDialog
 import ai.rever.boss.components.dialogs.NewTabDialog
 import ai.rever.boss.components.dialogs.ProjectOpenModeDialog
@@ -14,6 +16,7 @@ import ai.rever.boss.components.dialogs.TabType
 import ai.rever.boss.components.dialogs.TerminalLinkOpenDialog
 import ai.rever.boss.components.dialogs.ToolLauncherDialog
 import ai.rever.boss.components.dialogs.TopOfMindDialog
+import ai.rever.boss.components.events.DashboardEventBus
 import ai.rever.boss.components.events.FileEventBus
 import ai.rever.boss.components.events.PanelEventBus
 import ai.rever.boss.components.plugin.DependentRestartDeclinedException
@@ -22,6 +25,7 @@ import ai.rever.boss.components.plugin.DynamicPluginManager
 import ai.rever.boss.components.plugin.MissingDependencyDialog
 import ai.rever.boss.components.plugin.MissingHandlerPluginDialog
 import ai.rever.boss.components.plugin.MissingHandlerPluginEventBus
+import ai.rever.boss.components.plugin.PanelIds
 import ai.rever.boss.components.plugin.PluginDependencyEventBus
 import ai.rever.boss.components.plugin.PluginLoadGateHost
 import ai.rever.boss.components.plugin.PluginLoadRemedyAccess
@@ -39,9 +43,12 @@ import ai.rever.boss.components.workspaces.SelectWorkspaceDialog
 import ai.rever.boss.components.workspaces.applyWorkspace
 import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.dashboard.DashboardStatsManager
+import ai.rever.boss.html.HtmlFileOpenMode
+import ai.rever.boss.html.HtmlFileSettingsManager
 import ai.rever.boss.icons.FileIcons
 import ai.rever.boss.keymap.KeymapSettingsManager
 import ai.rever.boss.keymap.model.KeymapActions
+import ai.rever.boss.mcp.McpToolRegistryImpl
 import ai.rever.boss.platform.rememberDirectoryPicker
 import ai.rever.boss.plugin.api.Panel.Companion.left
 import ai.rever.boss.plugin.api.Panel.Companion.top
@@ -57,6 +64,8 @@ import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.project.DefaultWorkingDirectory
 import ai.rever.boss.run.RunConfigurationManager
 import ai.rever.boss.run.RunExecutionService
+import ai.rever.boss.search.SearchSources
+import ai.rever.boss.search.ToolSearchRecord
 import ai.rever.boss.services.auth.UserDataStorage
 import ai.rever.boss.services.bookmarks.BookmarkAPIAccess
 import ai.rever.boss.terminal.TerminalLinkSettingsManager
@@ -69,8 +78,10 @@ import ai.rever.boss.window.selectProjectInWindow
 import androidx.compose.material.Text
 import androidx.compose.material.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -452,9 +463,40 @@ internal fun BossAppDialogs(state: BossAppState) {
     }
 
     if (state.showGlobalSearchDialog) {
+        // Offer THIS window's tools to the search, for exactly as long as its dialog is open.
+        //
+        // Registered here rather than per window, because the window that matters is the one whose
+        // dialog is up - which is what this block already is. Registering while the WINDOW was
+        // mounted had a worse failure than "last one wins": closing any window ran its onDispose
+        // and cleared the slot unconditionally, including when the supplier in it belonged to a
+        // window still open, whose effect would never re-run. That window's Tools results then
+        // stayed empty for the rest of the session.
+        //
+        // A supplier rather than a snapshot, so a plugin loading while the dialog is open is
+        // findable without reopening it.
+        DisposableEffect(state.draggablePanelComponent, windowId) {
+            val component = state.draggablePanelComponent
+            // Registered under THIS window's id, and searched under it too, so two windows with a
+            // dialog open at once neither overwrite each other's tools nor empty the other's slot
+            // on close - and the tools offered always belong to the component that will be asked
+            // to open them.
+            SearchSources.registerTools(windowId) {
+                // distinctBy panelId, because allSidebarTools dedupes by SidebarItem.id and this
+                // record keys on the PANEL id - a different key, as slotForItem and activatePlugin
+                // between them show. Two items sharing a panel id across slots would otherwise
+                // give two identical Tool rows, and picking either reaches the same panel.
+                component
+                    .allSidebarTools()
+                    .map { ToolSearchRecord(panelId = it.pluginContentId.panelId, label = it.label) }
+                    .distinctBy { it.panelId }
+            }
+            onDispose { SearchSources.unregisterTools(windowId) }
+        }
+
         GlobalSearchDialog(
             projectPath = selectedProject.path,
             workspaceManager = workspaceManager,
+            windowId = windowId,
             onDismiss = {
                 state.showGlobalSearchDialog = false
                 state.focusRequester.requestFocus()
@@ -608,6 +650,10 @@ internal fun BossAppDialogs(state: BossAppState) {
                         MenuActionsHandler.triggerToggleFocusMode(windowId)
                     }
 
+                    KeymapActions.CHROME_DENSITY_CYCLE -> {
+                        MenuActionsHandler.triggerChromeDensityCycle(windowId)
+                    }
+
                     KeymapActions.SETTINGS_OPEN -> {
                         MenuActionsHandler.triggerOpenSettings(windowId)
                     }
@@ -618,6 +664,71 @@ internal fun BossAppDialogs(state: BossAppState) {
 
                     else -> {} // Unknown command
                 }
+                state.focusRequester.requestFocus()
+            },
+            onToolSelect = { panelId ->
+                state.showGlobalSearchDialog = false
+                // revealPlugin, not activatePlugin: a search asks for a thing, so it must not
+                // toggle the panel shut, and it must focus the tab a tool is already hosted in
+                // rather than re-open it in the sidebar. Plugin-supplied onClick still wins.
+                state.draggablePanelComponent.revealPlugin(panelId)
+                state.focusRequester.requestFocus()
+            },
+            onSettingSelect = { setting ->
+                state.showGlobalSearchDialog = false
+                // A signpost is not in the Settings window at all, so it does not open it: it
+                // activates the panel, the same entry point a ToolResult takes. Handled before the
+                // reveal because such an entry names neither a section nor a page, and reveal(null)
+                // would raise Settings on whatever page it was last on and highlight a label that
+                // is not there - the wrong-page highlight its own KDoc exists to prevent.
+                val panelId = setting.panelId
+                if (panelId != null) {
+                    // Same verb as onToolSelect, for the same reasons - a signpost is a request to
+                    // be taken somewhere, not a switch.
+                    //
+                    // Note this is NOT the path the Settings window's own search box takes for the
+                    // same row: that one goes through `revealPanel`, which resolves the id against
+                    // a PanelRegistry and then raises a main window over PanelEventBus. It has to,
+                    // because it is reaching out of the Settings window into another one. Here the
+                    // dialog is already inside the window that owns the sidebar, so the component
+                    // is right there and the resolve-then-raise dance has nothing to do - and
+                    // `activatePlugin`'s own matching is what `searchSettings` filters signposts
+                    // on, so the row is offered exactly when this path can serve it.
+                    state.draggablePanelComponent.revealPlugin(panelId)
+                    // The same pair onToolSelect does, because this branch does the same work.
+                    // The reveal branch below deliberately does not: it is handing focus to the
+                    // Settings window, so pulling it back here would fight that.
+                    state.focusRequester.requestFocus()
+                } else {
+                    // A plugin page navigates by page id; everything else by section. Both go
+                    // through the same open(), which raises the window if it is already up and
+                    // bumps its sectionRequest so asking twice for one section still navigates.
+                    state.settingsWindow.reveal(
+                        section = setting.pluginPageId ?: setting.section,
+                        group = setting.group,
+                        label = setting.label,
+                        highlightable = setting.highlightable,
+                    )
+                }
+            },
+            onPageSelect = { url ->
+                state.showGlobalSearchDialog = false
+                coroutineScope.launch { DashboardEventBus.openUrlInNewTab(url, windowId) }
+                state.focusRequester.requestFocus()
+            },
+            onMcpToolSelect = { mcp ->
+                state.showGlobalSearchDialog = false
+                // Same verb as onToolSelect: open Toolbox so kill-switches are reachable without a
+                // coding CLI attached (BossConsole#380). Does not invoke the MCP tool.
+                val message =
+                    if (state.draggablePanelComponent.toolboxSidebarItem() != null) {
+                        state.draggablePanelComponent.revealPlugin(PanelIds.PLUGIN_MANAGER.panelId)
+                        "In Toolbox, select MCP and find ${mcp.name} to manage its kill-switch"
+                    } else {
+                        "Toolbox is unavailable in this window; the MCP tool was not run or changed"
+                    }
+                // Status messages are process-wide; only this window reveals Toolbox.
+                StatusMessageManager.showMessage(message, durationMs = 8_000L)
                 state.focusRequester.requestFocus()
             },
         )
@@ -637,6 +748,8 @@ internal fun BossAppDialogs(state: BossAppState) {
             // which reads as a different bug rather than as none.
             focusRequest = state.settingsWindow.focusRequest,
             sectionRequest = state.settingsWindow.sectionRequest,
+            requestedHighlight = state.settingsWindow.highlight,
+            highlightRequest = state.settingsWindow.highlightRequest,
         )
     }
 
@@ -689,6 +802,21 @@ internal fun BossAppDialogs(state: BossAppState) {
         )
     }
 
+    // Interactive approval dialog for governed MCP tools invoked by an AI agent
+    state.pendingMcpApproval?.let { approvalRequest ->
+        val pendingList by McpToolRegistryImpl.approvalBus.pendingList.collectAsState()
+        McpApprovalDialog(
+            request = approvalRequest,
+            pendingQueueSize = pendingList.size,
+            onApprove = { trustForSession ->
+                McpToolRegistryImpl.approvalBus.approve(approvalRequest.id, trustForSession)
+            },
+            onDeny = { reason ->
+                McpToolRegistryImpl.approvalBus.deny(approvalRequest.id, reason)
+            },
+        )
+    }
+
     // Terminal link open dialog (Issue #346)
     if (state.showTerminalLinkDialog) {
         TerminalLinkOpenDialog(
@@ -726,6 +854,8 @@ internal fun BossAppDialogs(state: BossAppState) {
         )
     }
 
+    HtmlFilePrompt(state)
+
     // An unload is waiting on this answer: other plugins depend on the one being updated or
     // removed. Both handlers complete the prompt's `answer` before clearing the field - the
     // collector's finally block is only a backstop for a window closing mid-dialog.
@@ -758,7 +888,7 @@ internal fun BossAppDialogs(state: BossAppState) {
                 state.pendingMissingPluginDependency = null
                 state.missingDependencyError = null
             },
-            onInstall = {
+            onInstall = { plan ->
                 state.installingMissingDependency = true
                 state.missingDependencyError = null
                 coroutineScope.launch {
@@ -770,7 +900,10 @@ internal fun BossAppDialogs(state: BossAppState) {
                         // them a fault: the window closed while the detached install carried on,
                         // or the user cancelled the download from the bottom bar - in which case
                         // the dependency really is still missing and this prompt is still true.
-                        runCatching { prompt.installer.install(prompt.missing.missingPluginId) }
+                        // The plan the dialog showed, dependencies first. `installAll` stops at
+                        // the first failure and leaves what came before it installed; the error
+                        // shown then names the plugin that stopped the run.
+                        runCatching { prompt.installer.installAll(plan.order) }
                             .getOrElse { error ->
                                 if (error is CancellationException) throw error
                                 Result.failure(error)
@@ -783,7 +916,7 @@ internal fun BossAppDialogs(state: BossAppState) {
                                 state.currentDefaultPlugin?.pluginToastState?.show(
                                     ToastMessage(
                                         type = ToastType.SUCCESS,
-                                        title = "Plugin installed",
+                                        title = if (plan.order.size > 1) "Plugins installed" else "Plugin installed",
                                         message =
                                             "${prompt.missing.dependentDisplayName} can use it now. " +
                                                 "Relaunch BOSS if a feature still reports it missing.",
@@ -1027,4 +1160,48 @@ internal fun BossAppDialogs(state: BossAppState) {
 
     // Generic dialog host for plugin dialogs
     GenericDialogHostContent()
+}
+
+@Composable
+private fun HtmlFilePrompt(state: BossAppState) {
+    val coroutineScope = state.coroutineScope
+    val splitViewState = state.splitViewState
+    val logger = state.logger
+    state.pendingHtmlFileOpen?.let { request ->
+        key(request) {
+            HtmlFileOpenDialog(
+                fileName = request.fileName,
+                filePath = request.filePath,
+                onDismiss = { state.pendingHtmlFileOpen = null },
+                onOpenChoice = { mode, rememberChoice ->
+                    coroutineScope.launch {
+                        try {
+                            if (rememberChoice) {
+                                HtmlFileSettingsManager.setOpenMode(mode)
+                            }
+                            when (mode) {
+                                HtmlFileOpenMode.EDITOR -> {
+                                    splitViewState.openFileInEditorTab(request.filePath, request.fileName)
+                                }
+
+                                HtmlFileOpenMode.BROWSER -> {
+                                    splitViewState.openFileInBrowserTab(request.filePath, request.fileName)
+                                }
+
+                                HtmlFileOpenMode.ALWAYS_ASK -> {
+                                    Unit
+                                }
+                            }
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            logger.error(LogCategory.FILE, "Unable to open HTML file", error = e)
+                        } finally {
+                            state.pendingHtmlFileOpen = null
+                        }
+                    }
+                },
+            )
+        }
+    }
 }

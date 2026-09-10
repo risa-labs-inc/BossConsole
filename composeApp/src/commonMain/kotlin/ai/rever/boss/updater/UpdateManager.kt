@@ -21,8 +21,26 @@ import kotlin.time.Duration
  * coordinator is the single owner that can [shutdown], windows hold handles that
  * cannot.
  */
-class UpdateManager {
+class UpdateManager private constructor(
+    private val installOperation: (suspend (String) -> InstallOutcome)?,
+    private val checkOperation: (suspend () -> UpdateInfo)?,
+    private val downloadOperation: (suspend (UpdateInfo, (Float) -> Unit) -> String?)? = null,
+) {
+    constructor() : this(null, null)
+
+    internal constructor(installOperation: UpdateInstallOperation) : this(installOperation::install, null)
+
+    internal constructor(
+        installOperation: UpdateInstallOperation,
+        checkOperation: suspend () -> UpdateInfo,
+        downloadOperation: (suspend (UpdateInfo, (Float) -> Unit) -> String?)? = null,
+    ) : this(installOperation::install, checkOperation, downloadOperation)
+
     private val logger = BossLogger.forComponent("UpdateManager")
+
+    // File ownership spans suspension: a second download must not overwrite the
+    // artifact while an installer is using it or removing a permanent refusal.
+    private val artifactMutex = Mutex()
 
     // Internal for access by VersionListManager
     internal val updateService = UpdateService()
@@ -155,6 +173,8 @@ class UpdateManager {
         // a downloaded update waits for install, during install, and after an
         // install that's pending a restart (where the version still reads as
         // "newer" than the running build).
+        // Error is deliberately rechecked: suppression clears the refusal banner
+        // on the next automatic check rather than preserving it indefinitely.
         val current = _updateState.value
         if (current is UpdateState.Downloading || current is UpdateState.ReadyToInstall ||
             current is UpdateState.Installing || current is UpdateState.RestartRequired
@@ -167,13 +187,13 @@ class UpdateManager {
             _updateState.value = UpdateState.CheckingForUpdates
             _lastCheckTime.value = Clock.System.now()
 
-            val updateInfo = updateService.checkForUpdates()
+            val updateInfo = checkOperation?.invoke() ?: updateService.checkForUpdates()
             _updateInfo.value = updateInfo
 
             when {
                 updateInfo.isNewerVersionAvailable -> {
                     if (!force && isVersionDismissed(updateInfo.latestVersion)) {
-                        // User dismissed this exact version: stay quiet (no banner, no dialog)
+                        // This exact version was dismissed or refused for this OS: stay quiet.
                         _updateState.value = UpdateState.Idle
                         UpdateResult.NoUpdateAvailable
                     } else {
@@ -213,6 +233,10 @@ class UpdateManager {
         // case the dismissal doesn't survive a restart and re-prompts.
         _showUpdateDialog.value = false
         _updateState.value = UpdateState.Idle
+        persistDismissedVersion(version)
+    }
+
+    private suspend fun persistDismissedVersion(version: Version) {
         UpdateSettings.lastDismissedVersion = version.toString()
         UpdateSettingsManager.saveSettings()
     }
@@ -226,8 +250,8 @@ class UpdateManager {
     }
 
     /**
-     * The coroutine running the current download, so [cancelDownload] has
-     * something to cancel.
+     * The coroutine holding download ownership, not a queued request. Updated
+     * only inside [artifactMutex], so Cancel always reaches the active transfer.
      *
      * @Volatile: written on the manager's scope and read from whichever thread
      * the download center's Cancel arrives on.
@@ -242,12 +266,12 @@ class UpdateManager {
      * in-flight download.
      */
     fun downloadUpdateInBackground(updateInfo: UpdateInfo) {
-        downloadJob = launchInBackground { downloadUpdate(updateInfo) }
+        launchInBackground { downloadUpdate(updateInfo) }
     }
 
     /** As [downloadUpdateInBackground], for a specific version (upgrade or downgrade). */
     fun downloadSpecificVersionInBackground(versionInfo: VersionInfo) {
-        downloadJob = launchInBackground { downloadSpecificVersion(versionInfo) }
+        launchInBackground { downloadSpecificVersion(versionInfo) }
     }
 
     /**
@@ -275,6 +299,13 @@ class UpdateManager {
      * The version stays on offer, so the banner can download it again.
      */
     suspend fun discardDownload() {
+        val expected = _updateState.value as? UpdateState.ReadyToInstall ?: return
+        artifactMutex.withLock {
+            if (_updateState.value === expected) discardStagedDownload()
+        }
+    }
+
+    private suspend fun discardStagedDownload() {
         // CLAIM BEFORE DELETING, and give up if the claim is lost. The state move used to
         // happen AFTER the delete, which is exactly what let an install and a discard both
         // proceed - see [claimStagedUpdate]. Whoever moves the state out of ReadyToInstall owns
@@ -303,16 +334,37 @@ class UpdateManager {
      * Download the available update
      */
     suspend fun downloadUpdate(updateInfo: UpdateInfo): UpdateResult =
+        withDownloadOwnership {
+            downloadAvailableUpdate(updateInfo)
+        }
+
+    private suspend fun withDownloadOwnership(operation: suspend () -> UpdateResult): UpdateResult =
+        artifactMutex.withLock {
+            if (_updateState.value == UpdateState.RestartRequired) {
+                return@withLock UpdateResult.Error("Restart BOSS before downloading another update")
+            }
+            downloadJob = currentCoroutineContext()[Job]
+            try {
+                operation()
+            } finally {
+                downloadJob = null
+            }
+        }
+
+    private suspend fun downloadAvailableUpdate(updateInfo: UpdateInfo): UpdateResult =
         try {
             _updateState.value = UpdateState.Downloading(0f)
 
+            val onProgress: (Float) -> Unit = { progress -> _updateState.value = UpdateState.Downloading(progress) }
             val downloadPath =
-                updateService.downloadUpdate(updateInfo) { progress ->
-                    _updateState.value = UpdateState.Downloading(progress)
+                if (downloadOperation != null) {
+                    downloadOperation.invoke(updateInfo, onProgress)
+                } else {
+                    updateService.downloadUpdate(updateInfo, onProgress)
                 }
 
             if (downloadPath != null) {
-                _updateState.value = UpdateState.ReadyToInstall(downloadPath)
+                stageDownloadedUpdate(updateInfo, downloadPath)
                 UpdateResult.UpdateAvailable(updateInfo.copy())
             } else {
                 val errorMsg = "Failed to download update"
@@ -336,6 +388,9 @@ class UpdateManager {
      * Download a specific version (for upgrades or downgrades)
      */
     suspend fun downloadSpecificVersion(versionInfo: VersionInfo): UpdateResult =
+        withDownloadOwnership { downloadSelectedVersion(versionInfo) }
+
+    private suspend fun downloadSelectedVersion(versionInfo: VersionInfo): UpdateResult =
         try {
             _updateState.value = UpdateState.Downloading(0f)
 
@@ -358,13 +413,16 @@ class UpdateManager {
             // downgrading to 9.4.20 showed a row reading "BOSS v9.4.34".
             _updateInfo.value = updateInfo
 
+            val onProgress: (Float) -> Unit = { progress -> _updateState.value = UpdateState.Downloading(progress) }
             val downloadPath =
-                updateService.downloadUpdate(updateInfo) { progress ->
-                    _updateState.value = UpdateState.Downloading(progress)
+                if (downloadOperation != null) {
+                    downloadOperation.invoke(updateInfo, onProgress)
+                } else {
+                    updateService.downloadUpdate(updateInfo, onProgress)
                 }
 
             if (downloadPath != null) {
-                _updateState.value = UpdateState.ReadyToInstall(downloadPath)
+                stageDownloadedUpdate(updateInfo, downloadPath)
                 UpdateResult.UpdateAvailable(updateInfo)
             } else {
                 val errorMsg = "Failed to download version ${versionInfo.version}"
@@ -390,6 +448,13 @@ class UpdateManager {
      * Install the downloaded update
      */
     suspend fun installUpdate(downloadPath: String): Boolean {
+        val expected = _updateState.value as? UpdateState.ReadyToInstall ?: return false
+        return artifactMutex.withLock {
+            if (_updateState.value === expected) installStagedUpdate(downloadPath) else false
+        }
+    }
+
+    private suspend fun installStagedUpdate(downloadPath: String): Boolean {
         // Claim the staged artifact, or do nothing at all.
         //
         // Both halves of this matter, and the bug was that neither existed. The state moved to
@@ -403,7 +468,8 @@ class UpdateManager {
         // whichever lands first wins, and the loser returns without touching the file. It also
         // makes a second press of Install a no-op rather than a second elevated installer, which
         // the download center's dialog already got for free by clearing its action on use.
-        if (_updateState.claimStagedUpdate { UpdateState.Installing } == null) {
+        val claimed = _updateState.claimStagedUpdate(downloadPath) { UpdateState.Installing }
+        if (claimed == null) {
             logger.info(
                 LogCategory.SYSTEM,
                 "Ignoring install request - nothing staged, or the staged update was claimed first",
@@ -412,21 +478,80 @@ class UpdateManager {
             return false
         }
         return try {
-            val outcome = updateService.installUpdate(downloadPath)
+            // Use the path won by the claim. A stale UI action must not install an
+            // artifact staged later by another download.
+            val outcome =
+                if (installOperation != null) {
+                    installOperation.invoke(claimed.downloadPath)
+                } else {
+                    updateService.installUpdate(claimed.downloadPath)
+                }
             if (outcome.succeeded) {
-                _updateState.value = UpdateState.RestartRequired
+                if (!_updateState.compareAndSet(UpdateState.Installing, UpdateState.RestartRequired)) {
+                    logger.warn(LogCategory.SYSTEM, "Preserving a newer update state after an installation succeeded")
+                }
             } else {
-                // Prefer the installer's own explanation. It is the only place that
-                // knows *why* — e.g. a release requiring a newer macOS than this
-                // Mac runs — and a generic string there is indistinguishable from
-                // a crash to the user.
-                _updateState.value = UpdateState.Error(outcome.errorMessage ?: "Installation failed")
+                applyInstallFailure(outcome, claimed)
             }
             outcome.succeeded
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            _updateState.value = UpdateState.Error("Installation failed: ${e.message}")
+            _updateState.compareAndSet(UpdateState.Installing, UpdateState.Error("Installation failed: ${e.message}"))
             false
         }
+    }
+
+    /**
+     * Applies the installer message directly: this is the only layer that knows
+     * why an install was refused, while a generic failure is indistinguishable
+     * from a crash to the person looking at the update UI.
+     */
+    private suspend fun applyInstallFailure(
+        outcome: InstallOutcome,
+        staged: UpdateState.ReadyToInstall,
+    ) {
+        val publishedFailure =
+            _updateState.compareAndSet(
+                UpdateState.Installing,
+                UpdateState.Error(outcome.errorMessage ?: "Installation failed"),
+            )
+        if (!publishedFailure) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Preserving a newer update state after an earlier installation failed",
+                mapOf("error" to (outcome.errorMessage ?: "Installation failed")),
+            )
+        }
+        if (outcome.failureReason != InstallFailureReason.UnsupportedOs) return
+        try {
+            val info = staged.updateInfo
+            val dismissed = UpdateSettings.lastDismissedVersion?.let { Version.parse(it) }
+            // An intermediate release (newer than this app, older than the latest
+            // refusal) must not reopen automatic offers of that latest release.
+            if (info?.isNewerVersionAvailable == true && dismissed?.isNewerThan(info.latestVersion) != true) {
+                logger.info(
+                    LogCategory.SYSTEM,
+                    "Suppressing update refused by this operating system",
+                    mapOf("version" to info.latestVersion.toString()),
+                )
+                persistDismissedVersion(info.latestVersion)
+            }
+        } finally {
+            // artifactMutex also excludes downloads during persistence/cleanup.
+            // If a state was replaced outside that protocol, keep its files intact.
+            // Cancellation can prevent durability; a later launch may offer again.
+            if (publishedFailure) updateService.discardDownload(staged.downloadPath)
+        }
+    }
+
+    /** Record the exact update whose downloaded artifact is now ready to install. */
+    internal fun stageDownloadedUpdate(
+        updateInfo: UpdateInfo,
+        downloadPath: String,
+    ) {
+        _updateInfo.value = updateInfo
+        _updateState.value = UpdateState.ReadyToInstall(downloadPath, updateInfo)
     }
 
     /**
@@ -470,6 +595,12 @@ class UpdateManager {
     }
 }
 
+internal class UpdateInstallOperation(
+    private val operation: suspend (String) -> InstallOutcome,
+) {
+    suspend fun install(downloadPath: String): InstallOutcome = operation(downloadPath)
+}
+
 /**
  * Update state sealed class
  */
@@ -490,6 +621,8 @@ sealed class UpdateState {
 
     data class ReadyToInstall(
         val downloadPath: String,
+        /** Immutable metadata for the artifact at [downloadPath]. */
+        val updateInfo: UpdateInfo? = null,
     ) : UpdateState()
 
     object Installing : UpdateState()
@@ -524,8 +657,10 @@ sealed class UpdateState {
  * read state the loser has no business acting on.
  */
 internal fun MutableStateFlow<UpdateState>.claimStagedUpdate(
+    expectedDownloadPath: String? = null,
     to: (UpdateState.ReadyToInstall) -> UpdateState,
 ): UpdateState.ReadyToInstall? {
     val ready = value as? UpdateState.ReadyToInstall ?: return null
-    return if (compareAndSet(ready, to(ready))) ready else null
+    val matchesPath = expectedDownloadPath == null || ready.downloadPath == expectedDownloadPath
+    return if (matchesPath && compareAndSet(ready, to(ready))) ready else null
 }

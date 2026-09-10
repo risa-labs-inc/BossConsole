@@ -30,10 +30,14 @@ class StoreVersionInstallerTest {
         const val EXPECTED_NAME = "ai_rever_boss_plugin_dynamic_probe_1.0.4.jar"
     }
 
+    /** A real not-hot-reloadable id, not a copy, so the two lists cannot drift apart. */
+    private val notHotReloadablePlugin = HotReloadPolicy.NOT_HOT_RELOADABLE.first()
+
     private val loaded = mutableListOf<String>()
     private val unloaded = mutableListOf<String>()
     private val discarded = mutableListOf<String>()
     private val persisted = mutableListOf<Triple<String, String, String?>>()
+    private val deferredNotices = mutableListOf<String>()
 
     /** Writes the "downloaded" bytes wherever the installer asks, like the real repository does. */
     private class FakeRepository(
@@ -71,6 +75,7 @@ class StoreVersionInstallerTest {
     private fun installer(
         readManifestId: String? = PLUGIN,
         promoteThrows: Boolean = false,
+        runningVersion: String = VERSION,
     ) = StoreVersionInstaller(
         pluginDir = { dir },
         hooks =
@@ -80,7 +85,7 @@ class StoreVersionInstallerTest {
                         PluginManifest(
                             pluginId = id,
                             displayName = "Probe",
-                            version = VERSION,
+                            version = if (File(path).name == "running.jar") runningVersion else VERSION,
                             apiVersion = "1.0.0",
                             mainClass = "com.example.Main",
                         ).takeIf { File(path).exists() }
@@ -97,21 +102,25 @@ class StoreVersionInstallerTest {
                 },
                 exists = { File(it).isFile },
                 persist = { id, jarPath, version, sourceUrl -> persisted += Triple(id, version, sourceUrl) },
+                notifyDeferred = { displayName -> deferredNotices += displayName },
             ),
     )
 
     private suspend fun StoreVersionInstaller.run(
+        pluginId: String = PLUGIN,
         repository: PluginRepository = FakeRepository(),
         runningJarPath: String? = null,
         loadSucceeds: Boolean = true,
+        hasLiveInstance: Boolean = true,
     ) = install(
         store = repository,
         request =
             StoreVersionRequest(
-                pluginId = PLUGIN,
+                pluginId = pluginId,
                 version = VERSION,
                 sourceUrl = "https://store.example/probe.jar",
                 runningJarPath = runningJarPath,
+                hasLiveInstance = hasLiveInstance,
             ),
         unload = { id ->
             unloaded += id
@@ -218,5 +227,102 @@ class StoreVersionInstallerTest {
 
             assertTrue(result.isSuccess)
             assertTrue(streamedTo!!.endsWith(".part"), "streamed to $streamedTo")
+        }
+
+    // ---- BossConsole#71: not-hot-reloadable plugins defer to a restart ----
+
+    @Test
+    fun `a not-hot-reloadable plugin's update is staged without unloading anything`() =
+        runTest {
+            val running = File(dir, "fluck-browser-old.jar").apply { writeText("the build that is running") }
+
+            val result =
+                installer(readManifestId = notHotReloadablePlugin)
+                    .run(pluginId = notHotReloadablePlugin, runningJarPath = running.absolutePath)
+
+            assertTrue(result.isSuccess)
+            assertEquals(VERSION, result.getOrNull())
+            assertEquals(emptyList<String>(), unloaded, "the live instance must never be touched")
+            assertEquals(emptyList<String>(), loaded, "the live instance must never be touched")
+            assertEquals("the build that is running", running.readText(), "the old jar is still open - it must survive")
+            assertEquals(
+                listOf(Triple(notHotReloadablePlugin, VERSION, "https://store.example/probe.jar")),
+                persisted.toList(),
+            )
+            assertEquals(listOf("Probe"), deferredNotices)
+        }
+
+    @Test
+    fun `a refused browser installs immediately despite a newer refused artifact`() =
+        runTest {
+            val refused = File(dir, "running.jar").apply { writeText("refused bytes") }
+            val result =
+                installer(readManifestId = notHotReloadablePlugin, runningVersion = "9.0.0")
+                    .run(
+                        pluginId = notHotReloadablePlugin,
+                        runningJarPath = refused.absolutePath,
+                        hasLiveInstance = false,
+                    )
+
+            assertTrue(result.isSuccess)
+            assertEquals(listOf(notHotReloadablePlugin), unloaded)
+            assertEquals(1, loaded.size)
+            assertTrue(deferredNotices.isEmpty())
+        }
+
+    @Test
+    fun `a deferred downgrade is refused because startup would select the newer live jar`() =
+        runTest {
+            val running = File(dir, "running.jar").apply { writeText("live bytes") }
+            val result =
+                installer(readManifestId = notHotReloadablePlugin, runningVersion = "9.0.0")
+                    .run(pluginId = notHotReloadablePlugin, runningJarPath = running.absolutePath)
+
+            assertTrue(result.isFailure)
+            assertTrue(running.exists())
+            assertTrue(unloaded.isEmpty())
+            assertTrue(loaded.isEmpty())
+            assertTrue(persisted.isEmpty())
+            assertTrue(deferredNotices.isEmpty())
+        }
+
+    @Test
+    fun `a not-hot-reloadable plugin whose record can't be written discards the download`() =
+        runTest {
+            val installer =
+                StoreVersionInstaller(
+                    pluginDir = { dir },
+                    hooks =
+                        StoreVersionHooks(
+                            readManifest = { path ->
+                                PluginManifest(
+                                    pluginId = notHotReloadablePlugin,
+                                    displayName = "Probe",
+                                    version = VERSION,
+                                    apiVersion = "1.0.0",
+                                    mainClass = "com.example.Main",
+                                ).takeIf { File(path).exists() }
+                            },
+                            promoteFiles = { downloaded, target ->
+                                target.writeText(File(downloaded).readText())
+                                File(downloaded).delete()
+                            },
+                            discardFiles = { path ->
+                                discarded += path
+                                File(path).delete()
+                            },
+                            persist = { _, _, _, _ -> error("disk full") },
+                            notifyDeferred = { deferredNotices += it },
+                        ),
+                )
+
+            val result = installer.run(pluginId = notHotReloadablePlugin)
+
+            assertTrue(result.isFailure)
+            assertEquals(emptyList<String>(), unloaded)
+            assertEquals(emptyList<String>(), loaded)
+            assertEquals(emptyList<String>(), deferredNotices, "no notice for an update that never actually landed")
+            // Nothing to show for the download: it is neither installed nor recorded.
+            assertTrue(discarded.any { it.contains(notHotReloadablePlugin.replace('.', '_')) })
         }
 }

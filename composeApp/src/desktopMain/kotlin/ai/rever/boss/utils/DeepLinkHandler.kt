@@ -12,9 +12,12 @@ import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.utils.logging.LogSanitizer
 import ai.rever.boss.window.MenuActionsHandler
 import ai.rever.boss.window.Project
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -274,6 +277,19 @@ actual object DeepLinkHandler {
                         _deepLinkFlow.value = uri
                     }
                 }
+            } catch (e: UnsupportedOperationException) {
+                // Documented outcome on Linux: the JDK's X11 Desktop peer supports no
+                // APP_OPEN_URI action (see processCommandLineArgs's KDoc), so this always
+                // throws there. Not an error - argv already delivers these links, both at
+                // cold start and forwarded to a running instance over the single-instance
+                // channel - but logging it at ERROR read as a broken feature on every Linux
+                // launch (BossConsole#410). Same pattern setupOpenFileHandler already uses
+                // for the equivalent APP_OPEN_FILE gap.
+                logger.debug(
+                    LogCategory.SYSTEM,
+                    "Desktop.setOpenURIHandler not supported on this platform",
+                    mapOf("reason" to (e.message ?: "unsupported")),
+                )
             } catch (e: Exception) {
                 logger.error(LogCategory.SYSTEM, "Failed to set up deep link handler", error = e)
             }
@@ -331,11 +347,19 @@ actual object DeepLinkHandler {
      * [origin] reaches the handlers that need it (currently `boss://terminal`)
      * because no later stage can tell an operator's request apart from one some
      * other program asked the OS to open.
+     *
+     * @return a [Deferred] resolving to whether the link was actually acted on,
+     *   for the one route that can answer that question today
+     *   ([DeepLinkHost.PLUGIN] with an `action`) — null for every other route,
+     *   which stays fire-and-forget exactly as before. A caller with no use for
+     *   the verdict (the OS-delivered flow, the CLI) can ignore the return value
+     *   unchanged; [SingleInstanceManager] is the one caller that awaits it, so a
+     *   forwarded action link no longer reports success it never delivered.
      */
     fun processDeepLink(
         uri: String,
         origin: DeepLinkOrigin,
-    ) {
+    ): Deferred<Boolean>? {
         logger.info(
             LogCategory.SYSTEM,
             "Processing deep link",
@@ -357,7 +381,7 @@ actual object DeepLinkHandler {
                 mapOf("uri" to LogSanitizer.maskUriParams(uri)),
             )
             _deepLinkFlow.value = uri
-            return
+            return null
         }
 
         // Single resolution point for every host that acts on a window here.
@@ -367,7 +391,7 @@ actual object DeepLinkHandler {
         // window is plainly registered. Resolving here instead of inside each
         // handler is what keeps the window-targeting links from diverging again.
         // Safe on this thread: resolveActionableWindowId reads volatile state.
-        dispatch(host, uri, targetWindowIdFor(host) { WindowFocusManager.resolveActionableWindowId() }, origin)
+        return dispatch(host, uri, targetWindowIdFor(host) { WindowFocusManager.resolveActionableWindowId() }, origin)
     }
 
     /**
@@ -380,16 +404,17 @@ actual object DeepLinkHandler {
         uri: String,
         targetWindowId: String?,
         origin: DeepLinkOrigin,
-    ) {
+    ): Deferred<Boolean>? {
         when (host) {
             DeepLinkHost.URL -> handleUrlLink(uri)
             DeepLinkHost.WORKSPACE -> handleWorkspaceLink(uri)
             DeepLinkHost.FILE -> handleFileLink(uri)
             DeepLinkHost.TERMINAL -> handleTerminalLink(uri, origin)
             DeepLinkHost.FOLDER -> handleFolderLink(uri, targetWindowId)
-            DeepLinkHost.PLUGIN -> handlePluginLink(uri, targetWindowId)
+            DeepLinkHost.PLUGIN -> return handlePluginLink(uri, targetWindowId)
             DeepLinkHost.SPLIT -> handleSplitLink(uri, targetWindowId)
         }
+        return null
     }
 
     actual fun clearDeepLink() {
@@ -537,19 +562,26 @@ actual object DeepLinkHandler {
      *
      * [targetWindowId] is already resolved by [processDeepLink]; the panel event
      * and the action dispatch are emitted on the UI thread.
+     *
+     * @return for an action link, a [Deferred] resolving to
+     *   [ai.rever.boss.components.plugin.registries.DeepLinkActionRegistryImpl.dispatch]'s
+     *   own verdict (false for an unregistered handler id, a handler that
+     *   declines the action, or one that throws — that function never lets an
+     *   exception escape). Null for a panel-open link, which stays fire-and-forget. An action
+     *   without a usable id is rejected with a false verdict.
      */
     private fun handlePluginLink(
         uri: String,
         targetWindowId: String?,
-    ) {
+    ): Deferred<Boolean>? {
         logger.debug(LogCategory.UI, "Handling plugin link")
 
         val params = parseQueryParams(uri)
         val panelIdStr = params["id"]?.urlDecode()
 
-        if (panelIdStr == null) {
+        if (panelIdStr.isNullOrBlank()) {
             logger.warn(LogCategory.UI, "Missing 'id' parameter in plugin deep link")
-            return
+            return if (params.containsKey("action")) CompletableDeferred(false) else null
         }
 
         // Action links dispatch to the plugin's DeepLinkActionHandler and do
@@ -557,18 +589,35 @@ actual object DeepLinkHandler {
         // sharing the `plugin` scheme. Unhandled actions just log (registry
         // warns); external input, so handlers own validation.
         val action = params["action"]?.urlDecode()
-        if (action != null) {
-            val actionParams =
-                params
-                    .filterKeys { it != "id" && it != "action" }
-                    .mapValues { (_, value) -> value.urlDecode() }
-            scope.launch(Dispatchers.Main) {
-                ai.rever.boss.components.plugin.registries.DeepLinkActionRegistryImpl
-                    .dispatch(panelIdStr, action, actionParams)
-            }
-            return
+        return if (action != null) {
+            dispatchPluginAction(panelIdStr, action, params)
+        } else {
+            openPluginPanel(panelIdStr, targetWindowId)
+            null
         }
+    }
 
+    /** Runs a `boss://plugin?id=…&action=…` link's action and hands back its real outcome. */
+    private fun dispatchPluginAction(
+        handlerId: String,
+        action: String,
+        params: Map<String, String>,
+    ): Deferred<Boolean> {
+        val actionParams =
+            params
+                .filterKeys { it != "id" && it != "action" }
+                .mapValues { (_, value) -> value.urlDecode() }
+        return scope.async(Dispatchers.Main) {
+            ai.rever.boss.components.plugin.registries.DeepLinkActionRegistryImpl
+                .dispatch(handlerId, action, actionParams)
+        }
+    }
+
+    /** Opens a `boss://plugin?id=…` link's panel. Fire-and-forget: nothing awaits this today. */
+    private fun openPluginPanel(
+        panelIdStr: String,
+        targetWindowId: String?,
+    ) {
         if (targetWindowId == null) {
             logger.warn(
                 LogCategory.UI,
@@ -578,7 +627,6 @@ actual object DeepLinkHandler {
             return
         }
 
-        // Emit panel open event
         scope.launch(Dispatchers.Main) {
             // Create PanelId with panelId string
             // The event handler in BossApp will look it up in the registry

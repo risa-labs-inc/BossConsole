@@ -13,6 +13,7 @@ import javax.swing.JPopupMenu
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
@@ -376,5 +377,59 @@ class PopupWindowContextMenuTest {
         // surface - the menu would silently not appear.
         val menu = buildPopupWindowMenu(stubFrame(), entries(editable = true, selection = "x"))
         assertFalse(menu.isLightWeightPopupEnabled)
+    }
+
+    @Test
+    fun `installSuppressingContextMenu registers ShowContextMenuCallback`() {
+        val installed = mutableListOf<String>()
+        var callback: ShowContextMenuCallback? = null
+        installSuppressingContextMenu(
+            recordingBrowser(installed, captureMenuCallback = { callback = it }),
+        )
+        assertEquals(listOf("ShowContextMenuCallback"), installed)
+
+        val tell = ShowContextMenuCallback.Action { }
+        callback?.on(
+            Proxy.newProxyInstance(
+                ShowContextMenuCallback.Params::class.java.classLoader,
+                arrayOf(ShowContextMenuCallback.Params::class.java),
+            ) { _, _, _ -> null } as ShowContextMenuCallback.Params,
+            tell,
+        )
+        assertTrue(tell.isClosed, "Suppressing callback must call tell.close()")
+    }
+
+    @Test
+    fun `installDefaultBrowserChrome installs suppressing context menu and page-click dismiss`() {
+        val installed = mutableListOf<String>()
+        installDefaultBrowserChrome(recordingBrowser(installed))
+        assertEquals(listOf("ShowContextMenuCallback", "PressMouseCallback"), installed)
+    }
+
+    @Test
+    fun `a failed custom menu falls back to suppression before installing dismissal`() {
+        val installed = mutableListOf<String>()
+        var fallback: ShowContextMenuCallback? = null
+        val browser =
+            Proxy.newProxyInstance(Browser::class.java.classLoader, arrayOf(Browser::class.java)) { _, method, args ->
+                check(method.name == "set")
+                installed += (args!![0] as Class<*>).simpleName
+                if (installed.size == 1) error("custom menu rejected")
+                (args[1] as? ShowContextMenuCallback)?.let { fallback = it }
+                null
+            } as Browser
+
+        installPopupWindowChrome(browser, JPanel())
+
+        assertEquals(listOf("ShowContextMenuCallback", "ShowContextMenuCallback", "PressMouseCallback"), installed)
+        val callback = assertNotNull(fallback)
+        val params =
+            Proxy.newProxyInstance(
+                ShowContextMenuCallback.Params::class.java.classLoader,
+                arrayOf(ShowContextMenuCallback.Params::class.java),
+            ) { _, _, _ -> error("suppression must not inspect a disposed target") } as ShowContextMenuCallback.Params
+        val tell = ShowContextMenuCallback.Action { }
+        callback.on(params, tell)
+        assertTrue(tell.isClosed)
     }
 }

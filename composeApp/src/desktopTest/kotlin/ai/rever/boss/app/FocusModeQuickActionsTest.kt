@@ -1,6 +1,7 @@
 package ai.rever.boss.app
 
 import ai.rever.boss.components.overlays.OverlayConfig
+import ai.rever.boss.components.overlays.resetOverlayFieldForTest
 import ai.rever.boss.plugin.ui.LocalHeavyweightOverlays
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -50,6 +51,7 @@ class FocusModeQuickActionsTest {
         // OverlayConfig is a process-global registry; leaving a fake in it would leak into any
         // other test that routes an overlay.
         OverlayConfig.heavyweightCorner = previousRenderer
+        resetOverlayFieldForTest("useHeavyweightOverlays")
         OverlayConfig.useHeavyweightPopups = previousUseHeavyweight
     }
 
@@ -70,6 +72,7 @@ class FocusModeQuickActionsTest {
         inset: DpSize = DpSize.Zero,
     ): Boolean {
         var requested = false
+        resetOverlayFieldForTest("useHeavyweightOverlays")
         OverlayConfig.useHeavyweightPopups = heavyweight
         OverlayConfig.heavyweightCorner = { _, _, cornerInset, _, _, _ ->
             // Recorded, not composed: composing a real Window needs a display.
@@ -214,6 +217,7 @@ class FocusModeQuickActionsTest {
         // On the lightweight path, so the real content is composed rather than handed to a fake
         // renderer. The buttons are icon-only, so `text` is the content description.
         val fired = mutableListOf<String>()
+        resetOverlayFieldForTest("useHeavyweightOverlays")
         OverlayConfig.useHeavyweightPopups = false
         rule.setContent {
             CompositionLocalProvider(

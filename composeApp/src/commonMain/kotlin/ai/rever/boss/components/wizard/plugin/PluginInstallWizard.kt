@@ -12,12 +12,15 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.Button
 import androidx.compose.material.ButtonDefaults
 import androidx.compose.material.CircularProgressIndicator
@@ -32,6 +35,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.HomeRepairService
 import androidx.compose.material.icons.filled.Rocket
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -207,14 +211,7 @@ internal fun CategoryStepContent(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(plugins, key = { it.id }) { plugin ->
-                    CheckboxCard(
-                        title = plugin.name,
-                        description = plugin.description,
-                        icon = plugin.icon,
-                        isChecked = isPluginSelected(plugin.id),
-                        onCheckedChange = { onTogglePlugin(plugin.id) },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                    PluginChoiceCard(plugin, isPluginSelected(plugin.id)) { onTogglePlugin(plugin.id) }
                 }
             }
         }
@@ -337,13 +334,13 @@ internal fun CompleteStepContent(
     val hasFailures = failedPlugins.isNotEmpty()
 
     Column(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
         Icon(
-            imageVector = Icons.Default.CheckCircle,
-            contentDescription = if (hasFailures) "Partial Success" else "Success",
+            imageVector = if (hasFailures) Icons.Outlined.Warning else Icons.Default.CheckCircle,
+            contentDescription = if (hasFailures) "Installation errors" else "Success",
             modifier = Modifier.size(72.dp),
             tint = if (hasFailures) BossTheme.colors.warn else BossTheme.colors.ok,
         )
@@ -351,7 +348,7 @@ internal fun CompleteStepContent(
         Spacer(modifier = Modifier.height(24.dp))
 
         Text(
-            text = if (hasFailures) "Installation Complete" else "You're All Set!",
+            text = if (hasFailures) "Installation incomplete" else "You're All Set!",
             fontSize = 24.sp,
             fontWeight = FontWeight.Bold,
             color = BossTheme.colors.textPrimary,
@@ -363,6 +360,8 @@ internal fun CompleteStepContent(
             text =
                 if (installedCount > 0) {
                     "$installedCount tool${if (installedCount > 1) "s" else ""} installed successfully"
+                } else if (hasFailures) {
+                    "No tools were installed successfully"
                 } else {
                     "No tools were selected for installation"
                 },
@@ -391,13 +390,20 @@ internal fun CompleteStepContent(
                         color = BossTheme.colors.warn,
                     )
                     Spacer(modifier = Modifier.height(8.dp))
-                    failedPlugins.forEach { (pluginId, error) ->
-                        Text(
-                            text = "\u2022 $pluginId: $error",
-                            fontSize = 12.sp,
-                            color = BossTheme.colors.textSecondary,
-                            lineHeight = 18.sp,
-                        )
+                    Column(
+                        modifier =
+                            Modifier
+                                .heightIn(max = 120.dp)
+                                .verticalScroll(rememberScrollState()),
+                    ) {
+                        failedPlugins.forEach { (pluginId, error) ->
+                            Text(
+                                text = "\u2022 $pluginId: $error",
+                                fontSize = 12.sp,
+                                color = BossTheme.colors.textSecondary,
+                                lineHeight = 18.sp,
+                            )
+                        }
                     }
                 }
             }
@@ -517,4 +523,22 @@ internal fun WizardNavigation(
             }
         }
     }
+}
+
+@Composable
+private fun PluginChoiceCard(
+    plugin: WizardPluginInfo,
+    selected: Boolean,
+    onToggle: () -> Unit,
+) {
+    CheckboxCard(
+        title = plugin.name,
+        trailingLabel = if (plugin.isMandatory) "Required" else "Optional",
+        locked = plugin.isMandatory,
+        description = plugin.description,
+        icon = plugin.icon,
+        isChecked = selected,
+        onCheckedChange = { onToggle() },
+        modifier = Modifier.fillMaxWidth(),
+    )
 }

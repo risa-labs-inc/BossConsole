@@ -1,5 +1,6 @@
 package ai.rever.boss.ipc
 
+import ai.rever.boss.ipc.auth.ProcessTokenClientInterceptor
 import ai.rever.boss.ipc.proto.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.flow
@@ -53,6 +54,16 @@ class ChildProcessBootstrap {
     }
 
     /**
+     * This process's IPC credential, minted by the kernel at spawn time and handed down as an
+     * environment variable alongside [processId] — never read back or logged. Optional: a process
+     * started outside [ai.rever.boss.process.ProcessSpawner] (any test, or a kernel not wired with a
+     * `ProcessTokenRegistry`) simply connects without one, exactly as before this existed.
+     */
+    private val processToken: String? by lazy {
+        System.getenv("BOSS_PROCESS_TOKEN")
+    }
+
+    /**
      * Connect to the kernel, register, and start heartbeat.
      */
     suspend fun connect(
@@ -66,8 +77,13 @@ class ChildProcessBootstrap {
         delay(100)
         logger.info("Connecting to kernel at: {}", kernelAddress)
 
-        // Connect to kernel
-        val kernelClient = BossIpcClient(kernelAddress)
+        // Connect to kernel. The credential (when we have one) rides on every call this channel
+        // makes, so the kernel can verify who is calling instead of trusting what a request claims.
+        val kernelClient =
+            BossIpcClient(
+                kernelAddress,
+                interceptors = processToken?.let { listOf(ProcessTokenClientInterceptor(it)) } ?: emptyList(),
+            )
         if (!kernelClient.waitForReady(30_000)) {
             throw IllegalStateException("Failed to connect to kernel at $kernelAddress")
         }

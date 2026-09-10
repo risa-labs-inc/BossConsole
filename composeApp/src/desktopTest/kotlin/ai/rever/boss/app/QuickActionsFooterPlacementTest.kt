@@ -3,18 +3,17 @@ package ai.rever.boss.app
 import ai.rever.boss.focusmode.FocusModeSettings
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertTrue
 
 /**
- * Pins the precedence between the three renderings of Settings / Search / Sign Out.
+ * Pins the precedence between the five renderings of Settings / Search / Sign Out.
  *
- * The order is rail, then the tab bar's footer, then the floating cluster, and each step is a
- * choice rather than an accident. The floating cluster is a native always-on-top window with no
- * click-through, so it is the most intrusive of the three and goes last; the rail was already
- * preferred over it and stays preferred; the tab bar's foot is chrome the app draws anyway.
+ * The order is the right rail, the tab bar's foot, that bar's collapsed rail, a reserved row at
+ * the foot of the open right panel, and only then the floating cluster - and each step is a choice
+ * rather than an accident. The cluster is a native always-on-top window with no click-through, so
+ * it is the most intrusive of the five and goes last; every one before it is chrome the app draws
+ * anyway, or layout it can carve out.
  *
- * Getting this backwards does not crash - it puts a dead click region over the content area in a
+ * Getting this backwards does not crash - it puts a dead click region over the content area of a
  * window that had a perfectly good place to put four icons.
  */
 class QuickActionsFooterPlacementTest {
@@ -22,20 +21,22 @@ class QuickActionsFooterPlacementTest {
 
     private fun placement(
         rightStripHidden: Boolean,
-        verticalTabBar: Boolean,
+        verticalBar: VerticalBarHost,
+        panelFootAvailable: Boolean = false,
     ) = focusQuickActionsPlacement(
         settings = focusOff,
         topBarHidden = true,
         rightStripHidden = rightStripHidden,
         showTopBar = false,
-        verticalTabBar = verticalTabBar,
+        verticalBar = verticalBar,
+        panelFootAvailable = panelFootAvailable,
     )
 
     @Test
     fun `the rail still wins when there is a rail`() {
         assertEquals(
             FocusQuickActionsPlacement.RIGHT_RAIL,
-            placement(rightStripHidden = false, verticalTabBar = true),
+            placement(rightStripHidden = false, verticalBar = VerticalBarHost.FOOT),
             "the vertical tab bar displaces the floating cluster, not the rail",
         )
     }
@@ -44,51 +45,69 @@ class QuickActionsFooterPlacementTest {
     fun `the tab bar's foot takes the floating cluster's place`() {
         assertEquals(
             FocusQuickActionsPlacement.TAB_BAR_FOOTER,
-            placement(rightStripHidden = true, verticalTabBar = true),
+            placement(rightStripHidden = true, verticalBar = VerticalBarHost.FOOT),
         )
     }
 
     @Test
-    fun `a collapsed bar floats them, because its foot does not exist`() {
-        // The caller passes verticalTabBar = false for a collapsed bar. Pinned here as the
-        // contract rather than left to the scaffold, because the failure is silent: the four
-        // actions simply render nowhere.
+    fun `a collapsed bar puts them at the foot of its rail, not in the corner`() {
+        // The rail has no foot under a split map, but it does have a bottom, and it is still the
+        // bar. Collapsing it is a request for content width; answering that with a native overlay
+        // parked in the content is the opposite of granting it.
         assertEquals(
-            FocusQuickActionsPlacement.FLOATING,
-            placement(rightStripHidden = true, verticalTabBar = false),
+            FocusQuickActionsPlacement.TAB_BAR_RAIL,
+            placement(rightStripHidden = true, verticalBar = VerticalBarHost.RAIL),
         )
     }
 
     @Test
-    fun `a bar that is not on the left has no foot either`() {
-        // Was a character-for-character copy of the test above, so the case its name described -
-        // no vertical bar AT ALL, as against a collapsed one - went untested while looking covered.
-        //
-        // Asked through verticalBarHasFoot rather than by passing `false` again, because that is
-        // the composition the scaffold performs and the only way the two cases differ.
-        val tabsOnTop = verticalBarHasFoot(tabBarOnLeft = false, barCollapsed = false, drawerVisible = false)
+    fun `a collapsed bar keeps the rail even with the right panel open`() {
+        // The panel only decides between its own foot and the overlay, and neither is reached
+        // while a bar - full or railed - can hold these itself.
+        assertEquals(
+            FocusQuickActionsPlacement.TAB_BAR_RAIL,
+            placement(rightStripHidden = true, verticalBar = VerticalBarHost.RAIL, panelFootAvailable = true),
+        )
+        assertEquals(
+            FocusQuickActionsPlacement.TAB_BAR_FOOTER,
+            placement(rightStripHidden = true, verticalBar = VerticalBarHost.FOOT, panelFootAvailable = true),
+        )
+    }
+
+    @Test
+    fun `a bar that is not on the left hosts nothing at all`() {
+        // Asked through verticalBarHost rather than by naming NONE again, because that is the
+        // composition the scaffold performs and the only way these cases differ.
+        val tabsOnTop = verticalBarHost(tabBarOnLeft = false, barCollapsed = false, drawerVisible = false)
+        assertEquals(VerticalBarHost.NONE, tabsOnTop)
         assertEquals(
             FocusQuickActionsPlacement.FLOATING,
-            placement(rightStripHidden = true, verticalTabBar = tabsOnTop),
+            placement(rightStripHidden = true, verticalBar = tabsOnTop),
         )
 
-        // And the collapsed-bar case reaches the same answer by the other route.
-        val collapsedOnLeft = verticalBarHasFoot(tabBarOnLeft = true, barCollapsed = true, drawerVisible = false)
+        // With the right panel open, the same window reserves a row instead of covering it.
         assertEquals(
-            FocusQuickActionsPlacement.FLOATING,
-            placement(rightStripHidden = true, verticalTabBar = collapsedOnLeft),
+            FocusQuickActionsPlacement.PANEL_FOOTER,
+            placement(rightStripHidden = true, verticalBar = tabsOnTop, panelFootAvailable = true),
+        )
+
+        // A collapsed bar on the left reaches its own rail by the other route.
+        val collapsedOnLeft = verticalBarHost(tabBarOnLeft = true, barCollapsed = true, drawerVisible = false)
+        assertEquals(
+            FocusQuickActionsPlacement.TAB_BAR_RAIL,
+            placement(rightStripHidden = true, verticalBar = collapsedOnLeft),
         )
 
         // The drawer is the third state: a collapsed bar with it open HAS a foot again.
-        val drawerOpen = verticalBarHasFoot(tabBarOnLeft = true, barCollapsed = true, drawerVisible = true)
+        val drawerOpen = verticalBarHost(tabBarOnLeft = true, barCollapsed = true, drawerVisible = true)
         assertEquals(
             FocusQuickActionsPlacement.TAB_BAR_FOOTER,
-            placement(rightStripHidden = true, verticalTabBar = drawerOpen),
+            placement(rightStripHidden = true, verticalBar = drawerOpen),
         )
     }
 
     @Test
-    fun `the top bar being up still beats all three`() {
+    fun `the top bar being up still beats all of them`() {
         assertEquals(
             FocusQuickActionsPlacement.NONE,
             focusQuickActionsPlacement(
@@ -96,44 +115,73 @@ class QuickActionsFooterPlacementTest {
                 topBarHidden = false,
                 rightStripHidden = true,
                 showTopBar = true,
-                verticalTabBar = true,
+                verticalBar = VerticalBarHost.FOOT,
+                panelFootAvailable = true,
             ),
-            "the top bar owns these three whenever it is on screen",
+            "the top bar owns these whenever it is on screen",
         )
     }
 
     @Test
-    fun `the footer list is empty for every other placement`() {
-        // What lets the bar call it unconditionally and render nothing.
-        FocusQuickActionsPlacement.entries
-            .filter { it != FocusQuickActionsPlacement.TAB_BAR_FOOTER }
-            .forEach { placement ->
-                assertTrue(
-                    focusQuickActionsFooter(placement, {}, {}, {}, { _, _ -> }).isEmpty(),
-                    "$placement should contribute no footer actions",
-                )
-            }
-        assertEquals(
-            FOCUS_QUICK_ACTION_COUNT,
-            focusQuickActionsFooter(FocusQuickActionsPlacement.TAB_BAR_FOOTER, {}, {}, {}, { _, _ -> }).size,
-        )
-    }
-
-    @Test
-    fun `the launcher adds a fourth action without disturbing the reserve`() {
-        // The rail's reserve is FOCUS_QUICK_ACTION_COUNT rows, and it stays at three because the
-        // launcher can never join the rail flavour - see ToolLauncherPlacementTest.
-        val withLauncher =
-            focusQuickActionsFooter(
-                FocusQuickActionsPlacement.TAB_BAR_FOOTER,
-                {},
-                {},
-                {},
-                toolbox = { _, _ -> },
-                toolLauncher = { _, _ -> },
+    fun `each layout is empty for every placement but its own`() {
+        // What lets all four hosts call their builder unconditionally and render nothing. A
+        // non-empty list on the wrong placement is not a stray icon: the right rail reserves
+        // height from its list's SIZE, and two hosts drawing at once is Sign Out twice.
+        val builders =
+            mapOf(
+                FocusQuickActionsPlacement.RIGHT_RAIL to
+                    { p: FocusQuickActionsPlacement -> focusQuickActionsRail(p, {}, {}, {}, { _, _ -> }) },
+                FocusQuickActionsPlacement.TAB_BAR_FOOTER to
+                    { p: FocusQuickActionsPlacement -> focusQuickActionsFooter(p, {}, {}, {}, { _, _ -> }) },
+                FocusQuickActionsPlacement.TAB_BAR_RAIL to
+                    { p: FocusQuickActionsPlacement -> focusQuickActionsTabRail(p, {}, {}, {}, { _, _ -> }) },
+                FocusQuickActionsPlacement.PANEL_FOOTER to
+                    { p: FocusQuickActionsPlacement -> focusQuickActionsPanelFooter(p, {}, {}, {}, { _, _ -> }) },
             )
 
-        assertEquals(FOCUS_QUICK_ACTION_COUNT + 1, withLauncher.size)
+        builders.forEach { (owner, build) ->
+            FocusQuickActionsPlacement.entries.forEach { placement ->
+                val expected = if (placement == owner) FOCUS_QUICK_ACTION_COUNT else 0
+                assertEquals(
+                    expected,
+                    build(placement).size,
+                    "the $owner layout for placement $placement",
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `the launcher adds one more action to each layout without disturbing the reserve`() {
+        // The rail's reserve is FOCUS_QUICK_ACTION_COUNT rows, and it stays at four because the
+        // launcher can never join the right-rail flavour - see ToolLauncherPlacementTest.
+        val hosts =
+            listOf(
+                FocusQuickActionsPlacement.TAB_BAR_FOOTER to
+                    { p: FocusQuickActionsPlacement ->
+                        focusQuickActionsFooter(p, {}, {}, {}, toolbox = { _, _ -> }, toolLauncher = { _, _ -> })
+                    },
+                FocusQuickActionsPlacement.TAB_BAR_RAIL to
+                    { p: FocusQuickActionsPlacement ->
+                        focusQuickActionsTabRail(p, {}, {}, {}, toolbox = { _, _ -> }, toolLauncher = { _, _ -> })
+                    },
+                FocusQuickActionsPlacement.PANEL_FOOTER to
+                    { p: FocusQuickActionsPlacement ->
+                        focusQuickActionsPanelFooter(
+                            p,
+                            {},
+                            {},
+                            {},
+                            toolbox = { _, _ -> },
+                            toolLauncher = { _, _ -> },
+                        )
+                    },
+            )
+
+        hosts.forEach { (placement, build) ->
+            assertEquals(FOCUS_QUICK_ACTION_COUNT + 1, build(placement).size, "with the launcher, $placement")
+        }
+
         val rail = focusQuickActionsRail(FocusQuickActionsPlacement.RIGHT_RAIL, {}, {}, {}, { _, _ -> })
         assertEquals(FOCUS_QUICK_ACTION_COUNT, rail.size)
     }
@@ -151,40 +199,71 @@ class QuickActionsFooterPlacementTest {
                 topBarHidden = true,
                 rightStripHidden = false,
                 showTopBar = false,
-                verticalTabBar = true,
+                verticalBar = VerticalBarHost.FOOT,
             ),
         )
+    }
+
+    @Test
+    fun `the overlay is the only placement that draws over content`() {
+        // The whole point of the two additions, stated as one assertion: of the configurations a
+        // window with the top bar off can be in, the only one that ends up with an overlay is the
+        // one with no bar to host these and nothing open for it to cover.
+        val overlaid =
+            VerticalBarHost.entries
+                .flatMap { bar -> listOf(false, true).map { open -> bar to open } }
+                .filter { (bar, open) ->
+                    placement(
+                        rightStripHidden = true,
+                        verticalBar = bar,
+                        panelFootAvailable = open,
+                    ) == FocusQuickActionsPlacement.FLOATING
+                }
+
+        assertEquals(listOf(VerticalBarHost.NONE to false), overlaid)
     }
 }
 
 /**
- * Pins the three states of "does the vertical bar have a foot to put the host's actions in".
+ * Pins the three states of "what can the vertical bar host".
  *
  * Two of them look the same from the settings alone - a collapsed bar with the drawer open and one
  * with it shut differ only in a transient flag - and getting it wrong is silent either way: the
  * actions render twice, or nowhere.
  */
-class VerticalBarFootTest {
+class VerticalBarHostTest {
     @Test
     fun `an expanded left bar has a foot`() {
-        assertTrue(verticalBarHasFoot(tabBarOnLeft = true, barCollapsed = false, drawerVisible = false))
+        assertEquals(
+            VerticalBarHost.FOOT,
+            verticalBarHost(tabBarOnLeft = true, barCollapsed = false, drawerVisible = false),
+        )
     }
 
     @Test
-    fun `a collapsed bar has none, so they float`() {
-        // It draws its rail and nothing else - there is no foot to render into.
-        assertFalse(verticalBarHasFoot(tabBarOnLeft = true, barCollapsed = true, drawerVisible = false))
+    fun `a collapsed bar offers its rail`() {
+        // It draws its rail and nothing else, and the bottom of that rail is what it has room for.
+        assertEquals(
+            VerticalBarHost.RAIL,
+            verticalBarHost(tabBarOnLeft = true, barCollapsed = true, drawerVisible = false),
+        )
     }
 
     @Test
-    fun `a collapsed bar with the drawer open has one again`() {
+    fun `a collapsed bar with the drawer open has a foot again`() {
         // The drawer is a full bar, split map and all, for as long as it is up.
-        assertTrue(verticalBarHasFoot(tabBarOnLeft = true, barCollapsed = true, drawerVisible = true))
+        assertEquals(
+            VerticalBarHost.FOOT,
+            verticalBarHost(tabBarOnLeft = true, barCollapsed = true, drawerVisible = true),
+        )
     }
 
     @Test
-    fun `a top tab bar never has one, drawer or not`() {
+    fun `a top tab bar hosts nothing, drawer or not`() {
         // There is no vertical bar at all in TOP position, so no drawer can give it a foot.
-        assertFalse(verticalBarHasFoot(tabBarOnLeft = false, barCollapsed = false, drawerVisible = true))
+        assertEquals(
+            VerticalBarHost.NONE,
+            verticalBarHost(tabBarOnLeft = false, barCollapsed = false, drawerVisible = true),
+        )
     }
 }

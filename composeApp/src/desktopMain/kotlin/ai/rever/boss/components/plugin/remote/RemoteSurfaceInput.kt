@@ -96,14 +96,10 @@ import java.awt.event.KeyEvent as AwtKeyEvent
  * what the field ignores bubbles this far. That is the same "host first, then the specific thing, then
  * the surface" ordering one level down.
  *
- * **The surface is deliberately not a focus target of its own.** An earlier revision ended this chain
- * in `.focusable()`, which made a surface with no interactive content a Tab stop that began streaming
- * every unclaimed key-down to a separate OS process — with no plugin identity, no capability model and
- * nothing visible in the UI. Reviewers were unanimous that that is the wrong default to ship, and the
- * directions are not symmetric: granting it later behind a declared `wants_keys` on `UIRegistration` is
- * additive, whereas revoking it after a plugin has shipped against it is a negotiation. So a surface
- * receives keys only once something inside it holds focus — which is every surface built for
- * interaction, and none of the ones with no business seeing keystrokes.
+ * **The surface is deliberately not a focus target of its own.** The renderer adds this tap only
+ * when registration declares `wants_keys`; the outgoing surface queue enforces the same declaration.
+ * Even an opted-in surface receives keys only while an interactive child holds focus. The declaration
+ * is not user consent and does not create a Tab stop for a surface containing only labels.
  *
  * ## Cost
  *
@@ -165,6 +161,12 @@ internal fun Modifier.forwardUnclaimedKeys(
  *   shortcut sheet — and refusing it here made `?` on a focused remote surface do nothing at all,
  *   claimed by neither side. [KeymapMatcher.hasSystemModifier] is the interceptor's own test for that
  *   and is now shared rather than reimplemented, so the two cannot drift.
+ *
+ *   Not exact any more, in the safe direction: the interceptor now declines chords it has a
+ *   binding for but cannot act on - Cmd+3 in a two-tab panel, tab stepping in a single-tab panel,
+ *   panel navigation in a single-panel window. This test still refuses to forward those, so such
+ *   a chord reaches nobody. Nothing places a remote surface yet, and closing it means teaching
+ *   this the gates dispatchAction applies; see #52.
  *
  *   Not consulted: `PluginShortcutRegistryImpl`'s defaults, which the interceptor checks after the
  *   keymap. They sit behind the same system-modifier early exit, so anything they could claim is

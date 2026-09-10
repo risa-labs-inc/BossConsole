@@ -114,20 +114,6 @@ object LogSanitizer {
     fun maskUriParams(uri: String?): String {
         if (uri.isNullOrBlank()) return "[empty]"
 
-        val sensitiveParams =
-            setOf(
-                "token",
-                "access_token",
-                "refresh_token",
-                "code",
-                "error_description",
-                "id_token",
-                "session_token",
-                "api_key",
-                "key",
-                "secret",
-            )
-
         return try {
             // Handle both query params (?) and fragment params (#)
             var result = uri
@@ -135,13 +121,13 @@ object LogSanitizer {
             // Mask query parameters
             val queryStart = uri.indexOf('?')
             if (queryStart >= 0) {
-                result = maskParamsInSegment(result, queryStart + 1, '#', sensitiveParams)
+                result = maskParamsInSegment(result, queryStart + 1, '#', sensitiveUriParamNames)
             }
 
             // Mask fragment parameters
             val fragmentStart = result.indexOf('#')
             if (fragmentStart >= 0) {
-                result = maskParamsInSegment(result, fragmentStart + 1, '\u0000', sensitiveParams)
+                result = maskParamsInSegment(result, fragmentStart + 1, '\u0000', sensitiveUriParamNames)
             }
 
             result
@@ -230,6 +216,60 @@ object LogSanitizer {
     private val emailPattern = Regex("""[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}""")
 
     /**
+     * Private DNS names that can reveal an organisation's internal topology in
+     * network failures. Kept to the private-style suffixes measured in #109 so
+     * ordinary dotted prose and package names remain diagnostic. Case folding intentionally
+     * also masks ambiguous constants such as `Status.INTERNAL`: free text cannot distinguish
+     * these from private DNS names. Run before the public matcher to avoid exposing a mixed-case
+     * leading label. Both hostname passes preserve ports because they remain useful diagnostics.
+     * A terminal period is punctuation (or a DNS root dot); a following label blocks the match.
+     */
+    private val privateHostnamePattern =
+        Regex(
+            """(?<![A-Za-z0-9_.-])(?:[A-Za-z0-9-]+\.)+(?:internal|local)(?![A-Za-z0-9_-])(?!\.[A-Za-z0-9_-])""",
+            RegexOption.IGNORE_CASE,
+        )
+
+    /**
+     * A bare hostname with no protocol/path around it - the shape `UnknownHostException.getMessage()`
+     * and every DNS/proxy-connect failure produces (BossConsole#109). [filePathPattern] needs a `/`,
+     * [urlPattern] needs `http`, [emailPattern] needs `@` - none of them fire on this shape, so
+     * `proxy.corp.internal:3128` or a bare `api.risaboss.com` passed through every prior revision of
+     * this file untouched, and for a user behind a corporate proxy the failing hostname *is* the
+     * sensitive part - it names an employer and an internal topology.
+     *
+     * Deliberately narrow: labels are lowercase-hostname-shaped (`[a-z0-9-]`), and the trailing label
+     * must be one of a short, explicit list of real TLDs or `internal`/`local` - not "any 2-6 letter
+     * word," which would eat ordinary lowercase prose. The lowercase requirement is also what keeps a
+     * fully-qualified Kotlin/Java exception class name (`ai.rever.boss.services.supabase.SecretService`)
+     * from matching: its trailing segment is PascalCase, and no legitimate exception class happens to
+     * end in a bare `.com`/`.io`/etc. word.
+     *
+     * `internal` and `io` are also real lowercase package-name segments
+     * (`kotlinx.coroutines.internal.ScopeCoroutine`, `kotlinx.io.EOFException`), and the lowercase
+     * rule alone does not rule those out - a package path is lowercase right up to the class name.
+     * What distinguishes them is what follows: a hostname's TLD is the end of the token, while a
+     * package segment is immediately followed by `.NextSegment`. The trailing
+     * `(?!\.[A-Za-z])` is that check - measured directly against a realistic stack trace
+     * (`sanitizeStackTrace leaves a realistic Kotlin trace intact`) after the first version of this
+     * pattern redacted `kotlinx.coroutines.internal` out of one.
+     *
+     * Coverage limits: multi-level public suffixes such as `.co.uk` are rejected by that same
+     * guard. This public-host matcher remains case-sensitive, so
+     * mixed-case public hosts are untouched. The preceding private-host pass handles complete
+     * mixed-case `.internal`/`.local` names and preserves their ports. Unlisted suffixes and IP literals also
+     * remain unchanged. Ports are preserved, as in the private-host pass. The private suffixes
+     * remain here to preserve existing lowercase matching outside the stricter private boundaries.
+     * This is selected lowercase-host redaction, not complete DNS redaction.
+     */
+    private val hostnamePattern =
+        Regex(
+            """\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+""" +
+                """(?:internal|local|com|net|org|io|dev|app|co|ai|gov|edu|mil|info|biz)\b""" +
+                """(?!\.[A-Za-z])""",
+        )
+
+    /**
      * Runs of text that are a credential by their own structure, wherever they
      * appear: a JWT (three base64url segments — the first is the base64url of a
      * JSON header, which is why every JWT begins `eyJ`), a GitHub token prefix,
@@ -265,8 +305,51 @@ object LogSanitizer {
      */
     private val assignmentPattern = Regex("""(?<![A-Za-z0-9_.])([A-Za-z][A-Za-z0-9_.-]*)=([^\s\[][^\s]*)""")
 
+    /**
+     * A sensitive-named query or fragment parameter shape — `?token=…`,
+     * `&access_token=…`, `#access_token=…` — redacted before [filePathPattern]
+     * gets a chance to see it. These shapes are redacted even without a full URL.
+     * Parameters use ampersand separators; legacy semicolon separators and
+     * percent-encoded parameter names are not interpreted by this text matcher.
+     *
+     * BossConsole#109 (review comment): [filePathPattern]'s `[^\s:]+` stops at
+     * the first colon, on the (correct, elsewhere) assumption that a colon
+     * there marks a `host:port` boundary worth preserving. A value that
+     * happens to contain one — `token=abc:def` — is only partly consumed, so
+     * the tail survives the later replace verbatim: `[url=https://…?token=
+     * abc:def]` became `[url=https:[PATH]:def]`, leaking a fragment of the
+     * token. Measured, not hypothetical.
+     *
+     * Running this first removes the value entirely wherever [nameMarksSecret]
+     * says the name is sensitive, so there is nothing containing a colon left
+     * by the time [filePathPattern] runs — the fix is in what reaches that
+     * pass, not in loosening its own boundary (which exists for the
+     * `host:port` case this pass does not touch: no `?`/`&`/`#` precedes it).
+     * Only parameter/fragment separators and whitespace terminate the value.
+     * Punctuation such as `)` and an apostrophe is legal inside a URI value;
+     * treating it as a log wrapper can leave a later colon and secret suffix
+     * exposed. Conservatively consume adjacent wrapper punctuation too, as
+     * the following path pass already does for colon-free URLs.
+     */
+    private val sensitiveQueryParamPattern = Regex("""([?&#])([A-Za-z][A-Za-z0-9_.-]*)=([^&#\s]+)""")
+
     /** Inserts a word boundary into camelCase names, so `accessToken` splits like `access_token`. */
     private val camelCaseBoundary = Regex("""(?<=[a-z0-9])(?=[A-Z])""")
+
+    // Exact URL names stay separate: free-text exit_code and status_code are diagnostics.
+    private val sensitiveUriParamNames =
+        setOf(
+            "token",
+            "access_token",
+            "refresh_token",
+            "code",
+            "error_description",
+            "id_token",
+            "session_token",
+            "api_key",
+            "key",
+            "secret",
+        )
 
     /**
      * Names whose value is sensitive. Shared by [sanitizeMap] and the
@@ -375,13 +458,32 @@ object LogSanitizer {
      * The passes compose in either order because [maskToken] is a fixed point on
      * its own output at these lengths (`ghp...345` masks to `ghp...345`), so a
      * value both of them match is masked once in effect.
+     *
+     * [sensitiveQueryParamPattern] runs before all of that, for a narrower
+     * reason: it is the one pass that must see the *original* text, since its
+     * whole job is removing a colon before [filePathPattern] can trip on it
+     * (BossConsole#109). Running it any later would be too late by definition.
      */
     private fun redactLocationsAndCredentials(text: String): String {
+        val withMaskedQueryParams =
+            sensitiveQueryParamPattern.replace(text) { match ->
+                val (prefix, name, value) = match.destructured
+                val sensitive =
+                    nameMarksSecret(name) || sensitiveUriParamNames.any { name.equals(it, ignoreCase = true) }
+                if (sensitive && value.lowercase() !in nonSecretValues) {
+                    "$prefix$name=[REDACTED]"
+                } else {
+                    match.value
+                }
+            }
+
         val withoutLocations =
-            text
+            withMaskedQueryParams
                 .replace(filePathPattern, "[PATH]")
                 .replace(urlPattern, "[URL]")
                 .replace(emailPattern, "[EMAIL]")
+                .replace(privateHostnamePattern, "[HOST]")
+                .replace(hostnamePattern, "[HOST]")
 
         val withMaskedAssignments =
             assignmentPattern.replace(withoutLocations) { match ->
@@ -403,6 +505,7 @@ object LogSanitizer {
      * - File paths (Unix and Windows)
      * - URLs
      * - Email addresses
+     * - Bare hostnames (no protocol/path around them - DNS and proxy-connect failures)
      * - Credentials recognisable by shape: JWTs, GitHub tokens, `sk_`/`pk_` keys
      * - The value of a `name=value` pair whose name marks it sensitive
      *

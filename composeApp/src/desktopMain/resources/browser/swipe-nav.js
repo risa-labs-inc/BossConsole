@@ -67,9 +67,17 @@
     // Set once the gesture has been ruled out; stays set until the gesture ends, so a
     // rejected swipe cannot become an accepted one halfway through.
     var rejected = false;
-    // Set once the navigation has fired, so one continuous swipe navigates exactly once.
-    var committed = false;
     var direction = 0;
+    // Latched the first time this gesture is past COMMIT_PX with enough events to be real.
+    //
+    // From that point the vertical tiers stop being asked. Vertical is a PATH LENGTH, so it only
+    // ever grows, and every event after the crossing is one more chance for it to cancel a swipe
+    // the user already completed - including events the user did not make. macOS momentum-phase
+    // scroll carries 325-2500px of travel (AGENTS.md), and a tail with even a little dy in it
+    // clears CANCEL_VERTICAL_HIGH on its own. Past the line only the horizontal position decides:
+    // easing back below COMMIT_PX, or reversing outright. That is also what a native swipe-back
+    // does - once you are past the threshold, wobble no longer counts against you.
+    var reachedCommit = false;
     // Ends the gesture when the fingers lift.
     //
     // The gap check at the top of onWheel cannot do this on its own: it only runs when a NEXT
@@ -276,9 +284,18 @@
 
     // ---- gesture ----------------------------------------------------------------------
 
-    // End of gesture: everything goes back to neutral. Only ever called on a gap in the
-    // wheel stream or on pagehide - never to abandon a gesture in flight, because clearing
-    // `rejected` mid-gesture would let a swipe this code already ruled out come back.
+    // End of gesture: everything goes back to neutral. Never to abandon a gesture in flight -
+    // clearing `rejected` mid-gesture would let a swipe this code already ruled out come back.
+    //
+    // Both signals that a gesture ended call decide() immediately before this: the endTimer
+    // callback, and the gap check at the top of onWheel (a NEXT event arriving after
+    // GESTURE_GAP_MS of quiet). Whichever of the two gets there first, the other's decide() is a
+    // no-op, because this already put `direction` and `accumX` back to zero. Neither may be the
+    // only decider: Chromium dispatches input on a higher-priority task queue than timers, so a
+    // wheel event can run ahead of an already-due timer task, and a completed gesture that got
+    // reset without deciding is a navigation the user made and silently did not get.
+    //
+    // pagehide is the one reset() that deliberately does NOT decide - see decide().
     function reset() {
         if (endTimer) {
             w.clearTimeout(endTimer);
@@ -289,8 +306,8 @@
         verticalPath = 0;
         eventCount = 0;
         rejected = false;
-        committed = false;
         direction = 0;
+        reachedCommit = false;
     }
 
     // Rule the current gesture out, keeping the accumulators so nothing restarts until the
@@ -313,22 +330,80 @@
         }
     }
 
+    // The one place "reached the commit distance" becomes an actual navigation.
+    //
+    // Called only when the gesture ENDS, never mid-swipe. That is the same question a native
+    // trackpad swipe-back answers on release: was the LAST position past the line, not "was any
+    // position ever past it". Reaching COMMIT_PX used to navigate on the spot, in the same wheel
+    // event that crossed it (boss-plugin-fluck-browser#36) - fingers still down, no chance to see
+    // it coming and no way to back out.
+    //
+    // Read against the live accumulators rather than a cached progress, so easing back below
+    // COMMIT_PX before release - same direction the whole time, no reversal - cancels exactly like
+    // letting go early on a real trackpad. A genuine reversal never reaches here at all: it flips
+    // `direction` inside onWheel and abandons there, which is the separate, pre-existing
+    // cancel-by-reversing path this does not duplicate.
+    //
+    // Both guards past `rejected` matter specifically BECAUSE this runs at gesture end and not
+    // from onWheel: onWheel's early returns stop updating state the moment they fire, but the
+    // gesture still ends, and this still runs on whatever the last onWheel call left behind.
+    //
+    // - eventCount < MIN_EVENTS: below that count onWheel draws no affordance, yet accumX and
+    //   direction are already live. Two shift-modified mouse-wheel notches (or two big trackpad
+    //   deltas) can each land under MAX_STEP_PX - so neither trips the wheel-shape guard alone -
+    //   and together clear COMMIT_PX before a third event ever arrives. Without this, that pair
+    //   navigates with no chevron ever drawn.
+    // - available(direction): asked again here rather than reusing the answer latched in onWheel,
+    //   because the host can push new state during the gesture and throughout the GESTURE_GAP_MS
+    //   after it. It subsumes switchedOff() - the setting can flip mid-gesture, and the comment on
+    //   switchedOff() promises the detector stops when it does - and additionally fails closed if
+    //   the direction lost its history entry, or if state went away entirely.
+    //
+    // MOMENTUM costs latency here and nothing else, which is what reachedCommit is for. The
+    // numbers are in AGENTS.md: macOS emits momentum-phase scroll for 180-870ms after the fingers
+    // lift, carrying 325-2500px, measured on this hardware. Whether Chromium forwards those to the
+    // renderer as `wheel` events is not confirmed and cannot be settled with synthetic events. If
+    // it does, each one re-arms endTimer through onWheel and a flick commits at end-of-momentum
+    // rather than at release.
+    //
+    // It cannot change the ANSWER, only when it arrives: a momentum tail runs the flick's own
+    // direction, so it cannot reverse or ease back, and past COMMIT_PX the vertical tiers - the
+    // one path by which a tail's dy could have cancelled a completed swipe - are no longer asked.
+    function decide() {
+        if (rejected || direction === 0 || eventCount < MIN_EVENTS || !available(direction)) {
+            return;
+        }
+        if (Math.abs(accumX) >= COMMIT_PX) {
+            navigate(direction);
+        }
+    }
+
     function onWheel(event) {
         var now = Date.now();
         if (now - lastEventAt > GESTURE_GAP_MS) {
+            // This much quiet means the PREVIOUS gesture ended, and this event belongs to a new
+            // one - so the old gesture gets decided here, not silently discarded. See reset().
+            decide();
             reset();
         }
         lastEventAt = now;
-        // Kept armed for as long as events keep arriving; fires once they stop.
+        // Kept armed for as long as events keep arriving; fires once they stop - the other of the
+        // two places a gesture is decided and then reset to neutral either way.
+        //
+        // Armed before the early returns below on purpose: a gesture that is rejected or switched
+        // off partway still has to end, and this timer is the only thing that ends one. The cost
+        // is a clearTimeout/setTimeout pair on every wheel event, even with the gesture switched
+        // off, on the hottest path in a browser.
         if (endTimer) {
             w.clearTimeout(endTimer);
         }
         endTimer = w.setTimeout(function () {
             endTimer = 0;
+            decide();
             reset();
         }, GESTURE_GAP_MS);
 
-        if (committed || rejected || switchedOff()) {
+        if (rejected || switchedOff()) {
             return;
         }
         // Line and page modes come from sources that are never a trackpad.
@@ -357,11 +432,13 @@
         eventCount++;
         accumX += dx;
 
-        // Chrome's three tiers, in its order.
+        // Chrome's three tiers, in its order. Asked only until the gesture is past the commit
+        // distance - see reachedCommit.
         var xDelta = Math.abs(accumX);
-        if (verticalPath > CANCEL_STRONG_RATIO * xDelta ||
-            (verticalPath * CANCEL_MIXED_RATIO > xDelta && verticalPath > CANCEL_VERTICAL_LOW) ||
-            verticalPath > CANCEL_VERTICAL_HIGH) {
+        if (!reachedCommit &&
+            (verticalPath > CANCEL_STRONG_RATIO * xDelta ||
+                (verticalPath * CANCEL_MIXED_RATIO > xDelta && verticalPath > CANCEL_VERTICAL_LOW) ||
+                verticalPath > CANCEL_VERTICAL_HIGH)) {
             abandon();
             return;
         }
@@ -385,21 +462,28 @@
         if (eventCount < MIN_EVENTS) {
             return;
         }
+        // Latched here rather than the moment xDelta crosses, so it means the same thing decide()
+        // does: past the line AND enough events to be a trackpad at all. Latching earlier would
+        // let the two-big-deltas pair decide() rejects switch the vertical tiers off on its way
+        // through.
+        if (xDelta >= COMMIT_PX) {
+            reachedCommit = true;
+        }
 
-        var progress = Math.abs(accumX) / COMMIT_PX;
+        // Progress is tracked all the way through the gesture now, never gated on whether it
+        // has reached the commit distance yet - see decide() for why crossing COMMIT_PX no
+        // longer does anything here beyond what trackAffordance already draws.
+        var progress = xDelta / COMMIT_PX;
         showAffordance(direction);
         trackAffordance(direction, progress);
-
-        if (progress >= 1) {
-            committed = true;
-            hideAffordance(direction);
-            navigate(direction);
-        }
     }
 
     // Capture-phase and passive: the gesture only commits when nothing was going to scroll,
     // so there is never anything to preventDefault, and passive keeps this off Chromium's
     // scroll-blocking path.
     w.addEventListener('wheel', onWheel, { capture: true, passive: true });
+    // pagehide is NOT routed through decide() - the page is already unloading, so navigating
+    // it anywhere is moot at best; this only tears down the affordance so nothing outlives the
+    // document it was drawn into.
     w.addEventListener('pagehide', reset, { capture: true });
 })();

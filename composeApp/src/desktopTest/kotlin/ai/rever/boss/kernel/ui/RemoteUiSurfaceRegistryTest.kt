@@ -43,6 +43,57 @@ class RemoteUiSurfaceRegistryTest {
     private val registry = RemoteUiSurfaceRegistry()
 
     @Test
+    fun `capabilities replay before streaming and reset for absent displaced and closed surfaces`() {
+        val originalHost = RecordingHost()
+        registry.attach(SURFACE, originalHost)
+        assertEquals(listOf(false), originalHost.capabilities)
+
+        val surface = registry.register(SURFACE, PROCESS, RemoteUiSurfaceDescriptor(wantsKeys = true)).accepted()
+        val replacementHost = RecordingHost()
+        registry.attach(SURFACE, replacementHost)
+        assertEquals(listOf(false, false), originalHost.capabilities, "displacement resets the old host")
+        assertEquals(listOf(true), replacementHost.capabilities, "replay grants before a stream exists")
+
+        assertIs<SurfaceStream.Bound>(registry.openStream(SURFACE, PROCESS))
+        registry.closeStream(surface)
+        assertEquals(listOf(true, true, false), replacementHost.capabilities, "closing revokes the tap")
+    }
+
+    @Test
+    fun `unregister and kernel reset retain ownership while old host compositions can remain`() {
+        registry.register(SURFACE, PROCESS).accepted()
+        registry.unregister(SURFACE)
+        assertIs<SurfaceRegistration.Rejected>(registry.register(SURFACE, "intruder"))
+        registry.clear()
+        assertIs<SurfaceRegistration.Rejected>(registry.register(SURFACE, "intruder"))
+        assertIs<SurfaceRegistration.Accepted>(registry.register(SURFACE, PROCESS))
+    }
+
+    @Test
+    fun `a disconnected visible surface cannot be taken over by another process`() {
+        val original = registry.register(SURFACE, PROCESS).accepted()
+        registry.closeStream(original)
+        assertIs<SurfaceRegistration.Rejected>(registry.register(SURFACE, "intruder"))
+        assertIs<SurfaceRegistration.Accepted>(registry.register(SURFACE, PROCESS))
+    }
+
+    @Test
+    fun `authorization of an old registration cannot remove its replacement`() {
+        val original = registry.register(SURFACE, PROCESS).accepted()
+        val replacement = registry.register(SURFACE, PROCESS).accepted()
+        assertFalse(registry.unregister(SURFACE, original))
+        assertEquals(replacement, registry.surfaceOf(SURFACE))
+    }
+
+    @Test
+    fun `stream ownership is checked when the claim is acquired`() {
+        registry.register(SURFACE, PROCESS).accepted()
+        assertIs<SurfaceStream.NotOwner>(registry.openStream(SURFACE, "intruder"))
+        assertIs<SurfaceStream.NotOwner>(registry.openStream(SURFACE, null))
+        assertIs<SurfaceStream.Bound>(registry.openStream(SURFACE, PROCESS))
+    }
+
+    @Test
     fun `a component attached before the plugin exists still gets the first tree`() {
         val host = RecordingHost()
         registry.attach(SURFACE, host)
@@ -83,7 +134,7 @@ class RemoteUiSurfaceRegistryTest {
         assertIs<SurfaceStream.Bound>(registry.openStream(SURFACE))
         registry.closeStream(first)
 
-        val second = registry.register(SURFACE, "plugin-a-respawned")
+        val second = registry.register(SURFACE, PROCESS)
 
         assertIs<SurfaceRegistration.Accepted>(second)
     }
@@ -208,6 +259,7 @@ class RemoteUiSurfaceRegistryTest {
                 displayName = "Inbox",
                 iconName = "mail",
                 defaultSlot = "left.top.top",
+                wantsKeys = true,
             )
 
         val surface = registry.register(SURFACE, PROCESS, descriptor).accepted()
@@ -521,6 +573,11 @@ class RemoteUiSurfaceRegistryTest {
     private class RecordingHost : RemoteUiSurfaceHost {
         val trees = CopyOnWriteArrayList<WidgetTree>()
         val connections = CopyOnWriteArrayList<Boolean>()
+        val capabilities = CopyOnWriteArrayList<Boolean>()
+
+        override fun onKeyCapabilityChanged(wantsKeys: Boolean) {
+            capabilities += wantsKeys
+        }
 
         override fun onTreeUpdated(tree: WidgetTree) {
             trees += tree
