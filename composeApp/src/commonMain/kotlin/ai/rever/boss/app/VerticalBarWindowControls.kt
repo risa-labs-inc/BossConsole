@@ -333,13 +333,22 @@ internal enum class VerticalBarHost {
  *
  * Three states, not two, and an enum rather than a pair of booleans because two of the three are
  * the same bar: an EXPANDED left bar has a foot under its split map, a COLLAPSED one is a rail
- * whose bottom is the only room it has, and a collapsed bar whose hover drawer is OPEN has a foot
- * again for as long as the drawer is up, because the drawer is a full bar. Carried as two flags
- * these would admit "a foot AND a rail", which is not a window that exists.
+ * whose bottom is the only room it has.
+ *
+ * Permanent Activity Bar: a collapsed rail stays a rail even while its hover drawer is open.
+ * The drawer is a sibling beside the rail, not a replacement that absorbs it. Switching the
+ * host from RAIL to FOOT on drawerVisible moved Settings/Search/Sign-Out from a vertical
+ * column at the foot of a 36dp rail into a horizontal wrapping row under the drawer's split
+ * map - the exact vertical→horizontal jump that violated Fitts's Law and forced users to chase
+ * the target. Keeping the rail stationary means the hit-target never moves out from under the
+ * cursor; the drawer carries only the tab list and the window's own footer chrome.
+ *
+ * Carried as two flags these would admit "a foot AND a rail", which is not a window that exists.
  *
  * Pure and named because it is the one input to [focusQuickActionsPlacement] that is not a
  * standing preference, and because the scaffold that reads it is at detekt's complexity ceiling.
  */
+@Suppress("UNUSED_PARAMETER")
 internal fun verticalBarHost(
     tabBarOnLeft: Boolean,
     barCollapsed: Boolean,
@@ -347,6 +356,6 @@ internal fun verticalBarHost(
 ): VerticalBarHost =
     when {
         !tabBarOnLeft -> VerticalBarHost.NONE
-        !barCollapsed || drawerVisible -> VerticalBarHost.FOOT
+        !barCollapsed -> VerticalBarHost.FOOT
         else -> VerticalBarHost.RAIL
     }

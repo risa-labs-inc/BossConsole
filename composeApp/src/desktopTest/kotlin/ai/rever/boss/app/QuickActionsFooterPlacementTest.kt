@@ -98,10 +98,11 @@ class QuickActionsFooterPlacementTest {
             placement(rightStripHidden = true, verticalBar = collapsedOnLeft),
         )
 
-        // The drawer is the third state: a collapsed bar with it open HAS a foot again.
+        // Permanent Activity Bar: drawer open keeps the rail stationary (Fitts's Law).
+        // The collapsed rail is a sibling beside the drawer, not absorbed by it.
         val drawerOpen = verticalBarHost(tabBarOnLeft = true, barCollapsed = true, drawerVisible = true)
         assertEquals(
-            FocusQuickActionsPlacement.TAB_BAR_FOOTER,
+            FocusQuickActionsPlacement.TAB_BAR_RAIL,
             placement(rightStripHidden = true, verticalBar = drawerOpen),
         )
     }
@@ -250,10 +251,11 @@ class VerticalBarHostTest {
     }
 
     @Test
-    fun `a collapsed bar with the drawer open has a foot again`() {
-        // The drawer is a full bar, split map and all, for as long as it is up.
+    fun `a collapsed bar with the drawer open keeps the rail`() {
+        // Permanent Activity Bar: drawer is a sibling beside the rail, not a full bar that
+        // replaces it. Hit-targets stay in the stationary rail (Fitts's Law).
         assertEquals(
-            VerticalBarHost.FOOT,
+            VerticalBarHost.RAIL,
             verticalBarHost(tabBarOnLeft = true, barCollapsed = true, drawerVisible = true),
         )
     }

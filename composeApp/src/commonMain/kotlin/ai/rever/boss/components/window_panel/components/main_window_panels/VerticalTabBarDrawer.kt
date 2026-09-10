@@ -2,6 +2,7 @@ package ai.rever.boss.components.window_panel.components.main_window_panels
 
 import ai.rever.boss.components.overlays.OverlayCorner
 import ai.rever.boss.components.overlays.overlayCornerIsHeavyweight
+import ai.rever.boss.layout.BossChrome
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -24,8 +26,13 @@ import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 
 /**
- * The full vertical tab bar shown as a temporary drawer over a panel whose bar is down to its
- * rail.
+ * The full vertical tab bar shown as a temporary drawer beside the permanent activity rail.
+ *
+ * Permanent Activity Bar: the drawer is a sibling beside the 40dp rail, not an overlay over it.
+ * The rail's Settings/Search/Sign-Out icons stay stationary at the window edge (Fitts's Law);
+ * this drawer carries only the tab list and the window footer. The heavyweight region is
+ * therefore offset by the rail width before placement (see `SplitView.RevealedBar.besideRail`);
+ * the lightweight path offsets in the Compose scene for the same reason.
  *
  * **Why this is not just a Box with an offset.** Under HARDWARE_ACCELERATED JxBrowser - the
  * default on every platform - a browser tab is Chromium's own native window composited ABOVE the
@@ -43,8 +50,9 @@ import kotlin.math.roundToInt
  *
  * @param hoverSource the drawer's hover interaction source, owned by the caller because the
  *   reveal decision needs it alongside the rail's.
- * @param panelRegion this panel's rectangle in dp relative to the window's content pane. Null
- *   means not yet measured, and nothing is drawn - see [overlayRegionInWindow].
+ * @param panelRegion this panel's rectangle in dp relative to the window's content pane, already
+ *   offset beside the rail for the permanent activity bar. Null means not yet measured, and
+ *   nothing is drawn - see [overlayRegionInWindow].
  * @param onDismissOutside installs a click-catcher over the rest of the panel that invokes this.
  *   Non-null only for a drawer opened by the chevron; a hover-revealed one must NOT swallow the
  *   click that focuses the content behind it, since the pointer leaving is what closes it.
@@ -88,9 +96,11 @@ fun BoxScope.VerticalTabBarDrawer(
         // drawer can slide in the scene. Reachable via BOSS_RENDERING_MODE=OFF_SCREEN, which is a
         // supported escape hatch rather than a dead branch. The heavyweight path gets no slide -
         // animating a native window's bounds per frame is a different and much worse trade.
+        // Permanent Activity Bar: offset beside the 40dp rail so its hit-targets stay exposed.
+        val railWidth = BossChrome.dimens.stripWidth
         AnimatedVisibility(
             visible = true,
-            modifier = Modifier.align(Alignment.CenterStart).fillMaxHeight(),
+            modifier = Modifier.align(Alignment.CenterStart).fillMaxHeight().padding(start = railWidth),
             enter = slideInHorizontally(initialOffsetX = { -it }),
             exit = slideOutHorizontally(targetOffsetX = { -it }),
         ) {

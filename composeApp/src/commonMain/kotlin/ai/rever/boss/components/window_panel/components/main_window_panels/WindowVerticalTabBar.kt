@@ -213,13 +213,11 @@ fun WindowVerticalTabBar(
      *
      * A second slot rather than [belowMap] handed to both branches, which is what this was, and
      * the reason is that the two are on screen at once. `SplitViewPanel` composes the in-flow rail
-     * and the hover drawer together - the drawer is an overlay over the rail, not a replacement
-     * for it - and the drawer being open makes the LIVE placement `TAB_BAR_FOOTER`. One shared
-     * slot therefore drew the full bar's wrapping row twice: once in the drawer's foot, and once
-     * behind it at the bottom of a 36dp rail, where four 32dp buttons wrap to four lines of
-     * squeezed icons. Hidden while the drawer covers it, and visible for the frame after it is
-     * dismissed - `drawerVisible` is reported through a `LaunchedEffect`, so the uncovered rail
-     * draws the wrong layout for one frame before the placement catches up.
+     * and the hover drawer together as siblings (Permanent Activity Bar) - the drawer sits beside
+     * the rail, not over it. The rail keeps the host actions stationary (Fitts's Law) while the
+     * drawer carries only the tab list and footer; a shared slot previously drew the full bar's
+     * wrapping row behind the 36dp rail where four 32dp buttons wrapped to four lines of squeezed
+     * icons.
      *
      * With two slots each branch is handed only its own layout, so there is nothing to get wrong.
      */

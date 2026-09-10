@@ -27,6 +27,7 @@ import ai.rever.boss.components.window_panel.components.main_window_panels.remem
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberToggleCollapseAction
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberWindowTabGroups
 import ai.rever.boss.icons.FileIcons
+import ai.rever.boss.layout.BossChrome
 import ai.rever.boss.platform.bossFileDropTarget
 import ai.rever.boss.plugin.api.Panel
 import ai.rever.boss.plugin.api.TabIcon
@@ -2005,10 +2006,10 @@ fun SplitViewPanel(
     /**
      * Reports whether the hover-revealed bar is on screen.
      *
-     * The window needs it because it decides where the host's actions go: a collapsed bar puts
-     * them at the foot of its rail, and a revealed drawer IS a full bar, so while it is up they
-     * move from the rail's bottom into the bar's foot. Only this composable knows: the reveal
-     * state machine lives here. See `verticalBarHost`.
+     * Permanent Activity Bar: the drawer is a sibling beside the permanent rail, so its
+     * visibility no longer moves host actions between rail and bar foot. Kept for the
+     * scaffold's drawer bookkeeping and traffic-light inset; placement now ignores it.
+     * See `verticalBarHost`.
      */
     onDrawerVisibleChange: (Boolean) -> Unit = {},
     /**
@@ -2265,9 +2266,14 @@ private fun rememberSplitTree(
 /**
  * The hover-revealed bar, with everything the pinned one carries.
  *
+ * Permanent Activity Bar: the drawer sits BESIDE the permanent rail rather than over it.
+ * The in-flow rail stays visible and keeps the host actions (Settings/Search/Sign-Out) at
+ * its foot; the drawer carries only the tab list and the window footer. ContentRegion is
+ * therefore offset by the rail width before it is handed to the drawer.
+ *
  * Split out of [SplitViewPanel], which is at detekt's length ceiling. Both slots are passed
- * because while this is open it is the only bar on screen - the in-flow one is down to its rail -
- * so anything missing here is missing outright, not merely missing from a preview.
+ * because while this is open the rail is still on screen - so anything missing here is
+ * missing from the drawer, not from the window.
  */
 @Composable
 @Suppress("LongParameterList")
@@ -2280,14 +2286,15 @@ private fun BoxScope.RevealedBar(
     footer: @Composable () -> Unit,
     belowMap: @Composable () -> Unit,
 ) {
+    val railWidth = BossChrome.dimens.stripWidth
     WindowRevealedTabBarDrawer(
         splitViewState = splitViewState,
         bar = bar,
         reveal = reveal,
-        // Started BELOW the traffic-light clearance rather than padded inside it. The drawer is
-        // its own always-on-top window, so the lights are behind it whatever it pads - the only
-        // way to leave them visible is to not cover them. The region is already in dp.
-        contentRegion = contentRegion.below(topInset),
+        // Started BELOW the traffic-light clearance and BESIDE the permanent rail.
+        // The drawer is its own always-on-top window; offsetting leaves the rail visible
+        // and keeps its hit-targets stationary (Fitts's Law) instead of covering them.
+        contentRegion = contentRegion.below(topInset).besideRail(railWidth),
         footer = footer,
         belowMap = belowMap,
         onPin = rememberPinDrawerAction(reveal, bar),
@@ -2305,6 +2312,19 @@ private fun IntRect?.below(inset: Dp): IntRect? {
     val region = this ?: return null
     val dp = inset.value.roundToInt()
     return if (dp <= 0) region else region.copy(top = region.top + dp)
+}
+
+/**
+ * The region with its left moved by the permanent rail width.
+ *
+ * Permanent Activity Bar: the drawer is a sibling beside the rail, not an overlay over it.
+ * Offsetting the region keeps the rail's 40dp hit-targets visible and stationary (Fitts's Law)
+ * instead of covering them for the duration of the drawer.
+ */
+private fun IntRect?.besideRail(railWidth: Dp): IntRect? {
+    val region = this ?: return null
+    val dp = railWidth.value.roundToInt()
+    return if (dp <= 0) region else region.copy(left = region.left + dp)
 }
 
 @Composable

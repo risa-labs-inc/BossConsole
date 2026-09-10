@@ -33,12 +33,10 @@ import kotlin.test.assertNull
  * them, where every failure is silent. Two hosts drawing at once is Sign Out twice; a host drawing
  * for a placement it does not own is Sign Out in a container nothing is composing.
  *
- * The first test exists because that second failure SHIPPED in this change's first draft: one slot
- * was handed to both the collapsed rail and the hover drawer on the reasoning that "a rail is
- * TAB_BAR_RAIL and a full bar is TAB_BAR_FOOTER, never both". `SplitViewPanel` composes the rail
- * and the drawer TOGETHER - the drawer is an overlay over the rail, not a replacement - so with
- * the drawer up the rail drew the full bar's wrapping row at 36dp wide, four lines of squeezed
- * icons, visible for the frame after dismissal.
+ * Permanent Activity Bar: the drawer is a sibling beside the rail, not an overlay over it. The
+ * rail keeps the host actions (Settings/Search/Sign-Out) stationary at its foot while the drawer
+ * carries only the tab list. This test verifies that opening the drawer never moves the actions
+ * out of the rail or doubles them.
  */
 class HostActionsWiringTest {
     @get:Rule
@@ -61,13 +59,14 @@ class HostActionsWiringTest {
     )
 
     @Test
-    fun `the hover drawer moves the actions out of the rail, never doubles them`() {
+    fun `the hover drawer keeps the actions in the rail, never doubles them`() {
         val drawerVisible = mutableStateOf(false)
         rule.setContent {
             val placement = placementFor(drawerVisible = drawerVisible.value)
             // Both hosts composed together on purpose: that is the configuration the bug was in,
             // and asserting on the CONTENT rather than on which slot receives it keeps this
             // honest even if someone shares one slot between the branches again.
+            // Permanent Activity Bar: drawer is a sibling beside the rail, not a replacement.
             Column(modifier = Modifier.width(BAR_WIDTH)) {
                 VerticalBarRailActions(
                     focusQuickActionsTabRail(placement, {}, {}, {}, { _, _ -> }),
@@ -83,11 +82,11 @@ class HostActionsWiringTest {
 
         drawerVisible.value = true
         rule.waitForIdle()
-        assertOnly(VERTICAL_BAR_HOST_ACTIONS_TAG, "the drawer is a full bar, so its foot takes them")
+        assertOnly(VERTICAL_BAR_RAIL_ACTIONS_TAG, "the drawer is a sibling beside the rail, so it keeps them")
 
         drawerVisible.value = false
         rule.waitForIdle()
-        assertOnly(VERTICAL_BAR_RAIL_ACTIONS_TAG, "and dismissing it hands them back to the rail")
+        assertOnly(VERTICAL_BAR_RAIL_ACTIONS_TAG, "and dismissing it leaves them in the rail")
     }
 
     /** Exactly one of the two bar layouts on screen, and it is [expected]. */
