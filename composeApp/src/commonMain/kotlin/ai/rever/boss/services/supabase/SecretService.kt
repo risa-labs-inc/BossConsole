@@ -85,8 +85,15 @@ object SecretService {
                 )
 
             val jsonElement = supabaseJson.parseToJsonElement(postgrestResult.data)
-            val secrets = supabaseJson.decodeFromJsonElement<List<SecretEntry>>(jsonElement)
-            val hasMore = secrets.size >= limit
+            val decoded = decodeSupabaseRows<SecretEntry>(jsonElement)
+            logger.logDroppedSupabaseRows(
+                LogCategory.NETWORK,
+                "Dropped malformed rows from secret RPC response",
+                "getUserSecrets",
+                decoded.droppedCount,
+            )
+            val secrets = decoded.values
+            val hasMore = decoded.receivedCount >= limit
 
             Result.success(PaginatedSecrets(data = secrets, hasMore = hasMore))
         } catch (e: Exception) {
@@ -127,10 +134,17 @@ object SecretService {
                 )
 
             val jsonElement = supabaseJson.parseToJsonElement(postgrestResult.data)
-            val secrets = supabaseJson.decodeFromJsonElement<List<SecretEntry>>(jsonElement)
+            val decoded = decodeSupabaseRows<SecretEntry>(jsonElement)
+            logger.logDroppedSupabaseRows(
+                LogCategory.NETWORK,
+                "Dropped malformed rows from secret RPC response",
+                "searchSecrets",
+                decoded.droppedCount,
+            )
+            val secrets = decoded.values
 
             // Check if there might be more results
-            val hasMore = secrets.size >= limit
+            val hasMore = decoded.receivedCount >= limit
 
             Result.success(
                 PaginatedSecrets(
@@ -328,9 +342,16 @@ object SecretService {
                 )
 
             val jsonElement = supabaseJson.parseToJsonElement(postgrestResult.data)
-            val secretsWithSharing = supabaseJson.decodeFromJsonElement<List<SecretEntryWithSharing>>(jsonElement)
+            val decoded = decodeSupabaseRows<SecretEntryWithSharing>(jsonElement)
+            logger.logDroppedSupabaseRows(
+                LogCategory.NETWORK,
+                "Dropped malformed rows from secret RPC response",
+                "getUserSecretsWithShared",
+                decoded.droppedCount,
+            )
+            val secretsWithSharing = decoded.values
             val secrets = secretsWithSharing.map { it.toSecretEntry() }
-            val hasMore = secrets.size >= limit
+            val hasMore = decoded.receivedCount >= limit
 
             Result.success(PaginatedSecrets(data = secrets, hasMore = hasMore))
         } catch (e: Exception) {
@@ -372,8 +393,15 @@ object SecretService {
                 )
 
             val jsonElement = supabaseJson.parseToJsonElement(postgrestResult.data)
-            val secretsWithSharing = supabaseJson.decodeFromJsonElement<List<SecretEntryWithSharing>>(jsonElement)
-            val hasMore = secretsWithSharing.size >= limit
+            val decoded = decodeSupabaseRows<SecretEntryWithSharing>(jsonElement)
+            logger.logDroppedSupabaseRows(
+                LogCategory.NETWORK,
+                "Dropped malformed rows from secret RPC response",
+                "getUserSecretsWithSharingInfo",
+                decoded.droppedCount,
+            )
+            val secretsWithSharing = decoded.values
+            val hasMore = decoded.receivedCount >= limit
 
             Result.success(PaginatedSecretsWithSharing(data = secretsWithSharing, hasMore = hasMore))
         } catch (e: Exception) {
@@ -504,7 +532,14 @@ object SecretService {
                 )
 
             val jsonElement = supabaseJson.parseToJsonElement(postgrestResult.data)
-            val shares = supabaseJson.decodeFromJsonElement<List<SecretShareEntry>>(jsonElement)
+            val decoded = decodeSupabaseRows<SecretShareEntry>(jsonElement)
+            logger.logDroppedSupabaseRows(
+                LogCategory.NETWORK,
+                "Dropped malformed rows from secret RPC response",
+                "getSecretShares",
+                decoded.droppedCount,
+            )
+            val shares = decoded.values
 
             Result.success(shares)
         } catch (e: Exception) {

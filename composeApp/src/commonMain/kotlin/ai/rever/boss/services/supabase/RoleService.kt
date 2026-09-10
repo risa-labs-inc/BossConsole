@@ -185,7 +185,14 @@ object RoleService {
                 )
 
             val jsonElement = supabaseJson.parseToJsonElement(postgrestResult.data)
-            val roles = supabaseJson.decodeFromJsonElement<List<UserRole>>(jsonElement)
+            val decoded = decodeSupabaseRows<UserRole>(jsonElement)
+            logger.logDroppedSupabaseRows(
+                LogCategory.AUTH,
+                "Dropped malformed rows from role RPC response",
+                "getUserRoles",
+                decoded.droppedCount,
+            )
+            val roles = decoded.values
 
             Result.success(roles)
         } catch (e: Exception) {
@@ -310,7 +317,14 @@ object RoleService {
                 )
 
             val jsonElement = supabaseJson.parseToJsonElement(postgrestResult.data)
-            val permissions = supabaseJson.decodeFromJsonElement<List<RolePermission>>(jsonElement)
+            val decoded = decodeSupabaseRows<RolePermission>(jsonElement)
+            logger.logDroppedSupabaseRows(
+                LogCategory.AUTH,
+                "Dropped malformed rows from role RPC response",
+                "getRolePermissions",
+                decoded.droppedCount,
+            )
+            val permissions = decoded.values
 
             Result.success(permissions)
         } catch (e: Exception) {
