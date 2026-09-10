@@ -119,6 +119,29 @@ class PluginDependencyResolutionTest {
     }
 
     @Test
+    fun `a padded manifest id cannot offer itself as a dependency`() {
+        for (child in listOf(" com.example.self ", "com.example.self")) {
+            val missing =
+                PluginDependencyResolution.missingFor(
+                    manifest(pluginId = " com.example.self ", dependencies = listOf(dependency(child))),
+                    installedPluginIds = emptySet(),
+                )
+            assertTrue(missing.isEmpty(), "offered self-reference $child")
+        }
+    }
+
+    @Test
+    fun `direct prompts reject blank and padded protected ids`() {
+        val ids = listOf("", " ", "\t") + PluginDependencyResolution.NOT_USER_INSTALLABLE.map { " $it " }
+        val missing =
+            PluginDependencyResolution.missingFor(
+                manifest(dependencies = ids.map { dependency(it) }),
+                installedPluginIds = emptySet(),
+            )
+        assertTrue(missing.isEmpty())
+    }
+
+    @Test
     fun `a dependency declared twice prompts once, as the stricter declaration`() {
         // Both orders, because asserting only the count passes whichever declaration wins -
         // and calling something "Recommended" that the plugin requires is the worse mistake.

@@ -284,7 +284,7 @@ object PluginDependencyResolution {
         parent: String,
     ): Boolean {
         val id = child.trim()
-        return id.isNotEmpty() && id != parent && id !in NOT_USER_INSTALLABLE
+        return id.isNotEmpty() && id != parent.trim() && id !in NOT_USER_INSTALLABLE
     }
 
     /**
@@ -463,7 +463,8 @@ interface MissingDependencyInstaller {
                 if (pluginId == root) {
                     error
                 } else {
-                    IllegalStateException("Could not install $root: ${error.message}", error)
+                    val message = error.message?.let { "Could not install $root: $it" } ?: "Could not install $root."
+                    IllegalStateException(message, error)
                 }
             return Result.failure(reported)
         }

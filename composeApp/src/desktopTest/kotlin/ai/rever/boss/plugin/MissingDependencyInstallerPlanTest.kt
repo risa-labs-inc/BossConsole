@@ -21,6 +21,7 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /**
@@ -188,6 +189,7 @@ class MissingDependencyInstallerPlanTest {
     /** An installer that records the order it was asked to install in and fails on demand. */
     private class RecordingInstaller(
         private val failOn: String? = null,
+        val failure: Throwable = IllegalStateException("$failOn did not install"),
     ) : MissingDependencyInstaller {
         val installed = mutableListOf<String>()
 
@@ -196,7 +198,7 @@ class MissingDependencyInstallerPlanTest {
         override suspend fun displayNameFor(pluginId: String): String? = null
 
         override suspend fun install(pluginId: String): Result<Unit> {
-            if (pluginId == failOn) return Result.failure(IllegalStateException("$pluginId did not install"))
+            if (pluginId == failOn) return Result.failure(failure)
             installed += pluginId
             return Result.success(Unit)
         }
@@ -242,6 +244,20 @@ class MissingDependencyInstallerPlanTest {
 
             assertEquals(listOf("d", "c"), installer.installed)
             assertEquals("b did not install", result.exceptionOrNull()?.message)
+            assertSame(installer.failure, result.exceptionOrNull())
+        }
+
+    @Test
+    fun `a dependency failure without a message still identifies the root`() =
+        runTest {
+            val failure = IllegalStateException(null, null)
+            val installer = RecordingInstaller(failOn = "c", failure = failure)
+
+            val result = installer.installAll(listOf("d", "c", "b"))
+
+            assertEquals("Could not install b.", result.exceptionOrNull()?.message)
+            assertSame(failure, result.exceptionOrNull()?.cause)
+            assertEquals(listOf("d"), installer.installed)
         }
 
     @Test
