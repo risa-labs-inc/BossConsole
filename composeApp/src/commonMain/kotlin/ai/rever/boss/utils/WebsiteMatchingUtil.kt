@@ -35,14 +35,12 @@ object WebsiteMatchingUtil {
      * Extract the main domain from a URL.
      *
      * Examples:
-     * - https://login.google.com/auth → google.com
+     * - https://login.google.com/auth → login.google.com
      * - https://www.github.com/login → github.com
-     * - https://accounts.google.com → google.com
      * - http://localhost:3000 → localhost
-     * - https://example.co.uk → example.co.uk
      *
      * @param url The URL to extract domain from
-     * @return Cleaned main domain, or null if invalid
+     * @return Cleaned domain, or null if invalid
      */
     fun extractMainDomain(url: String): String? {
         return try {
@@ -73,38 +71,6 @@ object WebsiteMatchingUtil {
             // Remove www. prefix
             host = host.removePrefix("www.")
 
-            // Remove common subdomains for matching
-            // But keep subdomains that might be meaningful for secrets
-            val commonSubdomains = listOf("login", "accounts", "auth", "signin", "signup", "sso", "id", "portal", "app", "my")
-            val parts = host.split(".")
-
-            // Keep TLD + main domain (e.g., google.com, github.com)
-            // Special handling for .co.uk, .com.au, etc.
-            val twoPartTlds = listOf("co.uk", "com.au", "co.in", "co.jp", "com.br", "co.za")
-
-            host =
-                when {
-                    // Handle two-part TLDs (example.co.uk)
-                    parts.size >= 3 && twoPartTlds.any { host.endsWith(it) } -> {
-                        parts.takeLast(3).joinToString(".")
-                    }
-
-                    // Remove common subdomain (login.google.com → google.com)
-                    parts.size >= 3 && parts[0] in commonSubdomains -> {
-                        parts.drop(1).joinToString(".")
-                    }
-
-                    // Keep as is if short enough
-                    parts.size <= 2 -> {
-                        host
-                    }
-
-                    // For longer domains, keep last 2 parts (subdomain.example.com → example.com)
-                    else -> {
-                        parts.takeLast(2).joinToString(".")
-                    }
-                }
-
             host
         } catch (e: Exception) {
             logger.debug(LogCategory.BROWSER, "Failed to extract domain", mapOf("url" to url, "error" to e.toString()))
@@ -119,8 +85,6 @@ object WebsiteMatchingUtil {
      * Matching logic:
      * - Exact match (google.com == google.com): score 1.0
      * - Subdomain match (login.google.com vs google.com): score 0.9
-     * - Domain contains (google.com contains "google"): score 0.7
-     * - Partial match ("google" in "google-workspace.com"): score 0.5
      *
      * @param domain Current website domain (e.g., "google.com")
      * @param secrets List of all available secrets
@@ -178,22 +142,8 @@ object WebsiteMatchingUtil {
                 MatchScore(0.9f, "subdomain")
             }
 
-            // Domain contains other (google.com contains google)
-            secretNorm.contains(domainNorm) || domainNorm.contains(secretNorm) -> {
-                MatchScore(0.7f, "domain")
-            }
-
-            // Partial match (same keywords)
             else -> {
-                val secretParts = secretNorm.split(".", "-", "_")
-                val domainParts = domainNorm.split(".", "-", "_")
-                val commonParts = secretParts.intersect(domainParts.toSet())
-
-                if (commonParts.isNotEmpty()) {
-                    MatchScore(0.5f, "partial")
-                } else {
-                    MatchScore(0.0f, "no_match")
-                }
+                MatchScore(0.0f, "no_match")
             }
         }
     }
@@ -265,7 +215,7 @@ object WebsiteMatchingUtil {
                 // Generic formatting: example-site → Example Site
                 nameWithoutTld
                     .split("-", "_")
-                    .joinToString(" ") { it.replaceFirstChar { c -> if (c.isLowerCase()) c.titlecase() else it } }
+                    .joinToString(" ") { it.replaceFirstChar { c -> if (c.isLowerCase()) c.titlecase() else c.toString() } }
             }
         }
     }
