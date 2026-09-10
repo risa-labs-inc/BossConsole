@@ -1,5 +1,6 @@
 package ai.rever.boss.components.plugin.tab_types.fluck
 
+import ai.rever.boss.plugin.browser.BrowserContextMenuFallback
 import ai.rever.boss.plugin.browser.BrowserFindController
 import ai.rever.boss.plugin.browser.BrowserSettings
 import ai.rever.boss.plugin.browser.EngineInitError
@@ -334,6 +335,7 @@ private fun configureBrowserPopupHandler(
 
 actual fun createBrowser(): Any {
     val browser = FluckEngine.engine.newBrowser()
+    BrowserContextMenuFallback.installOn(browser)
     browser.settings().enableOverscrollHistoryNavigation()
     FluckEngine.setupBrowserDownloadHandler(browser as com.teamdev.jxbrowser.browser.Browser)
     FluckEngine.setupCaptureSessionHandler(browser)

@@ -1,5 +1,6 @@
 package ai.rever.boss.components.auth.forms
 
+import ai.rever.boss.plugin.browser.BrowserContextMenuFallback
 import ai.rever.boss.plugin.browser.FluckEngine
 import ai.rever.boss.plugin.browser.LocalAwtWindow
 import ai.rever.boss.utils.logging.BossLogger
@@ -118,6 +119,7 @@ internal actual fun AuthBrandSite(
             // first-ever launch, when no browser profile exists yet, and mid-prewarm this would block on
             // the same lock.
             created = withContext(Dispatchers.IO) { FluckEngine.engine.newBrowser() }
+            BrowserContextMenuFallback.installOn(created)
             created.navigation().on(LoadFinished::class.java) {
                 scope.launch(Dispatchers.Main) { loaded = true }
             }

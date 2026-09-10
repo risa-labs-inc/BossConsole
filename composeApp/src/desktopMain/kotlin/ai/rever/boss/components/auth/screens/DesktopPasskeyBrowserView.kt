@@ -1,5 +1,6 @@
 package ai.rever.boss.components.auth.screens
 
+import ai.rever.boss.plugin.browser.BrowserContextMenuFallback
 import ai.rever.boss.plugin.browser.FluckEngine
 import ai.rever.boss.plugin.browser.LocalAwtWindow
 import ai.rever.boss.plugin.ui.BossTheme
@@ -49,6 +50,7 @@ actual fun PasskeyBrowserView(
 
             // Create new browser instance for WebAuthn
             val newBrowser = engine.newBrowser()
+            BrowserContextMenuFallback.installOn(newBrowser)
             browser = newBrowser
 
             logger.debug(LogCategory.BROWSER, "JxBrowser initialized successfully")
