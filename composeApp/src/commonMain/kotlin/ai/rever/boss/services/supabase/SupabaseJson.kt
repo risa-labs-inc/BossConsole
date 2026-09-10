@@ -10,7 +10,7 @@ import kotlinx.serialization.json.Json
  * through it as well, so that "never the `Json` default here" is a rule with no exceptions
  * to remember. `SupabaseWiringTest` enforces exactly that.
  *
- * `ignoreUnknownKeys` is not a convenience, it is a requirement of how BOSS ships.
+ * `ignoreUnknownKeys` and `coerceInputValues` are not conveniences, they are requirements of how BOSS ships.
  * The database is migrated ahead of the desktop app and installed copies keep talking
  * to it, so a client will meet columns it does not model. The kotlinx default is strict
  * and treats those as a hard error - and because these RPCs return LISTS, one unmodelled
@@ -29,9 +29,10 @@ import kotlinx.serialization.json.Json
  *
  * ## What this buys, and what it costs
  *
- * Additive schema changes become safe. In exchange, **renames become silent** for any
- * field carrying a default: rename `metadata` server-side and decoding now succeeds with
- * the 2FA metadata quietly missing, rather than failing loudly.
+ * Additive schema changes and nulls in fields with client defaults become safe. In exchange,
+ * **renames and unexpected nulls become silent** for any field carrying a default: rename
+ * `metadata` server-side, or return null for `tags`, and decoding succeeds with the client
+ * default rather than failing loudly. Required fields without defaults remain strict.
  *
  * That is the right trade here - a loud failure means every secret vanishes - but it makes
  * "additive only, never rename" a contract the database side has to keep. Renaming a
@@ -39,7 +40,11 @@ import kotlinx.serialization.json.Json
  * as an alias until those builds age out. Do not read this instance as blanket tolerance
  * of schema drift.
  */
-internal val supabaseJson = Json { ignoreUnknownKeys = true }
+internal val supabaseJson =
+    Json {
+        ignoreUnknownKeys = true
+        coerceInputValues = true
+    }
 
 /**
  * The marker kotlinx puts before the offending document in a parse failure.

@@ -83,6 +83,29 @@ class SupabaseJsonTest {
     }
 
     @Test
+    fun `null defaulted fields use their client defaults`() {
+        val body =
+            """[{"id":"1","website":"w","username":"u","password":"p","tags":null,""" +
+                """"created_at":"x","updated_at":"x"}]"""
+
+        val secret = supabaseJson.decodeFromString<List<SecretEntry>>(body).single()
+
+        assertEquals(emptyList(), secret.tags)
+    }
+
+    @Test
+    fun `null required fields remain a schema error`() {
+        val body =
+            """[{"id":"1","website":"w","username":"u","password":null,"tags":[],""" +
+                """"created_at":"x","updated_at":"x"}]"""
+
+        val error = runCatching { supabaseJson.decodeFromString<List<SecretEntry>>(body) }.exceptionOrNull()
+
+        assertTrue(error is SerializationException)
+        assertTrue(error.message.orEmpty().contains("password"))
+    }
+
+    @Test
     fun `a non-serialization failure passes through untouched`() {
         // Network and auth failures are not ours to rewrite, and losing their type would
         // break any caller that distinguishes them.
