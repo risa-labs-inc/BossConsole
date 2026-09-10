@@ -26,7 +26,7 @@ class NoRawDialogConventionTest {
     private val allowed =
         setOf(
             // The routing primitive itself: its lightweight branch IS the plain Dialog.
-            "BossDialog.kt",
+            "plugin-platform/plugin-ui-core/src/commonMain/kotlin/ai/rever/boss/plugin/ui/BossDialog.kt",
         )
 
     @Test
@@ -34,7 +34,7 @@ class NoRawDialogConventionTest {
         val root = repoRoot()
         val offenders =
             kotlinSourcesUnder(root, "composeApp/src", "plugin-platform")
-                .filter { it.name !in allowed }
+                .filter { it.relativeTo(root).invariantSeparatorsPath !in allowed }
                 .filter { file ->
                     file.readLines().any { it.trim() == "import androidx.compose.ui.window.Dialog" }
                 }.map { it.relativeTo(root).path }
