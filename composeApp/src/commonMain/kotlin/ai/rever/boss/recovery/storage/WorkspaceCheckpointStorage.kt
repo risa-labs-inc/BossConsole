@@ -35,10 +35,16 @@ class WorkspaceCheckpointStorage(
         baseStorageDir.mkdirs()
     }
 
-    private fun missionDir(missionId: String): File = File(baseStorageDir, missionId).also { it.mkdirs() }
+    private fun missionDir(missionId: String): File {
+        val validMissionId = SafePathResolver.validateIdentifier(missionId, "missionId")
+        return SafePathResolver.resolveSafeChild(baseStorageDir, validMissionId).also { it.mkdirs() }
+    }
 
-    private fun checkpointDir(missionId: String, checkpointId: String): File =
-        File(missionDir(missionId), checkpointId)
+    private fun checkpointDir(missionId: String, checkpointId: String): File {
+        val validCpId = SafePathResolver.validateIdentifier(checkpointId, "checkpointId")
+        val mDir = missionDir(missionId)
+        return SafePathResolver.resolveSafeChild(mDir, validCpId)
+    }
 
     /**
      * Captures and persists a new workspace checkpoint for [projectRoot].

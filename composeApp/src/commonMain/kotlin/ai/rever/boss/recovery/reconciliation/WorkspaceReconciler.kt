@@ -138,7 +138,14 @@ object WorkspaceReconciler {
                     continue
                 }
 
-                val sourceSnapshotFile = File(snapshotFilesDir, relPath)
+                val sourceSnapshotFile =
+                    try {
+                        SafePathResolver.resolveSafeChild(snapshotFilesDir, relPath)
+                    } catch (e: Exception) {
+                        failedFiles[relPath] = "Security check failed for snapshot source path: ${e.message}"
+                        continue
+                    }
+
                 if (!sourceSnapshotFile.exists()) {
                     failedFiles[relPath] = "Snapshot source blob missing from storage"
                     continue

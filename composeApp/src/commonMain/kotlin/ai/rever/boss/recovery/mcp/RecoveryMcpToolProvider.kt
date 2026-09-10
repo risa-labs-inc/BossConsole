@@ -89,7 +89,7 @@ class RecoveryMcpToolProvider(
     private fun createVerifyClaimTool(): McpToolDefinition =
         McpToolDefinition(
             name = "recovery_verify_claim",
-            description = "Executes an independent ground-truth verification command (e.g. build or test) and compares against the agent's claim.",
+            description = "Executes an operator/agent-supplied verification command in the workspace (with host authority and bounded timeout) and records independent ground-truth evidence.",
             handler =
                 McpToolHandler { args: McpToolArgs ->
                     val command = args.string("command")
@@ -135,7 +135,7 @@ class RecoveryMcpToolProvider(
     private fun createRewindTool(): McpToolDefinition =
         McpToolDefinition(
             name = "recovery_rewind",
-            description = "Rewinds the workspace to a target checkpoint while preserving pre-existing baseline work.",
+            description = "Rewinds the workspace to a target checkpoint while preserving pre-existing baseline work. Mutating rollback operation requiring explicit authorization.",
             handler =
                 McpToolHandler { args: McpToolArgs ->
                     val checkpointId = args.string("checkpointId")
@@ -173,7 +173,9 @@ class RecoveryMcpToolProvider(
                         McpToolResult("Failed to rewind: ${e.message}", isError = true)
                     }
                 },
-        )
+        ).apply {
+            requiresAdmin = true
+        }
 
     private fun createListCheckpointsTool(): McpToolDefinition =
         McpToolDefinition(
