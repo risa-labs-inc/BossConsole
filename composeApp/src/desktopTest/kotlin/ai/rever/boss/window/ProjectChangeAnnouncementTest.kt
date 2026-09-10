@@ -1,6 +1,7 @@
 package ai.rever.boss.window
 
 import ai.rever.boss.components.plugin.panels.left_top.ProjectState
+import ai.rever.boss.components.plugin.providers.ApplicationEventBusImpl
 import ai.rever.boss.components.plugin.providers.ProjectDataProviderImpl
 import ai.rever.boss.components.plugin.providers.createApplicationEventBus
 import ai.rever.boss.components.plugin.providers.publishSystemEvent
@@ -15,12 +16,12 @@ import ai.rever.boss.plugin.api.ProjectChangeEvent
 import ai.rever.boss.plugin.api.ProjectData
 import ai.rever.boss.plugin.api.TabRegistry
 import ai.rever.boss.plugin.workspace.SplitConfig.SinglePanel
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.runBlocking
 import java.lang.reflect.Modifier
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -104,12 +105,20 @@ class ProjectChangeAnnouncementTest {
         )
     }
 
-    /** Plugin-facing selection is arbitrary-threaded, so the path chain must be visible to Main. */
+    /** Plugin-facing selection is arbitrary-threaded, so the path chain must update atomically. */
     @Test
-    fun `the previous path field is volatile`() {
+    fun `the previous path field is atomic`() {
         val field = ProjectChangeAnnouncer::class.java.getDeclaredField("previousPath")
 
-        assertTrue(Modifier.isVolatile(field.modifiers), "plugin-thread selections would be invisible to Main")
+        assertEquals(AtomicReference::class.java, field.type, "plugin-thread selections would race the path chain")
+    }
+
+    /** The callback itself is also read from arbitrary plugin threads and must be visible there. */
+    @Test
+    fun `the project selection callback field is volatile`() {
+        val field = WindowProjectState::class.java.getDeclaredField("projectSelectionCallback")
+
+        assertTrue(Modifier.isVolatile(field.modifiers), "a plugin thread could miss the callback and drop the event")
     }
 
     /**
@@ -430,9 +439,13 @@ class ProjectChangeAnnouncementTest {
         ApplicationEventBusRegistry.bus = null
         ApplicationEventBusRegistry.systemPublisher = publisher
         try {
-            val localBus = createApplicationEventBus(CoroutineScope(Dispatchers.Unconfined))
+            val localBus = createApplicationEventBus()
 
-            assertNotNull(localBus, "the factory still returns its classloader-local singleton")
+            assertSame(
+                ApplicationEventBusImpl.getInstance(),
+                localBus,
+                "the factory still returns its classloader-local singleton",
+            )
             assertNull(
                 ApplicationEventBusRegistry.bus,
                 "the factory must not pair a foreign publisher with its own bus",

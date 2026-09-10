@@ -34,7 +34,10 @@ class WindowProjectState(
         )
     val selectedProject: StateFlow<Project> = _selectedProject.asStateFlow()
 
-    // Callback for project selection (e.g., to update recent projects)
+    // selectProject is exposed to in-process plugins and may run on an arbitrary thread. Without
+    // visibility here, that thread could observe the pre-registration null and drop the callback;
+    // a ProjectChangeEvent on the replay-free application bus cannot be recovered later.
+    @Volatile
     private var projectSelectionCallback: ProjectSelectionCallback? = null
 
     /**

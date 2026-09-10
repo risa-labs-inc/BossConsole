@@ -832,7 +832,7 @@ class DefaultPlugin(
 
     // Phase 4: Application event bus for state change events
     override val applicationEventBus: ApplicationEventBus by lazy {
-        createApplicationEventBus(pluginScope)
+        createApplicationEventBus()
     }
 
     // Phase 4: Plugin storage factory for persistent data

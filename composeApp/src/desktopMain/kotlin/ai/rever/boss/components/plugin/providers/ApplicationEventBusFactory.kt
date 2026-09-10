@@ -15,7 +15,6 @@ import ai.rever.boss.plugin.api.TerminalSessionEvent
 import ai.rever.boss.plugin.api.WindowFocusEvent
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -29,8 +28,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * so the host and every in-process plugin share a single bus regardless of which classloader
  * first creates it.
  */
-@Suppress("UNUSED_PARAMETER")
-actual fun createApplicationEventBus(scope: CoroutineScope): ApplicationEventBus {
+actual fun createApplicationEventBus(): ApplicationEventBus {
     ApplicationEventBusRegistry.bus?.let { return it }
     return ApplicationEventBusImpl.getInstance()
 }
@@ -115,20 +113,19 @@ class ApplicationEventBusImpl private constructor() : ApplicationEventBus {
                 // publisher to capture events (ProjectChangeAnnouncementTest,
                 // BrowserAnalyticsEmissionTest, BossTabsComponentMoveTest). Testing only `bus`
                 // would let this method silently take that publisher away from them.
-                if (ApplicationEventBusRegistry.bus == null && ApplicationEventBusRegistry.systemPublisher != null) {
-                    if (missingBusRegistryWarned.compareAndSet(false, true)) {
-                        systemEventLogger.warn(
-                            LogCategory.SYSTEM,
-                            "ApplicationEventBusRegistry has a systemPublisher but no bus; " +
-                                "plugin subscribers are disconnected",
-                        )
+                if (ApplicationEventBusRegistry.bus == null) {
+                    if (ApplicationEventBusRegistry.systemPublisher != null) {
+                        if (missingBusRegistryWarned.compareAndSet(false, true)) {
+                            systemEventLogger.warn(
+                                LogCategory.SYSTEM,
+                                "ApplicationEventBusRegistry has a systemPublisher but no bus; " +
+                                    "plugin subscribers are disconnected (expected in publisher-capturing tests)",
+                            )
+                        }
+                    } else {
+                        ApplicationEventBusRegistry.bus = bus
+                        ApplicationEventBusRegistry.systemPublisher = { event -> bus.publishInternal(event) }
                     }
-                } else if (
-                    ApplicationEventBusRegistry.bus == null &&
-                    ApplicationEventBusRegistry.systemPublisher == null
-                ) {
-                    ApplicationEventBusRegistry.bus = bus
-                    ApplicationEventBusRegistry.systemPublisher = { event -> bus.publishInternal(event) }
                 }
                 bus
             }

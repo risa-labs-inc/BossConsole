@@ -2,17 +2,14 @@ package ai.rever.boss.components.plugin.providers
 
 import ai.rever.boss.plugin.api.ApplicationEvent
 import ai.rever.boss.plugin.api.ApplicationEventBus
-import kotlinx.coroutines.CoroutineScope
 
 /**
  * Factory function to create platform-specific ApplicationEventBus.
  * Desktop implementation provides a singleton event bus.
  *
- * @param scope retained for source-set factory compatibility; the desktop singleton currently
- * uses no coroutine scope
  * @return ApplicationEventBus implementation
  */
-expect fun createApplicationEventBus(scope: CoroutineScope): ApplicationEventBus
+expect fun createApplicationEventBus(): ApplicationEventBus
 
 /**
  * Publish a host/system [ApplicationEvent] onto the shared application event bus so plugins

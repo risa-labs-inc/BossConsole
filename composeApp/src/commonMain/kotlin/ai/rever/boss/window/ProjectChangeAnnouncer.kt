@@ -2,6 +2,7 @@ package ai.rever.boss.window
 
 import ai.rever.boss.components.plugin.providers.publishSystemEvent
 import ai.rever.boss.plugin.api.ProjectChangeEvent
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Announces every project selection in one window onto the application event bus.
@@ -32,20 +33,20 @@ internal class ProjectChangeAnnouncer(
      * Every host-initiated selection is main-confined. The one former host exception was the
      * KERNEL-mode gRPC bridge; `ProjectDataServiceBridge.selectProject` now hops to Main before it
      * calls the provider. The plugin-facing `ProjectDataProviderImpl.selectProject` is different:
-     * in-process plugin code may call it from any thread. `@Volatile` makes those writes visible to
-     * the host thread, but deliberately does not make the read-check-write sequence atomic. A
-     * monitor would run third-party code resumed inline by `tryEmit` while holding a host lock.
+     * in-process plugin code may call it from any thread. [AtomicReference.getAndSet] keeps the
+     * previous-path chain atomic without a monitor, so third-party code resumed by publication
+     * never runs while holding a host lock. Concurrent callers can still publish their already
+     * coherent events out of order; serialising publication would reintroduce that lock.
      *
      * [previousPath] advances before the publish. A subscriber that re-enters `selectProject`
      * inline with the same path therefore takes the early return; a different path produces a
      * correctly chained second event.
      */
-    @Volatile
-    private var previousPath: String = ""
+    private val previousPath = AtomicReference("")
 
     override fun onProjectSelected(project: Project) {
         val path = project.path
-        val from = previousPath
+        val from = previousPath.getAndSet(path)
         // Re-selecting the same project is not a change. The old publish site did fire for
         // it - selectProject rewrites lastOpened on every call, so the state emits a fresh
         // Project each time - with previousProjectPath == projectPath. A plugin that used
@@ -54,7 +55,6 @@ internal class ProjectChangeAnnouncer(
         // `_bossProject.value` and re-sweep, which is idempotent on a repeat.)
         // BossConsole#520 tracks the release note for that observable change.
         if (path == from) return
-        previousPath = path
         publishSystemEvent(
             ProjectChangeEvent(
                 projectPath = path,
