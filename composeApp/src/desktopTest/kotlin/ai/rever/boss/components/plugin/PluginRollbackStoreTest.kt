@@ -1,6 +1,11 @@
 package ai.rever.boss.components.plugin
 
+import ai.rever.boss.plugin.loader.DynamicPluginLoaderImpl
+import ai.rever.boss.plugin.loader.PluginBundledTrust
+import ai.rever.boss.plugin.loader.PluginClassException
+import ai.rever.boss.plugin.loader.PluginSignatureEnforcement
 import ai.rever.boss.plugin.loader.PluginSignatureSidecar
+import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -9,6 +14,7 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -277,5 +283,53 @@ class PluginRollbackStoreTest {
             File(dir, ".rollback").listFiles { f: File -> f.name.endsWith(".jar") }?.size,
             "the rollback directory is accumulating jars",
         )
+    }
+
+    @Test
+    fun `bundled rollback preserves trust through renamed snapshot and restore`() =
+        runBlocking<Unit> {
+            val old = writeJar("bundled-original.jar", "1.0.0")
+            PluginBundledTrust.bindToBundle(old.absolutePath, old)
+            PluginRollbackStore.snapshot(dir, pluginId, old.absolutePath)
+            old.delete()
+            PluginBundledTrust.delete(old.absolutePath)
+            val broken = writeJar("broken.jar", "2.0.0")
+            val restored = assertNotNull(PluginRollbackStore.restore(dir, pluginId, broken.absolutePath))
+            assertTrue(PluginBundledTrust.isTrusted(restored.absolutePath))
+
+            val previousEnforcement = System.getProperty(PluginSignatureEnforcement.PROPERTY)
+            val previousDev = System.getProperty("boss.dev.mode")
+            try {
+                System.setProperty(PluginSignatureEnforcement.PROPERTY, "true")
+                System.setProperty("boss.dev.mode", "false")
+                val result = DynamicPluginLoaderImpl().loadPlugin(restored.absolutePath)
+                assertIs<PluginClassException>(result.exceptionOrNull())
+            } finally {
+                if (previousEnforcement == null) {
+                    System.clearProperty(PluginSignatureEnforcement.PROPERTY)
+                } else {
+                    System.setProperty(PluginSignatureEnforcement.PROPERTY, previousEnforcement)
+                }
+                if (previousDev == null) {
+                    System.clearProperty("boss.dev.mode")
+                } else {
+                    System.setProperty("boss.dev.mode", previousDev)
+                }
+            }
+            PluginRollbackStore.discard(dir, pluginId)
+            assertFalse(File(dir, ".rollback").listFiles().orEmpty().any { it.name.endsWith(".bundled-trust") })
+        }
+
+    @Test
+    fun `an untrusted snapshot never inherits a prior snapshots marker`() {
+        val trusted = writeJar("trusted.jar", "1.0.0")
+        PluginBundledTrust.bindToBundle(trusted.absolutePath, trusted)
+        PluginRollbackStore.snapshot(dir, pluginId, trusted.absolutePath)
+        val untrusted = writeJar("unsigned.jar", "2.0.0")
+        PluginRollbackStore.snapshot(dir, pluginId, untrusted.absolutePath)
+
+        val restored = assertNotNull(PluginRollbackStore.restore(dir, pluginId, null))
+        assertFalse(PluginBundledTrust.isTrusted(restored.absolutePath))
+        assertFalse(File(PluginBundledTrust.pathFor(restored.absolutePath)).exists())
     }
 }

@@ -75,6 +75,14 @@ message UIRegistration {
   WidgetTree initial_tree = 6;
   // For panels: default slot position
   string default_slot = 7;     // e.g., "left.top.top", "right.top.bottom"
+
+  // Opt in to unclaimed KeyEvent delivery while an interactive child holds focus.
+  // False by default, including registrations from older plugins that omit this field.
+  // This is wire-compatible but changes behavior: older plugins must opt in to retain raw
+  // key delivery. Neither value makes the surface root a focus target. Widget events such as
+  // TextChange still work without this flag. This is a plugin declaration, not user consent;
+  // it does not add a permission prompt or protect against a plugin deliberately opting in.
+  bool wants_keys = 8;
 }
 
 message UIRegistrationResponse {

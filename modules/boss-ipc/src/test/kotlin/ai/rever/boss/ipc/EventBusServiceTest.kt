@@ -5,6 +5,7 @@ import ai.rever.boss.ipc.services.EventBusServiceImpl
 import com.google.protobuf.ByteString
 import io.grpc.ManagedChannelBuilder
 import io.grpc.ServerBuilder
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -24,7 +25,6 @@ import kotlin.test.assertTrue
 class EventBusServiceTest {
     private companion object {
         const val POLL_MS = 25L
-        const val SETTLE_MS = 100L
         const val BATCH_SIZE = 3
     }
 
@@ -73,20 +73,6 @@ class EventBusServiceTest {
             publish()
             delay(POLL_MS)
         }
-    }
-
-    /**
-     * Wait until a subscription has been registered with the service.
-     *
-     * Weaker than [publishUntilDelivered] — the count increments when the RPC handler runs, which is still
-     * ahead of the flow being collected — but it is what a test asserting an exact event count can use,
-     * since republishing would change the count it asserts. Still strictly better than a fixed sleep.
-     */
-    private suspend fun awaitSubscriberRegistered() {
-        while (eventBusService.activeSubscribers < 1) {
-            delay(POLL_MS)
-        }
-        delay(SETTLE_MS)
     }
 
     @Test
@@ -185,28 +171,40 @@ class EventBusServiceTest {
                 val stub = EventBusServiceGrpcKt.EventBusServiceCoroutineStub(channel!!)
 
                 val received = mutableListOf<EventEnvelope>()
+                val ready = CompletableDeferred<Unit>()
                 val subscribeRequest =
                     SubscribeRequest
                         .newBuilder()
                         .setSubscriberId("batch-subscriber")
                         .addEventTypes("BatchEvent")
+                        .addEventTypes("ReadyProbe")
                         .build()
 
                 val subscriberJob =
                     launch {
                         stub.subscribe(subscribeRequest).collect { envelope ->
-                            received.add(envelope)
-                            if (received.size == BATCH_SIZE) return@collect
+                            if (envelope.eventType == "ReadyProbe") {
+                                ready.complete(Unit)
+                            } else {
+                                received.add(envelope)
+                            }
                         }
                     }
 
-                awaitSubscriberRegistered()
+                // Observing a probe proves this stream is collecting. Retry only probes, so delayed
+                // delivery cannot duplicate the batch or hide a batch with missing entries.
+                val probe = EventEnvelope.newBuilder().setEventType("ReadyProbe").build()
+                while (!ready.isCompleted) {
+                    assertTrue(subscriberJob.isActive, "Subscriber ended before receiving the readiness probe")
+                    stub.publish(probe)
+                    delay(POLL_MS)
+                }
 
                 val batchRequest =
                     PublishBatchRequest
                         .newBuilder()
                         .addAllEvents(
-                            (1..3).map { i ->
+                            (1..BATCH_SIZE).map { i ->
                                 EventEnvelope
                                     .newBuilder()
                                     .setEventType("BatchEvent")
@@ -216,17 +214,21 @@ class EventBusServiceTest {
                             },
                         ).build()
 
-                stub.publishBatch(batchRequest)
+                assertTrue(stub.publishBatch(batchRequest).success)
 
-                // Wait for the three, rather than sleeping long enough that they have probably arrived. The
-                // enclosing withTimeout is the bound if they never do, so a real failure reports as a
-                // timeout instead of an off-by-a-few count that reads like a delivery bug.
+                // Wait for the complete batch. Fail immediately if the stream ends; the enclosing
+                // timeout bounds a live stream that never delivers all expected events.
                 while (received.size < BATCH_SIZE) {
+                    assertTrue(subscriberJob.isActive, "Subscriber ended before receiving the complete batch")
                     delay(POLL_MS)
                 }
                 subscriberJob.cancel()
 
-                assertEquals(BATCH_SIZE, received.size, "Should receive all 3 batch events")
+                assertEquals(
+                    (1..BATCH_SIZE).map { "event-$it" },
+                    received.map { it.payload.toStringUtf8() },
+                    "Should receive each batch event once, in order",
+                )
             }
         }
 

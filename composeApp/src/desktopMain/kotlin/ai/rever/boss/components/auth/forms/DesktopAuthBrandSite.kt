@@ -2,6 +2,7 @@ package ai.rever.boss.components.auth.forms
 
 import ai.rever.boss.plugin.browser.FluckEngine
 import ai.rever.boss.plugin.browser.LocalAwtWindow
+import ai.rever.boss.plugin.browser.installBrowserChromeOrClose
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.foundation.layout.fillMaxSize
@@ -117,7 +118,10 @@ internal actual fun AuthBrandSite(
             // long as the boot took. The startup prewarm does not save it: that is skipped entirely on a
             // first-ever launch, when no browser profile exists yet, and mid-prewarm this would block on
             // the same lock.
-            created = withContext(Dispatchers.IO) { FluckEngine.engine.newBrowser() }
+            created =
+                withContext(Dispatchers.IO) {
+                    FluckEngine.engine.newBrowser().also { installBrowserChromeOrClose(it) }
+                }
             created.navigation().on(LoadFinished::class.java) {
                 scope.launch(Dispatchers.Main) { loaded = true }
             }

@@ -154,9 +154,15 @@ sealed class InstallResult {
 
     data class Error(
         val message: String,
+        val failureReason: InstallFailureReason? = null,
     ) : InstallResult()
 }
 
+// This object deliberately coordinates the platform-specific update flows in one
+// place. Splitting it safely requires moving the shared validation and lifecycle
+// boundaries as a dedicated refactor, rather than coupling that churn to a
+// targeted update-outcome fix.
+@Suppress("LargeClass")
 object UpdateInstaller {
     private val logger = BossLogger.forComponent("UpdateInstaller")
 
@@ -547,7 +553,9 @@ object UpdateInstaller {
                     // (JxBrowser 9.4.0 took it 12.0 -> 13.0) and the release
                     // manifest carries no minimum-OS field, so nothing upstream
                     // stops the update being offered.
-                    unsupportedOsError(appBundle)?.let { return@withContext InstallResult.Error(it) }
+                    unsupportedOsError(appBundle)?.let {
+                        return@withContext InstallResult.Error(it, InstallFailureReason.UnsupportedOs)
+                    }
 
                     logger.info(LogCategory.SYSTEM, "DMG verified successfully", mapOf("appBundle" to appBundle.name))
 

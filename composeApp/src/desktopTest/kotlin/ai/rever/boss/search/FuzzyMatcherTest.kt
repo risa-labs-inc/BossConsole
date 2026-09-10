@@ -53,6 +53,15 @@ class FuzzyMatcherTest {
         assertNotNull(result)
     }
 
+    @Test
+    fun `expanding lowercase characters keep original match indices`() {
+        val suffix = assertNotNull(FuzzyMatcher.match("l", "İstanbul"))
+        assertEquals(listOf(MatchRange(7, 8)), suffix.matchRanges)
+        val initial = assertNotNull(FuzzyMatcher.match("İs", "İstanbul"))
+        assertEquals(listOf(MatchRange(0, 2)), initial.matchRanges)
+        assertNotNull(FuzzyMatcher.match("BoSs", "bossconsole"))
+    }
+
     // ==================== SCORING TESTS ====================
 
     @Test
@@ -127,6 +136,38 @@ class FuzzyMatcherTest {
             short.score > long.score,
             "Short target (${short.score}) should score higher than long (${long.score})",
         )
+    }
+
+    @Test
+    fun `should give higher score for exact case match`() {
+        val exactCase = FuzzyMatcher.match("Boss", "BossConsole", "bossconsole")
+        val lowerCase = FuzzyMatcher.match("boss", "BossConsole", "bossconsole")
+
+        assertNotNull(exactCase)
+        assertNotNull(lowerCase)
+        assertTrue(
+            exactCase.score > lowerCase.score,
+            "Exact case match (${exactCase.score}) should score higher than different case (${lowerCase.score})",
+        )
+    }
+
+    @Test
+    fun `should give higher score for colon word boundary matches`() {
+        val colonMatch = FuzzyMatcher.match("ma", "module:action", "module:action")
+        val nonBoundaryMatch = FuzzyMatcher.match("ma", "modulexaction")
+        assertNotNull(colonMatch)
+        assertNotNull(nonBoundaryMatch)
+        assertEquals(nonBoundaryMatch.score + 10, colonMatch.score)
+        assertEquals(nonBoundaryMatch.matchRanges, colonMatch.matchRanges)
+    }
+
+    @Test
+    fun `exact case bonus follows scattered query characters including lowercase`() {
+        val exact = assertNotNull(FuzzyMatcher.match("bC", "bossConsole"))
+        val mismatched = assertNotNull(FuzzyMatcher.match("Bc", "bossConsole"))
+        assertEquals(mismatched.score + 2, exact.score)
+        assertEquals(listOf(MatchRange(0, 1), MatchRange(4, 5)), exact.matchRanges)
+        assertEquals(exact.matchRanges, mismatched.matchRanges)
     }
 
     // ==================== MATCH RANGE TESTS ====================

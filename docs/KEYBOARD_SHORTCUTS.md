@@ -407,10 +407,12 @@ Common issues:
 - **Conflicts**: Settings UI shows visual warnings for conflicting shortcuts
 - **Focus mode**: Settings window and shortcuts work in focus mode (fixed in Issue #74)
 
-## Remote plugin surfaces are keystroke sinks while focused
+## Remote plugin surfaces declare raw key delivery
 
 A remote (out-of-process) plugin surface taps keys the host did not claim and forwards them to the
-plugin as `UIEvent.key`. Three things bound that, and one thing does not:
+plugin as `UIEvent.key` only when its registration declares `wants_keys = true`.
+Omitted or false declarations disable the tap and reject key events at the outgoing queue,
+including while a renderer still holds state from a previous registration. Three routing rules apply:
 
 - **The host keymap wins.** `AWTKeyboardInterceptor` runs at the `KeyboardFocusManager`, upstream of
   Compose, and consumes what it dispatches - so a bound shortcut never reaches a plugin surface. The
@@ -424,9 +426,11 @@ plugin as `UIEvent.key`. Three things bound that, and one thing does not:
 - **The tap never consumes.** It always returns `false`, so a plugin cannot swallow a shortcut or trap
   the user in a panel.
 
-**What is not bounded is which plugin may listen.** `Modifier.forwardUnclaimedKeys` ends in
-`.focusable()`, so a remote surface is a focus target in its own right - a surface made only of labels
-can still take focus and receive every unclaimed key-down, including plain typing when no widget inside
-it holds focus. There is no plugin capability model gating that today. The intended fix is a declared
-opt-in (a `wants_keys` flag on `UIRegistration`), which makes both the focus stop and the tap something
-a plugin asks for; it needs the same per-connection plugin identity as attributing `UnregisterUI`.
+The surface root is never a focus target of its own, even with `wants_keys = true`; an interactive
+child must hold focus. Text changes, clicks, scrolls and lifecycle events do not require this flag.
+
+The field is additive on the wire but changes behavior for older plugins: an omitted declaration
+now disables previously implicit raw key delivery. Plugin authors who need it must opt in.
+This is a declaration, not user consent: there is no prompt or user-managed permission, and a
+plugin can declare the flag itself. The existing authenticated process identity still determines
+which process may register and stream the surface.

@@ -9,6 +9,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import java.io.File
 
 /**
  * Desktop implementation of update settings
@@ -44,8 +45,8 @@ actual object UpdateSettings {
     actual var includePreReleases: Boolean = false
 
     /**
-     * Version string last dismissed by the user (update prompt suppressed for it)
-     * Default: null (nothing dismissed)
+     * Version string suppressed after the user dismissed it or installation was
+     * refused because this device does not meet its OS requirement.
      */
     @Volatile
     actual var lastDismissedVersion: String? = null
@@ -69,6 +70,16 @@ data class UpdateSettingsData(
     val lastSeenReleaseVersion: String? = null,
 )
 
+/** Filesystem destination used by [UpdateSettingsManager]. */
+internal object UpdateSettingsFiles {
+    /** The destination is resolved per access, so an override affects every later read and write. */
+    @Volatile
+    var settingsFileOverride: File? = null
+
+    val settingsFile: File
+        get() = settingsFileOverride ?: BossDirectories.resolve("update-settings.json")
+}
+
 /**
  * Desktop implementation of update settings manager
  *
@@ -77,10 +88,11 @@ data class UpdateSettingsData(
  */
 actual object UpdateSettingsManager {
     private val logger = BossLogger.forComponent("UpdateSettingsManager")
+    private val settingsFile: File
+        get() = UpdateSettingsFiles.settingsFile
 
     // Serialize snapshot-and-write operations so concurrent saves cannot persist stale settings.
     private val settingsWriteMutex = Mutex()
-    private val settingsFile = BossDirectories.resolve("update-settings.json")
     private val json =
         Json {
             prettyPrint = true

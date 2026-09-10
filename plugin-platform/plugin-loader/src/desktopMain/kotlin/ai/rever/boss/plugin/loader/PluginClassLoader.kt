@@ -2,6 +2,7 @@ package ai.rever.boss.plugin.loader
 
 import ai.rever.boss.plugin.logging.BossLogger
 import ai.rever.boss.plugin.logging.LogCategory
+import java.io.File
 import java.net.URL
 import java.net.URLClassLoader
 import java.util.concurrent.ConcurrentHashMap
@@ -92,6 +93,30 @@ class PluginClassLoader(
         fun findPluginForClass(className: String): String? {
             val snapshot = synchronized(allInstances) { allInstances.toList() }
             return snapshot.firstOrNull { it.definedClassNamed(className) }?.pluginId
+        }
+
+        /**
+         * Whether any known plugin classloader for [path] is ACTIVE or UNLOAD_IN_PROGRESS.
+         * The latter includes resource closure (BossConsole#72). A throwing close still publishes
+         * UNLOADED, so this predicate does not guarantee that every OS handle was released.
+         * The registry is weak: collectible loaders are not retained by this guard. Canonical-path
+         * failures also return false; this is a best-effort check, not a filesystem lock.
+         *
+         * `PluginJarReconciler` uses this before deleting a superseded jar: a live classloader
+         * merely existing is not sufficient, because not everything reads a plugin through the
+         * classloader. pty4j resolves its native helper by reopening its OWN jar by filename the
+         * first time a PTY is created, so a jar deleted out from under a still-open loader breaks
+         * that lookup even though nothing about the loader itself changed.
+         */
+        fun isPathOpenByLiveLoader(path: String): Boolean {
+            val target = runCatching { File(path).canonicalPath }.getOrNull() ?: return false
+            val snapshot = synchronized(allInstances) { allInstances.toList() }
+            return snapshot.any { loader ->
+                loader.state != ClassLoaderState.UNLOADED &&
+                    loader.getURLs().any { url ->
+                        runCatching { File(url.toURI()).canonicalPath == target }.getOrDefault(false)
+                    }
+            }
         }
 
         /**
@@ -189,10 +214,6 @@ class PluginClassLoader(
             )
     }
 
-    init {
-        synchronized(allInstances) { allInstances.add(this) }
-    }
-
     /**
      * Whether this loader defined the class named [name] (i.e. the class came
      * from the plugin JAR, not a shared parent-first package). Reads the JVM's
@@ -238,6 +259,11 @@ class PluginClassLoader(
      */
     private val refusedResourceNames: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
+    init {
+        // Publish only after lifecycle fields are initialized: reconciliation reads them concurrently.
+        synchronized(allInstances) { allInstances.add(this) }
+    }
+
     /**
      * Whether this classloader has been marked for unloading.
      */
@@ -251,9 +277,11 @@ class PluginClassLoader(
     /**
      * Mark this classloader as being unloaded.
      *
-     * New child-first misses stop delegating to the parent. Own-jar and shared-class loads
-     * still work during teardown. A parent lookup admitted while ACTIVE can finish after
-     * this marker; the per-name class-loading locks are not an unload/drain barrier.
+     * New child-first misses stop delegating to the parent. Own-JAR lookup remains permitted
+     * but can succeed only while its resources remain open; close() uses this state too.
+     * Shared-class lookup remains available. A parent lookup admitted while ACTIVE can finish
+     * after this marker; per-name class-loading locks are not an unload/drain barrier.
+     * See loadClassChildFirst for why parent fallback stays refused during resource closure.
      */
     fun markUnloading() {
         if (_state.compareAndSet(ClassLoaderState.ACTIVE, ClassLoaderState.UNLOAD_IN_PROGRESS)) {
@@ -270,7 +298,7 @@ class PluginClassLoader(
     /**
      * Mark this classloader as fully unloaded.
      */
-    fun markUnloaded() {
+    private fun markUnloaded() {
         _state.set(ClassLoaderState.UNLOADED)
         logger.debug(
             LogCategory.SYSTEM,
@@ -343,18 +371,13 @@ class PluginClassLoader(
      * loader is unloading or closed the same delegation becomes destructive, so
      * it is refused instead; see the comment in the catch block.
      *
-     * The two post-ACTIVE states are refused for different reasons, and only one
-     * of them is load-bearing for the LinkageError this exists to prevent:
-     * - [ClassLoaderState.UNLOADED] — CORRECTNESS. The jar is shut, `findClass`
-     *   misses on every name including ones the plugin owns, so delegating
-     *   splices the host's class graph into the plugin's.
-     * - [ClassLoaderState.UNLOAD_IN_PROGRESS] — POLICY. The jar is still open
-     *   here, so a miss is a genuine miss and delegating could not corrupt
-     *   anything. It is refused anyway as fail-fast on a lifecycle bug: the
-     *   plugin's own `dispose()` has already returned by the time this state is
-     *   set (see `DynamicPluginLoader.unloadPlugin`), so a first-time load in
-     *   this window is a straggler that would be refused a moment later anyway
-     *   once `close()` lands. One rule beats two.
+     * Both post-ACTIVE states must refuse parent fallback:
+     * - [ClassLoaderState.UNLOADED]: the jar is shut, so `findClass` misses even on names
+     *   the plugin owns. Delegation would splice the host's class graph into the plugin's.
+     * - [ClassLoaderState.UNLOAD_IN_PROGRESS]: before close this is fail-fast policy for
+     *   straggler work after teardown. The state also covers resource closure itself, when
+     *   JAR reads may already fail; refusal then protects class-graph correctness as well.
+     *   Do not relax this branch on the assumption that the jar is still open.
      */
     private fun loadClassChildFirst(
         name: String,
@@ -494,9 +517,12 @@ class PluginClassLoader(
 
     /**
      * Close this classloader and release resources.
+     * Keep UNLOAD_IN_PROGRESS across super.close(): the reconciler uses that state to retain
+     * the JAR while its resources are closing. Publish UNLOADED only afterwards, in finally,
+     * so a throwing close does not permanently pin the file. Both states refuse parent fallback.
      */
     override fun close() {
-        markUnloaded()
+        markUnloading()
         logger.info(
             LogCategory.SYSTEM,
             "Closing plugin classloader",
@@ -504,7 +530,11 @@ class PluginClassLoader(
                 "pluginId" to pluginId,
             ),
         )
-        super.close()
+        try {
+            super.close()
+        } finally {
+            markUnloaded()
+        }
     }
 
     override fun toString(): String = "PluginClassLoader(pluginId=$pluginId, state=$state, urls=${getURLs().size})"

@@ -2163,6 +2163,9 @@ class DynamicPluginManager(
      * Bundled plugins are system plugins that ship with BossConsole.
      * They are loaded in priority order (lower loadPriority values load first).
      *
+     * This helper does not establish provenance from the directory argument. Production startup
+     * binds trusted copies through PluginStoreSetup; unsigned, unbound files still fail enforcement.
+     *
      * @param bundledDir Directory containing bundled plugin JARs
      * @return Map of plugin IDs to their load results
      */

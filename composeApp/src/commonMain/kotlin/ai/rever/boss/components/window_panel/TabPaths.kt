@@ -57,12 +57,13 @@ internal object TabPaths {
     }
 
     /**
-     * Collapse repeated separators and drop a trailing one.
+     * Collapse repeated separators and drop a trailing one, except on roots.
      *
-     * Internal so the two deliberate choices in here are pinnable: backslash is only
-     * a separator on Windows, and a leading `//` (UNC host) survives the collapse.
-     * On POSIX [normalize] reaches this only when canonicalPath throws, so the
-     * tests exercise it directly. The separator is a parameter so the Windows
+     * Internal so separator rules are pinnable: backslash is only a separator on
+     * Windows, a leading `//` (UNC host) survives the collapse, drive roots retain
+     * their separator, and separator-only roots never become empty.
+     * [normalize] applies this before canonicalization on every platform.
+     * The separator is a parameter so the Windows
      * branch is testable on the Linux/macOS runners too - with the default it is
      * unreachable there (`File.separatorChar == '/'`).
      */
@@ -79,6 +80,13 @@ internal object TabPaths {
         // makes two tabs on different servers compare equal.
         val uncPrefix = if (unified.startsWith("//")) "/" else ""
         val collapsed = uncPrefix + unified.replace(Regex("/{2,}"), "/")
-        return if (collapsed.length > 1) collapsed.trimEnd('/') else collapsed
+        // C:/ is a drive root, but C: resolves against that drive's working
+        // directory. Separator-only paths must not become the empty path either.
+        val isDriveRoot =
+            separatorChar == '\\' &&
+                collapsed.length == 3 &&
+                (collapsed[0] in 'A'..'Z' || collapsed[0] in 'a'..'z') &&
+                collapsed.endsWith(":/")
+        return if (isDriveRoot || collapsed.all { it == '/' }) collapsed else collapsed.trimEnd('/')
     }
 }

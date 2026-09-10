@@ -1,5 +1,6 @@
 package ai.rever.boss.components.plugin.remote
 
+import ai.rever.boss.kernel.ui.RemoteUiSurfaceDescriptor
 import ai.rever.boss.kernel.ui.RemoteUiSurfaceHost
 import ai.rever.boss.kernel.ui.RemoteUiSurfaceRegistry
 import ai.rever.boss.ui.sdk.UIEventMapper
@@ -25,6 +26,14 @@ internal class RemoteSurfaceComponent(
     private val _connected = mutableStateOf(false)
 
     /**
+     * Whether the plugin behind this surface declared [RemoteUiSurfaceDescriptor.wantsKeys].
+     * Refreshed on tree/connection delivery. This snapshot only controls the renderer's tap;
+     * a same-owner replacement can precede its next callback or recomposition. The receiving
+     * surface also checks its own immutable descriptor when enqueueing keys.
+     */
+    private val _wantsKeys = mutableStateOf(false)
+
+    /**
      * The transport's view of this panel.
      *
      * Kept private rather than implemented by the class: these are calls the registry makes *into* the
@@ -32,6 +41,10 @@ internal class RemoteSurfaceComponent(
      */
     private val surfaceHost =
         object : RemoteUiSurfaceHost {
+            override fun onKeyCapabilityChanged(wantsKeys: Boolean) {
+                _wantsKeys.value = wantsKeys
+            }
+
             override fun onTreeUpdated(tree: WidgetTree) {
                 updateTree(tree)
             }
@@ -53,6 +66,7 @@ internal class RemoteSurfaceComponent(
         RemoteSurfaceContent(
             tree = tree,
             connected = _connected.value,
+            wantsKeys = _wantsKeys.value,
             onEvent = { nodeId, event -> sendUIEvent(nodeId, event) },
         )
     }
@@ -113,7 +127,7 @@ internal class RemoteSurfaceComponent(
         if (!registry.emit(surfaceId, proto)) {
             logger.debug(
                 LogCategory.UI,
-                "Dropped UI event: no plugin holds this surface",
+                "Dropped UI event: surface unavailable or capability not declared",
                 mapOf("surfaceId" to surfaceId),
             )
         }

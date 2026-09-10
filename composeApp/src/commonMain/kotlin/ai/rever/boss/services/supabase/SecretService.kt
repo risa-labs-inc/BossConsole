@@ -33,6 +33,10 @@ import kotlinx.serialization.json.*
  * - Decryption happens on server, decrypted password sent over HTTPS
  *
  * Usage:
+ * Paginated RPCs decode atomically: the pinned plugin API has no raw next-offset field,
+ * and clients advance by data.size. Dropping rows would repeat/skip records or end scans
+ * early. Recovery requires a cursor contract first; only getSecretShares recovers rows.
+ *
  * ```kotlin
  * // Get all secrets for current user
  * val result = SecretService.getUserSecrets(limit = 50, offset = 0)
@@ -52,7 +56,7 @@ object SecretService {
     // BossConsole#145: every catch here used to fail silently - the only WARN in the log came
     // from the *calling plugin*, not the code that actually failed, which is why an exception
     // emptying every secret panel once read as a cosmetic glitch rather than an outage.
-    // sanitizeSupabaseFailure only rewrites serialization failures. Other exceptions can contain
+    // sanitizeSupabaseFailure rewrites serialization and REST failures. Other exceptions can contain
     // server-echoed secret values, so logs keep the operation/type, never the message or throwable.
     // NETWORK matches NamedSupabaseLogging; these events diagnose RPC failures, not sign-in events.
     private val logger = BossLogger.forComponent("SecretService")
@@ -504,7 +508,7 @@ object SecretService {
                 )
 
             val jsonElement = supabaseJson.parseToJsonElement(postgrestResult.data)
-            val shares = supabaseJson.decodeFromJsonElement<List<SecretShareEntry>>(jsonElement)
+            val shares = decodeListRecovering<SecretShareEntry>(jsonElement, logger, "getSecretShares")
 
             Result.success(shares)
         } catch (e: Exception) {

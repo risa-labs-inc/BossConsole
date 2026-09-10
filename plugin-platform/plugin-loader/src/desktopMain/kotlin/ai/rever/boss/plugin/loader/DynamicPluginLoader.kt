@@ -557,7 +557,10 @@ class DynamicPluginLoaderImpl(
      * store versions from before signing) warns and proceeds during the
      * rollout, becoming a hard failure once [PluginSignatureEnforcement] is
      * enabled — except in dev mode, where a missing sidecar is always allowed
-     * so locally built plugins keep loading.
+     * so locally built plugins keep loading, and except a [PluginBundledTrust]
+     * exemption, which is permanent rather than rollout-scoped: a bundled JAR
+     * has no store signature to eventually gain, so it stays exempt even once
+     * enforcement is on.
      */
     private fun verifySignatureOrThrow(
         jarPath: String,
@@ -565,6 +568,17 @@ class DynamicPluginLoaderImpl(
     ): PluginSignatureException? {
         val signature = PluginSignatureSidecar.read(jarPath)
         if (signature == null) {
+            if (PluginBundledTrust.isTrusted(jarPath)) {
+                logger.debug(
+                    LogCategory.SYSTEM,
+                    "Plugin has no store signature but is a trusted bundled artifact - exempt from enforcement",
+                    mapOf(
+                        "pluginId" to manifest.pluginId,
+                        "version" to manifest.version,
+                    ),
+                )
+                return null
+            }
             val devMode = System.getProperty("boss.dev.mode")?.toBoolean() == true
             if (PluginSignatureEnforcement.enforceUnsigned && !devMode) {
                 return PluginSignatureException(
@@ -630,6 +644,9 @@ class DynamicPluginLoaderImpl(
      *
      * Bundled plugins are system plugins that ship with BossConsole.
      * They are loaded in priority order (lower loadPriority values load first).
+     *
+     * This helper does not establish provenance from the directory argument. Production startup
+     * binds trusted copies through PluginStoreSetup; unsigned, unbound files still fail enforcement.
      *
      * @param bundledDir Directory containing bundled plugin JARs
      * @return List of successfully loaded plugins, sorted by load priority

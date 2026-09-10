@@ -2,6 +2,7 @@ package ai.rever.boss.components.plugin.remote
 
 import ai.rever.boss.ipc.proto.UIEvent
 import ai.rever.boss.kernel.ui.RemoteUiSurface
+import ai.rever.boss.kernel.ui.RemoteUiSurfaceDescriptor
 import ai.rever.boss.kernel.ui.RemoteUiSurfaceRegistry
 import ai.rever.boss.kernel.ui.SurfaceRegistration
 import ai.rever.boss.keymap.KeymapSettingsManager
@@ -39,6 +40,7 @@ import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Rule
 import org.junit.Test
 import kotlin.test.assertEquals
@@ -67,7 +69,10 @@ class RemoteSurfaceInputComposeTest {
     @Test
     fun `a key the host does not claim reaches the plugin with its payload intact`() {
         val registry = RemoteUiSurfaceRegistry()
-        val surface = registry.accept(PANEL)
+        // wantsKeys = true: this test is about the routing rule end to end, not about the gate
+        // The gate added in front of it - RemoteSurfaceKeyRoutingTest and the wantsKeys-specific
+        // tests in this file cover that the gate itself defaults closed and is enforced.
+        val surface = registry.accept(PANEL, wantsKeys = true)
         val panel = RemotePanelComponent(PANEL, "Test Panel", PROCESS, registry)
         surface.pushTree(textFieldTree())
         panel.attach()
@@ -90,6 +95,77 @@ class RemoteSurfaceInputComposeTest {
         assertEquals(AwtKeyEvent.VK_F7, queued.key.keyCode)
         assertTrue(queued.key.alt, "the alt modifier must survive the crossing")
         assertTrue(queued.key.shift, "the shift modifier must survive the crossing")
+        panel.dispose()
+    }
+
+    @Test
+    fun `wants_keys defaults to false, and no key reaches a plugin that never declared it`() {
+        // The mirror of the test above, with the one thing changed being whether the
+        // surface declared wants_keys - not the widget tree, not the key, not the routing rule. Same
+        // interactive field, same focus, same unbound chord; the only difference from the passing case
+        // is the registration this test does NOT opt into.
+        val registry = RemoteUiSurfaceRegistry()
+        val surface = registry.accept(PANEL) // wantsKeys defaults to false - the point of this test.
+        val panel = RemotePanelComponent(PANEL, "Test Panel", PROCESS, registry)
+        surface.pushTree(textFieldTree())
+        panel.attach()
+        assertUnboundInLiveKeymap()
+
+        compose.setContent { panel.Content() }
+        compose.onNode(hasSetTextAction()).requestFocus()
+        compose.onRoot().performKeyInput {
+            withKeyDown(Key.AltLeft) { withKeyDown(Key.ShiftLeft) { pressKey(Key.F7) } }
+        }
+        compose.waitForIdle()
+
+        assertNoKeyReachesThePlugin(surface)
+        panel.dispose()
+    }
+
+    @Test
+    fun `an opted out replacement rejects keys from the still composed opted in renderer`() {
+        val registry = RemoteUiSurfaceRegistry()
+        val original = registry.accept(PANEL, wantsKeys = true)
+        val panel = RemotePanelComponent(PANEL, "Test Panel", PROCESS, registry)
+        original.pushTree(textFieldTree())
+        panel.attach()
+        assertUnboundInLiveKeymap()
+        compose.setContent { panel.Content() }
+        compose.onNode(hasSetTextAction()).requestFocus()
+
+        // Reclaim a registration that has not opened its stream. No tree or connection callback
+        // has refreshed the existing composition, but events now route to the replacement queue.
+        val replacement = registry.accept(PANEL)
+        compose.onRoot().performKeyInput {
+            withKeyDown(Key.AltLeft) { withKeyDown(Key.ShiftLeft) { pressKey(Key.F7) } }
+        }
+        compose.waitForIdle()
+        assertNoKeyReachesThePlugin(replacement)
+        panel.dispose()
+    }
+
+    @Test
+    fun `a component attached before registration follows an opted in reconnect`() {
+        val registry = RemoteUiSurfaceRegistry()
+        val panel = RemotePanelComponent(PANEL, "Test Panel", PROCESS, registry)
+        panel.attach()
+        compose.setContent { panel.Content() }
+        val original = registry.accept(PANEL)
+        original.pushTree(textFieldTree())
+        registry.openStream(PANEL, PROCESS)
+        registry.closeStream(original)
+
+        val replacement = registry.accept(PANEL, wantsKeys = true)
+        replacement.pushTree(textFieldTree())
+        registry.openStream(PANEL, PROCESS)
+        compose.waitForIdle()
+        assertUnboundInLiveKeymap()
+        compose.onNode(hasSetTextAction()).requestFocus()
+        compose.onRoot().performKeyInput {
+            withKeyDown(Key.AltLeft) { withKeyDown(Key.ShiftLeft) { pressKey(Key.F7) } }
+        }
+        compose.waitForIdle()
+        assertEquals(AwtKeyEvent.VK_F7, replacement.firstEventWhere { it.hasKey() }.key.keyCode)
         panel.dispose()
     }
 
@@ -234,8 +310,14 @@ class RemoteSurfaceInputComposeTest {
         return KeymapSettings(shortcuts = mapOf(binding.actionId to binding))
     }
 
-    private fun RemoteUiSurfaceRegistry.accept(surfaceId: String): RemoteUiSurface =
-        (register(surfaceId, PROCESS) as SurfaceRegistration.Accepted).surface
+    private fun RemoteUiSurfaceRegistry.accept(
+        surfaceId: String,
+        wantsKeys: Boolean = false,
+    ): RemoteUiSurface =
+        (
+            register(surfaceId, PROCESS, RemoteUiSurfaceDescriptor(wantsKeys = wantsKeys))
+                as SurfaceRegistration.Accepted
+        ).surface
 
     /** Bounded, so a regression fails the build instead of hanging it. Mirrors RemoteWidgetRendererComposeTest. */
     private fun RemoteUiSurface.firstEvent(): UIEvent = firstEventWhere { true }
@@ -250,6 +332,25 @@ class RemoteSurfaceInputComposeTest {
         runBlocking {
             withTimeout(WAIT_TIMEOUT_MS) { events().filter(predicate).take(1).toList() }.single()
         }
+
+    /**
+     * Bounded wait proving a Key event never arrives - a much shorter budget than
+     * [WAIT_TIMEOUT_MS], since this test asserts an absence rather than waiting out a real event,
+     * and a slow negative test is still a real one to keep the suite fast.
+     */
+    private fun assertNoKeyReachesThePlugin(surface: RemoteUiSurface) {
+        runBlocking {
+            val arrived =
+                withTimeoutOrNull(NEGATIVE_WAIT_TIMEOUT_MS) {
+                    surface
+                        .events()
+                        .filter { it.hasKey() }
+                        .take(1)
+                        .toList()
+                }
+            assertNull(arrived, "no Key event should reach a plugin that never declared wants_keys")
+        }
+    }
 
     private fun textFieldTree(): WidgetTree =
         WidgetTree(
@@ -280,5 +381,6 @@ class RemoteSurfaceInputComposeTest {
         const val ROWS = 20
         const val VIEWPORT_DP = 40
         const val WAIT_TIMEOUT_MS = 10_000L
+        const val NEGATIVE_WAIT_TIMEOUT_MS = 500L
     }
 }

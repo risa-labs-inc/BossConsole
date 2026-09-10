@@ -6,10 +6,10 @@ import ai.rever.boss.plugin.browser.EngineInitError
 import ai.rever.boss.plugin.browser.FluckEngine
 import ai.rever.boss.plugin.browser.LocalAwtWindow
 import ai.rever.boss.plugin.browser.NativeFileDialogs
-import ai.rever.boss.plugin.browser.installPopupWindowChrome
+import ai.rever.boss.plugin.browser.installBrowserChromeOrClose
+import ai.rever.boss.plugin.browser.openBrowserPopupWindow
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
-import ai.rever.boss.window.BossWindowIcon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -22,7 +22,6 @@ import com.teamdev.jxbrowser.event.Subscription
 import com.teamdev.jxbrowser.navigation.event.LoadStarted
 import com.teamdev.jxbrowser.ui.Rect
 import com.teamdev.jxbrowser.view.compose.BrowserViewState
-import com.teamdev.jxbrowser.view.swing.BrowserView
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -32,8 +31,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.awt.Window
 import java.util.concurrent.atomic.AtomicBoolean
-import javax.swing.JFrame
-import javax.swing.SwingUtilities
 
 private val logger = BossLogger.forComponent("BrowserFunctions")
 
@@ -259,71 +256,7 @@ private fun configureBrowserPopupHandler(
                     popupBrowser.close()
                 }
             } else {
-                SwingUtilities.invokeLater {
-                    try {
-                        val frame = JFrame()
-                        val subscriptions = mutableListOf<Subscription>()
-
-                        frame.title = "Popup"
-                        frame.defaultCloseOperation = JFrame.DISPOSE_ON_CLOSE
-                        frame.iconImages = BossWindowIcon.images
-                        frame.setLocation(initialBounds.origin().x(), initialBounds.origin().y())
-                        frame.setSize(initialBounds.size().width(), initialBounds.size().height())
-
-                        // Same reason as the BrowserHandleImpl popup path: a popup browser
-                        // is never configured by the tab flow, so claim its file dialogs
-                        // before the Swing view installs the JFileChooser ones.
-                        NativeFileDialogs.installOn(popupBrowser)
-
-                        val browserView = BrowserView.newInstance(popupBrowser)
-                        frame.contentPane.add(browserView)
-
-                        // Same crash as the BrowserHandleImpl popup path: JxBrowser's built-in
-                        // Swing menu resolves its position from a component that the popup may
-                        // already have disposed (BossConsole-Releases#17). The dismiss handler is
-                        // paired with the menu inside installPopupWindowChrome.
-                        installPopupWindowChrome(popupBrowser, browserView)
-
-                        subscriptions +=
-                            popupBrowser.on(com.teamdev.jxbrowser.browser.event.TitleChanged::class.java) { event ->
-                                SwingUtilities.invokeLater {
-                                    frame.title = event.title()
-                                }
-                            }
-
-                        subscriptions +=
-                            popupBrowser.on(BrowserClosed::class.java) {
-                                SwingUtilities.invokeLater {
-                                    subscriptions.forEach { it.unsubscribe() }
-                                    frame.dispose()
-                                }
-                            }
-
-                        frame.addWindowListener(
-                            object : java.awt.event.WindowAdapter() {
-                                override fun windowClosing(e: java.awt.event.WindowEvent?) {
-                                    subscriptions.forEach {
-                                        try {
-                                            it.unsubscribe()
-                                        } catch (_: Exception) {
-                                            // Intentional: ignore errors during cleanup
-                                        }
-                                    }
-                                    if (!popupBrowser.isClosed) {
-                                        popupBrowser.close()
-                                    }
-                                }
-                            },
-                        )
-
-                        frame.isVisible = true
-                    } catch (e: Exception) {
-                        logger.error(LogCategory.BROWSER, "Error creating popup window", error = e)
-                        if (!popupBrowser.isClosed) {
-                            popupBrowser.close()
-                        }
-                    }
-                }
+                openBrowserPopupWindow(popupBrowser, initialBounds)
             }
 
             com.teamdev.jxbrowser.browser.callback.OpenPopupCallback.Response
@@ -333,12 +266,11 @@ private fun configureBrowserPopupHandler(
 }
 
 actual fun createBrowser(): Any {
-    val browser = FluckEngine.engine.newBrowser()
+    val browser = FluckEngine.engine.newBrowser().also { installBrowserChromeOrClose(it) }
     browser.settings().enableOverscrollHistoryNavigation()
     FluckEngine.setupBrowserDownloadHandler(browser as com.teamdev.jxbrowser.browser.Browser)
     FluckEngine.setupCaptureSessionHandler(browser)
     FluckEngine.setupKeyboardInterceptor(browser)
-    FluckEngine.setupSwingPopupDismissOnPageClick(browser)
     return browser
 }
 

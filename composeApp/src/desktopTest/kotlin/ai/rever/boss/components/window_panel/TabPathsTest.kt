@@ -1,10 +1,12 @@
 package ai.rever.boss.components.window_panel
 
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
+import kotlin.test.assertTrue
 
 /**
  * Path comparison for tab reuse.
@@ -90,8 +92,8 @@ class TabPathsTest {
     @Test
     fun `lexical cleanup keeps a UNC host prefix while collapsing inner separators`() {
         // //server/share must not flatten to /server/share - two tabs on different
-        // servers would compare equal. Exercised directly: on POSIX normalize() only
-        // reaches the lexical path when canonicalPath throws.
+        // servers would compare equal. Exercise the lexical form directly because
+        // canonicalization of UNC paths depends on the host platform.
         assertEquals("//server/share/x", TabPaths.lexicalClean("//server/share//x"))
         assertNotEquals(TabPaths.lexicalClean("//server/share"), TabPaths.lexicalClean("/server/share"))
     }
@@ -111,5 +113,39 @@ class TabPathsTest {
     @Test
     fun `on the posix branch a backslash stays a filename character`() {
         assertEquals("/x/a\\bak.kt", TabPaths.lexicalClean("/x/a\\bak.kt", '/'))
+    }
+
+    @Test
+    fun `windows drive roots keep their separator`() {
+        assertEquals("C:/", TabPaths.lexicalClean("C:\\", '\\'))
+        assertEquals("d:/", TabPaths.lexicalClean("d:////", '\\'))
+        assertNotEquals(TabPaths.lexicalClean("C:", '\\'), TabPaths.lexicalClean("C:/", '\\'))
+        assertEquals("C:/folder", TabPaths.lexicalClean("C:\\folder\\", '\\'))
+        // A colon is an ordinary filename character on POSIX.
+        assertEquals("C:", TabPaths.lexicalClean("C:/", '/'))
+    }
+
+    @Test
+    fun `separator only paths never collapse to an empty path`() {
+        for (separator in listOf('/', '\\')) {
+            assertEquals("/", TabPaths.lexicalClean("/", separator))
+            assertEquals("//", TabPaths.lexicalClean("//", separator))
+            assertEquals("//", TabPaths.lexicalClean("////", separator))
+        }
+        assertEquals("//", TabPaths.lexicalClean("\\\\", '\\'))
+    }
+
+    @Test
+    fun `normalizing repeated POSIX root separators preserves root identity`() {
+        assumeTrue(File.separatorChar == '/', "POSIX root canonicalization")
+        assertEquals(File("/").canonicalPath, TabPaths.normalize("////"))
+        assertTrue(TabPaths.pathsMatch("/", "////"))
+    }
+
+    @Test
+    fun `normalizing a windows drive root does not resolve the drive working directory`() {
+        assumeTrue(File.separatorChar == '\\', "Windows drive-root canonicalization")
+        val root = File(System.getProperty("user.dir")).toPath().root.toString()
+        assertEquals(File(root).canonicalPath, TabPaths.normalize(root))
     }
 }

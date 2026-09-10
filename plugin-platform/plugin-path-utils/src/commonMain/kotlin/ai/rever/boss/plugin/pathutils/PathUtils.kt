@@ -11,9 +11,10 @@ package ai.rever.boss.plugin.pathutils
  * KNOWN LIMITATIONS:
  *
  * 1. EDGE CASES NOT HANDLED:
- *    - UNC paths (\\server\share\file.txt): May not extract parent correctly
+ *    - UNC share roots are treated lexically, not as filesystem roots
  *    - Root-level files (/file.txt or C:\file.txt): Returns empty or drive letter
- *    - Network paths with mixed separators: Behavior may be unpredictable
+ *    - Both slash styles are separators, including literal backslashes in POSIX names.
+ *      These display-label helpers differ deliberately from host-specific file identity rules.
  *    - Paths with trailing separators: Not normalized automatically
  *
  * 2. SIMPLE IMPLEMENTATION:
@@ -34,7 +35,8 @@ package ai.rever.boss.plugin.pathutils
  * - "/" -> "" (root path returns empty)
  * - "file.txt" -> "file.txt" (no path returns the string itself)
  *
- * Note: Does not handle edge cases like UNC paths (\\server\share) or root files correctly.
+ * This is lexical extraction: root-level files return their filename, UNC share roots
+ * return the share name, and a trailing separator returns an empty name.
  */
 fun String.extractFileName(): String = this.substringAfterLast('/').substringAfterLast('\\')
 
@@ -46,13 +48,16 @@ fun String.extractFileName(): String = this.substringAfterLast('/').substringAft
  * - "C:\Users\Documents\file.txt" -> "Documents"
  * - "C:/mixed\path/file.txt" -> "path"
  *
- * Implementation: Normalizes to forward slashes, then extracts the parent folder name.
- * Returns the parent path itself if no parent folder can be determined.
+ * Implementation: Normalizes to forward slashes, then extracts the parent folder name,
+ * ignoring repeated separators before the filename.
+ * Returns an empty string for a filename without a parent path.
  *
- * Note: Does not handle edge cases like UNC paths (\\server\share) or root files correctly.
+ * Root-level POSIX files have an empty parent label; Windows root-level files return
+ * the drive prefix (for example, "C:"). UNC files return the containing folder/share
+ * label, but a UNC share root itself is not recognized as a filesystem root.
  */
 fun String.extractParentName(): String {
     val normalized = this.replace('\\', '/')
-    val parentPath = normalized.substringBeforeLast('/')
-    return parentPath.substringAfterLast('/').ifEmpty { parentPath }
+    val parentPath = normalized.substringBeforeLast('/', missingDelimiterValue = "").trimEnd('/')
+    return parentPath.substringAfterLast('/')
 }

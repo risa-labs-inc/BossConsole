@@ -54,6 +54,26 @@ data class DependentPlugin(
 )
 
 /**
+ * Everything the dependency dialog will install if the user says yes, in an order that works.
+ *
+ * Built before the user answers, so the one dialog can say what it is about to do and then do
+ * exactly that. [order] is dependencies first and the plugin the user was asked about last;
+ * a plugin resolves its dependency's API lazily, but lazily still means before the first call,
+ * and that call can come from `register()`.
+ *
+ * The flags are diagnostics for the caller to log, not reasons to refuse: [unresolved] names
+ * plugins the store could not describe (their install is still attempted, but they are not expanded),
+ * [cyclic] means two store rows point at each other, [truncated] means the walk hit
+ * [PluginDependencyResolution.MAX_PLAN_SIZE] and stopped expanding.
+ */
+data class DependencyInstallPlan(
+    val order: List<String>,
+    val unresolved: Set<String>,
+    val cyclic: Boolean,
+    val truncated: Boolean,
+)
+
+/**
  * Works out which of a plugin's declared dependencies are absent.
  *
  * Pure, so the interesting rules are testable without a plugin loader: manifest
@@ -167,6 +187,93 @@ object PluginDependencyResolution {
             // that the plugin actually requires is the worse way to be wrong.
             .map { (_, declarations) -> declarations.minBy { it.optional } }
             .map { dependency -> manifest.toMissing(dependency) }
+
+    /**
+     * Upper bound on the plugins one plan may name.
+     *
+     * A store row is free-form JSONB and can name anything, so the walk is bounded by something
+     * other than the store's honesty. Real graphs are two or three deep; this exists so a
+     * malformed one cannot turn the dialog into a hang.
+     */
+    const val MAX_PLAN_SIZE = 32
+
+    /**
+     * The closure of [rootId] over what the store says each plugin needs, minus what is present.
+     *
+     * Pure apart from the two injected questions. [isPresent] must be the same "installed and
+     * usable now" predicate the reporter and the installer already share; the last time two
+     * definitions of installed disagreed, a failed install silenced every later dependent of
+     * that plugin (see the note on [installedAndOnDisk]). [dependenciesOf] returning null means
+     * the store could not describe that plugin: it is kept in the plan, so a later install can
+     * retry the lookup, but it is not expanded. An install failure
+     * stops the plan before its dependents, including the root.
+     *
+     * The root is never filtered by [isPresent]. The dialog's Install button already guards on
+     * `isInstalled` before calling, and a root that became present between the two reads is the
+     * installer's coalescing case; dropping it here would hand the installer an empty plan it
+     * has no sensible reading of.
+     *
+     * Filters on every edge match [missingFor]: a blank id is a manifest typo, a self-reference
+     * is a typo rather than a cycle, and [NOT_USER_INSTALLABLE] must not be smuggled past a
+     * two-button dialog by a transitive declaration any more than by a direct one.
+     */
+    suspend fun installPlan(
+        rootId: String,
+        isPresent: (String) -> Boolean,
+        dependenciesOf: suspend (String) -> List<String>?,
+    ): DependencyInstallPlan {
+        val order = mutableListOf<String>()
+        val unresolved = mutableSetOf<String>()
+        // Everything ever entered, so each plugin is asked about once and a diamond's shared
+        // dependency is planned once.
+        val visited = mutableSetOf<String>()
+        // Only what is currently being expanded. Meeting a visited plugin that is also on the
+        // stack is a cycle; meeting one that has already finished is a diamond.
+        val onStack = mutableSetOf<String>()
+        var cyclic = false
+        var truncated = false
+
+        suspend fun visit(pluginId: String) {
+            if (!visited.add(pluginId)) {
+                if (pluginId in onStack) cyclic = true
+                return
+            }
+            onStack += pluginId
+            val declared = dependenciesOf(pluginId)
+            if (declared == null) unresolved += pluginId
+            val children =
+                declared
+                    .orEmpty()
+                    .map { it.trim() }
+                    .filter { offerable(it, parent = pluginId) }
+                    .filterNot(isPresent)
+            for (child in children) {
+                if (child !in visited && visited.size >= MAX_PLAN_SIZE) {
+                    truncated = true
+                    continue
+                }
+                visit(child)
+            }
+            onStack -= pluginId
+            // Post-order: a plugin is planned only after everything it needs, which is what
+            // makes the list deps-first and the root last without a second pass.
+            order += pluginId
+        }
+
+        visit(rootId)
+        return DependencyInstallPlan(order, unresolved, cyclic, truncated)
+    }
+
+    /**
+     * Whether a declared dependency id is something the dialog may offer at all.
+     *
+     * Presence is checked separately by the caller: this is the shape of the id, and matches the
+     * three filters [missingFor] applies for the same reasons.
+     */
+    private fun offerable(
+        child: String,
+        parent: String,
+    ): Boolean = child.isNotEmpty() && child != parent && child !in NOT_USER_INSTALLABLE
 
     /**
      * Every loaded, enabled plugin that declares a dependency on [pluginId] - optional ones
@@ -302,6 +409,39 @@ interface MissingDependencyInstaller {
 
     /** Downloads and loads the plugin. The message on failure is shown to the user. */
     suspend fun install(pluginId: String): Result<Unit>
+
+    /**
+     * Everything Install will download and load if the user says yes to [pluginId].
+     *
+     * Defaults to the plugin alone, which is today's behaviour and what every caller other than
+     * the dependency dialog still wants: `PluginLoadGateRecovery` and `PluginStoreVersionBridge`
+     * install a plugin the user picked by name, not one whose closure was shown to them. Only
+     * the store-backed installer overrides this, and only the dialog asks.
+     */
+    suspend fun planFor(pluginId: String): DependencyInstallPlan =
+        DependencyInstallPlan(
+            order = listOf(pluginId),
+            unresolved = emptySet(),
+            cyclic = false,
+            truncated = false,
+        )
+
+    /**
+     * Installs [order] front to back and stops at the first failure.
+     *
+     * Sequential on purpose: the order is dependencies first, and a dependency still downloading
+     * when its dependent loads is the failure the plan exists to prevent. What installed before
+     * the failure stays installed - a dependency on its own is harmless and may already be wanted
+     * by something else - and the failure returned is the one for the plugin that stopped the
+     * run, which is the one the user can act on.
+     */
+    suspend fun installAll(order: List<String>): Result<Unit> {
+        for (pluginId in order) {
+            val result = install(pluginId)
+            if (result.isFailure) return result
+        }
+        return Result.success(Unit)
+    }
 }
 
 /**

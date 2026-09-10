@@ -8,6 +8,7 @@ import ai.rever.boss.plugin.repository.PluginRepository
 import ai.rever.boss.plugin.repository.PluginSearchFilter
 import ai.rever.boss.plugin.repository.PluginSearchResult
 import ai.rever.boss.utils.atomicMoveFrom
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
@@ -17,6 +18,7 @@ import java.io.File
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -303,6 +305,22 @@ class StoreMissingDependencyInstallerTest {
             // Read from `produceState` during composition, so a throw here would take the
             // dialog down instead of leaving the id on screen.
             assertNull(installer(ThrowingStore()).displayNameFor(PLUGIN_ID))
+        }
+
+    @Test
+    fun `displayNameFor propagates thrown and returned cancellation`() =
+        runTest {
+            for (throwFailure in listOf(false, true)) {
+                val store =
+                    object : PluginRepository by FakeStore(info()) {
+                        override suspend fun getPlugin(pluginId: String): Result<PluginInfo?> {
+                            val cancellation = CancellationException("dialog closed")
+                            if (throwFailure) throw cancellation
+                            return Result.failure(cancellation)
+                        }
+                    }
+                assertFailsWith<CancellationException> { installer(store).displayNameFor(PLUGIN_ID) }
+            }
         }
 
     @Test

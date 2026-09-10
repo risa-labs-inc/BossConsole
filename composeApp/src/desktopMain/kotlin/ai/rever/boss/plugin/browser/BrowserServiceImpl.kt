@@ -573,6 +573,16 @@ object BrowserServiceImpl : BrowserService {
                 error("Engine was recycled during browser creation (generation $generation is stale)")
             }
 
+            // Chrome setup is not an engine creation failure and must not trigger wedge recovery.
+            installBrowserChromeOrClose(
+                browser,
+                releaseOwnership = {
+                    val failedProfile = managed
+                    managed = null // Do not release twice if the outer Exception handler runs.
+                    failedProfile?.let(::releaseManaged)
+                },
+            )
+
             // Enable swipe navigation for touchscreen devices.
             //
             // Touchscreens only, and the qualifier is load-bearing: this does NOT give macOS the
@@ -945,7 +955,7 @@ object BrowserServiceImpl : BrowserService {
         profile: Profile,
         auth: BrowserAuthSpec,
     ) {
-        val tmp = profile.newBrowser()
+        val tmp = profile.newBrowser().also { installBrowserChromeOrClose(it) }
         try {
             seedAndAwait(profile, auth)
         } finally {

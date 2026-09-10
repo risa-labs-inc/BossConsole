@@ -51,6 +51,43 @@ class UrlOpenValidationTest {
     }
 
     @Test
+    fun `accepts port boundaries and an empty default port`() {
+        for (host in listOf("localhost", "127.0.0.1", "[::1]")) {
+            accepts("http://$host:0/")
+            accepts("https://$host:65535/path")
+            accepts("https://$host:/path")
+        }
+    }
+
+    @Test
+    fun `refuses ports above the maximum without integer overflow`() {
+        for (host in listOf("localhost", "127.0.0.1", "[::1]")) {
+            refuses("http://$host:65536/")
+            refuses("https://$host:4294967296/path")
+            refuses("http://$host:${"9".repeat(100)}/")
+        }
+    }
+
+    @Test
+    fun `leading zeros do not change whether a port is valid`() {
+        val zeros = "0".repeat(100)
+        accepts("http://localhost:007/")
+        refuses("http://localhost:0x50/")
+        refuses("http://[::1]:0-1/")
+        accepts("http://localhost:${zeros}65535/")
+        accepts("http://[::1]:$zeros/")
+        refuses("http://localhost:${zeros}65536/")
+    }
+
+    @Test
+    fun `refuses signed and non ASCII ports`() {
+        refuses("http://localhost:-1/")
+        refuses("http://localhost:+80/")
+        refuses("http://localhost:8.0/")
+        refuses("http://localhost:\u0663\u0969/")
+    }
+
+    @Test
     fun `refuses every scheme but http and https`() {
         refuses("file:///etc/passwd")
         refuses("javascript:alert(1)")

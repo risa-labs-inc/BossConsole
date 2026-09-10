@@ -2,6 +2,8 @@ package ai.rever.boss.plugin
 
 import ai.rever.boss.components.plugin.MicrokernelRuntime
 import ai.rever.boss.plugin.api.PluginManifest
+import ai.rever.boss.plugin.loader.PluginBundledTrust
+import ai.rever.boss.plugin.loader.PluginClassLoader
 import ai.rever.boss.plugin.loader.PluginManifestReader
 import ai.rever.boss.plugin.loader.PluginSignatureSidecar
 import ai.rever.boss.utils.Version
@@ -22,6 +24,17 @@ import java.io.File
  * This reconciler groups JARs by their manifest `pluginId`, keeps the highest
  * version, best-effort deletes the rest, and repoints `installed.json` at the
  * winner. A full scan is startup-only; an in-session update must explicitly select its plugin ids.
+ *
+ * A loser is left in place rather than deleted when a live [PluginClassLoader]
+ * still has it open (BossConsole#72) - not because the classloader NEEDS the
+ * file (it already has its own open handle), but because something inside the
+ * plugin might reopen that same path directly. pty4j is the concrete case:
+ * it resolves its native helper by reopening its own jar by filename the
+ * first time a PTY is created, so deleting the file out from under a plugin
+ * that has not finished unloading breaks that lookup even though nothing
+ * about the classloader itself changed. Deferred jars are swept on a later
+ * reconcile, normally at the next launch. Closing a loader does not trigger a sweep.
+ * Work that outlives classloader closure remains the separate BossConsole#207 issue.
  */
 object PluginJarReconciler {
     private val logger = BossLogger.forComponent("PluginJarReconciler")
@@ -33,6 +46,13 @@ object PluginJarReconciler {
         val deleted: List<String>,
         /** Unparseable / non-plugin JARs left untouched. */
         val skipped: List<String>,
+        /**
+         * Loser filenames left in place because a live classloader still has them open
+         * (BossConsole#72) - deletion deferred to a future reconcile, once that loader has
+         * actually closed. Distinct from [skipped]: these ARE plugin jars this reconcile
+         * identified as superseded, just not yet safe to remove.
+         */
+        val deferred: List<String> = emptyList(),
     )
 
     private data class Candidate(
@@ -64,6 +84,7 @@ object PluginJarReconciler {
         val installedByPluginId = PluginPersistence.getInstalledPlugins().associateBy { it.pluginId }
         val winners = mutableListOf<File>()
         val deleted = mutableListOf<String>()
+        val deferred = mutableListOf<String>()
 
         candidates.groupBy { it.manifest.pluginId }.forEach { (pluginId, group) ->
             val installedPath = installedByPluginId[pluginId]?.jarPath
@@ -76,37 +97,20 @@ object PluginJarReconciler {
             // or repointing its record back to a known older release.
             if (unordered) return@forEach
 
-            for (loser in group) {
-                if (loser.file == winner.file) continue
-                val removed = runCatching { loser.file.delete() }.getOrDefault(false)
-                if (removed) {
-                    deleted.add(loser.file.name)
-                    // A `.sig` must never outlive the JAR it describes: left behind
-                    // it is an orphan now, and a hard load failure later if a JAR of
-                    // the same name lands on the path.
-                    runCatching { PluginSignatureSidecar.delete(loser.file.absolutePath) }
-                }
-                logger.info(
-                    LogCategory.SYSTEM,
-                    "Removed stale duplicate plugin JAR",
-                    mapOf(
-                        "pluginId" to pluginId,
-                        "file" to loser.file.name,
-                        "kept" to winner.file.name,
-                        "deleted" to removed,
-                    ),
-                )
+            for (loser in group.filterNot { it.file == winner.file }) {
+                reconcileLoser(pluginId, loser, winner, deleted, deferred)
             }
 
             repointInstalledEntry(pluginId, installedByPluginId[pluginId], winner)
         }
 
-        if (deleted.isNotEmpty()) {
+        if (deleted.isNotEmpty() || deferred.isNotEmpty()) {
             logger.info(
                 LogCategory.SYSTEM,
                 "Plugin dir reconciled",
                 mapOf(
                     "deleted" to deleted.size,
+                    "deferred" to deferred.size,
                     "winners" to winners.size,
                     "skipped" to skipped.size,
                 ),
@@ -116,7 +120,51 @@ object PluginJarReconciler {
         // Pass non-plugin JARs through so callers never see fewer files than the
         // existing scan would have attempted.
         winners.addAll(jars.filter { it.name in skipped })
-        return ReconcileResult(winners, deleted, skipped)
+        return ReconcileResult(winners, deleted, skipped, deferred)
+    }
+
+    /**
+     * Delete one superseded candidate, unless a live classloader still has it open - see the
+     * class doc and [PluginClassLoader.isPathOpenByLiveLoader] for why that check exists
+     * (BossConsole#72). Extracted so the caller's loop has a single jump statement (`continue`
+     * lives inside `filterNot`, not here) rather than two, which is its own detekt rule.
+     */
+    private fun reconcileLoser(
+        pluginId: String,
+        loser: Candidate,
+        winner: Candidate,
+        deleted: MutableList<String>,
+        deferred: MutableList<String>,
+    ) {
+        if (PluginClassLoader.isPathOpenByLiveLoader(loser.file.absolutePath)) {
+            deferred.add(loser.file.name)
+            logger.info(
+                LogCategory.SYSTEM,
+                "Deferred removing a stale plugin JAR still open by a live classloader",
+                mapOf("pluginId" to pluginId, "file" to loser.file.name, "kept" to winner.file.name),
+            )
+            return
+        }
+
+        val removed = runCatching { loser.file.delete() }.getOrDefault(false)
+        if (removed) {
+            deleted.add(loser.file.name)
+            // A `.sig` must never outlive the JAR it describes: left behind it is an orphan
+            // now, and a hard load failure later if a JAR of the same name lands on the path.
+            runCatching { PluginSignatureSidecar.delete(loser.file.absolutePath) }
+            // Retain bundled provenance while deferred; remove it once its JAR is actually deleted.
+            runCatching { PluginBundledTrust.delete(loser.file.absolutePath) }
+        }
+        logger.info(
+            LogCategory.SYSTEM,
+            "Removed stale duplicate plugin JAR",
+            mapOf(
+                "pluginId" to pluginId,
+                "file" to loser.file.name,
+                "kept" to winner.file.name,
+                "deleted" to removed,
+            ),
+        )
     }
 
     private fun readCandidates(

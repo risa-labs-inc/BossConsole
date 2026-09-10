@@ -1,6 +1,7 @@
 package ai.rever.boss.services.passkey.desktop
 
 import ai.rever.boss.plugin.browser.FluckEngine
+import ai.rever.boss.plugin.browser.installBrowserChromeOrClose
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import com.teamdev.jxbrowser.browser.Browser
@@ -65,7 +66,7 @@ class CrossDeviceBrowserManager {
 
             // Use the existing FluckEngine singleton which has proper licensing and configuration
             webAuthnEngine = FluckEngine.engine
-            webAuthnBrowser = webAuthnEngine?.newBrowser()
+            webAuthnBrowser = webAuthnEngine?.newBrowser()?.also { installBrowserChromeOrClose(it) }
 
             logger.info(LogCategory.BROWSER, "WebAuthn engine initialized successfully using FluckEngine")
         } catch (e: Exception) {

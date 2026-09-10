@@ -1641,22 +1641,6 @@ internal class BrowserHandleImpl(
         }
     }
 
-    /**
-     * Answers Chromium, and never throws while doing it.
-     *
-     * `close()` can fail — already answered, or the browser torn down mid-callback — and both call
-     * sites reach it from a JxBrowser thread, one of them from a `finally`. An escaping exception
-     * there is uncaught and off the EDT, which is the failure class this handler is built around.
-     */
-    @Suppress("TooGenericExceptionCaught") // Error must propagate; see deliverContextMenu.
-    private fun closeQuietly(tell: ShowContextMenuCallback.Action) {
-        try {
-            tell.close()
-        } catch (e: Exception) {
-            logger.warn(LogCategory.BROWSER, "Could not answer the context-menu callback", error = e)
-        }
-    }
-
     private fun setupContextMenuHandler() {
         browser.set(
             ShowContextMenuCallback::class.java,
@@ -1666,7 +1650,7 @@ internal class BrowserHandleImpl(
                     // Nobody is going to draw a menu, so hand the request back rather than
                     // leaving it unanswered — an un-responded async callback shows nothing
                     // at all, and Chromium keeps waiting on it.
-                    closeQuietly(tell)
+                    closeContextMenuQuietly(tell)
                     return@ShowContextMenuCallback
                 }
 
@@ -1708,7 +1692,7 @@ internal class BrowserHandleImpl(
                         null
                     } finally {
                         // Suppresses JxBrowser's native menu and releases the request.
-                        closeQuietly(tell)
+                        closeContextMenuQuietly(tell)
                     }
 
                 if (read == null) return@ShowContextMenuCallback
@@ -3052,21 +3036,13 @@ internal class BrowserHandleImpl(
     // ============================================================
 
     /**
-     * Positions and sizes a popup window.
-     *
-     * A popup that asked for geometry gets it. One that did not - a Document Picture-in-Picture
-     * window - goes bottom-right of the work area, inset, which is where a browser puts its own.
+     * Positions the surface pop-out at the bottom-right of the work area, inset from its edges.
+     * Requested viewport size excludes the drag strip and resize grip added below.
      */
     private fun placePopOut(
         frame: JFrame,
-        bounds: Rect?,
         requestedSize: java.awt.Dimension?,
     ) {
-        if (bounds != null) {
-            frame.setLocation(bounds.origin().x(), bounds.origin().y())
-            frame.setSize(bounds.size().width(), bounds.size().height())
-            return
-        }
         val screen = GraphicsEnvironment.getLocalGraphicsEnvironment().maximumWindowBounds
         val width = requestedSize?.width ?: FLOATING_POPUP_WIDTH
         // The strip is added on top of the requested size rather than taken out of the video: the
@@ -3271,65 +3247,7 @@ internal class BrowserHandleImpl(
         popupBrowser: Browser,
         bounds: Rect,
     ) {
-        SwingUtilities.invokeLater {
-            try {
-                val frame = JFrame()
-                val subscriptions = mutableListOf<Subscription>()
-
-                frame.title = "Popup"
-                frame.defaultCloseOperation = JFrame.DISPOSE_ON_CLOSE
-                frame.iconImages = BossWindowIcon.images
-
-                placePopOut(frame, bounds, null)
-
-                // A popup browser has no handle of its own, so it never went through
-                // setupBrowserHandlers. Claim its file dialogs before the Swing view below
-                // installs the JFileChooser ones.
-                NativeFileDialogs.installOn(popupBrowser)
-
-                val browserView =
-                    com.teamdev.jxbrowser.view.swing.BrowserView
-                        .newInstance(popupBrowser)
-                frame.contentPane.add(browserView)
-
-                // Replaces JxBrowser's built-in Swing context menu, which crashes the EDT here: it
-                // positions itself from getLocationOnScreen() inside an invokeLater, and a popup
-                // can close itself the moment its flow completes, so a right-click landing on that
-                // boundary asks a disposed component where it is (BossConsole-Releases#17).
-                installPopupWindowChrome(popupBrowser, browserView)
-
-                subscriptions +=
-                    popupBrowser.on(TitleChanged::class.java) { event ->
-                        SwingUtilities.invokeLater { frame.title = event.title() }
-                    }
-
-                subscriptions +=
-                    popupBrowser.on(BrowserClosed::class.java) {
-                        SwingUtilities.invokeLater {
-                            subscriptions.forEach { runCatching { it.unsubscribe() } }
-                            frame.dispose()
-                        }
-                    }
-
-                frame.addWindowListener(
-                    object : java.awt.event.WindowAdapter() {
-                        override fun windowClosing(e: java.awt.event.WindowEvent?) {
-                            subscriptions.forEach { runCatching { it.unsubscribe() } }
-                            if (!popupBrowser.isClosed) {
-                                popupBrowser.close()
-                            }
-                        }
-                    },
-                )
-
-                frame.isVisible = true
-            } catch (e: Exception) {
-                logger.error(LogCategory.BROWSER, "Error creating popup window", error = e)
-                if (!popupBrowser.isClosed) {
-                    popupBrowser.close()
-                }
-            }
-        }
+        openBrowserPopupWindow(popupBrowser, bounds)
     }
 
     /**
@@ -3462,7 +3380,7 @@ internal class BrowserHandleImpl(
                     .newInstance(browser)
             frame.contentPane.add(view, java.awt.BorderLayout.CENTER)
             frame.contentPane.add(buildPopOutResizeGrip(frame), java.awt.BorderLayout.SOUTH)
-            placePopOut(frame, null, java.awt.Dimension(SURFACE_POP_OUT_WIDTH, SURFACE_POP_OUT_HEIGHT))
+            placePopOut(frame, java.awt.Dimension(SURFACE_POP_OUT_WIDTH, SURFACE_POP_OUT_HEIGHT))
             frame.isVisible = true
             popOutFrame = frame
             popOutView = view

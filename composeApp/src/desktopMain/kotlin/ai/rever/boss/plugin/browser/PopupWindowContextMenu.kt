@@ -69,22 +69,6 @@ private fun clipboardUnavailable(e: Exception): Boolean {
 }
 
 /**
- * Answers Chromium, and never throws while doing it.
- *
- * `close()` can fail — the request already answered, or the browser torn down mid-callback — and it
- * is called from a `finally` on a JxBrowser thread, so an escaping exception there would be exactly
- * the kind of uncaught, off-EDT throw this file exists to remove.
- */
-@Suppress("TooGenericExceptionCaught") // See installPopupWindowContextMenu - Error must propagate.
-private fun closeQuietly(tell: ShowContextMenuCallback.Action) {
-    try {
-        tell.close()
-    } catch (e: Exception) {
-        logger.warn(LogCategory.BROWSER, "Could not answer the context-menu callback", error = e)
-    }
-}
-
-/**
  * The menu for a right-click, decided entirely from the click target.
  *
  * Pure and derived from [ShowContextMenuCallback.Params] values rather than from the browser,
@@ -263,7 +247,7 @@ internal fun installPopupWindowContextMenu(
                 // in turn because close() can itself throw - already answered, or the browser torn
                 // down mid-callback - and this runs on a JxBrowser thread, where an escaping
                 // exception is the same failure class the whole file exists to remove.
-                closeQuietly(tell)
+                closeContextMenuQuietly(tell)
             }
 
             val target = frame
@@ -314,18 +298,16 @@ internal fun installPopupWindowChrome(
     try {
         installPopupWindowContextMenu(popupBrowser, view)
     } catch (e: Exception) {
-        // WARN, not debug: if this install fails the built-in menu stays, and with it the EDT crash
-        // this file exists to remove - live for that popup, for the rest of its life. That is a
-        // different order of failure from the dismissal handler's (a menu that sticks) and needs to
-        // be visible in a log a user would actually send.
+        // WARN: fallback removes editing actions for this popup's lifetime. If suppression also
+        // fails, the built-in menu and its disposal race remain, so both failures need diagnostics.
         logger.warn(
             LogCategory.BROWSER,
-            "Could not install the popup context menu - keeping JxBrowser's built-in one",
+            "Could not install the popup context menu - suppressing context menu",
             error = e,
         )
+        installSuppressingContextMenu(popupBrowser)
     }
-    // Deliberately outside the catch above: if the menu failed to install, the built-in menu is
-    // still there and still needs dismissing on an in-page click.
+    // Deliberately outside the catch above: if the menu failed to install, page clicks still need dismissing.
     FluckEngine.setupSwingPopupDismissOnPageClick(popupBrowser)
 }
 

@@ -1,6 +1,8 @@
 package ai.rever.boss.services.supabase
 
+import ai.rever.boss.services.auth.authFailure
 import ai.rever.boss.services.supabase.models.SecretEntry
+import io.ktor.http.HttpStatusCode
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlin.test.Test
@@ -25,6 +27,16 @@ class SupabaseJsonTest {
     /** Truncated mid-array, as a cut connection or a proxy error would leave it. */
     private val malformedBody =
         """[{"id":"1","website":"github.com","password":"$password","recovery_codes":["$recoveryCode"] """
+
+    @Test
+    fun `RestException server text and response headers never survive sanitization`() {
+        val raw = authFailure(HttpStatusCode.BadRequest, "private-error-value", "private-server-value")
+        assertTrue(raw.message.orEmpty().contains("private-server-value"))
+        val safe = sanitizeSupabaseFailure("getSecretShares", raw)
+        assertEquals("getSecretShares: Supabase request failed (HTTP 400)", safe.message)
+        assertNull(safe.cause)
+        assertFalse(safe.stackTraceToString().contains("private-"))
+    }
 
     @Test
     fun `a malformed body is not quoted back through the sanitiser`() {
@@ -56,14 +68,19 @@ class SupabaseJsonTest {
     @Test
     fun `the diagnostic half of the message survives`() {
         // Stripping the whole message would trade a credential leak for an undiagnosable
-        // outage. "Encountered an unknown key 'org_id'" is precisely what identified this bug.
-        val body = """[{"id":"1","org_id":null}]"""
+        // outage. "Encountered an unknown key 'org_id'" is precisely what identified BossConsole
+        // #146 - a real past incident, which is exactly why `org_id` is not the key used below
+        // any more: SecretEntry models it now (see SecretModels.kt), so a payload naming it is
+        // no longer an unknown-key failure at all. A still-genuinely-unmodeled name keeps this
+        // canary honest about what it tests: that the failing key's NAME survives sanitisation,
+        // not any particular key.
+        val body = """[{"id":"1","some_future_column":null}]"""
         val raw = runCatching { Json.decodeFromString<List<SecretEntry>>(body) }.exceptionOrNull()
 
         val safe = sanitizeSupabaseFailure("getUserSecrets", raw!!)
 
         assertTrue(safe.message.orEmpty().contains("getUserSecrets"), "operation name missing")
-        assertTrue(safe.message.orEmpty().contains("org_id"), "key name missing: ${safe.message}")
+        assertTrue(safe.message.orEmpty().contains("some_future_column"), "key name missing: ${safe.message}")
     }
 
     @Test
@@ -84,8 +101,7 @@ class SupabaseJsonTest {
 
     @Test
     fun `a non-serialization failure passes through untouched`() {
-        // Network and auth failures are not ours to rewrite, and losing their type would
-        // break any caller that distinguishes them.
+        // Unrelated failures preserve their type; REST failures are sanitized separately.
         val original = IllegalStateException("connection reset")
 
         val result = sanitizeSupabaseFailure("getUserSecrets", original)

@@ -888,7 +888,7 @@ internal fun BossAppDialogs(state: BossAppState) {
                 state.pendingMissingPluginDependency = null
                 state.missingDependencyError = null
             },
-            onInstall = {
+            onInstall = { plan ->
                 state.installingMissingDependency = true
                 state.missingDependencyError = null
                 coroutineScope.launch {
@@ -900,7 +900,10 @@ internal fun BossAppDialogs(state: BossAppState) {
                         // them a fault: the window closed while the detached install carried on,
                         // or the user cancelled the download from the bottom bar - in which case
                         // the dependency really is still missing and this prompt is still true.
-                        runCatching { prompt.installer.install(prompt.missing.missingPluginId) }
+                        // The plan the dialog showed, dependencies first. `installAll` stops at
+                        // the first failure and leaves what came before it installed; the error
+                        // shown then names the plugin that stopped the run.
+                        runCatching { prompt.installer.installAll(plan.order) }
                             .getOrElse { error ->
                                 if (error is CancellationException) throw error
                                 Result.failure(error)
@@ -913,7 +916,7 @@ internal fun BossAppDialogs(state: BossAppState) {
                                 state.currentDefaultPlugin?.pluginToastState?.show(
                                     ToastMessage(
                                         type = ToastType.SUCCESS,
-                                        title = "Plugin installed",
+                                        title = if (plan.order.size > 1) "Plugins installed" else "Plugin installed",
                                         message =
                                             "${prompt.missing.dependentDisplayName} can use it now. " +
                                                 "Relaunch BOSS if a feature still reports it missing.",

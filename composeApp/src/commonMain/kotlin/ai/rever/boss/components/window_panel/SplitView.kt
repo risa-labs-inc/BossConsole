@@ -1847,6 +1847,17 @@ class SplitViewState(
         }
     }
 
+    /**
+     * Lists all open tabs in this window's current and preserved workspaces.
+     *
+     * "Active" means running, not selected or visible. Search, Top of Mind, background-tab
+     * metadata lookup and pop-out return all need unselected tabs to remain discoverable.
+     * This inventory is not a visibility signal for browser hibernation.
+     *
+     * Panel IDs are scoped to their workspace and can repeat across workspaces. [selectTabInPanel]
+     * resolves against the current tree only; a preserved tab's panel ID must not be used there
+     * without first restoring its workspace.
+     */
     fun collectAllActiveTabs(
         workspaceManager: ai.rever.boss.components.workspaces.WorkspaceManager? = null,
         windowId: String = "unknown",

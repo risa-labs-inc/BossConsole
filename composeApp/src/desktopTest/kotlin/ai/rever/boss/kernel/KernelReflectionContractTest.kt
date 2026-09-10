@@ -20,8 +20,8 @@ import kotlin.test.assertTrue
  * constructor plus a synthetic defaults bridge, with no `@JvmOverloads` - so out-of-process plugins
  * would have stopped spawning entirely, in the same change that set out to stop them leaking.
  *
- * Each test below mirrors one reflective lookup in `DefaultPlugin` exactly. Keep them in step with
- * that call site: if a lookup here needs updating, the runtime behaviour changed.
+ * Tests mirror reflective lookups in `DefaultPlugin` and `PerformanceDataProviderImpl`. Keep them in step
+ * with those call sites: if a lookup here needs updating, the runtime behaviour changed.
  */
 class KernelReflectionContractTest {
     @Test
@@ -75,5 +75,21 @@ class KernelReflectionContractTest {
                 Class.forName("ai.rever.boss.process.ProcessRegistry"),
             )
         assertEquals(3, ctor.parameterCount)
+    }
+
+    @Test
+    fun `performance configuration metadata getters retain their reflective contract`() {
+        val config = Class.forName("ai.rever.boss.process.ProcessConfig")
+        assertEquals(String::class.java, config.getMethod("getProcessId").returnType)
+        assertEquals(String::class.java, config.getMethod("getDisplayName").returnType)
+        assertEquals(Map::class.java, config.getMethod("getEnvironment").returnType)
+    }
+
+    @Test
+    fun `performance managed process getters retain their reflective contract`() {
+        val process = Class.forName("ai.rever.boss.process.ManagedProcess")
+        assertEquals(Class.forName("ai.rever.boss.process.ProcessConfig"), process.getMethod("getConfig").returnType)
+        assertEquals(Long::class.javaPrimitiveType, process.getMethod("getPid").returnType)
+        assertEquals(Boolean::class.javaPrimitiveType, process.getMethod("isAlive").returnType)
     }
 }

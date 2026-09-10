@@ -2,6 +2,7 @@ package ai.rever.boss.components.plugin.remote
 
 import ai.rever.boss.components.overlays.ContextMenu
 import ai.rever.boss.components.overlays.ContextMenuItem
+import ai.rever.boss.kernel.ui.RemoteUiSurfaceDescriptor
 import ai.rever.boss.plugin.ui.BossColorScheme
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.ui.sdk.*
@@ -34,19 +35,25 @@ import androidx.compose.ui.unit.sp
  *
  * @param tree      The widget tree to render
  * @param onEvent   Callback for UI events, forwarded to the owning plugin as proto `UIEvent`s
+ * @param wantsKeys The latest observed [RemoteUiSurfaceDescriptor.wantsKeys] declaration.
+ *   False (the default) omits the key tap. A replacement registration can precede its next callback
+ *   or recomposition, so the receiving surface queue also enforces its own declaration before
+ *   delivering any key. See [forwardUnclaimedKeys] for host-keymap and focused-widget routing.
  */
 @Composable
 fun RemoteWidgetRenderer(
     tree: WidgetTree,
     onEvent: (nodeId: String, event: WidgetEvent) -> Unit = { _, _ -> },
+    wantsKeys: Boolean = false,
 ) {
     val root = tree.nodes[tree.rootId] ?: return
     // A wrapper only so the surface has one node above the whole tree to tap keys at — see
     // Modifier.forwardUnclaimedKeys for why that node is the right place and why it never consumes.
     // propagateMinConstraints so a root that fills its parent still does; the Box is otherwise
-    // transparent to layout.
+    // transparent to layout. Only the observed wantsKeys=true installs a tap; the receiving queue
+    // also rejects keys when a replacement registration has opted out before this state refreshes.
     Box(
-        modifier = Modifier.forwardUnclaimedKeys(onEvent),
+        modifier = if (wantsKeys) Modifier.forwardUnclaimedKeys(onEvent) else Modifier,
         propagateMinConstraints = true,
     ) {
         RenderNode(node = root, tree = tree, onEvent = onEvent)

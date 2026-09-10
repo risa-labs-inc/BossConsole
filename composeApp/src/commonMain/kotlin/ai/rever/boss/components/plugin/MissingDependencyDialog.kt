@@ -7,10 +7,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.Button
 import androidx.compose.material.ButtonDefaults
 import androidx.compose.material.Card
@@ -18,7 +21,9 @@ import androidx.compose.material.CircularProgressIndicator
 import androidx.compose.material.Text
 import androidx.compose.material.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -32,6 +37,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
+import kotlinx.coroutines.CancellationException
 
 /**
  * Offers to install a dependency a just-installed plugin declares but which is absent.
@@ -44,6 +50,8 @@ import androidx.compose.ui.window.DialogProperties
  * @param prompt the unmet dependency plus the installer that can fix it
  * @param installing true while the install is in flight, so the dialog stays put and shows why
  * @param error a failure from the last attempt, kept on screen with Retry rather than vanishing
+ * @param onInstall receives the plan that was on screen when Install was pressed, so what gets
+ *   installed is exactly what the user was shown, even if the store answered after the click
  */
 @Composable
 fun MissingDependencyDialog(
@@ -51,20 +59,16 @@ fun MissingDependencyDialog(
     installing: Boolean,
     error: String?,
     onDismiss: () -> Unit,
-    onInstall: () -> Unit,
+    onInstall: (DependencyInstallPlan) -> Unit,
 ) {
     val missing = prompt.missing
 
     // Show the id straight away and replace it with the store's display name if that
     // resolves. The alternative - waiting - means a dialog that appears late or not at all
     // when the store is unreachable, which is exactly when the user most needs telling.
-    val resolvedName by
-        produceState(initialValue = missing.missingPluginId, missing.missingPluginId) {
-            runCatching { prompt.installer.displayNameFor(missing.missingPluginId) }
-                .getOrNull()
-                ?.takeIf { it.isNotBlank() }
-                ?.let { value = it }
-        }
+    val resolvedName by rememberDependencyName(prompt)
+
+    val plan = rememberInstallPlan(prompt).value
 
     BossDialog(
         // Not dismissable while installing: the install continues regardless, and a dialog
@@ -97,19 +101,66 @@ fun MissingDependencyDialog(
             MissingDependencyBody(
                 missing = missing,
                 resolvedName = resolvedName,
+                alsoInstalls = plan.order.dropLast(1),
                 installing = installing,
                 error = error,
                 onDismiss = onDismiss,
-                onInstall = onInstall,
+                onInstall = { onInstall(plan) },
             )
         }
     }
 }
 
 @Composable
-private fun MissingDependencyBody(
+internal fun rememberDependencyName(prompt: MissingDependencyPrompt): State<String> =
+    key(prompt) {
+        val pluginId = prompt.missing.missingPluginId
+        produceState(initialValue = pluginId, pluginId) {
+            runCatching { prompt.installer.displayNameFor(pluginId) }
+                .getOrElse { error ->
+                    if (error is CancellationException) throw error
+                    null
+                }?.takeIf { it.isNotBlank() }
+                ?.let { value = it }
+        }
+    }
+
+/**
+ * What Install will do for [prompt], as a plan of the one missing plugin until the store answers.
+ *
+ * Same shape as the display name, for the same reason: the plan comes from the store, so the
+ * dialog opens immediately and grows an "also installs" line when the answer lands. Install acts
+ * on whatever plan is on screen at the click, so someone who clicks before the store answers gets
+ * today's single install and never something they were not shown. A store that cannot answer
+ * leaves the single plan in place.
+ */
+@Composable
+internal fun rememberInstallPlan(prompt: MissingDependencyPrompt): State<DependencyInstallPlan> =
+    key(prompt) {
+        val pluginId = prompt.missing.missingPluginId
+        produceState(
+            initialValue =
+                DependencyInstallPlan(
+                    order = listOf(pluginId),
+                    unresolved = emptySet(),
+                    cyclic = false,
+                    truncated = false,
+                ),
+            pluginId,
+        ) {
+            runCatching { prompt.installer.planFor(pluginId) }
+                .getOrElse { error ->
+                    if (error is CancellationException) throw error
+                    null
+                }?.let { value = it }
+        }
+    }
+
+@Composable
+internal fun MissingDependencyBody(
     missing: MissingPluginDependency,
     resolvedName: String,
+    alsoInstalls: List<String>,
     installing: Boolean,
     error: String?,
     onDismiss: () -> Unit,
@@ -150,6 +201,8 @@ private fun MissingDependencyBody(
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
+
+        AdditionalDependencies(alsoInstalls)
 
         if (error != null) {
             Spacer(modifier = Modifier.height(12.dp))
@@ -232,6 +285,18 @@ private fun MissingDependencyActions(
                 ),
         ) {
             Text(if (hasError) "Retry" else "Install")
+        }
+    }
+}
+
+@Composable
+private fun AdditionalDependencies(pluginIds: List<String>) {
+    if (pluginIds.isEmpty()) return
+    Spacer(modifier = Modifier.height(8.dp))
+    Column(modifier = Modifier.heightIn(max = 120.dp).verticalScroll(rememberScrollState())) {
+        Text("Also installs:", fontSize = 11.sp, color = BossTheme.colors.textMuted)
+        pluginIds.forEach { pluginId ->
+            Text(pluginId, fontSize = 11.sp, color = BossTheme.colors.textMuted)
         }
     }
 }

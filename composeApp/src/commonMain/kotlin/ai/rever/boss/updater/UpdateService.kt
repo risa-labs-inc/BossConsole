@@ -63,6 +63,11 @@ data class VersionInfo(
     val sha256: String? = null,
 )
 
+/** A specific install refusal that needs different follow-up behavior. */
+enum class InstallFailureReason {
+    UnsupportedOs,
+}
+
 /**
  * Result of an install attempt.
  *
@@ -75,6 +80,7 @@ data class VersionInfo(
 data class InstallOutcome(
     val succeeded: Boolean,
     val errorMessage: String? = null,
+    val failureReason: InstallFailureReason? = null,
 )
 
 /**

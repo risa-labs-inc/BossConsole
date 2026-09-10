@@ -189,7 +189,6 @@
     <ID>CyclomaticComplexMethod:UpdateUI.kt$@Composable fun UpdateSettingsSection(updateCoordinator: UpdateCoordinator = UpdateCoordinator.instance)</ID>
     <ID>CyclomaticComplexMethod:UpdateUI.kt$private fun formatTime(instant: kotlin.time.Instant): String</ID>
     <ID>CyclomaticComplexMethod:UserExistenceService.kt$UserExistenceService$suspend fun checkUserExists(email: String): Result&lt;UserExistence&gt;</ID>
-    <ID>CyclomaticComplexMethod:WizardComponents.kt$@Composable fun CheckboxCard( title: String, description: String, icon: ImageVector? = null, isChecked: Boolean, onCheckedChange: (Boolean) -&gt; Unit, enabled: Boolean = true, modifier: Modifier = Modifier, )</ID>
     <ID>CyclomaticComplexMethod:WorkspaceApplier.kt$private fun createTabFromWorkspaceConfig( tabConfig: TabConfig, projectPath: String, splitViewState: SplitViewState, ): TabInfo?</ID>
     <ID>CyclomaticComplexMethod:WorkspaceApplier.kt$private suspend fun applyWorkspaceNode( node: SplitConfig, splitViewState: SplitViewState, currentPanelId: String, projectPath: String, )</ID>
     <ID>CyclomaticComplexMethod:WorkspaceButton.kt$@Composable fun WorkspaceButton( onOpenWorkspace: (LayoutWorkspace) -&gt; Unit, workspaceManager: WorkspaceManager, getCurrentWorkspace: (() -&gt; LayoutWorkspace)? = null, onShowTopOfMind: (() -&gt; Unit)? = null, /** Sized for the vertical tab bar rather than the top bar. See BossActionButton. */ compact: Boolean = false, )</ID>
@@ -442,7 +441,6 @@
     <ID>LongMethod:VersionSelectionDialog.kt$@Composable fun VersionSelectionDialog( currentVersion: Version, versions: List&lt;VersionInfo&gt;, isLoading: Boolean, error: String? = null, onVersionSelected: (VersionInfo) -&gt; Unit, onDismiss: () -&gt; Unit, )</ID>
     <ID>LongMethod:VersionSelectionDialog.kt$@Composable private fun VersionItem( versionInfo: VersionInfo, isCurrent: Boolean, isLatest: Boolean = false, onClick: () -&gt; Unit, )</ID>
     <ID>LongMethod:WindowsDefaultBrowserHandler.kt$WindowsDefaultBrowserHandler$internal fun registerAsBrowserCandidate(): Boolean</ID>
-    <ID>LongMethod:WizardComponents.kt$@Composable fun CheckboxCard( title: String, description: String, icon: ImageVector? = null, isChecked: Boolean, onCheckedChange: (Boolean) -&gt; Unit, enabled: Boolean = true, modifier: Modifier = Modifier, )</ID>
     <ID>LongMethod:WizardComponents.kt$@Composable fun SelectionCard( title: String, description: String, icon: ImageVector? = null, isSelected: Boolean, onClick: () -&gt; Unit, modifier: Modifier = Modifier, )</ID>
     <ID>LongMethod:WizardComponents.kt$@Composable fun WizardStepIndicator( currentStep: Int, totalSteps: Int, modifier: Modifier = Modifier, )</ID>
     <ID>LongMethod:WorkspaceApplier.kt$private suspend fun applyWorkspaceNode( node: SplitConfig, splitViewState: SplitViewState, currentPanelId: String, projectPath: String, )</ID>
@@ -962,7 +960,6 @@
     <ID>NestedBlockDepth:ChromiumAutoDownloader.kt$ChromiumAutoDownloader$private fun downloadWithProgress( urlString: String, targetPath: Path, onProgress: (DownloadProgress) -&gt; Unit, )</ID>
     <ID>NestedBlockDepth:ChromiumAutoDownloader.kt$ChromiumAutoDownloader$private fun extractWithJava( zipPath: Path, targetDir: Path, )</ID>
     <ID>NestedBlockDepth:ConfigLoader.kt$ConfigLoader$private fun loadLocalProperties()</ID>
-    <ID>NestedBlockDepth:CrashHandler.kt$CrashHandler$internal fun attributePluginId(throwable: Throwable): String?</ID>
     <ID>NestedBlockDepth:CrossDeviceAuthService.kt$CrossDeviceAuthService$suspend fun pollForAuthenticationCompletion( challenge: String, sessionId: String? = null, ): Result&lt;PasskeyAuthenticationResult&gt;</ID>
     <ID>NestedBlockDepth:DesktopBrowserAccessor.kt$private fun findBrowserForTab( splitViewState: ai.rever.boss.components.window_panel.SplitViewState, tabId: String, ): LockedBrowser?</ID>
     <ID>NestedBlockDepth:DesktopMainFunctionDetector.kt$DesktopMainFunctionDetector$private fun findProjectRootInternal(startDir: File?): File?</ID>
@@ -1095,7 +1092,6 @@
     <ID>ReturnCount:ChromiumAutoDownloader.kt$ChromiumAutoDownloader$fun isChromiumInstalled(): Boolean</ID>
     <ID>ReturnCount:ChromiumAutoDownloader.kt$ChromiumAutoDownloader$internal fun promotePendingInstall( pending: File, target: File, backup: File, )</ID>
     <ID>ReturnCount:ChromiumReleaseSource.kt$ChromiumReleaseResolver.Companion$private fun comparePreRelease( a: List&lt;String&gt;, b: List&lt;String&gt;, ): Int</ID>
-    <ID>ReturnCount:CrashHandler.kt$CrashHandler$internal fun attributePluginId(throwable: Throwable): String?</ID>
     <ID>ReturnCount:CrossDeviceAuthService.kt$CrossDeviceAuthService$suspend fun handleCrossDeviceAuthentication( exception: CrossDeviceAuthenticationRequired, onAuthenticationComplete: suspend (PasskeyAuthenticationResult) -&gt; Result&lt;Unit&gt;, ): Result&lt;Unit&gt;</ID>
     <ID>ReturnCount:CrossDeviceAuthService.kt$CrossDeviceAuthService$suspend fun pollForAuthenticationCompletion( challenge: String, sessionId: String? = null, ): Result&lt;PasskeyAuthenticationResult&gt;</ID>
     <ID>ReturnCount:DeepLinkHandler.kt$DeepLinkHandler$actual fun extractVerificationToken(uri: String): String?</ID>
@@ -1158,11 +1154,11 @@
     <ID>ReturnCount:PluginInstallService.kt$PluginInstallService$private fun downloadFromGitHubRelease( owner: String, repo: String, pluginDir: File, ): String?</ID>
     <ID>ReturnCount:PluginLoaderDelegateImpl.kt$PluginLoaderDelegateImpl$private fun isMicrokernelRuntimeJar(jarPath: String): Boolean</ID>
     <ID>ReturnCount:PluginLoaderDelegateImpl.kt$PluginLoaderDelegateImpl$private suspend fun doReloadPlugin(pluginId: String): LoadedPluginInfo?</ID>
-    <ID>ReturnCount:PluginStoreSetup.kt$PluginStoreSetup$internal fun isNewerVersion( version1: String, version2: String, ): Boolean</ID>
     <ID>ReturnCount:PluginStoreSetup.kt$PluginStoreSetup$private fun copyBundledPluginsToPluginDir(dynamicPluginManager: ai.rever.boss.components.plugin.DynamicPluginManager)</ID>
     <ID>ReturnCount:PluginStoreVersionBridge.kt$PluginStoreVersionBridge$actual suspend fun lookup(pluginId: String): StoreVersionLookup</ID>
     <ID>ReturnCount:PluginUpdateBridge.kt$PluginUpdateBridge$actual suspend fun performUpdate( pluginId: String, manager: DynamicPluginManager, ): Result&lt;String&gt;</ID>
     <ID>ReturnCount:PluginUpdateBridge.kt$PluginUpdateBridge$actual suspend fun refreshAll(installed: List&lt;InstalledPluginRef&gt;)</ID>
+    <ID>ReturnCount:PluginVersionComparator.kt$PluginVersionComparator$fun isNewerVersion( version1: String, version2: String, ): Boolean</ID>
     <ID>ReturnCount:RoleService.kt$RoleService$suspend fun canPerformAction( userId: String, permissionName: String, ): Result&lt;Boolean&gt;</ID>
     <ID>ReturnCount:SecretModels.kt$CreateSecretRequest$fun validate(): Result&lt;Unit&gt;</ID>
     <ID>ReturnCount:SecretModels.kt$ShareSecretRequest$fun validate(): Result&lt;Unit&gt;</ID>
