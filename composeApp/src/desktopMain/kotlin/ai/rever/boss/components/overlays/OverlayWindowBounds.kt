@@ -7,6 +7,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.WindowState
@@ -164,27 +166,13 @@ internal fun cornerPosition(
     bounds: IntArray?,
     size: DpSize,
     alignment: Alignment,
+    layoutDirection: LayoutDirection = LayoutDirection.Ltr,
 ): Pair<Int, Int> {
     if (bounds == null) return 0 to 0
-    val width = size.width.value.toInt()
-    val height = size.height.value.toInt()
-    val slackX = (bounds[2] - width).coerceAtLeast(0)
-    val slackY = (bounds[3] - height).coerceAtLeast(0)
-    val x =
-        bounds[0] +
-            when (alignment) {
-                Alignment.TopStart, Alignment.CenterStart, Alignment.BottomStart -> 0
-                Alignment.TopEnd, Alignment.CenterEnd, Alignment.BottomEnd -> slackX
-                else -> slackX / 2
-            }
-    val y =
-        bounds[1] +
-            when (alignment) {
-                Alignment.TopStart, Alignment.TopCenter, Alignment.TopEnd -> 0
-                Alignment.BottomStart, Alignment.BottomCenter, Alignment.BottomEnd -> slackY
-                else -> slackY / 2
-            }
-    return x to y
+    val content = IntSize(size.width.value.roundToInt(), size.height.value.roundToInt())
+    val available = IntSize(bounds[2], bounds[3])
+    val offset = alignment.align(content, available, layoutDirection)
+    return bounds[0] + offset.x.coerceAtLeast(0) to bounds[1] + offset.y.coerceAtLeast(0)
 }
 
 /**

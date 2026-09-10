@@ -19,6 +19,7 @@ import androidx.compose.ui.awt.ComposeDialog
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntRect
@@ -105,6 +106,7 @@ fun HeavyweightCorner(
 ) {
     val parent = LocalAwtWindow.current
     val density = LocalDensity.current.density
+    val layoutDirection = LocalLayoutDirection.current
     var measured by remember { mutableStateOf<DpSize?>(null) }
     val size = measured ?: initialSize
     val bounds = trackedContentPaneBounds(parent) ?: return
@@ -127,14 +129,16 @@ fun HeavyweightCorner(
     val state =
         rememberWindowState(
             size = size,
-            position = cornerPosition(region, size, alignment).let { WindowPosition(it.first.dp, it.second.dp) },
+            position =
+                cornerPosition(region, size, alignment, layoutDirection)
+                    .let { WindowPosition(it.first.dp, it.second.dp) },
         )
 
     // Assign window state from an effect, never during composition - writing it inline during
     // composition is what made the cursor overlay jitter.
-    LaunchedEffect(size, region, alignment) {
+    LaunchedEffect(size, region, alignment, layoutDirection) {
         state.size = size
-        val at = cornerPosition(region, size, alignment)
+        val at = cornerPosition(region, size, alignment, layoutDirection)
         state.position = WindowPosition(at.first.dp, at.second.dp)
     }
 

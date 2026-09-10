@@ -2,6 +2,7 @@ package ai.rever.boss.components.overlays
 
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -34,6 +35,12 @@ class HeavyweightCornerTest {
     }
 
     @Test
+    fun `start and end follow right to left layout direction`() {
+        assertEquals(668 to 50, cornerPosition(parent, size, Alignment.TopStart, LayoutDirection.Rtl))
+        assertEquals(100 to 50, cornerPosition(parent, size, Alignment.TopEnd, LayoutDirection.Rtl))
+    }
+
+    @Test
     fun `bottom end offsets by both slacks`() {
         assertEquals(668 to 650, cornerPosition(parent, size, Alignment.BottomEnd))
     }
@@ -41,6 +48,13 @@ class HeavyweightCornerTest {
     @Test
     fun `center centres on both axes`() {
         assertEquals(384 to 350, cornerPosition(parent, size, Alignment.Center))
+    }
+
+    @Test
+    fun `fractional sizes round instead of clipping a pixel`() {
+        val fractional = DpSize(432.6.dp, 200.6.dp)
+
+        assertEquals(667 to 649, cornerPosition(parent, fractional, Alignment.BottomEnd))
     }
 
     @Test
