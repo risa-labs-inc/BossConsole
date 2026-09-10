@@ -38,8 +38,8 @@ class ProjectDataProviderImpl(
     // Cancelling on window close would leave that gRPC stream open and simply never changing:
     // a silent freeze for every out-of-process plugin, which is worse than the leak. Closing it
     // properly means the bridge reading ProjectState directly instead of a per-window provider,
-    // which is its own change - see the PR discussion. logDataProvider and gitDataProvider are
-    // registered in the same group and want the same look.
+    // which BossConsole#520 tracks. logDataProvider and gitDataProvider are registered in the
+    // same group and want the same look.
     private val scope = CoroutineScope(dispatcher + SupervisorJob())
 
     // Map ProjectState's recentProjects to plugin's ProjectData type

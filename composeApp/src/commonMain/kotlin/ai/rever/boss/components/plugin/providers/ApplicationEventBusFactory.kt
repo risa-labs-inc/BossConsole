@@ -8,7 +8,8 @@ import kotlinx.coroutines.CoroutineScope
  * Factory function to create platform-specific ApplicationEventBus.
  * Desktop implementation provides a singleton event bus.
  *
- * @param scope CoroutineScope for event processing
+ * @param scope retained for source-set factory compatibility; the desktop singleton currently
+ * uses no coroutine scope
  * @return ApplicationEventBus implementation
  */
 expect fun createApplicationEventBus(scope: CoroutineScope): ApplicationEventBus

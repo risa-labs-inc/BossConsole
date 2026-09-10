@@ -2,6 +2,7 @@ package ai.rever.boss.window
 
 import ai.rever.boss.components.plugin.panels.left_top.ProjectState
 import ai.rever.boss.components.plugin.providers.ProjectDataProviderImpl
+import ai.rever.boss.components.plugin.providers.createApplicationEventBus
 import ai.rever.boss.components.plugin.providers.publishSystemEvent
 import ai.rever.boss.components.window_panel.SplitViewState
 import ai.rever.boss.components.workspaces.LayoutWorkspace
@@ -14,10 +15,12 @@ import ai.rever.boss.plugin.api.ProjectChangeEvent
 import ai.rever.boss.plugin.api.ProjectData
 import ai.rever.boss.plugin.api.TabRegistry
 import ai.rever.boss.plugin.workspace.SplitConfig.SinglePanel
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.runBlocking
+import java.lang.reflect.Modifier
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -99,6 +102,14 @@ class ProjectChangeAnnouncementTest {
             listOf("" to "/tmp/boss-pca-first", "/tmp/boss-pca-first" to "/tmp/boss-pca-second"),
             changes().map { it.previousProjectPath to it.projectPath },
         )
+    }
+
+    /** Plugin-facing selection is arbitrary-threaded, so the path chain must be visible to Main. */
+    @Test
+    fun `the previous path field is volatile`() {
+        val field = ProjectChangeAnnouncer::class.java.getDeclaredField("previousPath")
+
+        assertTrue(Modifier.isVolatile(field.modifiers), "plugin-thread selections would be invisible to Main")
     }
 
     /**
@@ -347,7 +358,8 @@ class ProjectChangeAnnouncementTest {
      * To be precise about what is fixed: no registered publisher means nobody holds the bus,
      * which means it has no subscribers, so the event that triggers this branch still reaches
      * no one. What changes is that it is the last one to - the host stops being permanently
-     * silent while it waits for a plugin to be curious.
+     * silent while it waits for a plugin to be curious. The singleton this test leaves behind is
+     * stateless apart from its event flow; it no longer captures the first caller's scope.
      */
     @Test
     fun `a system event published with no bus leaves one behind, so the next one has somewhere to go`() {
@@ -397,6 +409,39 @@ class ProjectChangeAnnouncementTest {
                 "the half-registry should be refused, not completed by whatever getInstance builds",
             )
             assertSame(StubBus, ApplicationEventBusRegistry.bus, "and the existing bus left alone")
+        } finally {
+            ApplicationEventBusRegistry.bus = previousBus
+            ApplicationEventBusRegistry.systemPublisher = outerPublisher
+        }
+    }
+
+    /**
+     * The mirror half-registry is just as broken: host events use the installed publisher while
+     * plugins would subscribe to this classloader's disconnected singleton. The factory warns
+     * once and preserves the foreign registration rather than silently claiming it repaired the
+     * invariant. The warning itself is process-global and therefore not order-independently
+     * assertable; this pins the state that fires it and its non-destructive behavior.
+     */
+    @Test
+    fun `the bus factory preserves a publisher-only half-registry and leaves it visibly incomplete`() {
+        val previousBus: ApplicationEventBus? = ApplicationEventBusRegistry.bus
+        val outerPublisher = ApplicationEventBusRegistry.systemPublisher
+        val publisher: (ApplicationEvent) -> Unit = { captured += it }
+        ApplicationEventBusRegistry.bus = null
+        ApplicationEventBusRegistry.systemPublisher = publisher
+        try {
+            val localBus = createApplicationEventBus(CoroutineScope(Dispatchers.Unconfined))
+
+            assertNotNull(localBus, "the factory still returns its classloader-local singleton")
+            assertNull(
+                ApplicationEventBusRegistry.bus,
+                "the factory must not pair a foreign publisher with its own bus",
+            )
+            assertSame(
+                publisher,
+                ApplicationEventBusRegistry.systemPublisher,
+                "the foreign publisher must be left alone",
+            )
         } finally {
             ApplicationEventBusRegistry.bus = previousBus
             ApplicationEventBusRegistry.systemPublisher = outerPublisher

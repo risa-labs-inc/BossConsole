@@ -52,7 +52,11 @@ class ProjectDataServiceBridgeTest {
 
     private class RecordingProjectDataProvider : ProjectDataProvider {
         override val recentProjects: StateFlow<List<ProjectData>> = MutableStateFlow(emptyList())
+
+        @Volatile
         var selectedProject: ProjectData? = null
+
+        @Volatile
         var selectionThread: String? = null
 
         override fun updateRecentProjects(project: ProjectData) = Unit

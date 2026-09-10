@@ -10,6 +10,11 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withContext
 
+/**
+ * KERNEL bridge for project data. [uiDispatcher] must be a live UI dispatcher because project
+ * selection mutates window state; callers must not block that dispatcher while waiting for this
+ * RPC, or the dispatcher hop in [selectProject] will deadlock.
+ */
 class ProjectDataServiceBridge(
     private val provider: ProjectDataProvider,
     private val uiDispatcher: CoroutineDispatcher = Dispatchers.Main,
@@ -52,7 +57,7 @@ class ProjectDataServiceBridge(
 
     override suspend fun selectProject(request: ProjectProto): Empty {
         // The provider mutates per-window UI state and synchronously announces that change.
-        // Confining the only non-UI entry point here keeps the state and its previous-path event
+        // Confining the only non-UI host entry point here keeps the state and its previous-path event
         // chain ordered without making third-party event handlers run under a host lock.
         withContext(uiDispatcher) {
             provider.selectProject(

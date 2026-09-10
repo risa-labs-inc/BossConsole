@@ -29,15 +29,18 @@ internal class ProjectChangeAnnouncer(
     private val windowId: String,
 ) : ProjectSelectionCallback {
     /**
-     * Every production selection is main-confined. The one former exception was the KERNEL-mode
-     * gRPC bridge; `ProjectDataServiceBridge.selectProject` now hops to Main before it calls the
-     * provider. Keeping that confinement at the boundary means publishing here needs no monitor,
-     * so third-party code resumed inline by `tryEmit` never runs while holding a host lock.
+     * Every host-initiated selection is main-confined. The one former host exception was the
+     * KERNEL-mode gRPC bridge; `ProjectDataServiceBridge.selectProject` now hops to Main before it
+     * calls the provider. The plugin-facing `ProjectDataProviderImpl.selectProject` is different:
+     * in-process plugin code may call it from any thread. `@Volatile` makes those writes visible to
+     * the host thread, but deliberately does not make the read-check-write sequence atomic. A
+     * monitor would run third-party code resumed inline by `tryEmit` while holding a host lock.
      *
      * [previousPath] advances before the publish. A subscriber that re-enters `selectProject`
      * inline with the same path therefore takes the early return; a different path produces a
      * correctly chained second event.
      */
+    @Volatile
     private var previousPath: String = ""
 
     override fun onProjectSelected(project: Project) {
@@ -49,6 +52,7 @@ internal class ProjectChangeAnnouncer(
         // that as a "reload the project" nudge no longer receives one. (Checked: the only
         // consumers in boss_plugins are the two fluck-agent panels, and both assign
         // `_bossProject.value` and re-sweep, which is idempotent on a repeat.)
+        // BossConsole#520 tracks the release note for that observable change.
         if (path == from) return
         previousPath = path
         publishSystemEvent(

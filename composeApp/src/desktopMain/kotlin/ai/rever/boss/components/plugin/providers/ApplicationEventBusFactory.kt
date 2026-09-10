@@ -16,8 +16,6 @@ import ai.rever.boss.plugin.api.WindowFocusEvent
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -31,19 +29,11 @@ import java.util.concurrent.atomic.AtomicBoolean
  * so the host and every in-process plugin share a single bus regardless of which classloader
  * first creates it.
  */
+@Suppress("UNUSED_PARAMETER")
 actual fun createApplicationEventBus(scope: CoroutineScope): ApplicationEventBus {
     ApplicationEventBusRegistry.bus?.let { return it }
-    return ApplicationEventBusImpl.getInstance(scope)
+    return ApplicationEventBusImpl.getInstance()
 }
-
-/**
- * Scope handed to a bus created by [publishSystemEvent] rather than by a plugin touching
- * `PluginContext.applicationEventBus`. Nothing in [ApplicationEventBusImpl] launches on it today;
- * it exists because the constructor takes one, and it is a supervisor so that a future child
- * failing cannot take the process-wide bus with it. Lazy so it is built only if that fallback is
- * ever taken, which on most runs it is not.
- */
-private val systemEventBusScope by lazy { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
 
 actual fun publishSystemEvent(event: ApplicationEvent) {
     // Route through the shared registry rather than this classloader's own singleton, so host
@@ -76,7 +66,7 @@ actual fun publishSystemEvent(event: ApplicationEvent) {
     // TabEvent, and with replay = 0 nothing recoverable afterwards. Whether a plugin has been
     // curious is not a sensible thing for the host's events to depend on. getInstance registers
     // the publisher, so this branch is taken at most once.
-    ApplicationEventBusImpl.getInstance(systemEventBusScope).publishInternal(event)
+    ApplicationEventBusImpl.getInstance().publishInternal(event)
 }
 
 private val systemEventLogger = BossLogger.forComponent("ApplicationEventBus")
@@ -84,31 +74,33 @@ private val systemEventLogger = BossLogger.forComponent("ApplicationEventBus")
 /** One warning, not one per event: the drop is permanent, so repeating it only buries the log. */
 private val partialRegistryWarned = AtomicBoolean(false)
 
+/** One warning, not one per factory call: the split bus stays disconnected until repaired. */
+private val missingBusRegistryWarned = AtomicBoolean(false)
+
 /**
  * Desktop implementation of ApplicationEventBus.
  *
  * This is a singleton that manages application-wide event distribution.
  * All events are broadcast to all subscribers via SharedFlow.
  */
-class ApplicationEventBusImpl private constructor(
-    private val scope: CoroutineScope,
-) : ApplicationEventBus {
+class ApplicationEventBusImpl private constructor() : ApplicationEventBus {
     companion object {
         // Not @Volatile: every read and write is inside the synchronized block below. The
         // lock-free fast path is gone deliberately - both callers (createApplicationEventBus,
         // publishSystemEvent) check the registry first, so this is not on a hot path.
         private var instance: ApplicationEventBusImpl? = null
 
-        fun getInstance(scope: CoroutineScope): ApplicationEventBusImpl =
+        fun getInstance(): ApplicationEventBusImpl =
             synchronized(this) {
-                val bus = instance ?: ApplicationEventBusImpl(scope).also { instance = it }
+                val bus = instance ?: ApplicationEventBusImpl().also { instance = it }
                 // Publish to the process-global registry so the host's publishSystemEvent and
                 // in-process plugins share this exact instance regardless of classloader.
                 //
                 // Checked on every call rather than only at creation: when BOTH registry fields
                 // are empty, an instance that already exists would otherwise leave host events
                 // going nowhere forever. A half-populated registry is deliberately left alone;
-                // publishSystemEvent refuses its bus-without-publisher form and warns once.
+                // publishSystemEvent refuses its bus-without-publisher form and warns once;
+                // getInstance warns for the publisher-without-bus mirror below.
                 // Inside the lock, because it is a read-modify-write of two process-global
                 // statics; the lock is uncontended after the first call.
                 //
@@ -123,7 +115,18 @@ class ApplicationEventBusImpl private constructor(
                 // publisher to capture events (ProjectChangeAnnouncementTest,
                 // BrowserAnalyticsEmissionTest, BossTabsComponentMoveTest). Testing only `bus`
                 // would let this method silently take that publisher away from them.
-                if (ApplicationEventBusRegistry.bus == null && ApplicationEventBusRegistry.systemPublisher == null) {
+                if (ApplicationEventBusRegistry.bus == null && ApplicationEventBusRegistry.systemPublisher != null) {
+                    if (missingBusRegistryWarned.compareAndSet(false, true)) {
+                        systemEventLogger.warn(
+                            LogCategory.SYSTEM,
+                            "ApplicationEventBusRegistry has a systemPublisher but no bus; " +
+                                "plugin subscribers are disconnected",
+                        )
+                    }
+                } else if (
+                    ApplicationEventBusRegistry.bus == null &&
+                    ApplicationEventBusRegistry.systemPublisher == null
+                ) {
                     ApplicationEventBusRegistry.bus = bus
                     ApplicationEventBusRegistry.systemPublisher = { event -> bus.publishInternal(event) }
                 }
