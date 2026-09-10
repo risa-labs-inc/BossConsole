@@ -1,5 +1,6 @@
 package ai.rever.boss.components.plugin
 
+import ai.rever.boss.components.plugin.remote.PluginProcessMonitor
 import ai.rever.boss.ipc.BossIpcClient
 import ai.rever.boss.ipc.IpcVersion
 import ai.rever.boss.kernel.KernelBootstrap
@@ -19,6 +20,7 @@ import io.grpc.ManagedChannel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
@@ -41,6 +43,7 @@ import java.util.concurrent.ConcurrentHashMap
  * The spawner tracks all managed processes and provides connection info
  * (gRPC channel) for [PluginStateBridge] and remote UI components.
  */
+@Suppress("TooManyFunctions")
 class OutOfProcessPluginSpawnerImpl(
     private val processSpawner: ProcessSpawner,
     private val windowId: String = "",
@@ -56,6 +59,12 @@ class OutOfProcessPluginSpawnerImpl(
 
     /** State bridges keyed by plugin ID. */
     private val stateBridges = ConcurrentHashMap<String, PluginStateBridge>()
+
+    private val pluginLifecycleMutexes =
+        java.util.concurrent.ConcurrentHashMap<String, Mutex>()
+
+    private val processMonitor =
+        PluginProcessMonitor(this).also { it.start() }
 
     /**
      * Classpath for the plugin runtime fat JAR.
@@ -197,6 +206,18 @@ class OutOfProcessPluginSpawnerImpl(
                 bridge.start()
                 stateBridges[pluginId] = bridge
 
+                processMonitor.monitor(
+                    pluginId = pluginId,
+                    displayName = manifest.displayName,
+                    maxRestarts = manifest.sandbox.maxRestartAttempts,
+                    restartAction = {
+                        restartAfterCrash(manifest, jarPath)
+                    },
+                    terminalFailureAction = {
+                        cleanupAfterTerminalFailure(pluginId)
+                    },
+                )
+
                 logger.info(
                     "Out-of-process plugin ready: id={}, pid={}, ipc={}",
                     pluginId,
@@ -243,16 +264,56 @@ class OutOfProcessPluginSpawnerImpl(
     }
 
     override suspend fun terminate(pluginId: String): Result<Unit> =
+        withPluginLifecycleLock(pluginId) {
+            processMonitor.unmonitor(pluginId)
+            terminateManagedProcess(pluginId)
+        }
+
+    private suspend fun restartAfterCrash(
+        manifest: PluginManifest,
+        jarPath: String,
+    ): Result<Unit> {
+        val pluginId = manifest.pluginId
+
+        return withPluginLifecycleLock(pluginId) {
+            if (!processMonitor.isMonitored(pluginId)) {
+                return@withPluginLifecycleLock Result.failure(
+                    IllegalStateException("Plugin is no longer monitored: $pluginId"),
+                )
+            }
+
+            val terminated = terminateManagedProcess(pluginId)
+            if (terminated.isFailure) {
+                return@withPluginLifecycleLock terminated
+            }
+
+            if (!processMonitor.isMonitored(pluginId)) {
+                return@withPluginLifecycleLock Result.failure(
+                    IllegalStateException("Plugin restart was cancelled: $pluginId"),
+                )
+            }
+
+            spawn(manifest, jarPath)
+        }
+    }
+
+    private suspend fun cleanupAfterTerminalFailure(pluginId: String) {
+        withPluginLifecycleLock(pluginId) {
+            if (processMonitor.isMonitored(pluginId)) {
+                terminateManagedProcess(pluginId).getOrThrow()
+            }
+        }
+    }
+
+    private suspend fun terminateManagedProcess(pluginId: String): Result<Unit> =
         withContext(Dispatchers.IO) {
             val process = managedProcesses.remove(pluginId)
             val descendants =
                 ai.rever.boss.kernel
                     .processDescendants(process?.process)
             try {
-                // Dispose state bridge
                 stateBridges.remove(pluginId)?.dispose()
 
-                // Shutdown gRPC channel with timeout
                 pluginChannels.remove(pluginId)?.let { channel ->
                     channel.shutdown()
                     if (!channel.awaitTermination(3, java.util.concurrent.TimeUnit.SECONDS)) {
@@ -261,7 +322,6 @@ class OutOfProcessPluginSpawnerImpl(
                     }
                 }
 
-                // Destroy process
                 if (process != null) {
                     logger.info("Terminating plugin process: id={}, pid={}", pluginId, process.pid)
                     process.destroy()
@@ -286,7 +346,6 @@ class OutOfProcessPluginSpawnerImpl(
                 runCatching { process?.destroyForcibly() }
                 throw e
             } catch (e: Exception) {
-                // Force kill if graceful shutdown failed
                 process?.destroyForcibly()
                 logger.warn("Force-killed plugin process: id={}", pluginId, e)
                 Result.success(Unit)
@@ -304,6 +363,20 @@ class OutOfProcessPluginSpawnerImpl(
             }
         }
 
+    private suspend fun <T> withPluginLifecycleLock(
+        pluginId: String,
+        action: suspend () -> T,
+    ): T {
+        val mutex = pluginLifecycleMutexes.computeIfAbsent(pluginId) { Mutex() }
+        mutex.lock()
+
+        return try {
+            action()
+        } finally {
+            mutex.unlock()
+        }
+    }
+
     /**
      * Get the state bridge for a plugin.
      */
@@ -318,6 +391,10 @@ class OutOfProcessPluginSpawnerImpl(
      * Check if a plugin process is alive.
      */
     fun isAlive(pluginId: String): Boolean = managedProcesses[pluginId]?.isAlive == true
+
+    override fun dispose() {
+        processMonitor.dispose()
+    }
 
     private fun buildJvmArgs(): List<String> =
         buildList {
