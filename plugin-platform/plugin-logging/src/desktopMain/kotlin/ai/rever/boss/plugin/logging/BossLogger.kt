@@ -319,8 +319,12 @@ object BossLogger {
             categoryLevels.putAll(config.categoryLevels)
         }
 
+        // No threshold here on purpose: BossLoggerConfig is one of the classes boss-plugin-api also
+        // ships, so adding a constructor parameter changes its `<init>` and `copy` signatures and
+        // fails ApiPackageDivergenceTest. configure() has no host caller anyway; the host's
+        // threshold comes from configureFromEnvironment. TRACE keeps the prior semantics.
         if (config.fileLoggingEnabled && config.logFilePath != null) {
-            enableFileLogging(File(config.logFilePath), config.fileMinLevel)
+            enableFileLogging(File(config.logFilePath))
         } else {
             disableFileLogging()
         }
@@ -363,11 +367,26 @@ object BossLogger {
         }
 
     /**
+     * Enable file logging.
+     *
+     * Kept with exactly this signature: `ai.rever.boss.plugin.logging` also ships inside
+     * boss-plugin-api, and `ApiPackageDivergenceTest` fails the build if the host copy lacks any
+     * public member the api has. A defaulted parameter would have replaced this one-arg method
+     * with a two-arg one plus a synthetic bridge, and a plugin calling this would fail to link at
+     * load. New behaviour goes in an overload, never in place of an api signature.
+     */
+    fun enableFileLogging(file: File) {
+        enableFileLogging(file, LogLevel.TRACE)
+    }
+
+    /**
      * Enable file logging at [minLevel] and above (after the global level; see [fileMinLevel]).
+     * Host-only overload; not in the api jar, so plugins cannot see it, which is fine: the
+     * threshold is the host's decision.
      */
     fun enableFileLogging(
         file: File,
-        minLevel: LogLevel = LogLevel.TRACE,
+        minLevel: LogLevel,
     ) {
         try {
             file.parentFile?.mkdirs()
@@ -710,8 +729,6 @@ data class BossLoggerConfig(
     val categoryLevels: Map<LogCategory, LogLevel> = emptyMap(),
     val fileLoggingEnabled: Boolean = false,
     val logFilePath: String? = null,
-    /** Lowest level written to the file, applied after [globalLevel]. TRACE keeps prior behaviour. */
-    val fileMinLevel: LogLevel = LogLevel.TRACE,
     val maxFileSize: Long = 10 * 1024 * 1024, // 10 MB
     val maxBackupFiles: Int = 5,
     val stackTraceDepth: Int = 10,
