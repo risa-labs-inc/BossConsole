@@ -74,8 +74,13 @@ distinct. A secret saved for `accounts.google.com` is not suggested on `login.go
 Save it explicitly for `google.com` to share it with those subdomains. The scorer still allows
 parent/subdomain matches in either direction and does not validate public suffixes; saving a
 secret against a broad suffix would deliberately broaden its matches. This is not a complete
-public-suffix policy. Display names use the first hostname label, so a secret saved for
-`accounts.google.com` is labeled `Accounts` rather than `Google`.
+public-suffix policy. Existing entries saved for a specific sibling host stop matching other
+siblings; entries explicitly saved for the parent continue matching its subdomains.
+
+Display names retain hosts with more than two labels in full, so `accounts.google.com` and
+`google.com.evil.com` cannot be reduced to an ambiguous or impersonated brand label. Exact
+known hosts such as `google.com` retain their brand spelling; simple generic domains such as
+`example-site.com` retain the existing `Example Site` formatting.
 
 This section describes the host utility. Current Fluck plugin matching is implemented in
 the separate `boss-plugin-fluck-browser` repository; the host ViewModel construction below

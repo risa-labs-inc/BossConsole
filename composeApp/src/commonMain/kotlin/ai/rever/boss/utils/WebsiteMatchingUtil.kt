@@ -182,6 +182,8 @@ object WebsiteMatchingUtil {
      * - google.com → Google
      * - github.com → GitHub
      * - example-site.com → Example Site
+     * - accounts.google.com → accounts.google.com
+     * - google.com.evil.com → google.com.evil.com
      *
      * @param website Website domain or URL
      * @return Formatted display name
@@ -189,44 +191,48 @@ object WebsiteMatchingUtil {
     fun getDisplayName(website: String): String {
         val domain = extractMainDomain(website) ?: website
 
+        // Without a public-suffix policy, a multi-label host must stay visible in full.
+        // Using its first label would present google.com.evil.com as the trusted brand Google.
+        if (domain.count { it == '.' } > 1) return domain
+
         // Remove TLD
         val nameWithoutTld = domain.split(".").first()
 
         // Handle special cases
-        return when (nameWithoutTld.lowercase()) {
-            "google" -> {
+        return when (domain.lowercase()) {
+            "google.com" -> {
                 "Google"
             }
 
-            "github" -> {
+            "github.com" -> {
                 "GitHub"
             }
 
-            "facebook" -> {
+            "facebook.com" -> {
                 "Facebook"
             }
 
-            "linkedin" -> {
+            "linkedin.com" -> {
                 "LinkedIn"
             }
 
-            "twitter" -> {
+            "twitter.com" -> {
                 "Twitter (X)"
             }
 
-            "microsoft" -> {
+            "microsoft.com" -> {
                 "Microsoft"
             }
 
-            "apple" -> {
+            "apple.com" -> {
                 "Apple"
             }
 
-            "amazon" -> {
+            "amazon.com" -> {
                 "Amazon"
             }
 
-            "netflix" -> {
+            "netflix.com" -> {
                 "Netflix"
             }
 
@@ -271,11 +277,15 @@ object WebsiteMatchingUtil {
     }
 
     /**
-     * Extract subdomain from URL if present.
+     * Return hostname labels before the final two labels, if present.
+     *
+     * This legacy helper is not public-suffix aware and must not define credential boundaries.
+     * A leading www. is removed by [extractMainDomain] before labels are selected.
      *
      * Examples:
      * - login.google.com → login
-     * - www.example.com → www
+     * - www.example.com → null
+     * - a.example.co.uk → a.example
      * - example.com → null
      *
      * @param url URL to extract subdomain from

@@ -67,4 +67,25 @@ class WebsiteMatchingHostnameRegressionTest {
         assertEquals(listOf("www.login.example.com"), matches.map { it.secret.website })
         assertEquals("exact", matches.single().matchReason)
     }
+
+    @Test
+    fun `lookalike subdomains display the full host rather than an impersonated brand`() {
+        assertEquals("google.com.evil.com", WebsiteMatchingUtil.getDisplayName("https://google.com.evil.com/login"))
+        assertEquals("apple.com.mx.attacker.net", WebsiteMatchingUtil.getDisplayName("apple.com.mx.attacker.net"))
+        assertEquals("github.attacker.com", WebsiteMatchingUtil.getDisplayName("www.github.attacker.com"))
+    }
+
+    @Test
+    fun `subdomain display labels retain their full identity`() {
+        assertEquals("accounts.google.com", WebsiteMatchingUtil.getDisplayName("https://accounts.google.com"))
+        assertEquals("login.example.co.uk", WebsiteMatchingUtil.getDisplayName("login.example.co.uk"))
+        assertEquals("192.168.1.1", WebsiteMatchingUtil.getDisplayName("http://192.168.1.1"))
+    }
+
+    @Test
+    fun `exact known brands still display after www normalization`() {
+        assertEquals("Google", WebsiteMatchingUtil.getDisplayName("https://www.google.com/login"))
+        assertEquals("GitHub", WebsiteMatchingUtil.getDisplayName("github.com"))
+        assertEquals("Github", WebsiteMatchingUtil.getDisplayName("github.net"))
+    }
 }
