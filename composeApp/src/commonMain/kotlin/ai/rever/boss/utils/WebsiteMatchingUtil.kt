@@ -10,7 +10,7 @@ import ai.rever.boss.utils.logging.LogCategory
  * Handles:
  * - Domain extraction from URLs
  * - Subdomain normalization (login.google.com → google.com)
- * - Fuzzy matching between secret website and current domain
+ * - Exact and dot-boundary matching between secret website and current domain
  * - Scoring and ranking of matched secrets
  *
  * Used by Issue #56 - Secret Access Integration with Fluck Browser
@@ -24,7 +24,7 @@ object WebsiteMatchingUtil {
     data class MatchedSecret(
         val secret: SecretEntry,
         val matchScore: Float, // 0.0 - 1.0
-        val matchReason: String, // "exact", "subdomain", "partial", "domain"
+        val matchReason: String, // "exact", "subdomain"
     ) : Comparable<MatchedSecret> {
         override fun compareTo(other: MatchedSecret): Int {
             return other.matchScore.compareTo(this.matchScore) // Descending
@@ -119,8 +119,11 @@ object WebsiteMatchingUtil {
      * Matching logic:
      * - Exact match (google.com == google.com): score 1.0
      * - Subdomain match (login.google.com vs google.com): score 0.9
-     * - Domain contains (google.com contains "google"): score 0.7
-     * - Partial match ("google" in "google-workspace.com"): score 0.5
+     *
+     * Substrings and shared labels do not establish a domain relationship and must not
+     * produce credential suggestions. Only equality and a dot-delimited suffix qualify.
+     * This scorer does not validate public suffixes; [extractMainDomain] retains its existing
+     * limited suffix handling, so this is not a complete registrable-domain policy.
      *
      * @param domain Current website domain (e.g., "google.com")
      * @param secrets List of all available secrets
@@ -168,32 +171,26 @@ object WebsiteMatchingUtil {
         val domainNorm = currentDomain.lowercase().trim()
 
         return when {
+            // Without this, two blank sides (e.g. a secret with no recorded website, or a
+            // domain extraction failure that fell through to an empty string) would satisfy
+            // the exact-match check below vacuously: "" == "".
+            secretNorm.isEmpty() || domainNorm.isEmpty() -> {
+                MatchScore(0.0f, "no_match")
+            }
+
             // Exact match
             secretNorm == domainNorm -> {
                 MatchScore(1.0f, "exact")
             }
 
-            // Subdomain match (login.google.com vs google.com)
+            // Subdomain match (login.google.com vs google.com) - a real subdomain boundary,
+            // never a bare substring: "snapple.com".endsWith(".apple.com") is false.
             secretNorm.endsWith(".$domainNorm") || domainNorm.endsWith(".$secretNorm") -> {
                 MatchScore(0.9f, "subdomain")
             }
 
-            // Domain contains other (google.com contains google)
-            secretNorm.contains(domainNorm) || domainNorm.contains(secretNorm) -> {
-                MatchScore(0.7f, "domain")
-            }
-
-            // Partial match (same keywords)
             else -> {
-                val secretParts = secretNorm.split(".", "-", "_")
-                val domainParts = domainNorm.split(".", "-", "_")
-                val commonParts = secretParts.intersect(domainParts.toSet())
-
-                if (commonParts.isNotEmpty()) {
-                    MatchScore(0.5f, "partial")
-                } else {
-                    MatchScore(0.0f, "no_match")
-                }
+                MatchScore(0.0f, "no_match")
             }
         }
     }
@@ -265,7 +262,9 @@ object WebsiteMatchingUtil {
                 // Generic formatting: example-site → Example Site
                 nameWithoutTld
                     .split("-", "_")
-                    .joinToString(" ") { it.replaceFirstChar { c -> if (c.isLowerCase()) c.titlecase() else it } }
+                    .joinToString(" ") {
+                        it.replaceFirstChar { c -> if (c.isLowerCase()) c.titlecase() else c.toString() }
+                    }
             }
         }
     }

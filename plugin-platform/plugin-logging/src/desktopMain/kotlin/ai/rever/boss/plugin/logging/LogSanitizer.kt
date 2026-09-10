@@ -114,20 +114,6 @@ object LogSanitizer {
     fun maskUriParams(uri: String?): String {
         if (uri.isNullOrBlank()) return "[empty]"
 
-        val sensitiveParams =
-            setOf(
-                "token",
-                "access_token",
-                "refresh_token",
-                "code",
-                "error_description",
-                "id_token",
-                "session_token",
-                "api_key",
-                "key",
-                "secret",
-            )
-
         return try {
             // Handle both query params (?) and fragment params (#)
             var result = uri
@@ -135,13 +121,13 @@ object LogSanitizer {
             // Mask query parameters
             val queryStart = uri.indexOf('?')
             if (queryStart >= 0) {
-                result = maskParamsInSegment(result, queryStart + 1, '#', sensitiveParams)
+                result = maskParamsInSegment(result, queryStart + 1, '#', sensitiveUriParamNames)
             }
 
             // Mask fragment parameters
             val fragmentStart = result.indexOf('#')
             if (fragmentStart >= 0) {
-                result = maskParamsInSegment(result, fragmentStart + 1, '\u0000', sensitiveParams)
+                result = maskParamsInSegment(result, fragmentStart + 1, '\u0000', sensitiveUriParamNames)
             }
 
             result
@@ -319,8 +305,51 @@ object LogSanitizer {
      */
     private val assignmentPattern = Regex("""(?<![A-Za-z0-9_.])([A-Za-z][A-Za-z0-9_.-]*)=([^\s\[][^\s]*)""")
 
+    /**
+     * A sensitive-named query or fragment parameter shape — `?token=…`,
+     * `&access_token=…`, `#access_token=…` — redacted before [filePathPattern]
+     * gets a chance to see it. These shapes are redacted even without a full URL.
+     * Parameters use ampersand separators; legacy semicolon separators and
+     * percent-encoded parameter names are not interpreted by this text matcher.
+     *
+     * BossConsole#109 (review comment): [filePathPattern]'s `[^\s:]+` stops at
+     * the first colon, on the (correct, elsewhere) assumption that a colon
+     * there marks a `host:port` boundary worth preserving. A value that
+     * happens to contain one — `token=abc:def` — is only partly consumed, so
+     * the tail survives the later replace verbatim: `[url=https://…?token=
+     * abc:def]` became `[url=https:[PATH]:def]`, leaking a fragment of the
+     * token. Measured, not hypothetical.
+     *
+     * Running this first removes the value entirely wherever [nameMarksSecret]
+     * says the name is sensitive, so there is nothing containing a colon left
+     * by the time [filePathPattern] runs — the fix is in what reaches that
+     * pass, not in loosening its own boundary (which exists for the
+     * `host:port` case this pass does not touch: no `?`/`&`/`#` precedes it).
+     * Only parameter/fragment separators and whitespace terminate the value.
+     * Punctuation such as `)` and an apostrophe is legal inside a URI value;
+     * treating it as a log wrapper can leave a later colon and secret suffix
+     * exposed. Conservatively consume adjacent wrapper punctuation too, as
+     * the following path pass already does for colon-free URLs.
+     */
+    private val sensitiveQueryParamPattern = Regex("""([?&#])([A-Za-z][A-Za-z0-9_.-]*)=([^&#\s]+)""")
+
     /** Inserts a word boundary into camelCase names, so `accessToken` splits like `access_token`. */
     private val camelCaseBoundary = Regex("""(?<=[a-z0-9])(?=[A-Z])""")
+
+    // Exact URL names stay separate: free-text exit_code and status_code are diagnostics.
+    private val sensitiveUriParamNames =
+        setOf(
+            "token",
+            "access_token",
+            "refresh_token",
+            "code",
+            "error_description",
+            "id_token",
+            "session_token",
+            "api_key",
+            "key",
+            "secret",
+        )
 
     /**
      * Names whose value is sensitive. Shared by [sanitizeMap] and the
@@ -429,10 +458,27 @@ object LogSanitizer {
      * The passes compose in either order because [maskToken] is a fixed point on
      * its own output at these lengths (`ghp...345` masks to `ghp...345`), so a
      * value both of them match is masked once in effect.
+     *
+     * [sensitiveQueryParamPattern] runs before all of that, for a narrower
+     * reason: it is the one pass that must see the *original* text, since its
+     * whole job is removing a colon before [filePathPattern] can trip on it
+     * (BossConsole#109). Running it any later would be too late by definition.
      */
     private fun redactLocationsAndCredentials(text: String): String {
+        val withMaskedQueryParams =
+            sensitiveQueryParamPattern.replace(text) { match ->
+                val (prefix, name, value) = match.destructured
+                val sensitive =
+                    nameMarksSecret(name) || sensitiveUriParamNames.any { name.equals(it, ignoreCase = true) }
+                if (sensitive && value.lowercase() !in nonSecretValues) {
+                    "$prefix$name=[REDACTED]"
+                } else {
+                    match.value
+                }
+            }
+
         val withoutLocations =
-            text
+            withMaskedQueryParams
                 .replace(filePathPattern, "[PATH]")
                 .replace(urlPattern, "[URL]")
                 .replace(emailPattern, "[EMAIL]")

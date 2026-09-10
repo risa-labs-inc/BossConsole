@@ -13,7 +13,7 @@ This feature integrates BOSS's secret management system with the Fluck browser, 
 ### 1. Context Menu Integration
 - **Right-click detection** on form fields (username, password, email)
 - **Intelligent field detection** using multiple heuristics
-- **Domain-based secret matching** with fuzzy scoring
+- **Domain-based secret matching** with exact and dot-boundary scoring
 - **Visual indicators** for matched secrets
 
 ### 2. Auto-Fill Capabilities
@@ -58,16 +58,23 @@ suspend fun getCurrentFocusedField(browser: Browser): FormFieldInfo?
 
 Handles domain extraction and secret matching:
 - **Domain normalization** (removes www, common subdomains)
-- **Fuzzy matching** with confidence scores
-- **TLD handling** (co.uk, com.au, etc.)
+- **Exact and dot-boundary matching** with confidence scores
+- **Limited suffix handling** using six hardcoded two-part suffixes, not a public-suffix list
 
 **Scoring System**:
 ```
 Exact match (google.com == google.com):      1.0
 Subdomain match (login.google.com):          0.9
-Domain contains (google):                    0.7
-Partial match (keywords):                    0.5
+Blank or unrelated domains:                  0.0
 ```
+
+The scorer rejects substring and shared-token matches. The extractor can still collapse
+unrelated domains under unlisted public or private suffixes; these scores do not establish
+a complete registrable-domain or hosted-tenant isolation policy.
+
+This section describes the host utility. Current Fluck plugin matching is implemented in
+the separate `boss-plugin-fluck-browser` repository; the host ViewModel construction below
+is an integration example, not evidence that the current plugin uses this utility.
 
 **Key Methods**:
 ```kotlin
