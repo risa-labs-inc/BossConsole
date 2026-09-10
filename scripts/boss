@@ -17,20 +17,36 @@
 
 # URL encode function
 urlencode() {
+    # Percent-encode UTF-8 BYTES, not characters.
+    #
+    # This loop used to run in the caller's locale and use printf "'$c", which
+    # yields a character's CODEPOINT rather than its encoding. U+00E9 became
+    # %e9 instead of %C3%A9, and U+4E2D became the malformed %4e2d, because
+    # %02x cannot hold a value above 0xFF. DeepLinkHandler reads these back
+    # with URLDecoder.decode(s, "UTF-8"), which turned the first into U+FFFD
+    # and the second into the literal text "N2d" - so any non-ASCII path or
+    # command opened the wrong thing, or nothing, with only a log line to say
+    # so.
+    #
+    # LC_ALL=C is the fix: it makes ${#string} and ${string:i:1} count bytes
+    # rather than characters, so each byte of a multi-byte character is
+    # encoded separately and in order. The unreserved set is unchanged.
+    #
+    # boss.ps1 was always correct here (EscapeDataString); only this shim and
+    # boss.bat needed changing.
     local string="$1"
-    local strlen=${#string}
     local encoded=""
-    local pos c o
+    local i c
+    local LC_ALL=C
 
-    for (( pos=0 ; pos<strlen ; pos++ )); do
-        c=${string:$pos:1}
+    for (( i=0 ; i<${#string} ; i++ )); do
+        c=${string:i:1}
         case "$c" in
-            [-_.~a-zA-Z0-9] ) o="${c}" ;;
-            * ) printf -v o '%%%02x' "'$c"
+            [-_.~a-zA-Z0-9] ) encoded+="$c" ;;
+            * ) printf -v c '%%%02X' "'$c" ; encoded+="$c"
         esac
-        encoded+="${o}"
     done
-    echo "${encoded}"
+    printf '%s' "${encoded}"
 }
 
 # Detect OS for URL opening
@@ -128,7 +144,7 @@ case "$1" in
             exit 1
         fi
         encoded_path=$(urlencode "$2")
-        deep_link="boss://workspace?config=${encoded_path}"
+        deep_link="boss://workspace?path=${encoded_path}"
         open_url "$deep_link"
         ;;
 

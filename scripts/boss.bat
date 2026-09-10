@@ -62,7 +62,7 @@ if "%~2"=="" (
     exit /b 1
 )
 call :urlencode "%~2" ENCODED
-start "" "boss://workspace?config=%ENCODED%"
+start "" "boss://workspace?path=%ENCODED%"
 goto :eof
 
 :cmd_file
@@ -180,12 +180,29 @@ goto :eof
 REM URL encode subroutine
 REM Usage: call :urlencode "string to encode" OUTPUT_VAR
 :urlencode
-setlocal enabledelayedexpansion
-set "str=%~1"
+REM Pass the argument through the environment instead of substituting it into
+REM the PowerShell command text. The old form built
+REM   powershell -Command "[System.Uri]::EscapeDataString('%str%')"
+REM by substitution, so the argument was parsed as PowerShell source. A single
+REM quote anywhere in a path - O'Brien, a folder named "don't" - ended the
+REM string literal, PowerShell failed to parse, %encoded% came back empty, and
+REM the shim emitted a link with an empty path that the app then dropped. The
+REM same substitution let a crafted argument close the quote and run whatever
+REM followed, entirely outside the app and so outside the DeepLinkOrigin
+REM confirmation that guards boss://terminal, because nothing ever reached the
+REM app to be confirmed.
+REM
+REM $env:BOSS_ENC_IN is read as DATA by EscapeDataString, so no value can be
+REM parsed as code. setlocal keeps the variable out of the caller's scope.
+REM
+REM enabledelayedexpansion is deliberately NOT set here: it made "!" in a
+REM filename disappear. The endlocal line still expands %encoded% before
+REM endlocal runs, because cmd parses the whole line first.
+setlocal
+set "BOSS_ENC_IN=%~1"
 set "encoded="
 
-REM PowerShell is more reliable for URL encoding on Windows
-for /f "delims=" %%i in ('powershell -NoProfile -Command "[System.Uri]::EscapeDataString('%str%')"') do set "encoded=%%i"
+for /f "delims=" %%i in ('powershell -NoProfile -Command "[System.Uri]::EscapeDataString($env:BOSS_ENC_IN)"') do set "encoded=%%i"
 
 endlocal & set "%~2=%encoded%"
 goto :eof

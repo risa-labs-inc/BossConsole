@@ -486,7 +486,13 @@ actual object DeepLinkHandler {
             // exists()/isDirectory block for seconds.
             val folder = withContext(Dispatchers.IO) { resolveFolder(path) } ?: return@launch
 
-            val name = (params["name"] ?: folder.name).extractFileName()
+            // urlDecode, like every other parameter this file reads. Without it a link
+            // carrying an encoded display name - which is the only way to send one with a
+            // space in it - persisted the raw escapes: boss://folder?path=/x&name=My%20Project
+            // created a project literally called "My%20Project" in the recent-projects list
+            // and the window title. folder.name is a real filename and needs no decoding, so
+            // it is substituted after.
+            val name = (params["name"]?.urlDecode() ?: folder.name).extractFileName()
             val project =
                 Project(
                     name = name,
@@ -534,9 +540,15 @@ actual object DeepLinkHandler {
     private fun resolveFolder(path: String): File? {
         val folder = File(path).absoluteFile
 
+        // The first branch takes the read-target rules, matching
+        // CLICommandHandler.handleOpenFolder: this is the deep-link door to the same action,
+        // and the two must not disagree about which folders exist. isValidPath would refuse a
+        // folder named R&D, which is a real directory and never reaches a shell from here.
+        val pathIsUsable = CLISecurityValidator.isValidOpenTargetPath(folder.absolutePath)
+
         val rejection =
             when {
-                !CLISecurityValidator.isValidPath(folder.absolutePath) -> "Invalid folder path (security check failed)"
+                !pathIsUsable -> "Invalid folder path (security check failed)"
                 !folder.exists() -> "Folder does not exist"
                 !folder.isDirectory -> "Path is not a directory"
                 else -> null
