@@ -34,6 +34,27 @@ class WindowProjectState(
         )
     val selectedProject: StateFlow<Project> = _selectedProject.asStateFlow()
 
+    /**
+     * The selected project's path, or null when no project has been selected.
+     *
+     * [selectedProject] never emits null: before anything is chosen it holds the
+     * sentinel above, a `Project` named "No Project" whose path is the empty string.
+     * That is convenient for the UI, which wants something to render either way, and
+     * it is a trap for everything else. `boss-plugin-api` declares both
+     * `PluginContext.projectPath` and `WindowProjectStateProvider.getSelectedProjectPath`
+     * as `String?`, and the former's KDoc says "Returns null if no project is
+     * selected". A plugin writing the obvious `context.projectPath ?: fallback` got
+     * the empty string instead, because an Elvis never fires on a non-null value, and
+     * an empty path resolves against the filesystem root rather than failing.
+     *
+     * This exists so the sentinel is recognised by the class that creates it, once,
+     * instead of by every caller remembering to test for blankness. A caller that
+     * genuinely needs a non-null string for a native boundary can still write
+     * `selectedProjectPath ?: ""`, which is at least explicit about the substitution.
+     */
+    val selectedProjectPath: String?
+        get() = _selectedProject.value.path.takeIf { it.isNotBlank() }
+
     // Callback for project selection (e.g., to update recent projects)
     private var projectSelectionCallback: ProjectSelectionCallback? = null
 
