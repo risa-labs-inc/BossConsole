@@ -96,6 +96,15 @@ class OutOfProcessPluginSpawnerImpl(
     override suspend fun spawn(
         manifest: PluginManifest,
         jarPath: String,
+    ): Result<Unit> =
+        withPluginLifecycleLock(manifest.pluginId) {
+            spawnUnderLifecycleLock(manifest, jarPath)
+        }
+
+    @Suppress("LongMethod")
+    private suspend fun spawnUnderLifecycleLock(
+        manifest: PluginManifest,
+        jarPath: String,
     ): Result<Unit> {
         return withContext(Dispatchers.IO) {
             try {
@@ -293,7 +302,7 @@ class OutOfProcessPluginSpawnerImpl(
                 )
             }
 
-            spawn(manifest, jarPath)
+            spawnUnderLifecycleLock(manifest, jarPath)
         }
     }
 

@@ -13,6 +13,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.slf4j.LoggerFactory
@@ -141,14 +142,14 @@ class PluginProcessMonitor internal constructor(
                 maxRestarts = maxRestarts,
                 connected = backend.isConnected(pluginId),
             )
-        _healthStates.value = _healthStates.value + (pluginId to info)
+        _healthStates.update { states -> states + (pluginId to info) }
     }
 
     /**
      * Stop monitoring a plugin.
      */
     fun unmonitor(pluginId: String) {
-        _healthStates.value = _healthStates.value - pluginId
+        _healthStates.update { states -> states - pluginId }
         inProcessFallbacks.remove(pluginId)
         restartActions.remove(pluginId)
         terminalFailureActions.remove(pluginId)
@@ -162,9 +163,19 @@ class PluginProcessMonitor internal constructor(
 
         scope.launch {
             while (isActive) {
-                checkHealth()
+                runHealthCheckSafely()
                 delay(checkIntervalMs)
             }
+        }
+    }
+
+    private suspend fun runHealthCheckSafely() {
+        try {
+            checkHealth()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logger.error("Plugin health check failed", e)
         }
     }
 

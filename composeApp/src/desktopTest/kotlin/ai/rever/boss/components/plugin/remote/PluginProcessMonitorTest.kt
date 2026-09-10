@@ -5,6 +5,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -14,10 +15,17 @@ class PluginProcessMonitorTest {
         var alive: Boolean,
         var connected: Boolean = false,
         var restartAllowed: Boolean = true,
+        var aliveChecksToFail: Int = 0,
     ) : PluginProcessMonitorBackend {
         override fun getManagedProcess(pluginId: String): ManagedProcess? = null
 
-        override fun isAlive(pluginId: String): Boolean = alive
+        override fun isAlive(pluginId: String): Boolean {
+            if (aliveChecksToFail > 0) {
+                aliveChecksToFail--
+                error("Temporary backend failure")
+            }
+            return alive
+        }
 
         override fun isConnected(pluginId: String): Boolean = connected
 
@@ -282,5 +290,52 @@ class PluginProcessMonitorTest {
 
             assertEquals(0, restartAttempts)
             assertEquals(emptyMap(), monitor.healthStates.value)
+        }
+
+    @Test
+    fun `periodic monitoring survives a temporary backend failure`() =
+        runBlocking {
+            val backend =
+                FakeBackend(
+                    alive = false,
+                    aliveChecksToFail = 1,
+                )
+            val monitor =
+                PluginProcessMonitor(
+                    backend = backend,
+                    checkIntervalMs = 10,
+                )
+            var restartAttempts = 0
+
+            try {
+                monitor.monitor(
+                    pluginId = "test-plugin",
+                    displayName = "Test Plugin",
+                    restartAction = {
+                        restartAttempts++
+                        backend.alive = true
+                        Result.success(Unit)
+                    },
+                )
+                monitor.start()
+
+                withTimeout(1_000) {
+                    while (
+                        monitor.healthStates.value["test-plugin"]?.processState !=
+                        PluginProcessState.RUNNING ||
+                        restartAttempts != 1
+                    ) {
+                        yield()
+                    }
+                }
+
+                assertEquals(1, restartAttempts)
+                assertEquals(
+                    PluginProcessState.RUNNING,
+                    monitor.healthStates.value["test-plugin"]?.processState,
+                )
+            } finally {
+                monitor.dispose()
+            }
         }
 }
