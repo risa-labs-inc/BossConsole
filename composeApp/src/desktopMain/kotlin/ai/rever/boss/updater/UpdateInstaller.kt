@@ -154,6 +154,7 @@ sealed class InstallResult {
 
     data class Error(
         val message: String,
+        val dismissVersion: Boolean = false,
     ) : InstallResult()
 }
 
@@ -547,7 +548,7 @@ object UpdateInstaller {
                     // (JxBrowser 9.4.0 took it 12.0 -> 13.0) and the release
                     // manifest carries no minimum-OS field, so nothing upstream
                     // stops the update being offered.
-                    unsupportedOsError(appBundle)?.let { return@withContext InstallResult.Error(it) }
+                    unsupportedOsInstallResult(appBundle)?.let { return@withContext it }
 
                     logger.info(LogCategory.SYSTEM, "DMG verified successfully", mapOf("appBundle" to appBundle.name))
 

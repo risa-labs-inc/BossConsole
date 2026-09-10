@@ -38,6 +38,9 @@ internal fun unsupportedOsError(appBundle: File): String? {
     )
 }
 
+internal fun unsupportedOsInstallResult(appBundle: File): InstallResult.Error? =
+    unsupportedOsError(appBundle)?.let { InstallResult.Error(it, dismissVersion = true) }
+
 /**
  * The decision itself, separated from where the two versions come from.
  *

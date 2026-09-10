@@ -75,6 +75,7 @@ data class VersionInfo(
 data class InstallOutcome(
     val succeeded: Boolean,
     val errorMessage: String? = null,
+    val dismissVersion: Boolean = false,
 )
 
 /**

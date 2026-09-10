@@ -416,6 +416,10 @@ class UpdateManager {
             if (outcome.succeeded) {
                 _updateState.value = UpdateState.RestartRequired
             } else {
+                versionToDismiss(outcome, _updateInfo.value)?.let { version ->
+                    UpdateSettings.lastDismissedVersion = version.toString()
+                    UpdateSettingsManager.saveSettings()
+                }
                 // Prefer the installer's own explanation. It is the only place that
                 // knows *why* — e.g. a release requiring a newer macOS than this
                 // Mac runs — and a generic string there is indistinguishable from
@@ -469,6 +473,18 @@ class UpdateManager {
         scope.cancel()
     }
 }
+
+/**
+ * Select the release an installer refusal made permanently inapplicable to this host.
+ *
+ * Kept pure so the dismissal policy can be tested without mounting an update image or writing
+ * settings. Ordinary install failures stay retryable; only a typed installer disposition hides
+ * the exact release that was staged.
+ */
+internal fun versionToDismiss(
+    outcome: InstallOutcome,
+    updateInfo: UpdateInfo?,
+): Version? = updateInfo?.latestVersion?.takeIf { !outcome.succeeded && outcome.dismissVersion }
 
 /**
  * Update state sealed class
