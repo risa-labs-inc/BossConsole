@@ -3,6 +3,7 @@ package ai.rever.boss.recovery.runtime
 import ai.rever.boss.recovery.baseline.WorkspaceBaselineCapturer
 import ai.rever.boss.recovery.models.AgentClaim
 import ai.rever.boss.recovery.models.MissionBaseline
+import ai.rever.boss.recovery.models.RecoveryPlan
 import ai.rever.boss.recovery.models.RecoveryResult
 import ai.rever.boss.recovery.models.VerificationResult
 import ai.rever.boss.recovery.models.WorkspaceCheckpoint
@@ -236,5 +237,39 @@ class MissionRecoveryCoordinator(
 
             _events.emit(RecoveryEvent.RewindExecuted(result))
             result
+        }
+
+    /**
+     * Generates a dry-run recovery plan for [checkpointId] without modifying any files.
+     */
+    suspend fun previewRecovery(
+        checkpointId: String,
+        allowOverwriteConflicts: Boolean = false,
+    ): RecoveryPlan =
+        mutex.withLock {
+            val currentState = _state.value
+            val missionId = currentState.activeMissionId ?: throw IllegalStateException("No active mission started")
+            val rootPath = currentState.projectRootPath ?: throw IllegalStateException("No active project root")
+            val baseline = currentState.baseline ?: throw IllegalStateException("No baseline captured for mission")
+
+            val targetCheckpoint =
+                storage.loadCheckpoint(missionId, checkpointId)
+                    ?: return@withLock RecoveryPlan(
+                        checkpointId = checkpointId,
+                        filesToRestore = emptyList(),
+                        filesToRemove = emptyList(),
+                        filesToPreserve = emptyList(),
+                        conflicts = emptyList(),
+                        canRewind = false,
+                        blockingReason = "Checkpoint not found in storage: $checkpointId",
+                    )
+
+            WorkspaceReconciler.createPlan(
+                baseline = baseline,
+                targetCheckpoint = targetCheckpoint,
+                projectRoot = File(rootPath),
+                storage = storage,
+                allowOverwriteConflicts = allowOverwriteConflicts,
+            )
         }
 }

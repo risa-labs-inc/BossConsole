@@ -33,6 +33,7 @@ class RecoveryMcpToolProvider(
             createStartMissionTool(),
             createCheckpointTool(),
             createVerifyClaimTool(),
+            createPreviewRewindTool(),
             createRewindTool(),
             createListCheckpointsTool(),
         )
@@ -128,6 +129,51 @@ class RecoveryMcpToolProvider(
                         McpToolResult(summary)
                     } catch (e: Exception) {
                         McpToolResult("Verification failed: ${e.message}", isError = true)
+                    }
+                },
+        )
+
+    private fun createPreviewRewindTool(): McpToolDefinition =
+        McpToolDefinition(
+            name = "recovery_preview_rewind",
+            description = "Generates a non-destructive dry-run recovery plan detailing which files will be restored, removed, preserved, or flagged as conflicting before performing any rollback.",
+            handler =
+                McpToolHandler { args: McpToolArgs ->
+                    val checkpointId = args.string("checkpointId")
+                        ?: return@McpToolHandler McpToolResult("Missing required parameter: checkpointId", isError = true)
+
+                    val allowOverwrite = args.boolean("allowOverwriteConflicts") ?: false
+
+                    try {
+                        val plan = coordinator.previewRecovery(checkpointId, allowOverwriteConflicts = allowOverwrite)
+                        val summary = buildString {
+                            appendLine("=== RECOVERY PREVIEW (Dry Run) ===")
+                            appendLine("Target Checkpoint: ${plan.checkpointId}")
+                            appendLine("Safe To Rewind: ${if (plan.canRewind) "YES" else "NO (BLOCKED)"}")
+                            if (plan.blockingReason != null) {
+                                appendLine("Blocking Reason: ${plan.blockingReason}")
+                            }
+                            appendLine("\nFiles To Restore (${plan.filesToRestore.size}):")
+                            if (plan.filesToRestore.isEmpty()) appendLine("  (None)")
+                            else plan.filesToRestore.forEach { appendLine("  ↺ $it") }
+
+                            appendLine("\nFiles To Remove (${plan.filesToRemove.size}):")
+                            if (plan.filesToRemove.isEmpty()) appendLine("  (None)")
+                            else plan.filesToRemove.forEach { appendLine("  ✕ $it") }
+
+                            appendLine("\nFiles To Preserve (${plan.filesToPreserve.size}):")
+                            if (plan.filesToPreserve.isEmpty()) appendLine("  (None)")
+                            else plan.filesToPreserve.take(10).forEach { appendLine("  ✓ $it") }
+                            if (plan.filesToPreserve.size > 10) appendLine("  ... and ${plan.filesToPreserve.size - 10} more")
+
+                            if (plan.conflicts.isNotEmpty()) {
+                                appendLine("\nConflicts Detected (${plan.conflicts.size}):")
+                                plan.conflicts.forEach { appendLine("  ⚠ $it") }
+                            }
+                        }
+                        McpToolResult(summary)
+                    } catch (e: Exception) {
+                        McpToolResult("Failed to generate recovery preview: ${e.message}", isError = true)
                     }
                 },
         )

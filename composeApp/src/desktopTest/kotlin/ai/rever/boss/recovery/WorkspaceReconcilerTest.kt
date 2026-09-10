@@ -235,4 +235,118 @@ class WorkspaceReconcilerTest {
         assertEquals("B working cp1", fileB.readText())
         assertFalse(fileC.exists())
     }
+
+    @Test
+    fun `preview identifies modified files to restore`() = runBlocking {
+        val file1 = File(tempProjectRoot, "src/App.kt").also {
+            it.parentFile.mkdirs()
+            it.writeText("stable v1")
+        }
+        val baseline = WorkspaceBaselineCapturer.captureBaseline("m-plan-1", tempProjectRoot)
+        val cp1 = storage.createCheckpoint("m-plan-1", "cp-1", "V1", tempProjectRoot)
+
+        // Agent modifies file
+        file1.writeText("broken v2")
+
+        val plan = WorkspaceReconciler.createPlan(baseline, cp1, tempProjectRoot, storage)
+        assertEquals(listOf("src/App.kt"), plan.filesToRestore)
+    }
+
+    @Test
+    fun `preview identifies agent-created files to remove`() = runBlocking {
+        val baseline = WorkspaceBaselineCapturer.captureBaseline("m-plan-2", tempProjectRoot)
+        val cp1 = storage.createCheckpoint("m-plan-2", "cp-1", "Empty", tempProjectRoot)
+
+        // Agent creates untracked junk
+        File(tempProjectRoot, "junk.tmp").writeText("temp junk")
+        File(tempProjectRoot, "src/debug.log").also {
+            it.parentFile.mkdirs()
+            it.writeText("log")
+        }
+
+        val plan = WorkspaceReconciler.createPlan(baseline, cp1, tempProjectRoot, storage)
+        assertEquals(listOf("junk.tmp", "src/debug.log"), plan.filesToRemove)
+    }
+
+    @Test
+    fun `preview identifies baseline files to preserve`() = runBlocking {
+        File(tempProjectRoot, "my-notes.md").writeText("Pre-existing user notes")
+        val baseline = WorkspaceBaselineCapturer.captureBaseline("m-plan-3", tempProjectRoot)
+        val cp1 = storage.createCheckpoint("m-plan-3", "cp-1", "Notes State", tempProjectRoot)
+
+        val plan = WorkspaceReconciler.createPlan(baseline, cp1, tempProjectRoot, storage)
+        assertTrue(plan.filesToPreserve.contains("my-notes.md"))
+        assertTrue(plan.filesToRemove.isEmpty())
+        assertTrue(plan.filesToRestore.isEmpty())
+    }
+
+    @Test
+    fun `preview reports conflicts`() = runBlocking {
+        val configFile = File(tempProjectRoot, "config.json").also { it.writeText("{\"v\":1}") }
+        val baseline = WorkspaceBaselineCapturer.captureBaseline("m-plan-4", tempProjectRoot)
+
+        // Delete from checkpoint
+        configFile.delete()
+        val cp1 = storage.createCheckpoint("m-plan-4", "cp-1", "No Config", tempProjectRoot)
+
+        // User recreates with edits
+        configFile.writeText("{\"v\":2}")
+
+        val plan = WorkspaceReconciler.createPlan(baseline, cp1, tempProjectRoot, storage)
+        assertTrue(plan.conflicts.contains("config.json"))
+        assertFalse(plan.canRewind)
+    }
+
+    @Test
+    fun `preview performs no filesystem mutation`() = runBlocking {
+        val file1 = File(tempProjectRoot, "src/App.kt").also {
+            it.parentFile.mkdirs()
+            it.writeText("stable v1")
+        }
+        val baseline = WorkspaceBaselineCapturer.captureBaseline("m-plan-5", tempProjectRoot)
+        val cp1 = storage.createCheckpoint("m-plan-5", "cp-1", "V1", tempProjectRoot)
+
+        // Agent modifies file and adds junk
+        file1.writeText("broken v2")
+        val junkFile = File(tempProjectRoot, "agent-junk.txt").also { it.writeText("junk") }
+
+        // Execute dry-run preview
+        val plan = WorkspaceReconciler.createPlan(baseline, cp1, tempProjectRoot, storage)
+
+        // Verify plan is calculated
+        assertEquals(listOf("src/App.kt"), plan.filesToRestore)
+        assertEquals(listOf("agent-junk.txt"), plan.filesToRemove)
+
+        // Invariant: ZERO disk modifications during preview
+        assertEquals("broken v2", file1.readText(), "File content must not be modified by preview")
+        assertTrue(junkFile.exists(), "Junk file must not be deleted by preview")
+    }
+
+    @Test
+    fun `clean preview is marked rewindable`() = runBlocking {
+        File(tempProjectRoot, "main.kt").writeText("fun main() = 1")
+        val baseline = WorkspaceBaselineCapturer.captureBaseline("m-plan-6", tempProjectRoot)
+        val cp1 = storage.createCheckpoint("m-plan-6", "cp-1", "Initial", tempProjectRoot)
+
+        val plan = WorkspaceReconciler.createPlan(baseline, cp1, tempProjectRoot, storage)
+        assertTrue(plan.canRewind)
+        kotlin.test.assertNull(plan.blockingReason)
+    }
+
+    @Test
+    fun `conflict preview is blocked`() = runBlocking {
+        val baselineFile = File(tempProjectRoot, "secret.key").also { it.writeText("orig-key") }
+        val baseline = WorkspaceBaselineCapturer.captureBaseline("m-plan-7", tempProjectRoot)
+
+        baselineFile.delete()
+        val cp1 = storage.createCheckpoint("m-plan-7", "cp-1", "CP", tempProjectRoot)
+
+        // External modification
+        baselineFile.writeText("modified-external-key")
+
+        val plan = WorkspaceReconciler.createPlan(baseline, cp1, tempProjectRoot, storage)
+        assertFalse(plan.canRewind)
+        val reason = kotlin.test.assertNotNull(plan.blockingReason)
+        assertTrue(reason.contains("secret.key"))
+    }
 }

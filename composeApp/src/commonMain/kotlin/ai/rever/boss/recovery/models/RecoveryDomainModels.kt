@@ -125,6 +125,21 @@ data class VerificationResult(
 }
 
 /**
+ * Dry-run recovery plan detailing exactly what will change upon rollback,
+ * with zero destructive filesystem writes performed during planning.
+ */
+@Serializable
+data class RecoveryPlan(
+    val checkpointId: String,
+    val filesToRestore: List<String>,
+    val filesToRemove: List<String>,
+    val filesToPreserve: List<String>,
+    val conflicts: List<String>,
+    val canRewind: Boolean,
+    val blockingReason: String? = null,
+)
+
+/**
  * Explicit outcome of attempting a bounded workspace rollback.
  * INVARIANT:
  * - PARTIAL != SUCCESS
