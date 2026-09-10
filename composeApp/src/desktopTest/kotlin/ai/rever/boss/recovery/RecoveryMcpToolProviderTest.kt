@@ -38,18 +38,22 @@ class RecoveryMcpToolProviderTest {
     private fun mockArgs(map: Map<String, Any?> = emptyMap()): McpToolArgs = McpToolArgs(map)
 
     @Test
-    fun `provider exposes all 5 recovery tools and gates rewind with requiresAdmin`() {
+    fun `provider exposes all 6 recovery tools and gates rewind with requiresAdmin`() {
         val tools = provider.tools()
-        assertEquals(5, tools.size)
+        assertEquals(6, tools.size)
         val toolNames = tools.map { it.name }.toSet()
         assertTrue(toolNames.contains("recovery_start_mission"))
         assertTrue(toolNames.contains("recovery_create_checkpoint"))
         assertTrue(toolNames.contains("recovery_verify_claim"))
+        assertTrue(toolNames.contains("recovery_preview_rewind"))
         assertTrue(toolNames.contains("recovery_rewind"))
         assertTrue(toolNames.contains("recovery_list_checkpoints"))
 
         val rewindTool = tools.single { it.name == "recovery_rewind" }
         assertTrue(rewindTool.requiresAdmin, "recovery_rewind must require admin authorization")
+
+        val previewTool = tools.single { it.name == "recovery_preview_rewind" }
+        assertFalse(previewTool.requiresAdmin, "recovery_preview_rewind should be accessible for dry-run inspection")
     }
 
     @Test
@@ -131,5 +135,34 @@ class RecoveryMcpToolProviderTest {
         assertFalse(rewindResult.isError)
         assertTrue(rewindResult.text.contains("Successfully rewound"))
         assertEquals("stable v1", testFile.readText())
+    }
+
+    @Test
+    fun `recovery_preview_rewind generates dry run without modifying workspace via MCP handler`() = runBlocking {
+        val testFile = File(tempProjectRoot, "src/code.kt").also {
+            it.parentFile.mkdirs()
+            it.writeText("stable v1")
+        }
+        coordinator.startMission(tempProjectRoot, missionId = "mission-mcp-5")
+        val cp = coordinator.createCheckpoint("Checkpoint 1")
+
+        // Mutate file and add untracked junk
+        testFile.writeText("broken v2")
+        val junkFile = File(tempProjectRoot, "junk.log").also { it.writeText("junk") }
+
+        val previewTool = provider.tools().single { it.name == "recovery_preview_rewind" }
+        val previewHandler = requireNotNull(previewTool.handler)
+        val previewResult = previewHandler.call(
+            mockArgs(mapOf("checkpointId" to cp.checkpointId))
+        )
+
+        assertFalse(previewResult.isError)
+        assertTrue(previewResult.text.contains("RECOVERY PREVIEW (Dry Run)"))
+        assertTrue(previewResult.text.contains("src/code.kt"))
+        assertTrue(previewResult.text.contains("junk.log"))
+
+        // Confirm zero workspace modification occurred during preview
+        assertEquals("broken v2", testFile.readText(), "Workspace file must remain unchanged after dry-run preview")
+        assertTrue(junkFile.exists(), "Untracked file must not be removed during dry-run preview")
     }
 }

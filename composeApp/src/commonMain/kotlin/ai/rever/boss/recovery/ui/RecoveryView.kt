@@ -2,6 +2,7 @@ package ai.rever.boss.recovery.ui
 
 import ai.rever.boss.recovery.models.AgentClaim
 import ai.rever.boss.recovery.models.ClaimType
+import ai.rever.boss.recovery.models.RecoveryPlan
 import ai.rever.boss.recovery.models.RecoveryResult
 import ai.rever.boss.recovery.models.VerificationStatus
 import ai.rever.boss.recovery.runtime.MissionRecoveryCoordinator
@@ -64,6 +65,7 @@ fun RecoveryView(
     var customCommand by remember { mutableStateOf("./gradlew test") }
     var checkpointLabel by remember { mutableStateOf("Stable State") }
     var userClaimText by remember { mutableStateOf("All tests pass") }
+    var activePlan by remember { mutableStateOf<RecoveryPlan?>(null) }
 
     Column(
         modifier = modifier
@@ -360,25 +362,89 @@ fun RecoveryView(
                                     )
                                 }
 
-                                OutlinedButton(
-                                    onClick = {
-                                        scope.launch {
-                                            coordinator.rewindToCheckpoint(cp.checkpointId)
-                                        }
-                                    },
-                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFFB74D)),
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Restore,
-                                        contentDescription = "Rewind",
-                                        modifier = Modifier.size(16.dp),
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Rewind", fontSize = 12.sp)
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            scope.launch {
+                                                activePlan = coordinator.previewRecovery(cp.checkpointId)
+                                            }
+                                        },
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF64B5F6)),
+                                    ) {
+                                        Text("Preview", fontSize = 12.sp)
+                                    }
+
+                                    Spacer(modifier = Modifier.width(6.dp))
+
+                                    OutlinedButton(
+                                        onClick = {
+                                            scope.launch {
+                                                coordinator.rewindToCheckpoint(cp.checkpointId)
+                                            }
+                                        },
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFFB74D)),
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Restore,
+                                            contentDescription = "Rewind",
+                                            modifier = Modifier.size(16.dp),
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Rewind", fontSize = 12.sp)
+                                    }
                                 }
                             }
                         }
                     }
+                }
+            }
+        }
+
+        // Dry-run Recovery Plan Inspector Card
+        val currentPlan = activePlan
+        if (currentPlan != null) {
+            Spacer(modifier = Modifier.height(10.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color(0xFF252528))
+                    .border(1.dp, if (currentPlan.canRewind) Color(0xFF2E7D32) else Color(0xFFC62828), RoundedCornerShape(6.dp))
+                    .padding(12.dp),
+            ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "Recovery Preview: ${currentPlan.checkpointId} (${if (currentPlan.canRewind) "SAFE TO REWIND" else "BLOCKED"})",
+                            color = if (currentPlan.canRewind) Color(0xFF81C784) else Color(0xFFEF5350),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                        )
+                        OutlinedButton(
+                            onClick = { activePlan = null },
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFAAAAAA)),
+                        ) {
+                            Text("Dismiss", fontSize = 11.sp)
+                        }
+                    }
+                    if (currentPlan.blockingReason != null) {
+                        Text(
+                            text = "Reason: ${currentPlan.blockingReason}",
+                            color = Color(0xFFFF8A80),
+                            fontSize = 11.sp,
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Restore: ${currentPlan.filesToRestore.size} files • Remove: ${currentPlan.filesToRemove.size} files • Preserve: ${currentPlan.filesToPreserve.size} files • Conflicts: ${currentPlan.conflicts.size}",
+                        color = Color(0xFFCCCCCC),
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                    )
                 }
             }
         }
