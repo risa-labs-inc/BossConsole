@@ -38,7 +38,7 @@ class RecoveryMcpToolProviderTest {
     private fun mockArgs(map: Map<String, Any?> = emptyMap()): McpToolArgs = McpToolArgs(map)
 
     @Test
-    fun `provider exposes all 5 recovery tools`() {
+    fun `provider exposes all 5 recovery tools and gates rewind with requiresAdmin`() {
         val tools = provider.tools()
         assertEquals(5, tools.size)
         val toolNames = tools.map { it.name }.toSet()
@@ -47,6 +47,9 @@ class RecoveryMcpToolProviderTest {
         assertTrue(toolNames.contains("recovery_verify_claim"))
         assertTrue(toolNames.contains("recovery_rewind"))
         assertTrue(toolNames.contains("recovery_list_checkpoints"))
+
+        val rewindTool = tools.single { it.name == "recovery_rewind" }
+        assertTrue(rewindTool.requiresAdmin, "recovery_rewind must require admin authorization")
     }
 
     @Test

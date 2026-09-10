@@ -14,6 +14,31 @@ import java.io.IOException
  */
 object SafePathResolver {
 
+    private val SAFE_IDENTIFIER_REGEX = Regex("^[a-zA-Z0-9_\\-\\.]+$")
+
+    /**
+     * Validates that an identifier (e.g., missionId, checkpointId) contains only safe characters
+     * and cannot perform path traversal.
+     *
+     * @throws IllegalArgumentException if the identifier is blank.
+     * @throws SecurityException if the identifier contains path separators, null bytes, '..', or illegal characters.
+     */
+    fun validateIdentifier(id: String, paramName: String = "identifier"): String {
+        val trimmed = id.trim()
+        if (trimmed.isEmpty()) {
+            throw IllegalArgumentException("$paramName must not be blank")
+        }
+        if (trimmed.contains("/") || trimmed.contains("\\") || trimmed.contains("..") || trimmed.contains("\u0000")) {
+            throw SecurityException("Path traversal sequence or path separator detected in $paramName: '$id'")
+        }
+        if (!SAFE_IDENTIFIER_REGEX.matches(trimmed)) {
+            throw SecurityException(
+                "Invalid characters in $paramName: '$id'. Only alphanumeric characters, '.', '_', and '-' are allowed.",
+            )
+        }
+        return trimmed
+    }
+
     /**
      * Resolves the canonical root path for [projectRoot].
      * @throws SecurityException or [IOException] if [projectRoot] does not exist or cannot be canonicalized.

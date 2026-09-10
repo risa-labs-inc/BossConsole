@@ -126,4 +126,30 @@ class WorkspaceCheckpointStorageTest {
         assertTrue(deleted)
         assertNull(storage.loadCheckpoint("m-del", "cp-del-1"))
     }
+
+    @Test
+    fun `storage operations reject malicious path traversal identifiers`() = runBlocking {
+        File(tempProjectRoot, "file.txt").writeText("content")
+
+        kotlin.test.assertFailsWith<SecurityException> {
+            storage.createCheckpoint(
+                missionId = "../../etc",
+                checkpointId = "cp-1",
+                label = "Attack",
+                projectRoot = tempProjectRoot
+            )
+        }
+
+        kotlin.test.assertFailsWith<SecurityException> {
+            storage.loadCheckpoint("m-valid", "../escape-cp")
+        }
+
+        kotlin.test.assertFailsWith<SecurityException> {
+            storage.listCheckpoints("foo/bar")
+        }
+
+        kotlin.test.assertFailsWith<SecurityException> {
+            storage.deleteCheckpoint("../mission", "cp-1")
+        }
+    }
 }

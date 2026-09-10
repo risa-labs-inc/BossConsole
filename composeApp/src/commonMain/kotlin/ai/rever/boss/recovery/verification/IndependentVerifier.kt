@@ -13,14 +13,16 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Independent ground-truth verifier.
- * Executes build and test commands against the live workspace with strict timeout boundaries
- * and produces structured verification evidence.
+ * Executes operator/agent-supplied build and test commands against the live workspace with strict
+ * timeout boundaries and process-tree termination, recording structured verification evidence.
+ *
+ * NOTE: Verification commands execute with host workspace authority and are not sandboxed.
  *
  * INVARIANTS:
  * - Agent statements are treated as unverified claims.
  * - Non-zero exit code produces [VerificationStatus.FAIL].
  * - Command timeout or crash produces [VerificationStatus.UNKNOWN] (never PASS).
- * - Process is forcefully terminated on timeout to prevent zombie processes.
+ * - Full descendant process tree is forcibly terminated on timeout to prevent zombie processes.
  */
 object IndependentVerifier {
 

@@ -105,4 +105,50 @@ class SafePathResolverTest {
             externalDir.deleteRecursively()
         }
     }
+
+    @Test
+    fun `validateIdentifier accepts valid alphanumeric identifiers`() {
+        assertEquals("mission-123", SafePathResolver.validateIdentifier("mission-123", "missionId"))
+        assertEquals("checkpoint_v1.0", SafePathResolver.validateIdentifier("checkpoint_v1.0", "checkpointId"))
+        assertEquals("default.run-2", SafePathResolver.validateIdentifier("default.run-2", "id"))
+    }
+
+    @Test
+    fun `validateIdentifier rejects blank or empty identifiers`() {
+        assertFailsWith<IllegalArgumentException> {
+            SafePathResolver.validateIdentifier("", "missionId")
+        }
+        assertFailsWith<IllegalArgumentException> {
+            SafePathResolver.validateIdentifier("   ", "checkpointId")
+        }
+    }
+
+    @Test
+    fun `validateIdentifier rejects path traversal sequences and separators`() {
+        assertFailsWith<SecurityException> {
+            SafePathResolver.validateIdentifier("../escape", "missionId")
+        }
+        assertFailsWith<SecurityException> {
+            SafePathResolver.validateIdentifier("dir/subdir", "missionId")
+        }
+        assertFailsWith<SecurityException> {
+            SafePathResolver.validateIdentifier("dir\\subdir", "checkpointId")
+        }
+        assertFailsWith<SecurityException> {
+            SafePathResolver.validateIdentifier("null\u0000byte", "missionId")
+        }
+    }
+
+    @Test
+    fun `validateIdentifier rejects illegal characters`() {
+        assertFailsWith<SecurityException> {
+            SafePathResolver.validateIdentifier("mission id with spaces", "missionId")
+        }
+        assertFailsWith<SecurityException> {
+            SafePathResolver.validateIdentifier("mission*id", "missionId")
+        }
+        assertFailsWith<SecurityException> {
+            SafePathResolver.validateIdentifier("mission;rm -rf", "missionId")
+        }
+    }
 }
