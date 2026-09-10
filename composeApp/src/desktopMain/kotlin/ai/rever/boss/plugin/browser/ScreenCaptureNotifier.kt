@@ -14,7 +14,40 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
-import java.util.concurrent.ConcurrentHashMap
+
+/**
+ * The capture picker has one visible request slot, so its native callback storage must have the
+ * same cardinality. [publish] returns the request it replaced so the caller can cancel it, while
+ * [take] refuses stale UI actions without disturbing the request currently on screen.
+ */
+internal class SingleCaptureRequestSlot<T> {
+    private var active: Pair<String, T>? = null
+
+    fun publish(
+        requestId: String,
+        value: T,
+        onPublished: () -> Unit,
+    ): T? =
+        synchronized(this) {
+            val superseded = active?.second
+            active = requestId to value
+            onPublished()
+            superseded
+        }
+
+    fun take(
+        requestId: String,
+        onTaken: () -> Unit,
+    ): T? =
+        synchronized(this) {
+            val current = active?.takeIf { it.first == requestId } ?: return@synchronized null
+            active = null
+            onTaken()
+            current.second
+        }
+
+    fun contains(requestId: String): Boolean = synchronized(this) { active?.first == requestId }
+}
 
 /**
  * Event bus for screen capture requests.
@@ -65,7 +98,7 @@ object ScreenCaptureNotifier {
     private val _captureRequest = MutableStateFlow<CaptureRequest?>(null)
     val captureRequest: StateFlow<CaptureRequest?> = _captureRequest.asStateFlow()
 
-    private val pendingRequests = ConcurrentHashMap<String, PendingRequest>()
+    private val pendingRequest = SingleCaptureRequestSlot<PendingRequest>()
 
     // --- Screen-recording permission rationale (shown before the macOS prompt) ---
     private val rationaleSlot =
@@ -108,8 +141,6 @@ object ScreenCaptureNotifier {
         sources: CaptureSources,
         tell: StartCaptureSessionCallback.Action,
     ) {
-        pendingRequests[requestId] = PendingRequest(tell, sources)
-
         val totalScreens = sources.screens().size
         val screens =
             sources.screens().mapIndexed { index, screen ->
@@ -195,13 +226,25 @@ object ScreenCaptureNotifier {
             ),
         )
 
-        _captureRequest.value =
+        val request =
             CaptureRequest(
                 requestId = requestId,
                 screens = screens,
                 windows = windows,
                 browsers = browsers,
             )
+        val superseded =
+            pendingRequest.publish(requestId, PendingRequest(tell, sources)) {
+                _captureRequest.value = request
+            }
+        if (superseded != null) {
+            logger.warn(
+                LogCategory.BROWSER,
+                "A newer screen-capture request replaced the open picker",
+                mapOf("requestId" to requestId),
+            )
+            superseded.tell.cancel()
+        }
     }
 
     /**
@@ -212,7 +255,7 @@ object ScreenCaptureNotifier {
         source: CaptureSourceItem,
         audioMode: AudioCaptureMode = AudioCaptureMode.CAPTURE,
     ) {
-        val pending = pendingRequests.remove(requestId)
+        val pending = pendingRequest.take(requestId) { _captureRequest.value = null }
         if (pending != null) {
             logger.debug(
                 LogCategory.BROWSER,
@@ -257,23 +300,21 @@ object ScreenCaptureNotifier {
         } else {
             logger.warn(LogCategory.BROWSER, "No pending request for requestId", mapOf("requestId" to requestId))
         }
-        _captureRequest.value = null
     }
 
     /**
      * Called by UI when user cancels the capture request.
      */
     fun cancel(requestId: String) {
-        val pending = pendingRequests.remove(requestId)
+        val pending = pendingRequest.take(requestId) { _captureRequest.value = null }
         if (pending != null) {
             logger.debug(LogCategory.BROWSER, "User cancelled capture request")
             pending.tell.cancel()
         }
-        _captureRequest.value = null
     }
 
     /**
      * Check if there's a pending request
      */
-    fun hasPendingRequest(requestId: String): Boolean = pendingRequests.containsKey(requestId)
+    fun hasPendingRequest(requestId: String): Boolean = pendingRequest.contains(requestId)
 }
