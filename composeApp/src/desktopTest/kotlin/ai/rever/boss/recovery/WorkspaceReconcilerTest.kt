@@ -170,4 +170,69 @@ class WorkspaceReconcilerTest {
         assertIs<RecoveryResult.Success>(forceResult)
         assertTrue(forceResult.isSuccessful)
     }
+
+    @Test
+    fun `rewind is idempotent and safely retries after resolving a partial failure`() = runBlocking {
+        // Step 1: Baseline files
+        val fileA = File(tempProjectRoot, "src/A.kt").also {
+            it.parentFile.mkdirs()
+            it.writeText("A v1")
+        }
+        val fileB = File(tempProjectRoot, "src/B.kt").also {
+            it.writeText("B v1")
+        }
+        val baseline = WorkspaceBaselineCapturer.captureBaseline("m-idemp", tempProjectRoot)
+
+        // Step 2: Checkpoint 1
+        fileA.writeText("A working cp1")
+        fileB.writeText("B working cp1")
+        val cp1 = storage.createCheckpoint("m-idemp", "cp-1", "Working CP", tempProjectRoot)
+
+        // Step 3: Mission mutates A, B and creates untracked C
+        fileA.writeText("A broken code")
+        fileB.writeText("B broken code")
+        val fileC = File(tempProjectRoot, "src/C.kt").also { it.writeText("C untracked junk") }
+
+        // Step 4: Induce a partial failure by temporarily hiding B's snapshot blob
+        val snapshotFilesDir = storage.getSnapshotFilesDir("m-idemp", "cp-1")
+        val blobB = File(snapshotFilesDir, "src/B.kt")
+        val blobBBackup = File(snapshotFilesDir, "src/B.kt.bak")
+        assertTrue(blobB.renameTo(blobBBackup))
+
+        // Step 5: First rewind attempt -> should result in PartialFailure
+        val partialResult = WorkspaceReconciler.rewind(
+            baseline = baseline,
+            targetCheckpoint = cp1,
+            projectRoot = tempProjectRoot,
+            storage = storage
+        )
+
+        assertIs<RecoveryResult.PartialFailure>(partialResult)
+        assertEquals("cp-1", partialResult.checkpointId)
+        assertTrue(partialResult.restoredFiles.contains("src/A.kt"))
+        assertTrue(partialResult.failedFiles.containsKey("src/B.kt"))
+        assertFalse(partialResult.isSuccessful)
+
+        // Verify partial state: A is restored, C (junk) is removed, B is still broken
+        assertEquals("A working cp1", fileA.readText())
+        assertFalse(fileC.exists())
+        assertEquals("B broken code", fileB.readText())
+
+        // Step 6: Fix the issue (restore B's snapshot blob)
+        assertTrue(blobBBackup.renameTo(blobB))
+
+        // Step 7: Retry rewind -> should succeed idempotently
+        val retryResult = WorkspaceReconciler.rewind(
+            baseline = baseline,
+            targetCheckpoint = cp1,
+            projectRoot = tempProjectRoot,
+            storage = storage
+        )
+
+        assertIs<RecoveryResult.Success>(retryResult)
+        assertTrue(retryResult.isSuccessful)
+        assertEquals("A working cp1", fileA.readText())
+        assertEquals("B working cp1", fileB.readText())
+        assertFalse(fileC.exists())
+    }
 }
