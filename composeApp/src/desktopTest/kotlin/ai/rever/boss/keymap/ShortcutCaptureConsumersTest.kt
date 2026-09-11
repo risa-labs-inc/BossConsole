@@ -7,6 +7,7 @@ import ai.rever.boss.keymap.model.KeyStroke
 import ai.rever.boss.keymap.model.KeymapSettings
 import ai.rever.boss.keymap.model.formatShortcutLabel
 import ai.rever.boss.keymap.model.storedKeyName
+import ai.rever.boss.utils.SystemUtils
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyShortcut
 import kotlinx.coroutines.test.runTest
@@ -47,10 +48,52 @@ class ShortcutCaptureConsumersTest {
     }
 
     @Test
-    fun `native menu accelerator resolves a legacy numeric key`() {
-        val binding = KeyBinding(actionId = "window.new", key = Key.N.keyCode.toString(), modifiers = listOf("Cmd"))
+    fun `native menu accelerator maps a Cmd binding to the platform primary modifier`() {
+        val binding =
+            KeyBinding(
+                actionId = "window.new",
+                key = Key.N.keyCode.toString(),
+                modifiers = listOf("Cmd"),
+            )
         val bridge = MenuShortcutBridge(KeymapSettings(shortcuts = mapOf(binding.actionId to binding)))
-        assertEquals(KeyShortcut(Key.N, meta = true), bridge.getKeyShortcut(binding.actionId))
+        val shortcut = bridge.getKeyShortcut(binding.actionId)
+
+        if (SystemUtils.isMacOS) {
+            assertEquals(KeyShortcut(Key.N, meta = true), shortcut)
+        } else {
+            assertEquals(KeyShortcut(Key.N, ctrl = true), shortcut)
+        }
+    }
+
+    @Test
+    fun `native menu accelerator keeps an explicit Ctrl binding on Ctrl on every platform`() {
+        val binding =
+            KeyBinding(
+                actionId = "window.close",
+                key = "W",
+                modifiers = listOf("Ctrl"),
+            )
+        val bridge = MenuShortcutBridge(KeymapSettings(shortcuts = mapOf(binding.actionId to binding)))
+        val shortcut = bridge.getKeyShortcut(binding.actionId)
+        assertEquals(KeyShortcut(Key.W, ctrl = true), shortcut)
+    }
+
+    @Test
+    fun `native menu accelerator carries Shift and Alt through the platform mapping`() {
+        val binding =
+            KeyBinding(
+                actionId = "window.new",
+                key = "N",
+                modifiers = listOf("Cmd", "Shift", "Alt"),
+            )
+        val bridge = MenuShortcutBridge(KeymapSettings(shortcuts = mapOf(binding.actionId to binding)))
+        val shortcut = bridge.getKeyShortcut(binding.actionId)
+
+        if (SystemUtils.isMacOS) {
+            assertEquals(KeyShortcut(Key.N, meta = true, shift = true, alt = true), shortcut)
+        } else {
+            assertEquals(KeyShortcut(Key.N, ctrl = true, shift = true, alt = true), shortcut)
+        }
     }
 
     @Test

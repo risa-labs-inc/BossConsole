@@ -5,6 +5,7 @@ import ai.rever.boss.keymap.model.KeymapActions
 import ai.rever.boss.keymap.model.KeymapSettings
 import ai.rever.boss.keymap.model.canonicalKeyName
 import ai.rever.boss.keymap.model.canonicalModifiers
+import ai.rever.boss.utils.SystemUtils
 import androidx.compose.ui.input.key.Key
 import java.awt.event.KeyEvent as AwtKeyEvent
 
@@ -67,10 +68,22 @@ class MenuShortcutBridge(
         val hasShift = "shift" in modifiers
         val hasAlt = "alt" in modifiers
 
+        // Platform-aware modifier mapping: the rest of the keymap system treats "Cmd"
+        // as the primary modifier (Meta on macOS, Ctrl on Windows/Linux). Compose
+        // Desktop's KeyShortcut uses `meta` for the Super/Windows key, so a "Cmd"
+        // binding on non-mac would incorrectly require the Super key unless we swap it
+        // to `ctrl`. Note that we do *not* also map a literal "Ctrl" binding to
+        // `meta` on non-mac: the native menu accelerator and its display string both
+        // speak in the same physical key, while the AWT/Compose interceptors swap the
+        // two to give non-mac users a way to trigger an explicit Ctrl binding.
+        val isMacOS = SystemUtils.isMacOS
+        val effectiveCtrl = if (isMacOS) hasCtrl else (hasCtrl || hasCmd)
+        val effectiveMeta = if (isMacOS) hasCmd else false
+
         return androidx.compose.ui.input.key.KeyShortcut(
             key = key,
-            meta = hasCmd,
-            ctrl = hasCtrl,
+            meta = effectiveMeta,
+            ctrl = effectiveCtrl,
             shift = hasShift,
             alt = hasAlt,
         )
