@@ -2,7 +2,7 @@ name: Authenticated IPC boundaries
 
 on:
   push:
-    branches: ['fix/security-authenticated-ipc']
+    branches: ['fix/security-authenticated-ipc', 'fix/filesystem-service-authorization']
   pull_request:
     branches: [main, dev]
     paths:
