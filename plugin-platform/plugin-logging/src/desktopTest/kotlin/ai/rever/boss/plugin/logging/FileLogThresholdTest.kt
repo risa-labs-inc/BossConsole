@@ -38,6 +38,9 @@ class FileLogThresholdTest {
         assertFalse(BossLogger.writesToFile(LogLevel.INFO))
         assertTrue(BossLogger.writesToFile(LogLevel.WARN))
         assertTrue(BossLogger.writesToFile(LogLevel.ERROR))
+        // OFF is above any threshold, so only the explicit OFF clause in writesToFile can
+        // keep it out; this pins the agreement with log()'s console OFF no-op.
+        assertFalse(BossLogger.writesToFile(LogLevel.OFF))
     }
 
     @Test
@@ -64,19 +67,34 @@ class FileLogThresholdTest {
         // says. If the gate were moved above the early return, this DEBUG entry would be queued
         // for a file that accepts DEBUG and above - the exact inversion the fileMinLevel KDoc
         // and AGENTS.md promise cannot happen.
+        val debugMessage = "threshold-probe: below the global level"
+        val errorMessage = "threshold-probe: at the global level"
         val previousLevel = BossLogger.globalLevel
         try {
             BossLogger.setGlobalLevel(LogLevel.INFO)
             BossLogger.enableFileLogging(File(dir, "boss.log"), LogLevel.DEBUG)
+            val logger = ComponentLogger("threshold-probe")
+            logger.debug(LogCategory.SYSTEM, debugMessage)
+            // Positive control: proves the writer is alive and would have written the DEBUG
+            // entry too had the gate been misplaced. Without it, a writer that never works at
+            // all would make the absence assertion below pass for the wrong reason.
+            logger.error(LogCategory.SYSTEM, errorMessage)
 
-            ComponentLogger("threshold-probe").debug(LogCategory.SYSTEM, "below the global level")
-
-            // The writer is async; had the entry been queued, it would land within this window.
-            // With the gate correctly placed nothing is ever sent, so the file never appears.
-            Thread.sleep(500)
             val file = File(dir, "boss.log")
+            val deadline = System.currentTimeMillis() + 5_000
+            while (System.currentTimeMillis() < deadline) {
+                if (file.length() > 0 && file.readText().contains(errorMessage)) break
+                Thread.sleep(100)
+            }
+            assertTrue(
+                file.length() > 0 && file.readText().contains(errorMessage),
+                "the ERROR control entry never reached the file; the writer is not working, " +
+                    "so the narrow-only assertion below would pass vacuously",
+            )
+            // The channel is FIFO, so by the time the ERROR has landed any DEBUG entry that
+            // was sent at all has already been written too.
             assertFalse(
-                file.exists() && file.length() > 0,
+                file.readText().contains(debugMessage),
                 "an entry below the global level reached the file",
             )
         } finally {
