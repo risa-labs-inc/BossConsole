@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import java.io.IOException
+import java.nio.file.AccessDeniedException
 import java.nio.file.FileSystems
 import java.nio.file.FileVisitResult
 import java.nio.file.Files
@@ -131,8 +132,8 @@ internal class FileWatchRegistry {
                             enforceFileSystemLimit(keys.size < 1024, "File watch directory limit reached")
                             try {
                                 keys.add(entry.register(service, ENTRY_CREATE, ENTRY_MODIFY, ENTRY_DELETE))
-                            } catch (e: NoSuchFileException) {
-                                if (entry == root) throw e
+                            } catch (e: IOException) {
+                                if (!disappeared(entry, e)) throw e
                             }
                         }
                         return FileVisitResult.CONTINUE
@@ -143,7 +144,7 @@ internal class FileWatchRegistry {
                         exc: IOException,
                     ): FileVisitResult {
                         context.ensureActive()
-                        if (exc is NoSuchFileException && file != root) return FileVisitResult.CONTINUE
+                        if (disappeared(file, exc)) return FileVisitResult.CONTINUE
                         throw exc
                     }
 
@@ -158,6 +159,45 @@ internal class FileWatchRegistry {
                     ) = visit(file, attrs)
                 },
             )
+        }
+
+        private fun disappeared(
+            path: Path,
+            failure: IOException,
+        ): Boolean =
+            path != root &&
+                when (failure) {
+                    is NoSuchFileException -> {
+                        true
+                    }
+
+                    is AccessDeniedException -> {
+                        System.getProperty("os.name").startsWith("Windows") && confirmDeletion(path)
+                    }
+
+                    else -> {
+                        false
+                    }
+                }
+
+        private fun confirmDeletion(path: Path): Boolean {
+            // Windows can deny an open while deletion is pending. Only suppress the failure
+            // after an attribute read confirms absence; persistent permission failures still surface.
+            repeat(5) {
+                context.ensureActive()
+                Thread.sleep(10)
+                val absent =
+                    try {
+                        Files.readAttributes(path, BasicFileAttributes::class.java, NOFOLLOW_LINKS)
+                        false
+                    } catch (_: NoSuchFileException) {
+                        true
+                    } catch (_: AccessDeniedException) {
+                        null // Allow a bounded interval for the pending deletion to finish.
+                    }
+                if (absent != null) return absent
+            }
+            return false
         }
     }
 }
