@@ -8,6 +8,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -15,6 +16,16 @@ import kotlin.test.assertTrue
 
 /** Exercises policy precedence, real approval suspension and audit cancellation at the registry boundary. */
 class McpGovernedInvocationTest {
+    private companion object {
+        /**
+         * How long a test will wait for an approval request that should already be there.
+         *
+         * Generous, because it is a deadlock bound and not a timing assertion: the request is
+         * enqueued before `invoke` suspends, so a passing run reaches it in microseconds.
+         */
+        const val APPROVAL_ARRIVAL_TIMEOUT_MS = 10_000L
+    }
+
     private fun provider(
         id: String,
         vararg defs: McpToolDefinition,
@@ -28,12 +39,17 @@ class McpGovernedInvocationTest {
         name: String,
         requiredPermissions: List<String> = emptyList(),
         requiresAdmin: Boolean = false,
+        readOnly: Boolean = true,
         handler: McpToolHandler = McpToolHandler { McpToolResult("ok:$name") },
-    ) = McpToolDefinition(name = name, description = "test tool $name", handler = handler)
-        .apply {
-            this.requiredPermissions = requiredPermissions
-            this.requiresAdmin = requiresAdmin
-        }
+    ) = McpToolDefinition(
+        name = name,
+        description = "test tool $name",
+        readOnly = readOnly,
+        handler = handler,
+    ).apply {
+        this.requiredPermissions = requiredPermissions
+        this.requiresAdmin = requiresAdmin
+    }
 
     @Test
     fun `invoke respects DENY policy and records rejection in ledger`() =
@@ -358,6 +374,108 @@ class McpGovernedInvocationTest {
             assertEquals(0, callCount)
             assertEquals(
                 McpApprovalDisposition.POLICY_DENIED,
+                ledger.recentOperations.value
+                    .first()
+                    .approvalDisposition,
+            )
+        }
+
+    /**
+     * The wiring, not the predicate.
+     *
+     * `McpDeclaredReadOnlyPolicyTest` pins what `policyFor` answers when it is handed a
+     * declaration. Nothing pinned that `invoke` actually hands it one: every case there calls
+     * `policyFor` / `isMutating` / `resolveAction` directly, so deleting the
+     * `tool.definition.readOnly` argument at the `policyFor` call in `invoke` left that whole
+     * suite green while restoring the bug. This pair fails in that state.
+     *
+     * `git_push` is the fixture because it is invisible to both name tables: absent from
+     * `McpMutatingToolCatalog.KNOWN_MUTATING_TOOLS`, matching none of its mutating suffixes, and
+     * in no `DefaultMcpRiskEvaluator` branch that returns HIGH or CRITICAL. On the name alone it
+     * resolves to `defaultReadOnlyAction`, which is ALLOW.
+     */
+    @Test
+    fun `a declared-mutating tool reaches the operator though its name is unclassified`() =
+        runBlocking {
+            var handlerCalled = false
+            val tool =
+                echoTool(
+                    name = "git_push",
+                    readOnly = false,
+                    handler =
+                        McpToolHandler {
+                            handlerCalled = true
+                            McpToolResult("pushed")
+                        },
+                )
+            val approvalBus = McpApprovalBus(defaultTimeoutMs = 5000L)
+            val ledger = McpOperationLedger(ledgerFile = null)
+            val core =
+                McpToolRegistryCore(
+                    disabledFile = null,
+                    approvalBus = approvalBus,
+                    ledger = ledger,
+                )
+            core.registerProvider(provider("p1", tool))
+
+            val deferred = async { core.invoke("git_push", "{}") }
+
+            // Reaching the bus at all is the assertion: on the name alone this call would have
+            // executed immediately and no request would ever arrive here.
+            //
+            // Bounded, because the failure mode is silence rather than a wrong value. With the
+            // declaration not passed through, nothing is ever enqueued and this await would hang
+            // the suite instead of failing it - which is what it did when the mutation was run.
+            val req =
+                withTimeout(APPROVAL_ARRIVAL_TIMEOUT_MS) {
+                    approvalBus.pendingList.first { it.isNotEmpty() }.first()
+                }
+            assertEquals("git_push", req.toolName)
+            assertFalse(handlerCalled, "the handler must not run while the operator is being asked")
+            assertFalse(req.declaredReadOnly, "the dialog warns from the declaration, so it must carry it")
+
+            approvalBus.approve(req.id, trustForSession = false)
+            assertFalse(deferred.await().isError)
+            assertTrue(handlerCalled)
+            assertEquals(
+                McpApprovalDisposition.APPROVED_ONCE,
+                ledger.recentOperations.value
+                    .first()
+                    .approvalDisposition,
+            )
+        }
+
+    /**
+     * The control for the case above, so neither can pass for the wrong reason.
+     *
+     * Same tool, same registry, declaration omitted. `readOnly` defaults to `true` in the api, and
+     * a declared `true` is deliberately not believed, so this falls back to the name tables and is
+     * auto-allowed exactly as it was before the change. If this ever starts asking, the fix has
+     * stopped being the narrow one it claims to be.
+     */
+    @Test
+    fun `the same tool is auto-allowed when it declares nothing`() =
+        runBlocking {
+            var handlerCalled = false
+            val tool =
+                echoTool(
+                    name = "git_push",
+                    handler =
+                        McpToolHandler {
+                            handlerCalled = true
+                            McpToolResult("pushed")
+                        },
+                )
+            val ledger = McpOperationLedger(ledgerFile = null)
+            val core = McpToolRegistryCore(disabledFile = null, ledger = ledger)
+            core.registerProvider(provider("p1", tool))
+
+            val res = core.invoke("git_push", "{}")
+
+            assertFalse(res.isError)
+            assertTrue(handlerCalled, "no operator was asked, so the handler ran straight away")
+            assertEquals(
+                McpApprovalDisposition.AUTO_ALLOWED,
                 ledger.recentOperations.value
                     .first()
                     .approvalDisposition,
