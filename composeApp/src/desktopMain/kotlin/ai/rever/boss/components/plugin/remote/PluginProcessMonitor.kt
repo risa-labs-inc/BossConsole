@@ -288,15 +288,22 @@ class PluginProcessMonitor internal constructor(
                 completeRestart(request)
             }
         } catch (e: CancellationException) {
-            // A cancellation leaking out of the action is a failed attempt whenever this
-            // monitor is still alive: record it so the plugin goes CRASHED/FAILED and the
-            // next tick retries (or the terminal action runs), instead of sitting in
-            // RESTARTING, which checkPluginHealth treats as a no-op. A monitor whose own
-            // scope is cancelling skips this - dispose() clears the states.
-            if (currentCoroutineContext().isActive && isMonitored(pluginId)) {
-                recordRestartFailure(request, e)
+            if (currentCoroutineContext().isActive) {
+                // Our coroutine was not cancelled, so this is the restart action's own
+                // timeout (a withTimeout leak) surfacing: a plugin failure, not our
+                // cancellation. Record it so the plugin goes CRASHED/FAILED and the next
+                // tick retries (or the terminal action runs), instead of sitting in
+                // RESTARTING, which checkPluginHealth treats as a no-op - and let the tick
+                // continue instead of aborting the remaining plugins and surfacing a
+                // spurious CancellationException to restartPlugin callers.
+                if (isMonitored(pluginId)) {
+                    recordRestartFailure(request, e)
+                }
+            } else {
+                // A genuine cancellation of this monitor's scope: dispose() clears the
+                // states, so there is nothing to record - propagate it.
+                throw e
             }
-            throw e
         } catch (e: Exception) {
             if (isMonitored(pluginId)) {
                 recordRestartFailure(request, e)
@@ -337,10 +344,10 @@ class PluginProcessMonitor internal constructor(
                 PluginProcessState.CRASHED
             }
 
-        if (failureState == PluginProcessState.FAILED) {
-            runTerminalFailureAction(pluginId)
-        }
-
+        // Write the state first, unconditionally: the write is not suspending, so a
+        // cancellation leaking out of the terminal cleanup below cannot skip the
+        // CRASHED/FAILED transition and strand the plugin in RESTARTING. updateState
+        // no-ops for an unregistered (or disposed) plugin.
         updateState(
             pluginId,
             latest.copy(
@@ -350,6 +357,10 @@ class PluginProcessMonitor internal constructor(
                 connected = false,
             ),
         )
+
+        if (failureState == PluginProcessState.FAILED && currentCoroutineContext().isActive) {
+            runTerminalFailureAction(pluginId)
+        }
         logger.error(
             "Failed to restart plugin: id={}, attempt={}/{}",
             pluginId,

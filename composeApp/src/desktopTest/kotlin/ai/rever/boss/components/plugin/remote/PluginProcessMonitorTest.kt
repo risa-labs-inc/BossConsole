@@ -309,14 +309,14 @@ class PluginProcessMonitorTest {
                     backend = backend,
                     checkIntervalMs = 10,
                 )
-            var restartAttempts = 0
+            val restartAttempts = AtomicInteger(0)
 
             try {
                 monitor.monitor(
                     pluginId = "test-plugin",
                     displayName = "Test Plugin",
                     restartAction = {
-                        restartAttempts++
+                        restartAttempts.incrementAndGet()
                         backend.alive = true
                         Result.success(Unit)
                     },
@@ -327,13 +327,13 @@ class PluginProcessMonitorTest {
                     while (
                         monitor.healthStates.value["test-plugin"]?.processState !=
                         PluginProcessState.RUNNING ||
-                        restartAttempts != 1
+                        restartAttempts.get() != 1
                     ) {
                         yield()
                     }
                 }
 
-                assertEquals(1, restartAttempts)
+                assertEquals(1, restartAttempts.get())
                 assertEquals(
                     PluginProcessState.RUNNING,
                     monitor.healthStates.value["test-plugin"]?.processState,
