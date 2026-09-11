@@ -319,7 +319,7 @@ private class VideoFullscreenConfirmationHandler(
         tracker: VideoFullscreenTracker,
         geometryFullscreen: () -> Boolean,
         useOverlay: () -> Unit,
-    ) {
+    ): VideoFullscreenConfirmationDecision {
         val trackingAvailable = tracker.trackingAvailable
         val decision =
             VideoFullscreenConfirmationDecision.decide(
@@ -349,6 +349,7 @@ private class VideoFullscreenConfirmationHandler(
                 useOverlay()
             }
         }
+        return decision
     }
 }
 
@@ -514,8 +515,10 @@ private class FullscreenOverlayCoordinator(
  * Exactly one browser fullscreen session is supported process-wide; window and browser IDs
  * scope ownership and rejection decisions for that single session.
  */
+@Suppress("LargeClass")
 object FullscreenBrowserWindow {
     private val logger = BossLogger.forComponent("FullscreenBrowserWindow")
+    private val fullscreenFocusCoordinator = FullscreenFocusCoordinator()
 
     // Fullscreen lifecycle state is EDT-confined. Public entry/exit methods
     // marshal to the EDT before reading or mutating these fields.
@@ -726,6 +729,47 @@ object FullscreenBrowserWindow {
         frame: JFrame,
     ): Boolean = isCurrentSession(expectedEpoch, browser) && fullscreenFrame === frame
 
+    @Suppress("TooGenericExceptionCaught")
+    private fun requestFullscreenBrowserFocus(
+        frame: JFrame,
+        browserView: BrowserView,
+        browser: Browser,
+        expectedEpoch: Long,
+        reason: String,
+    ) {
+        fullscreenFocusCoordinator.requestFocus(
+            isCurrent = {
+                hasReachedFullscreen &&
+                    !isExiting &&
+                    isCurrentFrameSession(expectedEpoch, browser, frame) &&
+                    currentBrowserView === browserView &&
+                    frame.isShowing
+            },
+            attemptFocus = {
+                try {
+                    frame.toFront()
+                    frame.requestFocus()
+                    browserView.requestFocusInWindow()
+                } catch (e: Exception) {
+                    logger.warn(
+                        LogCategory.BROWSER,
+                        "Fullscreen browser focus attempt failed",
+                        mapOf("reason" to reason),
+                        error = e,
+                    )
+                    false
+                }
+            },
+            onExhausted = {
+                logger.warn(
+                    LogCategory.BROWSER,
+                    "Fullscreen browser focus retries exhausted",
+                    mapOf("reason" to reason),
+                )
+            },
+        )
+    }
+
     private fun runFullscreenTransition(
         frame: JFrame,
         browser: Browser,
@@ -798,11 +842,14 @@ object FullscreenBrowserWindow {
                 frame.setBounds(screenBounds.x, screenBounds.y, screenBounds.width, screenBounds.height)
                 frame.isVisible = true
                 hasReachedFullscreen = true
+                requestFullscreenBrowserFocus(
+                    frame = frame,
+                    browserView = browserView,
+                    browser = browser,
+                    expectedEpoch = expectedEpoch,
+                    reason = "Windows/Linux fullscreen entry",
+                )
             }
-
-            frame.toFront()
-            frame.requestFocus()
-            browserView.requestFocusInWindow()
 
             logger.info(LogCategory.BROWSER, "Fullscreen window opened", mapOf("tabId" to tabId, "isMacOS" to isMacOS))
         } catch (e: Exception) {
@@ -829,6 +876,22 @@ object FullscreenBrowserWindow {
             object : WindowAdapter() {
                 override fun windowClosing(e: WindowEvent?) {
                     requestPageExit()
+                }
+            },
+        )
+
+        frame.addWindowFocusListener(
+            object : WindowAdapter() {
+                override fun windowGainedFocus(event: WindowEvent?) {
+                    currentBrowserView?.let { browserView ->
+                        requestFullscreenBrowserFocus(
+                            frame = frame,
+                            browserView = browserView,
+                            browser = browser,
+                            expectedEpoch = expectedEpoch,
+                            reason = "fullscreen window regained focus",
+                        )
+                    }
                 }
             },
         )
@@ -909,7 +972,9 @@ object FullscreenBrowserWindow {
                         frame = frame,
                         browser = browser,
                         bounds = displayBounds(frame),
-                        watchOwnerExit = currentOwnerWindowId?.let(::isRegisteredWindowFullscreen) == true,
+                        watchOwnerExit =
+                            currentOwnerWindowId
+                                ?.let(::isRegisteredWindowFullscreen) == true,
                         expectedEpoch = expectedEpoch,
                     )
                     return@runFullscreenTransition
@@ -923,19 +988,34 @@ object FullscreenBrowserWindow {
                     )
                 Timer(confirmationDelayMs) {
                     runFullscreenTransition(frame, browser, expectedEpoch) {
-                        videoFullscreenConfirmationHandler.handle(
-                            tracker = videoFullscreenTracker,
-                            geometryFullscreen = { isWindowInFullscreen(frame) },
-                            useOverlay = {
-                                showBorderlessOverlay(
+                        val decision =
+                            videoFullscreenConfirmationHandler.handle(
+                                tracker = videoFullscreenTracker,
+                                geometryFullscreen = { isWindowInFullscreen(frame) },
+                                useOverlay = {
+                                    showBorderlessOverlay(
+                                        frame = frame,
+                                        browser = browser,
+                                        bounds = displayBounds(frame),
+                                        watchOwnerExit =
+                                            currentOwnerWindowId
+                                                ?.let(::isRegisteredWindowFullscreen) == true,
+                                        expectedEpoch = expectedEpoch,
+                                    )
+                                },
+                            )
+
+                        if (decision == VideoFullscreenConfirmationDecision.CONFIRMED) {
+                            currentBrowserView?.let { browserView ->
+                                requestFullscreenBrowserFocus(
                                     frame = frame,
+                                    browserView = browserView,
                                     browser = browser,
-                                    bounds = displayBounds(frame),
-                                    watchOwnerExit = currentOwnerWindowId?.let(::isRegisteredWindowFullscreen) == true,
                                     expectedEpoch = expectedEpoch,
+                                    reason = "macOS fullscreen transition completed",
                                 )
-                            },
-                        )
+                            }
+                        }
                     }
                 }.apply {
                     isRepeats = false
@@ -973,8 +1053,13 @@ object FullscreenBrowserWindow {
         overlay.frame.extendedState = JFrame.NORMAL
         overlay.frame.setBounds(bounds)
         overlay.frame.isVisible = true
-        overlay.frame.toFront()
-        overlay.browserView.requestFocusInWindow()
+        requestFullscreenBrowserFocus(
+            frame = overlay.frame,
+            browserView = overlay.browserView,
+            browser = browser,
+            expectedEpoch = expectedEpoch,
+            reason = "borderless fullscreen overlay entry",
+        )
         overlayCoordinator.installFocusBehavior(overlay.frame, currentOwnerWindowId)
         if (watchOwnerExit) {
             overlayCoordinator.watchOwnerExit(currentOwnerWindowId, expectedEpoch)
@@ -1080,6 +1165,7 @@ object FullscreenBrowserWindow {
      * Reset all state variables.
      */
     private fun resetState(): Long {
+        fullscreenFocusCoordinator.cancel()
         lifecycleEpoch++
         overlayCoordinator.clear()
         videoFullscreenTracker.clear()
