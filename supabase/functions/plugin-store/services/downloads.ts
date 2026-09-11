@@ -27,12 +27,18 @@ export async function recordDownload(
 }
 
 /**
- * Hash an IP address for privacy-preserving analytics
+ * Hash analytics input with an independently provisioned secret.
+ * Missing configuration omits this optional field without preventing downloads.
  */
-export async function hashIp(ip: string): Promise<string> {
+export async function hashIp(ip: string): Promise<string | null> {
+  const secret = Deno.env.get('PLUGIN_DOWNLOAD_IP_HASH_KEY')
+  if (!secret || secret.length < 32 || secret.length > 256 || /\s/.test(secret)) return null
+  if (!ip || ip.length > 1024) return null
   const encoder = new TextEncoder()
-  const data = encoder.encode(ip + Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')?.substring(0, 16))
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data)
+  const key = await crypto.subtle.importKey(
+    'raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+  )
+  const hashBuffer = await crypto.subtle.sign('HMAC', key, encoder.encode(ip))
   const hashArray = Array.from(new Uint8Array(hashBuffer))
   return hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
 }
