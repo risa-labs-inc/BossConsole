@@ -56,4 +56,31 @@ class FileLogThresholdTest {
 
         assertTrue(BossLogger.writesToFile(LogLevel.DEBUG), "a stale threshold survived disable")
     }
+
+    @Test
+    fun `a file threshold can only narrow, never widen past the global level`() {
+        // The file gate in log() sits BELOW the early return on the global level, so an entry
+        // the console never sees must never reach the file, whatever the file's own threshold
+        // says. If the gate were moved above the early return, this DEBUG entry would be queued
+        // for a file that accepts DEBUG and above - the exact inversion the fileMinLevel KDoc
+        // and AGENTS.md promise cannot happen.
+        val previousLevel = BossLogger.globalLevel
+        try {
+            BossLogger.setGlobalLevel(LogLevel.INFO)
+            BossLogger.enableFileLogging(File(dir, "boss.log"), LogLevel.DEBUG)
+
+            ComponentLogger("threshold-probe").debug(LogCategory.SYSTEM, "below the global level")
+
+            // The writer is async; had the entry been queued, it would land within this window.
+            // With the gate correctly placed nothing is ever sent, so the file never appears.
+            Thread.sleep(500)
+            val file = File(dir, "boss.log")
+            assertFalse(
+                file.exists() && file.length() > 0,
+                "an entry below the global level reached the file",
+            )
+        } finally {
+            BossLogger.setGlobalLevel(previousLevel)
+        }
+    }
 }

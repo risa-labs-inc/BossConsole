@@ -276,9 +276,11 @@ fun main(args: Array<String>) {
     // the flag audit is the line most worth being able to turn up.
     //
     // Safe this early, checked rather than assumed: configureFromEnvironment only reads env and
-    // system properties, and initialize() only registers a shutdown hook. Neither resolves a path,
-    // so setupNativeLibraryPaths reassigning java.io.tmpdir below cannot affect them - file
-    // logging is opt-in through configure() with an explicit path.
+    // system properties (and, when BOSS_LOG_FILE is set, creates the log file's parent
+    // directory), and initialize() only registers a shutdown hook. A relative BOSS_LOG_FILE
+    // resolves against the working directory, not java.io.tmpdir, so setupNativeLibraryPaths
+    // reassigning java.io.tmpdir below cannot affect it - file logging is opt-in through the
+    // environment (BOSS_LOG_FILE / boss.log.file), not through configure().
     BossLogger.configureFromEnvironment()
     BossLogger.initialize() // Register shutdown hook for log flushing
 

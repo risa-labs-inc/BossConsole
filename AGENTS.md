@@ -653,8 +653,8 @@ logger.error(LogCategory.NETWORK, "Request failed", error = exception)
 
 **Log file**: off unless asked for. `BOSS_LOG_FILE=/path/to/boss.log` (or `boss.log.file`) turns on a
 size-rotated file (10 MB, five backups) that receives entries at `BOSS_LOG_FILE_LEVEL` (or
-`boss.log.file.level`) and above, default ERROR. `BOSS_LOG_FILE=off` disables it even if a default is
-ever switched on. The file threshold is applied after the console level, so it can only narrow: with the
+`boss.log.file.level`) and above, default ERROR. `BOSS_LOG_FILE=off` or a level of `OFF` disables it even if a
+default is ever switched on. The file threshold is applied after the console level, so it can only narrow: with the
 console at INFO and the file at DEBUG, the file gets INFO. Blank is unset at every step, an
 unrecognised level falls through to the next source rather than to INFO, and entries reach the file
 through the same `LogSanitizer` path as the console. `BossLogger.configureFromEnvironment()` in

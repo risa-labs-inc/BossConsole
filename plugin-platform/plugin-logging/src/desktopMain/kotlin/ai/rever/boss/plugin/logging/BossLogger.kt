@@ -164,6 +164,10 @@ object BossLogger {
      * Whether the host writes a log file when nothing asks for one. Opt-in for now: the question of
      * default-on was raised on #394 and not yet answered, and off is the reading that cannot
      * surprise anyone's disk. Flipping this is the whole change to make it default-on.
+     *
+     * Note for the flip: defaultLogFilePath() is `~/.boss/logs/boss.log` and does not follow
+     * BossDirectories' dev-mode switch to `~/.boss_debug`, so until that is reconciled a dev
+     * run with the default on would write into the production data directory.
      */
     private const val FILE_LOGGING_ON_BY_DEFAULT = false
     private val recentLogs = ArrayDeque<LogEntry>(MAX_LOG_ENTRIES)
@@ -413,7 +417,8 @@ object BossLogger {
      * Whether an entry at [level] goes to the file, given the current file settings. Split out so
      * the threshold is testable without writing a file; [log] is the only production caller.
      */
-    internal fun writesToFile(level: LogLevel): Boolean = fileLoggingEnabled && level.priority >= fileMinLevel.priority
+    internal fun writesToFile(level: LogLevel): Boolean =
+        fileLoggingEnabled && level != LogLevel.OFF && level.priority >= fileMinLevel.priority
 
     /**
      * Start the background file writer coroutine.
