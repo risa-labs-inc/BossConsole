@@ -1,5 +1,11 @@
 package ai.rever.boss.app.terminal
 
+import ai.rever.boss.ipc.BossIpcClient
+import ai.rever.boss.ipc.BossIpcServer
+import ai.rever.boss.ipc.auth.IpcClientCredentials
+import ai.rever.boss.ipc.auth.IpcTlsIdentity
+import ai.rever.boss.ipc.auth.ProcessIdentityInterceptor
+import ai.rever.boss.ipc.auth.ProcessTokenRegistry
 import ai.rever.boss.ipc.proto.Empty
 import ai.rever.boss.ipc.proto.services.CloseSessionRequest
 import ai.rever.boss.ipc.proto.services.CreateSessionRequest
@@ -7,10 +13,12 @@ import ai.rever.boss.ipc.proto.services.SendInputRequest
 import ai.rever.boss.ipc.proto.services.StreamOutputRequest
 import ai.rever.boss.ipc.proto.services.TerminalServiceGrpcKt
 import com.google.protobuf.ByteString
+import io.grpc.Context
 import io.grpc.ManagedChannelBuilder
 import io.grpc.ServerBuilder
 import io.grpc.Status
 import io.grpc.StatusException
+import io.grpc.kotlin.GrpcContextElement
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -21,6 +29,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import java.io.File
 import java.nio.file.Files
@@ -50,23 +59,26 @@ class TerminalLimitsTest {
 
     private val root = Files.createTempDirectory("terminal-limits-")
     private val service = TerminalServiceImpl(activeLimit = 1, historyLimit = 2)
-    private val server =
-        ServerBuilder
-            .forPort(0)
-            .addService(service)
-            .build()
-            .start()
-    private val channel = ManagedChannelBuilder.forAddress("127.0.0.1", server.port).usePlaintext().build()
+    private val registry = ProcessTokenRegistry()
+    private val token = registry.issue("terminal-test")
+    private val identity = IpcTlsIdentity.create()
+    private val server = BossIpcServer("tcp://127.0.0.1:0", registry, identity).addService(service).start()
+    private val channel =
+        BossIpcClient(
+            "tcp://127.0.0.1:${server.port}",
+            IpcClientCredentials(identity.certificateBase64, token),
+        ).channel
+    private val callerContext =
+        GrpcContextElement(
+            Context.current().withValue(ProcessIdentityInterceptor.CURRENT_PRINCIPAL, { registry.principalFor(token) }),
+        )
     private val stub = TerminalServiceGrpcKt.TerminalServiceCoroutineStub(channel)
 
     @AfterTest
     fun cleanup() =
         runBlocking {
-            service.listSessions(Empty.getDefaultInstance()).sessionsList.forEach { session ->
-                service.closeSession(CloseSessionRequest.newBuilder().setSessionId(session.sessionId).build())
-            }
             channel.shutdownNow()
-            server.shutdownNow()
+            server.stop()
             service.close()
             root.toFile().deleteRecursively()
             Unit
@@ -186,12 +198,12 @@ class TerminalLimitsTest {
         runBlocking {
             withTimeout(15_000) {
                 val dispatcher = PausedDispatcher()
-                val scope = CoroutineScope(SupervisorJob() + dispatcher)
+                val scope = CoroutineScope(SupervisorJob() + dispatcher + callerContext)
                 val creation = scope.async { service.createSession(request("wait")) }
                 dispatcher.next().run()
                 val returning = dispatcher.next()
                 val unclaimed =
-                    service
+                    stub
                         .listSessions(Empty.getDefaultInstance())
                         .sessionsList
                         .single()
@@ -223,7 +235,9 @@ class TerminalLimitsTest {
                 val id = start("wait")
                 service.close()
                 awaitExit(id)
-                assertFailsWith<IllegalStateException> { service.createSession(request("echo")) }
+                withContext(callerContext) {
+                    assertFailsWith<IllegalStateException> { service.createSession(request("echo")) }
+                }
                 Unit
             }
         }
@@ -256,6 +270,8 @@ class TerminalLimitsTest {
             .addAllCommand(
                 listOf(java, "-Dfile.encoding=UTF-8", "-cp", classes, TerminalTestProcess::class.java.name, mode),
             ).putEnvironment("BOSS_PROCESS_TOKEN", "credential-sentinel")
+            .putEnvironment("BOSS_IPC_TLS_KEY", "credential-sentinel-private-key")
+            .putEnvironment("BOSS_HOST_TOKEN", "credential-sentinel-host-token")
             .putEnvironment("TERMINAL_TEST_VALUE", "preserved")
             .build()
     }

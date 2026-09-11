@@ -1,5 +1,6 @@
 package ai.rever.boss.app.terminal
 
+import ai.rever.boss.ipc.auth.IpcEnvironment
 import ai.rever.boss.ipc.proto.services.CreateSessionRequest
 import ai.rever.boss.ipc.proto.services.TerminalOutputChunk
 import com.google.protobuf.ByteString
@@ -11,13 +12,14 @@ import java.util.UUID
 import java.util.concurrent.locks.ReentrantLock
 
 internal class TerminalSession(
-    val id: String,
+    val ownerInstance: String,
     val workingDirectory: String,
     val command: List<String>,
     val process: Process,
     @Volatile var cols: Int,
     @Volatile var rows: Int,
 ) {
+    val id = UUID.randomUUID().toString()
     val createdAt = System.currentTimeMillis()
     val output = TerminalOutputBuffer()
     private val inputLock = ReentrantLock()
@@ -87,7 +89,10 @@ internal class TerminalSession(
             .build()
 
     companion object {
-        fun launch(request: CreateSessionRequest): TerminalSession {
+        fun launch(
+            request: CreateSessionRequest,
+            ownerInstance: String,
+        ): TerminalSession {
             val directory = request.workingDirectory.ifBlank { System.getProperty("user.home") }
             val command =
                 request.commandList.ifEmpty {
@@ -104,9 +109,9 @@ internal class TerminalSession(
                 put("LINES", rows.toString())
                 putAll(request.environmentMap)
                 // Strip after overrides so a launch request cannot reintroduce the parent's authority.
-                keys.filter { it.equals("BOSS_PROCESS_TOKEN", ignoreCase = true) }.forEach { remove(it) }
+                IpcEnvironment.removeCredentials(this)
             }
-            return TerminalSession(UUID.randomUUID().toString(), directory, command, builder.start(), cols, rows)
+            return TerminalSession(ownerInstance, directory, command, builder.start(), cols, rows)
         }
     }
 }

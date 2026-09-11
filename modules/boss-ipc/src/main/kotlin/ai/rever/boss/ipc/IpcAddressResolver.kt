@@ -13,7 +13,9 @@ import io.netty.channel.kqueue.KQueueServerDomainSocketChannel
 import io.netty.channel.unix.DomainSocketAddress
 import org.slf4j.LoggerFactory
 import java.io.File
+import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -113,9 +115,16 @@ object IpcAddressResolver {
             }
 
             address.startsWith("tcp://") -> {
-                val hostPort = address.removePrefix("tcp://")
-                val parts = hostPort.split(":")
-                InetSocketAddress(parts[0], parts[1].toInt())
+                val uri = URI(address)
+                require(uri.rawUserInfo == null && uri.rawQuery == null && uri.rawFragment == null) {
+                    "IPC TCP addresses cannot contain user info, queries, or fragments"
+                }
+                require(uri.rawPath.isNullOrEmpty() && uri.host != null && uri.port in 0..65535) {
+                    "Invalid IPC TCP address"
+                }
+                val host = InetAddress.getByName(uri.host)
+                require(host.isLoopbackAddress) { "IPC TCP addresses must be loopback addresses" }
+                InetSocketAddress(host, uri.port)
             }
 
             else -> {

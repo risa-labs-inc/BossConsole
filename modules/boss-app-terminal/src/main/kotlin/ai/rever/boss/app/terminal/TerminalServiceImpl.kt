@@ -1,5 +1,7 @@
 package ai.rever.boss.app.terminal
 
+import ai.rever.boss.ipc.auth.IpcCall
+import ai.rever.boss.ipc.auth.ProcessAuthority
 import ai.rever.boss.ipc.proto.Empty
 import ai.rever.boss.ipc.proto.services.*
 import io.grpc.Status
@@ -7,7 +9,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
@@ -32,6 +33,7 @@ class TerminalServiceImpl(
     }
 
     override suspend fun createSession(request: CreateSessionRequest): CreateSessionResponse {
+        val ownerInstance = IpcCall.current().instanceId
         var session: TerminalSession? = null
         var admitted = false
         var pumping = false
@@ -43,9 +45,10 @@ class TerminalServiceImpl(
                     currentCoroutineContext().ensureActive()
                     // Shutdown cannot overlook an admitted launch between process creation and registration.
                     synchronized(lock) {
+                        IpcCall.requireOwner(ownerInstance)
                         reserveSlot()
                         admitted = true
-                        val launched = TerminalSession.launch(request)
+                        val launched = TerminalSession.launch(request, ownerInstance)
                         session = launched
                         retain(launched)
                         launched.startPump { activeSlots.release() }
@@ -116,6 +119,7 @@ class TerminalServiceImpl(
 
     override fun streamOutput(request: StreamOutputRequest): Flow<TerminalOutputChunk> =
         flow {
+            val ownedSession = session(request.sessionId)
             if (!streamSlots.tryAcquire()) {
                 throw Status.RESOURCE_EXHAUSTED
                     .withDescription(
@@ -123,7 +127,10 @@ class TerminalServiceImpl(
                     ).asRuntimeException()
             }
             try {
-                emitAll(session(request.sessionId).output.stream())
+                ownedSession.output.stream().collect {
+                    IpcCall.requireOwner(ownedSession.ownerInstance)
+                    emit(it)
+                }
             } finally {
                 streamSlots.release()
             }
@@ -145,7 +152,12 @@ class TerminalServiceImpl(
     }
 
     override suspend fun listSessions(request: Empty): ListSessionsResponse {
-        val snapshot = synchronized(lock) { sessions.values.toList() }
+        val caller = IpcCall.current()
+        val host = caller.authority == ProcessAuthority.HOST
+        val snapshot =
+            synchronized(lock) {
+                sessions.values.filter { host || it.ownerInstance == caller.instanceId }
+            }
         return ListSessionsResponse
             .newBuilder()
             .addAllSessions(
@@ -162,7 +174,12 @@ class TerminalServiceImpl(
             ).build()
     }
 
-    private fun session(id: String): TerminalSession =
-        synchronized(lock) { sessions[id] }
-            ?: throw Status.NOT_FOUND.withDescription("Terminal session not found").asRuntimeException()
+    private fun session(id: String): TerminalSession {
+        IpcCall.current()
+        val session =
+            synchronized(lock) { sessions[id] }
+                ?: throw Status.NOT_FOUND.withDescription("Terminal session not found").asRuntimeException()
+        IpcCall.requireOwner(session.ownerInstance)
+        return session
+    }
 }

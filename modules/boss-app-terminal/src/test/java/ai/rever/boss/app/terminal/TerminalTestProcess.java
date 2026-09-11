@@ -3,6 +3,8 @@ package ai.rever.boss.app.terminal;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 /** Real subprocess fixture, shared by the Windows, Linux, and macOS service tests. */
 public final class TerminalTestProcess {
@@ -19,11 +21,13 @@ public final class TerminalTestProcess {
                 System.out.flush();
                 System.in.read();
             }
+            case "sentinel" -> Files.writeString(Path.of(System.getenv("TERMINAL_SENTINEL")), "started");
             case "flood" -> {
                 String chunk = "x".repeat(4096);
                 for (int i = 0; i < 400; i++) System.out.print(chunk);
             }
             case "environment" -> System.out.print(
+                System.getenv("BOSS_IPC_TLS_KEY") + ":" + System.getenv("BOSS_HOST_TOKEN") + ":" +
                 System.getenv("BOSS_PROCESS_TOKEN") + ":" + System.getenv("TERMINAL_TEST_VALUE")
             );
             default -> throw new IllegalArgumentException("Unknown fixture mode");

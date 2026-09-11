@@ -4,6 +4,8 @@ on:
   push:
     paths:
       - 'modules/boss-native-files/**'
+      - 'modules/boss-ipc/**'
+      - 'modules/boss-orchestrator/**'
       - 'modules/boss-process-manager/**'
       - 'modules/boss-service-filesystem/**'
       - 'modules/boss-app-terminal/**'
@@ -12,6 +14,8 @@ on:
     branches: [main, dev]
     paths:
       - 'modules/boss-native-files/**'
+      - 'modules/boss-ipc/**'
+      - 'modules/boss-orchestrator/**'
       - 'modules/boss-process-manager/**'
       - 'modules/boss-service-filesystem/**'
       - 'modules/boss-app-terminal/**'
@@ -28,7 +32,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6.0.0
@@ -40,6 +44,7 @@ jobs:
         shell: bash
         run: >-
           ./gradlew :boss-native-files:test :boss-native-files:nativeSmokeJvm
+          :boss-ipc:test :boss-ipc:nativeSmokeJvm :boss-orchestrator:test
           :boss-process-manager:test :boss-app-terminal:test :boss-service-filesystem:test
           :boss-native-files:ktlintCheck :boss-native-files:detekt
           --console=plain --no-daemon
@@ -50,10 +55,13 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Compile the native file boundary smoke binary
         shell: bash
-        run: ./gradlew :boss-native-files:nativeCompile --console=plain --no-daemon
+        run: ./gradlew :boss-native-files:nativeCompile :boss-ipc:nativeCompile --console=plain --no-daemon --no-parallel
       - name: Execute the native file boundary smoke binary
         shell: bash
         run: ./modules/boss-native-files/build/native/nativeCompile/native-files-smoke
+      - name: Execute the authenticated IPC native smoke binary
+        shell: bash
+        run: ./modules/boss-ipc/build/native/nativeCompile/ipc-security-smoke
       - name: Save test and native build reports
         if: always()
         uses: actions/upload-artifact@v7
@@ -62,6 +70,9 @@ jobs:
           path: |
             modules/boss-native-files/build/reports/
             modules/boss-native-files/build/test-results/
+            modules/boss-ipc/build/reports/
+            modules/boss-ipc/build/test-results/
+            modules/boss-orchestrator/build/test-results/
             modules/boss-process-manager/build/test-results/
             modules/boss-app-terminal/build/test-results/
             modules/boss-service-filesystem/build/test-results/

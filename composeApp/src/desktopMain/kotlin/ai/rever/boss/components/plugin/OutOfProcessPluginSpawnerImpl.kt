@@ -1,6 +1,6 @@
 package ai.rever.boss.components.plugin
 
-import ai.rever.boss.ipc.BossIpcClient
+import ai.rever.boss.ipc.IpcTransport
 import ai.rever.boss.ipc.IpcVersion
 import ai.rever.boss.kernel.KernelBootstrap
 import ai.rever.boss.kernel.ReapAdmissionException
@@ -67,21 +67,6 @@ class OutOfProcessPluginSpawnerImpl(
             )
     }
 
-    /**
-     * IPC-version compatibility status of the runtime JAR. Computed once on
-     * first spawn so we don't re-parse the manifest per plugin. `null` means
-     * the manifest couldn't be read at all — treated as a fatal startup
-     * error; the first spawn call will surface it.
-     */
-    private val runtimeCompat: IpcVersion.CompatResult? by lazy {
-        runCatching {
-            val manifest = PluginManifestReader.readFromJar(runtimeClasspath)
-            IpcVersion.isCompatible(manifest.minIpcVersion)
-        }.onFailure { e ->
-            logger.error("Failed to read runtime JAR manifest for IPC compat check: {}", runtimeClasspath, e)
-        }.getOrNull()
-    }
-
     override suspend fun spawn(
         manifest: PluginManifest,
         jarPath: String,
@@ -102,33 +87,7 @@ class OutOfProcessPluginSpawnerImpl(
                     return@withContext Result.failure<Unit>(IllegalStateException(msg))
                 }
 
-                // IPC-compat gate — if the runtime JAR on disk doesn't match
-                // the host's current IPC version we refuse here rather than
-                // hit a cryptic gRPC deserialization failure in the child.
-                when (val compat = runtimeCompat) {
-                    is IpcVersion.CompatResult.Incompatible -> {
-                        val msg =
-                            "Microkernel runtime is incompatible with this host. ${compat.reason} " +
-                                "(host IPC=${IpcVersion.CURRENT}, runtime=$runtimeClasspath)"
-                        logger.error(msg)
-                        return@withContext Result.failure<Unit>(IllegalStateException(msg))
-                    }
-
-                    is IpcVersion.CompatResult.UnknownRuntime -> {
-                        logger.warn(
-                            "Microkernel runtime does not declare minIpcVersion (legacy pre-Phase-0 JAR). " +
-                                "Proceeding but the next incompatible update will not be auto-detected. " +
-                                "runtime={}, hostIpcVersion={}",
-                            runtimeClasspath,
-                            IpcVersion.CURRENT,
-                        )
-                    }
-
-                    is IpcVersion.CompatResult.Compatible, null -> {
-                        // null = manifest read failure; already logged. Continue —
-                        // the child will fail on its own if the JAR is actually broken.
-                    }
-                }
+                validateRuntime(runtimeClasspath)
 
                 // Build classpath: runtime JAR + plugin JAR + (when resolved)
                 // the runtime API layer jar. The api jar goes LAST so runtime
@@ -182,7 +141,8 @@ class OutOfProcessPluginSpawnerImpl(
                 waitForReady(pluginId, managedProcess, config.startupTimeoutMs)
 
                 // Create gRPC channel to the plugin process
-                val channel = BossIpcClient(managedProcess.ipcAddress).channel
+                val channel =
+                    checkNotNull(managedProcess.ipcClient) { "Managed plugin lacks authenticated IPC" }.channel
                 pluginChannels[pluginId] = channel
 
                 // Create and start state bridge
@@ -407,3 +367,14 @@ internal fun pluginProcessId(
  * `KernelBootstrap.instance`, so the instance and its registry both exist before this class does.
  */
 private fun kernelRegistry(): ProcessRegistry? = KernelBootstrap.instance?.processRegistry
+
+/** Read the current runtime on every spawn; replacing a JAR must invalidate the previous decision. */
+private fun validateRuntime(runtimeClasspath: String) {
+    IpcTransport.requireCompatibleRuntime(File(runtimeClasspath).toPath())
+    val manifest = PluginManifestReader.readFromJar(runtimeClasspath)
+    when (val compatibility = IpcVersion.isCompatible(manifest.minIpcVersion)) {
+        is IpcVersion.CompatResult.Compatible -> Unit
+        is IpcVersion.CompatResult.UnknownRuntime -> error("The microkernel runtime must declare minIpcVersion")
+        is IpcVersion.CompatResult.Incompatible -> error(compatibility.reason)
+    }
+}

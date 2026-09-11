@@ -1,3 +1,5 @@
+import java.nio.file.Files
+
 plugins {
     alias(libs.plugins.kotlinJvm)
 }
@@ -35,9 +37,11 @@ tasks.withType<Test>().configureEach {
             .get()
             .asFile
     systemProperty("user.home", testHome.absolutePath)
-    systemProperty("boss.data.dir", testHome.resolve(".boss").absolutePath)
     doFirst {
         testHome.deleteRecursively()
         testHome.mkdirs()
+        // A short isolated directory keeps actual Unix socket names below the platform limit.
+        systemProperty("boss.data.dir", Files.createTempDirectory("bs").toString())
+        systemProperty("boss.test.classpath", classpath.asPath)
     }
 }

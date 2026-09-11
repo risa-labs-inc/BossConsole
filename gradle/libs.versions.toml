@@ -55,6 +55,7 @@ jxbrowser = "9.5.0"
 jxbrowser-gradle-plugin = "2.1.0"
 maven-publish = "0.37.0"
 jna = "5.19.1"
+bouncycastle = "1.85"
 # Reads the SQLite databases browsers keep their bookmarks and logins in
 # (Chromium "Login Data", Firefox places.sqlite / key4.db). Desktop-only.
 sqlite-jdbc = "3.53.4.0"
@@ -158,6 +159,7 @@ intellij-platform = "243.21565.199"
 boss-plugin-api = "1.0.88"
 
 [libraries]
+bouncycastle-pkix = { module = "org.bouncycastle:bcpkix-jdk18on", version.ref = "bouncycastle" }
 kotlin-test-junit = { module = "org.jetbrains.kotlin:kotlin-test-junit", version.ref = "kotlin" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit-jupiter" }
 # Runs the JUnit 4 rules Compose UI testing is built on (createComposeRule) on the
