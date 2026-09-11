@@ -29,14 +29,14 @@
 .PARAMETER Tags
     Comma-separated tags (optional)
     
-.PARAMETER Token
-    Authentication token (or set BOSS_PLUGIN_STORE_TOKEN env var)
-    
 .PARAMETER StoreUrl
     Store URL (or set BOSS_PLUGIN_STORE_URL env var)
+
+.PARAMETER HomepageUrl
+    Public project homepage, required when creating a new plugin entry
     
 .EXAMPLE
-    .\publish-plugin.ps1 -JarPath "my-plugin.jar" -PluginId "my.plugin" -Version "1.0.0" -Token $token
+    .\publish-plugin.ps1 -JarPath "my-plugin.jar" -PluginId "my.plugin" -Version "1.0.0"
     
 .EXAMPLE
     $env:BOSS_PLUGIN_STORE_TOKEN = "eyJ..."
@@ -70,13 +70,13 @@ param(
     [string]$Tags = "",
     
     [Parameter(Mandatory=$false)]
-    [string]$Token,
-    
-    [Parameter(Mandatory=$false)]
     [string]$StoreUrl,
     
     [Parameter(Mandatory=$false)]
-    [string]$AnonKey
+    [string]$AnonKey,
+
+    [Parameter(Mandatory=$false)]
+    [string]$HomepageUrl
 )
 
 # =============================================================================
@@ -152,7 +152,7 @@ function Get-ManifestValue {
             
             $lines = $content -split "`r?`n"
             foreach ($line in $lines) {
-                if ($line -match "^$Key:\s*(.+)$") {
+                if ($line -match "^${Key}:\s*(.+)$") {
                     $zip.Dispose()
                     return $matches[1].Trim()
                 }
@@ -190,6 +190,8 @@ function Invoke-PluginStoreRequest {
         Uri = $Url
         Headers = $headers
         ContentType = $ContentType
+        MaximumRedirection = 0
+        ErrorAction = "Stop"
     }
     
     if ($Body -and $Method -ne "GET") {
@@ -202,6 +204,7 @@ function Invoke-PluginStoreRequest {
     }
     
     try {
+        Assert-PublishingUrl $Url
         $response = Invoke-RestMethod @params
         return @{
             Success = $true
@@ -211,21 +214,21 @@ function Invoke-PluginStoreRequest {
     }
     catch {
         $statusCode = $_.Exception.Response.StatusCode.value__
-        $errorBody = $null
-        
-        try {
-            $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
-            $errorBody = $reader.ReadToEnd() | ConvertFrom-Json
-            $reader.Close()
-        }
-        catch { }
-        
         return @{
             Success = $false
-            Error = if ($errorBody.error) { $errorBody.error } else { $_.Exception.Message }
+            Error = if ($statusCode) { "HTTP $statusCode" } else { "Request failed" }
             StatusCode = $statusCode
-            Data = $errorBody
+            Data = $null
         }
+    }
+}
+
+function Assert-PublishingUrl([string]$Value) {
+    $uri = [Uri]$Value
+    $local = $uri.Host -in @("localhost", "127.0.0.1", "[::1]")
+    if (-not ($uri.Scheme -eq "https" -or ($uri.Scheme -eq "http" -and $local)) -or
+        $uri.UserInfo -or $uri.Fragment) {
+        throw "Invalid publishing URL"
     }
 }
 
@@ -234,7 +237,7 @@ function Invoke-PluginStoreRequest {
 # =============================================================================
 
 # Resolve token and URL
-$script:AuthToken = if ($Token) { $Token } else { $env:BOSS_PLUGIN_STORE_TOKEN }
+$script:AuthToken = $env:BOSS_PLUGIN_STORE_TOKEN
 $script:StoreUrl = if ($StoreUrl) { $StoreUrl } else { 
     if ($env:BOSS_PLUGIN_STORE_URL) { $env:BOSS_PLUGIN_STORE_URL } else { $DefaultStoreUrl }
 }
@@ -253,7 +256,7 @@ if (-not (Test-Path $JarPath)) {
 
 if (-not $script:AuthToken) {
     Write-Error-Message "Authentication token is required"
-    Write-Host "Set BOSS_PLUGIN_STORE_TOKEN environment variable or use -Token parameter."
+    Write-Host "Set BOSS_PLUGIN_STORE_TOKEN in the environment."
     exit 1
 }
 
@@ -315,7 +318,14 @@ Write-Host ""
 # Step 2: Check if plugin exists
 Write-Step 2 "Checking plugin existence..."
 
-$checkResult = Invoke-PluginStoreRequest -Method "GET" -Url "$($script:StoreUrl)/$PluginId"
+$encodedId = [Uri]::EscapeDataString($PluginId)
+if ($encodedId -eq "." -or $encodedId -eq "..") { $encodedId = $encodedId.Replace(".", "%2E") }
+$checkResult = Invoke-PluginStoreRequest -Method "GET" -Url "$($script:StoreUrl)/$encodedId"
+
+if (-not $checkResult.Success -and $checkResult.StatusCode -ne 404) {
+    Write-Error-Message "Plugin existence check failed: $($checkResult.Error)"
+    exit 1
+}
 
 $PluginExists = $checkResult.Success -and $checkResult.StatusCode -eq 200
 
@@ -331,6 +341,10 @@ Write-Host ""
 # Step 3: Create plugin entry if needed
 if (-not $PluginExists) {
     Write-Step 3 "Creating plugin entry..."
+    if (-not $HomepageUrl) {
+        Write-Error-Message "Provide -HomepageUrl when creating a new plugin"
+        exit 1
+    }
     
     $tagsArray = @()
     if ($Tags) {
@@ -341,6 +355,7 @@ if (-not $PluginExists) {
         pluginId = $PluginId
         displayName = $DisplayName
         description = $Description
+        homepageUrl = $HomepageUrl
         tags = $tagsArray
     }
     
@@ -395,7 +410,7 @@ $versionBody = @{
     minBossVersion = $minBossVersion
 }
 
-$versionResult = Invoke-PluginStoreRequest -Method "POST" -Url "$($script:StoreUrl)/$PluginId/version" -Body $versionBody
+$versionResult = Invoke-PluginStoreRequest -Method "POST" -Url "$($script:StoreUrl)/$encodedId/version" -Body $versionBody
 
 if (-not $versionResult.Success) {
     Write-Error-Message "Failed to create version: $($versionResult.Error)"
@@ -410,21 +425,20 @@ if (-not $VersionId -or -not $UploadUrl) {
     exit 1
 }
 
-Write-Success "  Version created: $VersionId"
+Write-Success "  Version created"
 
 Write-Host ""
 
 # Step 5: Upload JAR file
 Write-Step 5 "Uploading JAR file..."
 
-$jarBytes = [System.IO.File]::ReadAllBytes($JarPath)
-
 try {
-    $uploadResponse = Invoke-RestMethod -Method Put -Uri $UploadUrl -Body $jarBytes -ContentType "application/octet-stream"
+    Assert-PublishingUrl $UploadUrl
+    $uploadResponse = Invoke-RestMethod -Method Put -Uri $UploadUrl -InFile $JarPath -ContentType "application/octet-stream" -MaximumRedirection 0 -ErrorAction Stop
     Write-Success "  JAR uploaded successfully"
 }
 catch {
-    Write-Error-Message "Failed to upload JAR file: $($_.Exception.Message)"
+    Write-Error-Message "Failed to upload JAR file"
     exit 1
 }
 

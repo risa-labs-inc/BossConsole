@@ -1,3 +1,5 @@
+import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
 import org.gradle.api.DefaultTask
 import org.gradle.api.GradleException
 import org.gradle.api.file.RegularFileProperty
@@ -5,9 +7,10 @@ import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.Optional
+import java.io.File
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 import org.gradle.api.tasks.TaskAction
-import java.io.BufferedReader
-import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
@@ -16,10 +19,10 @@ import java.security.MessageDigest
 /**
  * Gradle task to publish a plugin to the BOSS Plugin Store.
  *
+ * Set BOSS_PLUGIN_STORE_TOKEN in the environment before publishing.
  * Usage:
  * ```
  * ./gradlew :plugin-platform:plugin-my-plugin:publishPlugin \
- *   -PpluginStoreToken=eyJ... \
  *   -PauthorName="My Company"
  * ```
  *
@@ -29,6 +32,8 @@ abstract class PublishPluginTask : DefaultTask() {
     init {
         group = "publishing"
         description = "Publishes the plugin to the BOSS Plugin Store"
+        notCompatibleWithConfigurationCache("Publishing reads credentials only during execution")
+        doNotTrackState("Publishing changes remote state and must not cache credentials or outcomes")
     }
 
     /**
@@ -89,12 +94,10 @@ abstract class PublishPluginTask : DefaultTask() {
     @get:Optional
     abstract val tags: Property<String>
 
-    /**
-     * Authentication token for the plugin store
-     * Can also be provided via BOSS_PLUGIN_STORE_TOKEN environment variable
-     */
+    /** Required by the store when creating a new plugin. */
     @get:Input
-    abstract val authToken: Property<String>
+    @get:Optional
+    abstract val homepageUrl: Property<String>
 
     /**
      * Plugin store URL
@@ -113,6 +116,17 @@ abstract class PublishPluginTask : DefaultTask() {
 
     @TaskAction
     fun publish() {
+        try {
+            publishArtifact()
+        } catch (error: GradleException) {
+            throw error
+        } catch (error: Exception) {
+            // Transport/parser exceptions may embed signed URLs or response bodies.
+            throw GradleException("Publishing failed (${error.javaClass.simpleName}); check connectivity and metadata")
+        }
+    }
+
+    private fun publishArtifact() {
         val jar = jarFile.get().asFile
         if (!jar.exists()) {
             throw GradleException("JAR file not found: ${jar.absolutePath}")
@@ -122,12 +136,21 @@ abstract class PublishPluginTask : DefaultTask() {
         logger.lifecycle("============================================")
 
         // Read JAR metadata
-        val jarBytes = jar.readBytes()
-        val jarSize = jarBytes.size.toLong()
-        val sha256 = calculateSha256(jarBytes)
+        val jarSize = jar.length()
+        val sha256 = calculateSha256(jar)
 
         // Extract metadata from manifest if not provided
         val manifest = readManifest(jar)
+        val pluginMetadata = java.util.jar.JarFile(jar).use { archive ->
+            archive.getJarEntry("META-INF/boss-plugin/plugin.json")?.let { entry ->
+                archive.getInputStream(entry).bufferedReader().use { JsonSlurper().parseText(it.readText()) }
+            }
+        }
+        val metadata = if (pluginMetadata is Map<*, *>) pluginMetadata else emptyMap<String, String>()
+        val minimumVersion = metadata["minBossVersion"]?.let {
+            require(it is String && it.isNotBlank()) { "Invalid minBossVersion in plugin metadata" }
+            it
+        } ?: "1.0.0"
 
         val actualPluginId =
             pluginId.orNull
@@ -156,13 +179,15 @@ abstract class PublishPluginTask : DefaultTask() {
                 ?: "https://api.risaboss.com/functions/v1/plugin-store"
 
         val token =
-            authToken.orNull
-                ?: System.getenv("BOSS_PLUGIN_STORE_TOKEN")
+            System.getenv("BOSS_PLUGIN_STORE_TOKEN")
                 ?: throw GradleException(
-                    "Authentication token required. Set via authToken property or BOSS_PLUGIN_STORE_TOKEN environment variable.",
+                    "Set BOSS_PLUGIN_STORE_TOKEN in the environment before publishing.",
                 )
 
         val apiKey = anonKey.orNull ?: System.getenv("SUPABASE_ANON_KEY") ?: ""
+        require(token.isNotBlank() && listOf(token, apiKey).none { '\r' in it || '\n' in it }) {
+            "Invalid publishing credentials"
+        }
 
         // Step 1: Check if plugin exists
         logger.lifecycle("Checking plugin existence...")
@@ -177,6 +202,8 @@ abstract class PublishPluginTask : DefaultTask() {
                 displayName = actualDisplayName,
                 description = pluginDescription.orNull ?: "",
                 authorName = authorName.orNull,
+                homepageUrl = homepageUrl.orNull ?: (metadata["homepageUrl"] as? String) ?: manifest["Plugin-Url"]
+                    ?: throw GradleException("Set homepageUrl when creating a new plugin"),
                 tags = tags.orNull?.split(",")?.map { it.trim() } ?: emptyList(),
                 token = token,
                 apiKey = apiKey,
@@ -194,14 +221,15 @@ abstract class PublishPluginTask : DefaultTask() {
                 pluginId = actualPluginId,
                 version = actualVersion,
                 changelog = changelog.orNull ?: "",
+                minBossVersion = minimumVersion,
                 token = token,
                 apiKey = apiKey,
             )
-        logger.lifecycle("  Version created: $versionId")
+        logger.lifecycle("  Version entry created")
 
         // Step 4: Upload JAR
         logger.lifecycle("Uploading JAR file...")
-        uploadJar(uploadUrl, jarBytes)
+        uploadJar(uploadUrl, jar)
         logger.lifecycle("  JAR uploaded successfully")
 
         // Step 5: Finalize version
@@ -223,9 +251,17 @@ abstract class PublishPluginTask : DefaultTask() {
         logger.lifecycle("  Version:   $actualVersion")
     }
 
-    private fun calculateSha256(bytes: ByteArray): String {
+    private fun calculateSha256(file: File): String {
         val digest = MessageDigest.getInstance("SHA-256")
-        val hashBytes = digest.digest(bytes)
+        file.inputStream().use { input ->
+            val buffer = ByteArray(8192)
+            var count = input.read(buffer)
+            while (count != -1) {
+                digest.update(buffer, 0, count)
+                count = input.read(buffer)
+            }
+        }
+        val hashBytes = digest.digest()
         return hashBytes.joinToString("") { "%02x".format(it) }
     }
 
@@ -249,15 +285,14 @@ abstract class PublishPluginTask : DefaultTask() {
         pluginId: String,
         token: String,
         apiKey: String,
-    ): Boolean =
-        try {
-            val response = httpGet("$baseUrl/$pluginId", token, apiKey)
-            response.statusCode == 200
-        } catch (e: Exception) {
-            // Treat as "not yet published" so the task falls through to create
-            logger.info("Plugin existence check failed (${e.message}) - assuming plugin does not exist yet")
-            false
+    ): Boolean {
+        val response = httpGet("$baseUrl/${pathSegment(pluginId)}", token, apiKey)
+        return when (response.statusCode) {
+            200 -> true
+            404 -> false
+            else -> throw GradleException("Plugin existence check failed: HTTP ${response.statusCode}")
         }
+    }
 
     private fun createPlugin(
         baseUrl: String,
@@ -265,28 +300,23 @@ abstract class PublishPluginTask : DefaultTask() {
         displayName: String,
         description: String,
         authorName: String?,
+        homepageUrl: String,
         tags: List<String>,
         token: String,
         apiKey: String,
     ) {
-        val tagsJson = tags.joinToString(",") { "\"$it\"" }
-        val authorJson = if (authorName != null) "\"$authorName\"" else "null"
-
-        val body =
-            """
-            {
-                "pluginId": "$pluginId",
-                "displayName": "$displayName",
-                "description": "${escapeJson(description)}",
-                "authorName": $authorJson,
-                "tags": [$tagsJson]
-            }
-            """.trimIndent()
+        val body = JsonOutput.toJson(mapOf(
+            "pluginId" to pluginId,
+            "displayName" to displayName,
+            "description" to description,
+            "authorName" to authorName,
+            "homepageUrl" to homepageUrl,
+            "tags" to tags,
+        ))
 
         val response = httpPost("$baseUrl/publish", body, token, apiKey)
         if (response.statusCode !in 200..201) {
-            val error = extractJsonValue(response.body, "error") ?: response.body
-            throw GradleException("Failed to create plugin: $error")
+            throw GradleException("Failed to create plugin: HTTP ${response.statusCode}")
         }
     }
 
@@ -295,22 +325,19 @@ abstract class PublishPluginTask : DefaultTask() {
         pluginId: String,
         version: String,
         changelog: String,
+        minBossVersion: String,
         token: String,
         apiKey: String,
     ): Pair<String, String> {
-        val body =
-            """
-            {
-                "version": "$version",
-                "changelog": "${escapeJson(changelog)}",
-                "minBossVersion": "1.0.0"
-            }
-            """.trimIndent()
+        val body = JsonOutput.toJson(mapOf(
+            "version" to version,
+            "changelog" to changelog,
+            "minBossVersion" to minBossVersion,
+        ))
 
-        val response = httpPost("$baseUrl/$pluginId/version", body, token, apiKey)
+        val response = httpPost("$baseUrl/${pathSegment(pluginId)}/version", body, token, apiKey)
         if (response.statusCode !in 200..201) {
-            val error = extractJsonValue(response.body, "error") ?: response.body
-            throw GradleException("Failed to create version: $error")
+            throw GradleException("Failed to create version: HTTP ${response.statusCode}")
         }
 
         val versionId =
@@ -325,16 +352,14 @@ abstract class PublishPluginTask : DefaultTask() {
 
     private fun uploadJar(
         uploadUrl: String,
-        jarBytes: ByteArray,
+        jar: File,
     ) {
-        val url = URL(uploadUrl)
-        val connection = url.openConnection() as HttpURLConnection
+        val connection = publishingConnection(uploadUrl)
         connection.requestMethod = "PUT"
         connection.doOutput = true
         connection.setRequestProperty("Content-Type", "application/octet-stream")
-        connection.setRequestProperty("Content-Length", jarBytes.size.toString())
-
-        connection.outputStream.use { it.write(jarBytes) }
+        connection.setFixedLengthStreamingMode(jar.length())
+        jar.inputStream().use { input -> connection.outputStream.use { input.copyTo(it) } }
 
         val responseCode = connection.responseCode
         if (responseCode !in 200..201) {
@@ -350,19 +375,15 @@ abstract class PublishPluginTask : DefaultTask() {
         token: String,
         apiKey: String,
     ) {
-        val body =
-            """
-            {
-                "versionId": "$versionId",
-                "sha256": "$sha256",
-                "jarSize": $jarSize
-            }
-            """.trimIndent()
+        val body = JsonOutput.toJson(mapOf(
+            "versionId" to versionId,
+            "sha256" to sha256,
+            "jarSize" to jarSize,
+        ))
 
         val response = httpPost("$baseUrl/version/finalize", body, token, apiKey)
         if (response.statusCode != 200) {
-            val error = extractJsonValue(response.body, "error") ?: response.body
-            throw GradleException("Failed to finalize version: $error")
+            throw GradleException("Failed to finalize version: HTTP ${response.statusCode}")
         }
     }
 
@@ -371,7 +392,7 @@ abstract class PublishPluginTask : DefaultTask() {
         token: String,
         apiKey: String,
     ): HttpResponse {
-        val connection = URL(url).openConnection() as HttpURLConnection
+        val connection = publishingConnection(url)
         connection.requestMethod = "GET"
         connection.setRequestProperty("Authorization", "Bearer $token")
         if (apiKey.isNotEmpty()) {
@@ -387,7 +408,7 @@ abstract class PublishPluginTask : DefaultTask() {
         token: String,
         apiKey: String,
     ): HttpResponse {
-        val connection = URL(url).openConnection() as HttpURLConnection
+        val connection = publishingConnection(url)
         connection.requestMethod = "POST"
         connection.doOutput = true
         connection.setRequestProperty("Content-Type", "application/json")
@@ -396,7 +417,7 @@ abstract class PublishPluginTask : DefaultTask() {
             connection.setRequestProperty("apikey", apiKey)
         }
 
-        OutputStreamWriter(connection.outputStream).use { writer ->
+        OutputStreamWriter(connection.outputStream, StandardCharsets.UTF_8).use { writer ->
             writer.write(body)
         }
 
@@ -414,29 +435,39 @@ abstract class PublishPluginTask : DefaultTask() {
 
         val body =
             inputStream?.use { stream ->
-                BufferedReader(InputStreamReader(stream)).use { reader ->
-                    reader.readText()
-                }
+                val bytes = stream.readNBytes(1024 * 1024 + 1)
+                require(bytes.size <= 1024 * 1024) { "Publishing response exceeds the size limit" }
+                bytes.toString(StandardCharsets.UTF_8)
             } ?: ""
 
         return HttpResponse(statusCode, body)
     }
 
-    private fun extractJsonValue(
-        json: String,
-        key: String,
-    ): String? {
-        val regex = """"$key"\s*:\s*"([^"]+)"""".toRegex()
-        return regex.find(json)?.groupValues?.get(1)
+    private fun extractJsonValue(json: String, key: String): String? {
+        val value = JsonSlurper().parseText(json)
+        if (value !is Map<*, *>) return null
+        val field = value[key]
+        return if (field is String) field else null
     }
 
-    private fun escapeJson(text: String): String =
-        text
-            .replace("\\", "\\\\")
-            .replace("\"", "\\\"")
-            .replace("\n", "\\n")
-            .replace("\r", "\\r")
-            .replace("\t", "\\t")
+    private fun pathSegment(value: String): String =
+        URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20").let {
+            if (it == "." || it == "..") it.replace(".", "%2E") else it
+        }
+
+    private fun publishingConnection(rawUrl: String): HttpURLConnection {
+        val url = URL(rawUrl)
+        val local = url.host in setOf("localhost", "127.0.0.1", "[::1]")
+        require(url.protocol == "https" || (url.protocol == "http" && local)) {
+            "Publishing requires HTTPS except for local development"
+        }
+        require(url.userInfo == null && url.ref == null) { "Invalid publishing URL" }
+        return (url.openConnection() as HttpURLConnection).apply {
+            instanceFollowRedirects = false
+            connectTimeout = 30_000
+            readTimeout = 60_000
+        }
+    }
 
     private data class HttpResponse(
         val statusCode: Int,
