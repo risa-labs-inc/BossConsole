@@ -65,7 +65,11 @@ class TerminalOwnershipTest {
                 assertEquals(0, owner.listSessions(Empty.getDefaultInstance()).sessionsCount)
                 val created = owner.createSession(request)
                 assertTrue(created.success)
-                while (!Files.exists(root.resolve("sentinel"))) delay(20)
+                // File creation becomes visible before the child finishes writing its readiness marker.
+                val sentinel = root.resolve("sentinel")
+                while (!Files.exists(sentinel) || Files.readString(sentinel) != "started") {
+                    delay(20)
+                }
                 assertEquals("started", Files.readString(root.resolve("sentinel")))
             }
         }
