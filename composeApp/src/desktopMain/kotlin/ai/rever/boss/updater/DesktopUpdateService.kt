@@ -105,22 +105,24 @@ actual class UpdateService {
                 UpdateSettings.includePreReleases ||
                     AppVersion.CURRENT.preRelease != null
 
-            // Get the latest version based on prerelease preference
+            val platform = getCurrentPlatform()
+            val currentOsVersion = System.getProperty("os.version")
+
+            // Select only releases runnable on this OS. The installer still checks
+            // the incoming bundle, which protects GitHub fallback rows without metadata.
             val latestRelease =
-                releases
-                    .filter { release ->
-                        !release.draft && (includePreReleases || !release.prerelease)
-                    }.mapNotNull { release ->
-                        Version.parse(release.tag_name)?.let { version -> release to version }
-                    }.maxByOrNull { it.second }
-                    ?.first
+                selectLatestCompatibleRelease(
+                    releases = releases,
+                    includePreReleases = includePreReleases,
+                    platform = platform,
+                    currentOsVersion = currentOsVersion,
+                )
                     ?: return upToDate()
 
             val latestVersion = Version.parse(latestRelease.tag_name) ?: return upToDate()
             val isUpdateAvailable = latestVersion.isNewerThan(AppVersion.CURRENT)
 
             // Find the appropriate asset for the current platform
-            val platform = getCurrentPlatform()
             val expectedAssetName = getExpectedAssetName(latestVersion)
             logger.debug(
                 LogCategory.SYSTEM,
@@ -522,7 +524,9 @@ actual class UpdateService {
                 val allReleases = source.listReleases()
 
                 // Convert to VersionInfo
-                allReleases.mapNotNull { release ->
+                val platform = getCurrentPlatform()
+                val currentOsVersion = System.getProperty("os.version")
+                allReleases.filter { it.supportsOs(platform, currentOsVersion) }.mapNotNull { release ->
                     try {
                         val version = Version.parse(release.tag_name) ?: return@mapNotNull null
                         val expectedAssetName = getExpectedAssetName(version)
@@ -563,6 +567,9 @@ actual class UpdateService {
         withContext(Dispatchers.IO) {
             try {
                 val release = source.getReleaseByTag("v$version") ?: return@withContext null
+                if (!release.supportsOs(getCurrentPlatform(), System.getProperty("os.version"))) {
+                    return@withContext null
+                }
                 val expectedAssetName = getExpectedAssetName(version)
                 val asset =
                     release.assets.find {

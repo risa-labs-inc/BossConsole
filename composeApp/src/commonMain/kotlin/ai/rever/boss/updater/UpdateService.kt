@@ -1,6 +1,7 @@
 package ai.rever.boss.updater
 
 import ai.rever.boss.utils.Version
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -16,6 +17,8 @@ data class GitHubRelease(
     val prerelease: Boolean = false,
     val published_at: String,
     val assets: List<GitHubAsset> = emptyList(),
+    /** Minimum supported OS version by catalog key (`macos`, `windows`, `linux`). */
+    @SerialName("min_os") val minimumOs: Map<String, String> = emptyMap(),
 )
 
 @Serializable

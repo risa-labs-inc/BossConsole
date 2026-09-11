@@ -83,6 +83,20 @@ val appVersion = versionPropsProvider.map { it.getProperty("app.version", "8.8.0
 // Base version (without prerelease suffix) for native package formats that don't support semver prereleases
 val baseVersion = appVersion.substringBefore("-")
 
+// One source for the package launch floor and the release-catalog floor. The
+// sync-release workflow passes this same file to publish-supabase-release.sh.
+val minimumOsPropsFile = layout.projectDirectory.file("../gradle/minimum-os-versions.properties")
+val minimumOsPropsProvider =
+    providers.of(VersionPropertiesValueSource::class.java) {
+        parameters.propertiesFile.set(minimumOsPropsFile)
+    }
+val minimumMacOsVersion =
+    minimumOsPropsProvider
+        .map { properties ->
+            properties.getProperty("macos")?.trim()?.takeIf { it.matches(Regex("""\d+(\.\d+){0,3}""")) }
+                ?: throw GradleException("gradle/minimum-os-versions.properties needs a numeric macos version")
+        }.get()
+
 // CFBundleVersion is macOS's *build* identifier, not the marketing version
 // (CFBundleShortVersionString) — it has to change for every shipped build of a
 // given version, otherwise a re-notarized rebuild of 9.2.60 is indistinguishable
@@ -1507,7 +1521,7 @@ compose.desktop {
                 // failure moves to first launch instead of into dyld. Keep in lockstep
                 // with chromium-branding / the engine bundle's LSMinimumSystemVersion:
                 // JxBrowser 9.4.0 (Chromium 151) dropped macOS 12, raising this from 12.0.
-                minimumSystemVersion = "13.0"
+                minimumSystemVersion = minimumMacOsVersion
 
                 // Was jpackage's placeholder "Unknown" (Compose's default when this
                 // is unset), which leaves Launchpad/Finder categorization empty.
