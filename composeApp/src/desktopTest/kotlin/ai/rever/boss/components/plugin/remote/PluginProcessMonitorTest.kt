@@ -7,6 +7,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -17,7 +19,7 @@ class PluginProcessMonitorTest {
         var connected: Boolean = false,
         var restartAllowed: Boolean = true,
         var aliveChecksToFail: Int = 0,
-        val aliveOverrides: MutableMap<String, Boolean> = mutableMapOf(),
+        val aliveOverrides: MutableMap<String, Boolean> = ConcurrentHashMap(),
     ) : PluginProcessMonitorBackend {
         override fun getManagedProcess(pluginId: String): ManagedProcess? = null
 
@@ -350,8 +352,8 @@ class PluginProcessMonitorTest {
                     backend = backend,
                     checkIntervalMs = 10,
                 )
-            var flakyAttempts = 0
-            var bystanderRestarts = 0
+            val flakyAttempts = AtomicInteger()
+            val bystanderRestarts = AtomicInteger()
             val await: suspend (condition: () -> Boolean) -> Unit = { condition ->
                 withTimeout(2_000) {
                     while (!condition()) {
@@ -365,8 +367,7 @@ class PluginProcessMonitorTest {
                     "flaky",
                     "flaky",
                     restartAction = {
-                        flakyAttempts++
-                        if (flakyAttempts == 1) withTimeout(50) { delay(5_000) }
+                        if (flakyAttempts.incrementAndGet() == 1) withTimeout(50) { delay(5_000) }
                         backend.aliveOverrides["flaky"] = true
                         Result.success(Unit)
                     },
@@ -375,7 +376,7 @@ class PluginProcessMonitorTest {
                     "bystander",
                     "bystander",
                     restartAction = {
-                        bystanderRestarts++
+                        bystanderRestarts.incrementAndGet()
                         backend.aliveOverrides["bystander"] = true
                         Result.success(Unit)
                     },
@@ -391,13 +392,22 @@ class PluginProcessMonitorTest {
 
                 backend.aliveOverrides["flaky"] = false
 
-                await { flakyAttempts >= 1 }
+                await { flakyAttempts.get() >= 1 }
 
                 backend.aliveOverrides["bystander"] = false
 
                 await {
-                    bystanderRestarts == 1 &&
+                    bystanderRestarts.get() == 1 &&
                         monitor.healthStates.value["bystander"]?.processState ==
+                        PluginProcessState.RUNNING
+                }
+
+                // The leaked cancellation must not strand "flaky" in RESTARTING: the
+                // failed attempt is recorded, a later tick retries, and the plugin
+                // recovers to RUNNING.
+                await {
+                    flakyAttempts.get() >= 2 &&
+                        monitor.healthStates.value["flaky"]?.processState ==
                         PluginProcessState.RUNNING
                 }
             } finally {

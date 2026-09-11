@@ -7,9 +7,9 @@ import ai.rever.boss.process.ManagedProcess
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -163,15 +163,14 @@ class PluginProcessMonitor internal constructor(
         if (disposed.get() || !monitoringStarted.compareAndSet(false, true)) return
 
         scope.launch {
-            val loopJob = coroutineContext[Job]
             while (isActive) {
-                runHealthCheckSafely(loopJob)
+                runHealthCheckSafely()
                 delay(checkIntervalMs)
             }
         }
     }
 
-    private suspend fun runHealthCheckSafely(loopJob: Job?) {
+    private suspend fun runHealthCheckSafely() {
         try {
             checkHealth()
         } catch (e: CancellationException) {
@@ -179,7 +178,7 @@ class PluginProcessMonitor internal constructor(
             // TimeoutCancellationException) must not take the one-way monitoring loop down
             // with it: supervision for the whole window would be gone for the rest of the
             // session. A genuinely cancelled scope ends the loop at the next delay().
-            if (loopJob?.isActive == true) {
+            if (currentCoroutineContext().isActive) {
                 logger.error("Health check interrupted by a cancellation exception; loop continues", e)
             }
         } catch (e: Exception) {
@@ -289,6 +288,14 @@ class PluginProcessMonitor internal constructor(
                 completeRestart(request)
             }
         } catch (e: CancellationException) {
+            // A cancellation leaking out of the action is a failed attempt whenever this
+            // monitor is still alive: record it so the plugin goes CRASHED/FAILED and the
+            // next tick retries (or the terminal action runs), instead of sitting in
+            // RESTARTING, which checkPluginHealth treats as a no-op. A monitor whose own
+            // scope is cancelling skips this - dispose() clears the states.
+            if (currentCoroutineContext().isActive && isMonitored(pluginId)) {
+                recordRestartFailure(request, e)
+            }
             throw e
         } catch (e: Exception) {
             if (isMonitored(pluginId)) {
