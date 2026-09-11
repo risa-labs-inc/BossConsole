@@ -53,19 +53,17 @@ class FileSystemServiceImpl internal constructor(
                 require(request.offsetBytes >= 0 && request.maxBytes >= 0) {
                     "Read offsets and limits must be nonnegative"
                 }
-                val maximum =
-                    request.maxBytes
-                        .takeIf { it > 0 }
-                        ?.coerceAtMost(FileSystemLimits.READ_BYTES.toLong())
-                        ?.toInt() ?: FileSystemLimits.READ_BYTES
+                val maximum = readLimit(request)
                 access.entry(request.path).use { entry ->
                     entry.parent.file(entry.name).use { reader ->
                         val total = reader.size()
                         val buffer = ByteBuffer.allocate(maximum + 1)
-                        reader.position(request.offsetBytes)
-                        while (buffer.hasRemaining()) {
-                            currentCoroutineContext().ensureActive()
-                            if (reader.read(buffer) < 0) break
+                        if (request.offsetBytes < total) {
+                            reader.position(request.offsetBytes)
+                            while (buffer.hasRemaining()) {
+                                currentCoroutineContext().ensureActive()
+                                if (reader.read(buffer) < 0) break
+                            }
                         }
                         val truncated = buffer.position() > maximum
                         if (truncated && request.maxBytes == 0L) {
@@ -90,6 +88,12 @@ class FileSystemServiceImpl internal constructor(
             }
         }
 
+    private fun readLimit(request: ReadFileRequest): Int =
+        request.maxBytes
+            .takeIf { it > 0 }
+            ?.coerceAtMost(FileSystemLimits.READ_BYTES.toLong())
+            ?.toInt() ?: FileSystemLimits.READ_BYTES
+
     @Suppress("TooGenericExceptionCaught") // Preserve the RPC response error contract for file/write failures.
     override suspend fun writeFile(request: WriteFileRequest): WriteFileResponse =
         withContext(Dispatchers.IO) {
@@ -98,10 +102,20 @@ class FileSystemServiceImpl internal constructor(
                 access.entry(request.path, request.createParents, followLeaf = true).use { entry ->
                     val writer =
                         try {
-                            entry.parent.file(entry.name, create = true, permissions = CreationPermissions.INHERIT)
+                            entry.parent.file(
+                                entry.name,
+                                create = true,
+                                readable = false,
+                                permissions = CreationPermissions.INHERIT,
+                            )
                         } catch (failure: FileAlreadyExistsException) {
                             if (!request.overwrite) throw failure
-                            entry.parent.file(entry.name, writable = true, permissions = CreationPermissions.INHERIT)
+                            entry.parent.file(
+                                entry.name,
+                                writable = true,
+                                readable = false,
+                                permissions = CreationPermissions.INHERIT,
+                            )
                         }
                     writer.use {
                         it.truncate(0)

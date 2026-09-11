@@ -328,6 +328,39 @@ class FileAuthorityTest {
         }
 
     @Test
+    fun `case aliases of a protected entry cannot be deleted renamed or watched`() =
+        runBlocking {
+            val alias = blocked.resolveSibling(blocked.fileName.toString().uppercase())
+            org.junit.Assume.assumeTrue(
+                "Case-insensitive volume required",
+                Files.exists(alias) && Files.isSameFile(alias, blocked),
+            )
+            Files.writeString(blocked.resolve("sentinel"), "protected")
+            assertFailsWith<FilePathDeniedException> {
+                service.renameFile(
+                    RenameFileRequest
+                        .newBuilder()
+                        .setSourcePath(alias.toString())
+                        .setDestinationPath(root.resolve("moved").toString())
+                        .build(),
+                )
+            }
+            assertFailsWith<FilePathDeniedException> {
+                service.deleteFile(
+                    DeleteFileRequest
+                        .newBuilder()
+                        .setPath(alias.toString())
+                        .setRecursive(true)
+                        .build(),
+                )
+            }
+            assertFailsWith<FilePathDeniedException> {
+                service.watchFileChanges(WatchFileChangesRequest.newBuilder().setPath(alias.toString()).build()).first()
+            }
+            assertEquals("protected", Files.readString(blocked.resolve("sentinel")))
+        }
+
+    @Test
     fun `ordinary creation overwrite and missing parents retain their behavior`() =
         runBlocking {
             val path = root.resolve("parents/child/file")

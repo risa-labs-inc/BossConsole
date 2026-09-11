@@ -2,6 +2,7 @@ package ai.rever.boss.service.filesystem
 
 import ai.rever.boss.files.CreationPermissions
 import ai.rever.boss.files.NativeDirectory
+import com.sun.jna.Platform
 import java.nio.file.Path
 
 /** Owns the validation-to-use boundary. Visible names are labels and are never used for subsequent I/O. */
@@ -27,8 +28,13 @@ internal class FileAccess(
         val parent = NativeDirectory.open(requireNotNull(candidate.parent), createParents, CreationPermissions.INHERIT)
         var delivered = false
         try {
-            afterAnchor(candidate)
-            return FileEntryHandle(parent, candidate, visible).also { delivered = true }
+            // Darwin's path comparisons are case-sensitive even on a case-insensitive volume.
+            // Ask for the stored directory-entry name without following its final link.
+            val name = if (Platform.isMac()) parent.info(candidate.fileName.toString())?.canonicalName else null
+            val authorized = if (name == null) candidate else candidate.resolveSibling(name)
+            policy.authorize(authorized)
+            afterAnchor(authorized)
+            return FileEntryHandle(parent, authorized, visible).also { delivered = true }
         } finally {
             if (!delivered) parent.close()
         }

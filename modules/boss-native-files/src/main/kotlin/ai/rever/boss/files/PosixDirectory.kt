@@ -31,7 +31,7 @@ internal class PosixDirectory(
             val result = PosixApi.library.getFunction("mkdirat").invokeInt(arrayOf<Any>(handle(), name, mode))
             if (result < 0 && Native.getLastError() != 17) throw PosixApi.error("Create directory")
         }
-        val flags = PosixApi.directory or PosixApi.noFollow or PosixApi.closeOnExec
+        val flags = PosixApi.search or PosixApi.directory or PosixApi.noFollow or PosixApi.closeOnExec
         val child = PosixApi.library.getFunction("openat").invokeInt(arrayOf<Any>(handle(), name, flags))
         return PosixDirectory(PosixApi.check(child, "Open directory"))
     }
@@ -41,17 +41,20 @@ internal class PosixDirectory(
         name: String,
         create: Boolean,
         writable: Boolean,
+        readable: Boolean,
         permissions: CreationPermissions,
     ): SeekableByteChannel {
+        require(readable || writable) { "A file must be opened for reading or writing" }
+        val access = if (writable) (if (readable) 2 else 1) else 0
         val creation = if (create) (if (PosixApi.mac) 0x200 or 0x800 else 0x40 or 0x80) else 0
         val flags =
-            (if (writable) 2 else 0) or creation or
+            access or creation or
                 PosixApi.noFollow or PosixApi.closeOnExec or PosixApi.nonBlocking
         val mode = if (permissions == CreationPermissions.OWNER_ONLY) 384 else 438
         val arguments = arrayOf<Any>(handle(), component(name), flags, mode)
         // openat has three fixed arguments; Darwin ARM64 passes the variadic mode on the stack.
         val opened = PosixApi.library.getFunction("openat", 3 shl 7).invokeInt(arguments)
-        return PosixFile(PosixApi.check(opened, "Open file"), writable = writable)
+        return PosixFile(PosixApi.check(opened, "Open file"), writable = writable, readable = readable)
     }
 
     @Synchronized
@@ -140,7 +143,14 @@ internal class PosixDirectory(
 
     @Synchronized
     override fun restrictToOwner() {
-        PosixPermissions.restrictDirectory(handle())
+        val flags = PosixApi.directory or PosixApi.closeOnExec
+        val opened = PosixApi.library.getFunction("openat").invokeInt(arrayOf<Any>(handle(), ".", flags))
+        val directory = PosixApi.check(opened, "Open permissions handle")
+        try {
+            PosixPermissions.restrictDirectory(directory)
+        } finally {
+            PosixApi.library.getFunction("close").invokeInt(arrayOf<Any>(directory))
+        }
     }
 
     @Synchronized
@@ -153,7 +163,7 @@ internal class PosixDirectory(
 
     companion object {
         fun openRoot(root: Path): NativeDirectory {
-            val flags = PosixApi.directory or PosixApi.noFollow or PosixApi.closeOnExec
+            val flags = PosixApi.search or PosixApi.directory or PosixApi.noFollow or PosixApi.closeOnExec
             val descriptor = PosixApi.library.getFunction("open").invokeInt(arrayOf<Any>(root.toString(), flags))
             return PosixDirectory(PosixApi.check(descriptor, "Open filesystem root"))
         }

@@ -14,6 +14,7 @@ data class FileInfo(
     val identity: String,
     val modifiedMillis: Long,
     val modifiedNanos: Long = modifiedMillis * 1_000_000,
+    val canonicalName: String? = null,
 )
 
 enum class CreationPermissions { OWNER_ONLY, INHERIT }
@@ -36,6 +37,7 @@ interface NativeDirectory : AutoCloseable {
         name: String,
         create: Boolean = false,
         writable: Boolean = create,
+        readable: Boolean = true,
         permissions: CreationPermissions = CreationPermissions.OWNER_ONLY,
     ): SeekableByteChannel
 

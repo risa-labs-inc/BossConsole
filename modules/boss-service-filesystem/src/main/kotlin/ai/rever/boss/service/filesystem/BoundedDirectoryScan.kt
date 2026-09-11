@@ -39,15 +39,15 @@ internal class BoundedDirectoryScan(
             if ((!request.includeHidden && name.startsWith('.')) || !policy.allowed(path)) return@entries true
             val info = directory.info(name) ?: return@entries true
             val isDirectory = info.isDirectory && !info.isLink
-            if (isDirectory || extensions.isEmpty() || name.substringAfterLast('.', "") in extensions) {
+            if (isDirectory || accepts(name)) {
                 add(visible.resolve(name), info)
             }
-            if (isDirectory) {
+            if (isDirectory && (level < depth || requestedDepth > depth)) {
                 try {
                     directory.child(name).use { child ->
                         if (level < depth) {
                             visit(child, path, visible.resolve(name), level + 1)
-                        } else if (requestedDepth > depth) {
+                        } else {
                             child.entries {
                                 throw fileSystemLimit("Directory scan depth limit reached")
                             }
@@ -60,6 +60,8 @@ internal class BoundedDirectoryScan(
             true
         }
     }
+
+    private fun accepts(name: String): Boolean = extensions.isEmpty() || name.substringAfterLast('.', "") in extensions
 
     private fun add(
         path: Path,

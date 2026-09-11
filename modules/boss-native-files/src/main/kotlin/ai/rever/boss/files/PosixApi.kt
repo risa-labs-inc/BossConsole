@@ -17,6 +17,7 @@ internal object PosixApi {
     val noFollow = if (mac) 0x100 else 0x20000
     val closeOnExec = if (mac) 0x01000000 else 0x80000
     val directory = if (mac) 0x00100000 else 0x10000
+    val search = if (mac) 0x40000000 else 0x200000 // O_SEARCH / O_PATH
     val nonBlocking = if (mac) 4 else 0x800
 
     fun error(
@@ -78,6 +79,29 @@ internal object PosixApi {
                 "$device:${memory.getLong(8)}",
                 modified * 1000 + memory.getLong(if (mac) 56 else 96) / 1_000_000,
                 modified * 1_000_000_000 + memory.getLong(if (mac) 56 else 96),
+                if (mac && name != null) entryName(descriptor, name) else null,
             )
+        }
+
+    private fun entryName(
+        directory: Int,
+        name: String,
+    ): String =
+        Memory(24).use { attributes ->
+            attributes.clear()
+            attributes.setShort(0, 5)
+            attributes.setInt(4, 1) // ATTR_CMN_NAME returns the stored spelling, including for symlinks.
+            Memory(4096).use { result ->
+                check(
+                    library.getFunction("getattrlistat").invokeInt(
+                        arrayOf<Any>(directory, component(name), attributes, result, result.size(), 1),
+                    ),
+                    "Read entry name",
+                ) // FSOPT_NOFOLLOW
+                val offset = result.getInt(4)
+                val length = result.getInt(8)
+                require(offset >= 8 && length > 0 && 4L + offset + length <= result.size()) { "Invalid entry name" }
+                component(result.getString(4L + offset, "UTF-8"))
+            }
         }
 }
