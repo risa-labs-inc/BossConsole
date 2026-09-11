@@ -2,199 +2,167 @@ package ai.rever.boss.app.terminal
 
 import ai.rever.boss.ipc.proto.Empty
 import ai.rever.boss.ipc.proto.services.*
-import com.google.protobuf.ByteString
+import io.grpc.Status
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
+import java.io.IOException
+import java.util.concurrent.Semaphore
 
-/**
- * gRPC implementation of TerminalService.
- *
- * Manages terminal sessions using ProcessBuilder. Each session launches
- * a shell process with stdout/stderr pumped into a SharedFlow that clients
- * subscribe to via StreamOutput. SendInput writes to the process stdin.
- *
- * Full PTY4J integration (resize, raw mode, ANSI escape sequences) can be
- * plugged in by replacing the ProcessBuilder approach without changing the
- * gRPC interface.
- */
-class TerminalServiceImpl : TerminalServiceGrpcKt.TerminalServiceCoroutineImplBase() {
+/** ProcessBuilder terminals with bounded active work, replay history, and completed-session retention. */
+class TerminalServiceImpl(
+    activeLimit: Int = 16,
+    private val historyLimit: Int = 64,
+) : TerminalServiceGrpcKt.TerminalServiceCoroutineImplBase(),
+    AutoCloseable {
     private val logger = LoggerFactory.getLogger(TerminalServiceImpl::class.java)
+    private val activeSlots = Semaphore(activeLimit)
+    private val streamSlots = Semaphore(32)
+    private val lock = Any()
+    private val sessions = linkedMapOf<String, TerminalSession>()
+    private var closed = false
 
-    private data class TerminalSession(
-        val id: String,
-        val workingDirectory: String,
-        val command: List<String>,
-        @Volatile var cols: Int = 80,
-        @Volatile var rows: Int = 24,
-        val createdAt: Long = System.currentTimeMillis(),
-        val outputFlow: MutableSharedFlow<TerminalOutputChunk> =
-            MutableSharedFlow(
-                extraBufferCapacity = 256,
-            ),
-        val process: Process,
-    )
-
-    private val sessions = ConcurrentHashMap<String, TerminalSession>()
+    init {
+        require(activeLimit > 0 && historyLimit >= activeLimit)
+    }
 
     override suspend fun createSession(request: CreateSessionRequest): CreateSessionResponse {
-        val sessionId = UUID.randomUUID().toString()
-        val workDir = request.workingDirectory.ifBlank { System.getProperty("user.home") }
-        val cmd =
-            if (request.commandList.isNotEmpty()) {
-                request.commandList
-            } else {
-                val shell =
-                    System.getenv("SHELL")
-                        ?: if (System.getProperty("os.name").lowercase().contains("win")) "cmd.exe" else "/bin/sh"
-                listOf(shell)
-            }
-
-        logger.info("createSession: id={}, workdir={}, command={}", sessionId, workDir, cmd)
-
-        return try {
-            val pb =
-                ProcessBuilder(cmd)
-                    .directory(java.io.File(workDir))
-                    .redirectErrorStream(true)
-
-            val env = pb.environment()
-            env["TERM"] = "xterm-256color"
-            env["COLUMNS"] = (request.cols.takeIf { it > 0 } ?: 80).toString()
-            env["LINES"] = (request.rows.takeIf { it > 0 } ?: 24).toString()
-            request.environmentMap.forEach { (k, v) -> env[k] = v }
-
-            val process = pb.start()
-            val outputFlow = MutableSharedFlow<TerminalOutputChunk>(extraBufferCapacity = 256)
-            val session =
-                TerminalSession(
-                    id = sessionId,
-                    workingDirectory = workDir,
-                    command = cmd,
-                    cols = request.cols.takeIf { it > 0 } ?: 80,
-                    rows = request.rows.takeIf { it > 0 } ?: 24,
-                    outputFlow = outputFlow,
-                    process = process,
-                )
-            sessions[sessionId] = session
-
-            // Pump stdout/stderr into the SharedFlow on a daemon thread
-            Thread {
-                try {
-                    val reader = BufferedReader(InputStreamReader(process.inputStream))
-                    val buf = CharArray(4096)
-                    var n: Int
-                    while (reader.read(buf).also { n = it } != -1) {
-                        outputFlow.tryEmit(
-                            TerminalOutputChunk
-                                .newBuilder()
-                                .setSessionId(sessionId)
-                                .setData(ByteString.copyFromUtf8(String(buf, 0, n)))
-                                .setTimestamp(System.currentTimeMillis())
-                                .build(),
-                        )
-                    }
-                    // Emit exit notification
-                    val exitCode =
-                        try {
-                            process.waitFor()
-                        } catch (_: Exception) {
-                            -1
-                        }
-                    outputFlow.tryEmit(
-                        TerminalOutputChunk
+        var session: TerminalSession? = null
+        var admitted = false
+        var pumping = false
+        var delivered = false
+        try {
+            val response =
+                withContext(Dispatchers.IO) {
+                    require(request.serializedSize <= 131_072) { "Terminal launch request exceeds 128 KiB" }
+                    currentCoroutineContext().ensureActive()
+                    // Shutdown cannot overlook an admitted launch between process creation and registration.
+                    synchronized(lock) {
+                        reserveSlot()
+                        admitted = true
+                        val launched = TerminalSession.launch(request)
+                        session = launched
+                        retain(launched)
+                        launched.startPump { activeSlots.release() }
+                        pumping = true
+                        logger.info("Created terminal session: {}", launched.id)
+                        CreateSessionResponse
                             .newBuilder()
-                            .setSessionId(sessionId)
-                            .setData(ByteString.copyFromUtf8("\r\n[Process exited with code $exitCode]\r\n"))
-                            .setTimestamp(System.currentTimeMillis())
-                            .setIsExit(true)
-                            .setExitCode(exitCode)
-                            .build(),
-                    )
-                } catch (_: Exception) {
-                    // Process terminated or stream closed — pump ends cleanly
+                            .setSuccess(true)
+                            .setSessionId(launched.id)
+                            .build()
+                    }
                 }
-            }.also { it.isDaemon = true }.start()
-
-            CreateSessionResponse
-                .newBuilder()
-                .setSuccess(true)
-                .setSessionId(sessionId)
-                .build()
-        } catch (e: Exception) {
-            logger.error("Failed to create terminal session", e)
-            CreateSessionResponse
+            // The return dispatch can discard a withContext result on cancellation. Ownership stays
+            // here until that dispatch succeeds, so a discarded response also terminates its process.
+            delivered = true
+            return response
+        } catch (failure: IOException) {
+            logger.warn("Terminal launch failed: {}", failure.javaClass.simpleName)
+            return CreateSessionResponse
                 .newBuilder()
                 .setSuccess(false)
-                .setErrorMessage(e.message ?: "Failed to start process")
+                .setErrorMessage("Failed to start terminal process")
                 .build()
+        } finally {
+            if (!delivered && admitted) {
+                session?.terminate()
+            }
+            if (!delivered && admitted && !pumping) {
+                session?.process?.onExit()?.join()
+                synchronized(lock) { session?.id?.let(sessions::remove) }
+                activeSlots.release()
+            }
         }
     }
 
-    override suspend fun sendInput(request: SendInputRequest): Empty {
-        val session = sessions[request.sessionId]
-        if (session == null) {
-            logger.warn("sendInput: session not found: {}", request.sessionId)
-            return Empty.getDefaultInstance()
+    /** Called while holding [lock], so shutdown and new launches cannot cross. */
+    private fun reserveSlot() {
+        check(!closed) { "Terminal service is closed" }
+        if (!activeSlots.tryAcquire()) {
+            throw Status.RESOURCE_EXHAUSTED.withDescription("Too many active terminals").asRuntimeException()
         }
-        try {
-            val out = session.process.outputStream
-            out.write(request.data.toByteArray())
-            out.flush()
-        } catch (e: Exception) {
-            logger.warn("sendInput error for session {}: {}", request.sessionId, e.message)
-        }
-        return Empty.getDefaultInstance()
     }
+
+    private fun retain(session: TerminalSession) {
+        val iterator = sessions.entries.iterator()
+        while (sessions.size >= historyLimit && iterator.hasNext()) {
+            if (!iterator.next().value.active) iterator.remove()
+        }
+        sessions[session.id] = session
+    }
+
+    override fun close() {
+        val active =
+            synchronized(lock) {
+                closed = true
+                sessions.values.filter { it.active }
+            }
+        active.forEach { it.terminate() }
+        active.forEach { it.process.onExit().join() }
+    }
+
+    override suspend fun sendInput(request: SendInputRequest): Empty =
+        withContext(Dispatchers.IO) {
+            require(request.data.size() <= 65_536) { "Terminal input exceeds 64 KiB" }
+            session(request.sessionId).send(request.data.toByteArray())
+            Empty.getDefaultInstance()
+        }
 
     override fun streamOutput(request: StreamOutputRequest): Flow<TerminalOutputChunk> =
         flow {
-            val session = sessions[request.sessionId]
-            if (session == null) {
-                logger.warn("streamOutput: session not found: {}", request.sessionId)
-                return@flow
+            if (!streamSlots.tryAcquire()) {
+                throw Status.RESOURCE_EXHAUSTED
+                    .withDescription(
+                        "Too many terminal output readers",
+                    ).asRuntimeException()
             }
-            session.outputFlow.collect { chunk -> emit(chunk) }
+            try {
+                emitAll(session(request.sessionId).output.stream())
+            } finally {
+                streamSlots.release()
+            }
         }
 
     override suspend fun resize(request: ResizeRequest): Empty {
-        val session = sessions[request.sessionId]
-        if (session != null) {
-            session.cols = request.cols
-            session.rows = request.rows
-            logger.debug("resize: session={}, {}x{}", request.sessionId, request.cols, request.rows)
+        require(request.cols in 1..1000 && request.rows in 1..1000) { "Invalid terminal dimensions" }
+        session(request.sessionId).apply {
+            cols = request.cols
+            rows = request.rows
         }
         return Empty.getDefaultInstance()
     }
 
     override suspend fun closeSession(request: CloseSessionRequest): Empty {
-        val session = sessions.remove(request.sessionId)
-        if (session != null) {
-            session.process.destroyForcibly()
-            logger.info("closeSession: id={}", request.sessionId)
-        } else {
-            logger.warn("closeSession: not found: {}", request.sessionId)
-        }
+        val session = session(request.sessionId)
+        if (session.active) session.terminate() else synchronized(lock) { sessions.remove(session.id) }
         return Empty.getDefaultInstance()
     }
 
     override suspend fun listSessions(request: Empty): ListSessionsResponse {
-        val infos =
-            sessions.values.map { s ->
-                TerminalSessionInfo
-                    .newBuilder()
-                    .setSessionId(s.id)
-                    .setWorkingDirectory(s.workingDirectory)
-                    .addAllCommand(s.command)
-                    .setCreatedAt(s.createdAt)
-                    .setIsAlive(s.process.isAlive)
-                    .build()
-            }
-        return ListSessionsResponse.newBuilder().addAllSessions(infos).build()
+        val snapshot = synchronized(lock) { sessions.values.toList() }
+        return ListSessionsResponse
+            .newBuilder()
+            .addAllSessions(
+                snapshot.map { session ->
+                    TerminalSessionInfo
+                        .newBuilder()
+                        .setSessionId(session.id)
+                        .setWorkingDirectory(session.workingDirectory)
+                        .addAllCommand(session.command)
+                        .setCreatedAt(session.createdAt)
+                        .setIsAlive(session.process.isAlive)
+                        .build()
+                },
+            ).build()
     }
+
+    private fun session(id: String): TerminalSession =
+        synchronized(lock) { sessions[id] }
+            ?: throw Status.NOT_FOUND.withDescription("Terminal session not found").asRuntimeException()
 }
