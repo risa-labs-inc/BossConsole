@@ -2,13 +2,14 @@ package ai.rever.boss.orchestrator
 
 import ai.rever.boss.ipc.proto.*
 import ai.rever.boss.process.ProcessRegistry
+import io.grpc.Status
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.sync.Semaphore
 import org.slf4j.LoggerFactory
 import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * gRPC implementation of OrchestratorService.
@@ -28,36 +29,69 @@ class OrchestratorServiceImpl(
      */
     private val onRepairApproved: suspend (processId: String, action: RepairAction) -> ApprovalResult =
         { processId, action -> ApprovalResult.Refused(noApprovalSinkReason(processId, action)) },
+    private val historyLimit: Int = 256,
+    pendingLimit: Int = 64,
+    analysisLimit: Int = 4,
 ) : OrchestratorServiceGrpcKt.OrchestratorServiceCoroutineImplBase() {
     private val logger = LoggerFactory.getLogger(OrchestratorServiceImpl::class.java)
 
-    private val repairHistory = ConcurrentHashMap<String, RepairHistoryEntry>()
-    private val pendingRepairs = ConcurrentHashMap<String, PendingRepair>()
+    init {
+        require(historyLimit >= pendingLimit && pendingLimit > 0 && analysisLimit > 0)
+    }
+
+    private val stateLock = Any()
+    private val repairHistory = LinkedHashMap<String, RepairHistoryEntry>()
+    private val pendingRepairs = mutableMapOf<String, PendingRepair>()
+    private val pendingSlots = Semaphore(pendingLimit)
+    private val analysisSlots = Semaphore(analysisLimit)
     private val _healthEvents = MutableSharedFlow<HealthEvent>(extraBufferCapacity = 64)
 
     override suspend fun reportFailure(request: ProcessFailureReport): RepairAction {
+        if (!analysisSlots.tryAcquire()) throw exhausted("Concurrent repair analysis limit reached; retry later")
+        var pendingReserved = false
+        var parked = false
+        try {
+            if (!pendingSlots.tryAcquire()) throw exhausted("Resolve pending repairs before submitting more")
+            pendingReserved = true
+            val action = analyzeFailure(request)
+            parked = action.requiresUserApproval
+            return action
+        } finally {
+            if (pendingReserved && !parked) pendingSlots.release()
+            analysisSlots.release()
+        }
+    }
+
+    private suspend fun analyzeFailure(request: ProcessFailureReport): RepairAction {
         logger.info("Received failure report for process: {}", request.processId)
 
         val outcome = repairEngine.handleFailure(request)
         val repairId = UUID.randomUUID().toString()
         val strategy = outcomeToStrategy(outcome)
         val action = buildRepairAction(repairId, strategy, outcome, request)
+        if (action.serializedSize > 131_072) throw exhausted("Repair proposal exceeds the size limit")
 
-        repairHistory[repairId] =
+        val entry =
             RepairHistoryEntry
                 .newBuilder()
                 .setRepairId(repairId)
                 .setProcessId(request.processId)
                 .setStrategy(strategy)
                 .setSuccess(outcome !is RepairOutcome.Failed)
-                .setDescription(action.description)
+                .setDescription(action.description.take(RepairLimits.MESSAGE_CHARS))
                 .setTimestamp(System.currentTimeMillis())
                 .build()
 
-        if (action.requiresUserApproval) {
-            // Parked with the process it is about: RepairAction has no process_id field, so a
-            // repair id alone is not enough to act on later.
-            pendingRepairs[repairId] = PendingRepair(request.processId, action)
+        synchronized(stateLock) {
+            if (action.requiresUserApproval) {
+                pendingRepairs[repairId] = PendingRepair(request.processId, action)
+            }
+            repairHistory[repairId] = entry
+            // Pending and executing approvals are active work, so only completed history is evicted.
+            while (repairHistory.size > historyLimit) {
+                val oldestCompleted = repairHistory.keys.first { it !in pendingRepairs }
+                repairHistory.remove(oldestCompleted)
+            }
         }
 
         _healthEvents.tryEmit(
@@ -107,7 +141,7 @@ class OrchestratorServiceImpl(
 
     override suspend fun getRepairHistory(request: RepairHistoryRequest): RepairHistoryResponse {
         val entries =
-            repairHistory.values
+            synchronized(stateLock) { repairHistory.values.toList() }
                 .let { all ->
                     if (request.processId.isNotBlank()) {
                         all.filter { it.processId == request.processId }
@@ -124,14 +158,28 @@ class OrchestratorServiceImpl(
 
     override suspend fun approveRepair(request: RepairApproval): RepairApprovalResponse {
         val pending =
-            pendingRepairs.remove(request.repairId)
+            synchronized(stateLock) {
+                pendingRepairs[request.repairId]?.takeUnless { it.claimed }?.also { it.claimed = true }
+            }
                 ?: return RepairApprovalResponse
                     .newBuilder()
                     .setApplied(false)
                     .setResultMessage("No pending repair found: ${request.repairId}")
                     .build()
 
-        return if (request.approved) {
+        return try {
+            executeApproval(request, pending)
+        } finally {
+            synchronized(stateLock) { pendingRepairs.remove(request.repairId) }
+            pendingSlots.release()
+        }
+    }
+
+    private suspend fun executeApproval(
+        request: RepairApproval,
+        pending: PendingRepair,
+    ): RepairApprovalResponse =
+        if (request.approved) {
             logger.info("Repair {} for process {} approved by user", request.repairId, pending.processId)
             // The response says what happened to the repair, not that it was approved: a
             // caller cannot tell an applied repair from a dropped one otherwise.
@@ -174,7 +222,8 @@ class OrchestratorServiceImpl(
                 .setResultMessage("Repair rejected: ${request.userNotes}")
                 .build()
         }
-    }
+
+    private fun exhausted(message: String) = Status.RESOURCE_EXHAUSTED.withDescription(message).asRuntimeException()
 
     override fun watchHealth(request: Empty): Flow<HealthEvent> = _healthEvents.asSharedFlow()
 
@@ -303,6 +352,7 @@ sealed class ApprovalResult {
 private data class PendingRepair(
     val processId: String,
     val action: RepairAction,
+    var claimed: Boolean = false,
 )
 
 private fun noApprovalSinkReason(
