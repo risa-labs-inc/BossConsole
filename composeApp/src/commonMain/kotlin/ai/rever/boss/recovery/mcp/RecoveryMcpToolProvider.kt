@@ -131,7 +131,10 @@ class RecoveryMcpToolProvider(
                         McpToolResult("Verification failed: ${e.message}", isError = true)
                     }
                 },
-        )
+        ).apply {
+            // Arbitrary command execution with host authority: admin-gated like recovery_rewind.
+            requiresAdmin = true
+        }
 
     private fun createPreviewRewindTool(): McpToolDefinition =
         McpToolDefinition(

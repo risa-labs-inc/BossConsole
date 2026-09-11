@@ -53,6 +53,9 @@ class RecoveryMcpToolProviderTest {
         val rewindTool = tools.single { it.name == "recovery_rewind" }
         assertTrue(rewindTool.requiresAdmin, "recovery_rewind must require admin authorization")
 
+        val verifyClaimTool = tools.single { it.name == "recovery_verify_claim" }
+        assertTrue(verifyClaimTool.requiresAdmin, "recovery_verify_claim executes arbitrary commands and must require admin authorization")
+
         val previewTool = tools.single { it.name == "recovery_preview_rewind" }
         assertFalse(previewTool.requiresAdmin, "recovery_preview_rewind should be accessible for dry-run inspection")
     }

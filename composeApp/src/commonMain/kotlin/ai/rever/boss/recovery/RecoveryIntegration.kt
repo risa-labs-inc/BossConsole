@@ -1,4 +1,4 @@
-﻿package ai.rever.boss.recovery
+package ai.rever.boss.recovery
 
 import ai.rever.boss.mcp.McpToolRegistryImpl
 import ai.rever.boss.recovery.mcp.RecoveryMcpToolProvider
