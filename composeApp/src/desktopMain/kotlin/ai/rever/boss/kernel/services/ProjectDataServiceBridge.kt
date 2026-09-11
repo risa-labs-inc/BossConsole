@@ -4,11 +4,15 @@ import ai.rever.boss.ipc.proto.Empty
 import ai.rever.boss.ipc.proto.services.*
 import ai.rever.boss.plugin.api.ProjectData
 import ai.rever.boss.plugin.api.ProjectDataProvider
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.withContext
 
 class ProjectDataServiceBridge(
     private val provider: ProjectDataProvider,
+    private val uiDispatcher: CoroutineDispatcher = Dispatchers.Main,
 ) : ProjectDataServiceGrpcKt.ProjectDataServiceCoroutineImplBase() {
     override fun watchRecentProjects(request: Empty): Flow<ProjectListResponse> =
         flow {
@@ -47,13 +51,18 @@ class ProjectDataServiceBridge(
     }
 
     override suspend fun selectProject(request: ProjectProto): Empty {
-        provider.selectProject(
-            ProjectData(
-                name = request.name,
-                path = request.path,
-                lastOpened = request.lastOpened,
-            ),
-        )
+        // The provider mutates per-window UI state and synchronously announces that change.
+        // Confining the only non-UI entry point here keeps the state and its previous-path event
+        // chain ordered without making third-party event handlers run under a host lock.
+        withContext(uiDispatcher) {
+            provider.selectProject(
+                ProjectData(
+                    name = request.name,
+                    path = request.path,
+                    lastOpened = request.lastOpened,
+                ),
+            )
+        }
         return Empty.getDefaultInstance()
     }
 }

@@ -86,11 +86,12 @@ internal object BrowserAnalytics {
     /** The one place a browser event reaches the bus, so the kill switch cannot be bypassed. */
     private fun publish(event: ApplicationEvent) {
         if (!telemetryEnabled) return
-        // NOTE: a no-op until some plugin first touches PluginContext.applicationEventBus,
-        // which is what lazily creates the bus (DefaultPlugin.applicationEventBus). Tabs
-        // restored at launch therefore report their TAB_OPENED and first PAGE_VIEWED into
-        // nothing, so opens undercount against closes for one session. Buffering pre-bus
-        // events would fix it; until then a consumer must not read tab counts as exact.
+        // publishSystemEvent creates the bus when none exists. Because it has replay = 0, that
+        // first event still has no subscriber and is discarded; later events can be observed.
+        // Browser interactions are the highest-volume publisher on this bus, so this turns the
+        // old null-check path into a real tryEmit even with no subscriber. That is intentional:
+        // tryEmit discards immediately in that case, and the null check was never a throttle.
+        // A consumer must still not read tab counts as exact.
         //
         // Nor page-view counts: pageLeft() drops a visit longer than MAX_REPORTABLE_DWELL_MS
         // rather than reporting a suspect number, so a PAGE_VIEWED for a tab left open

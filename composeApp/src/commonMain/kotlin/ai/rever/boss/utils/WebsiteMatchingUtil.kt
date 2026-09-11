@@ -9,7 +9,7 @@ import ai.rever.boss.utils.logging.LogCategory
  *
  * Handles:
  * - Domain extraction from URLs
- * - Subdomain normalization (login.google.com → google.com)
+ * - Full hostname preservation, with a leading www. removed
  * - Exact and dot-boundary matching between secret website and current domain
  * - Scoring and ranking of matched secrets
  *
@@ -32,17 +32,20 @@ object WebsiteMatchingUtil {
     }
 
     /**
-     * Extract the main domain from a URL.
+     * Extract the full hostname from a URL, removing a leading www.
+     *
+     * The historical function name is retained for callers. No registrable-domain or
+     * public-suffix guessing is performed: sibling hosts remain distinct.
      *
      * Examples:
-     * - https://login.google.com/auth → google.com
+     * - https://login.google.com/auth → login.google.com
      * - https://www.github.com/login → github.com
-     * - https://accounts.google.com → google.com
+     * - https://accounts.google.com → accounts.google.com
      * - http://localhost:3000 → localhost
      * - https://example.co.uk → example.co.uk
      *
      * @param url The URL to extract domain from
-     * @return Cleaned main domain, or null if invalid
+     * @return Cleaned hostname, or null if parsing fails
      */
     fun extractMainDomain(url: String): String? {
         return try {
@@ -73,38 +76,6 @@ object WebsiteMatchingUtil {
             // Remove www. prefix
             host = host.removePrefix("www.")
 
-            // Remove common subdomains for matching
-            // But keep subdomains that might be meaningful for secrets
-            val commonSubdomains = listOf("login", "accounts", "auth", "signin", "signup", "sso", "id", "portal", "app", "my")
-            val parts = host.split(".")
-
-            // Keep TLD + main domain (e.g., google.com, github.com)
-            // Special handling for .co.uk, .com.au, etc.
-            val twoPartTlds = listOf("co.uk", "com.au", "co.in", "co.jp", "com.br", "co.za")
-
-            host =
-                when {
-                    // Handle two-part TLDs (example.co.uk)
-                    parts.size >= 3 && twoPartTlds.any { host.endsWith(it) } -> {
-                        parts.takeLast(3).joinToString(".")
-                    }
-
-                    // Remove common subdomain (login.google.com → google.com)
-                    parts.size >= 3 && parts[0] in commonSubdomains -> {
-                        parts.drop(1).joinToString(".")
-                    }
-
-                    // Keep as is if short enough
-                    parts.size <= 2 -> {
-                        host
-                    }
-
-                    // For longer domains, keep last 2 parts (subdomain.example.com → example.com)
-                    else -> {
-                        parts.takeLast(2).joinToString(".")
-                    }
-                }
-
             host
         } catch (e: Exception) {
             logger.debug(LogCategory.BROWSER, "Failed to extract domain", mapOf("url" to url, "error" to e.toString()))
@@ -122,8 +93,9 @@ object WebsiteMatchingUtil {
      *
      * Substrings and shared labels do not establish a domain relationship and must not
      * produce credential suggestions. Only equality and a dot-delimited suffix qualify.
-     * This scorer does not validate public suffixes; [extractMainDomain] retains its existing
-     * limited suffix handling, so this is not a complete registrable-domain policy.
+     * [extractMainDomain] preserves the hostname rather than guessing a registrable domain.
+     * This scorer does not validate public suffixes. Explicit parent-domain entries still
+     * match subdomains in either direction; sibling hostnames do not match each other.
      *
      * @param domain Current website domain (e.g., "google.com")
      * @param secrets List of all available secrets
@@ -210,6 +182,8 @@ object WebsiteMatchingUtil {
      * - google.com → Google
      * - github.com → GitHub
      * - example-site.com → Example Site
+     * - accounts.google.com → accounts.google.com
+     * - google.com.evil.com → google.com.evil.com
      *
      * @param website Website domain or URL
      * @return Formatted display name
@@ -217,44 +191,48 @@ object WebsiteMatchingUtil {
     fun getDisplayName(website: String): String {
         val domain = extractMainDomain(website) ?: website
 
+        // Without a public-suffix policy, a multi-label host must stay visible in full.
+        // Using its first label would present google.com.evil.com as the trusted brand Google.
+        if (domain.count { it == '.' } > 1) return domain
+
         // Remove TLD
         val nameWithoutTld = domain.split(".").first()
 
         // Handle special cases
-        return when (nameWithoutTld.lowercase()) {
-            "google" -> {
+        return when (domain.lowercase()) {
+            "google.com" -> {
                 "Google"
             }
 
-            "github" -> {
+            "github.com" -> {
                 "GitHub"
             }
 
-            "facebook" -> {
+            "facebook.com" -> {
                 "Facebook"
             }
 
-            "linkedin" -> {
+            "linkedin.com" -> {
                 "LinkedIn"
             }
 
-            "twitter" -> {
+            "twitter.com" -> {
                 "Twitter (X)"
             }
 
-            "microsoft" -> {
+            "microsoft.com" -> {
                 "Microsoft"
             }
 
-            "apple" -> {
+            "apple.com" -> {
                 "Apple"
             }
 
-            "amazon" -> {
+            "amazon.com" -> {
                 "Amazon"
             }
 
-            "netflix" -> {
+            "netflix.com" -> {
                 "Netflix"
             }
 
@@ -299,11 +277,15 @@ object WebsiteMatchingUtil {
     }
 
     /**
-     * Extract subdomain from URL if present.
+     * Return hostname labels before the final two labels, if present.
+     *
+     * This legacy helper is not public-suffix aware and must not define credential boundaries.
+     * A leading www. is removed by [extractMainDomain] before labels are selected.
      *
      * Examples:
      * - login.google.com → login
-     * - www.example.com → www
+     * - www.example.com → null
+     * - a.example.co.uk → a.example
      * - example.com → null
      *
      * @param url URL to extract subdomain from

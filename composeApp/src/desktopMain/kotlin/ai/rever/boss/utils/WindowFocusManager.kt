@@ -291,6 +291,10 @@ private data class WindowFullscreenSignals(
  * [focusedWindowFlow] retains last-focused semantics for external actions such
  * as deep links and file opens.
  */
+@Suppress("TooManyFunctions")
+// One cohesive registry over window focus/registration state - the functions are small,
+// closely related accessors and mutations over that single registry, and splitting them
+// across objects would only add indirection between callers who need them as a unit.
 actual object WindowFocusManager {
     private val windows = ConcurrentHashMap<String, Window>()
     private val fullscreenSignals = ConcurrentHashMap<String, WindowFullscreenSignals>()
@@ -500,6 +504,8 @@ actual object WindowFocusManager {
      */
     actual fun isWindowFocused(windowId: String): Boolean = awtFocusTracker.isFocused(windowId)
 
+    actual fun isWindowOpen(windowId: String): Boolean = windows.containsKey(windowId)
+
     /**
      * Best-effort window id for actions that need "the" active window but may run
      * before a real OS focus-gained event has fired for it — e.g. a deep link
@@ -518,7 +524,7 @@ actual object WindowFocusManager {
      * consumers must tolerate a stale id (every current consumer emits an event
      * keyed by it, which is dropped if no such window listens).
      */
-    fun resolveActionableWindowId(): String? =
+    actual fun resolveActionableWindowId(): String? =
         resolveActionableWindowIdFrom(
             lastFocusedWindowId = focusedWindowId,
             focusFlowWindowId = focusedWindowFlow.value,

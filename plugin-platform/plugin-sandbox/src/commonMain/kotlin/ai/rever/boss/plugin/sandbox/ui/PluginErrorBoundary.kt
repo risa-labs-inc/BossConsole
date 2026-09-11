@@ -15,6 +15,9 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -240,19 +243,20 @@ object PluginCrashRegistry {
      * Persists across crash clear/tab close cycles so the DISABLED state fallback
      * can show the "incompatible" variant.
      */
-    private val _incompatiblePlugins = ConcurrentHashMap.newKeySet<String>()
+    private val _incompatiblePlugins = MutableStateFlow<Set<String>>(emptySet())
+    val incompatiblePlugins = _incompatiblePlugins.asStateFlow()
 
     /** Mark a plugin as incompatible (called from sandbox when binary incompatibility is detected). */
     fun markIncompatible(pluginId: String) {
-        _incompatiblePlugins.add(pluginId)
+        _incompatiblePlugins.update { it + pluginId }
     }
 
     /** Check if a plugin was disabled due to binary incompatibility. */
-    fun isIncompatible(pluginId: String): Boolean = _incompatiblePlugins.contains(pluginId)
+    fun isIncompatible(pluginId: String): Boolean = pluginId in _incompatiblePlugins.value
 
     /** Clear incompatible state (e.g., after plugin update). */
     fun clearIncompatible(pluginId: String) {
-        _incompatiblePlugins.remove(pluginId)
+        _incompatiblePlugins.update { it - pluginId }
     }
 }
 

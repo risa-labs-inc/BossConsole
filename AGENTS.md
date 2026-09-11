@@ -25,6 +25,16 @@ BOSS (Business Operating System Service) is a desktop application built with Kot
 
 **IMPORTANT**: Do NOT run `./gradlew run` in a blocking/foreground way just to test - the user runs and tests the app themselves. **Exception:** launching the app **in a dedicated bottom split pane is allowed** (backgrounded so it doesn't wedge the pane).
 
+### `composeApp` test home isolation
+
+Every `composeApp` `Test` task points `user.home` at its own fresh
+`composeApp/build/test-home/<task-name>` directory. Keep the redirect and the per-run deletion:
+`ProjectState` persists recent projects asynchronously and retains only ten, so tests using the
+real home can evict entries from a developer's project picker and a reused test home makes later
+runs race a stale `recent-projects.json` load. This guarantee is deliberately module-local;
+moving a test that reads `BossDirectories.rootDir` to another module requires equivalent isolation
+there.
+
 ### Running commands in a visible terminal pane
 
 When a terminal MCP server is available, prefer it over the plain `Bash` tool for commands worth showing - it runs in a visible BossTerm pane and still returns stdout/stderr/exit code. Two servers may be present depending on which app hosts the session; use whichever the session's `SessionStart` hook designates:
@@ -137,12 +147,10 @@ an update-shaped verb (or an intent parameter) on the api rather than a change t
 - **Optional dependencies are reported, flagged, not dropped.** An optional dependency is how a
   plugin says "this feature needs that plugin". Dropping them would leave this reporting
   nothing for the case it was built for.
-- **The event bus is a `Channel`, not a `SharedFlow`.** A broadcast would put the same dialog in
-  front of every open window and let each of them start the same install. The collector applies
-  back-pressure (`snapshotFlow { … }.first { it == null }`) so a second missing dependency is
-  asked about after the first rather than replacing it, and re-checks `isInstalled` before
-  showing - two dependents of one missing plugin each raise a prompt, so installing for the
-  first satisfies the second.
+- **The dependency bus retains pending prompts until atomically claimed.** Each eligible window
+  checks presence before claiming; cancellation during that check leaves the prompt pending.
+  Installed or declined prompts are also claimed and retired, so a later explicit retry can
+  reserve the key. A window waits for its current dialog to close before handling another prompt.
 - **Installing is the host's to do.** `PluginRepository.getPlugin(id)` plus `downloadPlugin`
   resolve an id to a jar, which no plugin can do - a plugin holding a null API can only send
   the user to the Toolbox to search by name.
@@ -232,13 +240,26 @@ Deliberately out of scope, so nobody assumes more than exists:
   `loadPlugin` refuses outright and `DefaultPlugin` skips on scan, so it looks missing to every
   manifest naming it) and the api plugin (whose install is an unload-all / swap / reload-all hot
   swap, not something to start from a dialog about something else).
-- **With two windows open, the window that asks may not be the one that reported.** The install
-  is still correct; the answering window may just not show the change until relaunch. See
-  `MissingDependencyPrompt`.
-- **The bus filters at report time, not only in the collector.** A prompt the collector is
-  certain to discard - declined, or a duplicate of one already waiting - still costs one of four
-  buffer slots on the way through, and that can be what refuses a different dependency which
-  could have been shown.
+- **Window routing is best-effort, not guaranteed delivery to the initiating window or manager.**
+  A prompt can carry a preferred window id (`MissingDependencyPrompt.windowId`, resolved from
+  focus at report time - it can differ from the window whose install actually found the missing
+  dependency, and a null target is unscoped by design). Delivery itself is a claim registry, not
+  a channel: `PluginDependencyBus.missingDependencies` broadcasts every pending prompt to every
+  open window each time anything changes (or once a second, as a fallback for the one case
+  nothing else wakes a collector for - the preferred window closing with no new report to
+  trigger a rescan), and each window decides independently, via `shouldClaimMissingDependencyPrompt`,
+  whether to `claim()` it. A non-target window that isn't the right audience simply leaves the
+  prompt where it is; there is no reoffer, no retry loop, and no per-rejection wait. When the
+  preferred window has closed, any other window may claim the prompt instead - and its installer
+  preserves its reporting manager while it is live and re-resolves to another live manager
+  after disposal (`MissingDependencyReporter.installerFor`). With none left, loading fails
+  explicitly. Each collecting window owns its periodic rescan, including while the queue is empty.
+  Closing a window after its dialog appears can still abandon that claimed prompt.
+- **The bus filters at report time, not only in the collector.** A prompt already declined this
+  session is dropped before it is ever admitted; a duplicate report for a key still pending keeps
+  the first reporter's prompt (and its `windowId`) rather than being replaced by the second. There
+  is no buffer to overflow - `pending` is a map with no capacity ceiling - so this is about not
+  re-asking a question already answered, not about conserving a scarce slot.
 - **A declined prompt is remembered for the session, not persisted, and keyed by kind.** "Not
   now" on an *optional* dependency is one answer about that plugin - three consumers declare the
   gateway optional, and being asked three times for one answer is what this prevents. "Skip" on a
@@ -331,9 +352,9 @@ installer factory), and it must not become an offer: the section falls back to t
 is composed inside the main window's subtree and opts *its own* dialogs out of heavyweight overlay
 routing precisely so they do not open centred on the main window - but the dependency dialog is
 raised through `PluginDependencyEventBus` and composed by `BossAppDialogs`, outside that opt-out. It
-is always-on-top so it is not lost, just not where the press happened. Routing it would mean the
-prompt carrying a window id, which is the same change `MissingDependencyPrompt` already records as
-not built for the two-window case.
+is always-on-top so it is not lost, just not where the press happened. The prompt now carries a
+best-effort BossWindow id, but Settings is not a registered BossWindow with its own dependency
+collector. Routing among BossWindows does not change this Settings placement limitation.
 
 **A raised offer is not a shown dialog.** `PluginDependencyEventBus.report` drops silently when a
 prompt for that plugin is already queued, so `offerIfMissing` returning true is not proof anything
@@ -552,7 +573,27 @@ server has already decrypted, recovery codes, and JWT claim sets. The request di
 counts too: `SupabaseDataProviderImpl.rpc` parses caller-supplied parameters, and a plugin
 calling `create_secret` puts the new password in them.
 
-## Code Quality
+## Microkernel Mode's toggle is a preference, not an activation switch
+
+`Settings > Advanced` and the application menu both let an operator turn Microkernel Mode on,
+persisted to `~/.boss/env_vars` as `BOSS_MODE=KERNEL` by `MicrokernelModePreference`. Nothing in
+the host reads that file back into a running process - `env_vars` is where the secret-manager
+plugin resolves API keys from, and where this toggle happens to also live, but no
+`ConfigLoader`/`System.getenv` path in this repo loads `BOSS_MODE` from it. So the toggle and its
+"restart required" notice are exactly what they say: a **preference** for the next launch to pick
+up, not something that activates anything in the current process. Whether a launch actually starts
+in KERNEL mode, and whether that mode works, is #391's and #485's territory, not this file's.
+
+**The "restart required" comparand must be a latched startup snapshot, never a live read.**
+`ConfigLoader.getConfig("BOSS_MODE")` looks like the right thing to compare a freshly-saved value
+against and is not: it resolves from an env var, a system property, `local.properties`, or the
+embedded build config - never from `env_vars` - so on an ordinary install it is permanently `false`
+and a comparison against it can never clear after an actual restart (or can never appear at all for
+an operator who sets `BOSS_MODE` some other way). `MicrokernelModePreference.startupEnabledLatched`
+exists for exactly this: it is set once, from the first `refresh()` a process makes, and never
+moved again, so it is "what `env_vars` said when this process started" - the only comparand that
+answers "does this need a restart" correctly. Reinstating a live `ConfigLoader` read here is the
+same regression that motivated this file in the first place; see BossConsole#472's review.
 
 - Use Compose Multiplatform Resource API (not Android resources)
 - Location: `composeApp/src/commonMain/composeResources/`
@@ -673,6 +714,19 @@ restart. There is no Settings row and no per-site exclusion.
   `window.__bossInteractionStarted`. The sanitizers bound what can be *smuggled*
   through; nothing bounds a site lying about its own usage. Treat these as
   indicative, not as measurements, wherever a site has an incentive to lie.
+- **Every project the user opens is now on the bus, not only plugin-initiated ones.**
+  `ProjectChangeEvent` used to be published from `ProjectDataProviderImpl.selectProject`
+  alone, so a path reached plugins only when a plugin had asked for the switch. It is
+  now announced from the window state's own `ProjectSelectionCallback`
+  (`WindowProjectStateRegistry.newState` / `ProjectChangeAnnouncer`), which covers the
+  startup restore, the top bar picker, the CLI, deep links and the KERNEL-mode gRPC
+  bridge. Project paths routinely contain usernames, so this widens *when* a filesystem
+  path reaches every installed plugin, not *what* - the same install-time-gating stance
+  as the bus above applies. In particular, `boss://` links can originate outside BOSS and
+  every non-terminal deep link currently bypasses `DeepLinkOrigin` confirmation, so an
+  externally opened project link can trigger this broadcast without operator confirmation.
+  It is recorded here because this paragraph is the canonical list of what a third-party
+  plugin can observe.
 - **`PluginContext.projectSearchProvider` is the first UNGATED WRITE surface.**
   Like the event bus it is available to every installed plugin, but where the
   bus is a read, its `replaceInProject` rewrites file contents anywhere inside
@@ -1037,7 +1091,7 @@ nothing" was.
    plugins have not registered yet, and prompting there would be a false alarm on
    every launch, the same reason `WorkspaceApplier.awaitTabTypes` exists;
 3. only then raises a `MissingHandlerPluginPrompt` on `MissingHandlerPluginEventBus`,
-   whose delivery copies `PluginDependencyBus` deliberately: a `Channel` so exactly
+   which keeps unscoped delivery through a `Channel` so exactly
    one window asks, buffered so reporting never suspends the open, `trySend` so an
    overflow is refused and logged rather than silently dropped;
 4. waits again, up to five minutes, for the plugin to register. **The dialog has no
@@ -1069,9 +1123,6 @@ the whole `TabTypeId`, whose equality includes `pluginId` and `defaultOrder`.
 - [Role Creation](docs/ROLE_CREATION_GUIDE.md) - Creating and managing roles
 - [Windows Deep Link](docs/WINDOWS_DEEP_LINK_SETUP.md) - Windows protocol handler setup
 - [Release Rebuild](docs/RELEASE_REBUILD_GUIDE.md) - Re-running release builds
-
-
-
 ### Governed MCP invocation (#371)
 
 The host policy applies to registry invocation; it does not isolate installed JVM
@@ -1079,8 +1130,18 @@ plugins. Unknown tool names default to ALLOW. Known mutations default to ASK wit
 a 45-second timeout. Each queued prompt is delivered to exactly one window and
 window teardown denies its owned request. Session trust is process-wide and can
 be cleared using “Revoke MCP session trust” in the bottom bar; restore the bar if
-it is hidden. Persistent rules currently require editing ~/.boss/mcp-tool-policy.json
-and restarting. Preserve a backup before manual recovery of a damaged policy;
+it is hidden. The approval dialog offers Always Allow and Always Deny, which save
+a tool-wide rule for all agents and arguments across restarts. Saved rules can be
+reviewed and reset from “Persisted MCP policies” in the bottom bar; a reset removes
+the rule and clears that tool's session trust, so the tool uses the configured default
+policy (ASK for known mutations in the shipped defaults). Unrelated DENYs remain intact.
+A failed reset keeps the previous durable rule visible and clears the selected session
+trust; it does not promise ASK if a saved ALLOW remains. Failed approval writes record
+POLICY_PERSIST_FAILED and withhold the current execution. A queued approval cannot
+replace a newer DENY or reset: each reset invalidates older authorizations before their
+final approval boundary, including queued once/session/persistent grants. Calls already
+authorized to execute are not cancelled. Reset remains host UI only, not an MCP tool.
+Preserve a backup before manual recovery of a damaged policy;
 the fault flow withholds all tools until recovery. No automatic quarantine UI is
 provided. Ledger redaction is bounded and best effort, not a guarantee for secrets
 under arbitrary keys. Queue overflow and cancellation before/after dispatch have

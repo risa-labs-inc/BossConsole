@@ -99,6 +99,12 @@ object MenuActionsHandler {
     private val _openSettingsEvents = MutableSharedFlow<Pair<String, String?>>(extraBufferCapacity = 10)
     val openSettingsEvents: SharedFlow<Pair<String, String?>> = _openSettingsEvents.asSharedFlow()
 
+    // The application-menu "Microkernel Mode" checkbox cannot host a dialog itself - a Menu{}
+    // block is not a real composition surface. An explicit off-to-on request instead carries here
+    // for the main window's own compose tree to show the confirmation (BossConsole#472).
+    private val _confirmMicrokernelModeEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
+    val confirmMicrokernelModeEvents: SharedFlow<String> = _confirmMicrokernelModeEvents.asSharedFlow()
+
     private val _toggleFocusModeEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
     val toggleFocusModeEvents: SharedFlow<String> = _toggleFocusModeEvents.asSharedFlow()
 
@@ -451,6 +457,17 @@ object MenuActionsHandler {
     }
 
     /**
+     * Ask the window at [windowId] to show the Microkernel Mode confirmation dialog.
+     *
+     * Raised by the application-menu checkbox item on an explicit off-to-on request only - the
+     * menu item still writes the preference directly for an on-to-off request, which needs no
+     * confirmation (BossConsole#472).
+     */
+    fun triggerConfirmMicrokernelMode(windowId: String) {
+        _confirmMicrokernelModeEvents.tryEmit(windowId)
+    }
+
+    /**
      * Trigger a "Toggle Focus Mode" action for the specified window.
      *
      * @param windowId The ID of the window where the action was triggered
@@ -737,6 +754,14 @@ object MenuActionsHandler {
      */
     fun triggerReloadAllPlugins(windowId: String) {
         _reloadAllPluginsEvents.tryEmit(windowId)
+    }
+
+    private val _showPluginHealthCenterEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
+    val showPluginHealthCenterEvents: SharedFlow<String> = _showPluginHealthCenterEvents.asSharedFlow()
+
+    /** Open the host-owned Plugin Health & Recovery Center for one window. */
+    fun triggerShowPluginHealthCenter(windowId: String) {
+        _showPluginHealthCenterEvents.tryEmit(windowId)
     }
 
     /**
