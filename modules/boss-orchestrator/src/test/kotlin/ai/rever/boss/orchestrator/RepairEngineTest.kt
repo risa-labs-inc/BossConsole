@@ -98,6 +98,21 @@ class RepairEngineTest {
     // ---- manifest source files are confined to the project root ----
 
     @Test
+    fun `repair source reads bound both bytes and file count`() =
+        runTest {
+            val files =
+                (0..RepairLimits.SOURCE_COUNT).map { index ->
+                    "source-$index.kt".also { name -> File(projectRoot, name).writeText("source code") }
+                }
+            File(projectRoot, files.first()).writeText("x".repeat(RepairLimits.SOURCE_BYTES + 1))
+            val ai = RecordingAiClient()
+            engine(aiClient = ai).handleFailure(
+                report("bounded", RepairStrategy.REPAIR_STRATEGY_PATCH_SOURCE, files),
+            )
+            assertEquals(files.take(RepairLimits.SOURCE_COUNT).drop(1).toSet(), ai.sourceFiles?.keys)
+        }
+
+    @Test
     fun `a manifest source file inside the project root is read`() =
         runTest {
             File(projectRoot, "src/App.kt").also { it.parentFile.mkdirs() }.writeText("inside the project")
