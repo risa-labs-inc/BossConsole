@@ -1,7 +1,9 @@
 package ai.rever.boss.keymap
 
 import ai.rever.boss.components.settings.keymap.isShortcutCaptureKey
+import ai.rever.boss.keymap.menu.MenuAcceleratorModifiers
 import ai.rever.boss.keymap.menu.MenuShortcutBridge
+import ai.rever.boss.keymap.menu.menuAcceleratorModifiers
 import ai.rever.boss.keymap.model.KeyBinding
 import ai.rever.boss.keymap.model.KeyStroke
 import ai.rever.boss.keymap.model.KeymapSettings
@@ -52,6 +54,8 @@ class ShortcutCaptureConsumersTest {
         val binding =
             KeyBinding(
                 actionId = "window.new",
+                // Packed-keycode spelling, on purpose: the bridge's only exercise of
+                // canonicalKeyName's legacy numeric branch.
                 key = Key.N.keyCode.toString(),
                 modifiers = listOf("Cmd"),
             )
@@ -63,6 +67,54 @@ class ShortcutCaptureConsumersTest {
         } else {
             assertEquals(KeyShortcut(Key.N, ctrl = true), shortcut)
         }
+    }
+
+    @Test
+    fun `the platform modifier mapping pins both branches on any runner`() {
+        // Cmd is the primary modifier everywhere: Meta on macOS, Ctrl on Windows/Linux, never
+        // Compose's meta (the Super key). A platform-conditional test could only ever assert
+        // the branch of the OS it runs on; the pure function takes the platform, so both
+        // branches are asserted unconditionally here.
+        assertEquals(
+            MenuAcceleratorModifiers(ctrl = true, meta = false),
+            menuAcceleratorModifiers(hasCmd = true, hasCtrl = false, isMacOS = false),
+        )
+        assertEquals(
+            MenuAcceleratorModifiers(ctrl = false, meta = true),
+            menuAcceleratorModifiers(hasCmd = true, hasCtrl = false, isMacOS = true),
+        )
+
+        // An explicit Ctrl stays Ctrl on every platform and never becomes meta: that is the
+        // asymmetry the interceptor relies on, and a regression of it would otherwise only
+        // surface on the OS the author is not using.
+        assertEquals(
+            MenuAcceleratorModifiers(ctrl = true, meta = false),
+            menuAcceleratorModifiers(hasCmd = false, hasCtrl = true, isMacOS = false),
+        )
+        assertEquals(
+            MenuAcceleratorModifiers(ctrl = true, meta = false),
+            menuAcceleratorModifiers(hasCmd = false, hasCtrl = true, isMacOS = true),
+        )
+
+        // Both modifiers: mac keeps them distinct, non-mac collapses onto ctrl.
+        assertEquals(
+            MenuAcceleratorModifiers(ctrl = true, meta = true),
+            menuAcceleratorModifiers(hasCmd = true, hasCtrl = true, isMacOS = true),
+        )
+        assertEquals(
+            MenuAcceleratorModifiers(ctrl = true, meta = false),
+            menuAcceleratorModifiers(hasCmd = true, hasCtrl = true, isMacOS = false),
+        )
+
+        // Neither: nothing to map.
+        assertEquals(
+            MenuAcceleratorModifiers(ctrl = false, meta = false),
+            menuAcceleratorModifiers(hasCmd = false, hasCtrl = false, isMacOS = false),
+        )
+        assertEquals(
+            MenuAcceleratorModifiers(ctrl = false, meta = false),
+            menuAcceleratorModifiers(hasCmd = false, hasCtrl = false, isMacOS = true),
+        )
     }
 
     @Test
