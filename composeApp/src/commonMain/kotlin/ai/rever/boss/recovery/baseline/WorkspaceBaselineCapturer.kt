@@ -14,10 +14,10 @@ import java.security.MessageDigest
  * Preserves pre-existing user work and provides the invariant boundary for all subsequent mutations.
  */
 object WorkspaceBaselineCapturer {
-
     /**
      * Scans [projectRoot] and builds a [MissionBaseline].
      */
+    @Suppress("LongParameterList") // Each field is an optional mission-context attribute.
     suspend fun captureBaseline(
         missionId: String,
         projectRoot: File,
@@ -30,7 +30,10 @@ object WorkspaceBaselineCapturer {
             val rootCanonical = SafePathResolver.canonicalRoot(projectRoot)
             val filesMap = mutableMapOf<String, FileSnapshotMeta>()
 
-            fun scanDir(currentDir: File, relativeDir: String) {
+            fun scanDir(
+                currentDir: File,
+                relativeDir: String,
+            ) {
                 val children = currentDir.listFiles() ?: return
                 for (child in children) {
                     val childName = child.name

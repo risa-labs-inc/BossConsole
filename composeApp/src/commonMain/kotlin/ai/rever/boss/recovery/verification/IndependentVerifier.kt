@@ -25,12 +25,12 @@ import java.util.concurrent.TimeUnit
  * - Full descendant process tree is forcibly terminated on timeout to prevent zombie processes.
  */
 object IndependentVerifier {
-
     private const val MAX_OUTPUT_CAPTURE_CHARS = 4096
 
     /**
      * Executes a verification command in [projectRoot] and produces a ground-truth [VerificationResult].
      */
+    @Suppress("LongMethod", "CyclomaticComplexMethod", "TooGenericExceptionCaught") // Failures map to UNKNOWN.
     suspend fun verify(
         command: String,
         projectRoot: File,
@@ -86,7 +86,8 @@ object IndependentVerifier {
                             }
                             stdoutText = sb.toString()
                         }
-                    } catch (_: Exception) {}
+                    } catch (_: Exception) {
+                    }
                 }
 
             val stderrReader =
@@ -102,7 +103,8 @@ object IndependentVerifier {
                             }
                             stderrText = sb.toString()
                         }
-                    } catch (_: Exception) {}
+                    } catch (_: Exception) {
+                    }
                 }
 
             stdoutReader.start()
@@ -163,20 +165,24 @@ object IndependentVerifier {
             process.descendants().forEach { handle ->
                 try {
                     handle.destroyForcibly()
-                } catch (_: Exception) {}
+                } catch (_: Exception) {
+                }
             }
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+        }
 
         try {
             process.destroyForcibly()
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+        }
 
         val isWindows = System.getProperty("os.name").lowercase().contains("win")
         if (isWindows && process.isAlive) {
             try {
                 val pid = process.pid()
                 ProcessBuilder("taskkill", "/F", "/T", "/PID", pid.toString()).start().waitFor(1, TimeUnit.SECONDS)
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            }
         }
     }
 }

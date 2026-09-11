@@ -5,6 +5,8 @@ import ai.rever.boss.recovery.models.CheckpointManifest
 import ai.rever.boss.recovery.models.FileSnapshotMeta
 import ai.rever.boss.recovery.models.WorkspaceCheckpoint
 import ai.rever.boss.recovery.paths.SafePathResolver
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.decodeFromString
@@ -25,6 +27,8 @@ import java.io.IOException
 class WorkspaceCheckpointStorage(
     private val baseStorageDir: File = File(System.getProperty("user.home"), ".boss/mission-recovery"),
 ) {
+    private val logger = BossLogger.forComponent("WorkspaceCheckpointStorage")
+
     private val json =
         Json {
             prettyPrint = true
@@ -40,7 +44,10 @@ class WorkspaceCheckpointStorage(
         return SafePathResolver.resolveSafeChild(baseStorageDir, validMissionId).also { it.mkdirs() }
     }
 
-    private fun checkpointDir(missionId: String, checkpointId: String): File {
+    private fun checkpointDir(
+        missionId: String,
+        checkpointId: String,
+    ): File {
         val validCpId = SafePathResolver.validateIdentifier(checkpointId, "checkpointId")
         val mDir = missionDir(missionId)
         return SafePathResolver.resolveSafeChild(mDir, validCpId)
@@ -49,6 +56,7 @@ class WorkspaceCheckpointStorage(
     /**
      * Captures and persists a new workspace checkpoint for [projectRoot].
      */
+    @Suppress("LongParameterList") // Storage layout keys + capture context.
     suspend fun createCheckpoint(
         missionId: String,
         checkpointId: String,
@@ -65,7 +73,10 @@ class WorkspaceCheckpointStorage(
 
             val filesMap = mutableMapOf<String, FileSnapshotMeta>()
 
-            fun copyAndRecord(currentDir: File, relativeDir: String) {
+            fun copyAndRecord(
+                currentDir: File,
+                relativeDir: String,
+            ) {
                 val children = currentDir.listFiles() ?: return
                 for (child in children) {
                     val childName = child.name
@@ -134,6 +145,7 @@ class WorkspaceCheckpointStorage(
     /**
      * Loads a persisted checkpoint by [missionId] and [checkpointId].
      */
+    @Suppress("TooGenericExceptionCaught") // Corrupt metadata is logged and treated as absent.
     suspend fun loadCheckpoint(
         missionId: String,
         checkpointId: String,
@@ -146,6 +158,11 @@ class WorkspaceCheckpointStorage(
             try {
                 json.decodeFromString<WorkspaceCheckpoint>(checkpointJsonFile.readText())
             } catch (e: Exception) {
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Corrupt checkpoint metadata ignored",
+                    mapOf("path" to checkpointJsonFile.path, "error" to (e.message ?: e::class.simpleName)),
+                )
                 null
             }
         }
@@ -153,36 +170,47 @@ class WorkspaceCheckpointStorage(
     /**
      * Returns the snapshot file directory containing stored file blobs for a checkpoint.
      */
-    fun getSnapshotFilesDir(missionId: String, checkpointId: String): File {
-        return File(checkpointDir(missionId, checkpointId), "files")
-    }
+    fun getSnapshotFilesDir(
+        missionId: String,
+        checkpointId: String,
+    ): File = File(checkpointDir(missionId, checkpointId), "files")
 
     /**
      * Lists all checkpoints for a mission, sorted most recent first.
      */
+    @Suppress("TooGenericExceptionCaught") // Corrupt metadata is logged and skipped.
     suspend fun listCheckpoints(missionId: String): List<WorkspaceCheckpoint> =
         withContext(Dispatchers.IO) {
             val mDir = missionDir(missionId)
             val cpDirs = mDir.listFiles { f -> f.isDirectory } ?: return@withContext emptyList()
 
-            cpDirs.mapNotNull { dir ->
-                val checkpointFile = File(dir, "checkpoint.json")
-                if (checkpointFile.exists()) {
-                    try {
-                        json.decodeFromString<WorkspaceCheckpoint>(checkpointFile.readText())
-                    } catch (e: Exception) {
+            cpDirs
+                .mapNotNull { dir ->
+                    val checkpointFile = File(dir, "checkpoint.json")
+                    if (checkpointFile.exists()) {
+                        try {
+                            json.decodeFromString<WorkspaceCheckpoint>(checkpointFile.readText())
+                        } catch (e: Exception) {
+                            logger.warn(
+                                LogCategory.SYSTEM,
+                                "Corrupt checkpoint metadata ignored",
+                                mapOf("path" to checkpointFile.path, "error" to (e.message ?: e::class.simpleName)),
+                            )
+                            null
+                        }
+                    } else {
                         null
                     }
-                } else {
-                    null
-                }
-            }.sortedByDescending { it.timestamp }
+                }.sortedByDescending { it.timestamp }
         }
 
     /**
      * Deletes a checkpoint from disk.
      */
-    suspend fun deleteCheckpoint(missionId: String, checkpointId: String): Boolean =
+    suspend fun deleteCheckpoint(
+        missionId: String,
+        checkpointId: String,
+    ): Boolean =
         withContext(Dispatchers.IO) {
             val cpDir = checkpointDir(missionId, checkpointId)
             if (cpDir.exists()) {

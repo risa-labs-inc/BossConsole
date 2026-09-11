@@ -9,8 +9,6 @@ import ai.rever.boss.recovery.models.AgentClaim
 import ai.rever.boss.recovery.models.ClaimType
 import ai.rever.boss.recovery.models.RecoveryResult
 import ai.rever.boss.recovery.runtime.MissionRecoveryCoordinator
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 import java.io.File
 
 /**
@@ -19,14 +17,7 @@ import java.io.File
 class RecoveryMcpToolProvider(
     private val coordinator: MissionRecoveryCoordinator,
 ) : McpToolProvider {
-
     override val providerId: String = "boss-recovery-provider"
-
-    private val json =
-        Json {
-            prettyPrint = true
-            ignoreUnknownKeys = true
-        }
 
     override fun tools(): List<McpToolDefinition> =
         listOf(
@@ -38,15 +29,22 @@ class RecoveryMcpToolProvider(
             createListCheckpointsTool(),
         )
 
+    @Suppress("TooGenericExceptionCaught") // Handler boundary: any failure becomes an error result.
     private fun createStartMissionTool(): McpToolDefinition =
         McpToolDefinition(
             name = "recovery_start_mission",
-            description = "Initializes a recovery boundary and captures the pre-existing workspace baseline for a project.",
+            description =
+                "Initializes a recovery boundary and captures the pre-existing " +
+                    "workspace baseline for a project.",
             handler =
                 McpToolHandler { args: McpToolArgs ->
-                    val projectPath = args.string("projectPath")
-                        ?: coordinator.state.value.projectRootPath
-                        ?: return@McpToolHandler McpToolResult("Missing required parameter: projectPath", isError = true)
+                    val projectPath =
+                        args.string("projectPath")
+                            ?: coordinator.state.value.projectRootPath
+                            ?: return@McpToolHandler McpToolResult(
+                                "Missing required parameter: projectPath",
+                                isError = true,
+                            )
 
                     val missionId = args.string("missionId")
                     val projectFile = File(projectPath)
@@ -69,6 +67,7 @@ class RecoveryMcpToolProvider(
                 },
         )
 
+    @Suppress("TooGenericExceptionCaught") // Handler boundary: any failure becomes an error result.
     private fun createCheckpointTool(): McpToolDefinition =
         McpToolDefinition(
             name = "recovery_create_checkpoint",
@@ -78,23 +77,31 @@ class RecoveryMcpToolProvider(
                     val label = args.string("label") ?: "Checkpoint"
                     try {
                         val cp = coordinator.createCheckpoint(label = label)
-                        McpToolResult(
-                            "Created checkpoint '${cp.checkpointId}' ('${cp.label}') tracking ${cp.manifest.files.size} files.",
-                        )
+                        val checkpointSummary =
+                            "Created checkpoint '${cp.checkpointId}' ('${cp.label}') " +
+                                "tracking ${cp.manifest.files.size} files."
+                        McpToolResult(checkpointSummary)
                     } catch (e: Exception) {
                         McpToolResult("Failed to create checkpoint: ${e.message}", isError = true)
                     }
                 },
         )
 
+    @Suppress("TooGenericExceptionCaught") // Handler boundary: any failure becomes an error result.
     private fun createVerifyClaimTool(): McpToolDefinition =
         McpToolDefinition(
             name = "recovery_verify_claim",
-            description = "Executes an operator/agent-supplied verification command in the workspace (with host authority and bounded timeout) and records independent ground-truth evidence.",
+            description =
+                "Executes an operator/agent-supplied verification command in the workspace (with host authority " +
+                    "and bounded timeout) and records independent ground-truth evidence.",
             handler =
                 McpToolHandler { args: McpToolArgs ->
-                    val command = args.string("command")
-                        ?: return@McpToolHandler McpToolResult("Missing required parameter: command", isError = true)
+                    val command =
+                        args.string("command")
+                            ?: return@McpToolHandler McpToolResult(
+                                "Missing required parameter: command",
+                                isError = true,
+                            )
 
                     val claimStatement = args.string("claimStatement")
                     val claimTypeStr = args.string("claimType")
@@ -115,17 +122,21 @@ class RecoveryMcpToolProvider(
 
                     try {
                         val result = coordinator.verifyClaim(command = command, agentClaim = agentClaim)
-                        val summary = buildString {
-                            appendLine("Verification Status: ${result.status}")
-                            appendLine("Exit Code: ${result.exitCode}")
-                            appendLine("Evidence: ${result.evidenceSummary}")
-                            if (result.isDiscrepancy) {
-                                appendLine("DISCREPANCY DETECTED: Agent claimed '${agentClaim?.statement}', but verification status was ${result.status}.")
+                        val summary =
+                            buildString {
+                                appendLine("Verification Status: ${result.status}")
+                                appendLine("Exit Code: ${result.exitCode}")
+                                appendLine("Evidence: ${result.evidenceSummary}")
+                                if (result.isDiscrepancy) {
+                                    val discrepancy =
+                                        "DISCREPANCY DETECTED: Agent claimed '${agentClaim?.statement}', " +
+                                            "but verification status was ${result.status}."
+                                    appendLine(discrepancy)
+                                }
+                                if (result.stderrSnippet.isNotBlank()) {
+                                    appendLine("Stderr: ${result.stderrSnippet.take(500)}")
+                                }
                             }
-                            if (result.stderrSnippet.isNotBlank()) {
-                                appendLine("Stderr: ${result.stderrSnippet.take(500)}")
-                            }
-                        }
                         McpToolResult(summary)
                     } catch (e: Exception) {
                         McpToolResult("Verification failed: ${e.message}", isError = true)
@@ -136,44 +147,64 @@ class RecoveryMcpToolProvider(
             requiresAdmin = true
         }
 
+    @Suppress("CyclomaticComplexMethod", "TooGenericExceptionCaught") // Report formatting + handler boundary.
     private fun createPreviewRewindTool(): McpToolDefinition =
         McpToolDefinition(
             name = "recovery_preview_rewind",
-            description = "Generates a non-destructive dry-run recovery plan detailing which files will be restored, removed, preserved, or flagged as conflicting before performing any rollback.",
+            description =
+                "Generates a non-destructive dry-run recovery plan detailing which files will be restored, removed, " +
+                    "preserved, or flagged as conflicting before performing any rollback.",
             handler =
                 McpToolHandler { args: McpToolArgs ->
-                    val checkpointId = args.string("checkpointId")
-                        ?: return@McpToolHandler McpToolResult("Missing required parameter: checkpointId", isError = true)
+                    val checkpointId =
+                        args.string("checkpointId")
+                            ?: return@McpToolHandler McpToolResult(
+                                "Missing required parameter: checkpointId",
+                                isError = true,
+                            )
 
                     val allowOverwrite = args.boolean("allowOverwriteConflicts") ?: false
 
                     try {
                         val plan = coordinator.previewRecovery(checkpointId, allowOverwriteConflicts = allowOverwrite)
-                        val summary = buildString {
-                            appendLine("=== RECOVERY PREVIEW (Dry Run) ===")
-                            appendLine("Target Checkpoint: ${plan.checkpointId}")
-                            appendLine("Safe To Rewind: ${if (plan.canRewind) "YES" else "NO (BLOCKED)"}")
-                            if (plan.blockingReason != null) {
-                                appendLine("Blocking Reason: ${plan.blockingReason}")
+                        val summary =
+                            buildString {
+                                appendLine("=== RECOVERY PREVIEW (Dry Run) ===")
+                                appendLine("Target Checkpoint: ${plan.checkpointId}")
+                                appendLine("Safe To Rewind: ${if (plan.canRewind) "YES" else "NO (BLOCKED)"}")
+                                if (plan.blockingReason != null) {
+                                    appendLine("Blocking Reason: ${plan.blockingReason}")
+                                }
+                                appendLine("\nFiles To Restore (${plan.filesToRestore.size}):")
+                                if (plan.filesToRestore.isEmpty()) {
+                                    appendLine("  (None)")
+                                } else {
+                                    plan.filesToRestore.forEach { appendLine("  ↺ $it") }
+                                }
+
+                                appendLine("\nFiles To Remove (${plan.filesToRemove.size}):")
+                                if (plan.filesToRemove.isEmpty()) {
+                                    appendLine("  (None)")
+                                } else {
+                                    plan.filesToRemove.forEach { appendLine("  ✕ $it") }
+                                }
+
+                                appendLine("\nFiles To Preserve (${plan.filesToPreserve.size}):")
+                                if (plan.filesToPreserve.isEmpty()) {
+                                    appendLine("  (None)")
+                                } else {
+                                    plan.filesToPreserve.take(10).forEach { appendLine("  ✓ $it") }
+                                }
+                                if (plan.filesToPreserve.size > 10) {
+                                    val remaining = plan.filesToPreserve.size - 10
+                                    appendLine("  ... and $remaining more")
+                                }
+
+                                if (plan.conflicts.isNotEmpty()) {
+                                    appendLine("\nConflicts Detected (${plan.conflicts.size}):")
+                                    plan.conflicts.forEach { appendLine("  ⚠ $it") }
+                                }
                             }
-                            appendLine("\nFiles To Restore (${plan.filesToRestore.size}):")
-                            if (plan.filesToRestore.isEmpty()) appendLine("  (None)")
-                            else plan.filesToRestore.forEach { appendLine("  ↺ $it") }
-
-                            appendLine("\nFiles To Remove (${plan.filesToRemove.size}):")
-                            if (plan.filesToRemove.isEmpty()) appendLine("  (None)")
-                            else plan.filesToRemove.forEach { appendLine("  ✕ $it") }
-
-                            appendLine("\nFiles To Preserve (${plan.filesToPreserve.size}):")
-                            if (plan.filesToPreserve.isEmpty()) appendLine("  (None)")
-                            else plan.filesToPreserve.take(10).forEach { appendLine("  ✓ $it") }
-                            if (plan.filesToPreserve.size > 10) appendLine("  ... and ${plan.filesToPreserve.size - 10} more")
-
-                            if (plan.conflicts.isNotEmpty()) {
-                                appendLine("\nConflicts Detected (${plan.conflicts.size}):")
-                                plan.conflicts.forEach { appendLine("  ⚠ $it") }
-                            }
-                        }
                         McpToolResult(summary)
                     } catch (e: Exception) {
                         McpToolResult("Failed to generate recovery preview: ${e.message}", isError = true)
@@ -181,25 +212,39 @@ class RecoveryMcpToolProvider(
                 },
         )
 
+    @Suppress("TooGenericExceptionCaught") // Handler boundary: any failure becomes an error result.
     private fun createRewindTool(): McpToolDefinition =
         McpToolDefinition(
             name = "recovery_rewind",
-            description = "Rewinds the workspace to a target checkpoint while preserving pre-existing baseline work. Mutating rollback operation requiring explicit authorization.",
+            description =
+                "Rewinds the workspace to a target checkpoint while preserving pre-existing baseline work. " +
+                    "Mutating rollback operation requiring explicit authorization.",
             handler =
                 McpToolHandler { args: McpToolArgs ->
-                    val checkpointId = args.string("checkpointId")
-                        ?: return@McpToolHandler McpToolResult("Missing required parameter: checkpointId", isError = true)
+                    val checkpointId =
+                        args.string("checkpointId")
+                            ?: return@McpToolHandler McpToolResult(
+                                "Missing required parameter: checkpointId",
+                                isError = true,
+                            )
 
                     val allowOverwrite = args.boolean("allowOverwriteConflicts") ?: false
 
                     try {
-                        when (val result = coordinator.rewindToCheckpoint(checkpointId, allowOverwriteConflicts = allowOverwrite)) {
+                        val result =
+                            coordinator.rewindToCheckpoint(
+                                checkpointId,
+                                allowOverwriteConflicts = allowOverwrite,
+                            )
+                        when (result) {
                             is RecoveryResult.Success -> {
                                 McpToolResult(
                                     "Successfully rewound workspace to checkpoint '${result.checkpointId}'. " +
-                                        "Restored ${result.restoredFilesCount} file(s), removed ${result.removedFilesCount} mission-added file(s) in ${result.durationMs}ms.",
+                                        "Restored ${result.restoredFilesCount} files, " +
+                                        "removed ${result.removedFilesCount} in ${result.durationMs}ms.",
                                 )
                             }
+
                             is RecoveryResult.Conflict -> {
                                 McpToolResult(
                                     "Rewind conflict on checkpoint '${result.checkpointId}': ${result.reason}. " +
@@ -207,13 +252,18 @@ class RecoveryMcpToolProvider(
                                     isError = true,
                                 )
                             }
+
                             is RecoveryResult.InvalidCheckpoint -> {
-                                McpToolResult("Invalid checkpoint '${result.checkpointId}': ${result.reason}", isError = true)
+                                McpToolResult(
+                                    "Invalid checkpoint '${result.checkpointId}': ${result.reason}",
+                                    isError = true,
+                                )
                             }
+
                             is RecoveryResult.PartialFailure -> {
                                 McpToolResult(
-                                    "Partial rewind failure on checkpoint '${result.checkpointId}': ${result.reason}. " +
-                                        "Failed on: ${result.failedFiles}",
+                                    "Partial rewind failure on checkpoint '${result.checkpointId}': " +
+                                        "${result.reason}. Failed on: ${result.failedFiles}",
                                     isError = true,
                                 )
                             }
@@ -233,8 +283,9 @@ class RecoveryMcpToolProvider(
             handler =
                 McpToolHandler { _: McpToolArgs ->
                     val state = coordinator.state.value
-                    val missionId = state.activeMissionId
-                        ?: return@McpToolHandler McpToolResult("No active mission started", isError = true)
+                    val missionId =
+                        state.activeMissionId
+                            ?: return@McpToolHandler McpToolResult("No active mission started", isError = true)
 
                     val checkpoints = state.checkpoints
                     if (checkpoints.isEmpty()) {
@@ -242,7 +293,7 @@ class RecoveryMcpToolProvider(
                     } else {
                         val listing =
                             checkpoints.joinToString("\n") { cp ->
-                                "• [${cp.checkpointId}] '${cp.label}' (${cp.manifest.files.size} files, at ${cp.timestamp})"
+                                "• [${cp.checkpointId}] '${cp.label}' (${cp.manifest.files.size}, at ${cp.timestamp})"
                             }
                         McpToolResult("Checkpoints for mission '$missionId':\n$listing")
                     }

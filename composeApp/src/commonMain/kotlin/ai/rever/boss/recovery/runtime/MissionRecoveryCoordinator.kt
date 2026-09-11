@@ -11,9 +11,6 @@ import ai.rever.boss.recovery.paths.SafePathResolver
 import ai.rever.boss.recovery.reconciliation.WorkspaceReconciler
 import ai.rever.boss.recovery.storage.WorkspaceCheckpointStorage
 import ai.rever.boss.recovery.verification.IndependentVerifier
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -21,7 +18,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
@@ -72,7 +68,6 @@ data class MissionRecoveryState(
  */
 class MissionRecoveryCoordinator(
     val storage: WorkspaceCheckpointStorage = WorkspaceCheckpointStorage(),
-    private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
 ) {
     private val mutex = Mutex()
 
@@ -85,6 +80,7 @@ class MissionRecoveryCoordinator(
     /**
      * Initializes a new mission baseline on [projectRoot].
      */
+    @Suppress("TooGenericExceptionCaught") // isBusy must reset for every failure kind before rethrow.
     suspend fun startMission(
         projectRoot: File,
         missionId: String = "mission-${System.currentTimeMillis()}-${UUID.randomUUID().toString().take(8)}",
@@ -130,14 +126,15 @@ class MissionRecoveryCoordinator(
     /**
      * Creates a named checkpoint from the current workspace files.
      */
+    @Suppress("TooGenericExceptionCaught") // isBusy must reset for every failure kind before rethrow.
     suspend fun createCheckpoint(
         label: String,
         checkpointId: String = "cp-${System.currentTimeMillis()}-${UUID.randomUUID().toString().take(6)}",
     ): WorkspaceCheckpoint =
         mutex.withLock {
             val currentState = _state.value
-            val missionId = currentState.activeMissionId ?: throw IllegalStateException("No active mission started")
-            val rootPath = currentState.projectRootPath ?: throw IllegalStateException("No active project root")
+            val missionId = requireNotNull(currentState.activeMissionId) { "No active mission started" }
+            val rootPath = requireNotNull(currentState.projectRootPath) { "No active project root" }
 
             _state.update { it.copy(isBusy = true) }
             try {
@@ -169,6 +166,7 @@ class MissionRecoveryCoordinator(
     /**
      * Executes independent ground-truth verification.
      */
+    @Suppress("TooGenericExceptionCaught") // isBusy must reset for every failure kind before rethrow.
     suspend fun verifyClaim(
         command: String,
         agentClaim: AgentClaim? = null,
@@ -176,7 +174,7 @@ class MissionRecoveryCoordinator(
     ): VerificationResult =
         mutex.withLock {
             val currentState = _state.value
-            val rootPath = currentState.projectRootPath ?: throw IllegalStateException("No active project root")
+            val rootPath = requireNotNull(currentState.projectRootPath) { "No active project root" }
 
             _state.update { it.copy(isBusy = true) }
             try {
@@ -212,9 +210,9 @@ class MissionRecoveryCoordinator(
     ): RecoveryResult =
         mutex.withLock {
             val currentState = _state.value
-            val missionId = currentState.activeMissionId ?: throw IllegalStateException("No active mission started")
-            val rootPath = currentState.projectRootPath ?: throw IllegalStateException("No active project root")
-            val baseline = currentState.baseline ?: throw IllegalStateException("No baseline captured for mission")
+            val missionId = requireNotNull(currentState.activeMissionId) { "No active mission started" }
+            val rootPath = requireNotNull(currentState.projectRootPath) { "No active project root" }
+            val baseline = requireNotNull(currentState.baseline) { "No baseline captured for mission" }
 
             val targetCheckpoint =
                 storage.loadCheckpoint(missionId, checkpointId)
@@ -254,9 +252,9 @@ class MissionRecoveryCoordinator(
     ): RecoveryPlan =
         mutex.withLock {
             val currentState = _state.value
-            val missionId = currentState.activeMissionId ?: throw IllegalStateException("No active mission started")
-            val rootPath = currentState.projectRootPath ?: throw IllegalStateException("No active project root")
-            val baseline = currentState.baseline ?: throw IllegalStateException("No baseline captured for mission")
+            val missionId = requireNotNull(currentState.activeMissionId) { "No active mission started" }
+            val rootPath = requireNotNull(currentState.projectRootPath) { "No active project root" }
+            val baseline = requireNotNull(currentState.baseline) { "No baseline captured for mission" }
 
             val targetCheckpoint =
                 storage.loadCheckpoint(missionId, checkpointId)

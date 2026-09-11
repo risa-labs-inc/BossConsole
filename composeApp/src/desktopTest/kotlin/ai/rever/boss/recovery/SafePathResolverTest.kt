@@ -11,12 +11,14 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class SafePathResolverTest {
-
     private lateinit var tempProjectRoot: File
 
     @BeforeTest
     fun setup() {
-        tempProjectRoot = kotlin.io.path.createTempDirectory("safe-path-test").toFile()
+        tempProjectRoot =
+            kotlin.io.path
+                .createTempDirectory("safe-path-test")
+                .toFile()
     }
 
     @AfterTest
@@ -79,7 +81,10 @@ class SafePathResolverTest {
 
     @Test
     fun `isSafeDirectoryToRecurse rejects directory outside project root`() {
-        val externalDir = kotlin.io.path.createTempDirectory("outside-dir").toFile()
+        val externalDir =
+            kotlin.io.path
+                .createTempDirectory("outside-dir")
+                .toFile()
         try {
             val rootCanonical = SafePathResolver.canonicalRoot(tempProjectRoot)
             assertFalse(SafePathResolver.isSafeDirectoryToRecurse(externalDir, rootCanonical))
@@ -90,11 +95,15 @@ class SafePathResolverTest {
 
     @Test
     fun `isContainedFile validates contained files and rejects external files`() {
-        val internalFile = File(tempProjectRoot, "src/Main.kt").also {
-            it.parentFile.mkdirs()
-            it.writeText("code")
-        }
-        val externalDir = kotlin.io.path.createTempDirectory("outside-file-dir").toFile()
+        val internalFile =
+            File(tempProjectRoot, "src/Main.kt").also {
+                it.parentFile.mkdirs()
+                it.writeText("code")
+            }
+        val externalDir =
+            kotlin.io.path
+                .createTempDirectory("outside-file-dir")
+                .toFile()
         val externalFile = File(externalDir, "Secret.kt").also { it.writeText("secret") }
 
         try {

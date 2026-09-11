@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 
 @Composable
+@Suppress("LongMethod", "CyclomaticComplexMethod") // Single-screen deck; decompose into sub-composables as it grows.
 fun RecoveryView(
     coordinator: MissionRecoveryCoordinator,
     modifier: Modifier = Modifier,
@@ -68,10 +69,11 @@ fun RecoveryView(
     var activePlan by remember { mutableStateOf<RecoveryPlan?>(null) }
 
     Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(Color(0xFF1E1E1E))
-            .padding(16.dp),
+        modifier =
+            modifier
+                .fillMaxSize()
+                .background(Color(0xFF1E1E1E))
+                .padding(16.dp),
     ) {
         // Header
         Row(
@@ -108,11 +110,12 @@ fun RecoveryView(
 
         // Mission Info Strip
         Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(8.dp))
-                .background(Color(0xFF2D2D2D))
-                .padding(12.dp),
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFF2D2D2D))
+                    .padding(12.dp),
         ) {
             Column {
                 Text(
@@ -130,8 +133,9 @@ fun RecoveryView(
                     )
                 }
                 if (state.baseline != null) {
+                    val baselineCount = state.baseline?.baselineFiles?.size ?: 0
                     Text(
-                        text = "Baseline Protected: ${state.baseline?.baselineFiles?.size ?: 0} pre-existing files preserved",
+                        text = "Baseline Protected: $baselineCount pre-existing files",
                         color = Color(0xFF81C784),
                         fontSize = 12.sp,
                     )
@@ -145,12 +149,13 @@ fun RecoveryView(
         Row(modifier = Modifier.fillMaxSize().weight(1f)) {
             // Left Column: Ground-Truth Claim Verification Deck
             Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxSize()
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFF252526))
-                    .padding(12.dp),
+                modifier =
+                    Modifier
+                        .weight(1f)
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFF252526))
+                        .padding(12.dp),
             ) {
                 Text(
                     text = "Claim Verification & Ground Truth",
@@ -205,16 +210,23 @@ fun RecoveryView(
                     val isDiscrepancy = latest.isDiscrepancy
 
                     Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(6.dp))
-                            .border(
-                                width = 1.dp,
-                                color = if (isDiscrepancy) Color(0xFFE53935) else if (isPass) Color(0xFF4CAF50) else Color(0xFFFFA726),
-                                shape = RoundedCornerShape(6.dp),
-                            )
-                            .background(if (isDiscrepancy) Color(0x33E53935) else Color(0x22000000))
-                            .padding(10.dp),
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(6.dp))
+                                .border(
+                                    width = 1.dp,
+                                    color =
+                                        if (isDiscrepancy) {
+                                            Color(0xFFE53935)
+                                        } else if (isPass) {
+                                            Color(0xFF4CAF50)
+                                        } else {
+                                            Color(0xFFFFA726)
+                                        },
+                                    shape = RoundedCornerShape(6.dp),
+                                ).background(if (isDiscrepancy) Color(0x33E53935) else Color(0x22000000))
+                                .padding(10.dp),
                     ) {
                         Column {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -279,12 +291,13 @@ fun RecoveryView(
 
             // Right Column: Checkpoints & Bounded Rewind Deck
             Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxSize()
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFF252526))
-                    .padding(12.dp),
+                modifier =
+                    Modifier
+                        .weight(1f)
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFF252526))
+                        .padding(12.dp),
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -335,12 +348,13 @@ fun RecoveryView(
                 LazyColumn(modifier = Modifier.fillMaxSize()) {
                     items(state.checkpoints) { cp ->
                         Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp)
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(Color(0xFF2D2D30))
-                                .padding(8.dp),
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(Color(0xFF2D2D30))
+                                    .padding(8.dp),
                         ) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -405,12 +419,16 @@ fun RecoveryView(
         if (currentPlan != null) {
             Spacer(modifier = Modifier.height(10.dp))
             Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(Color(0xFF252528))
-                    .border(1.dp, if (currentPlan.canRewind) Color(0xFF2E7D32) else Color(0xFFC62828), RoundedCornerShape(6.dp))
-                    .padding(12.dp),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color(0xFF252528))
+                        .border(
+                            1.dp,
+                            if (currentPlan.canRewind) Color(0xFF2E7D32) else Color(0xFFC62828),
+                            RoundedCornerShape(6.dp),
+                        ).padding(12.dp),
             ) {
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Row(
@@ -418,8 +436,9 @@ fun RecoveryView(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        val previewStatus = if (currentPlan.canRewind) "SAFE TO REWIND" else "BLOCKED"
                         Text(
-                            text = "Recovery Preview: ${currentPlan.checkpointId} (${if (currentPlan.canRewind) "SAFE TO REWIND" else "BLOCKED"})",
+                            text = "Recovery Preview: ${currentPlan.checkpointId} ($previewStatus)",
                             color = if (currentPlan.canRewind) Color(0xFF81C784) else Color(0xFFEF5350),
                             fontWeight = FontWeight.Bold,
                             fontSize = 13.sp,
@@ -439,8 +458,11 @@ fun RecoveryView(
                         )
                     }
                     Spacer(modifier = Modifier.height(6.dp))
+                    val planStats =
+                        "Restore: ${currentPlan.filesToRestore.size} • Remove: ${currentPlan.filesToRemove.size} • " +
+                            "Preserve: ${currentPlan.filesToPreserve.size} • Conflicts: ${currentPlan.conflicts.size}"
                     Text(
-                        text = "Restore: ${currentPlan.filesToRestore.size} files • Remove: ${currentPlan.filesToRemove.size} files • Preserve: ${currentPlan.filesToPreserve.size} files • Conflicts: ${currentPlan.conflicts.size}",
+                        text = planStats,
                         color = Color(0xFFCCCCCC),
                         fontSize = 11.sp,
                         fontFamily = FontFamily.Monospace,
@@ -454,19 +476,34 @@ fun RecoveryView(
         if (lastRecovery != null) {
             Spacer(modifier = Modifier.height(12.dp))
             Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(if (lastRecovery.isSuccessful) Color(0xFF1B5E20) else Color(0xFFB71C1C))
-                    .padding(8.dp),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(if (lastRecovery.isSuccessful) Color(0xFF1B5E20) else Color(0xFFB71C1C))
+                        .padding(8.dp),
             ) {
+                val lastRecoveryText =
+                    when (lastRecovery) {
+                        is RecoveryResult.Success -> {
+                            "✓ Rewind Successful: ${lastRecovery.restoredFilesCount} files restored, " +
+                                "${lastRecovery.removedFilesCount} removed in ${lastRecovery.durationMs}ms"
+                        }
+
+                        is RecoveryResult.Conflict -> {
+                            "⚠ Rewind Conflict: ${lastRecovery.reason}"
+                        }
+
+                        is RecoveryResult.InvalidCheckpoint -> {
+                            "❌ Invalid Checkpoint: ${lastRecovery.reason}"
+                        }
+
+                        is RecoveryResult.PartialFailure -> {
+                            "❌ Partial Failure: ${lastRecovery.reason} (${lastRecovery.failedFiles.size} locked)"
+                        }
+                    }
                 Text(
-                    text = when (lastRecovery) {
-                        is RecoveryResult.Success -> "✓ Rewind Successful: Restored ${lastRecovery.restoredFilesCount} files, removed ${lastRecovery.removedFilesCount} mission-added files in ${lastRecovery.durationMs}ms."
-                        is RecoveryResult.Conflict -> "⚠ Rewind Conflict: ${lastRecovery.reason}"
-                        is RecoveryResult.InvalidCheckpoint -> "❌ Invalid Checkpoint: ${lastRecovery.reason}"
-                        is RecoveryResult.PartialFailure -> "❌ Partial Failure: ${lastRecovery.reason} (${lastRecovery.failedFiles.size} locked)"
-                    },
+                    text = lastRecoveryText,
                     color = Color.White,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 12.sp,

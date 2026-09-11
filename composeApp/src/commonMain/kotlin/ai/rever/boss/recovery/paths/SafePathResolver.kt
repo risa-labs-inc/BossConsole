@@ -1,5 +1,7 @@
 package ai.rever.boss.recovery.paths
 
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 import java.io.File
 import java.io.IOException
 
@@ -13,6 +15,7 @@ import java.io.IOException
  * - Relative paths in manifests are always normalized to POSIX style (forward slashes '/').
  */
 object SafePathResolver {
+    private val logger = BossLogger.forComponent("SafePathResolver")
 
     private val SAFE_IDENTIFIER_REGEX = Regex("^[a-zA-Z0-9_\\-\\.]+$")
 
@@ -23,12 +26,16 @@ object SafePathResolver {
      * @throws IllegalArgumentException if the identifier is blank.
      * @throws SecurityException if the identifier contains path separators, null bytes, '..', or illegal characters.
      */
-    fun validateIdentifier(id: String, paramName: String = "identifier"): String {
+    @Suppress("UseRequire", "ThrowsCount") // Contract: IAE for blank, SecurityException for traversal/charset.
+    fun validateIdentifier(
+        id: String,
+        paramName: String = "identifier",
+    ): String {
         val trimmed = id.trim()
         if (trimmed.isEmpty()) {
             throw IllegalArgumentException("$paramName must not be blank")
         }
-        if (trimmed.contains("/") || trimmed.contains("\\") || trimmed.contains("..") || trimmed.contains("\u0000")) {
+        if (hasTraversalOrSeparator(trimmed)) {
             throw SecurityException("Path traversal sequence or path separator detected in $paramName: '$id'")
         }
         if (!SAFE_IDENTIFIER_REGEX.matches(trimmed)) {
@@ -73,6 +80,12 @@ object SafePathResolver {
         return clean
     }
 
+    private fun hasTraversalOrSeparator(id: String): Boolean =
+        id.contains("/") ||
+            id.contains("\\") ||
+            id.contains("..") ||
+            id.contains("\u0000")
+
     /**
      * Validates that [relativePath] resolves strictly inside [projectRoot].
      *
@@ -102,12 +115,15 @@ object SafePathResolver {
         val rootPathStr = rootCanonical.path
         val ancestorPathStr = ancestorCanonical.path
 
-        val isContained = ancestorPathStr == rootPathStr ||
-            ancestorPathStr.startsWith(rootPathStr + File.separator) ||
-            ancestorPathStr.startsWith(rootPathStr + "/")
+        val isContained =
+            ancestorPathStr == rootPathStr ||
+                ancestorPathStr.startsWith(rootPathStr + File.separator) ||
+                ancestorPathStr.startsWith(rootPathStr + "/")
 
         if (!isContained) {
-            throw SecurityException("Path traversal outside project root: '$relativePath' resolved to '$ancestorPathStr'")
+            throw SecurityException(
+                "Path traversal outside project root: '$relativePath' resolved to '$ancestorPathStr'",
+            )
         }
 
         return targetFile
@@ -119,9 +135,7 @@ object SafePathResolver {
     fun isExcluded(
         name: String,
         excludedPatterns: Set<String>,
-    ): Boolean {
-        return excludedPatterns.contains(name) || name.startsWith(".git")
-    }
+    ): Boolean = excludedPatterns.contains(name) || name.startsWith(".git")
 
     /**
      * Checks if [dir] is a safe directory to recurse into during scanning.
@@ -131,20 +145,12 @@ object SafePathResolver {
         dir: File,
         rootCanonical: File,
     ): Boolean {
-        if (java.nio.file.Files.isSymbolicLink(dir.toPath())) {
+        if (java.nio.file.Files
+                .isSymbolicLink(dir.toPath())
+        ) {
             return false
         }
-        val canonical =
-            try {
-                dir.canonicalFile
-            } catch (_: Exception) {
-                return false
-            }
-        val rootPathStr = rootCanonical.path
-        val childPathStr = canonical.path
-        return childPathStr == rootPathStr ||
-            childPathStr.startsWith(rootPathStr + File.separator) ||
-            childPathStr.startsWith(rootPathStr + "/")
+        return canonicalOrNull(dir)?.let { isContainedPath(it.path, rootCanonical.path, true) } ?: false
     }
 
     /**
@@ -154,18 +160,35 @@ object SafePathResolver {
         file: File,
         rootCanonical: File,
     ): Boolean {
-        if (java.nio.file.Files.isSymbolicLink(file.toPath())) {
+        if (java.nio.file.Files
+                .isSymbolicLink(file.toPath())
+        ) {
             return false
         }
-        val canonical =
-            try {
-                file.canonicalFile
-            } catch (_: Exception) {
-                return false
-            }
-        val rootPathStr = rootCanonical.path
-        val childPathStr = canonical.path
-        return childPathStr.startsWith(rootPathStr + File.separator) ||
-            childPathStr.startsWith(rootPathStr + "/")
+        return canonicalOrNull(file)?.let { isContainedPath(it.path, rootCanonical.path, false) } ?: false
+    }
+
+    @Suppress("TooGenericExceptionCaught") // Uncanonicalizable path is logged and treated as unsafe.
+    private fun canonicalOrNull(file: File): File? =
+        try {
+            file.canonicalFile
+        } catch (e: Exception) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Path cannot be canonicalized",
+                mapOf("path" to file.path, "error" to (e.message ?: e::class.simpleName)),
+            )
+            null
+        }
+
+    private fun isContainedPath(
+        childCanonical: String,
+        rootCanonical: String,
+        allowRootItself: Boolean,
+    ): Boolean {
+        val inside =
+            childCanonical.startsWith(rootCanonical + File.separator) ||
+                childCanonical.startsWith(rootCanonical + "/")
+        return inside || (allowRootItself && childCanonical == rootCanonical)
     }
 }

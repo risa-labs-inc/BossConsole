@@ -120,8 +120,9 @@ data class VerificationResult(
      * True if the agent claimed success but the ground truth was not PASS.
      */
     val isDiscrepancy: Boolean
-        get() = (agentClaim?.claimType == ClaimType.TESTS_PASSED || agentClaim?.claimType == ClaimType.BUILD_SUCCESS) &&
-            status != VerificationStatus.PASS
+        get() =
+            (agentClaim?.claimType == ClaimType.TESTS_PASSED || agentClaim?.claimType == ClaimType.BUILD_SUCCESS) &&
+                status != VerificationStatus.PASS
 }
 
 /**

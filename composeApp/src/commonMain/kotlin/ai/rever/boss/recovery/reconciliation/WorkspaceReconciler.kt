@@ -25,7 +25,6 @@ import java.io.IOException
  * - Planning/preview is non-destructive (performs ZERO writes).
  */
 object WorkspaceReconciler {
-
     /**
      * Internal scan representation containing files and their SHA-256 hashes.
      */
@@ -41,7 +40,10 @@ object WorkspaceReconciler {
         val files = mutableMapOf<String, File>()
         val hashes = mutableMapOf<String, String>()
 
-        fun scan(dir: File, relDir: String) {
+        fun scan(
+            dir: File,
+            relDir: String,
+        ) {
             val children = dir.listFiles() ?: return
             for (child in children) {
                 val childName = child.name
@@ -74,6 +76,7 @@ object WorkspaceReconciler {
      *
      * INVARIANT: Performs ZERO destructive filesystem writes.
      */
+    @Suppress("LongMethod") // Plan classification is one cohesive pass; splitting obscures the phases.
     suspend fun createPlan(
         baseline: MissionBaseline,
         targetCheckpoint: WorkspaceCheckpoint,
@@ -83,7 +86,8 @@ object WorkspaceReconciler {
     ): RecoveryPlan =
         withContext(Dispatchers.IO) {
             val rootCanonical = SafePathResolver.canonicalRoot(projectRoot)
-            val snapshotFilesDir = storage.getSnapshotFilesDir(targetCheckpoint.missionId, targetCheckpoint.checkpointId)
+            val snapshotFilesDir =
+                storage.getSnapshotFilesDir(targetCheckpoint.missionId, targetCheckpoint.checkpointId)
 
             if (!snapshotFilesDir.exists()) {
                 return@withContext RecoveryPlan(
@@ -138,11 +142,13 @@ object WorkspaceReconciler {
             }
 
             val hasConflicts = conflictingFiles.isNotEmpty() && !allowOverwriteConflicts
-            val blockingReason = if (hasConflicts) {
-                "Baseline file(s) modified on disk are missing from target checkpoint: ${conflictingFiles.joinToString()}"
-            } else {
-                null
-            }
+            val blockingReason =
+                if (hasConflicts) {
+                    "Baseline file(s) modified on disk are missing from target checkpoint: " +
+                        "${conflictingFiles.joinToString()}"
+                } else {
+                    null
+                }
 
             RecoveryPlan(
                 checkpointId = targetCheckpoint.checkpointId,
@@ -158,6 +164,7 @@ object WorkspaceReconciler {
     /**
      * Executes a bounded rewind of [projectRoot] to [targetCheckpoint].
      */
+    @Suppress("LongMethod", "CyclomaticComplexMethod", "TooGenericExceptionCaught")
     suspend fun rewind(
         baseline: MissionBaseline,
         targetCheckpoint: WorkspaceCheckpoint,
@@ -168,7 +175,8 @@ object WorkspaceReconciler {
         withContext(Dispatchers.IO) {
             val startTime = System.currentTimeMillis()
             val rootCanonical = SafePathResolver.canonicalRoot(projectRoot)
-            val snapshotFilesDir = storage.getSnapshotFilesDir(targetCheckpoint.missionId, targetCheckpoint.checkpointId)
+            val snapshotFilesDir =
+                storage.getSnapshotFilesDir(targetCheckpoint.missionId, targetCheckpoint.checkpointId)
 
             if (!snapshotFilesDir.exists()) {
                 return@withContext RecoveryResult.InvalidCheckpoint(
@@ -213,32 +221,13 @@ object WorkspaceReconciler {
 
             // Step 2: Restore files identified in the plan
             for (relPath in plan.filesToRestore) {
-                val sourceSnapshotFile =
-                    try {
-                        SafePathResolver.resolveSafeChild(snapshotFilesDir, relPath)
-                    } catch (e: Exception) {
-                        failedFiles[relPath] = "Security check failed for snapshot source path: ${e.message}"
-                        continue
-                    }
-
-                if (!sourceSnapshotFile.exists()) {
-                    failedFiles[relPath] = "Snapshot source blob missing from storage"
-                    continue
-                }
-
-                try {
-                    val destinationFile = SafePathResolver.resolveSafeChild(rootCanonical, relPath)
-                    destinationFile.parentFile?.mkdirs()
-
-                    sourceSnapshotFile.copyTo(destinationFile, overwrite = true)
-                    restoredFiles.add(relPath)
-                } catch (e: Exception) {
-                    failedFiles[relPath] = "Failed to restore file: ${e.message}"
-                }
+                restoreSnapshotFile(relPath, snapshotFilesDir, rootCanonical, failedFiles, restoredFiles)
             }
 
             // Add unchanged target files to restored count
-            val unchangedCount = targetCheckpoint.manifest.files.keys.count { it !in plan.filesToRestore }
+            val unchangedCount =
+                targetCheckpoint.manifest.files.keys
+                    .count { it !in plan.filesToRestore }
             val totalRestoredCount = restoredFiles.size + unchangedCount
 
             val durationMs = System.currentTimeMillis() - startTime
@@ -259,4 +248,36 @@ object WorkspaceReconciler {
                 )
             }
         }
+
+    @Suppress("TooGenericExceptionCaught") // Per-file fault isolation is deliberate.
+    private fun restoreSnapshotFile(
+        relPath: String,
+        snapshotFilesDir: File,
+        rootCanonical: File,
+        failedFiles: MutableMap<String, String>,
+        restoredFiles: MutableList<String>,
+    ) {
+        val sourceSnapshotFile =
+            try {
+                SafePathResolver.resolveSafeChild(snapshotFilesDir, relPath)
+            } catch (e: Exception) {
+                failedFiles[relPath] = "Security check failed for snapshot source path: ${e.message}"
+                return
+            }
+
+        if (!sourceSnapshotFile.exists()) {
+            failedFiles[relPath] = "Snapshot source blob missing from storage"
+            return
+        }
+
+        try {
+            val destinationFile = SafePathResolver.resolveSafeChild(rootCanonical, relPath)
+            destinationFile.parentFile?.mkdirs()
+
+            sourceSnapshotFile.copyTo(destinationFile, overwrite = true)
+            restoredFiles.add(relPath)
+        } catch (e: Exception) {
+            failedFiles[relPath] = "Failed to restore file: ${e.message}"
+        }
+    }
 }
