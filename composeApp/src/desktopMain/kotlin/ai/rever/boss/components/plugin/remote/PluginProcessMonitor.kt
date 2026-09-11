@@ -288,20 +288,25 @@ class PluginProcessMonitor internal constructor(
                 completeRestart(request)
             }
         } catch (e: CancellationException) {
+            // Record in both branches while the plugin is still monitored: the state
+            // write does not suspend, and recordRestartFailure already skips the
+            // cancellable terminal cleanup when our context is gone.
+            if (!disposed.get() && isMonitored(pluginId)) {
+                recordRestartFailure(request, e)
+            }
             if (currentCoroutineContext().isActive) {
-                // Our coroutine was not cancelled, so this is the restart action's own
-                // timeout (a withTimeout leak) surfacing: a plugin failure, not our
-                // cancellation. Record it so the plugin goes CRASHED/FAILED and the next
-                // tick retries (or the terminal action runs), instead of sitting in
-                // RESTARTING, which checkPluginHealth treats as a no-op - and let the tick
-                // continue instead of aborting the remaining plugins and surfacing a
-                // spurious CancellationException to restartPlugin callers.
-                if (isMonitored(pluginId)) {
-                    recordRestartFailure(request, e)
-                }
+                // We were not cancelled: this is the restart action's own timeout (a
+                // withTimeout leak) surfacing, a plugin failure. The record above keeps
+                // the plugin out of RESTARTING, and returning normally lets the tick
+                // continue to the remaining plugins instead of surfacing a spurious
+                // CancellationException to restartPlugin callers.
             } else {
-                // A genuine cancellation of this monitor's scope: dispose() clears the
-                // states, so there is nothing to record - propagate it.
+                // The calling coroutine was cancelled (the monitor's dispose, or an
+                // external restartPlugin caller such as the recovery UI). isActive is
+                // not a reliable "disposed" predicate, so the record above still
+                // lands for a cancelled external caller: without it the plugin would
+                // sit in RESTARTING, which checkPluginHealth treats as a no-op and
+                // isRestartable() refuses to retry. Then propagate to the caller.
                 throw e
             }
         } catch (e: Exception) {
@@ -358,9 +363,6 @@ class PluginProcessMonitor internal constructor(
             ),
         )
 
-        if (failureState == PluginProcessState.FAILED && currentCoroutineContext().isActive) {
-            runTerminalFailureAction(pluginId)
-        }
         logger.error(
             "Failed to restart plugin: id={}, attempt={}/{}",
             pluginId,
@@ -368,6 +370,20 @@ class PluginProcessMonitor internal constructor(
             previousHealth.maxRestarts,
             error,
         )
+
+        if (failureState == PluginProcessState.FAILED && currentCoroutineContext().isActive) {
+            // The FAILED state and the log line above are already in place, so a
+            // cancellation leaking out of the terminal cleanup must not abort the
+            // health tick for the remaining plugins.
+            try {
+                runTerminalFailureAction(pluginId)
+            } catch (e: CancellationException) {
+                if (!currentCoroutineContext().isActive) {
+                    throw e
+                }
+                logger.error("Terminal failure cleanup for plugin {} leaked a cancellation", pluginId, e)
+            }
+        }
     }
 
     private fun PluginHealthInfo.isRestartable(): Boolean =

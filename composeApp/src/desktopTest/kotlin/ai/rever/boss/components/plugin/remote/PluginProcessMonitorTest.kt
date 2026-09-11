@@ -4,6 +4,7 @@ import ai.rever.boss.process.ManagedProcess
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
@@ -410,6 +411,113 @@ class PluginProcessMonitorTest {
                         monitor.healthStates.value["flaky"]?.processState ==
                         PluginProcessState.RUNNING
                 }
+            } finally {
+                monitor.dispose()
+            }
+        }
+
+    @Test
+    fun `a leaked terminal restart timeout neither aborts the tick nor skips the state write`() =
+        runBlocking {
+            val backend = FakeBackend(alive = false)
+            val monitor = PluginProcessMonitor(backend)
+            val terminalCleanups = AtomicInteger()
+            val bystanderRestarts = AtomicInteger()
+
+            try {
+                monitor.monitor(
+                    "flaky",
+                    "flaky",
+                    maxRestarts = 1,
+                    restartAction = {
+                        // The action's own withTimeout fires; the leak surfaces as a
+                        // CancellationException out of the action body.
+                        withTimeout(50) { delay(5_000) }
+                        Result.success(Unit)
+                    },
+                    terminalFailureAction = {
+                        terminalCleanups.incrementAndGet()
+                        withTimeout(50) { delay(5_000) }
+                    },
+                )
+                monitor.monitor(
+                    "bystander",
+                    "bystander",
+                    restartAction = {
+                        bystanderRestarts.incrementAndGet()
+                        backend.aliveOverrides["bystander"] = true
+                        Result.success(Unit)
+                    },
+                )
+
+                // One health pass with both plugins dead: the first restart leaks its
+                // own timeout (a terminal attempt, so the terminal cleanup runs and
+                // leaks a cancellation of its own), then the second plugin must still
+                // be serviced in the same pass.
+                monitor.checkHealthNow()
+
+                // The terminal attempt was recorded before the cleanup ran, the
+                // cleanup ran, its leaked cancellation was absorbed, and the second
+                // plugin was serviced in the same tick.
+                val flaky = monitor.healthStates.value["flaky"]
+                assertEquals(PluginProcessState.FAILED, flaky?.processState)
+                assertEquals(1, flaky?.restartCount)
+                assertEquals(1, terminalCleanups.get())
+                assertEquals(1, bystanderRestarts.get())
+                assertEquals(
+                    PluginProcessState.RUNNING,
+                    monitor.healthStates.value["bystander"]?.processState,
+                )
+            } finally {
+                monitor.dispose()
+            }
+        }
+
+    @Test
+    fun `a cancelled external restart call records the attempt instead of stranding the plugin`() =
+        runBlocking {
+            val backend = FakeBackend(alive = true)
+            val monitor = PluginProcessMonitor(backend)
+            val attempts = AtomicInteger()
+            val secondAttemptEntered = CompletableDeferred<Unit>()
+
+            try {
+                monitor.monitor(
+                    "flaky",
+                    "flaky",
+                    maxRestarts = 3,
+                    restartAction = {
+                        if (attempts.incrementAndGet() == 1) {
+                            Result.failure(IllegalStateException("fast fail"))
+                        } else {
+                            secondAttemptEntered.complete(Unit)
+                            delay(5_000)
+                            Result.success(Unit)
+                        }
+                    },
+                )
+
+                // First tick: the process dies and the fast-failing attempt leaves the
+                // plugin in CRASHED (restartCount = 1).
+                backend.aliveOverrides["flaky"] = false
+                monitor.checkHealthNow()
+                assertEquals(
+                    PluginProcessState.CRASHED,
+                    monitor.healthStates.value["flaky"]?.processState,
+                )
+
+                // An external caller (the recovery-UI shape) restarts, and its
+                // coroutine is cancelled while the action is running.
+                val job = launch { monitor.restartPlugin("flaky") }
+                withTimeout(2_000) { secondAttemptEntered.await() }
+                job.cancel()
+                job.join()
+
+                // The failed attempt must be recorded (CRASHED, restartCount = 2),
+                // not left in RESTARTING where checkPluginHealth would never retry it.
+                val health = monitor.healthStates.value["flaky"]
+                assertEquals(PluginProcessState.CRASHED, health?.processState)
+                assertEquals(2, health?.restartCount)
             } finally {
                 monitor.dispose()
             }
