@@ -131,8 +131,8 @@ internal class FileWatchRegistry {
                             enforceFileSystemLimit(keys.size < 1024, "File watch directory limit reached")
                             try {
                                 keys.add(entry.register(service, ENTRY_CREATE, ENTRY_MODIFY, ENTRY_DELETE))
-                            } catch (e: NoSuchFileException) {
-                                if (entry == root) throw e
+                            } catch (e: IOException) {
+                                if (!disappeared(entry, e)) throw e
                             }
                         }
                         return FileVisitResult.CONTINUE
@@ -143,7 +143,7 @@ internal class FileWatchRegistry {
                         exc: IOException,
                     ): FileVisitResult {
                         context.ensureActive()
-                        if (exc is NoSuchFileException && file != root) return FileVisitResult.CONTINUE
+                        if (disappeared(file, exc)) return FileVisitResult.CONTINUE
                         throw exc
                     }
 
@@ -158,6 +158,41 @@ internal class FileWatchRegistry {
                     ) = visit(file, attrs)
                 },
             )
+        }
+
+        private fun disappeared(
+            path: Path,
+            failure: IOException,
+        ): Boolean =
+            path != root &&
+                when (failure) {
+                    is NoSuchFileException -> {
+                        true
+                    }
+
+                    else -> {
+                        System.getProperty("os.name").startsWith("Windows") && confirmDeletion(path)
+                    }
+                }
+
+        private fun confirmDeletion(path: Path): Boolean {
+            // Windows can deny an open while deletion is pending. Only suppress the failure
+            // after an attribute read confirms absence; persistent permission failures still surface.
+            repeat(5) {
+                context.ensureActive()
+                Thread.sleep(10)
+                val absent =
+                    try {
+                        Files.readAttributes(path, BasicFileAttributes::class.java, NOFOLLOW_LINKS)
+                        false
+                    } catch (_: NoSuchFileException) {
+                        true
+                    } catch (_: IOException) {
+                        false // The watch API can erase the Windows error type; only proven absence is suppressed.
+                    }
+                if (absent) return true
+            }
+            return false
         }
     }
 }
