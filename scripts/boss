@@ -43,7 +43,14 @@ urlencode() {
         c=${string:i:1}
         case "$c" in
             [-_.~a-zA-Z0-9] ) encoded+="$c" ;;
-            * ) printf -v c '%%%02X' "'$c" ; encoded+="$c"
+            * )
+                # macOS /bin/bash (3.2) reports bytes >= 0x80 as negative, which
+                # %02X would print as 16 hex digits; normalize to unsigned 0-255.
+                n=$(printf '%d' "'$c")
+                (( n < 0 )) && n=$(( n + 256 ))
+                printf -v c '%%%02X' "$n"
+                encoded+="$c"
+                ;;
         esac
     done
     printf '%s' "${encoded}"

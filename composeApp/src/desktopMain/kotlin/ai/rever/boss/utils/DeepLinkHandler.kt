@@ -534,7 +534,7 @@ actual object DeepLinkHandler {
     /**
      * Validates a folder deep link's path off the UI thread, returning null (and
      * logging why) when it must not be opened. Applies the same
-     * [CLISecurityValidator.isValidPath] check as the CLI's folder command —
+     * [CLISecurityValidator.isValidOpenTargetPath] check as the CLI's folder command —
      * `boss://` is registered system-wide, so any web page can reach this.
      */
     private fun resolveFolder(path: String): File? {
