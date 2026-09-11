@@ -26,6 +26,7 @@ REM Parse command
 set "COMMAND=%~1"
 
 if /i "%COMMAND%"=="status" goto :cmd_forward_exe
+if /i "%COMMAND%"=="doctor" goto :cmd_forward_exe
 if /i "%COMMAND%"=="mcp" goto :cmd_forward_exe
 if /i "%COMMAND%"=="completion" goto :cmd_forward_exe
 if /i "%COMMAND%"=="url" goto :cmd_url
@@ -145,6 +146,7 @@ echo   boss ^<command^> [arguments]     Run explicit command
 echo.
 echo Commands:
 echo   status                 Queries status and health of the running BOSS instance
+echo   doctor                 Reports problems in the running BOSS instance (exit 2 when degraded)
 echo   mcp ^<action^> [args]    Discovers and invokes desktop MCP tools (list, describe, invoke)
 echo   completion ^<shell^>     Generates shell completion script (bash, zsh, fish)
 echo   url ^<url^>              Opens a URL in Fluck browser

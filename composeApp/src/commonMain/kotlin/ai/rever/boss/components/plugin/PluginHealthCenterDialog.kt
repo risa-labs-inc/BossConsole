@@ -284,21 +284,7 @@ private fun kotlinx.coroutines.CoroutineScope.launchHealthAction(
 private fun currentHealthAction(
     manager: DynamicPluginManager,
     pluginId: String,
-): PluginHealthAction? {
-    val states = manager.pluginStates.value
-    val user = AuthStateManager.currentUser.value
-    return healthRowsWithSandboxDisables(
-        pluginHealthRows(
-            pluginStates = states,
-            loadGates = PluginLoadGateRegistry.gates.value,
-            crashedPluginIds = states.keys.filterTo(mutableSetOf()) { PluginCrashRegistry.hasCrashed(it) },
-            inaccessiblePluginIds =
-                healthInaccessiblePluginIds(states, user?.isAdmin == true, user?.permissions?.toSet() ?: emptySet()),
-            incompatiblePluginIds = PluginCrashRegistry.incompatiblePlugins.value,
-        ),
-        states.keys.filterTo(mutableSetOf()) { manager.sandboxManager.isPluginDisabled(it) },
-    ).firstOrNull { it.pluginId == pluginId }?.action
-}
+): PluginHealthAction? = currentPluginHealth(manager).rows.firstOrNull { it.pluginId == pluginId }?.action
 
 @Composable
 private fun PluginHealthRowCard(

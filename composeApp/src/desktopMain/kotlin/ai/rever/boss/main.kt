@@ -243,13 +243,13 @@ fun main(args: Array<String>) {
         )
     }
 
-    // Headless CLI commands (status, mcp, completion, --help) target the running
+    // Headless CLI commands (status, doctor, mcp, completion, --help) target the running
     // instance or generate output headlessly. Execute before AWT, plugins, Skiko,
     // or acquiring the single-instance lock so they fail without GUI startup when BOSS is
     // closed without booting the GUI or corrupting standard output streams.
     val firstNonFlag = args.firstOrNull { !it.startsWith("-") }?.lowercase()
     val isHeadlessCli =
-        firstNonFlag in setOf("status", "mcp", "completion") ||
+        firstNonFlag in setOf("status", "doctor", "mcp", "completion") ||
             (args.isNotEmpty() && args.all { it in setOf("-h", "--help") })
 
     if (isHeadlessCli) {

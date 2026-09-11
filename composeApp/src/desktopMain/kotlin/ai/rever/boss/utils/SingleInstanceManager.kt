@@ -2,6 +2,8 @@
 
 package ai.rever.boss.utils
 
+import ai.rever.boss.health.WorkspaceHealthCollector
+import ai.rever.boss.health.toJson
 import ai.rever.boss.plugin.api.McpToolResult
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.logging.BossLogger
@@ -696,8 +698,15 @@ private fun buildLlmTokenResponse(providerOverride: (() -> Result<String>)?): St
     )
 }
 
+/**
+ * The STATUS response. [healthJson] is a parameter so a test can check that the real response carries
+ * the health report without starting a browser engine or reading the MCP files.
+ */
 @Suppress("TooGenericExceptionCaught")
-private fun buildStatusResponse(statusProviderOverride: (() -> String)?): String {
+internal fun buildStatusResponse(
+    statusProviderOverride: (() -> String)?,
+    healthJson: () -> JsonObject = { WorkspaceHealthCollector().collect().toJson() },
+): String {
     val rawJson =
         if (statusProviderOverride != null) {
             statusProviderOverride.invoke()
@@ -732,6 +741,8 @@ private fun buildStatusResponse(statusProviderOverride: (() -> String)?): String
                             put("heapPercent", heapPercent)
                         },
                     )
+                    // Never throws: a health source that cannot be read is reported as unchecked.
+                    put("health", healthJson())
                 }.toString()
             } catch (e: Exception) {
                 return RESPONSE_ERROR_PREFIX + (e.message ?: "Failed to query status")
