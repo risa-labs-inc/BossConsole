@@ -14,7 +14,8 @@ import java.io.File
  * - BOSS_PROCESS_ID: Assigned process ID
  * - BOSS_PROCESS_TYPE: Process type (SERVICE, APP, PLUGIN)
  *
- * Process stdout/stderr are redirected to log files under $BOSS_DATA_DIR/logs/{processId}/
+ * Process stdout/stderr are drained into bounded logs under $BOSS_DATA_DIR/logs/{processId}/.
+ * Each stream retains at most five 10 MiB files, including the current file.
  *
  * Everything spawned here is entered into [registry], because the registry is what the kernel's
  * shutdown hook reaps on exit. Registration used to be each caller's job, and the caller that
@@ -60,10 +61,8 @@ class ProcessSpawner
          * deliberate termination and a crash.
          */
         fun spawn(config: ProcessConfig): ManagedProcess {
-            val processLogDir = File(logDir, config.processId).also { it.mkdirs() }
-            val stdoutLog = File(processLogDir, "stdout.log")
-            val stderrLog = File(processLogDir, "stderr.log")
-
+            // Validate before socket or log creation, not after a caller-selected directory is made.
+            IpcAddressResolver.validateProcessIdentifier(config.processId)
             val ipcAddress =
                 IpcAddressResolver.resolveAddress(
                     config.processType.name.lowercase(),
@@ -73,35 +72,35 @@ class ProcessSpawner
             val command = buildCommand(config)
 
             logger.info(
-                "Spawning process: id={}, type={}, command={}",
+                "Spawning process: id={}, type={}",
                 config.processId,
                 config.processType,
-                command.joinToString(" "),
             )
 
             val processBuilder =
                 ProcessBuilder(command)
                     .directory(config.workDir)
-                    .redirectOutput(ProcessBuilder.Redirect.appendTo(stdoutLog))
-                    .redirectError(ProcessBuilder.Redirect.appendTo(stderrLog))
 
             // Set environment variables
             processBuilder.environment().apply {
+                putAll(config.environment)
                 put("BOSS_KERNEL_IPC_ADDR", kernelIpcAddress)
                 put("BOSS_PROCESS_ID", config.processId)
                 put("BOSS_PROCESS_TYPE", config.processType.name)
                 put("BOSS_IPC_ADDR", ipcAddress)
-                putAll(config.environment)
+                keys.filter { it.equals("BOSS_PROCESS_TOKEN", ignoreCase = true) }.forEach { remove(it) }
                 // Minted after config.environment, so nothing a caller supplies can shadow the real
                 // credential — only the kernel gets to say what a process's own token is. Never logged.
             }
 
+            val logs = ProcessLogStreams.acquire(logDir.toPath(), config.processId)
             val token = tokenRegistry?.issue(config.processId)
             val process =
                 runCatching {
                     token?.let { processBuilder.environment()["BOSS_PROCESS_TOKEN"] = it }
-                    processBuilder.start()
+                    startWithLogs(processBuilder, logs)
                 }.onFailure {
+                    logs.close()
                     tokenRegistry?.revokeIfCurrent(config.processId, token)
                 }.getOrThrow()
             process.onExit().thenRun { tokenRegistry?.revokeIfCurrent(config.processId, token) }
@@ -120,6 +119,24 @@ class ProcessSpawner
             ).also {
                 it.ipcClient = BossIpcClient(ipcAddress)
                 registry?.register(config.processId, it)
+            }
+        }
+
+        private fun startWithLogs(
+            builder: ProcessBuilder,
+            logs: ProcessLogStreams,
+        ): Process {
+            val child = builder.start()
+            var attached = false
+            try {
+                logs.attach(child)
+                attached = true
+                return child
+            } finally {
+                if (!attached) {
+                    child.destroyForcibly()
+                    child.onExit().join()
+                }
             }
         }
 
