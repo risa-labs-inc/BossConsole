@@ -187,6 +187,12 @@ class TerminalOwnershipTest {
             .setWorkingDirectory(root.toString())
             .addAllCommand(listOf(java, "-cp", classes, TerminalOwnershipProcess::class.java.name, mode))
             .putEnvironment("TERMINAL_SENTINEL", root.resolve("sentinel").toString())
+            .putEnvironment("BOSS_TEST_NORMAL", "preserved")
+            .putEnvironment("BOSS_PROCESS_TOKEN", "synthetic-process-token")
+            .putEnvironment("BOSS_KERNEL_TLS_CERT", "synthetic-kernel-cert")
+            .putEnvironment("BOSS_IPC_TLS_CERT", "synthetic-server-cert")
+            .putEnvironment("BOSS_IPC_TLS_KEY", "synthetic-server-key")
+            .putEnvironment("BOSS_HOST_TOKEN", "synthetic-host-token")
             .build()
     }
 
