@@ -61,27 +61,25 @@ object PluginScaffolder {
             throw IOException("Failed to create directory: ${targetDir.absolutePath}")
         }
 
-        val pluginId =
+        val baseSuffix =
             if (name.contains('.')) {
-                name
-                    .trim()
-                    .lowercase()
-                    .replace(Regex("[^a-z0-9._-]"), "-")
-                    .replace(Regex("-+"), "-")
-                    .trim('-', '.')
-                    .ifBlank { "custom-plugin" }
+                name.substringAfterLast('.').ifBlank { "custom-plugin" }
             } else {
                 name
-                    .trim()
-                    .lowercase()
-                    .replace(Regex("[^a-z0-9-]"), "-")
-                    .replace(Regex("-+"), "-")
-                    .trim('-')
-                    .ifBlank { "custom-plugin" }
             }
+        val rawSuffix =
+            baseSuffix
+                .trim()
+                .lowercase()
+                .replace(Regex("[^a-z0-9-]"), "-")
+                .replace(Regex("-+"), "-")
+                .trim('-')
+                .ifBlank { "custom-plugin" }
+
+        val pluginId = derivePluginId(name)
 
         val className = sanitizeClassIdentifier(name)
-        val packageSuffix = sanitizePackageIdentifier(pluginId)
+        val packageSuffix = sanitizePackageIdentifier(rawSuffix)
         val packageName = "com.example.$packageSuffix"
         val packageDirRel = "com/example/$packageSuffix"
 
@@ -98,7 +96,7 @@ object PluginScaffolder {
                 Template.MCP_TOOL, Template.FULL -> {
                     listOf(
                         PluginMcpToolDeclaration(
-                            name = "mcp__${pluginId.replace('-', '_')}__action",
+                            name = "mcp__${pluginId.replace('.', '_').replace('-', '_')}__action",
                             description = "Executes $name action tool",
                             adminOnly = false,
                         ),
@@ -664,6 +662,27 @@ object PluginScaffolder {
         )
 
     fun isReservedKeyword(name: String): Boolean = RESERVED_KEYWORDS.contains(name.lowercase())
+
+    fun derivePluginId(name: String): String {
+        val trimmed = name.trim().lowercase()
+        if (trimmed.contains('.')) {
+            val cleaned =
+                trimmed
+                    .replace(Regex("[^a-z0-9._-]"), "-")
+                    .replace(Regex("-+"), "-")
+                    .trim('-', '.')
+            if (cleaned.isNotEmpty() && cleaned.first().isLetter() && cleaned.contains('.')) {
+                return cleaned
+            }
+        }
+        val rawSuffix =
+            trimmed
+                .replace(Regex("[^a-z0-9-]"), "-")
+                .replace(Regex("-+"), "-")
+                .trim('-')
+                .ifBlank { "custom-plugin" }
+        return "com.example.$rawSuffix"
+    }
 
     fun sanitizePackageIdentifier(rawId: String): String {
         val cleaned = rawId.lowercase().replace(Regex("[^a-z0-9]"), "")

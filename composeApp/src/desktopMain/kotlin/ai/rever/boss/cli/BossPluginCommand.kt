@@ -71,7 +71,10 @@ class BossPluginInitCommand : CliktCommand(name = "init") {
                         put(
                             "files",
                             buildJsonArray {
-                                result.filesCreated.forEach { add(it.name) }
+                                result.filesCreated.forEach { file ->
+                                    val relPath = file.relativeTo(result.targetDirectory).path.replace('\\', '/')
+                                    add(relPath)
+                                }
                             },
                         )
                     }
@@ -83,7 +86,10 @@ class BossPluginInitCommand : CliktCommand(name = "init") {
                 )
                 echo("Template: $template")
                 echo("Generated files:")
-                result.filesCreated.forEach { echo("  - ${it.name}") }
+                result.filesCreated.forEach { file ->
+                    val relPath = file.relativeTo(result.targetDirectory).path.replace('\\', '/')
+                    echo("  - $relPath")
+                }
             }
         } catch (e: Exception) {
             val errorMsg = e.message ?: "Failed to scaffold plugin"
@@ -300,9 +306,10 @@ class BossPluginLinkCommand : CliktCommand(name = "link") {
             throw ProgramResult(1)
         }
 
-        DevPluginArtifacts.pruneStagingHistory(pluginDevBase, maxVersionsToKeep = 3)
-
         val reloadResult = SingleInstanceManager.reloadDevPlugin(pluginId)
+        if (reloadResult is ReloadResult.Success || reloadResult is ReloadResult.HostOffline) {
+            DevPluginArtifacts.pruneStagingHistory(pluginDevBase, maxVersionsToKeep = 3)
+        }
         when (reloadResult) {
             is ReloadResult.Success -> {
                 if (json) {

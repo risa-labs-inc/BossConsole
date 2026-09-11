@@ -107,12 +107,23 @@ object DevPluginArtifacts {
     ) {
         if (!pluginDevDir.exists() || !pluginDevDir.isDirectory) return
 
-        val versionDirs =
+        val allVersionDirs =
             pluginDevDir.listFiles { file -> file.isDirectory && file.name.startsWith("v") }
                 ?: return
 
+        val (validDirs, corruptDirs) =
+            allVersionDirs.partition { dir ->
+                val jars =
+                    dir.listFiles { file ->
+                        file.isFile && file.extension == "jar" && !file.name.endsWith(".part") && file.length() > 0
+                    }
+                !jars.isNullOrEmpty()
+            }
+
+        cleanCorruptDirectories(corruptDirs)
+
         val sortedDirs =
-            versionDirs.sortedWith(
+            validDirs.sortedWith(
                 compareByDescending { dir ->
                     dir.name.removePrefix("v").toLongOrNull() ?: dir.lastModified()
                 },
@@ -120,7 +131,24 @@ object DevPluginArtifacts {
 
         if (sortedDirs.size <= maxVersionsToKeep) return
 
-        val dirsToPrune = sortedDirs.drop(maxVersionsToKeep)
+        pruneOldVersionDirectories(sortedDirs.drop(maxVersionsToKeep))
+    }
+
+    private fun cleanCorruptDirectories(corruptDirs: List<File>) {
+        for (dir in corruptDirs) {
+            try {
+                dir.deleteRecursively()
+            } catch (e: Exception) {
+                logger.debug(
+                    LogCategory.SYSTEM,
+                    "Failed to delete empty or corrupt staging directory",
+                    mapOf("dir" to dir.absolutePath, "error" to (e.message ?: "unknown")),
+                )
+            }
+        }
+    }
+
+    private fun pruneOldVersionDirectories(dirsToPrune: List<File>) {
         for (dir in dirsToPrune) {
             try {
                 dir.deleteRecursively()

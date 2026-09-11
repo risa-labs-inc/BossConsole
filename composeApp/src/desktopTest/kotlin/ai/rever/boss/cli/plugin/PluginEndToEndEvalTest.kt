@@ -76,7 +76,7 @@ class PluginEndToEndEvalTest {
                     ),
                 )
             }
-        assertTrue(initOut.contains("[✓] Plugin 'pristine-plugin' scaffolded successfully"))
+        assertTrue(initOut.contains("[✓] Plugin 'com.example.pristine-plugin' scaffolded successfully"))
         assertTrue(File(pluginDir, "plugin.json").exists())
         assertTrue(File(pluginDir, "gradlew").exists())
         assertTrue(File(pluginDir, "gradlew.bat").exists())
@@ -167,7 +167,7 @@ class PluginEndToEndEvalTest {
             listOf("plugin", "init", "offline-link-plugin", "--dir", pluginDir.absolutePath),
         )
 
-        createSyntheticJar(pluginDir, "offline-link-plugin")
+        createSyntheticJar(pluginDir, "com.example.offline-link-plugin")
 
         val (stdout, _) =
             captureStreams {
@@ -178,19 +178,19 @@ class PluginEndToEndEvalTest {
 
         val jsonResult = Json.parseToJsonElement(stdout).jsonObject
         assertEquals("staged", jsonResult["status"]?.jsonPrimitive?.content)
-        assertEquals("offline-link-plugin", jsonResult["pluginId"]?.jsonPrimitive?.content)
+        assertEquals("com.example.offline-link-plugin", jsonResult["pluginId"]?.jsonPrimitive?.content)
         assertEquals(false, jsonResult["running"]?.jsonPrimitive?.boolean)
 
         val stagedPath = jsonResult["stagedPath"]?.jsonPrimitive?.content
         assertNotNull(stagedPath)
         val stagedFile = File(stagedPath)
         assertTrue(stagedFile.exists(), "Staged JAR must exist on disk")
-        assertTrue(stagedFile.name == "offline-link-plugin.jar")
+        assertTrue(stagedFile.name == "com.example.offline-link-plugin.jar")
 
         // Verify version-rotation pattern: dev/plugins/<pluginId>/v<timestamp>/<pluginId>.jar
         val versionParent = stagedFile.parentFile
         assertTrue(versionParent.name.startsWith("v"), "Parent folder must be timestamped rotation directory")
-        assertEquals("offline-link-plugin", versionParent.parentFile.name)
+        assertEquals("com.example.offline-link-plugin", versionParent.parentFile.name)
     }
 
     @Test
@@ -200,7 +200,7 @@ class PluginEndToEndEvalTest {
             listOf("plugin", "init", "live-link-plugin", "--dir", pluginDir.absolutePath),
         )
 
-        createSyntheticJar(pluginDir, "live-link-plugin")
+        createSyntheticJar(pluginDir, "com.example.live-link-plugin")
 
         // 1. Success case: host is online and reload succeeds
         assertTrue(SingleInstanceManager.acquireLock(), "Acquire lock to simulate online BossConsole")
@@ -219,7 +219,7 @@ class PluginEndToEndEvalTest {
 
         assertTrue(linkOut.contains("\"status\":\"linked_and_reloaded\""))
         assertTrue(linkOut.contains("\"running\":true"))
-        assertEquals("live-link-plugin", reloadDispatchedFor)
+        assertEquals("com.example.live-link-plugin", reloadDispatchedFor)
 
         // 2. Failure case: host reports reload error
         SingleInstanceManager.pluginReloadHandlerOverride = { _ ->
@@ -271,14 +271,14 @@ class PluginEndToEndEvalTest {
         assertTrue(SingleInstanceManager.acquireLock(), "Acquire lock for IPC test")
 
         // Test success
-        val successRes = SingleInstanceManager.reloadDevPlugin("sample-tool")
+        val successRes = SingleInstanceManager.reloadDevPlugin("com.example.sample-tool")
         assertIs<ReloadResult.Success>(successRes)
 
         // Test failure with message
         reloadResultShouldSucceed = false
-        val failRes = SingleInstanceManager.reloadDevPlugin("sample-tool")
+        val failRes = SingleInstanceManager.reloadDevPlugin("com.example.sample-tool")
         assertIs<ReloadResult.Failed>(failRes)
-        assertTrue(failRes.reason.contains("Failed to reload plugin sample-tool"))
+        assertTrue(failRes.reason.contains("Failed to reload plugin com.example.sample-tool"))
     }
 
     @Test
@@ -415,7 +415,7 @@ class PluginEndToEndEvalTest {
 }
 
 class EndToEndFixturePlugin : ai.rever.boss.plugin.api.Plugin {
-    override val pluginId: String = "test-fixture"
+    override val pluginId: String = "com.example.test-fixture"
     override val displayName: String = "Test Fixture Plugin"
 
     override fun register(context: ai.rever.boss.plugin.api.PluginContext) {

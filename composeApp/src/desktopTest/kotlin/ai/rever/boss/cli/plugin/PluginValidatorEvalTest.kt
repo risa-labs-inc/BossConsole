@@ -28,7 +28,7 @@ class PluginValidatorEvalTest {
 
         val manifest =
             PluginManifest(
-                pluginId = "valid-plugin",
+                pluginId = "com.example.valid-plugin",
                 displayName = "Valid Plugin",
                 version = "1.0.0",
                 description = "A valid test plugin",
@@ -80,7 +80,7 @@ class PluginValidatorEvalTest {
 
         val manifest =
             PluginManifest(
-                pluginId = "future-plugin",
+                pluginId = "com.example.future-plugin",
                 displayName = "Future Plugin",
                 version = "1.0.0",
                 description = "Needs future API",
@@ -104,7 +104,7 @@ class PluginValidatorEvalTest {
         val jarFile = File(tempDir.toFile(), "missing-class.jar")
         val manifest =
             PluginManifest(
-                pluginId = "test-jar-plugin",
+                pluginId = "com.example.test-jar-plugin",
                 displayName = "Test Jar Plugin",
                 version = "0.2.0",
                 apiVersion = HostMeta.CURRENT_API_VERSION,
@@ -130,7 +130,7 @@ class PluginValidatorEvalTest {
         val jarFile = File(tempDir.toFile(), "valid-class.jar")
         val manifest =
             PluginManifest(
-                pluginId = "test-jar-plugin",
+                pluginId = "com.example.test-jar-plugin",
                 displayName = "Test Jar Plugin",
                 version = "0.2.0",
                 apiVersion = HostMeta.CURRENT_API_VERSION,
@@ -174,7 +174,7 @@ class PluginValidatorEvalTest {
         val jarFile = File(tempDir.toFile(), "non-plugin-class.jar")
         val manifest =
             PluginManifest(
-                pluginId = "non-plugin",
+                pluginId = "com.example.non-plugin",
                 displayName = "Non Plugin",
                 version = "0.2.0",
                 apiVersion = HostMeta.CURRENT_API_VERSION,
@@ -248,7 +248,7 @@ class PluginValidatorEvalTest {
             dir.mkdirs()
             val manifest =
                 PluginManifest(
-                    pluginId = "semver-plugin",
+                    pluginId = "com.example.semver-plugin",
                     displayName = "SemVer Plugin",
                     version = versionStr,
                     apiVersion = HostMeta.CURRENT_API_VERSION,
@@ -283,7 +283,7 @@ class PluginValidatorEvalTest {
             )
         val manifest =
             PluginManifest(
-                pluginId = "perms-plugin",
+                pluginId = "com.example.perms-plugin",
                 displayName = "Permissions Plugin",
                 version = "1.0.0",
                 apiVersion = HostMeta.CURRENT_API_VERSION,
@@ -308,6 +308,27 @@ class PluginValidatorEvalTest {
         assertFalse(invalidCheck.passed, "Unknown permission must fail")
     }
 
+    @Test
+    fun `tests dotless plugin ID fails id-format check`() {
+        val dir = File(tempDir.toFile(), "dotless-id-dir")
+        dir.mkdirs()
+        val manifest =
+            PluginManifest(
+                pluginId = "dotless-plugin",
+                displayName = "Dotless Plugin",
+                version = "1.0.0",
+                apiVersion = HostMeta.CURRENT_API_VERSION,
+                mainClass = "com.example.DotlessPlugin",
+            )
+        File(dir, "plugin.json").writeText(launchpadJson.encodeToString(manifest))
+        val result = PluginValidator.validate(dir)
+        assertFalse(result.isValid, "Dotless plugin ID must fail validation")
+        val idCheck = result.checks.firstOrNull { it.name == "id-format" }
+        assertNotNull(idCheck)
+        assertFalse(idCheck.passed, "Dotless plugin ID must fail id-format check")
+        assertTrue(idCheck.message.contains("must follow reverse domain notation"))
+    }
+
     private fun createJar(
         jarFile: File,
         entries: Map<String, ByteArray>,
@@ -324,7 +345,7 @@ class PluginValidatorEvalTest {
 }
 
 class ValidatorTestFixturePlugin : ai.rever.boss.plugin.api.Plugin {
-    override val pluginId = "test-jar-plugin"
+    override val pluginId = "com.example.test-jar-plugin"
     override val displayName = "Test Jar Plugin"
 
     override fun register(context: ai.rever.boss.plugin.api.PluginContext) {

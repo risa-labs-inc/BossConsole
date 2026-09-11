@@ -1,6 +1,7 @@
 package ai.rever.boss.plugin.launchpad
 
 import ai.rever.boss.plugin.api.Plugin
+import ai.rever.boss.plugin.loader.PluginManifestReader
 import java.io.File
 import java.io.IOException
 import java.net.URLClassLoader
@@ -22,8 +23,8 @@ import java.util.zip.ZipException
     "TooManyFunctions",
 )
 object PluginValidator {
-    private val ID_REGEX = Regex("^[a-zA-Z0-9_.-]+$")
-    private val MCP_TOOL_REGEX = Regex("^mcp__[a-z0-9_-]+__[a-z0-9_-]+$")
+    private val ID_REGEX = Regex("^[a-zA-Z][a-zA-Z0-9_-]*(?:\\.[a-zA-Z0-9_-]+)+$")
+    private val MCP_TOOL_REGEX = Regex("^mcp__[a-zA-Z0-9_-]+__[a-zA-Z0-9_-]+$")
     private val CLASS_NAME_REGEX = Regex("""^[a-zA-Z_$][a-zA-Z0-9_$]*(?:\.[a-zA-Z_$][a-zA-Z0-9_$]*)+$""")
 
     fun validate(target: File): ValidationResult {
@@ -443,7 +444,7 @@ object PluginValidator {
         manifest: PluginManifest,
         checks: MutableList<ValidationCheck>,
     ) {
-        // ID format (supports reverse-domain dotted IDs e.g. com.example.tool and kebab-case)
+        // ID format (supports reverse-domain dotted IDs e.g. com.example.tool matching PluginManifestReader)
         val idValid = ID_REGEX.matches(manifest.pluginId)
         checks +=
             ValidationCheck(
@@ -451,9 +452,10 @@ object PluginValidator {
                 passed = idValid,
                 message =
                     if (idValid) {
-                        "Plugin ID '${manifest.pluginId}' matches ^[a-zA-Z0-9_.-]+$"
+                        "Plugin ID '${manifest.pluginId}' follows reverse domain notation"
                     } else {
-                        "Plugin ID '${manifest.pluginId}' must match pattern ^[a-zA-Z0-9_.-]+$"
+                        "Plugin ID '${manifest.pluginId}' must follow reverse domain notation " +
+                            "with at least one dot (e.g. com.example.my-tools)"
                     },
             )
 
@@ -539,6 +541,26 @@ object PluginValidator {
                     } else {
                         "Invalid MCP tool declarations: ${invalidTools.map { it.name }}"
                     },
+            )
+
+        // Host loader manifest contract check
+        var hostValid = true
+        var hostMsg = "Manifest conforms to host PluginManifestReader contract"
+        try {
+            val hostManifest =
+                PluginManifestReader.parseManifest(
+                    launchpadJson.encodeToString(manifest),
+                )
+            PluginManifestReader.validateManifest(hostManifest)
+        } catch (e: Exception) {
+            hostValid = false
+            hostMsg = "Host manifest validation failed: ${e.message ?: "invalid"}"
+        }
+        checks +=
+            ValidationCheck(
+                name = "host-manifest-contract",
+                passed = hostValid,
+                message = hostMsg,
             )
     }
 }

@@ -4,6 +4,7 @@ import ai.rever.boss.plugin.launchpad.HostMeta
 import ai.rever.boss.plugin.launchpad.PluginManifest
 import ai.rever.boss.plugin.launchpad.PluginScaffolder
 import ai.rever.boss.plugin.launchpad.launchpadJson
+import ai.rever.boss.plugin.loader.PluginManifestReader
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import java.nio.file.Path
@@ -32,7 +33,7 @@ class PluginScaffolderEvalTest {
                     force = false,
                 )
 
-            assertEquals("test-$tmpl", result.pluginId)
+            assertEquals("com.example.test-$tmpl", result.pluginId)
             assertTrue(targetFolder.exists(), "Target folder should exist for $tmpl")
 
             // Verify canonical files exist
@@ -69,7 +70,7 @@ class PluginScaffolderEvalTest {
 
             // Verify plugin.json content
             val manifest = launchpadJson.decodeFromString<PluginManifest>(manifestFile.readText())
-            assertEquals("test-$tmpl", manifest.id)
+            assertEquals("com.example.test-$tmpl", manifest.id)
             assertEquals("0.1.0", manifest.version)
             assertEquals(HostMeta.CURRENT_API_VERSION, manifest.minApiVersion)
 
@@ -81,7 +82,7 @@ class PluginScaffolderEvalTest {
                         manifest.mcpTools
                             .first()
                             .name
-                            .startsWith("mcp__test_mcp_tool__"),
+                            .startsWith("mcp__com_example_test_mcp_tool__"),
                     )
                 }
 
@@ -172,7 +173,7 @@ class PluginScaffolderEvalTest {
                 targetDir = targetFolder,
                 force = true,
             )
-        assertEquals("collision-plugin", result.pluginId)
+        assertEquals("com.example.collision-plugin", result.pluginId)
         assertTrue(File(targetFolder, "plugin.json").exists())
     }
 
@@ -243,6 +244,24 @@ class PluginScaffolderEvalTest {
                     PluginScaffolder.assertSafeToPurge(userHome)
                 }
             assertTrue(homeEx.message?.contains("user home") == true)
+        }
+    }
+
+    @Test
+    fun `scaffolded manifest passes host PluginManifestReader parse and validation across all templates`() {
+        val templates = listOf("mcp-tool", "ui-panel", "background-service", "full")
+        for (tmpl in templates) {
+            val targetFolder = File(tempDir.toFile(), "manifest-verify-$tmpl")
+            PluginScaffolder.scaffold(
+                name = "test-$tmpl",
+                templateName = tmpl,
+                targetDir = targetFolder,
+            )
+            val manifestFile = File(targetFolder, "plugin.json")
+            assertTrue(manifestFile.exists(), "Manifest should exist for $tmpl")
+            val hostManifest = PluginManifestReader.parseManifest(manifestFile.readText())
+            PluginManifestReader.validateManifest(hostManifest)
+            assertEquals("com.example.test-$tmpl", hostManifest.pluginId)
         }
     }
 }

@@ -100,6 +100,29 @@ class PluginManifestTest {
     }
 
     @Test
+    fun `pruneStagingHistory ignores empty and part-only directories from failed links`() {
+        val pluginDevDir = Files.createDirectory(tempDir.resolve("ignore-empty-test"))
+        val v1 = Files.createDirectory(pluginDevDir.resolve("v1000"))
+        Files.writeString(v1.resolve("ignore-empty-test.jar"), "valid jar 1")
+        val v2 = Files.createDirectory(pluginDevDir.resolve("v2000"))
+        Files.writeString(v2.resolve("ignore-empty-test.jar"), "valid jar 2")
+
+        Files.createDirectory(pluginDevDir.resolve("v3000"))
+        val v4 = Files.createDirectory(pluginDevDir.resolve("v4000"))
+        Files.writeString(v4.resolve("ignore-empty-test.jar.part"), "incomplete")
+        val v5 = Files.createDirectory(pluginDevDir.resolve("v5000"))
+        Files.writeString(v5.resolve("ignore-empty-test.jar"), "")
+
+        DevPluginArtifacts.pruneStagingHistory(pluginDevDir.toFile(), maxVersionsToKeep = 2)
+
+        val remaining =
+            Files.list(pluginDevDir).use { stream ->
+                stream.map { it.fileName.toString() }.toList().sorted()
+            }
+        assertEquals(listOf("v1000", "v2000"), remaining, "Valid builds must be retained despite corrupt directories")
+    }
+
+    @Test
     fun `SingleInstanceManager captures host-side exception during reload and returns structured RELOAD_FAILED`() {
         SingleInstanceManager.pluginReloadHandlerOverride = { _ ->
             throw OutOfMemoryError("Metaspace out of memory during plugin classloading")
