@@ -92,6 +92,7 @@ const REGISTRATION_TEMPLATE = `<!DOCTYPE html>
         }
 
         .email-badge .value {
+            overflow-wrap: anywhere;
             color: #F2F2F2;
             font-size: 16px;
             font-weight: 500;
@@ -135,6 +136,7 @@ const REGISTRATION_TEMPLATE = `<!DOCTYPE html>
         }
 
         .status {
+            overflow-wrap: anywhere;
             padding: 16px 20px;
             border-radius: 6px;
             font-size: 14px;
@@ -231,7 +233,7 @@ const REGISTRATION_TEMPLATE = `<!DOCTYPE html>
 
             <div class="email-badge">
                 <div class="label">Account</div>
-                <div class="value">{{EMAIL}}</div>
+                <div class="value">{{EMAIL_HTML}}</div>
             </div>
 
             <button id="registerBtn" class="button">
@@ -258,13 +260,13 @@ const REGISTRATION_TEMPLATE = `<!DOCTYPE html>
     </div>
 
     <script>
-        const challenge = '{{CHALLENGE}}';
-        const userId = '{{USER_ID}}';
-        const email = '{{EMAIL}}';
-        const sessionId = '{{SESSION_ID}}';
-        const rpId = '{{RP_ID}}';
-        const rpName = '{{RP_NAME}}';
-        const anonKey = '{{ANON_KEY}}';
+        const challenge = {{CHALLENGE_JS}};
+        const userId = {{USER_ID_JS}};
+        const email = {{EMAIL_JS}};
+        const sessionId = {{SESSION_ID_JS}};
+        const rpId = {{RP_ID_JS}};
+        const rpName = {{RP_NAME_JS}};
+        const anonKey = {{ANON_KEY_JS}};
 
         function base64urlToBuffer(base64url) {
             try {
@@ -369,16 +371,17 @@ const REGISTRATION_TEMPLATE = `<!DOCTYPE html>
 
                     // Redirect to BOSS app via deep link after 1.5 seconds
                     setTimeout(() => {
-                        window.location.href = 'boss://passkey/registered?sessionId=' + sessionId;
+                        window.location.href = 'boss://passkey/registered?sessionId=' + encodeURIComponent(sessionId);
                     }, 1500);
                 } else {
                     throw new Error(result.error || 'Registration failed');
                 }
 
             } catch (error) {
-                console.error('Registration error:', error);
+                console.error('Passkey registration failed');
                 status.className = 'status error';
-                status.innerHTML = '<span class="icon">❌</span><strong>Failed to add passkey</strong><br>' + error.message;
+                status.innerHTML = '<span class="icon">❌</span><strong>Failed to add passkey</strong><br>';
+                status.appendChild(document.createTextNode(error.message || 'Please try again.'));
                 button.disabled = false;
                 button.textContent = '🔐 Try Again';
             }
@@ -488,6 +491,7 @@ const AUTHENTICATION_TEMPLATE = `<!DOCTYPE html>
         }
 
         .account-info .value {
+            overflow-wrap: anywhere;
             color: #F2F2F2;
             font-size: 16px;
             font-weight: 500;
@@ -502,6 +506,7 @@ const AUTHENTICATION_TEMPLATE = `<!DOCTYPE html>
         }
 
         .credential-details .row {
+            gap: 12px;
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -518,6 +523,8 @@ const AUTHENTICATION_TEMPLATE = `<!DOCTYPE html>
         }
 
         .credential-details .value {
+            min-width: 0;
+            overflow-wrap: anywhere;
             color: #F2F2F2;
             font-size: 13px;
             font-weight: 500;
@@ -561,6 +568,7 @@ const AUTHENTICATION_TEMPLATE = `<!DOCTYPE html>
         }
 
         .status {
+            overflow-wrap: anywhere;
             padding: 16px 20px;
             border-radius: 6px;
             font-size: 14px;
@@ -677,7 +685,7 @@ const AUTHENTICATION_TEMPLATE = `<!DOCTYPE html>
 
             <div class="account-info">
                 <div class="label">Account</div>
-                <div class="value">{{EMAIL}}</div>
+                <div class="value">{{EMAIL_HTML}}</div>
 
                 <div class="credential-details">
                     <div class="row">
@@ -715,12 +723,12 @@ const AUTHENTICATION_TEMPLATE = `<!DOCTYPE html>
     </div>
 
     <script>
-        const challenge = '{{CHALLENGE}}';
-        const email = '{{EMAIL}}';
-        const credentialId = '{{CREDENTIAL_ID}}';
-        const sessionId = '{{SESSION_ID}}';
-        const rpId = '{{RP_ID}}';
-        const anonKey = '{{ANON_KEY}}';
+        const challenge = {{CHALLENGE_JS}};
+        const email = {{EMAIL_JS}};
+        const credentialId = {{CREDENTIAL_ID_JS}};
+        const sessionId = {{SESSION_ID_JS}};
+        const rpId = {{RP_ID_JS}};
+        const anonKey = {{ANON_KEY_JS}};
 
         function base64urlToBuffer(base64url) {
             let base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
@@ -807,16 +815,17 @@ const AUTHENTICATION_TEMPLATE = `<!DOCTYPE html>
 
                     // Redirect to BOSS app via deep link after 1.5 seconds
                     setTimeout(() => {
-                        window.location.href = 'boss://passkey/authenticated?sessionId=' + sessionId;
+                        window.location.href = 'boss://passkey/authenticated?sessionId=' + encodeURIComponent(sessionId);
                     }, 1500);
                 } else {
                     throw new Error(result.error || 'Authentication failed');
                 }
 
             } catch (error) {
-                console.error('Authentication error:', error);
+                console.error('Passkey authentication failed');
                 status.className = 'status error';
-                status.innerHTML = '<span class="icon">❌</span><strong>Authentication failed</strong><br>' + error.message;
+                status.innerHTML = '<span class="icon">❌</span><strong>Authentication failed</strong><br>';
+                status.appendChild(document.createTextNode(error.message || 'Please try again.'));
                 button.disabled = false;
                 button.textContent = '🔐 Try Again';
             }
@@ -932,6 +941,7 @@ const ERROR_TEMPLATE = `<!DOCTYPE html>
         }
 
         .error-message .message {
+            overflow-wrap: anywhere;
             color: #F2F2F2;
             font-size: 15px;
             line-height: 1.6;
@@ -1090,6 +1100,34 @@ const ERROR_TEMPLATE = `<!DOCTYPE html>
 </html>
 `;
 
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => {
+    switch (character) {
+      case "&": return "&amp;";
+      case "<": return "&lt;";
+      case ">": return "&gt;";
+      case '"': return "&quot;";
+      default: return "&#39;";
+    }
+  });
+}
+
+function scriptString(value: string): string {
+  return JSON.stringify(value)
+    .replace(/</g, "\\u003c")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+}
+
+function render(template: string, values: Readonly<Record<string, string>>): string {
+  // One pass: values containing placeholders or $ replacement syntax stay data.
+  return template.replace(/{{([A-Z_]+)}}/g, (_match, key: string) => {
+    const value = values[key];
+    if (value === undefined) throw new Error(`Missing template value: ${key}`);
+    return value;
+  });
+}
+
 export async function getMobileRegistrationHTML(
   challenge: string,
   userId: string,
@@ -1098,16 +1136,16 @@ export async function getMobileRegistrationHTML(
   rpId: string,
   rpName: string
 ): Promise<string> {
-  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
-  
-  return REGISTRATION_TEMPLATE
-    .replace(/{{CHALLENGE}}/g, challenge)
-    .replace(/{{USER_ID}}/g, userId)
-    .replace(/{{EMAIL}}/g, email)
-    .replace(/{{SESSION_ID}}/g, sessionId)
-    .replace(/{{RP_ID}}/g, rpId)
-    .replace(/{{RP_NAME}}/g, rpName)
-    .replace(/{{ANON_KEY}}/g, anonKey);
+  return render(REGISTRATION_TEMPLATE, {
+    CHALLENGE_JS: scriptString(challenge),
+    USER_ID_JS: scriptString(userId),
+    EMAIL_HTML: escapeHtml(email),
+    EMAIL_JS: scriptString(email),
+    SESSION_ID_JS: scriptString(sessionId),
+    RP_ID_JS: scriptString(rpId),
+    RP_NAME_JS: scriptString(rpName),
+    ANON_KEY_JS: scriptString(Deno.env.get("SUPABASE_ANON_KEY") || ""),
+  });
 }
 
 export async function getMobileAuthenticationHTML(
@@ -1119,20 +1157,19 @@ export async function getMobileAuthenticationHTML(
   credentialDisplayName: string,
   credentialCreatedAt: number
 ): Promise<string> {
-  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
-  const createdAtFormatted = new Date(credentialCreatedAt).toLocaleDateString();
-  
-  return AUTHENTICATION_TEMPLATE
-    .replace(/{{CHALLENGE}}/g, challenge)
-    .replace(/{{EMAIL}}/g, email)
-    .replace(/{{SESSION_ID}}/g, sessionId)
-    .replace(/{{RP_ID}}/g, rpId)
-    .replace(/{{CREDENTIAL_ID}}/g, credentialId)
-    .replace(/{{CREDENTIAL_DISPLAY_NAME}}/g, credentialDisplayName)
-    .replace(/{{CREDENTIAL_CREATED_AT}}/g, createdAtFormatted)
-    .replace(/{{ANON_KEY}}/g, anonKey);
+  return render(AUTHENTICATION_TEMPLATE, {
+    CHALLENGE_JS: scriptString(challenge),
+    EMAIL_HTML: escapeHtml(email),
+    EMAIL_JS: scriptString(email),
+    SESSION_ID_JS: scriptString(sessionId),
+    RP_ID_JS: scriptString(rpId),
+    CREDENTIAL_ID_JS: scriptString(credentialId),
+    CREDENTIAL_DISPLAY_NAME: escapeHtml(credentialDisplayName),
+    CREDENTIAL_CREATED_AT: escapeHtml(new Date(credentialCreatedAt).toLocaleDateString()),
+    ANON_KEY_JS: scriptString(Deno.env.get("SUPABASE_ANON_KEY") || ""),
+  });
 }
 
 export async function getMobileErrorHTML(message: string): Promise<string> {
-  return ERROR_TEMPLATE.replace(/{{MESSAGE}}/g, message);
+  return render(ERROR_TEMPLATE, { MESSAGE: escapeHtml(message) });
 }
