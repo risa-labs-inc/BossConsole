@@ -129,10 +129,10 @@ class MissionRecoveryCoordinatorTest {
     @Test
     fun `rewind records its result even when the calling coroutine is cancelled mid-rewind`() =
         runBlocking {
-            // A workspace big enough that the rewind (double hash + file copies)
-            // outlives the cancellation below on any machine.
-            repeat(2_000) { index ->
-                File(tempProjectRoot, "payload-$index.dat").writeText("y".repeat(64 * 1024))
+            // A few hundred files keep the rewind (double hash + file copies) long
+            // enough that the cancellation below lands inside it.
+            repeat(300) { index ->
+                File(tempProjectRoot, "payload-$index.dat").writeText("y".repeat(32 * 1024))
             }
             File(tempProjectRoot, "keep.txt").writeText("keep")
 
@@ -147,7 +147,10 @@ class MissionRecoveryCoordinatorTest {
             delay(50)
 
             val rewindJob = launch { coordinator.rewindToCheckpoint(checkpoint.checkpointId) }
-            delay(20)
+            // Gate the cancellation on observed progress instead of a clock: once
+            // isBusy is set there is no suspension point before the NonCancellable
+            // region, so the cancel lands at/inside it on every machine.
+            coordinator.state.first { it.isBusy }
             rewindJob.cancel()
             rewindJob.join()
             delay(50)
@@ -158,7 +161,7 @@ class MissionRecoveryCoordinatorTest {
             val result = coordinator.state.value.lastRecoveryResult
             assertNotNull(result)
             assertIs<RecoveryResult.Success>(result)
-            assertEquals(false, coordinator.state.value.isBusy)
+            assertFalse(coordinator.state.value.isBusy)
             assertTrue(events.any { it is RecoveryEvent.RewindExecuted })
         }
 }

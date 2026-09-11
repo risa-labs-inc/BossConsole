@@ -67,12 +67,20 @@ class RecoveryMcpToolProviderTest {
 
             // A 2s stand-in for the registry's 60s invoke timeout: the verifier's
             // own 100ms process timeout must win the race, not the host wrapper.
+            // 'sleep' does not exist under cmd.exe, so branch on OS like
+            // IndependentVerifierTest does.
+            val sleepCommand =
+                if (System.getProperty("os.name").lowercase().contains("win")) {
+                    "powershell -Command Start-Sleep -Milliseconds 10000"
+                } else {
+                    "sleep 10"
+                }
             val result =
                 withTimeout(2_000L) {
                     tool.handler.call(
                         mockArgs(
                             mapOf(
-                                "command" to "sleep 10",
+                                "command" to sleepCommand,
                                 "timeoutMs" to 100,
                             ),
                         ),

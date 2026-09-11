@@ -251,7 +251,11 @@ class MissionRecoveryCoordinator(
                             )
                         }
 
-                        _events.emit(RecoveryEvent.RewindExecuted(rewindResult))
+                        // tryEmit, not emit: inside a non-cancellable region a
+                        // suspending emit would park the coordinator (with the mutex
+                        // held) if a subscriber stopped collecting; the 64-slot buffer
+                        // exists so the write need not suspend.
+                        _events.tryEmit(RecoveryEvent.RewindExecuted(rewindResult))
                         rewindResult
                     }
                 result
