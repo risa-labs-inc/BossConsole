@@ -31,6 +31,7 @@ class FileSystemLimitsTest {
         ServerBuilder
             .forPort(0)
             .addService(FileSystemServiceImpl())
+            .intercept(RpcFailureDiagnostics)
             .build()
             .start()
     private val channel = ManagedChannelBuilder.forAddress("127.0.0.1", server.port).usePlaintext().build()
