@@ -77,11 +77,13 @@ class McpGovernanceCoverageTest {
                 "run_in_panel" to false,
                 "send_input" to false,
                 "k8s_exec" to true,
-                // Named by the evaluator but not found anywhere else in this
-                // repository or in terminal-tab. Recorded as enforceable because an
-                // unrecognised name resolves that way; if it is ever a real BossTerm
-                // tool, it belongs in EXTERNALLY_SERVED_TOOLS.
-                "terminal_exec" to true,
+                // Named by the evaluator but found nowhere else in this repository and in
+                // no terminal-tab definition, which by the elimination rule is evidence it
+                // is served outside the registry rather than evidence it is inside. Now
+                // recorded that way: if the name is dead the claim costs nothing, and if it
+                // is live it is BossTerm's. Leaving it on the optimistic default was the one
+                // verdict here that could overstate coverage.
+                "terminal_exec" to false,
             )
         assertEquals(
             verdicts.keys,
@@ -93,16 +95,61 @@ class McpGovernanceCoverageTest {
         }
     }
 
+    /**
+     * The same guard as above, on the table where the gap was actually found.
+     *
+     * This used to pin only the derived intersection, which cannot catch the failure it
+     * exists for: add a new externally-served tool to [McpMutatingToolCatalog.KNOWN_MUTATING_TOOLS]
+     * and forget [McpGovernanceCoverage.EXTERNALLY_SERVED_TOOLS], and `isEnforceable` answers
+     * true, the inert set is unchanged, and the table again claims coverage it does not have.
+     * That is the originating failure mode reproduced exactly, in the table that has four inert
+     * entries today. A verdict per name forces the question instead.
+     */
     @Test
-    fun `the mutating catalog knows which of its entries are inert`() {
-        val inert =
-            McpMutatingToolCatalog.KNOWN_MUTATING_TOOLS
-                .filterNot { McpGovernanceCoverage.isEnforceable(it) }
-                .toSet()
+    fun `every known mutating tool has an explicit enforceability verdict`() {
+        val verdicts =
+            mapOf(
+                "k8s_delete" to true,
+                "k8s_exec" to true,
+                "k8s_apply" to true,
+                "k8s_scale" to true,
+                "k8s_rollout_restart" to true,
+                "docker_rm" to true,
+                "docker_stop" to true,
+                "docker_compose_down" to true,
+                "docker_compose_up" to true,
+                "docker_build" to true,
+                "docker_start" to true,
+                "docker_restart" to true,
+                "helm_install" to true,
+                "helm_upgrade" to true,
+                "helm_rollback" to true,
+                "helm_uninstall" to true,
+                "secret_get" to true,
+                "codebase_write" to true,
+                // The four the gate cannot receive. Shell execution, which is the whole
+                // reason this file exists.
+                "run_command" to false,
+                "run_in_sidebar" to false,
+                "run_in_panel" to false,
+                "send_input" to false,
+                "project_replace" to true,
+            )
         assertEquals(
-            setOf("run_command", "run_in_sidebar", "run_in_panel", "send_input"),
-            inert,
-            "the set of mutating tools the gate cannot receive has changed",
+            verdicts.keys,
+            McpMutatingToolCatalog.KNOWN_MUTATING_TOOLS,
+            "a mutating tool was added or removed without recording whether the gate can receive it",
         )
+        for ((tool, enforceable) in verdicts) {
+            assertEquals(enforceable, McpGovernanceCoverage.isEnforceable(tool), tool)
+        }
+    }
+
+    @Test
+    fun `both agent-facing prefixes are stripped before the verdict`() {
+        // mcp__bossterm__ is the standalone BossTerm app's namespace per AGENTS.md, which is
+        // the server these tools come from, so it is the likeliest prefix to meet them under.
+        assertFalse(McpGovernanceCoverage.isEnforceable("mcp__bossterm__run_command"))
+        assertTrue(McpGovernanceCoverage.isEnforceable("mcp__bossterm__k8s_exec"))
     }
 }

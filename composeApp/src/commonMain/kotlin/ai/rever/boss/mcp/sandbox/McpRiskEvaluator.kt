@@ -127,8 +127,8 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
     companion object {
         /**
          * Internal rather than private so `McpGovernanceCoverageTest` can assert that
-         * every name here has been classified as enforceable or not. Four of these six
-         * are served by BossTerm rather than by the host registry, so the assessment
+         * every name here has been classified as enforceable or not. Five of these six
+         * are served outside the host registry, so the assessment
          * they produce is advisory: nothing on the path those tools actually take
          * consults it. See `ai.rever.boss.mcp.McpGovernanceCoverage`.
          */

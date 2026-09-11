@@ -47,6 +47,13 @@ object McpGovernanceCoverage {
             "run_in_panel",
             "send_input",
             "send_signal",
+            // Defined nowhere in this repository and in no terminal-tab definition, which by
+            // the elimination rule above is evidence it is served here rather than evidence it
+            // is registry-served. Recorded as unenforceable deliberately: if the name is dead
+            // the claim costs nothing, and if it is live it is BossTerm's. The optimistic
+            // default is the one answer that could mislead, on the one entry where the
+            // evidence leans the other way.
+            "terminal_exec",
             // terminal-tab's own, through BossTermMcpConfig.additionalTools.
             "run_in_sidebar",
             "cli",
@@ -72,11 +79,34 @@ object McpGovernanceCoverage {
      * means the decision is currently advisory: the tables will answer, and nothing
      * consults them on the path this tool actually takes.
      *
-     * A name this does not know is assumed governed, because the registry is the
-     * only source this repository can enumerate, and a plugin tool that is wrongly
-     * reported as governed is a much smaller error than a terminal tool wrongly
-     * reported as ungoverned would be. [EXTERNALLY_SERVED_TOOLS] is the exception
-     * list precisely so that the default is the common case.
+     * **Nothing calls this yet.** It is a record and a drift guard, not a gate, and a
+     * reader who finds this object first should not assume otherwise. The obvious first
+     * caller is the Persisted MCP policies surface: an operator can set and see a
+     * persisted DENY on `run_command` today, and nothing tells them it will not fire.
+     *
+     * **The default is a convenience, not a fail-safe, and it is worth being exact about
+     * which error it risks.** The two ways this can be wrong are reporting `true` for a
+     * tool nothing governs, and reporting `false` for one that is governed. For an object
+     * whose whole job is to say what is covered, the first is the dangerous one: it is
+     * the error #495 found in the tables, reproduced one layer up. An unknown name is
+     * assumed governed anyway, because the registry is open-ended and cannot be
+     * enumerated from here, so defaulting to `false` would mark every plugin tool
+     * ungoverned and make this useless. That is a practical choice about the common case,
+     * and it should not be read as a safety argument it does not make.
+     *
+     * A three-state answer (GOVERNED / EXTERNALLY_SERVED / UNKNOWN) would force the first
+     * real caller to decide what an unclassified name means, which is the shape AGENTS.md
+     * prescribes for `blockingDependentsOf`'s `isDisabled` predicate and for the same
+     * reason. Worth doing when that caller exists; premature while this has none.
+     *
+     * Both agent-facing prefixes are stripped. AGENTS.md documents `mcp__bossterm__` as
+     * the standalone BossTerm app's namespace, which is the very server these tools come
+     * from and so the likeliest prefix to meet them under; leaving it would answer `true`
+     * for `mcp__bossterm__run_command`. `DefaultMcpRiskEvaluator` still normalises only
+     * `mcp__boss__`, so the two disagree on that namespace until it is widened too.
      */
-    fun isEnforceable(toolName: String): Boolean = toolName.removePrefix("mcp__boss__") !in EXTERNALLY_SERVED_TOOLS
+    fun isEnforceable(toolName: String): Boolean =
+        toolName
+            .removePrefix("mcp__bossterm__")
+            .removePrefix("mcp__boss__") !in EXTERNALLY_SERVED_TOOLS
 }
