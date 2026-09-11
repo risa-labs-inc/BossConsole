@@ -522,6 +522,21 @@ class SingleInstanceChannelTest {
     }
 
     @Test
+    fun `plugin dev reload refuses a path-shaped plugin id on the wire`() {
+        // The id joins straight onto the dev staging root on the host, so a
+        // traversal token must be refused before it is parsed as a request.
+        assertTrue(SingleInstanceManager.acquireLock())
+        val descriptor = assertNotNull(readPublishedDescriptor())
+        val base = "$PROTOCOL_VERSION ${descriptor.token} $VERB_PLUGIN_DEV_RELOAD "
+        assertEquals(RESPONSE_REJECTED, exchange(descriptor, "$base.."))
+        assertEquals(RESPONSE_REJECTED, exchange(descriptor, "$base..\\..\\etc"))
+        assertEquals(RESPONSE_REJECTED, exchange(descriptor, "${base}plugins/other"))
+        assertEquals(RESPONSE_REJECTED, exchange(descriptor, "${base}C:\\evil"))
+        assertEquals(RESPONSE_REJECTED, exchange(descriptor, base))
+        assertEquals(RESPONSE_REJECTED, exchange(descriptor, base.dropLast(1)))
+    }
+
+    @Test
     fun `status JSON escapes platform strings`() {
         val previous = System.getProperty("os.arch")
         val unusual = "C:\\Users\\name\"quoted\nline"

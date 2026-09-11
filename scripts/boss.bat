@@ -126,12 +126,19 @@ if not defined BOSS_EXE if exist "%LOCALAPPDATA%\Programs\BOSS\BOSS.exe" set "BO
 if not defined BOSS_EXE if exist "%ProgramFiles%\BOSS\BOSS.exe" set "BOSS_EXE=%ProgramFiles%\BOSS\BOSS.exe"
 if not defined BOSS_EXE if exist "%~dp0..\composeApp\build\compose\binaries\main\app\BOSS\BOSS.exe" set "BOSS_EXE=%~dp0..\composeApp\build\compose\binaries\main\app\BOSS\BOSS.exe"
 if not defined BOSS_EXE goto :cmd_missing_exe
-if exist "%~dp0boss.ps1" (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0boss.ps1" %*
-    exit /b !ERRORLEVEL!
-)
+if exist "%~dp0boss.ps1" goto :cmd_forward_ps
 "%BOSS_EXE%" %*
 exit /b %ERRORLEVEL%
+goto :eof
+
+:cmd_forward_ps
+REM The exit code rides out on its own line, parsed only after powershell
+REM returns, so %ERRORLEVEL% still holds the launcher's result. Inside a
+REM parenthesized block the whole block parses first, where %ERRORLEVEL% is
+REM stale and !ERRORLEVEL! stays literal because delayed expansion is off.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0boss.ps1" %*
+exit /b %ERRORLEVEL%
+goto :eof
 
 :cmd_missing_exe
 >&2 echo Error: BOSS application binary not found. Set BOSS_EXE to the packaged executable.

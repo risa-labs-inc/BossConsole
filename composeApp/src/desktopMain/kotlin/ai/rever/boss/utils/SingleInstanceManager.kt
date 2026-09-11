@@ -82,6 +82,14 @@ sealed interface ReloadResult {
         val message: String = "BossConsole is not running",
     ) : ReloadResult
 
+    /**
+     * The host is running but did not confirm the reload within the client budget. The reload
+     * may still be in progress on the host; the staged JAR is on disk for the next launch.
+     */
+    data class TimedOut(
+        val message: String,
+    ) : ReloadResult
+
     data class Failed(
         val reason: String,
     ) : ReloadResult
@@ -107,6 +115,11 @@ private const val TCP_BACKLOG = 5
 private const val CONNECTION_TIMEOUT_MS = 10000L // 10 seconds - important for auth deep links
 private const val LLM_TOKEN_TIMEOUT_MS = 90000L
 private const val MCP_INVOKE_TIMEOUT_MS = 60000L
+
+// A dev reload on the host unloads the running instance and installs fresh bytes.
+// This is the client budget: above anything a healthy reload spends, below the
+// 60s server connection budget the verb gets from isLongerBudgetCandidate.
+internal const val PLUGIN_DEV_RELOAD_TIMEOUT_MS = 45_000L
 
 /**
  * Ceiling on a single request. Bounds what one caller can make the app buffer,
@@ -260,7 +273,11 @@ internal fun parseRequestLine(line: String): SingleInstanceRequest? {
 
         VERB_PLUGIN_DEV_RELOAD -> {
             val pluginId = parts.getOrNull(3).orEmpty()
-            SingleInstanceRequest(token, VERB_PLUGIN_DEV_RELOAD, DeepLinkOrigin.OPERATOR_CLI, null, pluginId)
+            if (validPluginDevId(pluginId)) {
+                SingleInstanceRequest(token, VERB_PLUGIN_DEV_RELOAD, DeepLinkOrigin.OPERATOR_CLI, null, pluginId)
+            } else {
+                null
+            }
         }
 
         else -> {
@@ -271,6 +288,16 @@ internal fun parseRequestLine(line: String): SingleInstanceRequest? {
 
 private fun validMcpToolName(toolName: String): Boolean =
     toolName.length in 1..MAX_TOOL_NAME_LENGTH && toolName.none { it.isWhitespace() || it.isISOControl() }
+
+/**
+ * A plugin id crosses the wire as a bare token and the host joins it straight onto
+ * the dev staging root, so it must never carry a path separator or traverse out of it.
+ * Whitespace cannot survive the wire format anyway; the separators and `..` can.
+ */
+private fun validPluginDevId(pluginId: String): Boolean =
+    pluginId.length in 1..MAX_TOOL_NAME_LENGTH &&
+        pluginId.none { it.isWhitespace() || it.isISOControl() || it == '/' || it == '\\' } &&
+        pluginId != ".."
 
 private fun parseMcpInvokeRequest(
     token: String,
@@ -1134,7 +1161,11 @@ object SingleInstanceManager {
 
     private val isLongerBudgetCandidate: (SingleInstanceRequest) -> Boolean
         get() = { request ->
-            (request.verb == VERB_LLM_TOKEN || request.verb == VERB_MCP_INVOKE) && presentsLiveToken(request)
+            (
+                request.verb == VERB_LLM_TOKEN ||
+                    request.verb == VERB_MCP_INVOKE ||
+                    request.verb == VERB_PLUGIN_DEV_RELOAD
+            ) && presentsLiveToken(request)
         }
 
     /**
@@ -1436,12 +1467,19 @@ object SingleInstanceManager {
     /**
      * Dispatches dev reload signal for [pluginId] to the running BossConsole instance
      * with synchronous request-response verification and timeout handling.
+     *
+     * A response that never arrives is split into its two causes: nothing answering the
+     * channel means the host is offline, while a host that answers a probe but not the
+     * reload is busy, and the staged JAR is still picked up at the next launch.
      */
     @Suppress("ReturnCount")
     fun reloadDevPlugin(
         pluginId: String,
-        timeoutMs: Int = 5000,
+        timeoutMs: Int = PLUGIN_DEV_RELOAD_TIMEOUT_MS.toInt(),
     ): ReloadResult {
+        if (!validPluginDevId(pluginId)) {
+            return ReloadResult.Failed("Invalid plugin id for dev reload: '$pluginId'")
+        }
         val target =
             SingleInstanceFiles.read()
                 ?: return ReloadResult.HostOffline("BossConsole is not running.")
@@ -1453,7 +1491,14 @@ object SingleInstanceManager {
                     message,
                     timeoutMs = timeoutMs.toLong(),
                     maxResponseBytes = MAX_RESPONSE_BYTES,
-                ) ?: return ReloadResult.HostOffline("BossConsole is offline or connection timed out")
+                ) ?: return if (SingleInstanceWire.respondsToPing(target)) {
+                    ReloadResult.TimedOut(
+                        "BossConsole is running but did not confirm the reload within $timeoutMs ms; " +
+                            "it may still be reloading",
+                    )
+                } else {
+                    ReloadResult.HostOffline("BossConsole is offline or the channel stopped answering")
+                }
 
             when {
                 response.startsWith("RELOAD_OK") -> {

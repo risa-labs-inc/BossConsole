@@ -341,6 +341,25 @@ class BossPluginLinkCommand : CliktCommand(name = "link") {
                 }
             }
 
+            is ReloadResult.TimedOut -> {
+                if (json) {
+                    val payload =
+                        buildJsonObject {
+                            put("status", "staged_unconfirmed")
+                            put("pluginId", pluginId)
+                            put("running", true)
+                            put("stagedPath", stagedJar.absolutePath.replace('\\', '/'))
+                            put("notice", reloadResult.message)
+                        }
+                    echo(payload.toString())
+                } else {
+                    echo(
+                        "[~] Plugin '$pluginId' staged at ${stagedJar.absolutePath}. " +
+                            "${reloadResult.message}. It is picked up at the next launch.",
+                    )
+                }
+            }
+
             is ReloadResult.Failed -> {
                 val msg = "Plugin '$pluginId' staged, but reload failed: ${reloadResult.reason}"
                 logger.error(LogCategory.SYSTEM, msg)

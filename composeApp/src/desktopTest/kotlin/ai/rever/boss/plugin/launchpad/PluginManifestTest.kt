@@ -271,6 +271,29 @@ class PluginManifestTest {
         assertIs<ReloadResult.HostOffline>(result, "Should report HostOffline when port connection is refused")
     }
 
+    @Test
+    fun `reloadDevPlugin reports TimedOut when the host is alive but the reload does not confirm in time`() {
+        // The handler blocks past the client budget. The host still answers the
+        // probe ping, which is what separates "running and busy" from "offline".
+        SingleInstanceManager.pluginReloadHandlerOverride = { _ ->
+            Thread.sleep(4_000)
+            true
+        }
+        assertTrue(SingleInstanceManager.acquireLock(), "Acquire lock for IPC test")
+
+        val result = SingleInstanceManager.reloadDevPlugin("slow-tool", timeoutMs = 1_000)
+        assertIs<ReloadResult.TimedOut>(result, "A live host that does not confirm is busy, not offline")
+    }
+
+    @Test
+    fun `reloadDevPlugin refuses a path-shaped plugin id before touching the channel`() {
+        assertTrue(SingleInstanceManager.acquireLock())
+
+        val result = SingleInstanceManager.reloadDevPlugin("..")
+        assertIs<ReloadResult.Failed>(result)
+        assertTrue(result.reason.contains("Invalid plugin id"), "Got: ${result.reason}")
+    }
+
     private fun writeSyntheticJar(
         targetFile: File,
         pluginId: String,

@@ -296,12 +296,15 @@ object PluginValidator {
         mainClass: String,
         archiveData: ArchiveData,
     ): Boolean {
-        try {
+        return try {
             val parentLoader = Plugin::class.java.classLoader
-            val urlClassLoader = URLClassLoader(arrayOf(jarFile.toURI().toURL()), parentLoader)
-            // initialize = false ensures static initializers (<clinit>) are never executed
-            val clazz = Class.forName(mainClass, false, urlClassLoader)
-            return Plugin::class.java.isAssignableFrom(clazz)
+            // The classloader holds the jar open (notably on Windows), so it is
+            // closed as soon as the assignability question is answered.
+            URLClassLoader(arrayOf(jarFile.toURI().toURL()), parentLoader).use { urlClassLoader ->
+                // initialize = false ensures static initializers (<clinit>) are never executed
+                val clazz = Class.forName(mainClass, false, urlClassLoader)
+                Plugin::class.java.isAssignableFrom(clazz)
+            }
         } catch (_: Throwable) {
             // Manual classfile fallback when classloading fails due to external dependencies.
             // Note: Manual classfile parser supports direct implementations of ai.rever.boss.plugin.api.Plugin.

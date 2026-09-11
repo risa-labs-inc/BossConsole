@@ -45,7 +45,7 @@ data class PluginManifest(
     val displayName: String = "",
     val version: String = "1.0.0",
     @SerialName("apiVersion")
-    val apiVersion: String = HostMeta.DEFAULT_API_VERSION,
+    val apiVersion: String = HostMeta.CURRENT_API_VERSION,
     @SerialName("mainClass")
     val mainClass: String = "",
     val description: String = "",
@@ -127,14 +127,13 @@ data class ValidationReport(
 )
 
 object HostMeta {
-    const val DEFAULT_API_VERSION = "1.0.88"
-
     val CURRENT_API_VERSION: String = resolveCurrentApiVersion()
 
+    // VersionConstants is generated from libs.versions.toml, so the fallback
+    // here is a compile-time constant, not a second hand-copied version.
     private fun resolveCurrentApiVersion(): String =
         System.getProperty("boss.plugin.api.version")
-            ?: runCatching { ai.rever.boss.utils.VersionConstants.PLUGIN_API_VERSION }.getOrNull()
-            ?: DEFAULT_API_VERSION
+            ?: ai.rever.boss.utils.VersionConstants.PLUGIN_API_VERSION
 
     val ALLOWED_PERMISSIONS: Set<String> =
         PluginPermission.entries.map { it.identifier }.toSet()
