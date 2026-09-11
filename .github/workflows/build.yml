@@ -406,6 +406,9 @@ jobs:
       - name: 🧪 Run pgTAP RBAC tests
         run: supabase test db
 
+      - name: Verify concurrent passkey admission and bounded cleanup
+        run: python3 scripts/test/test-passkey-admission-concurrency.py
+
       - name: 🧹 Stop Supabase
         if: always()
         run: supabase stop --no-backup || true

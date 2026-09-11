@@ -55,14 +55,18 @@ export async function storeChallenge(
 
     if (error) {
       console.error('Database error storing challenge:', authFailureDetails(error))
-      return { success: false, error: error.message }
+      if (error.code === '53300') {
+        return { success: false as const, status: 429 as const, retryAfterSeconds: 30,
+          error: 'Challenge capacity is temporarily unavailable. Retry shortly.' }
+      }
+      return { success: false as const, error: 'Failed to store challenge' }
     }
 
     console.log('Challenge stored successfully')
-    return { success: true, data }
+    return { success: true as const, data }
   } catch (error) {
     console.error('Exception storing challenge:', authFailureDetails(error))
-    return { success: false, error: (error as Error).message }
+    return { success: false as const, error: (error as Error).message }
   }
 }
 
@@ -71,10 +75,7 @@ export async function storeChallenge(
  */
 export async function cleanupExpiredChallenges(supabase: SupabaseClient) {
   try {
-    const { error } = await supabase
-      .from('passkey_challenges')
-      .delete()
-      .lt('expires_at', new Date().toISOString())
+    const { error } = await supabase.rpc('clean_expired_passkey_challenges')
 
     if (error) {
       console.error('Error cleaning up expired challenges:', authFailureDetails(error))
@@ -84,6 +85,6 @@ export async function cleanupExpiredChallenges(supabase: SupabaseClient) {
     return { success: true }
   } catch (error) {
     console.error('Exception cleaning up challenges:', authFailureDetails(error))
-    return { success: false, error: (error as Error).message }
+    return { success: false as const, error: (error as Error).message }
   }
 }

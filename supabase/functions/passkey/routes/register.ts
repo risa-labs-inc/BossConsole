@@ -1,3 +1,4 @@
+import { limitPasskeyRequest } from "../utils/request-limits.ts"
 import { authFailureDetails } from "../utils/logging.ts"
 import { createRoute, OpenAPIHono } from "@hono/zod-openapi"
 import type { PasskeyContext } from "../types/context.ts"
@@ -17,6 +18,7 @@ import {
 } from "../types/schemas.ts"
 
 const register = new OpenAPIHono<{ Variables: PasskeyContext }>()
+register.use("*", limitPasskeyRequest)
 
 // ============================================================================
 // POST /register/challenge - Generate registration challenge
@@ -70,6 +72,14 @@ const registerChallengeRoute = createRoute({
         }
       }
     },
+    429: {
+      description: 'Challenge capacity reached; retry after the Retry-After interval',
+      content: { 'application/json': { schema: ErrorResponseSchema } }
+    },
+    503: {
+      description: 'Shared admission storage unavailable; retry after the Retry-After interval',
+      content: { 'application/json': { schema: ErrorResponseSchema } }
+    },
     500: {
       description: 'Internal server error',
       content: {
@@ -105,6 +115,10 @@ register.openapi(registerChallengeRoute, async (ctx) => {
     const result = await generateRegistrationChallenge(supabase, caller.caller.userId, sessionId)
 
     if (!result.success) {
+      if ('status' in result && (result.status === 429 || result.status === 503)) {
+        ctx.header('Retry-After', String(result.retryAfterSeconds))
+        return ctx.json({ error: result.error }, result.status)
+      }
       return ctx.json({ error: result.error || 'Failed to generate challenge' }, 400)
     }
 
