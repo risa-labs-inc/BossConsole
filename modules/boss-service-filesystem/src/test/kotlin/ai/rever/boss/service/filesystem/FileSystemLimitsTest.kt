@@ -290,11 +290,16 @@ class FileSystemLimitsTest {
                 failure.status.code,
                 "the handler raises IllegalArgumentException, which gRPC surfaces as UNKNOWN",
             )
-            val traversal = Files.createSymbolicLink(root.resolve("private-etc"), Paths.get("/private/etc"))
-            assertFailsWith<StatusException> {
-                stub.scanDirectory(
-                    ScanDirectoryRequest.newBuilder().setPath(traversal.toString()).build(),
-                )
+            // The canonical spelling of the denylist is the alias that matters on macOS, where
+            // `/etc` is `/private/etc`; elsewhere the symlink into it dangles and the scan simply
+            // reports a missing directory.
+            if (Platform.isMac()) {
+                val traversal = Files.createSymbolicLink(root.resolve("private-etc"), Paths.get("/private/etc"))
+                assertFailsWith<StatusException> {
+                    stub.scanDirectory(
+                        ScanDirectoryRequest.newBuilder().setPath(traversal.toString()).build(),
+                    )
+                }
             }
             assertFalse(Files.exists(root.resolve("linked").resolve("passwd")), "nothing was read or written")
         }
