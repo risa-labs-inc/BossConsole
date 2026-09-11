@@ -1,3 +1,4 @@
+import { admitChallenge } from "../utils/admission.ts"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { generateChallenge, storeChallenge } from "../utils/challenge.ts"
 import { verifyAndConsumeChallenge, storePasskeyInDB } from "../utils/database.ts"
@@ -52,6 +53,9 @@ export interface RegistrationCredential {
  */
 export const generateRegistrationChallenge = withErrorHandler(
   async (supabase: SupabaseClient, userId: string, sessionId?: string) => {
+    const admission = await admitChallenge(supabase, ChallengeType.Registration)
+    if (!admission.success) return admission
+
     console.log('🔑 Generating registration challenge for user:', userId, 'sessionId:', sessionId)
 
     // Generate and store challenge
@@ -61,12 +65,7 @@ export const generateRegistrationChallenge = withErrorHandler(
       sessionId
     })
 
-    if (!storeResult.success) {
-      return {
-        success: false,
-        error: storeResult.error || 'Failed to store challenge'
-      }
-    }
+    if (!storeResult.success) return storeResult
 
     // rpId comes from the server, so registration and authentication cannot pin
     // different relying parties.

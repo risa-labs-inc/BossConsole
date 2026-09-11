@@ -220,6 +220,8 @@ Deno.test("POST /register/challenge - a token for one user cannot mint a challen
 
 Deno.test("POST /register/challenge - binds the challenge to the token, not the body", async () => {
   const mockClient = createMockSupabaseClient()
+  mockClient.mockResponse('rpc.admit_passkey_challenge', { data: [{ allowed: true, retry_after_seconds: 0 }], error: null }, 'call')
+
   mockClient.mockAccessToken(ATTACKER_TOKEN, { id: ATTACKER_ID, email: 'attacker@example.com' })
   mockClient.mockResponse('passkey_challenges', { data: [{ id: 'challenge-1' }], error: null }, 'insert')
   const app = buildApp(mockClient)
@@ -240,6 +242,8 @@ Deno.test("POST /register/challenge - binds the challenge to the token, not the 
 
 Deno.test("POST /register/challenge - accepts a body userId that agrees with the token", async () => {
   const mockClient = createMockSupabaseClient()
+  mockClient.mockResponse('rpc.admit_passkey_challenge', { data: [{ allowed: true, retry_after_seconds: 0 }], error: null }, 'call')
+
   mockClient.mockAccessToken(ATTACKER_TOKEN, { id: ATTACKER_ID, email: 'attacker@example.com' })
   mockClient.mockResponse('passkey_challenges', { data: [{ id: 'challenge-1' }], error: null }, 'insert')
   const app = buildApp(mockClient)

@@ -1,3 +1,4 @@
+import { admitChallenge } from "../utils/admission.ts"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { generateChallenge, storeChallenge } from "../utils/challenge.ts"
 import {
@@ -47,6 +48,9 @@ export interface AuthenticationCredential {
  */
 export const generateAuthChallenge = withErrorHandler(
   async (supabase: SupabaseClient, email: string, sessionId?: string) => {
+    const admission = await admitChallenge(supabase, ChallengeType.Authentication)
+    if (!admission.success) return admission
+
     console.log('🔑 Generating authentication challenge for email:', email)
 
     // Use utility function for scalable user lookup
@@ -56,7 +60,7 @@ export const generateAuthChallenge = withErrorHandler(
       console.error('User not found with email:', email)
       return {
         success: false,
-        error: 'User not found'
+        error: 'No usable passkey is available for this sign-in'
       }
     }
 
@@ -79,7 +83,7 @@ export const generateAuthChallenge = withErrorHandler(
     if (userPasskeys.length === 0) {
       return {
         success: false,
-        error: 'No passkeys found for user'
+        error: 'No usable passkey is available for this sign-in'
       }
     }
 
@@ -90,12 +94,7 @@ export const generateAuthChallenge = withErrorHandler(
       sessionId
     })
 
-    if (!storeResult.success) {
-      return {
-        success: false,
-        error: storeResult.error || 'Failed to store challenge'
-      }
-    }
+    if (!storeResult.success) return storeResult
 
     // Build allowed credentials list
     const allowedCredentials = userPasskeys.map(pk => ({
