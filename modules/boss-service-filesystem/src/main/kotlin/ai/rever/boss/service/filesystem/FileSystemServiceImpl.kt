@@ -50,6 +50,7 @@ class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutine
 
     override suspend fun scanDirectory(request: ScanDirectoryRequest): ScanDirectoryResponse =
         withContext(Dispatchers.IO) {
+            requireKernelCaller()
             logger.debug("scanDirectory: path={}, recursive={}", request.path, request.recursive)
             validatePath(request.path)
             val dir = File(request.path)
@@ -95,6 +96,7 @@ class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutine
 
     override suspend fun readFile(request: ReadFileRequest): ReadFileResponse =
         withContext(Dispatchers.IO) {
+            requireKernelCaller()
             logger.debug("readFile: path={}", request.path)
             validatePath(request.path)
             val file = File(request.path)
@@ -132,6 +134,7 @@ class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutine
 
     override suspend fun writeFile(request: WriteFileRequest): WriteFileResponse =
         withContext(Dispatchers.IO) {
+            requireKernelCaller()
             logger.debug("writeFile: path={}", request.path)
             validatePath(request.path)
             return@withContext try {
@@ -162,6 +165,7 @@ class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutine
 
     override suspend fun createFile(request: CreateFileRequest): Empty =
         withContext(Dispatchers.IO) {
+            requireKernelCaller()
             logger.info("createFile: path={}, isDirectory={}", request.path, request.isDirectory)
             validatePath(request.path)
             val file = File(request.path)
@@ -172,6 +176,7 @@ class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutine
 
     override suspend fun deleteFile(request: DeleteFileRequest): Empty =
         withContext(Dispatchers.IO) {
+            requireKernelCaller()
             logger.info("deleteFile: path={}, recursive={}", request.path, request.recursive)
             validatePath(request.path)
             val file = File(request.path)
@@ -228,6 +233,7 @@ class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutine
      */
     override suspend fun renameFile(request: RenameFileRequest): Empty =
         withContext(Dispatchers.IO) {
+            requireKernelCaller()
             logger.info("renameFile: from={}, to={}", request.sourcePath, request.destinationPath)
             validatePath(request.sourcePath)
             validatePath(request.destinationPath)
@@ -268,6 +274,7 @@ class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutine
 
     override fun watchFileChanges(request: WatchFileChangesRequest): Flow<FileChangeEvent> =
         flow {
+            requireKernelCaller()
             logger.info("watchFileChanges: path={}, recursive={}", request.path, request.recursive)
             validatePath(request.path)
             val root = Paths.get(request.path)

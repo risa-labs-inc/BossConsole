@@ -1,5 +1,6 @@
 package ai.rever.boss.service.filesystem
 
+import ai.rever.boss.ipc.auth.ProcessAuthority
 import ai.rever.boss.ipc.proto.services.RenameFileRequest
 import io.grpc.Status
 import io.grpc.StatusException
@@ -26,22 +27,23 @@ import kotlin.test.assertTrue
  * The overwrite test can therefore only fail on `build-test (windows-latest)`; the rest fail
  * everywhere.
  *
- * These call [FileSystemServiceImpl] directly rather than over a channel, so they pin the status
- * codes and descriptions the handler *raises*, not what a client receives. A real round-trip would
- * be the stronger test; there is no in-process gRPC harness in this module today.
+ * These now run over the production authenticated transport: [FileSystemServiceImpl] refuses
+ * callers without the kernel's host authority, so a direct call would fail before it ever
+ * reached the rename.
  */
 class FileSystemServiceRenameTest {
-    private val service = FileSystemServiceImpl()
-
     private val dir: File =
         File.createTempFile("rename-svc-", "").let {
             it.delete()
             it.mkdirs()
             it
         }
+    private val service = AuthenticatedFileService(FileSystemServiceImpl())
+    private val stub = AuthenticatedFileService.stub(service.channelFor("host", ProcessAuthority.HOST))
 
     @AfterTest
     fun cleanUp() {
+        service.close()
         dir.deleteRecursively()
     }
 
@@ -50,7 +52,7 @@ class FileSystemServiceRenameTest {
         to: File,
         overwrite: Boolean,
     ) = runBlocking {
-        service.renameFile(
+        stub.renameFile(
             RenameFileRequest
                 .newBuilder()
                 .setSourcePath(from.absolutePath)
@@ -136,18 +138,19 @@ class FileSystemServiceRenameTest {
 
     @Test
     fun `path traversal is still rejected`() {
-        // validatePath runs before any I/O; pinned so the rewrite cannot have moved it.
-        assertFailsWith<IllegalArgumentException> {
-            runBlocking {
-                service.renameFile(
-                    RenameFileRequest
-                        .newBuilder()
-                        .setSourcePath("${dir.absolutePath}/../escape.txt")
-                        .setDestinationPath(File(dir, "dest.txt").absolutePath)
-                        .setOverwrite(true)
-                        .build(),
-                )
+        // validatePath runs before any I/O; pinned so the rewrite cannot have moved it. Over the
+        // channel the IllegalArgumentException surfaces as UNKNOWN - gRPC does not map handler
+        // exceptions - and the important half is that nothing was moved.
+        val source = File(dir, "source.txt").apply { writeText("content") }
+        val dest = File(dir, "dest.txt")
+
+        val failure =
+            assertFailsWith<StatusException> {
+                rename(source, File(dir, ".."), overwrite = true)
             }
-        }
+
+        assertEquals(Status.Code.UNKNOWN, failure.status.code)
+        assertTrue(source.exists(), "the source must survive a refused rename")
+        assertFalse(dest.exists())
     }
 }
