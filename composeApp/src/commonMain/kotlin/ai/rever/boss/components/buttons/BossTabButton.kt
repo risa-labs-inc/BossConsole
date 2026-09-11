@@ -251,8 +251,9 @@ fun BossTabButton(
     // `false` twice for the same reason (once from onDispose, once from the re-run body).
     val latestContextMenuVisibility by rememberUpdatedState(onContextMenuVisibilityChange)
     DisposableEffect(showContextMenu) {
-        if (showContextMenu) latestContextMenuVisibility(true)
-        onDispose { if (showContextMenu) latestContextMenuVisibility(false) }
+        val open = showContextMenu
+        if (open) latestContextMenuVisibility(true)
+        onDispose { if (open) latestContextMenuVisibility(false) }
     }
 
     // Coroutine scope for middle-click close (Issue #328)

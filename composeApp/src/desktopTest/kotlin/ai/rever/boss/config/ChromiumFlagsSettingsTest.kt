@@ -371,7 +371,7 @@ class ChromiumFlagsSettingsTest {
             ChromiumFlagsSettingsManager.previewValue(settings, ChromiumFlagKeys.RENDERING_MODE),
         )
         // A key with no setting and no env resolves to nothing rather than to a guess.
-        assertNull(ChromiumFlagsSettingsManager.previewValue(ChromiumFlagsSettings(), ChromiumFlagKeys.RENDERING_MODE))
+        assertNull(ChromiumFlagsSettingsManager.previewValue(ChromiumFlagsSettings(), ChromiumFlagKeys.PREWARM))
         // And it never consults system properties, which hold THIS process's published boot
         // values — reading them would make the preview echo the running session back at the user
         // instead of showing what they just chose.
