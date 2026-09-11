@@ -1,11 +1,12 @@
 package ai.rever.boss.orchestrator
 
+import ai.rever.boss.ipc.auth.IpcCall
 import ai.rever.boss.ipc.proto.*
 import ai.rever.boss.process.ProcessRegistry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.flow
 import org.slf4j.LoggerFactory
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -36,9 +37,11 @@ class OrchestratorServiceImpl(
     private val _healthEvents = MutableSharedFlow<HealthEvent>(extraBufferCapacity = 64)
 
     override suspend fun reportFailure(request: ProcessFailureReport): RepairAction {
+        IpcCall.requireHost()
         logger.info("Received failure report for process: {}", request.processId)
 
         val outcome = repairEngine.handleFailure(request)
+        IpcCall.requireHost()
         val repairId = UUID.randomUUID().toString()
         val strategy = outcomeToStrategy(outcome)
         val action = buildRepairAction(repairId, strategy, outcome, request)
@@ -73,6 +76,7 @@ class OrchestratorServiceImpl(
     }
 
     override suspend fun getHealthDashboard(request: Empty): HealthDashboard {
+        IpcCall.requireHost()
         val processes = processRegistry?.getAllProcesses() ?: emptyList()
         val statuses =
             processes.map { proc ->
@@ -106,6 +110,7 @@ class OrchestratorServiceImpl(
     }
 
     override suspend fun getRepairHistory(request: RepairHistoryRequest): RepairHistoryResponse {
+        IpcCall.requireHost()
         val entries =
             repairHistory.values
                 .let { all ->
@@ -123,6 +128,7 @@ class OrchestratorServiceImpl(
     }
 
     override suspend fun approveRepair(request: RepairApproval): RepairApprovalResponse {
+        IpcCall.requireHost()
         val pending =
             pendingRepairs.remove(request.repairId)
                 ?: return RepairApprovalResponse
@@ -167,7 +173,7 @@ class OrchestratorServiceImpl(
                 }
             }
         } else {
-            logger.info("Repair {} rejected by user: {}", request.repairId, request.userNotes)
+            logger.info("Repair {} rejected by user", request.repairId)
             RepairApprovalResponse
                 .newBuilder()
                 .setApplied(false)
@@ -176,7 +182,14 @@ class OrchestratorServiceImpl(
         }
     }
 
-    override fun watchHealth(request: Empty): Flow<HealthEvent> = _healthEvents.asSharedFlow()
+    override fun watchHealth(request: Empty): Flow<HealthEvent> =
+        flow {
+            IpcCall.requireHost()
+            _healthEvents.collect {
+                IpcCall.requireHost()
+                emit(it)
+            }
+        }
 
     private fun outcomeToStrategy(outcome: RepairOutcome): RepairStrategy =
         when (outcome) {

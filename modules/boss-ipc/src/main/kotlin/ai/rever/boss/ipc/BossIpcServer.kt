@@ -1,5 +1,6 @@
 package ai.rever.boss.ipc
 
+import ai.rever.boss.ipc.auth.IpcTlsIdentity
 import ai.rever.boss.ipc.auth.ProcessIdentityInterceptor
 import ai.rever.boss.ipc.auth.ProcessTokenRegistry
 import io.grpc.BindableService
@@ -13,7 +14,7 @@ import java.util.concurrent.TimeUnit
  *
  * Usage:
  * ```kotlin
- * val server = BossIpcServer(address)
+ * val server = BossIpcServer(address, tokenRegistry, tlsIdentity)
  *     .addService(MyServiceImpl())
  *     .start()
  * ```
@@ -28,14 +29,8 @@ import java.util.concurrent.TimeUnit
  */
 class BossIpcServer(
     private val address: String,
-    /**
-     * When present, every call is run through a [ProcessIdentityInterceptor] backed by this registry,
-     * so a service on this server can read a verified caller identity from the gRPC [io.grpc.Context]
-     * instead of trusting a request field (BossConsole#53). Null (the default) installs no interceptor
-     * and leaves every service's behaviour exactly as it was — most `BossIpcServer` instances (every
-     * child process's own `processServer`, every test server) have no use for one.
-     */
-    private val tokenRegistry: ProcessTokenRegistry? = null,
+    private val tokenRegistry: ProcessTokenRegistry,
+    private val tlsIdentity: IpcTlsIdentity,
 ) {
     private val logger = LoggerFactory.getLogger(BossIpcServer::class.java)
     private val services = mutableListOf<BindableService>()
@@ -61,13 +56,14 @@ class BossIpcServer(
 
     private fun buildAndStart() {
         val builder = IpcAddressResolver.configureServerBuilder(address)
+        builder.sslContext(tlsIdentity.serverContext())
         services.forEach { builder.addService(it) }
         // Consulted only for methods no directly-registered service claims, so build-time registration
         // takes precedence. That is a CHANGE: a rebuild put everything in the primary registry, where the
         // last one added won, so re-adding a service after start used to replace the build-time one and
         // now silently does nothing. Nothing in the tree relies on either behaviour.
         builder.fallbackHandlerRegistry(lateServices)
-        tokenRegistry?.let { builder.intercept(ProcessIdentityInterceptor(it)) }
+        builder.intercept(ProcessIdentityInterceptor(tokenRegistry))
         server = builder.build().start()
         logger.info("IPC server started on: {}", address)
         IpcAddressResolver.secureSocketFile(address)

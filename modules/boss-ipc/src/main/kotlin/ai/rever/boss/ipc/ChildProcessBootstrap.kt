@@ -1,6 +1,9 @@
 package ai.rever.boss.ipc
 
-import ai.rever.boss.ipc.auth.ProcessTokenClientInterceptor
+import ai.rever.boss.ipc.auth.IpcClientCredentials
+import ai.rever.boss.ipc.auth.IpcEnvironment
+import ai.rever.boss.ipc.auth.IpcTlsIdentity
+import ai.rever.boss.ipc.auth.ProcessTokenRegistry
 import ai.rever.boss.ipc.proto.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.flow
@@ -54,16 +57,6 @@ class ChildProcessBootstrap {
     }
 
     /**
-     * This process's IPC credential, minted by the kernel at spawn time and handed down as an
-     * environment variable alongside [processId] — never read back or logged. Optional: a process
-     * started outside [ai.rever.boss.process.ProcessSpawner] (any test, or a kernel not wired with a
-     * `ProcessTokenRegistry`) simply connects without one, exactly as before this existed.
-     */
-    private val processToken: String? by lazy {
-        System.getenv("BOSS_PROCESS_TOKEN")
-    }
-
-    /**
      * Connect to the kernel, register, and start heartbeat.
      */
     suspend fun connect(
@@ -77,54 +70,50 @@ class ChildProcessBootstrap {
         delay(100)
         logger.info("Connecting to kernel at: {}", kernelAddress)
 
-        // Connect to kernel. The credential (when we have one) rides on every call this channel
-        // makes, so the kernel can verify who is calling instead of trusting what a request claims.
-        val kernelClient =
-            BossIpcClient(
-                kernelAddress,
-                interceptors = processToken?.let { listOf(ProcessTokenClientInterceptor(it)) } ?: emptyList(),
+        val credentials =
+            IpcClientCredentials(
+                IpcEnvironment.required(IpcEnvironment.KERNEL_CERTIFICATE),
+                IpcEnvironment.required(IpcEnvironment.PROCESS_TOKEN),
             )
-        if (!kernelClient.waitForReady(30_000)) {
-            throw IllegalStateException("Failed to connect to kernel at $kernelAddress")
+        val processServer =
+            BossIpcServer(
+                processAddress,
+                ProcessTokenRegistry.forHostController(IpcEnvironment.required(IpcEnvironment.HOST_TOKEN)),
+                IpcTlsIdentity.restore(
+                    IpcEnvironment.required(IpcEnvironment.SERVER_CERTIFICATE),
+                    IpcEnvironment.required(IpcEnvironment.SERVER_PRIVATE_KEY),
+                ),
+            )
+        val kernelClient = BossIpcClient(kernelAddress, credentials)
+        var connected = false
+        try {
+            check(kernelClient.waitForReady(30_000)) { "Failed to establish authenticated kernel IPC" }
+            val kernelStub = KernelServiceGrpcKt.KernelServiceCoroutineStub(kernelClient.channel)
+            val response =
+                kernelStub.registerProcess(
+                    RegisterProcessRequest
+                        .newBuilder()
+                        .setManifest(manifest)
+                        .setIpcAddress(processAddress)
+                        .build(),
+                )
+            check(response.success && response.assignedProcessId == processId) { "Kernel registration was refused" }
+            val heartbeatJob = scope.launch { startHeartbeat(kernelStub, manifest) }
+            val connection =
+                ChildProcessConnection(
+                    processId = processId,
+                    kernelClient = kernelClient,
+                    kernelStub = kernelStub,
+                    processServer = processServer,
+                    heartbeatJob = heartbeatJob,
+                    serviceAddresses = response.serviceAddressesMap,
+                    scope = scope,
+                )
+            connected = true
+            return connection
+        } finally {
+            if (!connected) kernelClient.shutdown()
         }
-        logger.info("Connected to kernel")
-
-        // Register with kernel
-        val kernelStub = KernelServiceGrpcKt.KernelServiceCoroutineStub(kernelClient.channel)
-        val registerResponse =
-            kernelStub.registerProcess(
-                RegisterProcessRequest
-                    .newBuilder()
-                    .setManifest(manifest)
-                    .setIpcAddress(processAddress)
-                    .build(),
-            )
-
-        if (!registerResponse.success) {
-            throw IllegalStateException(
-                "Failed to register with kernel: ${registerResponse.errorMessage}",
-            )
-        }
-        logger.info("Registered with kernel. Service addresses: {}", registerResponse.serviceAddressesMap)
-
-        // Start heartbeat
-        val heartbeatJob =
-            scope.launch {
-                startHeartbeat(kernelStub, manifest)
-            }
-
-        // Create process gRPC server
-        val processServer = BossIpcServer(processAddress)
-
-        return ChildProcessConnection(
-            processId = processId,
-            kernelClient = kernelClient,
-            kernelStub = kernelStub,
-            processServer = processServer,
-            heartbeatJob = heartbeatJob,
-            serviceAddresses = registerResponse.serviceAddressesMap,
-            scope = scope,
-        )
     }
 
     private suspend fun startHeartbeat(
@@ -204,8 +193,8 @@ class ChildProcessConnection(
      * Create a client to another service process using its address from the kernel.
      */
     fun connectToService(serviceName: String): BossIpcClient? {
-        val address = serviceAddresses[serviceName] ?: return null
-        return BossIpcClient(address)
+        if (serviceName !in serviceAddresses) return null
+        error("Direct peer IPC requires a host-authorized channel; request this service through the host")
     }
 
     /**
