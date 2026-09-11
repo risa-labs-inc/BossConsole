@@ -159,12 +159,11 @@ object ImportService {
     /**
      * The value stored as a secret's website, and half of the de-duplication key.
      *
-     * Deliberately the full host, not `WebsiteMatchingUtil.extractMainDomain`:
-     * that collapses subdomains, so `jira.example.com` and `wiki.example.com`
-     * would both become `example.com` and the second credential would be
-     * discarded as "already saved" — losing a real password and erasing which
-     * host the survivor belonged to. Subdomain collapsing is right for *matching*
-     * a secret to a page at autofill time; it is wrong for storage.
+     * Preserve the full host so `jira.example.com` and `wiki.example.com` remain distinct
+     * de-duplication keys. Collapsing them could discard a real password as "already saved".
+     * The matching utility also preserves full hosts, but storage keeps a separate parser:
+     * it uses URI parsing and retains the trimmed raw value when no host can be parsed,
+     * rather than returning null. An imported website must not disappear on a parse failure.
      */
     private fun normaliseWebsite(raw: String): String {
         val trimmed = raw.trim()

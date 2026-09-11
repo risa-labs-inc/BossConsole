@@ -27,6 +27,7 @@ import ai.rever.boss.components.plugin.MissingHandlerPluginDialog
 import ai.rever.boss.components.plugin.MissingHandlerPluginEventBus
 import ai.rever.boss.components.plugin.PanelIds
 import ai.rever.boss.components.plugin.PluginDependencyEventBus
+import ai.rever.boss.components.plugin.PluginHealthCenterDialog
 import ai.rever.boss.components.plugin.PluginLoadGateHost
 import ai.rever.boss.components.plugin.PluginLoadRemedyAccess
 import ai.rever.boss.components.plugin.PluginStoreVersionBridge
@@ -52,6 +53,7 @@ import ai.rever.boss.mcp.McpToolRegistryImpl
 import ai.rever.boss.platform.rememberDirectoryPicker
 import ai.rever.boss.plugin.api.Panel.Companion.left
 import ai.rever.boss.plugin.api.Panel.Companion.top
+import ai.rever.boss.plugin.api.PluginLoaderDelegate
 import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.plugin.sandbox.notification.ToastMessage
 import ai.rever.boss.plugin.sandbox.notification.ToastType
@@ -68,6 +70,8 @@ import ai.rever.boss.search.SearchSources
 import ai.rever.boss.search.ToolSearchRecord
 import ai.rever.boss.services.auth.UserDataStorage
 import ai.rever.boss.services.bookmarks.BookmarkAPIAccess
+import ai.rever.boss.settings.MICROKERNEL_MODE_CONFIRMATION_MESSAGE
+import ai.rever.boss.settings.MicrokernelModePreference
 import ai.rever.boss.terminal.TerminalLinkSettingsManager
 import ai.rever.boss.utils.extractFileName
 import ai.rever.boss.utils.logging.LogCategory
@@ -462,6 +466,14 @@ internal fun BossAppDialogs(state: BossAppState) {
         )
     }
 
+    if (state.showPluginHealthCenter) {
+        PluginHealthCenterDialog(
+            manager = state.currentDefaultPlugin?.dynamicPluginManager,
+            delegate = state.currentDefaultPlugin?.getPluginAPI(PluginLoaderDelegate::class.java),
+            onDismiss = { state.showPluginHealthCenter = false },
+        )
+    }
+
     if (state.showGlobalSearchDialog) {
         // Offer THIS window's tools to the search, for exactly as long as its dialog is open.
         //
@@ -808,11 +820,28 @@ internal fun BossAppDialogs(state: BossAppState) {
         McpApprovalDialog(
             request = approvalRequest,
             pendingQueueSize = pendingList.size,
-            onApprove = { trustForSession ->
-                McpToolRegistryImpl.approvalBus.approve(approvalRequest.id, trustForSession)
+            onApprove = { trustForSession, persistPolicy ->
+                McpToolRegistryImpl.approvalBus.approve(approvalRequest.id, trustForSession, persistPolicy)
             },
-            onDeny = { reason ->
-                McpToolRegistryImpl.approvalBus.deny(approvalRequest.id, reason)
+            onDeny = { reason, persistPolicy ->
+                McpToolRegistryImpl.approvalBus.deny(approvalRequest.id, reason, persistPolicy)
+            },
+        )
+    }
+
+    // Application-menu request to enable experimental Microkernel Mode (BossConsole#472) - the
+    // Settings entry point shows its own copy of this dialog locally, since that composable
+    // already owns a scope to hold the pending/error state in.
+    if (state.microkernelModeConfirmation.pending) {
+        ConfirmationDialog(
+            title = "Enable experimental Microkernel Mode?",
+            message = MICROKERNEL_MODE_CONFIRMATION_MESSAGE,
+            confirmText = "Enable experimental mode",
+            onDismiss = { state.microkernelModeConfirmation.cancel() },
+            onConfirm = {
+                state.microkernelModeConfirmation.confirm {
+                    coroutineScope.launch { MicrokernelModePreference.save(true) }
+                }
             },
         )
     }
@@ -916,7 +945,9 @@ internal fun BossAppDialogs(state: BossAppState) {
                                 state.currentDefaultPlugin?.pluginToastState?.show(
                                     ToastMessage(
                                         type = ToastType.SUCCESS,
-                                        title = if (plan.order.size > 1) "Plugins installed" else "Plugin installed",
+                                        // Neutral for a plan, because an element that became present between
+                                        // consent and install is a no-op success and "Plugins" would overstate.
+                                        title = if (plan.order.size > 1) "Install complete" else "Plugin installed",
                                         message =
                                             "${prompt.missing.dependentDisplayName} can use it now. " +
                                                 "Relaunch BOSS if a feature still reports it missing.",

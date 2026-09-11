@@ -255,4 +255,112 @@ class McpGovernedInvocationTest {
                 assertFalse(called, change)
             }
         }
+
+    @Test
+    fun `approving with persistPolicy writes an ALLOW rule that survives past this one call`() =
+        runBlocking {
+            val approvalBus = McpApprovalBus(defaultTimeoutMs = 5000L)
+            val policyEngine = McpPolicyEngine(policyFile = null)
+            val ledger = McpOperationLedger(ledgerFile = null)
+            var callCount = 0
+            val core =
+                McpToolRegistryCore(
+                    disabledFile = null,
+                    policyEngine = policyEngine,
+                    approvalBus = approvalBus,
+                    ledger = ledger,
+                )
+            core.registerProvider(
+                provider(
+                    "p1",
+                    echoTool(
+                        "helm_uninstall",
+                        handler =
+                            McpToolHandler {
+                                callCount++
+                                McpToolResult("ok")
+                            },
+                    ),
+                ),
+            )
+
+            // First call: the tool has no configured rule, so DefaultMcpRiskEvaluator's
+            // mutating-tool default routes it to ASK.
+            val first = async { core.invoke("helm_uninstall", "{}") }
+            val req = approvalBus.pendingList.first { it.isNotEmpty() }.first()
+            approvalBus.approve(req.id, trustForSession = false, persistPolicy = true)
+            assertFalse(first.await().isError)
+            assertEquals(1, callCount)
+            assertEquals(McpPolicyAction.ALLOW, policyEngine.policyFor("helm_uninstall"))
+            assertEquals(
+                McpApprovalDisposition.PERSISTENTLY_ALLOWED,
+                ledger.recentOperations.value
+                    .first()
+                    .approvalDisposition,
+            )
+
+            // Second call: the persisted rule means it never suspends for approval again.
+            val second = core.invoke("helm_uninstall", "{}")
+            assertFalse(second.isError)
+            assertEquals(2, callCount)
+            assertEquals(
+                McpApprovalDisposition.AUTO_ALLOWED,
+                ledger.recentOperations.value
+                    .first()
+                    .approvalDisposition,
+            )
+        }
+
+    @Test
+    fun `denying with persistPolicy writes a DENY rule that survives past this one call`() =
+        runBlocking {
+            val approvalBus = McpApprovalBus(defaultTimeoutMs = 5000L)
+            val policyEngine = McpPolicyEngine(policyFile = null)
+            val ledger = McpOperationLedger(ledgerFile = null)
+            var callCount = 0
+            val core =
+                McpToolRegistryCore(
+                    disabledFile = null,
+                    policyEngine = policyEngine,
+                    approvalBus = approvalBus,
+                    ledger = ledger,
+                )
+            core.registerProvider(
+                provider(
+                    "p1",
+                    echoTool(
+                        "docker_rm",
+                        handler =
+                            McpToolHandler {
+                                callCount++
+                                McpToolResult("ok")
+                            },
+                    ),
+                ),
+            )
+
+            val first = async { core.invoke("docker_rm", "{}") }
+            val req = approvalBus.pendingList.first { it.isNotEmpty() }.first()
+            approvalBus.deny(req.id, "not today", persistPolicy = true)
+            assertTrue(first.await().isError)
+            assertEquals(0, callCount)
+            assertEquals(McpPolicyAction.DENY, policyEngine.policyFor("docker_rm"))
+            assertEquals(
+                McpApprovalDisposition.PERSISTENTLY_DENIED,
+                ledger.recentOperations.value
+                    .first()
+                    .approvalDisposition,
+            )
+
+            // Second call: refused by policy before the handler is ever reached, no new prompt.
+            val second = core.invoke("docker_rm", "{}")
+            assertTrue(second.isError)
+            assertEquals(0, callCount)
+            assertEquals(
+                McpApprovalDisposition.POLICY_DENIED,
+                ledger.recentOperations.value
+                    .first()
+                    .approvalDisposition,
+            )
+        }
 }

@@ -744,6 +744,7 @@ internal class McpToolRegistryCore(
             _tools.value.firstOrNull { it.definition.name == toolName }
                 ?: return McpToolResult("Unknown or disabled MCP tool: $toolName", isError = true)
         val args = parseArgs(arguments)
+        val revocation = policyEngine.revocationVersion(toolName)
         // The definition, not just the name: a tool that declares side effects is governed as
         // mutating even when its name matches nothing in McpMutatingToolCatalog.
         val policy = policyEngine.policyFor(toolName, tool.definition.readOnly)
@@ -752,7 +753,7 @@ internal class McpToolRegistryCore(
         var result: McpToolResult? = null
         var executionStarted = false
         try {
-            val authorization = authorizeInvocation(tool, args, policy)
+            val authorization = authorizeInvocation(tool, args, policy, revocation)
             disposition = authorization.first
             val denial = authorization.second
             result =
@@ -761,16 +762,12 @@ internal class McpToolRegistryCore(
                         McpToolResult(denial, isError = true)
                     }
 
-                    _tools.value.none { it.providerId == tool.providerId && it.definition === tool.definition } ||
-                        policyEngine.policyFor(toolName, tool.definition.readOnly) == McpPolicyAction.DENY -> {
+                    !confirmApproval(tool, revocation, disposition) || !isAvailable(tool) -> {
                         disposition = McpApprovalDisposition.POLICY_DENIED
                         McpToolResult("MCP tool access revoked while awaiting approval", isError = true)
                     }
 
                     else -> {
-                        if (disposition == McpApprovalDisposition.SESSION_TRUSTED) {
-                            policyEngine.trustForSession(toolName)
-                        }
                         executionStarted = true
                         executeAuthorized(tool, args)
                     }
@@ -805,10 +802,98 @@ internal class McpToolRegistryCore(
         }
     }
 
+    private fun isAvailable(tool: RegisteredMcpTool): Boolean =
+        _tools.value.any { it.providerId == tool.providerId && it.definition === tool.definition }
+
+    private suspend fun confirmApproval(
+        tool: RegisteredMcpTool,
+        revocation: Long,
+        disposition: McpApprovalDisposition,
+    ): Boolean =
+        withContext(Dispatchers.IO) {
+            isAvailable(tool) &&
+                policyEngine.confirmInvocation(
+                    tool.definition.name,
+                    revocation,
+                    grantSessionTrust = disposition == McpApprovalDisposition.SESSION_TRUSTED,
+                    declaredReadOnly = tool.definition.readOnly,
+                )
+        }
+
+    /** Recheck access before saving a queued ALLOW; resets invalidate older answers under the policy lock. */
+    @Suppress("ReturnCount") // Ordered denial, access revocation, persistence and write-failure outcomes.
+    private suspend fun validateApproval(
+        tool: RegisteredMcpTool,
+        authorization: Pair<McpApprovalDisposition, String?>,
+        revocation: Long,
+    ): Pair<McpApprovalDisposition, String?> =
+        withContext(Dispatchers.IO) {
+            if (authorization.second != null) return@withContext authorization
+            val toolName = tool.definition.name
+            if (!isAvailable(tool) ||
+                policyEngine.revocationVersion(toolName) != revocation ||
+                policyEngine.policyFor(toolName, tool.definition.readOnly) == McpPolicyAction.DENY
+            ) {
+                return@withContext McpApprovalDisposition.POLICY_DENIED to
+                    "MCP tool access revoked while awaiting approval"
+            }
+            if (authorization.first != McpApprovalDisposition.PERSISTENTLY_ALLOWED ||
+                policyEngine.setToolPolicy(
+                    toolName,
+                    McpPolicyAction.ALLOW,
+                    preserveDeny = true,
+                    expectedRevocation = revocation,
+                )
+            ) {
+                return@withContext authorization
+            }
+            val disposition =
+                if (policyEngine.revocationVersion(toolName) != revocation ||
+                    policyEngine.policyFor(toolName, tool.definition.readOnly) == McpPolicyAction.DENY
+                ) {
+                    McpApprovalDisposition.POLICY_DENIED
+                } else {
+                    McpApprovalDisposition.POLICY_PERSIST_FAILED
+                }
+            disposition to "MCP persistent approval was not saved; tool execution withheld"
+        }
+
+    private suspend fun approvedAuthorization(
+        tool: RegisteredMcpTool,
+        decision: McpApprovalDecision.Approved,
+        revocation: Long,
+    ): Pair<McpApprovalDisposition, String?> {
+        if (decision.persistPolicy) {
+            return validateApproval(tool, McpApprovalDisposition.PERSISTENTLY_ALLOWED to null, revocation)
+        }
+        val disposition =
+            if (decision.trustForSession) {
+                McpApprovalDisposition.SESSION_TRUSTED
+            } else {
+                McpApprovalDisposition.APPROVED_ONCE
+            }
+        return disposition to null
+    }
+
+    private suspend fun persistentDenialDisposition(
+        toolName: String,
+        revocation: Long,
+    ): McpApprovalDisposition =
+        withContext(Dispatchers.IO) {
+            if (policyEngine.setToolPolicy(toolName, McpPolicyAction.DENY, expectedRevocation = revocation)) {
+                McpApprovalDisposition.PERSISTENTLY_DENIED
+            } else if (policyEngine.revocationVersion(toolName) != revocation) {
+                McpApprovalDisposition.POLICY_DENIED
+            } else {
+                McpApprovalDisposition.POLICY_PERSIST_FAILED
+            }
+        }
+
     private suspend fun authorizeInvocation(
         tool: RegisteredMcpTool,
         args: McpToolArgs,
         policy: McpPolicyAction,
+        revocation: Long,
     ): Pair<McpApprovalDisposition, String?> =
         when (policy) {
             McpPolicyAction.DENY -> {
@@ -831,18 +916,17 @@ internal class McpToolRegistryCore(
                         )
                 ) {
                     is McpApprovalDecision.Approved -> {
-                        val disposition =
-                            if (decision.trustForSession) {
-                                McpApprovalDisposition.SESSION_TRUSTED
-                            } else {
-                                McpApprovalDisposition.APPROVED_ONCE
-                            }
-                        disposition to null
+                        approvedAuthorization(tool, decision, revocation)
                     }
 
                     is McpApprovalDecision.Denied -> {
-                        McpApprovalDisposition.DENIED_BY_OPERATOR to
-                            "MCP tool rejected by operator: ${decision.reason}"
+                        val disposition =
+                            if (decision.persistPolicy) {
+                                persistentDenialDisposition(tool.definition.name, revocation)
+                            } else {
+                                McpApprovalDisposition.DENIED_BY_OPERATOR
+                            }
+                        disposition to "MCP tool rejected by operator: ${decision.reason}"
                     }
 
                     McpApprovalDecision.QueueFull -> {
