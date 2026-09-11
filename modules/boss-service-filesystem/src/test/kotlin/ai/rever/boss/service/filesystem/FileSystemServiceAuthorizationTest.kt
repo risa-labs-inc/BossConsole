@@ -3,6 +3,8 @@ package ai.rever.boss.service.filesystem
 import ai.rever.boss.ipc.auth.ProcessAuthority
 import ai.rever.boss.ipc.proto.services.CreateFileRequest
 import ai.rever.boss.ipc.proto.services.DeleteFileRequest
+import ai.rever.boss.ipc.proto.services.FileChangeEvent
+import ai.rever.boss.ipc.proto.services.FileSystemServiceGrpcKt
 import ai.rever.boss.ipc.proto.services.ReadFileRequest
 import ai.rever.boss.ipc.proto.services.RenameFileRequest
 import ai.rever.boss.ipc.proto.services.ScanDirectoryRequest
@@ -11,9 +13,12 @@ import ai.rever.boss.ipc.proto.services.WriteFileRequest
 import com.google.protobuf.ByteString
 import io.grpc.Status
 import io.grpc.StatusException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -23,22 +28,18 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-/**
- * The caller authority the filesystem service accepts.
- *
- * Every rpc previously served whoever authenticated. The only credential the service's registry
- * holds in production is the kernel's per-spawn host token, so this pins the boundary in code:
- * an authenticated caller that is not the host is refused on every operation, which is what stops
- * a later token - a plugin's, a supervisor's - silently inheriting the kernel's whole-disk
- * service instead of being relayed through the host that knows what it was granted.
- */
+/** Exercises the host-only service boundary and credential revocation over the real IPC transport. */
 class FileSystemServiceAuthorizationTest {
     private val root = Files.createTempDirectory("filesystem-auth-")
     private val service = AuthenticatedFileService(FileSystemServiceImpl())
     private val host = AuthenticatedFileService.stub(service.channelFor("host", ProcessAuthority.HOST))
-    private val plugin = AuthenticatedFileService.stub(service.channelFor("plugin"))
+    private val nonHostCallers =
+        listOf(ProcessAuthority.PROCESS, ProcessAuthority.SUPERVISOR).map { authority ->
+            AuthenticatedFileService.stub(service.channelFor(authority.name, authority))
+        }
 
     @AfterTest
     fun cleanup() {
@@ -47,7 +48,7 @@ class FileSystemServiceAuthorizationTest {
     }
 
     @Test
-    fun `the kernel reads writes scans while a plugin caller is refused on every operation`() =
+    fun `host file operations succeed while every non-host authority is refused`() =
         runBlocking {
             val file = root.resolve("visible.txt")
             Files.writeString(file, "host content")
@@ -63,8 +64,13 @@ class FileSystemServiceAuthorizationTest {
             assertTrue(scanned.entriesList.any { it.path == file.toString() })
             assertTrue(host.writeFile(writeRequest(file, "updated")).success)
             assertEquals("updated", Files.readString(file))
+            val created = root.resolve("created-by-host")
+            host.createFile(CreateFileRequest.newBuilder().setPath(created.toString()).build())
+            assertTrue(Files.isRegularFile(created))
+            host.deleteFile(DeleteFileRequest.newBuilder().setPath(created.toString()).build())
+            assertFalse(Files.exists(created))
 
-            for (call in refusedPluginCalls(file)) {
+            for (call in nonHostCallers.flatMap { refusedCalls(it, file) }) {
                 val failure = assertFailsWith<StatusException> { call() }
                 assertEquals(
                     Status.Code.PERMISSION_DENIED,
@@ -74,18 +80,20 @@ class FileSystemServiceAuthorizationTest {
             }
             // Nothing the refused caller attempted may have landed.
             assertEquals("updated", Files.readString(file))
-            assertTrue(!Files.exists(root.resolve("created-by-plugin")))
-            assertTrue(!Files.exists(root.resolve("renamed-by-plugin")))
+            assertFalse(Files.exists(root.resolve("created-by-plugin")))
+            assertFalse(Files.exists(root.resolve("renamed-by-plugin")))
         }
 
     @Test
-    fun `watching requires the host authority at collection time, not when the flow was built`() =
+    fun `watching refuses every non-host authority`() =
         runBlocking {
-            assertFailsWith<StatusException> {
-                withTimeout(10_000) {
-                    plugin.watchFileChanges(watchRequest()).first()
-                }
-            }.let { assertEquals(Status.Code.PERMISSION_DENIED, it.status.code) }
+            for (caller in nonHostCallers) {
+                assertFailsWith<StatusException> {
+                    withTimeout(10_000) {
+                        caller.watchFileChanges(watchRequest()).first()
+                    }
+                }.let { assertEquals(Status.Code.PERMISSION_DENIED, it.status.code) }
+            }
         }
 
     @Test
@@ -94,16 +102,58 @@ class FileSystemServiceAuthorizationTest {
             withTimeout(30_000) {
                 coroutineScope {
                     val first = async { host.watchFileChanges(watchRequest()).first() }
-                    // Registration polls on a 500ms tick; give it room before creating the event.
-                    delay(2_000)
-                    Files.writeString(root.resolve("event.txt"), "changed")
-                    val event = first.await()
-                    assertTrue(event.path.endsWith("event.txt"), "unexpected event: $event")
+                    val event = awaitWatchEvent(first)
+                    assertTrue(
+                        Path
+                            .of(event.path)
+                            .fileName
+                            .toString()
+                            .startsWith("event-"),
+                        "unexpected event: $event",
+                    )
                 }
             }
         }
 
-    private fun refusedPluginCalls(file: Path): List<suspend () -> Any> =
+    @Test
+    fun `revoking an admitted idle watch closes it and a new host credential remains usable`() =
+        runBlocking {
+            withTimeout(30_000) {
+                val first = CompletableDeferred<FileChangeEvent>()
+                val completion =
+                    async {
+                        assertFailsWith<StatusException> {
+                            host.watchFileChanges(watchRequest()).collect { first.complete(it) }
+                        }
+                    }
+                val event = awaitWatchEvent(first)
+                // No more filesystem events are produced: revocation must close an idle stream.
+                service.registry.revoke("host")
+                val failure = withTimeout(5_000) { completion.await() }
+                assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
+                assertFailsWith<StatusException> {
+                    host.watchFileChanges(watchRequest()).first()
+                }.let { assertEquals(Status.Code.UNAUTHENTICATED, it.status.code) }
+
+                val replacement = AuthenticatedFileService.stub(service.channelFor("host", ProcessAuthority.HOST))
+                assertEquals("changed", replacement.readFile(readRequest(Path.of(event.path))).content.toStringUtf8())
+            }
+        }
+
+    private suspend fun awaitWatchEvent(first: Deferred<FileChangeEvent>): FileChangeEvent {
+        var sequence = 0
+        // Produce until an event proves registration completed, including a slow TLS handshake.
+        while (!first.isCompleted) {
+            Files.writeString(root.resolve("event-${sequence++}.txt"), "changed")
+            delay(50)
+        }
+        return first.await()
+    }
+
+    private fun refusedCalls(
+        plugin: FileSystemServiceGrpcKt.FileSystemServiceCoroutineStub,
+        file: Path,
+    ): List<suspend () -> Any> =
         listOf(
             { plugin.readFile(readRequest(file)) },
             { plugin.scanDirectory(ScanDirectoryRequest.newBuilder().setPath(root.toString()).build()) },

@@ -5,7 +5,6 @@ import ai.rever.boss.ipc.BossIpcServer
 import ai.rever.boss.ipc.auth.IpcClientCredentials
 import ai.rever.boss.ipc.auth.IpcTlsIdentity
 import ai.rever.boss.ipc.auth.ProcessAuthority
-import ai.rever.boss.ipc.auth.ProcessTokenClientInterceptor
 import ai.rever.boss.ipc.auth.ProcessTokenRegistry
 import ai.rever.boss.ipc.proto.services.FileSystemServiceGrpcKt
 import io.grpc.BindableService
@@ -43,13 +42,9 @@ class AuthenticatedFileService(
         ).channel.also { channels.add(it) }
     }
 
-    fun closeWithChannels() {
+    override fun close() {
         channels.forEach { it.shutdownNow() }
         server.stop(2_000)
-    }
-
-    override fun close() {
-        closeWithChannels()
     }
 
     companion object {

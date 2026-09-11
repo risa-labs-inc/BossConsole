@@ -137,20 +137,34 @@ class FileSystemServiceRenameTest {
     }
 
     @Test
-    fun `path traversal is still rejected`() {
-        // validatePath runs before any I/O; pinned so the rewrite cannot have moved it. Over the
-        // channel the IllegalArgumentException surfaces as UNKNOWN - gRPC does not map handler
-        // exceptions - and the important half is that nothing was moved.
+    fun `source path traversal is rejected before moving the file`() {
+        val nested = File(dir, "nested").apply { mkdirs() }
+        assertTraversalRejected(File(nested, "../source.txt"), File(dir, "dest.txt"))
+    }
+
+    @Test
+    fun `destination path traversal is rejected before moving the file`() {
+        val nested = File(dir, "nested").apply { mkdirs() }
+        assertTraversalRejected(File(dir, "source.txt"), File(nested, "../dest.txt"))
+    }
+
+    private fun assertTraversalRejected(
+        requestedSource: File,
+        requestedDestination: File,
+    ) {
+        // Both paths resolve to valid files in this temporary directory. A missing validation
+        // check would therefore move the source, rather than fail for an unrelated I/O reason.
         val source = File(dir, "source.txt").apply { writeText("content") }
         val dest = File(dir, "dest.txt")
 
         val failure =
             assertFailsWith<StatusException> {
-                rename(source, File(dir, ".."), overwrite = true)
+                rename(requestedSource, requestedDestination, overwrite = true)
             }
 
+        // The existing path validator throws IllegalArgumentException, mapped by gRPC to UNKNOWN.
         assertEquals(Status.Code.UNKNOWN, failure.status.code)
-        assertTrue(source.exists(), "the source must survive a refused rename")
+        assertEquals("content", source.readText(), "the source must survive a refused rename")
         assertFalse(dest.exists())
     }
 }
