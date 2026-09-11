@@ -23,6 +23,13 @@ enum class McpApprovalDisposition {
     AUTO_ALLOWED,
     APPROVED_ONCE,
     SESSION_TRUSTED,
+
+    // A persisted decision, in the same [McpApprovalDecision] shape as SESSION_TRUSTED /
+    // DENIED_BY_OPERATOR - distinct dispositions so the ledger records which of the three
+    // scopes (once, session, persistent) the operator actually chose.
+    PERSISTENTLY_ALLOWED,
+    PERSISTENTLY_DENIED,
+    POLICY_PERSIST_FAILED,
     DENIED_BY_OPERATOR,
     TIMEOUT,
     POLICY_DENIED,

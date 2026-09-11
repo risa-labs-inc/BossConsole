@@ -35,6 +35,7 @@ import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
@@ -383,6 +384,10 @@ class DynamicPluginManager(
          * Null in a headless or fully torn-down process, where there is nothing to install into.
          */
         fun anyActiveManager(): DynamicPluginManager? = activeManagers().firstOrNull()
+
+        /** Keep a window-bound operation in its manager while that manager remains live. */
+        internal fun activeManagerOrFallback(preferred: DynamicPluginManager): DynamicPluginManager? =
+            activeManagers().let { managers -> managers.firstOrNull { it === preferred } ?: managers.firstOrNull() }
 
         /** Where [pluginId] was loaded from, per the first live manager that knows it. */
         fun jarPathOf(pluginId: String): String? =
@@ -1331,25 +1336,57 @@ class DynamicPluginManager(
         force: Boolean = false,
         waitForGC: Boolean = false,
     ): Result<Unit> =
-        uninstallPlugin(
-            pluginId = pluginId,
-            force = force,
-            waitForGC = waitForGC,
-            closeTabsAcrossWindows = true,
-        ).also { outcome ->
-            // The teardown inside detached this plugin's sidebar panels so they would dispose
-            // while the loader was still open. If the unload then did not happen, nothing else
-            // puts them back: the plugin is still loaded, its panels are still registered, and no
-            // (re)install is coming to call notifyPanelsRefresh. Resuming here is what stops a
-            // refused uninstall from blanking a slot for the rest of the session, and a no-op
-            // when nothing was detached.
-            //
-            // Here rather than in the private overload because this is the entry point every
-            // user-facing unload takes (update, reload, remove). The other caller that tears
-            // tabs down globally is dispose(), which is the app shutting down - a panel that
-            // never comes back is exactly right there.
-            if (outcome.isFailure) notifyPanelsRefresh(pluginId)
+        try {
+            uninstallPlugin(
+                pluginId = pluginId,
+                force = force,
+                waitForGC = waitForGC,
+                closeTabsAcrossWindows = true,
+            ).also { outcome ->
+                // The teardown inside detached this plugin's sidebar panels so they would dispose
+                // while the loader was still open. If the unload then did not happen, nothing else
+                // puts them back: the plugin is still loaded, its panels are still registered, and no
+                // (re)install is coming to call notifyPanelsRefresh. Resuming here is what stops a
+                // refused uninstall from blanking a slot for the rest of the session, and a no-op
+                // when nothing was detached.
+                //
+                // Here rather than in the private overload because this is the entry point every
+                // user-facing unload takes (update, reload, remove). The other caller that tears
+                // tabs down globally is dispose(), which is the app shutting down - a panel that
+                // never comes back is exactly right there.
+                if (outcome.isFailure) notifyPanelsRefresh(pluginId)
+            }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            // Tab/panel disposal happens before the lock; cancellation while waiting for it
+            // must resume any still-registered panels just like a refused uninstall does.
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Plugin uninstall caller cancelled; cleanup may already have completed",
+                mapOf("pluginId" to pluginId, "stillInstalled" to isInstalled(pluginId)),
+            )
+            notifyPanelsRefresh(pluginId)
+            throw cancelled
         }
+
+    /** Cancellation must reach the public compensation before a free mutex admits destructive cleanup. */
+    internal suspend fun teardownPluginTabsForUnload(pluginId: String) {
+        pluginTabsTeardown?.let { teardown ->
+            try {
+                teardown(pluginId)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (t: Throwable) {
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Plugin tab teardown before unload failed (continuing)",
+                    mapOf(
+                        "pluginId" to pluginId,
+                        "error" to (t.message ?: t::class.simpleName),
+                    ),
+                )
+            }
+        }
+    }
 
     private suspend fun uninstallPlugin(
         pluginId: String,
@@ -1385,166 +1422,153 @@ class DynamicPluginManager(
             candidate != null &&
             (force || (candidate.manifest.canUnload && checkCanUnload(pluginId).isAllowed))
         ) {
-            pluginTabsTeardown?.let { teardown ->
-                try {
-                    teardown(pluginId)
-                } catch (t: Throwable) {
-                    logger.warn(
-                        LogCategory.SYSTEM,
-                        "Plugin tab teardown before unload failed (continuing)",
-                        mapOf(
-                            "pluginId" to pluginId,
-                            "error" to (t.message ?: t::class.simpleName),
-                        ),
-                    )
-                }
-            }
+            teardownPluginTabsForUnload(pluginId)
         }
         return mutex.withLock {
-            try {
-                logger.info(
-                    LogCategory.SYSTEM,
-                    "Uninstalling plugin",
-                    mapOf(
-                        "pluginId" to pluginId,
-                        "force" to force,
-                    ),
-                )
-
-                val loadedPlugin = pluginLoader.getPlugin(pluginId)
-                if (loadedPlugin == null) {
-                    // Plugin not in classloader — may have been unloaded during
-                    // incompatibility handling but still tracked in _pluginStates.
-                    // Clean up state so the update flow can proceed to reinstall.
-                    val pluginState = _pluginStates.value[pluginId]
-                    if (pluginState != null) {
-                        logger.info(
-                            LogCategory.SYSTEM,
-                            "Plugin already unloaded from classloader, cleaning up state",
-                            mapOf(
-                                "pluginId" to pluginId,
-                                "state" to pluginState.state.name,
-                            ),
-                        )
-                        val trackingContext = trackingContexts.remove(pluginId)
-                        trackingContext?.unregisterAll()
-                        managerScope.launch { sandboxManager.removeSandbox(pluginId) }
-                        removePluginState(pluginId)
-                        return@withLock Result.success(Unit)
-                    }
-                    return@withLock Result.failure(
-                        PluginUnloadException("Plugin not found: $pluginId", pluginId),
-                    )
-                }
-
-                val manifest = loadedPlugin.manifest
-
-                // Check if plugin can be unloaded (system plugins may be protected)
-                if (!manifest.canUnload && !force) {
-                    logger.warn(
+            // Once destructive cleanup starts, finish sandbox, loader and state cleanup even if
+            // the requesting dialog/window disappears. Lock acquisition remains cancellable.
+            withContext(NonCancellable) {
+                try {
+                    logger.info(
                         LogCategory.SYSTEM,
-                        "Cannot unload system plugin",
+                        "Uninstalling plugin",
                         mapOf(
                             "pluginId" to pluginId,
-                            "systemPlugin" to manifest.systemPlugin,
+                            "force" to force,
                         ),
                     )
-                    return@withLock Result.failure(
-                        PluginUnloadException(
-                            "Cannot unload system plugin: $pluginId (canUnload=false)",
-                            pluginId,
-                            listOf("System plugin is protected from unloading"),
-                        ),
-                    )
-                }
 
-                // Check if unload is allowed
-                if (!force) {
-                    val canUnload = checkCanUnload(pluginId)
-                    if (!canUnload.isAllowed) {
-                        val reasons = (canUnload as CanUnloadResult.NotAllowed).reasons
-                        return@withLock Result.failure(
-                            PluginUnloadException(
-                                "Cannot unload plugin: ${reasons.joinToString("; ")}",
-                                pluginId,
-                                reasons,
-                            ),
+                    val loadedPlugin = pluginLoader.getPlugin(pluginId)
+                    if (loadedPlugin == null) {
+                        // Plugin not in classloader — may have been unloaded during
+                        // incompatibility handling but still tracked in _pluginStates.
+                        // Clean up state so the update flow can proceed to reinstall.
+                        val pluginState = _pluginStates.value[pluginId]
+                        if (pluginState != null) {
+                            logger.info(
+                                LogCategory.SYSTEM,
+                                "Plugin already unloaded from classloader, cleaning up state",
+                                mapOf(
+                                    "pluginId" to pluginId,
+                                    "state" to pluginState.state.name,
+                                ),
+                            )
+                            val trackingContext = trackingContexts.remove(pluginId)
+                            trackingContext?.unregisterAll()
+                            sandboxManager.removeSandbox(pluginId)
+                            removePluginState(pluginId)
+                            return@withContext Result.success(Unit)
+                        }
+                        return@withContext Result.failure(
+                            PluginUnloadException("Plugin not found: $pluginId", pluginId),
                         )
                     }
-                }
 
-                // Notify listeners before unload
-                notifyListeners { it.beforePluginUnload(manifest) }
+                    val manifest = loadedPlugin.manifest
 
-                // Prepare unload-aware components
-                for (ref in unloadAwareComponents) {
-                    val component = ref.get() ?: continue
-                    try {
-                        component.prepareForUnload(pluginId)
-                    } catch (e: Exception) {
+                    // Check if plugin can be unloaded (system plugins may be protected)
+                    if (!manifest.canUnload && !force) {
                         logger.warn(
                             LogCategory.SYSTEM,
-                            "Error preparing component for unload",
+                            "Cannot unload system plugin",
                             mapOf(
                                 "pluginId" to pluginId,
+                                "systemPlugin" to manifest.systemPlugin,
                             ),
-                            error = e,
+                        )
+                        return@withContext Result.failure(
+                            PluginUnloadException(
+                                "Cannot unload system plugin: $pluginId (canUnload=false)",
+                                pluginId,
+                                listOf("System plugin is protected from unloading"),
+                            ),
                         )
                     }
-                }
 
-                // Unregister all panels and tabs
-                val trackingContext = trackingContexts.remove(pluginId)
-                trackingContext?.unregisterAll()
+                    // Check if unload is allowed
+                    if (!force) {
+                        val canUnload = checkCanUnload(pluginId)
+                        if (!canUnload.isAllowed) {
+                            val reasons = (canUnload as CanUnloadResult.NotAllowed).reasons
+                            return@withContext Result.failure(
+                                PluginUnloadException(
+                                    "Cannot unload plugin: ${reasons.joinToString("; ")}",
+                                    pluginId,
+                                    reasons,
+                                ),
+                            )
+                        }
+                    }
 
-                // Remove sandbox
-                managerScope.launch {
+                    // Notify listeners before unload
+                    notifyListeners { it.beforePluginUnload(manifest) }
+
+                    // Prepare unload-aware components
+                    for (ref in unloadAwareComponents) {
+                        val component = ref.get() ?: continue
+                        try {
+                            component.prepareForUnload(pluginId)
+                        } catch (e: Exception) {
+                            logger.warn(
+                                LogCategory.SYSTEM,
+                                "Error preparing component for unload",
+                                mapOf(
+                                    "pluginId" to pluginId,
+                                ),
+                                error = e,
+                            )
+                        }
+                    }
+
+                    // Unregister all panels and tabs
+                    val trackingContext = trackingContexts.remove(pluginId)
+                    trackingContext?.unregisterAll()
+
+                    // Complete teardown before reload can create a replacement sandbox for this ID.
                     sandboxManager.removeSandbox(pluginId)
-                }
 
-                // Terminate out-of-process child if applicable
-                if (manifest.isolationMode == "out-of-process") {
-                    managerScope.launch {
+                    // Terminate out-of-process child if applicable
+                    if (manifest.isolationMode == "out-of-process") {
                         outOfProcessSpawner?.terminate(pluginId)
                     }
+
+                    // Unload the plugin
+                    // force flows through: without it the loader re-blocks
+                    // canUnload=false system plugins, leaving their classloaders
+                    // parented to a superseded ApiClassLoader after a hot swap.
+                    val unloadResult = pluginLoader.unloadPlugin(pluginId, waitForGC, force)
+                    if (unloadResult.isFailure) {
+                        notifyListeners { it.pluginUnloadFailed(manifest, unloadResult.exceptionOrNull()!!) }
+                        return@withContext unloadResult
+                    }
+
+                    // Update state
+                    removePluginState(pluginId)
+
+                    // Notify listeners
+                    notifyListeners { it.pluginUnloaded(manifest) }
+                    emitPluginLifecycle(manifest.pluginId, PluginLifecycleState.UNLOADED)
+
+                    logger.info(
+                        LogCategory.SYSTEM,
+                        "Plugin uninstalled successfully",
+                        mapOf(
+                            "pluginId" to pluginId,
+                        ),
+                    )
+
+                    Result.success(Unit)
+                } catch (e: Exception) {
+                    logger.error(
+                        LogCategory.SYSTEM,
+                        "Failed to uninstall plugin",
+                        mapOf(
+                            "pluginId" to pluginId,
+                        ),
+                        e,
+                    )
+                    Result.failure(e)
                 }
-
-                // Unload the plugin
-                // force flows through: without it the loader re-blocks
-                // canUnload=false system plugins, leaving their classloaders
-                // parented to a superseded ApiClassLoader after a hot swap.
-                val unloadResult = pluginLoader.unloadPlugin(pluginId, waitForGC, force)
-                if (unloadResult.isFailure) {
-                    notifyListeners { it.pluginUnloadFailed(manifest, unloadResult.exceptionOrNull()!!) }
-                    return@withLock unloadResult
-                }
-
-                // Update state
-                removePluginState(pluginId)
-
-                // Notify listeners
-                notifyListeners { it.pluginUnloaded(manifest) }
-                emitPluginLifecycle(manifest.pluginId, PluginLifecycleState.UNLOADED)
-
-                logger.info(
-                    LogCategory.SYSTEM,
-                    "Plugin uninstalled successfully",
-                    mapOf(
-                        "pluginId" to pluginId,
-                    ),
-                )
-
-                Result.success(Unit)
-            } catch (e: Exception) {
-                logger.error(
-                    LogCategory.SYSTEM,
-                    "Failed to uninstall plugin",
-                    mapOf(
-                        "pluginId" to pluginId,
-                    ),
-                    e,
-                )
-                Result.failure(e)
             }
         }
     }
@@ -2468,6 +2492,7 @@ class DynamicPluginManager(
         _pluginStates.value = _pluginStates.value - pluginId
         PluginRecoveryQuarantine.clear(pluginId)
         PluginCrashRegistry.clearCrash(pluginId)
+        PluginCrashRegistry.clearIncompatible(pluginId)
         // The build verdict describes a loaded plugin, so it goes with it. A reload re-probes on the
         // way back in, so dropping it here does not make a reloaded panel lose its tag.
         PluginBuildRegistry.clear(pluginId)

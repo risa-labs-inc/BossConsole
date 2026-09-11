@@ -26,6 +26,9 @@ import ai.rever.boss.plugin.ui.BossThemeController
 import ai.rever.boss.plugin.ui.LocalHeavyweightOverlays
 import ai.rever.boss.services.editor.EditorAPIAccess
 import ai.rever.boss.services.terminal.TerminalAPIAccess
+import ai.rever.boss.settings.MicrokernelModePreference
+import ai.rever.boss.settings.microkernelModeMenuLabel
+import ai.rever.boss.settings.needsMicrokernelModeConfirmation
 import ai.rever.boss.updater.UpdateCoordinator
 import ai.rever.boss.utils.CLIInstaller
 import ai.rever.boss.utils.DisplayUtils
@@ -376,6 +379,8 @@ fun ApplicationScope.BossWindow(
 
         // Coroutine scope for menu actions (like checking for updates)
         val menuScope = rememberCoroutineScope()
+        val microkernelSaveState by MicrokernelModePreference.saveState.collectAsState()
+        LaunchedEffect(Unit) { MicrokernelModePreference.refresh() }
 
         // Listen for panel registry changes to update the menu
         DisposableEffect(panelRegistry) {
@@ -510,38 +515,28 @@ fun ApplicationScope.BossWindow(
 
                 Separator()
 
-                // Process Mode toggle
-                val isKernelMode =
-                    remember {
-                        val mode =
-                            System.getenv("BOSS_MODE")
-                                ?: ai.rever.boss.config.ConfigLoader
-                                    .getConfig("BOSS_MODE")
-                        mode == "KERNEL"
-                    }
+                // enabled falls back to startupEnabled (what env_vars said at launch) while the
+                // first refresh() is still in flight, rather than a live ConfigLoader read - see
+                // MicrokernelModePreference's KDoc on why that comparand doesn't work here.
+                val displayedKernelMode = microkernelSaveState.enabled ?: (microkernelSaveState.startupEnabled ?: false)
                 CheckboxItem(
-                    "Microkernel Mode",
-                    checked = isKernelMode,
-                    onCheckedChange = {
-                        // Toggle in env_vars file; requires restart
-                        menuScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                            val envFile =
-                                ai.rever.boss.plugin.pathutils.BossDirectories
-                                    .resolve("env_vars")
-                            envFile.parentFile?.mkdirs()
-                            if (!envFile.exists()) {
-                                envFile.writeText(if (it) "BOSS_MODE=KERNEL\n" else "# BOSS_MODE=KERNEL\n", Charsets.UTF_8)
-                            } else {
-                                val lines = envFile.readLines(Charsets.UTF_8).toMutableList()
-                                val idx = lines.indexOfFirst { l -> l.trimStart('#', ' ').startsWith("BOSS_MODE") }
-                                val newLine = if (it) "BOSS_MODE=KERNEL" else "# BOSS_MODE=KERNEL"
-                                if (idx >= 0) {
-                                    lines[idx] = newLine
-                                } else {
-                                    lines.add("")
-                                    lines.add(newLine)
-                                }
-                                envFile.writeText(lines.joinToString("\n") + "\n", Charsets.UTF_8)
+                    microkernelModeMenuLabel(microkernelSaveState),
+                    checked = displayedKernelMode,
+                    enabled = microkernelSaveState.enabled != null,
+                    onCheckedChange = { requestedEnabled ->
+                        if (needsMicrokernelModeConfirmation(
+                                currentlyEnabled = displayedKernelMode,
+                                nextEnabled = requestedEnabled,
+                            )
+                        ) {
+                            // A Menu{} block cannot host a dialog itself - hand off to the main
+                            // window's compose tree, which writes the preference on confirm via
+                            // the same MicrokernelModePreference the Settings entry point uses.
+                            MenuActionsHandler.triggerConfirmMicrokernelMode(windowState.id)
+                        } else {
+                            // Disabling stays a plain, un-confirmed toggle (BossConsole#472).
+                            menuScope.launch {
+                                MicrokernelModePreference.save(requestedEnabled)
                             }
                         }
                     },
@@ -1045,6 +1040,13 @@ fun ApplicationScope.BossWindow(
                         menuScope.launch {
                             MenuActionsHandler.triggerReloadAllPlugins(windowState.id)
                         }
+                    },
+                )
+
+                Item(
+                    "Plugin Health & Recovery...",
+                    onClick = {
+                        MenuActionsHandler.triggerShowPluginHealthCenter(windowState.id)
                     },
                 )
 

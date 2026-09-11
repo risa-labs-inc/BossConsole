@@ -1,6 +1,7 @@
 package ai.rever.boss.plugin.sandbox
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
@@ -99,6 +100,32 @@ class PluginSandboxManagerTest {
             }
 
         @Test
+        fun `removing disabled sandbox clears recovery bookkeeping before replacement`() =
+            runTest {
+                val old = manager.createSandbox("plugin-1")
+                manager.disablePlugin("plugin-1").getOrThrow()
+                assertTrue(manager.isPluginDisabled("plugin-1"))
+                manager.removeSandbox("plugin-1")
+                assertFalse(manager.isPluginDisabled("plugin-1"))
+                val replacement = manager.createSandbox("plugin-1")
+                assertTrue(old !== replacement)
+                assertFalse(manager.isPluginDisabled("plugin-1"))
+            }
+
+        @Test
+        fun `late watchdog disable cannot mark a replacement sandbox disabled`() =
+            runTest {
+                val old = manager.createSandbox("plugin-1") as InProcessPluginSandbox
+                manager.removeSandbox("plugin-1")
+                manager.createSandbox("plugin-1")
+                assertFalse(manager.markDisabledIfCurrent(old))
+                assertFalse(manager.isPluginDisabled("plugin-1"))
+                val current = manager.getSandbox("plugin-1") as InProcessPluginSandbox
+                assertTrue(manager.markDisabledIfCurrent(current))
+                assertTrue(manager.isPluginDisabled("plugin-1"))
+            }
+
+        @Test
         fun `removeSandbox is safe for unknown plugin`() =
             runTest {
                 // Should not throw
@@ -140,10 +167,108 @@ class PluginSandboxManagerTest {
 
                 assertTrue(result.isSuccess)
             }
+
+        @Test
+        fun `backoff restart cannot resurrect a sandbox disabled while it waits`() =
+            runBlocking {
+                val enteredBackoff = CompletableDeferred<Unit>()
+                val releaseBackoff = CompletableDeferred<Unit>()
+                val config = SandboxConfig(restartBackoffBaseMs = 1)
+                val raceManager =
+                    PluginSandboxManagerImpl(
+                        defaultConfig = config,
+                        awaitRestartBackoff = {
+                            enteredBackoff.complete(Unit)
+                            releaseBackoff.await()
+                        },
+                    )
+                var restarted = false
+                raceManager.addListener(
+                    object : PluginSandboxListener {
+                        override fun onPluginRestarted(pluginId: String) {
+                            restarted = true
+                        }
+                    },
+                )
+                val sandbox = raceManager.createSandbox("plugin-1", config) as InProcessPluginSandbox
+                sandbox.start()
+                val scheduled = async { raceManager.handleRestartRequest("plugin-1") }
+                try {
+                    withTimeout(5_000) { enteredBackoff.await() }
+                    raceManager.disablePlugin("plugin-1").getOrThrow()
+                    assertTrue(raceManager.isPluginDisabled("plugin-1"))
+
+                    releaseBackoff.complete(Unit)
+                    withTimeout(5_000) { scheduled.await() }
+
+                    assertFalse(restarted, "A restart queued for the disabled sandbox must be rejected")
+                    assertEquals(SandboxState.DISABLED, sandbox.state.value)
+                    assertTrue(sandbox.isExecutorTerminated())
+                } finally {
+                    releaseBackoff.complete(Unit)
+                    scheduled.join()
+                    raceManager.dispose()
+                }
+            }
+
+        @Test
+        fun `backoff restart cannot affect a replacement sandbox`() =
+            runBlocking {
+                val enteredBackoff = CompletableDeferred<Unit>()
+                val releaseBackoff = CompletableDeferred<Unit>()
+                val config = SandboxConfig(restartBackoffBaseMs = 1)
+                val raceManager =
+                    PluginSandboxManagerImpl(
+                        defaultConfig = config,
+                        awaitRestartBackoff = {
+                            enteredBackoff.complete(Unit)
+                            releaseBackoff.await()
+                        },
+                    )
+                var restarted = false
+                raceManager.addListener(
+                    object : PluginSandboxListener {
+                        override fun onPluginRestarted(pluginId: String) {
+                            restarted = true
+                        }
+                    },
+                )
+                val old = raceManager.createSandbox("plugin-1", config) as InProcessPluginSandbox
+                old.start()
+                val scheduled = async { raceManager.handleRestartRequest("plugin-1") }
+                try {
+                    withTimeout(5_000) { enteredBackoff.await() }
+                    raceManager.removeSandbox("plugin-1")
+                    val replacement = raceManager.createSandbox("plugin-1", config) as InProcessPluginSandbox
+                    replacement.start()
+
+                    releaseBackoff.complete(Unit)
+                    withTimeout(5_000) { scheduled.await() }
+
+                    assertFalse(restarted, "A backoff from the removed sandbox must not restart its replacement")
+                    assertEquals(SandboxState.RUNNING, replacement.state.value)
+                    assertTrue(old.isExecutorTerminated())
+                } finally {
+                    releaseBackoff.complete(Unit)
+                    scheduled.join()
+                    raceManager.dispose()
+                }
+            }
     }
 
     @Nested
     inner class DisableEnableTests {
+        @Test
+        fun `disable after removal cannot poison a future sandbox`() =
+            runTest {
+                manager.createSandbox("plugin-1")
+                manager.removeSandbox("plugin-1")
+                manager.disablePlugin("plugin-1").getOrThrow()
+                assertFalse(manager.isPluginDisabled("plugin-1"))
+                manager.createSandbox("plugin-1")
+                assertFalse(manager.isPluginDisabled("plugin-1"))
+            }
+
         @Test
         fun `disablePlugin marks plugin as disabled`() =
             runTest {
@@ -163,6 +288,7 @@ class PluginSandboxManagerTest {
                 manager.enablePlugin("plugin-1")
 
                 assertFalse(manager.isPluginDisabled("plugin-1"))
+                assertTrue(manager.restartPlugin("plugin-1").isSuccess)
             }
 
         @Test
