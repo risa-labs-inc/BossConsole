@@ -180,6 +180,8 @@ BOSS speaks the **Model Context Protocol**. The `terminal-tab` plugin hosts a lo
 | Automation | `flow_run`, `rpa_run`, `rpa_record_toggle`, `llmrpa_run`, `evolver_evolve` |
 | Productivity | `bookmarks_list`, `bookmark_add`, `downloads_list`, `plugins_list` |
 
+> **Terminal exception:** The Terminal row is exposed by terminal-tab and BossTerm outside the host `McpToolRegistry`, rather than contributed through `McpToolProvider`. These tools still surface through the same loopback MCP server and agent-facing namespace, but the host registry's policy, approval, and operation-ledger paths cannot receive them.
+
 Plugin authors add tools by implementing `McpToolProvider` (boss-plugin-api 1.0.51+). Full reference: [**PLUGIN_DEVELOPMENT.md**](https://github.com/risa-labs-inc/boss-plugins/blob/main/PLUGIN_DEVELOPMENT.md) in boss-plugins.
 
 ---
