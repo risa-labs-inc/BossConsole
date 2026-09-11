@@ -4,7 +4,12 @@ import ai.rever.boss.ipc.proto.services.FileSystemServiceGrpcKt
 import ai.rever.boss.ipc.proto.services.ReadFileRequest
 import ai.rever.boss.ipc.proto.services.ScanDirectoryRequest
 import ai.rever.boss.ipc.proto.services.WatchFileChangesRequest
+import com.sun.jna.Function
+import com.sun.jna.Native
+import com.sun.jna.NativeLibrary
 import com.sun.jna.Platform
+import com.sun.jna.Pointer
+import com.sun.jna.WString
 import io.grpc.ManagedChannelBuilder
 import io.grpc.ServerBuilder
 import io.grpc.Status
@@ -14,12 +19,13 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import java.io.IOException
 import java.io.RandomAccessFile
 import java.nio.file.Files
-import java.nio.file.attribute.AclEntry
-import java.nio.file.attribute.AclEntryPermission
-import java.nio.file.attribute.AclEntryType
-import java.nio.file.attribute.AclFileAttributeView
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
+import java.nio.file.Path
+import java.nio.file.StandardWatchEventKinds.ENTRY_CREATE
+import java.nio.file.attribute.BasicFileAttributes
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.test.AfterTest
@@ -92,26 +98,14 @@ class FileSystemLimitsTest {
         }
 
     @Test
-    fun `persistent Windows directory permission failures remain visible`() =
+    fun `persistent Windows directory sharing failures remain visible`() =
         runBlocking {
             if (!Platform.isWindows()) return@runBlocking
             val denied = Files.createDirectory(root.resolve("denied"))
-            Files.writeString(denied.resolve("sentinel"), "requires directory enumeration")
-            val view = Files.getFileAttributeView(denied, AclFileAttributeView::class.java)
-            val original = view.acl
-            val principal =
-                denied.fileSystem.userPrincipalLookupService.lookupPrincipalByName(System.getProperty("user.name"))
-            try {
-                val deny =
-                    AclEntry
-                        .newBuilder()
-                        .setType(AclEntryType.DENY)
-                        .setPrincipal(principal)
-                        .setPermissions(AclEntryPermission.LIST_DIRECTORY)
-                        .build()
-                view.acl = listOf(deny) + original
-                assertFailsWith<java.nio.file.AccessDeniedException> {
-                    Files.newDirectoryStream(denied).use { it.toList() }
+            withExclusiveDirectory(denied) {
+                assertTrue(Files.readAttributes(denied, BasicFileAttributes::class.java, NOFOLLOW_LINKS).isDirectory)
+                denied.fileSystem.newWatchService().use { watcher ->
+                    assertFailsWith<IOException> { denied.register(watcher, ENTRY_CREATE) }
                 }
                 assertFailsWith<StatusException> {
                     withTimeout(5000) {
@@ -125,9 +119,10 @@ class FileSystemLimitsTest {
                             ).first()
                     }
                 }
-                assertTrue(Files.exists(denied))
-            } finally {
-                view.acl = original
+            }
+            // The same operation succeeds after releasing the deliberately conflicting handle.
+            denied.fileSystem.newWatchService().use { watcher ->
+                assertTrue(denied.register(watcher, ENTRY_CREATE).isValid)
             }
         }
 
@@ -270,4 +265,25 @@ class FileSystemLimitsTest {
                 }
             }
         }
+}
+
+private suspend fun withExclusiveDirectory(
+    directory: Path,
+    action: suspend () -> Unit,
+) {
+    val kernel = NativeLibrary.getInstance("kernel32")
+    // FILE_LIST_DIRECTORY, no sharing, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS.
+    // Attribute reads remain allowed, so the watch registry can distinguish this from deletion.
+    val handle =
+        kernel.getFunction("CreateFileW", Function.ALT_CONVENTION).invokePointer(
+            arrayOf(WString(directory.toString()), 1, 0, null, 3, 0x02000000, null),
+        )
+    check(handle != null && Pointer.nativeValue(handle) != -1L) {
+        "Cannot acquire exclusive directory handle: ${Native.getLastError()}"
+    }
+    try {
+        action()
+    } finally {
+        check(kernel.getFunction("CloseHandle", Function.ALT_CONVENTION).invokeInt(arrayOf(handle)) != 0)
+    }
 }
