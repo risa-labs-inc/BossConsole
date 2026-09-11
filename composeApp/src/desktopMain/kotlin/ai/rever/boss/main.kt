@@ -480,31 +480,20 @@ fun main(args: Array<String>) {
             // Try to send with retry logic (important for auth deep links during sign-in)
             // Note: runBlocking is acceptable here as this runs during pre-UI initialization,
             // before the Compose application starts. No UI thread exists yet to block.
-            val maxRetries = 3
-
-            fun forward(link: String): Boolean {
-                for (attempt in 1..maxRetries) {
-                    if (SingleInstanceManager.sendToExistingInstance(link, DeepLinkOrigin.EXTERNAL)) {
-                        logger.info(LogCategory.SYSTEM, "URL sent successfully", mapOf("attempt" to attempt))
-                        return true
-                    }
-                    logger.warn(
-                        LogCategory.SYSTEM,
-                        "Failed to send URL",
-                        mapOf(
-                            "attempt" to attempt,
-                            "maxRetries" to maxRetries,
-                        ),
-                    )
-                    if (attempt < maxRetries) {
-                        // Use coroutine delay instead of Thread.sleep to avoid blocking
-                        kotlinx.coroutines.runBlocking {
-                            kotlinx.coroutines.delay(500)
-                        }
-                    }
-                }
-                return false
-            }
+            fun forward(link: String): Boolean =
+                ai.rever.boss.utils.forwardDeepLinkWithRetry(
+                    link = link,
+                    send = { attempt ->
+                        val accepted = SingleInstanceManager.sendToExistingInstance(link, DeepLinkOrigin.EXTERNAL)
+                        logger.info(
+                            LogCategory.SYSTEM,
+                            "Open request forwarding completed",
+                            mapOf("attempt" to attempt, "accepted" to accepted),
+                        )
+                        accepted
+                    },
+                    pause = { kotlinx.coroutines.runBlocking { kotlinx.coroutines.delay(500) } },
+                )
 
             // Every link is attempted, and success means every one landed.
             // `fold` rather than `all`, which would short-circuit and silently
@@ -514,14 +503,11 @@ fun main(args: Array<String>) {
             if (success) {
                 exitProcess(0)
             } else {
-                // IPC failed after retries - DO NOT create new window
+                // Forwarding failed or the action did not report success - DO NOT create a new window.
                 // This prevents duplicate windows during sign-in
                 logger.error(
                     LogCategory.SYSTEM,
-                    "Could not send URL to existing instance after retries",
-                    mapOf(
-                        "maxRetries" to maxRetries,
-                    ),
+                    "An open request did not report success in the existing instance",
                 )
                 exitProcess(1)
             }

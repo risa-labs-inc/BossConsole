@@ -6,6 +6,11 @@ plugins {
 
 group = "ai.rever.boss"
 version = "1.0.0"
+
+kotlin {
+    jvmToolchain(17)
+}
+
 application {
     mainClass.set("ai.rever.boss.ApplicationKt")
     applicationDefaultJvmArgs = listOf("-Dio.ktor.development=${extra["io.ktor.development"] ?: "false"}")

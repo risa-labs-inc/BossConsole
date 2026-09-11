@@ -3,7 +3,9 @@ package ai.rever.boss.components.dialogs
 import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -83,12 +85,19 @@ fun ConfirmationDialog(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Message
+                // Message. Bounded and scrollable rather than left to grow the dialog
+                // unboundedly - every existing call site's message is short enough that this
+                // never engages (BossConsole#472's confirmation text is the first one long
+                // enough to actually need it, at ~690 characters / ~16 wrapped lines).
                 Text(
                     text = message,
                     fontSize = 14.sp,
                     color = colors.textSecondary,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 320.dp)
+                            .verticalScroll(rememberScrollState()),
                 )
 
                 Spacer(modifier = Modifier.height(24.dp))

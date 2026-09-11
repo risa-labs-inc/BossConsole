@@ -9,8 +9,8 @@ import ai.rever.boss.utils.logging.LogCategory
  *
  * Handles:
  * - Domain extraction from URLs
- * - Subdomain normalization (login.google.com → google.com)
- * - Fuzzy matching between secret website and current domain
+ * - Full hostname preservation, with a leading www. removed
+ * - Exact and dot-boundary matching between secret website and current domain
  * - Scoring and ranking of matched secrets
  *
  * Used by Issue #56 - Secret Access Integration with Fluck Browser
@@ -24,7 +24,7 @@ object WebsiteMatchingUtil {
     data class MatchedSecret(
         val secret: SecretEntry,
         val matchScore: Float, // 0.0 - 1.0
-        val matchReason: String, // "exact", "subdomain", "partial", "domain"
+        val matchReason: String, // "exact", "subdomain"
     ) : Comparable<MatchedSecret> {
         override fun compareTo(other: MatchedSecret): Int {
             return other.matchScore.compareTo(this.matchScore) // Descending
@@ -32,17 +32,20 @@ object WebsiteMatchingUtil {
     }
 
     /**
-     * Extract the main domain from a URL.
+     * Extract the full hostname from a URL, removing a leading www.
+     *
+     * The historical function name is retained for callers. No registrable-domain or
+     * public-suffix guessing is performed: sibling hosts remain distinct.
      *
      * Examples:
-     * - https://login.google.com/auth → google.com
+     * - https://login.google.com/auth → login.google.com
      * - https://www.github.com/login → github.com
-     * - https://accounts.google.com → google.com
+     * - https://accounts.google.com → accounts.google.com
      * - http://localhost:3000 → localhost
      * - https://example.co.uk → example.co.uk
      *
      * @param url The URL to extract domain from
-     * @return Cleaned main domain, or null if invalid
+     * @return Cleaned hostname, or null if parsing fails
      */
     fun extractMainDomain(url: String): String? {
         return try {
@@ -73,38 +76,6 @@ object WebsiteMatchingUtil {
             // Remove www. prefix
             host = host.removePrefix("www.")
 
-            // Remove common subdomains for matching
-            // But keep subdomains that might be meaningful for secrets
-            val commonSubdomains = listOf("login", "accounts", "auth", "signin", "signup", "sso", "id", "portal", "app", "my")
-            val parts = host.split(".")
-
-            // Keep TLD + main domain (e.g., google.com, github.com)
-            // Special handling for .co.uk, .com.au, etc.
-            val twoPartTlds = listOf("co.uk", "com.au", "co.in", "co.jp", "com.br", "co.za")
-
-            host =
-                when {
-                    // Handle two-part TLDs (example.co.uk)
-                    parts.size >= 3 && twoPartTlds.any { host.endsWith(it) } -> {
-                        parts.takeLast(3).joinToString(".")
-                    }
-
-                    // Remove common subdomain (login.google.com → google.com)
-                    parts.size >= 3 && parts[0] in commonSubdomains -> {
-                        parts.drop(1).joinToString(".")
-                    }
-
-                    // Keep as is if short enough
-                    parts.size <= 2 -> {
-                        host
-                    }
-
-                    // For longer domains, keep last 2 parts (subdomain.example.com → example.com)
-                    else -> {
-                        parts.takeLast(2).joinToString(".")
-                    }
-                }
-
             host
         } catch (e: Exception) {
             logger.debug(LogCategory.BROWSER, "Failed to extract domain", mapOf("url" to url, "error" to e.toString()))
@@ -119,8 +90,12 @@ object WebsiteMatchingUtil {
      * Matching logic:
      * - Exact match (google.com == google.com): score 1.0
      * - Subdomain match (login.google.com vs google.com): score 0.9
-     * - Domain contains (google.com contains "google"): score 0.7
-     * - Partial match ("google" in "google-workspace.com"): score 0.5
+     *
+     * Substrings and shared labels do not establish a domain relationship and must not
+     * produce credential suggestions. Only equality and a dot-delimited suffix qualify.
+     * [extractMainDomain] preserves the hostname rather than guessing a registrable domain.
+     * This scorer does not validate public suffixes. Explicit parent-domain entries still
+     * match subdomains in either direction; sibling hostnames do not match each other.
      *
      * @param domain Current website domain (e.g., "google.com")
      * @param secrets List of all available secrets
@@ -168,32 +143,26 @@ object WebsiteMatchingUtil {
         val domainNorm = currentDomain.lowercase().trim()
 
         return when {
+            // Without this, two blank sides (e.g. a secret with no recorded website, or a
+            // domain extraction failure that fell through to an empty string) would satisfy
+            // the exact-match check below vacuously: "" == "".
+            secretNorm.isEmpty() || domainNorm.isEmpty() -> {
+                MatchScore(0.0f, "no_match")
+            }
+
             // Exact match
             secretNorm == domainNorm -> {
                 MatchScore(1.0f, "exact")
             }
 
-            // Subdomain match (login.google.com vs google.com)
+            // Subdomain match (login.google.com vs google.com) - a real subdomain boundary,
+            // never a bare substring: "snapple.com".endsWith(".apple.com") is false.
             secretNorm.endsWith(".$domainNorm") || domainNorm.endsWith(".$secretNorm") -> {
                 MatchScore(0.9f, "subdomain")
             }
 
-            // Domain contains other (google.com contains google)
-            secretNorm.contains(domainNorm) || domainNorm.contains(secretNorm) -> {
-                MatchScore(0.7f, "domain")
-            }
-
-            // Partial match (same keywords)
             else -> {
-                val secretParts = secretNorm.split(".", "-", "_")
-                val domainParts = domainNorm.split(".", "-", "_")
-                val commonParts = secretParts.intersect(domainParts.toSet())
-
-                if (commonParts.isNotEmpty()) {
-                    MatchScore(0.5f, "partial")
-                } else {
-                    MatchScore(0.0f, "no_match")
-                }
+                MatchScore(0.0f, "no_match")
             }
         }
     }
@@ -213,6 +182,8 @@ object WebsiteMatchingUtil {
      * - google.com → Google
      * - github.com → GitHub
      * - example-site.com → Example Site
+     * - accounts.google.com → accounts.google.com
+     * - google.com.evil.com → google.com.evil.com
      *
      * @param website Website domain or URL
      * @return Formatted display name
@@ -220,44 +191,48 @@ object WebsiteMatchingUtil {
     fun getDisplayName(website: String): String {
         val domain = extractMainDomain(website) ?: website
 
+        // Without a public-suffix policy, a multi-label host must stay visible in full.
+        // Using its first label would present google.com.evil.com as the trusted brand Google.
+        if (domain.count { it == '.' } > 1) return domain
+
         // Remove TLD
         val nameWithoutTld = domain.split(".").first()
 
         // Handle special cases
-        return when (nameWithoutTld.lowercase()) {
-            "google" -> {
+        return when (domain.lowercase()) {
+            "google.com" -> {
                 "Google"
             }
 
-            "github" -> {
+            "github.com" -> {
                 "GitHub"
             }
 
-            "facebook" -> {
+            "facebook.com" -> {
                 "Facebook"
             }
 
-            "linkedin" -> {
+            "linkedin.com" -> {
                 "LinkedIn"
             }
 
-            "twitter" -> {
+            "twitter.com" -> {
                 "Twitter (X)"
             }
 
-            "microsoft" -> {
+            "microsoft.com" -> {
                 "Microsoft"
             }
 
-            "apple" -> {
+            "apple.com" -> {
                 "Apple"
             }
 
-            "amazon" -> {
+            "amazon.com" -> {
                 "Amazon"
             }
 
-            "netflix" -> {
+            "netflix.com" -> {
                 "Netflix"
             }
 
@@ -265,7 +240,9 @@ object WebsiteMatchingUtil {
                 // Generic formatting: example-site → Example Site
                 nameWithoutTld
                     .split("-", "_")
-                    .joinToString(" ") { it.replaceFirstChar { c -> if (c.isLowerCase()) c.titlecase() else it } }
+                    .joinToString(" ") {
+                        it.replaceFirstChar { c -> if (c.isLowerCase()) c.titlecase() else c.toString() }
+                    }
             }
         }
     }
@@ -300,11 +277,15 @@ object WebsiteMatchingUtil {
     }
 
     /**
-     * Extract subdomain from URL if present.
+     * Return hostname labels before the final two labels, if present.
+     *
+     * This legacy helper is not public-suffix aware and must not define credential boundaries.
+     * A leading www. is removed by [extractMainDomain] before labels are selected.
      *
      * Examples:
      * - login.google.com → login
-     * - www.example.com → www
+     * - www.example.com → null
+     * - a.example.co.uk → a.example
      * - example.com → null
      *
      * @param url URL to extract subdomain from

@@ -116,6 +116,11 @@ private const val CONNECTION_TIMEOUT_MS = 10000L // 10 seconds - important for a
 private const val LLM_TOKEN_TIMEOUT_MS = 90000L
 private const val MCP_INVOKE_TIMEOUT_MS = 60000L
 
+// Well under CONNECTION_TIMEOUT_MS: VERB_OPEN gets the default socket budget (it is
+// not a longer-budget candidate), so this wait must leave room for that budget to
+// still close a genuinely wedged connection rather than race it.
+private const val OPEN_ACTION_TIMEOUT_MS = 5000L
+
 // A dev reload on the host unloads the running instance and installs fresh bytes.
 // This is the client budget: above anything a healthy reload spends, below the
 // 60s server connection budget the verb gets from isLongerBudgetCandidate.
@@ -962,6 +967,20 @@ private fun acceptNextClient(
         null
     }
 
+private fun pluginActionResponse(verdict: kotlinx.coroutines.Deferred<Boolean>?): String {
+    if (verdict == null) return RESPONSE_OK
+    val handled = kotlinx.coroutines.runBlocking { awaitPluginAction(verdict, OPEN_ACTION_TIMEOUT_MS) }
+    return when (handled) {
+        true -> RESPONSE_OK
+
+        false -> RESPONSE_ERROR_PREFIX + "Plugin action was not handled"
+
+        // The deadline cancels queued dispatch; an already-running synchronous
+        // handler cannot be interrupted, so its outcome remains unknown.
+        null -> RESPONSE_ERROR_PREFIX + "Plugin action outcome unknown (timed out); do not retry automatically"
+    }
+}
+
 /**
  * Manages single-instance application behavior.
  *
@@ -1205,8 +1224,14 @@ object SingleInstanceManager {
                 // The forwarding instance states the URL's provenance; it is not
                 // inferred from the caller having held the token, which says
                 // nothing about where the URL came from.
-                DeepLinkHandler.processDeepLink(requireNotNull(request.url), request.origin)
-                RESPONSE_OK
+                val verdict = DeepLinkHandler.processDeepLink(requireNotNull(request.url), request.origin)
+                // Every route but a plugin action link returns null here and
+                // keeps today's fire-and-forget behaviour: RESPONSE_OK means
+                // only "queued". An action link is the one case with a real
+                // answer to await, so its OK/ERROR reflects whether the
+                // registered handler reported the action handled, not just that a
+                // coroutine was launched for it.
+                pluginActionResponse(verdict)
             }
 
             request.verb == VERB_LLM_TOKEN -> {
@@ -1431,7 +1456,12 @@ object SingleInstanceManager {
      * @param origin what the caller knows about where [url] came from. Defaults to
      *   [DeepLinkOrigin.EXTERNAL], because a forwarded URL normally reached this
      *   process from the OS.
-     * @return true if the running instance acknowledged it.
+     * @return true if the running instance acknowledged it. For most links this
+     *   still means only "queued" (fire-and-forget, as before); for a
+     *   `boss://plugin?id=…&action=…` link it now means the registered handler
+     *   reported the action handled. An unregistered handler id, a declined
+     *   action, or an unknown outcome at timeout returns false. This is not a
+     *   guarantee that asynchronous work started by a handler has completed.
      */
     fun sendToExistingInstance(
         url: String,

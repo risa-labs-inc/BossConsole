@@ -553,6 +553,54 @@ class LogSanitizerTest {
         assertFalse(result.contains("api.risaboss.com"), "hostname leaked through a URL: $result")
     }
 
+    // BossConsole#109 (review comment): filePathPattern's `[^\s:]+` stops at a colon, so a
+    // sensitive query/fragment value containing one is only partly consumed and the tail
+    // survives verbatim - a genuine token-fragment leak, not a cosmetic gap.
+    @Test
+    fun `sanitizeExceptionMessage does not leak a token fragment when its value contains a colon`() {
+        val result =
+            LogSanitizer.sanitizeExceptionMessage(
+                "Failed: [url=https://api.example.com/cb?token=abc:def]",
+            )
+        assertFalse(result.contains("abc"), "token fragment leaked before the colon: $result")
+        assertFalse(result.contains("def"), "token fragment leaked after the colon: $result")
+        assertFalse(result.contains(":def"), "the exact reported leak shape: $result")
+    }
+
+    @Test
+    fun `sanitizeExceptionMessage redacts a colon-bearing secret in a URL fragment too`() {
+        val result =
+            LogSanitizer.sanitizeExceptionMessage(
+                "Deep link boss://auth#access_token=abc:def&type=recovery rejected",
+            )
+        assertFalse(result.contains("abc"), "fragment token leaked: $result")
+        assertFalse(result.contains(":def"), "fragment token leaked after colon: $result")
+    }
+
+    @Test
+    fun `sanitizeExceptionMessage leaves a non-sensitive query param untouched by the new pass`() {
+        // The new pre-pass only fires for names nameMarksSecret recognises. A non-sensitive
+        // param's colon is not this fix's scope - it must still hit filePathPattern's
+        // pre-existing colon boundary exactly as before, unchanged by this fix.
+        assertEquals(
+            "Redirected to https:[PATH]:b",
+            LogSanitizer.sanitizeExceptionMessage("Redirected to https://api.example.com/go?next=a:b"),
+        )
+    }
+
+    @Test
+    fun `sanitizeExceptionMessage still keeps a colon-free token carried in a URL redacted exactly as before`() {
+        // Regression guard: the new pre-pass must not change the already-pinned output for
+        // the ordinary (no-colon) case in `sanitizeExceptionMessage keeps a token carried in a
+        // URL redacted` above.
+        assertEquals(
+            "Request to https:[PATH] failed",
+            LogSanitizer.sanitizeExceptionMessage(
+                "Request to https://api.example.com/auth/v1/verify?access_token=eyJhbGciOiJIUzI1NiJ9.abc.def failed",
+            ),
+        )
+    }
+
     @Test
     fun `sanitizeExceptionMessage does not mistake a fully-qualified class name for a hostname`() {
         // The exact false-positive risk a naive hostname pattern would create: Kotlin/Java

@@ -147,7 +147,7 @@ class EditorContentProviderImpl : EditorContentProvider {
             try {
                 val detector = MainFunctionDetectorProvider.get()
                 val actualProjectRoot = detector.findProjectRoot(mainFunction.filePath)
-                val langEnum = Language.fromExtension(mainFunction.language)
+                val langEnum = runLanguageForMainFunction(mainFunction)
 
                 // Create a DetectedMainFunction from MainFunctionInfo
                 val detected =
@@ -202,6 +202,18 @@ class EditorContentProviderImpl : EditorContentProvider {
         private var navigationEnabled: Boolean = true
     }
 }
+
+/**
+ * The [Language] to run [main] as, resolved from its FILE PATH.
+ *
+ * Deliberately not `Language.fromExtension(mainFunction.language)`: [toMainFunctionInfo] serialises
+ * the language as `this.language.name.lowercase()` - a language NAME (`"kotlin"`, `"python"`) - but
+ * `fromExtension` matches on file EXTENSIONS (`kt`, `py`). The two only coincide for `java` and
+ * `go`, so every other language resolved to [Language.UNKNOWN] and the generated run command became
+ * `echo 'Unknown language'`. The path carries the real extension and is what [detectMainFunctions]
+ * derived the language from in the first place, so it round-trips correctly.
+ */
+internal fun runLanguageForMainFunction(main: MainFunctionInfo): Language = Language.fromFileName(main.filePath)
 
 /**
  * Extension function to convert DetectedMainFunction to MainFunctionInfo.

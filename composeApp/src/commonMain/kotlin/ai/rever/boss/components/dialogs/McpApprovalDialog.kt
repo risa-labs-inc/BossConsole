@@ -48,14 +48,21 @@ import androidx.compose.ui.window.DialogProperties
 /**
  * Interactive dialog prompted when an AI agent attempts to execute a tool
  * governed by an ASK policy.
+ *
+ * Four scopes an operator can choose, in increasing durability: approve or deny just this one
+ * call, trust it for the rest of this session only, or persist a rule to
+ * `~/.boss/mcp-tool-policy.json` so the same tool never asks again - across restarts, not just
+ * this run. The engine behind the persisted scope ([ai.rever.boss.mcp.McpPolicyEngine
+ * .setToolPolicy]) already existed and was already tested; this dialog was the only thing
+ * standing between it and an operator who wanted to use it without hand-editing that file.
  */
 @Composable
 @Suppress("LongMethod") // Declarative Compose layout.
 fun McpApprovalDialog(
     request: McpApprovalRequest,
     pendingQueueSize: Int = 1,
-    onApprove: (trustForSession: Boolean) -> Unit,
-    onDeny: (reason: String) -> Unit,
+    onApprove: (trustForSession: Boolean, persistPolicy: Boolean) -> Unit,
+    onDeny: (reason: String, persistPolicy: Boolean) -> Unit,
 ) {
     val colors = BossTheme.colors
     val radii = BossTheme.radius
@@ -66,7 +73,7 @@ fun McpApprovalDialog(
     BossDialog(
         // onDismissRequest is required by BossDialog; outside-click and back-press are disabled below
         // to enforce deliberate operator approval or denial.
-        onDismissRequest = { onDeny("Dismissed by operator") },
+        onDismissRequest = { onDeny("Dismissed by operator", false) },
         properties =
             DialogProperties(
                 dismissOnClickOutside = false,
@@ -222,7 +229,45 @@ fun McpApprovalDialog(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Text(
+                    "Always choices apply to this tool name for all agents and arguments, across restarts " +
+                        "and replacement plugins. " +
+                        "Saved rules can be reviewed and reset from \"Persisted MCP policies\" in the bottom bar.",
+                    color = colors.textSecondary,
+                    fontSize = 11.sp,
+                )
+
+                // Persistent-scope actions: a rule written to disk, surviving a restart - kept
+                // visually secondary to the actions below since they are the more consequential,
+                // less common choice.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(
+                        onClick = {
+                            val reason = rejectionReason.ifBlank { "Operator declined this action" }
+                            onDeny(reason, true)
+                        },
+                        colors = ButtonDefaults.textButtonColors(contentColor = colors.alert),
+                    ) {
+                        Text("Always Deny", fontSize = 11.sp)
+                    }
+
+                    Spacer(modifier = Modifier.width(8.dp))
+
+                    TextButton(
+                        onClick = { onApprove(false, true) },
+                        colors = ButtonDefaults.textButtonColors(contentColor = colors.warn),
+                    ) {
+                        Text("Always Allow", fontSize = 11.sp)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
 
                 // Actions
                 Row(
@@ -243,7 +288,7 @@ fun McpApprovalDialog(
                     Button(
                         onClick = {
                             val reason = rejectionReason.ifBlank { "Operator declined this action" }
-                            onDeny(reason)
+                            onDeny(reason, false)
                         },
                         colors = ButtonDefaults.buttonColors(backgroundColor = colors.alert),
                     ) {
@@ -253,7 +298,7 @@ fun McpApprovalDialog(
                     Spacer(modifier = Modifier.width(8.dp))
 
                     OutlinedButton(
-                        onClick = { onApprove(true) },
+                        onClick = { onApprove(true, false) },
                         border = ButtonDefaults.outlinedBorder,
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.textPrimary),
                     ) {
@@ -263,7 +308,7 @@ fun McpApprovalDialog(
                     Spacer(modifier = Modifier.width(8.dp))
 
                     Button(
-                        onClick = { onApprove(false) },
+                        onClick = { onApprove(false, false) },
                         colors = ButtonDefaults.buttonColors(backgroundColor = colors.signal),
                     ) {
                         Text("Approve Once", color = colors.onSignal, fontSize = 12.sp)
