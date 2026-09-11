@@ -2,7 +2,7 @@ name: Filesystem resource limits
 
 on:
   push:
-    branches: ['fix/security-filesystem-limits']
+    branches: ['fix/security-filesystem-limits', 'fix/filesystem-service-resolved-paths']
   pull_request:
     paths:
       - 'modules/boss-service-filesystem/**'

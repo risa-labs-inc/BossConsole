@@ -30,24 +30,10 @@ import java.nio.file.StandardCopyOption
 class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutineImplBase() {
     private val logger = LoggerFactory.getLogger(FileSystemServiceImpl::class.java)
 
-    /** Paths that must not be accessed via IPC — prevents privilege-escalation via path injection. */
-    private val BLOCKED_PATH_PREFIXES = listOf("/etc", "/sys", "/proc")
-
-    /**
-     * Validates that [path] does not traverse outside its intended root and does not
-     * target sensitive system directories. Throws [IllegalArgumentException] on violation.
-     */
-    private fun validatePath(path: String) {
-        require(!path.contains("..")) { "Path traversal sequences ('..') are not allowed: $path" }
-        BLOCKED_PATH_PREFIXES.forEach { prefix ->
-            require(!path.startsWith(prefix)) { "Access to system path '$prefix' is not allowed: $path" }
-        }
-    }
-
     override suspend fun scanDirectory(request: ScanDirectoryRequest): ScanDirectoryResponse =
         withContext(Dispatchers.IO) {
+            FilePathPolicy.authorize(request.path)
             logger.debug("scanDirectory: path={}, recursive={}", request.path, request.recursive)
-            validatePath(request.path)
             val dir = File(request.path)
             if (!dir.exists() || !dir.isDirectory) {
                 return@withContext ScanDirectoryResponse
@@ -66,8 +52,8 @@ class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutine
 
     override suspend fun readFile(request: ReadFileRequest): ReadFileResponse =
         withContext(Dispatchers.IO) {
+            FilePathPolicy.authorize(request.path)
             logger.debug("readFile: path={}", request.path)
-            validatePath(request.path)
             val file = File(request.path)
             if (!file.exists()) {
                 return@withContext ReadFileResponse
@@ -114,8 +100,8 @@ class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutine
 
     override suspend fun writeFile(request: WriteFileRequest): WriteFileResponse =
         withContext(Dispatchers.IO) {
+            FilePathPolicy.authorize(request.path)
             logger.debug("writeFile: path={}", request.path)
-            validatePath(request.path)
             return@withContext try {
                 val file = File(request.path)
                 if (request.createParents) file.parentFile?.mkdirs()
@@ -144,8 +130,8 @@ class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutine
 
     override suspend fun createFile(request: CreateFileRequest): Empty =
         withContext(Dispatchers.IO) {
+            FilePathPolicy.authorize(request.path)
             logger.info("createFile: path={}, isDirectory={}", request.path, request.isDirectory)
-            validatePath(request.path)
             val file = File(request.path)
             if (request.createParents) file.parentFile?.mkdirs()
             if (request.isDirectory) file.mkdirs() else file.createNewFile()
@@ -154,13 +140,23 @@ class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutine
 
     override suspend fun deleteFile(request: DeleteFileRequest): Empty =
         withContext(Dispatchers.IO) {
+            FilePathPolicy.authorize(request.path)
             logger.info("deleteFile: path={}, recursive={}", request.path, request.recursive)
-            validatePath(request.path)
             val file = File(request.path)
-            if (request.recursive && file.isDirectory) {
-                file.deleteRecursively()
-            } else {
-                file.delete()
+            val deleted =
+                if (request.recursive && file.isDirectory) {
+                    file.deleteRecursively()
+                } else {
+                    file.delete()
+                }
+            // DeleteFileResponse has no error field - like renameFile, the status is the only
+            // channel a failure has. Returning Empty here reports every refused delete,
+            // including a recursive removal that only partly succeeded, as success.
+            if (!deleted) {
+                if (file.exists()) {
+                    throw status(Status.PERMISSION_DENIED, "Delete failed: ${request.path}", null)
+                }
+                throw status(Status.NOT_FOUND, "No such file: ${request.path}", null)
             }
             Empty.getDefaultInstance()
         }
@@ -210,9 +206,9 @@ class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutine
      */
     override suspend fun renameFile(request: RenameFileRequest): Empty =
         withContext(Dispatchers.IO) {
+            FilePathPolicy.authorize(request.sourcePath)
+            FilePathPolicy.authorize(request.destinationPath)
             logger.info("renameFile: from={}, to={}", request.sourcePath, request.destinationPath)
-            validatePath(request.sourcePath)
-            validatePath(request.destinationPath)
             val destinationExists = "Destination already exists: ${request.destinationPath}"
             val source = Paths.get(request.sourcePath)
             val dest = Paths.get(request.destinationPath)
@@ -251,7 +247,7 @@ class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutine
     private val watches = FileWatchRegistry()
 
     override fun watchFileChanges(request: WatchFileChangesRequest): Flow<FileChangeEvent> {
-        validatePath(request.path)
+        FilePathPolicy.authorize(request.path)
         return watches.watch(request)
     }
 }

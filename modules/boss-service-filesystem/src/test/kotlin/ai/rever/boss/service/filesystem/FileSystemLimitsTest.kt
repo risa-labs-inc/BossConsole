@@ -1,5 +1,6 @@
 package ai.rever.boss.service.filesystem
 
+import ai.rever.boss.ipc.proto.services.DeleteFileRequest
 import ai.rever.boss.ipc.proto.services.FileSystemServiceGrpcKt
 import ai.rever.boss.ipc.proto.services.ReadFileRequest
 import ai.rever.boss.ipc.proto.services.ScanDirectoryRequest
@@ -24,6 +25,7 @@ import java.io.RandomAccessFile
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
+import java.nio.file.Paths
 import java.nio.file.StandardWatchEventKinds.ENTRY_CREATE
 import java.nio.file.attribute.BasicFileAttributes
 import java.util.concurrent.Executors
@@ -264,6 +266,62 @@ class FileSystemLimitsTest {
                     assertTrue(received.await().path.startsWith(root.toString()))
                 }
             }
+        }
+
+    @Test
+    fun `a symlinked parent directory does not carry the denylist past its resolved location`() =
+        runBlocking {
+            if (Platform.isWindows()) return@runBlocking
+            val linked = Files.createDirectory(root.resolve("linked"))
+            Files.createSymbolicLink(linked.resolve("into-etc"), Paths.get("/etc"))
+            val failure =
+                assertFailsWith<StatusException> {
+                    stub.readFile(
+                        ReadFileRequest
+                            .newBuilder()
+                            .setPath(linked.resolve("into-etc").resolve("hostname").toString())
+                            .setMaxBytes(8)
+                            .build(),
+                    )
+                }
+            // The message names the resolved location, not the requested one.
+            assertEquals(
+                Status.Code.UNKNOWN,
+                failure.status.code,
+                "the handler raises IllegalArgumentException, which gRPC surfaces as UNKNOWN",
+            )
+            val traversal = Files.createSymbolicLink(root.resolve("private-etc"), Paths.get("/private/etc"))
+            assertFailsWith<StatusException> {
+                stub.scanDirectory(
+                    ScanDirectoryRequest.newBuilder().setPath(traversal.toString()).build(),
+                )
+            }
+            assertFalse(Files.exists(root.resolve("linked").resolve("passwd")), "nothing was read or written")
+        }
+
+    @Test
+    fun `a refused delete is reported instead of returning Empty as success`() =
+        runBlocking {
+            val failure =
+                assertFailsWith<StatusException> {
+                    stub.deleteFile(
+                        DeleteFileRequest
+                            .newBuilder()
+                            .setPath(root.resolve("never-existed").toString())
+                            .build(),
+                    )
+                }
+            assertEquals(Status.Code.NOT_FOUND, failure.status.code)
+            assertTrue(
+                failure.status.description
+                    .orEmpty()
+                    .contains("never-existed"),
+                "got: ${failure.status.description}",
+            )
+            val deleted = root.resolve("deletable")
+            Files.writeString(deleted, "content")
+            stub.deleteFile(DeleteFileRequest.newBuilder().setPath(deleted.toString()).build())
+            assertFalse(Files.exists(deleted), "a successful delete still returns Empty")
         }
 }
 
