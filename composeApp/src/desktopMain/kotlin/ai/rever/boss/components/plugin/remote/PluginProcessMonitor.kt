@@ -7,6 +7,7 @@ import ai.rever.boss.process.ManagedProcess
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -162,18 +163,25 @@ class PluginProcessMonitor internal constructor(
         if (disposed.get() || !monitoringStarted.compareAndSet(false, true)) return
 
         scope.launch {
+            val loopJob = coroutineContext[Job]
             while (isActive) {
-                runHealthCheckSafely()
+                runHealthCheckSafely(loopJob)
                 delay(checkIntervalMs)
             }
         }
     }
 
-    private suspend fun runHealthCheckSafely() {
+    private suspend fun runHealthCheckSafely(loopJob: Job?) {
         try {
             checkHealth()
         } catch (e: CancellationException) {
-            throw e
+            // A cancellation escaping a restart action (e.g. a timeout that surfaces as
+            // TimeoutCancellationException) must not take the one-way monitoring loop down
+            // with it: supervision for the whole window would be gone for the rest of the
+            // session. A genuinely cancelled scope ends the loop at the next delay().
+            if (loopJob?.isActive == true) {
+                logger.error("Health check interrupted by a cancellation exception; loop continues", e)
+            }
         } catch (e: Exception) {
             logger.error("Plugin health check failed", e)
         }

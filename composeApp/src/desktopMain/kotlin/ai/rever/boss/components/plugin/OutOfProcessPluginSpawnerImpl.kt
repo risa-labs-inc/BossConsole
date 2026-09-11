@@ -335,15 +335,20 @@ class OutOfProcessPluginSpawnerImpl(
                     logger.info("Terminating plugin process: id={}, pid={}", pluginId, process.pid)
                     process.destroy()
 
-                    // Wait for graceful shutdown, then force kill
+                    // A child that outlives the grace window is the normal exit of this
+                    // wait, not an error: force-kill it and succeed, matching dev's
+                    // pre-cancellation behaviour. withTimeout would surface the same
+                    // outcome as TimeoutCancellationException, a CancellationException
+                    // that callers and the health loop treat as caller cancellation.
                     val exited =
                         withTimeoutOrNull(5_000) {
-                            while (process.isAlive) delay(100)
-                            true
-                        } ?: false
-                    if (!exited) {
+                            while (process.isAlive) {
+                                delay(100)
+                            }
+                        }
+                    if (exited == null) {
+                        logger.warn("Plugin process outlived the 5s destroy grace, forcing: id={}", pluginId)
                         process.destroyForcibly()
-                        logger.warn("Force-killed plugin process after shutdown timeout: id={}", pluginId)
                     }
                 } else {
                     logger.warn("No managed process found for plugin: {}", pluginId)

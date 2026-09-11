@@ -3,6 +3,7 @@ package ai.rever.boss.components.plugin.remote
 import ai.rever.boss.process.ManagedProcess
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
@@ -16,6 +17,7 @@ class PluginProcessMonitorTest {
         var connected: Boolean = false,
         var restartAllowed: Boolean = true,
         var aliveChecksToFail: Int = 0,
+        val aliveOverrides: MutableMap<String, Boolean> = mutableMapOf(),
     ) : PluginProcessMonitorBackend {
         override fun getManagedProcess(pluginId: String): ManagedProcess? = null
 
@@ -24,7 +26,7 @@ class PluginProcessMonitorTest {
                 aliveChecksToFail--
                 error("Temporary backend failure")
             }
-            return alive
+            return aliveOverrides[pluginId] ?: alive
         }
 
         override fun isConnected(pluginId: String): Boolean = connected
@@ -334,6 +336,70 @@ class PluginProcessMonitorTest {
                     PluginProcessState.RUNNING,
                     monitor.healthStates.value["test-plugin"]?.processState,
                 )
+            } finally {
+                monitor.dispose()
+            }
+        }
+
+    @Test
+    fun `periodic monitoring survives a cancellation exception from a restart action`() =
+        runBlocking {
+            val backend = FakeBackend(alive = true)
+            val monitor =
+                PluginProcessMonitor(
+                    backend = backend,
+                    checkIntervalMs = 10,
+                )
+            var flakyAttempts = 0
+            var bystanderRestarts = 0
+            val await: suspend (condition: () -> Boolean) -> Unit = { condition ->
+                withTimeout(2_000) {
+                    while (!condition()) {
+                        yield()
+                    }
+                }
+            }
+
+            try {
+                monitor.monitor(
+                    "flaky",
+                    "flaky",
+                    restartAction = {
+                        flakyAttempts++
+                        if (flakyAttempts == 1) withTimeout(50) { delay(5_000) }
+                        backend.aliveOverrides["flaky"] = true
+                        Result.success(Unit)
+                    },
+                )
+                monitor.monitor(
+                    "bystander",
+                    "bystander",
+                    restartAction = {
+                        bystanderRestarts++
+                        backend.aliveOverrides["bystander"] = true
+                        Result.success(Unit)
+                    },
+                )
+                monitor.start()
+
+                await {
+                    monitor.healthStates.value["flaky"]?.processState ==
+                        PluginProcessState.RUNNING &&
+                        monitor.healthStates.value["bystander"]?.processState ==
+                        PluginProcessState.RUNNING
+                }
+
+                backend.aliveOverrides["flaky"] = false
+
+                await { flakyAttempts >= 1 }
+
+                backend.aliveOverrides["bystander"] = false
+
+                await {
+                    bystanderRestarts == 1 &&
+                        monitor.healthStates.value["bystander"]?.processState ==
+                        PluginProcessState.RUNNING
+                }
             } finally {
                 monitor.dispose()
             }
