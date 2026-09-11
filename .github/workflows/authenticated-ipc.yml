@@ -10,6 +10,7 @@ on:
       - 'modules/boss-process-manager/**'
       - 'modules/boss-app-terminal/**'
       - 'modules/boss-orchestrator/**'
+      - 'modules/boss-service-filesystem/**'
       - '.github/workflows/authenticated-ipc.yml'
   workflow_dispatch:
 
@@ -35,11 +36,12 @@ jobs:
         shell: bash
         run: >-
           ./gradlew :boss-ipc:test :boss-ipc:nativeSmokeJvm :boss-process-manager:test
-          :boss-app-terminal:test :boss-orchestrator:test
+          :boss-app-terminal:test :boss-orchestrator:test :boss-service-filesystem:test
           :boss-ipc:ktlintCheck :boss-ipc:detekt
           :boss-process-manager:ktlintCheck :boss-process-manager:detekt
           :boss-app-terminal:ktlintCheck :boss-app-terminal:detekt
           :boss-orchestrator:ktlintCheck :boss-orchestrator:detekt
+          :boss-service-filesystem:ktlintCheck :boss-service-filesystem:detekt
           --no-daemon
       - uses: graalvm/setup-graalvm@v1
         with:
@@ -60,3 +62,4 @@ jobs:
             modules/boss-process-manager/build/test-results
             modules/boss-app-terminal/build/test-results
             modules/boss-orchestrator/build/test-results
+            modules/boss-service-filesystem/build/test-results
