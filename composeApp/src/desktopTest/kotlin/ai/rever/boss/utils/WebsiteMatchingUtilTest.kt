@@ -93,10 +93,24 @@ class WebsiteMatchingUtilTest {
     }
 
     @Test
+    fun `matching is case-insensitive`() {
+        val result = WebsiteMatchingUtil.calculateMatchScore("VIJAY.COM", "vijay.com")
+        assertEquals(1.0f, result.score)
+        assertEquals("exact", result.reason)
+    }
+
+    @Test
     fun `a subdomain still matches its parent domain`() {
         val score = WebsiteMatchingUtil.calculateMatchScore("google.com", "login.google.com")
         assertEquals(0.9f, score.score)
         assertEquals("subdomain", score.reason)
+    }
+
+    @Test
+    fun `deep subdomain match returns score 0_9 and reason subdomain`() {
+        val result = WebsiteMatchingUtil.calculateMatchScore("vijay.com", "login.auth.vijay.com")
+        assertEquals(0.9f, result.score)
+        assertEquals("subdomain", result.reason)
     }
 
     @Test
@@ -132,9 +146,45 @@ class WebsiteMatchingUtilTest {
     }
 
     @Test
+    fun `malicious suffix domain does not match`() {
+        val result = WebsiteMatchingUtil.calculateMatchScore("apple.com", "apple.com.evil")
+        assertEquals(0.0f, result.score)
+        assertEquals("no_match", result.reason)
+    }
+
+    @Test
+    fun `multi-part TLD valid subdomain matches`() {
+        val result = WebsiteMatchingUtil.calculateMatchScore("example.co.uk", "login.example.co.uk")
+        assertEquals(0.9f, result.score)
+        assertEquals("subdomain", result.reason)
+    }
+
+    @Test
+    fun `multi-part TLD fake domain does not match`() {
+        val result = WebsiteMatchingUtil.calculateMatchScore("example.co.uk", "badexample.co.uk")
+        assertEquals(0.0f, result.score)
+        assertEquals("no_match", result.reason)
+    }
+
+    @Test
     fun `blank sides do not vacuously exact-match each other`() {
         assertEquals(0.0f, WebsiteMatchingUtil.calculateMatchScore("", "").score)
         assertEquals(0.0f, WebsiteMatchingUtil.calculateMatchScore("", "example.com").score)
+    }
+
+    @Test
+    fun `empty input returns no match`() {
+        val emptySecret = WebsiteMatchingUtil.calculateMatchScore("", "vijay.com")
+        assertEquals(0.0f, emptySecret.score)
+        assertEquals("no_match", emptySecret.reason)
+
+        val emptyDomain = WebsiteMatchingUtil.calculateMatchScore("vijay.com", "")
+        assertEquals(0.0f, emptyDomain.score)
+        assertEquals("no_match", emptyDomain.reason)
+
+        val bothEmpty = WebsiteMatchingUtil.calculateMatchScore("", "")
+        assertEquals(0.0f, bothEmpty.score)
+        assertEquals("no_match", bothEmpty.reason)
     }
 
     // ---- End to end: the actual suggestion path a user sees ----
