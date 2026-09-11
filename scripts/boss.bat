@@ -13,7 +13,16 @@ REM   boss folder <path>                # Opens folder in codebase
 REM   boss terminal                     # Opens terminal
 REM   boss terminal -c <command>        # Opens terminal with command
 
-setlocal enabledelayedexpansion
+REM Plain setlocal, NOT enabledelayedexpansion.
+REM
+REM cmd runs delayed expansion after percent expansion, on the resulting line
+REM text. With it on for the whole file, every `call :urlencode "%~2" ENCODED`
+REM line had already had its "!" consumed by the time the subroutine ran, so a
+REM path like wow!.md reached :urlencode as wow.md and no fix inside the
+REM subroutine could recover it. Nothing in this file uses !var!, so the option
+REM bought nothing; :cmd_forward_exe's explicit DisableDelayedExpansion below
+REM is now belt-and-braces rather than the only defence.
+setlocal
 
 REM Check if no arguments provided
 if "%~1"=="" (
@@ -195,8 +204,10 @@ REM
 REM $env:BOSS_ENC_IN is read as DATA by EscapeDataString, so no value can be
 REM parsed as code. setlocal keeps the variable out of the caller's scope.
 REM
-REM enabledelayedexpansion is deliberately NOT set here: it made "!" in a
-REM filename disappear. The endlocal line still expands %encoded% before
+REM Preserving "!" in a filename takes BOTH this plain setlocal and the plain
+REM setlocal at the top of the file. The character is consumed at the CALL
+REM site, before this subroutine is entered, so turning it off only here fixes
+REM nothing on its own. The endlocal line below still expands %encoded% before
 REM endlocal runs, because cmd parses the whole line first.
 setlocal
 set "BOSS_ENC_IN=%~1"
