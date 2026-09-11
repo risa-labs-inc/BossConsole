@@ -18,13 +18,14 @@ function scriptValues(html: string): Record<string, unknown> {
   assertEquals(blocks.length, 1, "input must not create additional scripts");
   const source = blocks[0]?.[1];
   assert(source);
-  const values: Record<string, unknown> = {};
-  for (const match of source.matchAll(/const (\w+) = ("(?:[^"\\]|\\.)*");/g)) {
-    assert(match[1] && match[2]);
-    values[match[1]] = JSON.parse(match[2]);
-  }
-  new Function(source);
-  return values;
+  const names = ["challenge", "userId", "email", "sessionId", "rpId", "rpName", "credentialId"]
+    .filter((name) => source.includes(`const ${name} =`));
+  const initialize = new Function("document", `${source}\nreturn {${names.join(",")}};`);
+  // Exercise the generated declarations without triggering a browser ceremony.
+  return initialize({
+    getElementById: () => ({ addEventListener() {} }),
+    addEventListener() {},
+  });
 }
 
 for (const value of inputs) {

@@ -1,3 +1,4 @@
+import { authFailureDetails } from "./utils/logging.ts"
 /**
  * Passkey Edge Function
  *
@@ -125,7 +126,7 @@ app.notFound((ctx) => {
 
 // Global error handler
 app.onError((err, ctx) => {
-  console.error('Global error:', err)
+  console.error('Global error:', authFailureDetails(err))
   return ctx.json({ error: err.message }, 500)
 })
 

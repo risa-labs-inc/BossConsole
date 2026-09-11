@@ -1,3 +1,4 @@
+import { authFailureDetails } from "./logging.ts"
 /**
  * Error Handler Utility
  *
@@ -48,8 +49,8 @@ export function withGenericErrorHandler<TArgs extends unknown[], TResult, TError
     try {
       return await fn(...args)
     } catch (error) {
-      const err = error as Error
-      console.error(`${logPrefix} Error:`, err)
+      const err = error instanceof Error ? error : new Error("Unknown service failure")
+      console.error(`${logPrefix} Error:`, authFailureDetails(err))
       return onError(err)
     }
   }
