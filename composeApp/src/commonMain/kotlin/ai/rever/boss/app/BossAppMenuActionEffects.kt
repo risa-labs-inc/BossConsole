@@ -1,5 +1,6 @@
 package ai.rever.boss.app
 
+import ai.rever.boss.browser.FluckMarkdownExtractor
 import ai.rever.boss.components.bars.horizontal.StatusMessageManager
 import ai.rever.boss.components.dialogs.TabType
 import ai.rever.boss.components.plugin.AvailablePluginUpdate
@@ -26,6 +27,7 @@ import ai.rever.boss.plugin.tab.terminal.TerminalTabInfo
 import ai.rever.boss.plugin.tab.terminal.TerminalTabType
 import ai.rever.boss.project.DefaultWorkingDirectory
 import ai.rever.boss.topofmind.TabTreeState
+import ai.rever.boss.window.ClipboardHelper
 import ai.rever.boss.window.MenuActionsHandler
 import ai.rever.boss.window.WindowAppearanceSettings
 import ai.rever.boss.window.WindowAppearanceSettingsManager
@@ -505,6 +507,70 @@ internal fun BossAppMenuActionEffects(
             .onEach { eventWindowId ->
                 if (eventWindowId == windowId) {
                     ActiveBrowserRegistry.activeIn(windowId)?.showDevTools()
+                }
+            }.launchIn(this)
+    }
+
+    LaunchedEffect(windowId) {
+        val copyMarkdownMutex = kotlinx.coroutines.sync.Mutex()
+        MenuActionsHandler.browserCopyMarkdownEvents
+            .onEach { eventWindowId ->
+                if (eventWindowId == windowId) {
+                    if (!copyMarkdownMutex.tryLock()) {
+                        return@onEach
+                    }
+                    try {
+                        val browserHandle = ActiveBrowserRegistry.activeIn(windowId)
+                        if (browserHandle == null) {
+                            StatusMessageManager.showMessage("No active browser tab")
+                            return@onEach
+                        }
+                        withContext(Dispatchers.Default) {
+                            val result = FluckMarkdownExtractor.extractMarkdown(browserHandle)
+                            if (result.markdown.isNotBlank()) {
+                                val copied = ClipboardHelper.copyTextSafe(result.markdown)
+                                withContext(Dispatchers.Main) {
+                                    if (copied) {
+                                        val targetLabel = if (result.isSelection) "Selection" else "Page"
+                                        val truncSuffix = if (result.isTruncated) ", truncated" else ""
+                                        val tokenCount = result.estimatedTokens
+                                        val toastMsg =
+                                            "$targetLabel Markdown copied for agent " +
+                                                "(~$tokenCount tokens$truncSuffix)"
+                                        StatusMessageManager.showMessage(
+                                            toastMsg,
+                                            durationMs = 2500,
+                                        )
+                                    } else {
+                                        StatusMessageManager.showMessage(
+                                            "Failed to copy Markdown to clipboard",
+                                            durationMs = 2500,
+                                        )
+                                    }
+                                }
+                            } else {
+                                withContext(Dispatchers.Main) {
+                                    StatusMessageManager.showMessage("No readable content found", durationMs = 2500)
+                                }
+                            }
+                        }
+                    } finally {
+                        copyMarkdownMutex.unlock()
+                    }
+                }
+            }.launchIn(this)
+    }
+
+    LaunchedEffect(windowId) {
+        MenuActionsHandler.browserCopyLinkEvents
+            .onEach { eventWindowId ->
+                if (eventWindowId == windowId) {
+                    val browserHandle = ActiveBrowserRegistry.activeIn(windowId)
+                    if (browserHandle == null) {
+                        StatusMessageManager.showMessage("No active browser tab")
+                        return@onEach
+                    }
+                    browserHandle.copyCurrentUrl()
                 }
             }.launchIn(this)
     }
