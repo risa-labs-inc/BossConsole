@@ -47,6 +47,10 @@ class WindowProjectState(
      * the empty string instead, because an Elvis never fires on a non-null value, and
      * an empty path resolves against the filesystem root rather than failing.
      *
+     * A point read, not a flow: this snapshots [selectedProject]'s current value. A
+     * caller that must react to later project switches collects [selectedProject] and
+     * maps it itself.
+     *
      * This exists so the sentinel is recognised by the class that creates it, once,
      * instead of by every caller remembering to test for blankness. A caller that
      * genuinely needs a non-null string for a native boundary can still write

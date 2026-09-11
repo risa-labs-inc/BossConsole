@@ -318,7 +318,12 @@ class DefaultPlugin(
                             ).newInstance(
                                 kernelSpawner,
                                 windowId ?: "",
-                                windowProjectState?.selectedProject?.value?.path ?: "",
+                                // Explicit substitution at the native boundary, as the
+                                // selectedProjectPath KDoc recommends: a blank path means "no
+                                // project" for the in-process surface, so the out-of-process
+                                // launch must agree instead of handing a blank string to
+                                // File() and BOSS_PROJECT_PATH.
+                                windowProjectState?.selectedProjectPath ?: "",
                             ) as OutOfProcessPluginSpawner
                     } else {
                         null
