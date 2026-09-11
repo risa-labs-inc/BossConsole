@@ -103,9 +103,15 @@ class WebsiteMatchingUtilTest {
 
     @Test
     fun `surrounding whitespace is trimmed before matching`() {
+        // Both sides: the secret's stored website AND the page domain can arrive
+        // padded, and either trim must run or the pair would miss.
         val result = WebsiteMatchingUtil.calculateMatchScore(" google.com ", "google.com")
         assertEquals(1.0f, result.score)
         assertEquals("exact", result.reason)
+
+        val paddedDomain = WebsiteMatchingUtil.calculateMatchScore("google.com", " google.com ")
+        assertEquals(1.0f, paddedDomain.score)
+        assertEquals("exact", paddedDomain.reason)
     }
 
     @Test
@@ -130,6 +136,12 @@ class WebsiteMatchingUtilTest {
         val result = WebsiteMatchingUtil.calculateMatchScore("google.com", "Login.Auth.GOOGLE.COM")
         assertEquals(0.9f, result.score)
         assertEquals("subdomain", result.reason)
+
+        // Mixed case AND padding on the secret side: the fold must also reach inside the
+        // interpolated ".$domainNorm" operand, and the secret's trim must run on this path.
+        val mixed = WebsiteMatchingUtil.calculateMatchScore(" Login.GOOGLE.com ", "google.com")
+        assertEquals(0.9f, mixed.score)
+        assertEquals("subdomain", mixed.reason)
     }
 
     @Test
@@ -179,8 +191,12 @@ class WebsiteMatchingUtilTest {
     fun `a hostile saved secret does not match the legitimate site`() {
         // The mirror of the case above, and the more dangerous one: a poisoned
         // vault entry for "apple.com.evil" must not be offered on the real
-        // apple.com. The test above only covers `secretNorm.endsWith(".$domainNorm")`;
-        // this one pins the other operand, `domainNorm.endsWith(".$secretNorm")`.
+        // apple.com. Each negative pins the operand that is live in that direction -
+        // in the test above that is `domainNorm.endsWith(".$secretNorm")` (the secret is a
+        // substring of the domain); here it is `secretNorm.endsWith(".$domainNorm")`
+        // (the domain is a substring of the secret). In each, the other operand is
+        // vacuous: its needle is longer than its haystack, so no anchoring mutation
+        // could ever flip it.
         val result = WebsiteMatchingUtil.calculateMatchScore("apple.com.evil", "apple.com")
         assertEquals(0.0f, result.score)
         assertEquals("no_match", result.reason)
@@ -206,7 +222,8 @@ class WebsiteMatchingUtilTest {
 
     @Test
     fun `a fake multi-part TLD domain does not match as a hostile secret either`() {
-        // The mirror of the case above: the other endsWith operand on the .co.uk pair.
+        // The mirror of the case above: the same live-operand logic on the .co.uk pair -
+        // here `secretNorm.endsWith(".$domainNorm")` is the operand a mutation could flip.
         val result = WebsiteMatchingUtil.calculateMatchScore("badexample.co.uk", "example.co.uk")
         assertEquals(0.0f, result.score)
         assertEquals("no_match", result.reason)
