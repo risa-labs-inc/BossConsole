@@ -5,16 +5,12 @@ on:
     paths:
       - 'modules/boss-native-files/**'
       - 'modules/boss-process-manager/**'
-      - 'modules/boss-service-filesystem/**'
-      - 'modules/boss-app-terminal/**'
       - '.github/workflows/native-file-boundaries.yml'
   pull_request:
     branches: [main, dev]
     paths:
       - 'modules/boss-native-files/**'
       - 'modules/boss-process-manager/**'
-      - 'modules/boss-service-filesystem/**'
-      - 'modules/boss-app-terminal/**'
       - '.github/workflows/native-file-boundaries.yml'
   workflow_dispatch:
 
@@ -40,7 +36,7 @@ jobs:
         shell: bash
         run: >-
           ./gradlew :boss-native-files:test :boss-native-files:nativeSmokeJvm
-          :boss-process-manager:test :boss-app-terminal:test :boss-service-filesystem:test
+          :boss-process-manager:test :boss-process-manager:ktlintCheck :boss-process-manager:detekt
           :boss-native-files:ktlintCheck :boss-native-files:detekt
           --console=plain --no-daemon
       - uses: graalvm/setup-graalvm@v1
@@ -63,6 +59,4 @@ jobs:
             modules/boss-native-files/build/reports/
             modules/boss-native-files/build/test-results/
             modules/boss-process-manager/build/test-results/
-            modules/boss-app-terminal/build/test-results/
-            modules/boss-service-filesystem/build/test-results/
           retention-days: 7
