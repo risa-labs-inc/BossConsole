@@ -1,3 +1,4 @@
+import { authFailureDetails } from "../utils/logging.ts"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { getUserPasskeys } from "../utils/database.ts"
 import { withErrorHandler } from "../utils/error-handler.ts"
@@ -68,7 +69,7 @@ export const deleteUserPasskey = withErrorHandler(
       .eq('id', passkeyId)
 
     if (deleteError) {
-      console.error('🗑️ Error deleting passkey:', deleteError)
+      console.error('🗑️ Error deleting passkey:', authFailureDetails(deleteError))
       return {
         success: false,
         error: 'Failed to delete passkey'
@@ -119,7 +120,7 @@ export const updatePasskeyDisplayName = withErrorHandler(
       .eq('id', passkeyId)
 
     if (updateError) {
-      console.error('✏️ Error updating passkey:', updateError)
+      console.error('✏️ Error updating passkey:', authFailureDetails(updateError))
       return {
         success: false,
         error: 'Failed to update passkey'

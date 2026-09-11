@@ -1,3 +1,4 @@
+import { authFailureDetails } from "./logging.ts"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { ChallengeType } from "../types/challenge.ts"
 import { normalizeBase64Url } from "./base64.ts"
@@ -35,7 +36,6 @@ export async function verifyChallenge(
   type: ChallengeType
 ) {
   console.log('🔍 verifyChallenge called with:', {
-    challenge: challenge.substring(0, 20) + '...',
     type
   })
 
@@ -47,10 +47,10 @@ export async function verifyChallenge(
       .eq('type', type)
       .single()
 
-    console.log('🔍 verifyChallenge result:', { found: !!challengeData, error: error?.message })
+    console.log('🔍 verifyChallenge result:', { found: !!challengeData, error: authFailureDetails(error) })
 
     if (error || !challengeData) {
-      console.error('Challenge verification failed:', error)
+      console.error('Challenge verification failed:', authFailureDetails(error))
       return { success: false, error: 'Invalid or expired challenge' }
     }
 
@@ -61,7 +61,7 @@ export async function verifyChallenge(
 
     return { success: true, challengeData }
   } catch (error) {
-    console.error('Challenge verification error:', error)
+    console.error('Challenge verification error:', authFailureDetails(error))
     return { success: false, error: 'Challenge verification failed' }
   }
 }
@@ -86,7 +86,7 @@ export async function consumeChallengeRow(
     .select('id')
 
   if (error) {
-    console.error('❌ Failed to consume challenge:', error)
+    console.error('❌ Failed to consume challenge:', authFailureDetails(error))
     return { consumed: false, error: error.message }
   }
 
@@ -151,7 +151,7 @@ export async function storeCompletedAuthentication(
       '⚠️ completed_authentications has no unique index on session_id — apply migration ' +
       '20260726000000_completed_auth_session_unique.sql. Falling back to a plain insert; ' +
       'duplicate rows for one session are possible until it is applied.',
-      error
+      authFailureDetails(error)
     )
 
     const retry = await supabase
@@ -200,7 +200,7 @@ export async function claimStoredSession(
     .select('id')
 
   if (error) {
-    console.error('❌ Failed to claim the stored session:', error)
+    console.error('❌ Failed to claim the stored session:', authFailureDetails(error))
     return { claimed: false, error: error.message }
   }
 
@@ -218,7 +218,6 @@ export async function verifyAndConsumeChallenge(
   type: ChallengeType
 ) {
   console.log('🔥 verifyAndConsumeChallenge called with:', {
-    challenge: challenge.substring(0, 20) + '...',
     type
   })
 
@@ -232,7 +231,7 @@ export async function verifyAndConsumeChallenge(
       .single()
 
     if (error || !data) {
-      console.error('Challenge not found or expired:', error)
+      console.error('Challenge not found or expired:', authFailureDetails(error))
       return { success: false, error: 'Invalid or expired challenge' }
     }
 
@@ -245,7 +244,7 @@ export async function verifyAndConsumeChallenge(
     console.log('Challenge verified and consumed successfully')
     return { success: true, challenge: data }
   } catch (error) {
-    console.error('Exception verifying challenge:', error)
+    console.error('Exception verifying challenge:', authFailureDetails(error))
     return { success: false, error: (error as Error).message }
   }
 }
@@ -254,7 +253,7 @@ export async function storePasskeyInDB(
   supabase: SupabaseClient,
   passkey: Omit<PasskeyRecord, 'id' | 'created_at' | 'active'>
 ) {
-  console.log('storePasskeyInDB called with credential:', passkey.credential_id)
+  console.log('Storing verified passkey')
 
   try {
     const insertData = {
@@ -282,7 +281,7 @@ export async function storePasskeyInDB(
           console.error(
             `❌ Cannot store an alg ${alg} credential without the passkey verification columns — ` +
             'apply migration 20260725000000_passkey_verification_columns.sql',
-            error
+            authFailureDetails(error)
           )
           return {
             success: false,
@@ -294,7 +293,7 @@ export async function storePasskeyInDB(
           '⚠️ user_passkeys is missing the passkey verification columns — apply migration ' +
           '20260725000000_passkey_verification_columns.sql. Storing the credential without them; ' +
           'signature-counter and rpId checks will be unavailable for it.',
-          error
+          authFailureDetails(error)
         )
 
         const { public_key_alg: _alg, sign_count: _count, rp_id: _rpId, ...legacyData } = insertData
@@ -304,21 +303,21 @@ export async function storePasskeyInDB(
           .select()
 
         if (retry.error) {
-          console.error('Database error storing passkey:', retry.error)
+          console.error('Database error storing passkey:', authFailureDetails(retry.error))
           return { success: false, error: retry.error.message }
         }
 
         return { success: true, data: retry.data }
       }
 
-      console.error('Database error storing passkey:', error)
+      console.error('Database error storing passkey:', authFailureDetails(error))
       return { success: false, error: error.message }
     }
 
     console.log('Passkey stored successfully')
     return { success: true, data }
   } catch (error) {
-    console.error('Exception storing passkey:', error)
+    console.error('Exception storing passkey:', authFailureDetails(error))
     return { success: false, error: (error as Error).message }
   }
 }
@@ -336,7 +335,7 @@ function logPasskeyUseFailure(error: { code?: string; message?: string }): void 
       '⚠️ Cannot record the signature counter: user_passkeys is missing the verification ' +
       'columns. Apply migration 20260725000000_passkey_verification_columns.sql — until then ' +
       'cloned-authenticator detection is unavailable.',
-      error
+      authFailureDetails(error)
     )
     return
   }
@@ -344,7 +343,7 @@ function logPasskeyUseFailure(error: { code?: string; message?: string }): void 
   console.error(
     '❌ Failed to record passkey use on a migrated schema — cloned-authenticator detection ' +
     'is not engaging for this credential:',
-    error
+    authFailureDetails(error)
   )
 }
 
@@ -428,14 +427,14 @@ export async function getUserPasskeys(supabase: SupabaseClient, userId: string) 
       .eq('active', true)
 
     if (error) {
-      console.error('Database error getting passkeys:', error)
+      console.error('Database error getting passkeys:', authFailureDetails(error))
       return { success: false, error: error.message }
     }
 
     console.log(`Found ${data?.length || 0} existing passkeys`)
     return { success: true, passkeys: data }
   } catch (error) {
-    console.error('Exception getting passkeys:', error)
+    console.error('Exception getting passkeys:', authFailureDetails(error))
     return { success: false, error: (error as Error).message }
   }
 }
@@ -444,7 +443,7 @@ export async function findPasskeyByCredentialId(
   supabase: SupabaseClient,
   credentialId: string
 ) {
-  console.log('Finding passkey by credential ID:', credentialId)
+  console.log('Finding passkey by credential ID')
 
   // credential_id is stored canonicalised (unpadded base64url), so a client that
   // emits standard base64 or padding still resolves to the same row. Everything
@@ -471,13 +470,13 @@ export async function findPasskeyByCredentialId(
       }
 
       if (lookupId === lookupIds[lookupIds.length - 1]) {
-        console.error('Passkey not found:', error)
+        console.error('Passkey not found:', authFailureDetails(error))
       }
     }
 
     return { success: false, error: 'Passkey not found' }
   } catch (error) {
-    console.error('Exception finding passkey:', error)
+    console.error('Exception finding passkey:', authFailureDetails(error))
     return { success: false, error: (error as Error).message }
   }
 }
@@ -497,7 +496,7 @@ export async function findUserByEmail(
       .rpc('find_user_by_email', { p_email: email })
 
     if (error) {
-      console.error('Error finding user:', error)
+      console.error('Error finding user:', authFailureDetails(error))
       return { success: false, error: error.message }
     }
 
@@ -512,7 +511,7 @@ export async function findUserByEmail(
     console.log('Found user:', user.id)
     return { success: true, user }
   } catch (error) {
-    console.error('Exception finding user:', error)
+    console.error('Exception finding user:', authFailureDetails(error))
     return { success: false, error: (error as Error).message }
   }
 }
@@ -542,7 +541,7 @@ export async function getUserWithEmail(
       .single()
 
     if (userError || !userData?.email) {
-      console.error('Failed to fetch user email:', userError)
+      console.error('Failed to fetch user email:', authFailureDetails(userError))
       return {
         success: false,
         error: userError?.message || 'User email not found'
@@ -558,7 +557,7 @@ export async function getUserWithEmail(
       }
     }
   } catch (error) {
-    console.error('Exception getting user with email:', error)
+    console.error('Exception getting user with email:', authFailureDetails(error))
     return {
       success: false,
       error: (error as Error).message

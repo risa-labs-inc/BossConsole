@@ -1,3 +1,4 @@
+import { authFailureDetails } from "./logging.ts"
 /**
  * WebAuthn cryptography: attestation parsing and assertion signature verification.
  *
@@ -278,7 +279,7 @@ export async function verifySignature(
     console.log('Signature verification result:', isValid)
     return isValid
   } catch (error) {
-    console.error('Signature verification error:', error instanceof Error ? error.message : error)
+    console.error('Signature verification error:', authFailureDetails(error))
     return false
   }
 }

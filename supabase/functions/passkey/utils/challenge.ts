@@ -1,3 +1,4 @@
+import { authFailureDetails } from "./logging.ts"
 import { encodeBase64Url } from "@std/encoding/base64url"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { ChallengeType } from "../types/challenge.ts"
@@ -24,9 +25,8 @@ export async function storeChallenge(
   }
 ) {
   console.log('Storing challenge:', {
-    challenge: challenge.substring(0, 20) + '...',
     type,
-    sessionId: options?.sessionId,
+    hasSessionId: Boolean(options?.sessionId),
     userId: options?.userId
   })
 
@@ -54,14 +54,14 @@ export async function storeChallenge(
       .select()
 
     if (error) {
-      console.error('Database error storing challenge:', error)
+      console.error('Database error storing challenge:', authFailureDetails(error))
       return { success: false, error: error.message }
     }
 
     console.log('Challenge stored successfully')
     return { success: true, data }
   } catch (error) {
-    console.error('Exception storing challenge:', error)
+    console.error('Exception storing challenge:', authFailureDetails(error))
     return { success: false, error: (error as Error).message }
   }
 }
@@ -77,13 +77,13 @@ export async function cleanupExpiredChallenges(supabase: SupabaseClient) {
       .lt('expires_at', new Date().toISOString())
 
     if (error) {
-      console.error('Error cleaning up expired challenges:', error)
+      console.error('Error cleaning up expired challenges:', authFailureDetails(error))
       return { success: false, error: error.message }
     }
 
     return { success: true }
   } catch (error) {
-    console.error('Exception cleaning up challenges:', error)
+    console.error('Exception cleaning up challenges:', authFailureDetails(error))
     return { success: false, error: (error as Error).message }
   }
 }
