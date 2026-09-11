@@ -57,6 +57,7 @@ import ai.rever.boss.utils.logging.ComponentLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.window.WindowProjectState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.Dispatchers
@@ -132,9 +133,27 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
     }
 
     // A delivered security prompt belongs to exactly one window.
-    LaunchedEffect(Unit) {
-        McpToolRegistryImpl.approvalBus.consumeApprovals { request ->
+    // Window-filtered to prevent cross-window prompt stealing.
+    LaunchedEffect(windowId) {
+        McpToolRegistryImpl.approvalBus.consumeApprovals(targetWindowId = windowId) { request ->
             state.pendingMcpApproval = request
+        }
+    }
+
+    // Reactively invalidate pending approvals for this window when project changes.
+    LaunchedEffect(windowProjectState, windowId) {
+        windowProjectState.selectedProject.collect {
+            McpToolRegistryImpl.approvalBus.invalidateForWindow(
+                windowId = windowId,
+                newGeneration = windowProjectState.generation,
+            )
+        }
+    }
+
+    // Cancel any pending approvals claimed by or targeted to this window when closed.
+    DisposableEffect(windowId) {
+        onDispose {
+            McpToolRegistryImpl.approvalBus.invalidateForClosedWindow(windowId)
         }
     }
 

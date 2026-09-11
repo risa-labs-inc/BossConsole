@@ -16,6 +16,7 @@ import androidx.compose.runtime.mutableStateMapOf
 typealias Project = ai.rever.boss.plugin.window.Project
 typealias WindowProjectState = ai.rever.boss.plugin.window.WindowProjectState
 typealias ProjectSelectionCallback = ai.rever.boss.plugin.window.ProjectSelectionCallback
+typealias WorkspaceContextToken = ai.rever.boss.plugin.window.WorkspaceContextToken
 
 // Re-export composition locals
 val LocalWindowId = ai.rever.boss.plugin.window.LocalWindowId
@@ -37,6 +38,7 @@ private val windowProjectStateLogger = BossLogger.forComponent("WindowProjectSta
  * Pattern matches SplitViewStateRegistry for consistency.
  */
 object WindowProjectStateRegistry {
+    private val lock = Any()
     private val _states = mutableStateMapOf<String, WindowProjectState>()
 
     /**
@@ -110,27 +112,38 @@ object WindowProjectStateRegistry {
     /**
      * Get the project state for a window.
      */
-    fun get(windowId: String): WindowProjectState? = _states[windowId]
+    fun get(windowId: String): WindowProjectState? =
+        synchronized(lock) {
+            _states[windowId]
+        }
 
     /**
      * Get or create the project state for a window.
      */
     fun getOrCreate(windowId: String): WindowProjectState =
-        _states.getOrPut(windowId) {
-            windowProjectStateLogger.debug(LogCategory.UI, "Creating new state for window", mapOf("windowId" to windowId))
-            newState(windowId)
+        synchronized(lock) {
+            _states.getOrPut(windowId) {
+                windowProjectStateLogger.debug(LogCategory.UI, "Creating new state for window", mapOf("windowId" to windowId))
+                newState(windowId)
+            }
         }
 
     /**
      * Unregister a window project state when the window is closed.
      */
     fun unregister(windowId: String) {
-        _states.remove(windowId)
+        val removed = synchronized(lock) {
+            _states.remove(windowId)
+        }
+        removed?.markClosed()
         windowProjectStateLogger.debug(LogCategory.UI, "Unregistered state for window", mapOf("windowId" to windowId))
     }
 
     /**
      * Get all registered window IDs.
      */
-    fun getAllWindowIds(): Set<String> = _states.keys.toSet()
+    fun getAllWindowIds(): Set<String> =
+        synchronized(lock) {
+            _states.keys.toSet()
+        }
 }
