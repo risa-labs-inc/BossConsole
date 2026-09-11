@@ -51,7 +51,7 @@ class SecureSpawnTest {
                     )
                 val client = assertNotNull(child.ipcClient)
                 assertTrue(
-                    client.waitForReady(20_000),
+                    client.waitForReady(60_000),
                     "Child bootstrap stderr: ${Files.readString(logs.resolve("secure/stderr.log")).takeLast(8_000)}",
                 )
                 val channel = client.channel

@@ -103,10 +103,11 @@ class FileSystemLimitsTest {
                     AclEntry
                         .newBuilder()
                         .setType(AclEntryType.DENY)
-                        .setPrincipal(Files.getOwner(denied))
+                        .setPrincipal(denied.fileSystem.userPrincipalLookupService.lookupPrincipalByName(System.getProperty("user.name")))
                         .setPermissions(AclEntryPermission.LIST_DIRECTORY)
                         .build()
                 view.acl = listOf(deny) + original
+                assertFailsWith<java.nio.file.AccessDeniedException> { Files.newDirectoryStream(denied).use { it.toList() } }
                 assertFailsWith<StatusException> {
                     withTimeout(5000) {
                         stub
