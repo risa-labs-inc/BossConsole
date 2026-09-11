@@ -1114,7 +1114,12 @@ fun ApplicationScope.BossWindow(
             // two windows open it is false in BOTH, so nobody mounts the dialog and the notice is
             // never seen at all. Reading `windows` also registers a snapshot read, so this re-evaluates
             // when the first window closes and the role passes to the next one.
-            if (WindowManager.windows.firstOrNull()?.id == windowState.id) {
+            val ownsProcessWideDialogs =
+                ownsProcessWideDialogs(
+                    windowId = windowState.id,
+                    orderedWindowIds = WindowManager.windows.map { it.id },
+                )
+            if (ownsProcessWideDialogs) {
                 ai.rever.boss.performance.MemoryPressureNoticeDialog(
                     onRestartRequested = {
                         ai.rever.boss.config.ResourceModeConfig
@@ -1387,44 +1392,59 @@ fun ApplicationScope.BossWindow(
                 )
             }
 
-            // Screen Capture Picker Dialog
-            val captureRequest by ScreenCaptureNotifier.captureRequest.collectAsState()
-            captureRequest?.let { request ->
-                ScreenCapturePickerDialog(
-                    screens = request.screens,
-                    windows = request.windows,
-                    browsers = request.browsers,
-                    onDismiss = { ScreenCaptureNotifier.cancel(request.requestId) },
-                    onSelect = { source, audioMode ->
-                        ScreenCaptureNotifier.selectSource(request.requestId, source, audioMode)
-                    },
-                )
-            }
+            // Capture state is process-global. Rendering it in every window creates several
+            // pickers that race to resolve the same one-shot request.
+            if (ownsProcessWideDialogs) {
+                // Screen Capture Picker Dialog
+                val captureRequest by ScreenCaptureNotifier.captureRequest.collectAsState()
+                captureRequest?.let { request ->
+                    ScreenCapturePickerDialog(
+                        screens = request.screens,
+                        windows = request.windows,
+                        browsers = request.browsers,
+                        onDismiss = { ScreenCaptureNotifier.cancel(request.requestId) },
+                        onSelect = { source, audioMode ->
+                            ScreenCaptureNotifier.selectSource(request.requestId, source, audioMode)
+                        },
+                    )
+                }
 
-            // Screen Recording permission rationale — explains why, before the macOS prompt.
-            val permissionRationale by ScreenCaptureNotifier.permissionRationale.collectAsState()
-            if (permissionRationale != null) {
-                BossAlertDialog(
-                    onDismissRequest = { ScreenCaptureNotifier.resolvePermissionRationale(false) },
-                    title = { Text("Allow screen sharing?") },
-                    text = {
-                        Text(
-                            "To share a screen, window, or browser tab, BOSS needs macOS " +
-                                "Screen Recording permission. macOS will now ask you to allow \u201CBOSS\u201D. " +
-                                "You can change this anytime in System Settings \u203A Privacy & Security \u203A Screen Recording.",
-                        )
-                    },
-                    confirmButton = {
-                        TextButton(onClick = { ScreenCaptureNotifier.resolvePermissionRationale(true) }) { Text("Continue") }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { ScreenCaptureNotifier.resolvePermissionRationale(false) }) { Text("Not now") }
-                    },
-                )
+                // Screen Recording permission rationale — explains why, before the macOS prompt.
+                val permissionRationale by ScreenCaptureNotifier.permissionRationale.collectAsState()
+                if (permissionRationale != null) {
+                    BossAlertDialog(
+                        onDismissRequest = { ScreenCaptureNotifier.resolvePermissionRationale(false) },
+                        title = { Text("Allow screen sharing?") },
+                        text = {
+                            Text(
+                                "To share a screen, window, or browser tab, BOSS needs macOS " +
+                                    "Screen Recording permission. macOS will now ask you to allow \u201CBOSS\u201D. " +
+                                    "You can change this anytime in System Settings \u203A Privacy & Security \u203A " +
+                                    "Screen Recording.",
+                            )
+                        },
+                        confirmButton = {
+                            TextButton(onClick = { ScreenCaptureNotifier.resolvePermissionRationale(true) }) {
+                                Text("Continue")
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { ScreenCaptureNotifier.resolvePermissionRationale(false) }) {
+                                Text("Not now")
+                            }
+                        },
+                    )
+                }
             }
         }
     }
 }
+
+/** True for the one window that owns dialogs backed by process-global state. */
+internal fun ownsProcessWideDialogs(
+    windowId: String,
+    orderedWindowIds: List<String>,
+): Boolean = orderedWindowIds.firstOrNull() == windowId
 
 /**
  * Update window title
