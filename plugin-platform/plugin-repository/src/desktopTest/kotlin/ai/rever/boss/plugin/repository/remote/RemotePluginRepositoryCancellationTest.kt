@@ -5,6 +5,8 @@ import ai.rever.boss.plugin.logging.LogCategory
 import ai.rever.boss.plugin.logging.LogLevel
 import ai.rever.boss.plugin.repository.PluginSearchFilter
 import com.sun.net.httpserver.HttpServer
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
@@ -18,21 +20,28 @@ import kotlin.test.Test
 import kotlin.test.assertTrue
 
 /**
- * A caller's cancellation of a store call must not be recorded as a network failure.
+ * A caller's cancellation of a store call must not be recorded as a network failure, and it
+ * must not be swallowed into a returned `Result.failure`.
  *
  * `runCatching` catches Throwable, so a cancelled request used to come back as `Result.failure`
- * carrying a `CancellationException`, and the repository logged it at ERROR under NETWORK as a fault
- * that never happened. Dismissing the dependency dialog while the store was slow produced one such
- * line per in-flight lookup. [RemotePluginRepository.downloadPlugin] had the fix; the other five
- * store calls did not.
+ * carrying a `CancellationException`, and the repository logged it at ERROR under NETWORK as a
+ * fault that never happened. Dismissing the dependency dialog while the store was slow produced
+ * one such line per in-flight lookup, and the caller saw a failed store where there was only its
+ * own cancellation. [RemotePluginRepository.downloadPlugin] had the rule; the other five store
+ * calls did not.
  *
- * Tested against a real local server that receives the request and then holds it, so the
- * cancellation lands inside the ktor call the way it does in production, not in a fake. The
- * observable is the log, because the caller's own `await` throws on a cancelled job either way.
- * A positive control proves the assertion can see an ERROR when there is one.
+ * Every store call is tested both ways, against a real local server that receives the request
+ * and then holds it, so the cancellation lands inside the ktor call the way it does in
+ * production, not in a fake:
  *
- * `ratePlugin` gets the same rule but is not driven here: it refuses without an access token before
- * any request is sent, so a held server would never see it.
+ * 1. Log absence - the ERROR line for a store failure must not appear. A positive control
+ *    proves the assertion can see an ERROR when there is one.
+ * 2. Propagation - the repository method must throw the caller's [CancellationException] out,
+ *    not return a failed [Result]. The log assertion cannot see this half: a swallowed
+ *    cancellation and a correctly propagated one are both "no ERROR line".
+ *
+ * `ratePlugin` is the only store call that refuses before a request is sent - it requires an
+ * access token - so its two tests install a structurally valid one first; see those tests.
  */
 class RemotePluginRepositoryCancellationTest {
     private lateinit var server: HttpServer
@@ -45,6 +54,10 @@ class RemotePluginRepositoryCancellationTest {
         received = CountDownLatch(1)
         release = CountDownLatch(1)
         status = 200
+        // No executor is passed, so the JDK dispatches handlers on its own single thread. The
+        // latch design depends on that thread: the handler runs off the test's threads (the test
+        // blocks on `received`, the handler on `release`), and with exactly one request per test
+        // nothing can queue behind the held one.
         server =
             HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
                 // One context for every store path: signal that the request arrived, then hold it
@@ -92,6 +105,56 @@ class RemotePluginRepositoryCancellationTest {
         assertTrue(spurious.isEmpty(), "a cancellation was logged as a network failure: $spurious")
     }
 
+    /**
+     * Asserts that cancelling [call] propagates the caller's [CancellationException] out of the
+     * repository method, rather than the method swallowing it and returning a `Result.failure`
+     * that reads as a store fault.
+     *
+     * The deferred records whichever half actually happened: the call returning normally (the
+     * cancellation was swallowed into the returned value) or it throwing. Both branches complete
+     * before the job ends, so after [cancelAndJoin] the deferred is always complete.
+     */
+    private fun assertCancellationPropagates(call: suspend (RemotePluginRepository) -> Any?) {
+        runBlocking {
+            val repository = RemotePluginRepository()
+            val thrown = CompletableDeferred<Throwable>()
+            val job =
+                launch(Dispatchers.IO) {
+                    // runCatching, the same idiom the production methods use: success means the
+                    // cancellation was swallowed into the returned value, failure means it propagated.
+                    val result = runCatching { call(repository) }
+                    thrown.complete(
+                        if (result.isSuccess) {
+                            IllegalStateException(
+                                "the store call returned normally instead of propagating the cancellation",
+                            )
+                        } else {
+                            result.exceptionOrNull()!!
+                        },
+                    )
+                }
+
+            assertTrue(received.await(10, TimeUnit.SECONDS), "the store never received the request")
+            job.cancelAndJoin()
+            release.countDown()
+
+            val error = thrown.await()
+            assertTrue(error is CancellationException, "cancellation did not propagate out of the store call: $error")
+        }
+    }
+
+    private fun installAccessToken() {
+        // ratePlugin is the only store call that refuses before a request is sent (it requires
+        // an access token), so without one the held server would never see it. "a.b.c" is a
+        // three-part token with no admin claim: structurally valid for the client's token check
+        // and for decodeIsAdmin, and enough to get the request on the wire.
+        PluginStoreConfig.initialize(
+            "http://127.0.0.1:${server.address.port}/functions/v1",
+            "test-anon-key",
+            accessToken = "a.b.c",
+        )
+    }
+
     @Test
     fun `cancelling getPlugin is not logged as a failure`() =
         assertCancellationIsNotLogged("Failed to get remote plugin") { it.getPlugin("some.plugin") }
@@ -109,6 +172,38 @@ class RemotePluginRepositoryCancellationTest {
         assertCancellationIsNotLogged("Failed to search remote plugins") {
             it.searchPlugins(PluginSearchFilter(query = "x"))
         }
+
+    @Test
+    fun `cancelling ratePlugin is not logged as a failure`() {
+        installAccessToken()
+        assertCancellationIsNotLogged("Failed to rate plugin") { it.ratePlugin("some.plugin", 5) }
+    }
+
+    @Test
+    fun `a cancelled getPlugin propagates the caller's cancellation`() {
+        assertCancellationPropagates { it.getPlugin("some.plugin") }
+    }
+
+    @Test
+    fun `a cancelled getPluginVersions propagates the caller's cancellation`() {
+        assertCancellationPropagates { it.getPluginVersions("some.plugin") }
+    }
+
+    @Test
+    fun `a cancelled listPlugins propagates the caller's cancellation`() {
+        assertCancellationPropagates { it.listPlugins() }
+    }
+
+    @Test
+    fun `a cancelled searchPlugins propagates the caller's cancellation`() {
+        assertCancellationPropagates { it.searchPlugins(PluginSearchFilter(query = "x")) }
+    }
+
+    @Test
+    fun `a cancelled ratePlugin propagates the caller's cancellation`() {
+        installAccessToken()
+        assertCancellationPropagates { it.ratePlugin("some.plugin", 5) }
+    }
 
     @Test
     fun `a real failure is still logged`() =

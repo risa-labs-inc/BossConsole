@@ -65,8 +65,10 @@ class StoreMissingDependencyInstaller(
      *
      * Cancellation is not a failure and is not swallowed: it propagates, thrown or returned, before
      * the log line, so dismissing the dialog mid-lookup does not record a store problem that did not
-     * happen. `RemotePluginRepository.getPlugin` folds a caller's cancellation into `Result.failure`,
-     * which is why the returned shape has to be handled too.
+     * happen. Both arrival shapes are handled: the bundled `RemotePluginRepository` rethrows a
+     * caller's cancellation, but the [PluginRepository] interface permits either shape - a
+     * third-party implementation may still fold it into `Result.failure` - so the returned shape
+     * is checked as well.
      */
     override suspend fun displayNameFor(pluginId: String): String? {
         val lookup = runCatching { repository()?.getPlugin(pluginId) }.getOrElse { Result.failure(it) }

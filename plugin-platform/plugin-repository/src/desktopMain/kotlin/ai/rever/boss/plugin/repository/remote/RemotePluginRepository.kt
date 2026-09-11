@@ -464,24 +464,6 @@ class RemotePluginRepository(
 
     override fun getDownloadProgress(pluginId: String): Flow<Float>? = downloadProgress[pluginId]?.asStateFlow()
 
-    /**
-     * `onFailure` for a store call, with one rule the file used to state only on [downloadPlugin]:
-     * a caller's cancellation is not a network failure and must not arrive as one.
-     *
-     * `runCatching` catches Throwable, so a cancelled request used to come back as `Result.failure`
-     * with a `CancellationException` inside, [handler] logged it at ERROR as a fault that never
-     * happened, and the caller saw a failed lookup rather than its own cancellation. Dismissing the
-     * dependency dialog while the store was slow produced one such ERROR per in-flight lookup; with
-     * a host log file those lines now survive the process, so a reader would go hunting a store
-     * outage that did not occur. Rethrowing here lets the cancellation reach the caller's own
-     * handler, which is what `withContext` would have done had nothing caught it.
-     */
-    private inline fun <T> Result<T>.onStoreFailure(handler: (Throwable) -> Unit): Result<T> =
-        onFailure { e ->
-            if (e is CancellationException) throw e
-            handler(e)
-        }
-
     override suspend fun refresh(): Result<Unit> = listPlugins().map { }
 
     /**
@@ -536,5 +518,23 @@ class RemotePluginRepository(
             "tab" -> ai.rever.boss.plugin.api.PluginType.TAB
             "hybrid", "mixed" -> ai.rever.boss.plugin.api.PluginType.MIXED
             else -> ai.rever.boss.plugin.api.PluginType.PANEL
+        }
+
+    /**
+     * `onFailure` for a store call, with one rule the file used to state only on [downloadPlugin]:
+     * a caller's cancellation is not a network failure and must not arrive as one.
+     *
+     * `runCatching` catches Throwable, so a cancelled request used to come back as `Result.failure`
+     * with a `CancellationException` inside, [handler] logged it at ERROR as a fault that never
+     * happened, and the caller saw a failed lookup rather than its own cancellation. Dismissing the
+     * dependency dialog while the store was slow produced one such ERROR per in-flight lookup; with
+     * a host log file those lines now survive the process, so a reader would go hunting a store
+     * outage that did not occur. Rethrowing here lets the cancellation reach the caller's own
+     * handler, which is what `withContext` would have done had nothing caught it.
+     */
+    private inline fun <T> Result<T>.onStoreFailure(handler: (Throwable) -> Unit): Result<T> =
+        onFailure { e ->
+            if (e is CancellationException) throw e
+            handler(e)
         }
 }
