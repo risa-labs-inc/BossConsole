@@ -12,6 +12,19 @@ import ai.rever.boss.recovery.runtime.MissionRecoveryCoordinator
 import java.io.File
 
 /**
+ * The MCP registry wraps every tool handler in a 60s `withTimeout`
+ * (`McpToolRegistryImpl.invokeTimeoutMs`). The verifier's own process timeout must
+ * stay strictly below that bound, otherwise the host timeout wins the race and the
+ * verifier's UNKNOWN verdict is discarded as a plain tool timeout.
+ */
+internal const val DEFAULT_VERIFY_CLAIM_TIMEOUT_MS: Long = 45_000L
+internal const val MAX_VERIFY_CLAIM_TIMEOUT_MS: Long = 55_000L
+
+internal fun resolveVerifyClaimTimeoutMs(requested: Int?): Long =
+    (requested?.takeIf { it > 0 }?.toLong() ?: DEFAULT_VERIFY_CLAIM_TIMEOUT_MS)
+        .coerceAtMost(MAX_VERIFY_CLAIM_TIMEOUT_MS)
+
+/**
  * Exposes workspace recovery and ground-truth verification tools to AI coding agents via the MCP protocol.
  */
 class RecoveryMcpToolProvider(
@@ -97,7 +110,9 @@ class RecoveryMcpToolProvider(
             name = "recovery_verify_claim",
             description =
                 "Executes an operator/agent-supplied verification command in the workspace (with host authority " +
-                    "and bounded timeout) and records independent ground-truth evidence.",
+                    "and bounded timeout) and records independent ground-truth evidence. Optional 'timeoutMs' " +
+                    "(default 45000, capped at 55000, strictly below the host's 60s invoke timeout) bounds the " +
+                    "verification process so the verifier's own timeout verdict is what the caller sees.",
             handler =
                 McpToolHandler { args: McpToolArgs ->
                     val command =
@@ -107,25 +122,16 @@ class RecoveryMcpToolProvider(
                                 isError = true,
                             )
 
-                    val claimStatement = args.string("claimStatement")
-                    val claimTypeStr = args.string("claimType")
-
-                    val claimType =
-                        when (claimTypeStr?.uppercase()) {
-                            "BUILD_SUCCESS" -> ClaimType.BUILD_SUCCESS
-                            "TESTS_PASSED" -> ClaimType.TESTS_PASSED
-                            else -> ClaimType.CUSTOM
-                        }
-
-                    val agentClaim =
-                        if (claimStatement != null) {
-                            AgentClaim(claimType = claimType, statement = claimStatement)
-                        } else {
-                            null
-                        }
+                    val agentClaim = args.claimOrNull()
+                    val timeoutMs = resolveVerifyClaimTimeoutMs(args.int("timeoutMs"))
 
                     try {
-                        val result = coordinator.verifyClaim(command = command, agentClaim = agentClaim)
+                        val result =
+                            coordinator.verifyClaim(
+                                command = command,
+                                agentClaim = agentClaim,
+                                timeoutMs = timeoutMs,
+                            )
                         val summary =
                             buildString {
                                 appendLine("Verification Status: ${result.status}")
@@ -150,6 +156,17 @@ class RecoveryMcpToolProvider(
             // Arbitrary command execution with host authority: admin-gated like recovery_rewind.
             requiresAdmin = true
         }
+
+    private fun McpToolArgs.claimOrNull(): AgentClaim? {
+        val claimStatement = string("claimStatement") ?: return null
+        val claimType =
+            when (string("claimType")?.uppercase()) {
+                "BUILD_SUCCESS" -> ClaimType.BUILD_SUCCESS
+                "TESTS_PASSED" -> ClaimType.TESTS_PASSED
+                else -> ClaimType.CUSTOM
+            }
+        return AgentClaim(claimType = claimType, statement = claimStatement)
+    }
 
     @Suppress("CyclomaticComplexMethod", "TooGenericExceptionCaught") // Report formatting + handler boundary.
     private fun createPreviewRewindTool(): McpToolDefinition =

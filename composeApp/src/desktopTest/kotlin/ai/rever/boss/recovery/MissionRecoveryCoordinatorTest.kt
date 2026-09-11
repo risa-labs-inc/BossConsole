@@ -7,7 +7,9 @@ import ai.rever.boss.recovery.models.VerificationStatus
 import ai.rever.boss.recovery.runtime.MissionRecoveryCoordinator
 import ai.rever.boss.recovery.runtime.RecoveryEvent
 import ai.rever.boss.recovery.storage.WorkspaceCheckpointStorage
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.io.IOException
@@ -122,5 +124,41 @@ class MissionRecoveryCoordinatorTest {
 
             assertFailsWith<IOException> { coordinator.previewRecovery(cp.checkpointId) }
             assertFalse(coordinator.state.value.isBusy, "isBusy must reset when preview throws")
+        }
+
+    @Test
+    fun `rewind records its result even when the calling coroutine is cancelled mid-rewind`() =
+        runBlocking {
+            // A workspace big enough that the rewind (double hash + file copies)
+            // outlives the cancellation below on any machine.
+            repeat(2_000) { index ->
+                File(tempProjectRoot, "payload-$index.dat").writeText("y".repeat(64 * 1024))
+            }
+            File(tempProjectRoot, "keep.txt").writeText("keep")
+
+            coordinator.startMission(tempProjectRoot, missionId = "mission-cancel")
+            val checkpoint = coordinator.createCheckpoint(label = "pre-edit")
+
+            // Post-checkpoint edit so the rewind has restore work to do.
+            File(tempProjectRoot, "keep.txt").writeText("edited")
+
+            val events = mutableListOf<RecoveryEvent>()
+            val collector = launch { coordinator.events.collect { events += it } }
+            delay(50)
+
+            val rewindJob = launch { coordinator.rewindToCheckpoint(checkpoint.checkpointId) }
+            delay(20)
+            rewindJob.cancel()
+            rewindJob.join()
+            delay(50)
+            collector.cancel()
+
+            // The caller's cancellation must not discard a rewind that completed:
+            // the result is recorded, the event is emitted, and isBusy resets.
+            val result = coordinator.state.value.lastRecoveryResult
+            assertNotNull(result)
+            assertIs<RecoveryResult.Success>(result)
+            assertEquals(false, coordinator.state.value.isBusy)
+            assertTrue(events.any { it is RecoveryEvent.RewindExecuted })
         }
 }

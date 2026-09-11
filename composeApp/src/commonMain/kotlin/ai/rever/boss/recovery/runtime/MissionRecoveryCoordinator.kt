@@ -11,6 +11,7 @@ import ai.rever.boss.recovery.paths.SafePathResolver
 import ai.rever.boss.recovery.reconciliation.WorkspaceReconciler
 import ai.rever.boss.recovery.storage.WorkspaceCheckpointStorage
 import ai.rever.boss.recovery.verification.IndependentVerifier
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -20,6 +21,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
 
@@ -225,23 +227,33 @@ class MissionRecoveryCoordinator(
             _state.update { it.copy(isBusy = true) }
 
             try {
+                // The destructive section and its state/event write run under
+                // NonCancellable: the MCP registry wraps every handler in a 60s
+                // withTimeout, and the blocking rewind loops do not observe that
+                // cancellation. Without this boundary a large workspace would be
+                // fully rewound while the tool still reports a timeout, with no
+                // result recorded and no RewindExecuted event.
                 val result =
-                    WorkspaceReconciler.rewind(
-                        baseline = baseline,
-                        targetCheckpoint = targetCheckpoint,
-                        projectRoot = File(rootPath),
-                        storage = storage,
-                        allowOverwriteConflicts = allowOverwriteConflicts,
-                    )
+                    withContext(NonCancellable) {
+                        val rewindResult =
+                            WorkspaceReconciler.rewind(
+                                baseline = baseline,
+                                targetCheckpoint = targetCheckpoint,
+                                projectRoot = File(rootPath),
+                                storage = storage,
+                                allowOverwriteConflicts = allowOverwriteConflicts,
+                            )
 
-                _state.update {
-                    it.copy(
-                        lastRecoveryResult = result,
-                        isBusy = false,
-                    )
-                }
+                        _state.update {
+                            it.copy(
+                                lastRecoveryResult = rewindResult,
+                                isBusy = false,
+                            )
+                        }
 
-                _events.emit(RecoveryEvent.RewindExecuted(result))
+                        _events.emit(RecoveryEvent.RewindExecuted(rewindResult))
+                        rewindResult
+                    }
                 result
             } catch (e: Exception) {
                 _state.update { it.copy(isBusy = false) }

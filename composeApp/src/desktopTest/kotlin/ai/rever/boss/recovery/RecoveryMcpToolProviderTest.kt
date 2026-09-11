@@ -2,10 +2,15 @@ package ai.rever.boss.recovery
 
 import ai.rever.boss.mcp.McpToolRegistryImpl
 import ai.rever.boss.plugin.api.McpToolArgs
+import ai.rever.boss.recovery.mcp.DEFAULT_VERIFY_CLAIM_TIMEOUT_MS
+import ai.rever.boss.recovery.mcp.MAX_VERIFY_CLAIM_TIMEOUT_MS
 import ai.rever.boss.recovery.mcp.RecoveryMcpToolProvider
+import ai.rever.boss.recovery.mcp.resolveVerifyClaimTimeoutMs
+import ai.rever.boss.recovery.models.VerificationStatus
 import ai.rever.boss.recovery.runtime.MissionRecoveryCoordinator
 import ai.rever.boss.recovery.storage.WorkspaceCheckpointStorage
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import java.io.File
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -40,6 +45,50 @@ class RecoveryMcpToolProviderTest {
         tempProjectRoot.deleteRecursively()
         tempStorageDir.deleteRecursively()
     }
+
+    @Test
+    fun `verify claim timeout defaults and cap stay strictly below the host invoke timeout`() {
+        assertEquals(45_000L, resolveVerifyClaimTimeoutMs(null))
+        assertEquals(45_000L, resolveVerifyClaimTimeoutMs(0))
+        assertEquals(45_000L, resolveVerifyClaimTimeoutMs(-5))
+        assertEquals(1_000L, resolveVerifyClaimTimeoutMs(1_000))
+        assertEquals(55_000L, resolveVerifyClaimTimeoutMs(55_000))
+        assertEquals(55_000L, resolveVerifyClaimTimeoutMs(999_999))
+        assertTrue(DEFAULT_VERIFY_CLAIM_TIMEOUT_MS < 60_000L)
+        assertTrue(MAX_VERIFY_CLAIM_TIMEOUT_MS < 60_000L)
+    }
+
+    @Test
+    fun `verify claim returns the verifier's own timeout verdict before any host timeout`() =
+        runBlocking {
+            coordinator.startMission(tempProjectRoot, missionId = "mission-verify-timeout")
+
+            val tool = provider.tools().single { it.name == "recovery_verify_claim" }
+
+            // A 2s stand-in for the registry's 60s invoke timeout: the verifier's
+            // own 100ms process timeout must win the race, not the host wrapper.
+            val result =
+                withTimeout(2_000L) {
+                    tool.handler.call(
+                        mockArgs(
+                            mapOf(
+                                "command" to "sleep 10",
+                                "timeoutMs" to 100,
+                            ),
+                        ),
+                    )
+                }
+
+            assertFalse(result.isError)
+            assertTrue(result.text.contains("UNKNOWN"))
+            assertTrue(result.text.contains("timed out after 100ms"))
+            assertEquals(
+                VerificationStatus.UNKNOWN,
+                coordinator.state.value
+                    .latestVerification
+                    ?.status,
+            )
+        }
 
     private fun mockArgs(map: Map<String, Any?> = emptyMap()): McpToolArgs = McpToolArgs(map)
 
