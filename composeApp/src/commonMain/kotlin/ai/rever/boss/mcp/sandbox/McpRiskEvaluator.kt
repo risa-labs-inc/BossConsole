@@ -133,6 +133,7 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
                 "send_input",
                 "terminal_exec",
                 "k8s_exec",
+                "recovery_verify_claim",
             )
 
         private val SECRET_MANAGEMENT_TOOLS =
@@ -177,6 +178,7 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
                 "file_delete",
                 "file_write",
                 "project_replace",
+                "recovery_rewind",
             )
 
         private val READ_ONLY_TOOLS =

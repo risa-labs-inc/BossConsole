@@ -18,13 +18,19 @@ object SafePathResolver {
     private val logger = BossLogger.forComponent("SafePathResolver")
 
     private val SAFE_IDENTIFIER_REGEX = Regex("^[a-zA-Z0-9_\\-\\.]+$")
+    private const val MAX_IDENTIFIER_LENGTH = 128
 
     /**
      * Validates that an identifier (e.g., missionId, checkpointId) contains only safe characters
      * and cannot perform path traversal.
      *
+     * Identifiers made up solely of dots (e.g. ".") are rejected because they collapse the
+     * storage layout to its root, and a length cap keeps identifiers from approaching
+     * filesystem name limits.
+     *
      * @throws IllegalArgumentException if the identifier is blank.
-     * @throws SecurityException if the identifier contains path separators, null bytes, '..', or illegal characters.
+     * @throws SecurityException if the identifier contains path separators, null bytes, '..', is
+     * all dots, exceeds [MAX_IDENTIFIER_LENGTH], or contains illegal characters.
      */
     @Suppress("UseRequire", "ThrowsCount") // Contract: IAE for blank, SecurityException for traversal/charset.
     fun validateIdentifier(
@@ -34,6 +40,16 @@ object SafePathResolver {
         val trimmed = id.trim()
         if (trimmed.isEmpty()) {
             throw IllegalArgumentException("$paramName must not be blank")
+        }
+        if (trimmed.all { it == '.' }) {
+            throw SecurityException(
+                "Identifier consisting only of dots is not allowed for $paramName: '$id'",
+            )
+        }
+        if (trimmed.length > MAX_IDENTIFIER_LENGTH) {
+            throw SecurityException(
+                "$paramName exceeds maximum length of $MAX_IDENTIFIER_LENGTH characters",
+            )
         }
         if (hasTraversalOrSeparator(trimmed)) {
             throw SecurityException("Path traversal sequence or path separator detected in $paramName: '$id'")

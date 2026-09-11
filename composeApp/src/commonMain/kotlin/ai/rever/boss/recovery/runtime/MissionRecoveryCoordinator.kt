@@ -204,6 +204,7 @@ class MissionRecoveryCoordinator(
     /**
      * Rewinds workspace files to the target checkpoint.
      */
+    @Suppress("TooGenericExceptionCaught") // isBusy must reset for every failure kind before rethrow.
     suspend fun rewindToCheckpoint(
         checkpointId: String,
         allowOverwriteConflicts: Boolean = false,
@@ -223,29 +224,35 @@ class MissionRecoveryCoordinator(
 
             _state.update { it.copy(isBusy = true) }
 
-            val result =
-                WorkspaceReconciler.rewind(
-                    baseline = baseline,
-                    targetCheckpoint = targetCheckpoint,
-                    projectRoot = File(rootPath),
-                    storage = storage,
-                    allowOverwriteConflicts = allowOverwriteConflicts,
-                )
+            try {
+                val result =
+                    WorkspaceReconciler.rewind(
+                        baseline = baseline,
+                        targetCheckpoint = targetCheckpoint,
+                        projectRoot = File(rootPath),
+                        storage = storage,
+                        allowOverwriteConflicts = allowOverwriteConflicts,
+                    )
 
-            _state.update {
-                it.copy(
-                    lastRecoveryResult = result,
-                    isBusy = false,
-                )
+                _state.update {
+                    it.copy(
+                        lastRecoveryResult = result,
+                        isBusy = false,
+                    )
+                }
+
+                _events.emit(RecoveryEvent.RewindExecuted(result))
+                result
+            } catch (e: Exception) {
+                _state.update { it.copy(isBusy = false) }
+                throw e
             }
-
-            _events.emit(RecoveryEvent.RewindExecuted(result))
-            result
         }
 
     /**
      * Generates a dry-run recovery plan for [checkpointId] without modifying any files.
      */
+    @Suppress("TooGenericExceptionCaught") // isBusy must reset for every failure kind before rethrow.
     suspend fun previewRecovery(
         checkpointId: String,
         allowOverwriteConflicts: Boolean = false,
@@ -268,12 +275,23 @@ class MissionRecoveryCoordinator(
                         blockingReason = "Checkpoint not found in storage: $checkpointId",
                     )
 
-            WorkspaceReconciler.createPlan(
-                baseline = baseline,
-                targetCheckpoint = targetCheckpoint,
-                projectRoot = File(rootPath),
-                storage = storage,
-                allowOverwriteConflicts = allowOverwriteConflicts,
-            )
+            _state.update { it.copy(isBusy = true) }
+
+            try {
+                val plan =
+                    WorkspaceReconciler.createPlan(
+                        baseline = baseline,
+                        targetCheckpoint = targetCheckpoint,
+                        projectRoot = File(rootPath),
+                        storage = storage,
+                        allowOverwriteConflicts = allowOverwriteConflicts,
+                    )
+
+                _state.update { it.copy(isBusy = false) }
+                plan
+            } catch (e: Exception) {
+                _state.update { it.copy(isBusy = false) }
+                throw e
+            }
         }
 }

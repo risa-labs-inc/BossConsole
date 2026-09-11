@@ -44,7 +44,7 @@ class RecoveryMcpToolProviderTest {
     private fun mockArgs(map: Map<String, Any?> = emptyMap()): McpToolArgs = McpToolArgs(map)
 
     @Test
-    fun `provider exposes all 6 recovery tools and gates rewind with requiresAdmin`() {
+    fun `provider exposes all 6 recovery tools and gates every mutating tool with requiresAdmin`() {
         val tools = provider.tools()
         assertEquals(6, tools.size)
         val toolNames = tools.map { it.name }.toSet()
@@ -66,6 +66,20 @@ class RecoveryMcpToolProviderTest {
 
         val previewTool = tools.single { it.name == "recovery_preview_rewind" }
         assertFalse(previewTool.requiresAdmin, "recovery_preview_rewind should be accessible for dry-run inspection")
+
+        val startTool = tools.single { it.name == "recovery_start_mission" }
+        assertTrue(
+            startTool.requiresAdmin,
+            "recovery_start_mission captures a baseline from a caller-supplied path and must " +
+                "require admin authorization",
+        )
+
+        val checkpointTool = tools.single { it.name == "recovery_create_checkpoint" }
+        assertTrue(
+            checkpointTool.requiresAdmin,
+            "recovery_create_checkpoint byte-copies the whole workspace into storage and must " +
+                "require admin authorization",
+        )
     }
 
     @Test

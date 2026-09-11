@@ -160,4 +160,25 @@ class SafePathResolverTest {
             SafePathResolver.validateIdentifier("mission;rm -rf", "missionId")
         }
     }
+
+    @Test
+    fun `validateIdentifier rejects identifiers made only of dots`() {
+        // "." would resolve missionDir(".") to the storage root itself, collapsing every
+        // mission into one namespace, and deleteCheckpoint(".", ".") would deleteRecursively
+        // the whole storage root.
+        assertFailsWith<SecurityException> {
+            SafePathResolver.validateIdentifier(".", "missionId")
+        }
+        assertFailsWith<SecurityException> {
+            SafePathResolver.validateIdentifier(".", "checkpointId")
+        }
+    }
+
+    @Test
+    fun `validateIdentifier enforces the maximum identifier length`() {
+        assertEquals("a".repeat(128), SafePathResolver.validateIdentifier("a".repeat(128), "missionId"))
+        assertFailsWith<SecurityException> {
+            SafePathResolver.validateIdentifier("a".repeat(129), "missionId")
+        }
+    }
 }

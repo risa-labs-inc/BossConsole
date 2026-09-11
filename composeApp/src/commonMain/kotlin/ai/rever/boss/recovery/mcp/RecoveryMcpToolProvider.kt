@@ -65,7 +65,9 @@ class RecoveryMcpToolProvider(
                         McpToolResult("Failed to capture baseline: ${e.message}", isError = true)
                     }
                 },
-        )
+        ).apply {
+            requiresAdmin = true
+        }
 
     @Suppress("TooGenericExceptionCaught") // Handler boundary: any failure becomes an error result.
     private fun createCheckpointTool(): McpToolDefinition =
@@ -85,7 +87,9 @@ class RecoveryMcpToolProvider(
                         McpToolResult("Failed to create checkpoint: ${e.message}", isError = true)
                     }
                 },
-        )
+        ).apply {
+            requiresAdmin = true
+        }
 
     @Suppress("TooGenericExceptionCaught") // Handler boundary: any failure becomes an error result.
     private fun createVerifyClaimTool(): McpToolDefinition =

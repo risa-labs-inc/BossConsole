@@ -10,10 +10,12 @@ import ai.rever.boss.recovery.storage.WorkspaceCheckpointStorage
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import java.io.File
+import java.io.IOException
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
@@ -86,5 +88,39 @@ class MissionRecoveryCoordinatorTest {
             // 7. Verify file contents restored and junk removed
             assertEquals("feature v1 implemented", srcFile.readText())
             assertFalse(junkFile.exists())
+        }
+
+    @Test
+    fun `rewindToCheckpoint resets isBusy when the project root disappears`() =
+        runBlocking {
+            File(tempProjectRoot, "src/App.kt").also {
+                it.parentFile.mkdirs()
+                it.writeText("initial")
+            }
+            coordinator.startMission(tempProjectRoot, missionId = "mission-busy-rewind")
+            val cp = coordinator.createCheckpoint("v1")
+
+            // Moving or deleting the root makes SafePathResolver.canonicalRoot throw an
+            // IOException inside WorkspaceReconciler.rewind, after isBusy was set.
+            assertTrue(tempProjectRoot.deleteRecursively())
+
+            assertFailsWith<IOException> { coordinator.rewindToCheckpoint(cp.checkpointId) }
+            assertFalse(coordinator.state.value.isBusy, "isBusy must reset when rewind throws")
+        }
+
+    @Test
+    fun `previewRecovery resets isBusy when the project root disappears`() =
+        runBlocking {
+            File(tempProjectRoot, "src/App.kt").also {
+                it.parentFile.mkdirs()
+                it.writeText("initial")
+            }
+            coordinator.startMission(tempProjectRoot, missionId = "mission-busy-preview")
+            val cp = coordinator.createCheckpoint("v1")
+
+            assertTrue(tempProjectRoot.deleteRecursively())
+
+            assertFailsWith<IOException> { coordinator.previewRecovery(cp.checkpointId) }
+            assertFalse(coordinator.state.value.isBusy, "isBusy must reset when preview throws")
         }
 }
