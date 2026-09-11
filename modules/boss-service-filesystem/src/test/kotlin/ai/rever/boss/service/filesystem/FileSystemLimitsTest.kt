@@ -65,10 +65,9 @@ class FileSystemLimitsTest {
         try {
             val rejected =
                 worker.submit<Boolean> {
-                    try {
-                        openRegularFile(fifo).use { false }
-                    } catch (_: IllegalArgumentException) {
-                        true
+                    runBlocking {
+                        val result = stub.readFile(ReadFileRequest.newBuilder().setPath(fifo.toString()).build())
+                        result.errorMessage.isNotEmpty()
                     }
                 }
             assertTrue(rejected.get(2, TimeUnit.SECONDS))

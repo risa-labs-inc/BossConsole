@@ -13,7 +13,10 @@ data class FileInfo(
     val isLink: Boolean,
     val identity: String,
     val modifiedMillis: Long,
+    val modifiedNanos: Long = modifiedMillis * 1_000_000,
 )
+
+enum class CreationPermissions { OWNER_ONLY, INHERIT }
 
 /**
  * Operations relative to owned directory handles. Names are single components and never followed as links.
@@ -26,11 +29,14 @@ interface NativeDirectory : AutoCloseable {
     fun child(
         name: String,
         create: Boolean = false,
+        permissions: CreationPermissions = CreationPermissions.OWNER_ONLY,
     ): NativeDirectory
 
     fun file(
         name: String,
         create: Boolean = false,
+        writable: Boolean = create,
+        permissions: CreationPermissions = CreationPermissions.OWNER_ONLY,
     ): SeekableByteChannel
 
     fun info(name: String): FileInfo?
@@ -47,8 +53,17 @@ interface NativeDirectory : AutoCloseable {
         overwrite: Boolean,
     )
 
+    /** Copy one entry exclusively; directories must be empty and links are copied without traversal. */
+    fun copyEntry(
+        source: String,
+        destination: NativeDirectory,
+        name: String,
+    )
+
     /** The callback permits early termination without allocating an unbounded list. */
     fun entries(visit: (String) -> Boolean)
+
+    fun watch(session: DirectoryWatchSession? = null): NativeDirectoryWatch
 
     fun restrictToOwner()
 
@@ -56,6 +71,7 @@ interface NativeDirectory : AutoCloseable {
         fun open(
             path: Path,
             create: Boolean = false,
+            permissions: CreationPermissions = CreationPermissions.OWNER_ONLY,
         ): NativeDirectory {
             check(Native.POINTER_SIZE == 8) { "Native file operations require a supported 64-bit platform" }
             val absolute = physicalSystemPath(path.toAbsolutePath().normalize())
@@ -76,7 +92,7 @@ interface NativeDirectory : AutoCloseable {
             var delivered = false
             try {
                 for (component in absolute) {
-                    val next = current.child(component.toString(), create)
+                    val next = current.child(component.toString(), create, permissions)
                     current.close()
                     current = next
                 }
@@ -103,3 +119,5 @@ internal fun component(name: String): String {
     require(!Platform.isWindows() || name.none { it == '\\' || it == ':' }) { "Windows stream paths are not allowed" }
     return name
 }
+
+class CrossDeviceMoveException : IOException("Move crosses filesystem volumes")

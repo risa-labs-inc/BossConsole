@@ -27,6 +27,8 @@ internal object PosixApi {
             2 -> NoSuchFileException(operation)
             13, 1 -> AccessDeniedException(operation)
             17 -> FileAlreadyExistsException(operation)
+            18 -> CrossDeviceMoveException()
+            20 -> java.nio.file.NotDirectoryException(operation)
             else -> IOException("$operation failed (OS error $code)")
         }
 
@@ -74,7 +76,8 @@ internal object PosixApi {
                 mode and 0xf000 == 0x4000,
                 mode and 0xf000 == 0xa000,
                 "$device:${memory.getLong(8)}",
-                modified * 1000,
+                modified * 1000 + memory.getLong(if (mac) 56 else 96) / 1_000_000,
+                modified * 1_000_000_000 + memory.getLong(if (mac) 56 else 96),
             )
         }
 }

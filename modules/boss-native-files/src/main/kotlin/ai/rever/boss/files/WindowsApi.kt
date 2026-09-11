@@ -22,6 +22,8 @@ internal object WindowsApi {
             2, 3 -> NoSuchFileException(operation)
             5 -> AccessDeniedException(operation)
             80, 183 -> FileAlreadyExistsException(operation)
+            17 -> CrossDeviceMoveException()
+            267 -> java.nio.file.NotDirectoryException(operation)
             else -> IOException("$operation failed (OS error $code)")
         }
 
@@ -52,6 +54,18 @@ internal object WindowsApi {
             val directory = attributes and 0x10 != 0
             val link = attributes and 0x400 != 0
             FileInfo(size, !directory && !link, directory, link, "${memory.getInt(28)}:$index", modified)
+        }
+
+    fun duplicate(handle: Pointer): Pointer =
+        Memory(Native.POINTER_SIZE.toLong()).use { copy ->
+            val process = kernel.getFunction("GetCurrentProcess").invokePointer(emptyArray<Any>())
+            check(
+                kernel.getFunction("DuplicateHandle").invokeInt(
+                    arrayOf<Any?>(process, handle, process, copy, 0, 0, 2),
+                ),
+                "Duplicate file handle",
+            )
+            checkNotNull(copy.getPointer(0))
         }
 
     fun close(handle: Pointer) {
@@ -88,6 +102,7 @@ internal class WindowsOpen private constructor(
         access: Int,
         disposition: Int,
         options: Int,
+        asynchronous: Boolean = false,
     ): Pointer {
         val arguments =
             arrayOf<Any?>(
@@ -99,7 +114,7 @@ internal class WindowsOpen private constructor(
                 0x80,
                 7,
                 disposition,
-                options or 0x20,
+                options or (if (asynchronous) 0 else 0x20),
                 null,
                 0,
             )

@@ -6,7 +6,8 @@ import java.nio.channels.SeekableByteChannel
 import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 
-internal class PosixDirectory private constructor(
+@Suppress("TooManyFunctions") // Implements the complete native directory operation contract.
+internal class PosixDirectory(
     private val descriptor: Int,
 ) : NativeDirectory {
     private var closed = false
@@ -22,10 +23,12 @@ internal class PosixDirectory private constructor(
     override fun child(
         name: String,
         create: Boolean,
+        permissions: CreationPermissions,
     ): NativeDirectory {
         component(name)
         if (create) {
-            val result = PosixApi.library.getFunction("mkdirat").invokeInt(arrayOf<Any>(handle(), name, 448)) // 0700
+            val mode = if (permissions == CreationPermissions.OWNER_ONLY) 448 else 511 // 0700 / 0777 before umask
+            val result = PosixApi.library.getFunction("mkdirat").invokeInt(arrayOf<Any>(handle(), name, mode))
             if (result < 0 && Native.getLastError() != 17) throw PosixApi.error("Create directory")
         }
         val flags = PosixApi.directory or PosixApi.noFollow or PosixApi.closeOnExec
@@ -37,13 +40,18 @@ internal class PosixDirectory private constructor(
     override fun file(
         name: String,
         create: Boolean,
+        writable: Boolean,
+        permissions: CreationPermissions,
     ): SeekableByteChannel {
-        val creation = if (create) 2 or (if (PosixApi.mac) 0x200 or 0x800 else 0x40 or 0x80) else 0
-        val flags = creation or PosixApi.noFollow or PosixApi.closeOnExec or PosixApi.nonBlocking
-        val arguments = arrayOf<Any>(handle(), component(name), flags, 384)
+        val creation = if (create) (if (PosixApi.mac) 0x200 or 0x800 else 0x40 or 0x80) else 0
+        val flags =
+            (if (writable) 2 else 0) or creation or
+                PosixApi.noFollow or PosixApi.closeOnExec or PosixApi.nonBlocking
+        val mode = if (permissions == CreationPermissions.OWNER_ONLY) 384 else 438
+        val arguments = arrayOf<Any>(handle(), component(name), flags, mode)
         // openat has three fixed arguments; Darwin ARM64 passes the variadic mode on the stack.
         val opened = PosixApi.library.getFunction("openat", 3 shl 7).invokeInt(arguments)
-        return PosixFile(PosixApi.check(opened, "Open file"), writable = create)
+        return PosixFile(PosixApi.check(opened, "Open file"), writable = writable)
     }
 
     @Synchronized
@@ -86,6 +94,15 @@ internal class PosixDirectory private constructor(
         PosixApi.check(result, "Move")
     }
 
+    override fun copyEntry(
+        source: String,
+        destination: NativeDirectory,
+        name: String,
+    ) {
+        require(destination is PosixDirectory) { "Incompatible filesystem provider" }
+        PosixCopy.copy(handle(), component(source), destination.handle(), component(name))
+    }
+
     @Synchronized
     override fun entries(visit: (String) -> Boolean) {
         // A separate open file description gives each enumeration its own directory offset.
@@ -113,6 +130,13 @@ internal class PosixDirectory private constructor(
             PosixApi.library.getFunction("closedir").invokeInt(arrayOf<Any>(stream))
         }
     }
+
+    @Synchronized
+    override fun watch(session: DirectoryWatchSession?): NativeDirectoryWatch =
+        when {
+            PosixApi.mac -> SnapshotDirectoryWatch(this)
+            else -> LinuxDirectoryWatch(handle(), session)
+        }
 
     @Synchronized
     override fun restrictToOwner() {

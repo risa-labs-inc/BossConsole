@@ -1,198 +1,243 @@
 package ai.rever.boss.service.filesystem
 
+import ai.rever.boss.files.DirectoryChange
+import ai.rever.boss.files.DirectoryWatchOverflowException
+import ai.rever.boss.files.DirectoryWatchSession
+import ai.rever.boss.files.NativeDirectory
 import ai.rever.boss.ipc.proto.services.FileChangeEvent
 import ai.rever.boss.ipc.proto.services.FileChangeType
 import ai.rever.boss.ipc.proto.services.WatchFileChangesRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import java.io.IOException
-import java.nio.file.FileSystems
-import java.nio.file.FileVisitResult
-import java.nio.file.Files
-import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.NoSuchFileException
 import java.nio.file.Path
-import java.nio.file.SimpleFileVisitor
-import java.nio.file.StandardWatchEventKinds.ENTRY_CREATE
-import java.nio.file.StandardWatchEventKinds.ENTRY_DELETE
-import java.nio.file.StandardWatchEventKinds.ENTRY_MODIFY
-import java.nio.file.StandardWatchEventKinds.OVERFLOW
-import java.nio.file.WatchKey
-import java.nio.file.WatchService
-import java.nio.file.attribute.BasicFileAttributes
 import java.util.concurrent.Semaphore
-import java.util.concurrent.TimeUnit
 import kotlin.coroutines.CoroutineContext
 
-/** Every collector owns its registrations until cancellation, failure, or deletion of its root. */
-internal class FileWatchRegistry {
+/** Each cold collector owns authorized handles and registrations until cancellation or root removal. */
+internal class FileWatchRegistry(
+    private val access: FileAccess,
+) {
     private val slots = Semaphore(32)
 
     fun watch(request: WatchFileChangesRequest): Flow<FileChangeEvent> =
         flow {
             if (!slots.tryAcquire()) throw fileSystemLimit("Too many active file watches")
             try {
-                val root = Path.of(request.path).toAbsolutePath().normalize()
-                require(Files.isDirectory(root, NOFOLLOW_LINKS)) { "Watch root must be a directory" }
-                FileSystems.getDefault().newWatchService().use { service ->
-                    val registrations = Registrations(service, root, currentCoroutineContext())
-                    registrations.add(root, request.recursive)
-                    var active = true
-                    while (active) {
-                        currentCoroutineContext().ensureActive()
-                        val key = service.poll(500, TimeUnit.MILLISECONDS)
-                        if (key != null) {
-                            emitChanges(key, request.recursive, registrations)
-                            if (!key.reset()) {
-                                registrations.remove(key)
-                                active = key.watchable() != root
+                access.directory(request.path, followLeaf = false).use { root ->
+                    Registrations(root, access.policy, currentCoroutineContext()).use { registrations ->
+                        registrations.start(request.recursive)
+                        while (registrations.active) {
+                            currentCoroutineContext().ensureActive()
+                            registrations.poll(request.recursive) { path, kind ->
+                                val type =
+                                    when (kind) {
+                                        DirectoryChange.Kind.CREATED -> FileChangeType.FILE_CHANGE_TYPE_CREATED
+                                        DirectoryChange.Kind.MODIFIED -> FileChangeType.FILE_CHANGE_TYPE_MODIFIED
+                                        DirectoryChange.Kind.DELETED -> FileChangeType.FILE_CHANGE_TYPE_DELETED
+                                    }
+                                emit(
+                                    FileChangeEvent
+                                        .newBuilder()
+                                        .setPath(path.toString())
+                                        .setChangeType(type)
+                                        .setTimestamp(System.currentTimeMillis())
+                                        .build(),
+                                )
                             }
+                            delay(250)
                         }
                     }
                 }
+            } catch (_: DirectoryWatchOverflowException) {
+                throw fileSystemLimit("File watch overflow; rescan and reconnect")
             } finally {
                 slots.release()
             }
         }.flowOn(Dispatchers.IO)
+}
 
-    private suspend fun FlowCollector<FileChangeEvent>.emitChanges(
-        key: WatchKey,
+private data class ParentEntry(
+    val directory: NativeDirectory,
+    val name: String,
+)
+
+private class Registration(
+    val directory: NativeDirectory,
+    val canonical: Path,
+    val visible: Path,
+    val parent: ParentEntry?,
+    val depth: Int,
+    session: DirectoryWatchSession,
+) {
+    private val identity = directory.identity
+    val watch = directory.watch(session)
+
+    fun present(): Boolean =
+        parent?.let {
+            val current = it.directory.info(it.name)
+            current != null && !current.isLink && current.identity == identity
+        } ?: true
+}
+
+private class WatchScanWork(
+    var visited: Int = 0,
+)
+
+private class Registrations(
+    private val root: FileDirectoryHandle,
+    private val policy: FilePathPolicy,
+    private val context: CoroutineContext,
+) : AutoCloseable {
+    private val entries = mutableListOf<Registration>()
+    private val session = DirectoryWatchSession()
+    val active: Boolean get() = entries.any { it.directory === root.directory }
+
+    fun start(recursive: Boolean) {
+        val parent = root.entry?.let { ParentEntry(it.parent, it.name) }
+        val first = register(root.directory, root.canonical, root.visible, parent, 0)
+        if (recursive) scan(first, WatchScanWork())
+    }
+
+    suspend fun poll(
         recursive: Boolean,
-        registrations: Registrations,
+        emit: suspend (Path, DirectoryChange.Kind) -> Unit,
     ) {
-        val directory = key.watchable() as Path
-        for (event in key.pollEvents()) {
-            currentCoroutineContext().ensureActive()
-            if (event.kind() == OVERFLOW) throw fileSystemLimit("File watch overflow; rescan and reconnect")
-            val relative = event.context() as? Path ?: continue
-            val path = directory.resolve(relative)
-            if (recursive && event.kind() == ENTRY_CREATE && Files.isDirectory(path, NOFOLLOW_LINKS)) {
-                registrations.add(path, true)
-            }
-            val type =
-                when (event.kind()) {
-                    ENTRY_CREATE -> FileChangeType.FILE_CHANGE_TYPE_CREATED
-                    ENTRY_MODIFY -> FileChangeType.FILE_CHANGE_TYPE_MODIFIED
-                    ENTRY_DELETE -> FileChangeType.FILE_CHANGE_TYPE_DELETED
-                    else -> FileChangeType.FILE_CHANGE_TYPE_UNSPECIFIED
+        for (registration in entries.toList()) {
+            if (registration in entries) {
+                if (registration.present()) {
+                    pollDirectory(registration, recursive, emit)
+                } else {
+                    remove(registration)
                 }
-            emit(
-                FileChangeEvent
-                    .newBuilder()
-                    .setPath(path.toString())
-                    .setChangeType(type)
-                    .setTimestamp(System.currentTimeMillis())
-                    .build(),
-            )
+            }
         }
     }
 
-    private class Registrations(
-        private val service: WatchService,
-        private val root: Path,
-        private val context: CoroutineContext,
+    private suspend fun pollDirectory(
+        registration: Registration,
+        recursive: Boolean,
+        emit: suspend (Path, DirectoryChange.Kind) -> Unit,
     ) {
-        private val keys = mutableSetOf<WatchKey>()
-
-        fun remove(key: WatchKey) {
-            keys.remove(key)
-        }
-
-        fun add(
-            path: Path,
-            recursive: Boolean,
-        ) {
-            var visited = 0
-            Files.walkFileTree(
-                path,
-                emptySet(),
-                if (recursive) FileSystemLimits.SCAN_DEPTH + 1 else 0,
-                object : SimpleFileVisitor<Path>() {
-                    private fun visit(
-                        entry: Path,
-                        attrs: BasicFileAttributes,
-                    ): FileVisitResult {
-                        context.ensureActive()
-                        enforceFileSystemLimit(
-                            ++visited <= FileSystemLimits.SCAN_ENTRIES,
-                            "File watch scan limit reached",
-                        )
-                        if (attrs.isDirectory) {
-                            enforceFileSystemLimit(
-                                root.relativize(entry).nameCount <= FileSystemLimits.SCAN_DEPTH,
-                                "File watch depth limit reached",
-                            )
-                            keys.removeAll { !it.isValid }
-                            enforceFileSystemLimit(keys.size < 1024, "File watch directory limit reached")
-                            try {
-                                keys.add(entry.register(service, ENTRY_CREATE, ENTRY_MODIFY, ENTRY_DELETE))
-                            } catch (e: IOException) {
-                                if (!disappeared(entry, e)) throw e
-                            }
-                        }
-                        return FileVisitResult.CONTINUE
-                    }
-
-                    override fun visitFileFailed(
-                        file: Path,
-                        exc: IOException,
-                    ): FileVisitResult {
-                        context.ensureActive()
-                        if (disappeared(file, exc)) return FileVisitResult.CONTINUE
-                        throw exc
-                    }
-
-                    override fun preVisitDirectory(
-                        dir: Path,
-                        attrs: BasicFileAttributes,
-                    ) = visit(dir, attrs)
-
-                    override fun visitFile(
-                        file: Path,
-                        attrs: BasicFileAttributes,
-                    ) = visit(file, attrs)
-                },
-            )
-        }
-
-        private fun disappeared(
-            path: Path,
-            failure: IOException,
-        ): Boolean =
-            path != root &&
-                when (failure) {
-                    is NoSuchFileException -> {
-                        true
-                    }
-
-                    else -> {
-                        System.getProperty("os.name").startsWith("Windows") && confirmDeletion(path)
-                    }
+        // A parent's removal can have removed this record since the loop snapshot was made.
+        if (registration !in entries) return
+        val batch = registration.watch.poll()
+        for (event in batch.events) {
+            context.ensureActive()
+            if (policy.allowed(registration.canonical.resolve(event.name))) {
+                if (recursive && event.kind == DirectoryChange.Kind.CREATED) {
+                    addChild(registration, event.name, WatchScanWork())
                 }
+                emit(registration.visible.resolve(event.name), event.kind)
+            }
+        }
+        if (!batch.valid) remove(registration)
+    }
 
-        private fun confirmDeletion(path: Path): Boolean {
-            // Windows can deny an open while deletion is pending. Only suppress the failure
-            // after an attribute read confirms absence; persistent permission failures still surface.
+    private fun register(
+        directory: NativeDirectory,
+        canonical: Path,
+        visible: Path,
+        parent: ParentEntry?,
+        depth: Int,
+    ): Registration {
+        context.ensureActive()
+        enforceFileSystemLimit(depth <= FileSystemLimits.SCAN_DEPTH, "File watch depth limit reached")
+        enforceFileSystemLimit(entries.size < 1024, "File watch directory limit reached")
+        return Registration(directory, canonical, visible, parent, depth, session).also(entries::add)
+    }
+
+    private fun scan(
+        parent: Registration,
+        work: WatchScanWork,
+    ) {
+        parent.directory.entries { name ->
+            context.ensureActive()
+            enforceFileSystemLimit(++work.visited <= FileSystemLimits.SCAN_ENTRIES, "File watch scan limit reached")
+            addChild(parent, name, work)
+            true
+        }
+    }
+
+    private fun addChild(
+        parent: Registration,
+        name: String,
+        work: WatchScanWork,
+    ) {
+        val canonical = parent.canonical.resolve(name)
+        val info = if (policy.allowed(canonical)) parent.directory.info(name) else null
+        if (info == null || !info.isDirectory || info.isLink) return
+        val existing = entries.firstOrNull { it.canonical == canonical }
+        if (existing?.present() == true) return
+        if (existing != null) remove(existing)
+        try {
+            val child = parent.directory.child(name)
+            var registered = false
+            try {
+                val registration =
+                    register(
+                        child,
+                        canonical,
+                        parent.visible.resolve(name),
+                        ParentEntry(parent.directory, name),
+                        parent.depth + 1,
+                    )
+                registered = true
+                scan(registration, work)
+            } finally {
+                if (!registered) child.close()
+            }
+        } catch (failure: IOException) {
+            if (!disappeared(parent.directory, name, failure)) throw failure
+        }
+    }
+
+    private fun disappeared(
+        parent: NativeDirectory,
+        name: String,
+        failure: IOException,
+    ): Boolean {
+        if (failure is NoSuchFileException) return true
+        var absent = false
+        if (System.getProperty("os.name").startsWith("Windows")) {
             repeat(5) {
                 context.ensureActive()
-                Thread.sleep(10)
-                val absent =
+                if (!absent) {
+                    Thread.sleep(10)
                     try {
-                        Files.readAttributes(path, BasicFileAttributes::class.java, NOFOLLOW_LINKS)
-                        false
-                    } catch (_: NoSuchFileException) {
-                        true
+                        absent = parent.info(name) == null
                     } catch (_: IOException) {
-                        false // The watch API can erase the Windows error type; only proven absence is suppressed.
+                        // Pending deletion can deny opens; only proven absence permits suppression.
                     }
-                if (absent) return true
+                }
             }
-            return false
+        }
+        return absent
+    }
+
+    private fun remove(registration: Registration) {
+        val removed = entries.filter { it.canonical.startsWith(registration.canonical) }.asReversed()
+        for (item in removed) {
+            entries.remove(item)
+            try {
+                item.watch.close()
+            } finally {
+                if (item.directory !== root.directory) item.directory.close()
+            }
+        }
+    }
+
+    override fun close() {
+        try {
+            entries.firstOrNull()?.let(::remove)
+        } finally {
+            session.close()
         }
     }
 }

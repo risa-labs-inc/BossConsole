@@ -6,6 +6,7 @@ on:
   pull_request:
     paths:
       - 'modules/boss-service-filesystem/**'
+      - 'modules/boss-native-files/**'
       - 'modules/boss-ipc/src/main/proto/boss/ipc/v1/services/filesystem.proto'
       - 'plugin-platform/plugin-api-ipc/**'
       - '.github/workflows/filesystem-limits.yml'
@@ -28,9 +29,24 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v6
+      - name: Create a disposable second filesystem on macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          hdiutil create -size 64m -fs APFS -volname boss-filesystem-test "$RUNNER_TEMP/boss-filesystem-test.dmg"
+          hdiutil attach -nobrowse -mountpoint "$RUNNER_TEMP/boss-filesystem-volume" "$RUNNER_TEMP/boss-filesystem-test.dmg"
+          echo "BOSS_TEST_SECOND_VOLUME=$RUNNER_TEMP/boss-filesystem-volume" >> "$GITHUB_ENV"
       - name: Run filesystem and paging regressions
         shell: bash
         run: ./gradlew :boss-service-filesystem:test :plugin-platform:plugin-api-ipc:desktopTest :boss-service-filesystem:ktlintCheck :boss-service-filesystem:detekt :plugin-platform:plugin-api-ipc:ktlintCheck :plugin-platform:plugin-api-ipc:detekt --no-daemon
+      - name: Remove the disposable second filesystem
+        if: always() && runner.os == 'macOS'
+        shell: bash
+        run: |
+          if [ -d "$RUNNER_TEMP/boss-filesystem-volume" ]; then
+            hdiutil detach "$RUNNER_TEMP/boss-filesystem-volume"
+          fi
+          rm -f "$RUNNER_TEMP/boss-filesystem-test.dmg"
       - uses: actions/upload-artifact@v7
         if: always()
         with:

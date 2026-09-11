@@ -8,6 +8,7 @@ import java.nio.channels.SeekableByteChannel
 import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 
+@Suppress("TooManyFunctions") // Implements the complete native directory operation contract.
 internal class WindowsDirectory(
     private val pointer: Pointer,
 ) : NativeDirectory {
@@ -24,15 +25,16 @@ internal class WindowsDirectory(
     override fun child(
         name: String,
         create: Boolean,
+        permissions: CreationPermissions,
     ): NativeDirectory {
         val access = 0x81 // FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES
         val opened =
-            if (create) {
+            if (create && permissions == CreationPermissions.OWNER_ONLY) {
                 WindowsSecurity.privateDescriptor(handle()) { descriptor ->
                     WindowsOpen(handle(), name, descriptor).use { it.open(access, 3, 1) }
                 }
             } else {
-                WindowsOpen(handle(), name, null).use { it.open(access, 1, 1) }
+                WindowsOpen(handle(), name, null).use { it.open(access, if (create) 3 else 1, 1) }
             }
         return WindowsDirectory(opened)
     }
@@ -41,16 +43,20 @@ internal class WindowsDirectory(
     override fun file(
         name: String,
         create: Boolean,
+        writable: Boolean,
+        permissions: CreationPermissions,
     ): SeekableByteChannel {
+        val access = if (writable) 0xc0000000.toInt() else 0x80000000.toInt()
+        val disposition = if (create) 2 else 1
         val opened =
-            if (create) {
+            if (create && permissions == CreationPermissions.OWNER_ONLY) {
                 WindowsSecurity.privateDescriptor(handle()) { descriptor ->
                     WindowsOpen(handle(), name, descriptor).use { it.open(0xc0000000.toInt(), 2, 0x40) }
                 }
             } else {
-                WindowsOpen(handle(), name, null).use { it.open(0x80000000.toInt(), 1, 0x40) }
+                WindowsOpen(handle(), name, null).use { it.open(access, disposition, 0x40) }
             }
-        return WindowsFile(opened, create)
+        return WindowsFile(opened, writable, verifyPrivate = writable && permissions == CreationPermissions.OWNER_ONLY)
     }
 
     @Synchronized
@@ -107,8 +113,20 @@ internal class WindowsDirectory(
         }
     }
 
+    override fun copyEntry(
+        source: String,
+        destination: NativeDirectory,
+        name: String,
+    ) {
+        require(destination is WindowsDirectory) { "Incompatible filesystem provider" }
+        WindowsCopy.copy(handle(), component(source), destination.handle(), component(name))
+    }
+
     @Synchronized
     override fun entries(visit: (String) -> Boolean) = WindowsEntries.visit(handle(), visit)
+
+    @Synchronized
+    override fun watch(session: DirectoryWatchSession?): NativeDirectoryWatch = WindowsDirectoryWatch(handle())
 
     @Synchronized
     override fun restrictToOwner() {

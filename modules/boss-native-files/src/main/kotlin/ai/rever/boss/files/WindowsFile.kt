@@ -10,6 +10,7 @@ import java.nio.channels.SeekableByteChannel
 internal class WindowsFile(
     private val pointer: Pointer,
     private val writable: Boolean,
+    verifyPrivate: Boolean = writable,
 ) : SeekableByteChannel {
     private var closed = false
     private var offset = 0L
@@ -19,7 +20,7 @@ internal class WindowsFile(
         try {
             val type = WindowsApi.kernel.getFunction("GetFileType").invokeInt(arrayOf<Any?>(pointer))
             require(type == 1 && WindowsApi.info(pointer).isRegularFile) { "Only regular disk files can be opened" }
-            if (writable) WindowsSecurity.verify(pointer)
+            if (verifyPrivate) WindowsSecurity.verify(pointer)
             valid = true
         } finally {
             if (!valid) close()

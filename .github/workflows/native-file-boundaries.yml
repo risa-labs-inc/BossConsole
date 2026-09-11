@@ -36,6 +36,13 @@ jobs:
           java-version: '17'
           distribution: temurin
       - uses: gradle/actions/setup-gradle@v6
+      - name: Create a disposable second filesystem on macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          hdiutil create -size 64m -fs APFS -volname boss-filesystem-test "$RUNNER_TEMP/boss-filesystem-test.dmg"
+          hdiutil attach -nobrowse -mountpoint "$RUNNER_TEMP/boss-filesystem-volume" "$RUNNER_TEMP/boss-filesystem-test.dmg"
+          echo "BOSS_TEST_SECOND_VOLUME=$RUNNER_TEMP/boss-filesystem-volume" >> "$GITHUB_ENV"
       - name: Run JVM file and process regressions
         shell: bash
         run: >-
@@ -54,6 +61,14 @@ jobs:
       - name: Execute the native file boundary smoke binary
         shell: bash
         run: ./modules/boss-native-files/build/native/nativeCompile/native-files-smoke
+      - name: Remove the disposable second filesystem
+        if: always() && runner.os == 'macOS'
+        shell: bash
+        run: |
+          if [ -d "$RUNNER_TEMP/boss-filesystem-volume" ]; then
+            hdiutil detach "$RUNNER_TEMP/boss-filesystem-volume"
+          fi
+          rm -f "$RUNNER_TEMP/boss-filesystem-test.dmg"
       - name: Save test and native build reports
         if: always()
         uses: actions/upload-artifact@v7
