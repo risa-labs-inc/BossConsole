@@ -16,6 +16,10 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import java.io.RandomAccessFile
 import java.nio.file.Files
+import java.nio.file.attribute.AclEntry
+import java.nio.file.attribute.AclEntryPermission
+import java.nio.file.attribute.AclEntryType
+import java.nio.file.attribute.AclFileAttributeView
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.test.AfterTest
@@ -85,6 +89,40 @@ class FileSystemLimitsTest {
                 setOf(alias.resolve("content").toString(), alias.resolve("loop").toString()),
                 result.entriesList.map { it.path }.toSet(),
             )
+        }
+
+    @Test
+    fun `persistent Windows directory permission failures remain visible`() =
+        runBlocking {
+            if (!Platform.isWindows()) return@runBlocking
+            val denied = Files.createDirectory(root.resolve("denied"))
+            val view = Files.getFileAttributeView(denied, AclFileAttributeView::class.java)
+            val original = view.acl
+            try {
+                val deny =
+                    AclEntry
+                        .newBuilder()
+                        .setType(AclEntryType.DENY)
+                        .setPrincipal(Files.getOwner(denied))
+                        .setPermissions(AclEntryPermission.LIST_DIRECTORY)
+                        .build()
+                view.acl = listOf(deny) + original
+                assertFailsWith<StatusException> {
+                    withTimeout(5000) {
+                        stub
+                            .watchFileChanges(
+                                WatchFileChangesRequest
+                                    .newBuilder()
+                                    .setPath(root.toString())
+                                    .setRecursive(true)
+                                    .build(),
+                            ).first()
+                    }
+                }
+                assertTrue(Files.exists(denied))
+            } finally {
+                view.acl = original
+            }
         }
 
     @Test

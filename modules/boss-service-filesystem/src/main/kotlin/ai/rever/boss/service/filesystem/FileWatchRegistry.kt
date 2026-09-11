@@ -11,7 +11,6 @@ import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import java.io.IOException
-import java.nio.file.AccessDeniedException
 import java.nio.file.FileSystems
 import java.nio.file.FileVisitResult
 import java.nio.file.Files
@@ -171,12 +170,8 @@ internal class FileWatchRegistry {
                         true
                     }
 
-                    is AccessDeniedException -> {
-                        System.getProperty("os.name").startsWith("Windows") && confirmDeletion(path)
-                    }
-
                     else -> {
-                        false
+                        System.getProperty("os.name").startsWith("Windows") && confirmDeletion(path)
                     }
                 }
 
@@ -192,10 +187,10 @@ internal class FileWatchRegistry {
                         false
                     } catch (_: NoSuchFileException) {
                         true
-                    } catch (_: AccessDeniedException) {
-                        null // Allow a bounded interval for the pending deletion to finish.
+                    } catch (_: IOException) {
+                        false // The watch API can erase the Windows error type; only proven absence is suppressed.
                     }
-                if (absent != null) return absent
+                if (absent) return true
             }
             return false
         }
