@@ -78,6 +78,5 @@ object McpGovernanceCoverage {
      * reported as ungoverned would be. [EXTERNALLY_SERVED_TOOLS] is the exception
      * list precisely so that the default is the common case.
      */
-    fun isEnforceable(toolName: String): Boolean =
-        toolName.removePrefix("mcp__boss__") !in EXTERNALLY_SERVED_TOOLS
+    fun isEnforceable(toolName: String): Boolean = toolName.removePrefix("mcp__boss__") !in EXTERNALLY_SERVED_TOOLS
 }
