@@ -48,7 +48,8 @@ internal class WindowsDirectory(
         permissions: CreationPermissions,
     ): SeekableByteChannel {
         require(readable || writable) { "A file must be opened for reading or writing" }
-        val access = (if (readable) 0x80000000.toInt() else 0) or (if (writable) 0x40000000 else 0)
+        // File-type validation needs FILE_READ_ATTRIBUTES even when file contents are write-only.
+        val access = 0x80 or (if (readable) 0x80000000.toInt() else 0) or (if (writable) 0x40000000 else 0)
         val disposition = if (create) 2 else 1
         val opened =
             if (create && permissions == CreationPermissions.OWNER_ONLY) {
