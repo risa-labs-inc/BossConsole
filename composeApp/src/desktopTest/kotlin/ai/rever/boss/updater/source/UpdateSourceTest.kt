@@ -33,6 +33,7 @@ class UpdateSourceTest {
               "channel": "stable",
               "prerelease": false,
               "release_notes": "Bug fixes and improvements",
+              "min_os": {"macos": "13.0"},
               "assets": [
                 {"name": "BOSS-9.2.17-Universal.dmg", "url": "https://cdn/boss/9.2.17/BOSS-9.2.17-Universal.dmg", "size": 287654321, "sha256": "deadbeef"}
               ],
@@ -47,6 +48,7 @@ class UpdateSourceTest {
         assertEquals("v9.2.17", release.tag_name)
         assertEquals("Bug fixes and improvements", release.body)
         assertEquals("2026-06-30T12:00:00Z", release.published_at)
+        assertEquals(mapOf("macos" to "13.0"), release.minimumOs)
         assertFalse(release.draft)
         assertFalse(release.prerelease)
         assertEquals(1, release.assets.size)

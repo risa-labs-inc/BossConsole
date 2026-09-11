@@ -367,7 +367,8 @@ jobs:
         fi
 
         echo "📤 Publishing BOSS $VERSION (channel=$CHANNEL) to Supabase bucket '$BUCKET'"
-        bash scripts/publish-supabase-release.sh boss "$VERSION" "$CHANNEL" release-assets "$BUCKET"
+        bash scripts/publish-supabase-release.sh \
+          boss "$VERSION" "$CHANNEL" release-assets "$BUCKET" gradle/minimum-os-versions.properties
 
     - name: Update public repository README
       env:

@@ -103,6 +103,7 @@ internal data class AppReleaseRow(
     val channel: String = "stable",
     val prerelease: Boolean = false,
     @SerialName("release_notes") val releaseNotes: String = "",
+    @SerialName("min_os") val minimumOs: Map<String, String> = emptyMap(),
     val assets: List<AppReleaseAsset> = emptyList(),
     @SerialName("published_at") val publishedAt: String = "",
 ) {
@@ -114,6 +115,7 @@ internal data class AppReleaseRow(
             draft = false,
             prerelease = prerelease,
             published_at = publishedAt,
+            minimumOs = minimumOs,
             assets =
                 assets.map { asset ->
                     GitHubAsset(

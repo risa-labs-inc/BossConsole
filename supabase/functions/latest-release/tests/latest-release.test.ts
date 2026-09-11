@@ -96,6 +96,7 @@ const BOSSTERM_ROW = {
   channel: "stable",
   prerelease: false,
   release_notes: "notes",
+  min_os: { macos: "13.0" },
   assets: BOSSTERM_ASSETS,
   published_at: "2026-07-03T09:39:32.010341+00:00",
 }
@@ -130,6 +131,7 @@ Deno.test("?app=bossterm returns latest-release JSON with no-store", async () =>
     assertEquals(res.headers.get("Cache-Control"), "no-store")
     const body = await res.json()
     assertEquals(body.version, "1.2.126")
+    assertEquals(body.min_os, { macos: "13.0" })
     assertEquals(body.assets.length, BOSSTERM_ASSETS.length)
   })
 })

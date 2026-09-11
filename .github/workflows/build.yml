@@ -41,6 +41,9 @@ jobs:
         # (regressed twice: #877 misaligned resume, and the SIGPIPE status bug).
         run: bash scripts/test/test-tus-slice.sh
 
+      - name: 🧪 Release publish minimum OS metadata tests
+        run: bash scripts/test/test-minimum-os.sh
+
       - name: 🧪 Release notarization — retry/resume tests
         # Guards the macOS notarization retry path: a dropped status poll must
         # resume the existing submission, never re-upload, and an actual Apple
