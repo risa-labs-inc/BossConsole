@@ -418,6 +418,10 @@ internal class BrowserHandleImpl(
     // JxBrowser callback thread; a stale null read there means no menu at all.
     @Volatile private var contextMenuCallback: ContextMenuCallback? = null
 
+    // The frame that was right-clicked when the current context menu was requested.
+    // Captured so edit commands target the exact frame, rather than falling back to focusedFrame().
+    @Volatile private var contextMenuTargetFrame: java.lang.ref.WeakReference<com.teamdev.jxbrowser.frame.Frame>? = null
+
     // Last title Chromium reported, kept so building a context menu never has to call into
     // the live Browser. browser.title() can be slow as well as throw, and the menu path is
     // where that costs the user something visible.
@@ -1697,6 +1701,8 @@ internal class BrowserHandleImpl(
 
                 if (read == null) return@ShowContextMenuCallback
                 val (info, frame) = read
+
+                contextMenuTargetFrame = frame?.let { java.lang.ref.WeakReference(it) }
 
                 if (!info.isEditable) {
                     // Runs on a JxBrowser thread; deliverContextMenu bounds a throwing plugin.
@@ -3622,27 +3628,14 @@ internal class BrowserHandleImpl(
      * field could show text its own state never learned about.
      *
      * **On the frame choice, and a comment in this package that says the opposite.**
-     * [Browser.focusedFrame] first, `mainFrame()` only as a fallback: the caret is what an editor
-     * command acts on, and it routinely sits in a subframe. `PopupWindowContextMenu` reaches the
-     * other conclusion for its own menu ("browser.focusedFrame() would answer for the wrong frame
-     * inside an iframe") and it is right there: a right-click has a frame Chromium already
-     * resolved for that exact click, `params.frame()`, which beats any inference. These are not
-     * in conflict so much as differently supplied — that callback has the accurate frame in hand
-     * and this method does not.
+     * The caret is what an editor command acts on, and it routinely sits in a subframe (like an
+     * OAuth or payment form). When invoked from the context menu, [contextMenuTargetFrame] holds
+     * the frame Chromium already resolved for the exact right-click, which beats any inference
+     * and aligns precisely with `PopupWindowContextMenu`.
      *
-     * What that costs, stated plainly: for a caller reaching `copySelection()` on a non-editable
-     * selection while an iframe holds keyboard focus, `focusedFrame()` is the iframe and the
-     * command acts on its empty selection. `mainFrame()` would have been right there. That case
-     * is not reachable through the browser plugin's menu today — its non-editable branch copies
-     * the reported selection through AWT and never calls this, and the editable branch is gated
-     * on `isEditable`, which `toContextMenuInfo` computes for the main frame only, so a
-     * right-click that reaches here has focused a main-frame editable element. It is reachable by
-     * any other plugin holding a [BrowserHandle].
-     *
-     * The durable answer is to prefer the frame the context-menu callback already resolved
-     * (`BrowserHandleImpl` line ~1232 keeps `params.frame()`), held weakly and only while its
-     * menu is live, with `focusedFrame()` then `mainFrame()` behind it. Not done here: it changes
-     * the shape of the handle for a case nothing currently hits.
+     * If the command is invoked outside a context-menu flow (e.g. from an explicit plugin call or
+     * keyboard shortcut), [Browser.focusedFrame] is the next best answer, with `mainFrame()` as a
+     * final fallback.
      *
      * Never throws: this runs from context-menu handlers on a JxBrowser callback thread, where
      * an escaping exception has no owner. A refusal is logged rather than returned, because
@@ -3656,9 +3649,15 @@ internal class BrowserHandleImpl(
         // editorCommand(EditorCommand.paste(), "Copy") compile and mislabel every log line it
         // produced.
         val what = command.name().name
+
+        // Consume the context menu frame: it is valid for one editor command initiated from that menu.
+        val menuFrame = contextMenuTargetFrame?.get()
+        contextMenuTargetFrame = null
+
         val accepted =
             try {
                 executeEditorCommand(
+                    menuFrame = menuFrame,
                     focusedFrame = browser.focusedFrame().orElse(null),
                     mainFrame = browser.mainFrame().orElse(null),
                     command = command,
@@ -4542,11 +4541,12 @@ internal fun shouldRetainSurface(mode: com.teamdev.jxbrowser.engine.RenderingMod
  * the logger.
  */
 internal fun executeEditorCommand(
+    menuFrame: Frame?,
     focusedFrame: Frame?,
     mainFrame: Frame?,
     command: EditorCommand,
 ): Boolean {
-    val frame = focusedFrame ?: mainFrame ?: return false
+    val frame = menuFrame ?: focusedFrame ?: mainFrame ?: return false
     return frame.execute(command)
 }
 

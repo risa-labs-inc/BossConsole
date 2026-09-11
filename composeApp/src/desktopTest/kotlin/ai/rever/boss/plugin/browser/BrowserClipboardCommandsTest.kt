@@ -77,11 +77,30 @@ class BrowserClipboardCommandsTest {
      * into the wrong document.
      */
     @Test
-    fun `the focused frame receives the command, and the main frame does not`() {
+    fun `the context menu frame beats the focused frame, which beats the main frame`() {
+        val menu = RecordingFrame()
         val focused = RecordingFrame()
         val main = RecordingFrame()
 
-        executeEditorCommand(focused.frame, main.frame, EditorCommand.copy())
+        executeEditorCommand(menu.frame, focused.frame, main.frame, EditorCommand.copy())
+
+        assertEquals(1, menu.executed.size, "the exact frame the menu was opened on must be used")
+        assertEquals(EditorCommand.Name.COPY, menu.executed.single().name())
+        assertTrue(focused.executed.isEmpty(), "a focused frame must be ignored if a menu frame exists")
+        assertTrue(main.executed.isEmpty(), "the main frame must not be used")
+    }
+
+    @Test
+    fun `the focused frame is the fallback when no menu frame is held`() {
+        val focused = RecordingFrame()
+        val main = RecordingFrame()
+
+        executeEditorCommand(
+            menuFrame = null,
+            focusedFrame = focused.frame,
+            mainFrame = main.frame,
+            command = EditorCommand.copy(),
+        )
 
         assertEquals(1, focused.executed.size, "the focused frame should have run the command")
         assertEquals(EditorCommand.Name.COPY, focused.executed.single().name())
@@ -94,10 +113,15 @@ class BrowserClipboardCommandsTest {
      * working there instead of turning the fix into a different silent no-op.
      */
     @Test
-    fun `the main frame is the fallback when nothing is focused`() {
+    fun `the main frame is the final fallback when nothing is focused`() {
         val main = RecordingFrame()
 
-        executeEditorCommand(focusedFrame = null, mainFrame = main.frame, command = EditorCommand.paste())
+        executeEditorCommand(
+            menuFrame = null,
+            focusedFrame = null,
+            mainFrame = main.frame,
+            command = EditorCommand.paste(),
+        )
 
         assertEquals(EditorCommand.Name.PASTE, main.executed.single().name())
     }
@@ -105,7 +129,14 @@ class BrowserClipboardCommandsTest {
     /** A closed or still-loading browser has neither frame. Refusing beats throwing at a menu. */
     @Test
     fun `no frame at all is a refusal, not a throw`() {
-        assertFalse(executeEditorCommand(focusedFrame = null, mainFrame = null, command = EditorCommand.cut()))
+        assertFalse(
+            executeEditorCommand(
+                menuFrame = null,
+                focusedFrame = null,
+                mainFrame = null,
+                command = EditorCommand.cut(),
+            ),
+        )
     }
 
     /**
@@ -118,8 +149,22 @@ class BrowserClipboardCommandsTest {
     fun `a refusal by Chromium is reported, not swallowed`() {
         val refusing = RecordingFrame(accepts = false)
 
-        assertFalse(executeEditorCommand(refusing.frame, null, EditorCommand.copy()))
-        assertTrue(executeEditorCommand(RecordingFrame(accepts = true).frame, null, EditorCommand.copy()))
+        assertFalse(
+            executeEditorCommand(
+                menuFrame = null,
+                focusedFrame = refusing.frame,
+                mainFrame = null,
+                command = EditorCommand.copy(),
+            ),
+        )
+        assertTrue(
+            executeEditorCommand(
+                menuFrame = null,
+                focusedFrame = RecordingFrame(accepts = true).frame,
+                mainFrame = null,
+                command = EditorCommand.copy(),
+            ),
+        )
     }
 
     // --- who has to restore keyboard focus ---
