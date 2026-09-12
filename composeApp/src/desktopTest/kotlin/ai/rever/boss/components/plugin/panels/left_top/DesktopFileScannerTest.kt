@@ -1,8 +1,10 @@
 package ai.rever.boss.components.plugin.panels.left_top
 
 import kotlinx.coroutines.runBlocking
+import org.junit.jupiter.api.Assumptions.abort
 import org.junit.jupiter.api.Test
 import java.io.File
+import java.nio.file.FileSystemException
 import java.nio.file.Files
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -68,7 +70,13 @@ class DesktopFileScannerTest {
         File(real, "file.txt").writeText("hi")
         val linkDir = tempDir()
         val link = File(linkDir, "link")
-        Files.createSymbolicLink(link.toPath(), real.toPath())
+        try {
+            Files.createSymbolicLink(link.toPath(), real.toPath())
+        } catch (e: UnsupportedOperationException) {
+            abort("no symlink support: ${e.message}")
+        } catch (e: FileSystemException) {
+            abort("symlink creation refused: ${e.message}")
+        }
         assertTrue(directoryHasChildren(link.absolutePath))
     }
 

@@ -47,9 +47,17 @@ class GitProviderWritesToRepoTest {
         return dir
     }
 
+    private val activeProviders = mutableListOf<GitDataProviderImpl>()
+
+    @org.junit.jupiter.api.AfterEach
+    fun cleanup() {
+        activeProviders.forEach { it.dispose() }
+        activeProviders.clear()
+    }
+
     private fun provider(dir: File): GitDataProviderImpl {
         val state = WindowGitState("w")
-        return GitDataProviderImpl(state, { "w" }) { dir.absolutePath }
+        return GitDataProviderImpl(state, { "w" }) { dir.absolutePath }.also { activeProviders += it }
     }
 
     /** Porcelain status of one path, e.g. " M", "M ", "??", or "" when clean. */
@@ -549,7 +557,7 @@ class GitProviderWritesToRepoTest {
         File(dir, "nested/deep/a.txt").writeText("x\n")
         File(dir, "nested/b.txt").writeText("y\n")
         val state = WindowGitState("w")
-        val p = GitDataProviderImpl(state, { "w" }) { dir.absolutePath }
+        val p = GitDataProviderImpl(state, { "w" }) { dir.absolutePath }.also { activeProviders += it }
 
         p.refreshStatus()
 

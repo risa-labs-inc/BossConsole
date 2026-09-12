@@ -1,5 +1,6 @@
 package ai.rever.boss.plugin.browser
 
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
@@ -22,17 +23,19 @@ class BrowserHandleExecuteJavaScriptTest {
             val closes = AtomicInteger()
             val disposal = BrowserNativeDisposal(listOf(call.executor)) { closes.incrementAndGet() }
             try {
-                assertNull(
-                    call.call<String>(timeoutMs = 100) {
-                        entered.countDown()
-                        release.await()
-                        "late-result"
-                    },
-                )
-                assertTrue(entered.await(5, TimeUnit.SECONDS))
+                val callJob =
+                    async {
+                        call.call<String>(timeoutMs = 500) {
+                            entered.countDown()
+                            release.await()
+                            "late-result"
+                        }
+                    }
+                assertTrue(entered.await(5, TimeUnit.SECONDS), "precondition: block entered")
+                assertNull(callJob.await(), "caller timeout answers null")
                 disposal.start()
                 assertNull(
-                    withTimeoutOrNull(100) {
+                    withTimeoutOrNull(200) {
                         disposal.awaitCompletion()
                         true
                     },
@@ -44,6 +47,7 @@ class BrowserHandleExecuteJavaScriptTest {
             } finally {
                 release.countDown()
                 disposal.start()
+                call.shutdown()
             }
         }
 
