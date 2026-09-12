@@ -56,6 +56,11 @@ class StandardBrowserBindingsTest {
         assertEquals(listOf("Cmd", "Alt"), devTools.modifiers)
         assertEquals(ShortcutContext.BROWSER, devTools.context)
 
+        val copyMarkdown = assertNotNull(settings.getBinding(KeymapActions.BROWSER_COPY_MARKDOWN))
+        assertEquals("C", copyMarkdown.key)
+        assertEquals(listOf("Cmd", "Alt"), copyMarkdown.modifiers)
+        assertEquals(ShortcutContext.BROWSER, copyMarkdown.context)
+
         assertEquals("OpenBracket", assertNotNull(settings.getBinding(KeymapActions.BROWSER_BACK)).key)
         assertEquals("CloseBracket", assertNotNull(settings.getBinding(KeymapActions.BROWSER_FORWARD)).key)
     }

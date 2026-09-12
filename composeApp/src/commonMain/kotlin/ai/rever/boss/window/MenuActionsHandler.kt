@@ -75,6 +75,12 @@ object MenuActionsHandler {
     private val _browserDevToolsEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
     val browserDevToolsEvents: SharedFlow<String> = _browserDevToolsEvents.asSharedFlow()
 
+    private val _browserCopyMarkdownEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
+    val browserCopyMarkdownEvents: SharedFlow<String> = _browserCopyMarkdownEvents.asSharedFlow()
+
+    private val _browserCopyLinkEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
+    val browserCopyLinkEvents: SharedFlow<String> = _browserCopyLinkEvents.asSharedFlow()
+
     private val _zoomInEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
     val zoomInEvents: SharedFlow<String> = _zoomInEvents.asSharedFlow()
 
@@ -368,6 +374,16 @@ object MenuActionsHandler {
     /** Open DevTools on the window's active browser (Cmd+Opt+I). */
     fun triggerBrowserDevTools(windowId: String) {
         _browserDevToolsEvents.tryEmit(windowId)
+    }
+
+    /** Copy page or selection as Markdown for the window's active browser (Cmd+Alt+C / Ctrl+Alt+C). */
+    fun triggerBrowserCopyMarkdown(windowId: String) {
+        _browserCopyMarkdownEvents.tryEmit(windowId)
+    }
+
+    /** Copy current page URL for the window's active browser. */
+    fun triggerBrowserCopyLink(windowId: String) {
+        _browserCopyLinkEvents.tryEmit(windowId)
     }
 
     /**

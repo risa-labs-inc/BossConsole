@@ -953,6 +953,7 @@ object KeymapPresets {
                 browserBinding(KeymapActions.BROWSER_BACK, "OpenBracket", listOf("Cmd")),
                 browserBinding(KeymapActions.BROWSER_FORWARD, "CloseBracket", listOf("Cmd")),
                 browserBinding(KeymapActions.BROWSER_DEVTOOLS, "I", listOf("Cmd", "Alt")),
+                browserBinding(KeymapActions.BROWSER_COPY_MARKDOWN, "C", listOf("Cmd", "Alt")),
                 // Cmd+L for the fluck browser's Focus Address Bar. The ACTION belongs to the
                 // plugin (the address bar is its UI); the BINDING has to live here, because a
                 // plugin's own defaultBinding is GLOBAL in the host's v1 contract and would

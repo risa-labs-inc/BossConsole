@@ -33,6 +33,7 @@ class KeyCaptureNameTest {
     private val presetSpellingByKey: Map<Key, String> =
         mapOf(
             Key.B to "B",
+            Key.C to "C",
             Key.D to "D",
             Key.E to "E",
             Key.F to "F",
