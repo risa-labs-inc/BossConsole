@@ -40,6 +40,7 @@ class ReapChildrenTest {
         private val onDestroy: () -> Unit = {},
         private val ignoreForce: Boolean = false,
         private val delayedForce: Boolean = false,
+        private val handle: ProcessHandle? = null,
     ) : Process() {
         private var alive = true
         private var destroys = 0
@@ -82,6 +83,8 @@ class ReapChildrenTest {
         }
 
         override fun isAlive(): Boolean = alive
+
+        override fun toHandle(): ProcessHandle = handle ?: super.toHandle()
 
         override fun pid(): Long = pidValue
     }
@@ -340,4 +343,94 @@ class ReapChildrenTest {
 
         assertFalse(process.isAlive, "omitting tokenRegistry must not stop the reap itself from working")
     }
+
+    @Test
+    fun `descendant failure does not skip siblings or parent and closes snapshot`() {
+        val killed = mutableListOf<Int>()
+        var snapshotClosed = false
+
+        fun handle(action: (String) -> Any?): ProcessHandle =
+            java.lang.reflect.Proxy.newProxyInstance(
+                ProcessHandle::class.java.classLoader,
+                arrayOf(ProcessHandle::class.java),
+            ) { _, method, _ -> action(method.name) } as ProcessHandle
+        val descendants =
+            (1..3).map { id ->
+                handle { method ->
+                    if (method == "isAlive") return@handle true
+                    check(method == "destroyForcibly")
+                    killed.add(id)
+                    if (id == 2) error("termination refused")
+                    true
+                }
+            }
+        val parentHandle =
+            handle { method ->
+                check(method == "descendants")
+                descendants.stream().filter { killed.isEmpty() }.onClose { snapshotClosed = true }
+            }
+        var gracefulSawIntactDescendants = false
+        val parent =
+            FakeProcess(900, handle = parentHandle, onDestroy = {
+                gracefulSawIntactDescendants = killed.isEmpty()
+            })
+        val registry = ProcessRegistry()
+        registry.register("parent", managed("parent", parent))
+        reapChildren(null, registry)
+        assertFalse(parent.isAlive)
+        assertTrue(gracefulSawIntactDescendants)
+        assertTrue(snapshotClosed)
+        assertEquals(listOf(1, 2, 3), killed)
+    }
+
+    @Test
+    fun `restart cap notice is emitted once per failed process generation`() {
+        val first = managed("notice-generation", FakeProcess(910))
+        val replacement = managed("notice-generation", FakeProcess(911))
+        assertTrue(firstRestartLimitNotice(first))
+        assertFalse(firstRestartLimitNotice(first))
+        assertTrue(firstRestartLimitNotice(replacement))
+        assertFalse(firstRestartLimitNotice(replacement))
+    }
+
+    @Test
+    fun `caller cancellation is not reported as successful plugin termination`() =
+        kotlinx.coroutines.runBlocking {
+            val destroyed = java.util.concurrent.CountDownLatch(1)
+            val process =
+                FakeProcess(
+                    920,
+                    ignoreDestroys = 1,
+                    onDestroy = { destroyed.countDown() },
+                    delayedForce = true,
+                )
+            val spawner =
+                ai.rever.boss.components.plugin.OutOfProcessPluginSpawnerImpl(
+                    ai.rever.boss.process
+                        .ProcessSpawner("unused"),
+                )
+            val field = spawner.javaClass.getDeclaredField("managedProcesses").apply { isAccessible = true }
+
+            @Suppress("UNCHECKED_CAST")
+            val managedMap = field.get(spawner) as MutableMap<String, ManagedProcess>
+            managedMap["cancel-test"] = managed("cancel-test", process)
+            val outcome =
+                java.util.concurrent.atomic
+                    .AtomicReference<Result<Unit>?>(null)
+            val job =
+                launch(kotlinx.coroutines.Dispatchers.IO) {
+                    outcome.set(spawner.terminate("cancel-test"))
+                }
+            try {
+                assertTrue(destroyed.await(5, TimeUnit.SECONDS))
+                job.cancel()
+                job.join()
+                assertEquals(null, outcome.get())
+                assertTrue(process.forciblyKilled)
+                assertFalse(process.isAlive)
+            } finally {
+                job.cancel()
+                job.join()
+            }
+        }
 }

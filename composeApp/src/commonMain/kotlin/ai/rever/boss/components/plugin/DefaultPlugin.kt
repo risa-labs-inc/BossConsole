@@ -261,20 +261,19 @@ class DefaultPlugin(
 
                 // Only wire if BOSS_MODE=KERNEL
                 val bossMode =
-                    System.getenv("BOSS_MODE")
-                        ?: try {
-                            val cfgCls = Class.forName("ai.rever.boss.config.ConfigLoader")
-                            val cfgInstance = cfgCls.getDeclaredField("INSTANCE").get(null)
-                            cfgCls
-                                .getMethod(
-                                    "getConfig",
-                                    String::class.java,
-                                    String::class.java,
-                                ).invoke(cfgInstance, "BOSS_MODE", null) as? String
-                        } catch (e: Exception) {
-                            logger.warn(LogCategory.SYSTEM, "OOP spawner: ConfigLoader failed", mapOf("error" to e.toString()))
-                            null
-                        }
+                    try {
+                        val cfgCls = Class.forName("ai.rever.boss.config.ConfigLoader")
+                        val cfgInstance = cfgCls.getDeclaredField("INSTANCE").get(null)
+                        cfgCls
+                            .getMethod(
+                                "getConfig",
+                                String::class.java,
+                                String::class.java,
+                            ).invoke(cfgInstance, "BOSS_MODE", null) as? String
+                    } catch (e: Exception) {
+                        logger.warn(LogCategory.SYSTEM, "OOP spawner: ConfigLoader failed", mapOf("error" to e.toString()))
+                        null
+                    }
                 logger.info(LogCategory.SYSTEM, "OOP spawner: BOSS_MODE resolved", mapOf("bossMode" to (bossMode ?: "null")))
                 if (bossMode == "KERNEL") {
                     // Reuse the kernel's own ProcessSpawner rather than building a second one.
@@ -1282,19 +1281,18 @@ class DefaultPlugin(
     private fun registerKernelPluginServices() {
         try {
             val bossMode =
-                System.getenv("BOSS_MODE")
-                    ?: try {
-                        val configCls = Class.forName("ai.rever.boss.config.ConfigLoader")
-                        val cfgInst = configCls.getDeclaredField("INSTANCE").get(null)
-                        configCls
-                            .getMethod(
-                                "getConfig",
-                                String::class.java,
-                                String::class.java,
-                            ).invoke(cfgInst, "BOSS_MODE", null) as? String
-                    } catch (_: Exception) {
-                        null
-                    }
+                try {
+                    val configCls = Class.forName("ai.rever.boss.config.ConfigLoader")
+                    val cfgInst = configCls.getDeclaredField("INSTANCE").get(null)
+                    configCls
+                        .getMethod(
+                            "getConfig",
+                            String::class.java,
+                            String::class.java,
+                        ).invoke(cfgInst, "BOSS_MODE", null) as? String
+                } catch (_: Exception) {
+                    null
+                }
             if (bossMode != "KERNEL") return
 
             val bootstrapCls = Class.forName("ai.rever.boss.kernel.KernelBootstrap")

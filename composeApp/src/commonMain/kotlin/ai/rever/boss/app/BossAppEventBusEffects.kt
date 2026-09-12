@@ -76,6 +76,12 @@ import kotlinx.coroutines.withContext
  */
 @Composable
 internal fun BossAppEventBusEffects(state: BossAppState) {
+    LaunchedEffect(Unit) {
+        ai.rever.boss.startup.kernelStartupNotices.notices.collect { notice ->
+            StatusMessageManager.showMessage(notice, durationMs = ai.rever.boss.startup.KERNEL_NOTICE_DURATION_MS)
+        }
+    }
+
     val windowId = state.windowId
     val logger = state.logger
     val splitViewState = state.splitViewState

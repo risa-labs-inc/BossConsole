@@ -1,5 +1,6 @@
 package ai.rever.boss.settings
 
+import ai.rever.boss.config.parseEnvVars
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -367,6 +368,44 @@ class MicrokernelModePreferenceTest {
             // export-prefixed assignment at all and appended a second, unrelated line instead,
             // leaving the original export line (still active) untouched underneath it.
             assertEquals(listOf("# BOSS_MODE=KERNEL"), file.readLines())
+        }
+
+    @Test
+    fun `indented comment lines are comments in the settings reader too`() =
+        runTest {
+            // The disabled state is written as `# BOSS_MODE=KERNEL`; an indented copy is a
+            // comment as well. Before BossConsole#450's fix this line read as ENABLED in the
+            // settings reader while the ConfigLoader reader (and every runtime gate) saw a
+            // comment - the UI and the runtime disagreed about one file.
+            val file = tempEnvFile()
+            file.writeText("  # BOSS_MODE=KERNEL\n")
+            assertFalse(MicrokernelModePreference.isEnabled(file))
+        }
+
+    @Test
+    fun `settings reader and ConfigLoader reader agree on the same file`() =
+        runTest {
+            // Both in-repo readers of env_vars must agree line by line (BossConsole#450's
+            // review): Settings shows the mode ON exactly when the runtime gate would resolve
+            // KERNEL for the very same file. If either reader regrows a private parser, this
+            // fails on the line where they diverge.
+            val samples =
+                listOf(
+                    "BOSS_MODE=KERNEL",
+                    "export BOSS_MODE=KERNEL",
+                    "# BOSS_MODE=KERNEL",
+                    "  # BOSS_MODE=KERNEL",
+                    "BOSS_MODE=MONOLITH",
+                    "BOSS_MODE=KERNEL\nBOSS_MODE=MONOLITH",
+                )
+            for (sample in samples) {
+                val file = tempEnvFile()
+                file.writeText(sample + "\n")
+                val configLoaderView =
+                    parseEnvVars(file.readLines()).getProperty("BOSS_MODE")?.trim()?.uppercase() == "KERNEL"
+                val settingsView = MicrokernelModePreference.isEnabled(file)
+                assertEquals(configLoaderView, settingsView, "readers disagree on: $sample")
+            }
         }
 
     @Test

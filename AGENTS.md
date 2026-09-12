@@ -446,7 +446,21 @@ GITHUB_TOKEN=ghp_your_token_here  # Optional, 60 req/hr without
 MACOS_DEVELOPER_ID=Developer ID Application: ...  # Optional, signs local packaging
 ```
 
-**Priority**: Environment variables > System properties > local.properties > Embedded build config
+**Priority**: Environment variables > System properties > local.properties > Embedded build config.
+For `BOSS_MODE` only, the `env_vars` file is consulted between system properties and
+local.properties. The reader and the settings writers use `BossDirectories.resolve("env_vars")`;
+`BOSS_DATA_DIR` does not redirect this preferences file. The file uses the plain, unquoted
+`KEY=value` format; both in-repo readers also accept a shell-style `export KEY=value` prefix
+(`env_vars` doubles as the secret-manager plugin's key file) via one shared normalization,
+`EnvVarsFormat` in `ai.rever.boss.config` - the two readers must never parse it differently.
+Other keys in that file cannot override host configuration. `BOSS_MODE` is normalized to trimmed
+uppercase
+by ConfigLoader; runtime plugin gates must use that resolver rather than prefixing a raw
+getenv lookup. Nonblank environment or system property values override the saved file at
+every resolution tier. The ConfigLoader snapshot reads the file once per process, so a
+mode change applies on the next launch; the settings surfaces share one published save
+state within the running process. Atomic preference writes preserve existing POSIX
+permissions.
 
 ### Credential brokers
 
@@ -573,27 +587,35 @@ server has already decrypted, recovery codes, and JWT claim sets. The request di
 counts too: `SupabaseDataProviderImpl.rpc` parses caller-supplied parameters, and a plugin
 calling `create_secret` puts the new password in them.
 
-## Microkernel Mode's toggle is a preference, not an activation switch
+## Microkernel Mode's toggle is applied on restart, not in the running process
 
 `Settings > Advanced` and the application menu both let an operator turn Microkernel Mode on,
-persisted to `~/.boss/env_vars` as `BOSS_MODE=KERNEL` by `MicrokernelModePreference`. Nothing in
-the host reads that file back into a running process - `env_vars` is where the secret-manager
-plugin resolves API keys from, and where this toggle happens to also live, but no
-`ConfigLoader`/`System.getenv` path in this repo loads `BOSS_MODE` from it. So the toggle and its
-"restart required" notice are exactly what they say: a **preference** for the next launch to pick
-up, not something that activates anything in the current process. Whether a launch actually starts
-in KERNEL mode, and whether that mode works, is #391's and #485's territory, not this file's.
+persisted to `~/.boss/env_vars` as `BOSS_MODE=KERNEL` by `MicrokernelModePreference` (disabling
+writes the line back as `# BOSS_MODE=KERNEL`). `env_vars` is also where the secret-manager
+plugin resolves API keys from; the mode line is the only key this area of the host manages.
+
+Because `ConfigLoader` reads `env_vars` as a `BOSS_MODE`-only precedence tier (between system
+properties and `local.properties`), a saved `BOSS_MODE=KERNEL` changes the mode the **next**
+launch runs in: `main.kt` starts `KernelBootstrap` when `ConfigLoader.getConfig("BOSS_MODE")`
+resolves `KERNEL`, and that snapshot is taken once per process. The toggle still activates
+nothing in the running process, nothing re-reads the file mid-launch, and a nonblank
+`BOSS_MODE` environment variable or system property overrides the saved file at every
+resolution tier. Disabling is one asymmetric step: the commented-out line contributes
+nothing to any tier, so resolution falls through to `local.properties`/embedded, which
+emit no `BOSS_MODE` in this repo - the effective mode is MONOLITH, matching the toggle.
 
 **The "restart required" comparand must be a latched startup snapshot, never a live read.**
-`ConfigLoader.getConfig("BOSS_MODE")` looks like the right thing to compare a freshly-saved value
-against and is not: it resolves from an env var, a system property, `local.properties`, or the
-embedded build config - never from `env_vars` - so on an ordinary install it is permanently `false`
-and a comparison against it can never clear after an actual restart (or can never appear at all for
-an operator who sets `BOSS_MODE` some other way). `MicrokernelModePreference.startupEnabledLatched`
-exists for exactly this: it is set once, from the first `refresh()` a process makes, and never
-moved again, so it is "what `env_vars` said when this process started" - the only comparand that
-answers "does this need a restart" correctly. Reinstating a live `ConfigLoader` read here is the
-same regression that motivated this file in the first place; see BossConsole#472's review.
+`MicrokernelModePreference.startupEnabledLatched` is set once, from the first `refresh()` a
+process makes, and never moved again - "what `env_vars` said when this process started".
+A live file read would clear the notice the moment the save lands, while the process still
+runs the old mode; a live `ConfigLoader.getConfig("BOSS_MODE")` would additionally reflect
+environment or system-property overrides the saved file has nothing to do with. The latch
+is the only comparand that answers "does this need a restart" for the saved preference;
+reinstating a live read here is the regression behind BossConsole#472's review.
+
+What this section covers: preference persistence, its readers, and the restart notice.
+Whether a launch actually starts in KERNEL mode, and whether that mode works (spawn,
+supervision, IPC), is #391's territory.
 
 - Use Compose Multiplatform Resource API (not Android resources)
 - Location: `composeApp/src/commonMain/composeResources/`

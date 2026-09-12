@@ -1,5 +1,7 @@
 package ai.rever.boss.settings
 
+import ai.rever.boss.config.envVarsKey
+import ai.rever.boss.config.parseEnvVarsLines
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -47,12 +49,15 @@ object MicrokernelModePreference {
 
     // Latched from the FIRST refresh() this process makes, never updated after - this is "what
     // env_vars said when BOSS started", which is the comparand "restart required" actually needs.
-    // ConfigLoader.getConfig("BOSS_MODE") looks like the right answer to that question and isn't:
-    // it resolves from an env var / system property / local.properties / the embedded build
-    // config, and nothing in this repo loads env_vars into any of those, so on an ordinary
-    // install it is permanently false and the banner it used to drive could never clear after an
-    // actual restart (or could never appear for someone who does export BOSS_MODE). See #472's
-    // review. Whole-hog fix (making env_vars actually reach the running process) is #391's.
+    // ConfigLoader.getConfig("BOSS_MODE") looks like the right answer to that question and still
+    // isn't one here: it resolves env var > system property > env_vars > local.properties >
+    // embedded, so it answers "what mode will the NEXT launch run in" (and can reflect an
+    // environment or system-property override the saved file has nothing to do with), not
+    // "what mode is THIS process running in" - which was fixed at startup by the ConfigLoader
+    // snapshot. A live file read is worse still: it would clear the notice the moment the save
+    // lands, while the process still runs the old mode. The latched file read is the only
+    // comparand that answers "does this need a restart" for the saved preference. See #472's
+    // review; what a process actually runs at startup is #391's territory.
     private var startupEnabledLatched: Boolean? = null
 
     /**
@@ -137,13 +142,10 @@ object MicrokernelModePreference {
 
     private fun readEnabled(envFile: File): Boolean {
         if (!envFile.exists()) return false
-        return envFile
-            .readLines(Charsets.UTF_8)
-            .filter { it.isNotBlank() && !it.startsWith("#") }
-            .mapNotNull { line ->
-                val parts = line.split("=", limit = 2)
-                if (parts.size == 2 && envVarKey(line) == "BOSS_MODE") parts[1].trim() else null
-            }.lastOrNull() == "KERNEL"
+        // The same shared line semantics as ConfigLoader's env_vars tier (parseEnvVarsLines):
+        // both readers of the same file must agree, so Settings and the runtime gate cannot
+        // state opposite modes for one file (BossConsole#450's review).
+        return parseEnvVarsLines(envFile.readLines(Charsets.UTF_8))["BOSS_MODE"] == "KERNEL"
     }
 
     /**
@@ -172,7 +174,7 @@ object MicrokernelModePreference {
                 }
 
                 val lines = envFile.readLines(Charsets.UTF_8).toMutableList()
-                val modeLineIndices = lines.indices.filter { index -> envVarKey(lines[index]) == "BOSS_MODE" }
+                val modeLineIndices = lines.indices.filter { index -> envVarsKey(lines[index]) == "BOSS_MODE" }
                 val newLine = if (enabled) "BOSS_MODE=KERNEL" else "# BOSS_MODE=KERNEL"
                 if (modeLineIndices.isEmpty()) {
                     lines.add(newLine)
@@ -194,28 +196,6 @@ object MicrokernelModePreference {
             }
         }
 }
-
-/**
- * The env-var key a raw `env_vars` line assigns, ignoring a leading `#` comment marker and/or an
- * `export ` prefix.
- *
- * `env_vars` is also read by the secret-manager plugin for API keys, and shell convention supports
- * `export KEY=value` there - a line reader that recognizes only a bare `KEY=` would not (before
- * this) recognize a hand-edited `export BOSS_MODE=KERNEL` as setting `BOSS_MODE` at all. That line
- * still made it through both directions wrong: [readEnabled] treated the file as if it never set
- * `BOSS_MODE`, and [setEnabled] - unable to find the existing assignment either - appended a
- * second, unrelated line rather than replacing the export line, leaving both in the file and the
- * toggle reporting the opposite of what was actually set.
- */
-private fun envVarKey(line: String): String =
-    line
-        .trimStart()
-        .removePrefix("#")
-        .trimStart()
-        .removePrefix("export ")
-        .trimStart()
-        .substringBefore("=")
-        .trim()
 
 /**
  * Whether requesting [nextEnabled] for the current preference state [currentlyEnabled] needs the

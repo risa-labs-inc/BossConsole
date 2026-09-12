@@ -2,34 +2,46 @@ package ai.rever.boss
 
 import BossTheme
 import ai.rever.boss.cli.CLICommandHandler
-import ai.rever.boss.cli.createBossCLI
 import ai.rever.boss.components.bars.horizontal.StatusMessageManager
 import ai.rever.boss.components.dialogs.ChromiumDownloadContent
 import ai.rever.boss.components.settings.search.SettingsSearchIndex
 import ai.rever.boss.config.ChromiumAutoDownloader
+import ai.rever.boss.config.ChromiumFlagKeys
+import ai.rever.boss.config.ChromiumFlagsSettingsManager
+import ai.rever.boss.config.ConfigLoader
+import ai.rever.boss.config.ResourceModeConfig
 import ai.rever.boss.crash.CrashHandler
 import ai.rever.boss.crash.RENDER_RECOVERY_TOAST_MILLIS
 import ai.rever.boss.crash.RenderCrashPolicy
 import ai.rever.boss.crash.RenderRecoveryToaster
 import ai.rever.boss.crash.WindowExceptionRoute
 import ai.rever.boss.crash.decideWindowExceptionRoute
+import ai.rever.boss.crash.displayPluginId
 import ai.rever.boss.crash.hasFatalCause
+import ai.rever.boss.crash.hostPluginIdResolver
 import ai.rever.boss.crash.noteRecoveryOutcome
 import ai.rever.boss.logging.GlobalLogCapture
-import ai.rever.boss.performance.PerformanceDataProviderImpl
+import ai.rever.boss.performance.MemoryPressureWatchdog
+import ai.rever.boss.performance.PerformanceMonitor
 import ai.rever.boss.plugin.PluginStoreSetup
-import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.plugin.sandbox.PluginExecutionBoundary
 import ai.rever.boss.plugin.sandbox.ui.PluginCrashInterceptor
+import ai.rever.boss.plugin.sandbox.ui.PluginCrashRegistry
 import ai.rever.boss.plugin.sandbox.ui.PluginRenderRecovery
+import ai.rever.boss.plugin.sandbox.ui.installCrashInterceptor
 import ai.rever.boss.plugin.ui.BossThemeController
 import ai.rever.boss.project.DefaultWorkingDirectory
 import ai.rever.boss.services.passkey.PasskeyPlatformInit
-import ai.rever.boss.utils.DeepLinkHandler
-import ai.rever.boss.utils.DeepLinkOrigin
-import ai.rever.boss.utils.OsOpenArguments
+import ai.rever.boss.startup.ChromiumBootstrap
+import ai.rever.boss.startup.CliBootstrap
+import ai.rever.boss.startup.CliDispatchResult
+import ai.rever.boss.startup.OverlaySetup
+import ai.rever.boss.startup.PlatformSetup
+import ai.rever.boss.startup.ShutdownSequence
+import ai.rever.boss.theme.AppThemeSettingsManager
+import ai.rever.boss.updater.AppUpdateRealtimeService
+import ai.rever.boss.updater.UpdateCoordinator
 import ai.rever.boss.utils.SingleInstanceManager
-import ai.rever.boss.utils.SystemUtils
-import ai.rever.boss.utils.WindowsProtocolHandler
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.window.AWTKeyboardInterceptor
@@ -58,14 +70,11 @@ import androidx.compose.ui.window.WindowExceptionHandlerFactory
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
-import com.github.ajalt.clikt.core.ProgramResult
-import com.github.ajalt.clikt.core.main
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import java.awt.Window
-import java.io.File
 import javax.swing.JPopupMenu
 import kotlin.system.exitProcess
 
@@ -84,17 +93,7 @@ private val renderRecoveryToaster = RenderRecoveryToaster()
  * The gap this closes: [PluginCrashInterceptor.attributeToPlugin] only answers
  * for plugins with a *mounted* error boundary, so a plugin with no UI on screen
  * was unattributable — and an unattributable `StackOverflowError` escalated to
- * ending the app. `TerminalTabPluginAPIImpl.setPendingSidebarCommand` recursed
- * into itself from a click and took BOSS down that way, with all ~1024 surviving
- * frames naming the plugin.
- *
- * Recorded through `recordCrash` rather than `recordRenderFault`: unlike
- * [PluginRenderRecovery]'s narrowing loop, which quarantines a *suspect* and must
- * not close somebody's tab on a guess, this is a plugin we can name — from the
- * host's own execution-boundary tag, or from a stack made of nothing else.
- *
- * The window is kept. No repaint: nothing here rebuilt the scene, and repainting
- * is what must not happen after a stack overflow.
+ * ending the app.
  */
 private fun quarantineBlamedPlugin(
     pluginId: String,
@@ -180,189 +179,64 @@ private fun containRenderFault(
  */
 private val startupScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
-/**
- * Point macOS's own chrome at the BOSS theme, before AWT starts.
- *
- * macOS draws the traffic lights itself, from the window's NSAppearance, and nothing the app
- * paints changes them. The INACTIVE ones - what an unfocused window shows - are pale in a
- * dark-appearance window, so a light BOSS theme in a dark-appearance window loses them against
- * its own light chrome. The active ones are always red/amber/green, which is why the bug is only
- * visible when the window is not focused.
- *
- * `apple.awt.application.appearance` is the property that decides it. The build passes
- * `=system`, which ties the window to the macOS setting rather than to the theme - fine while the
- * two agree and wrong the moment they do not.
- *
- * **Timing is the whole thing.** It is read once, when AWT creates the NSApplication, so this has
- * to run before anything touches AWT. `AWTKeyboardInterceptor.install()` does, a few hundred
- * lines below, and so does every window. Logging above it does not, which is why this sits
- * directly under it. Per-window client properties were tried first and do nothing:
- * `apple.awt.windowAppearance` is not among the properties this JDK reads.
- *
- * **Known limit, stated because somebody will hit it**: switching themes at runtime does not move
- * the lights. The property has already been read by then, and there is no supported way to change
- * an NSAppearance from Java afterwards. It takes a restart.
- */
-private fun applyMacAppearanceFromTheme() {
-    if (!SystemUtils.isMacOS) return
-
-    // Reads a small JSON file and touches no UI toolkit, which is what makes it safe this early.
-    ai.rever.boss.theme.AppThemeSettingsManager
-        .ensureInitialized()
-
-    val theme = BossThemeController.current
-    val appearance =
-        if (theme.isLight) {
-            "NSAppearanceNameAqua"
-        } else {
-            "NSAppearanceNameDarkAqua"
-        }
-    System.setProperty("apple.awt.application.appearance", appearance)
-
-    // Logged because the failure is invisible from inside the app: the lights are drawn by macOS,
-    // and the only way to tell "the theme was read too early" from "macOS ignored us" is to see
-    // which theme this ran with. Costs one line at startup.
-    BossLogger
-        .forComponent("MacAppearance")
-        .info(
-            LogCategory.SYSTEM,
-            "Window appearance set from theme",
-            mapOf("themeId" to theme.id, "isLight" to theme.isLight.toString(), "appearance" to appearance),
-        )
-}
-
 fun main(args: Array<String>) {
-    // Codex invokes this headless credential helper. Handle it before AWT,
-    // plugins, logging, or the single-instance lock so stdout stays token-only.
-    if (ai.rever.boss.llm.RisaLlmTokenCommand
-            .isRequested(args)
-    ) {
-        exitProcess(
-            ai.rever.boss.llm.RisaLlmTokenCommand
-                .execute(),
-        )
-    }
-
-    // Headless CLI commands (status, mcp, completion, --help) target the running
-    // instance or generate output headlessly. Execute before AWT, plugins, Skiko,
-    // or acquiring the single-instance lock so they fail without GUI startup when BOSS is
-    // closed without booting the GUI or corrupting standard output streams.
-    val firstNonFlag = args.firstOrNull { !it.startsWith("-") }?.lowercase()
-    val isHeadlessCli =
-        firstNonFlag in setOf("status", "mcp", "completion") ||
-            (args.isNotEmpty() && args.all { it in setOf("-h", "--help") })
-
-    if (isHeadlessCli) {
-        ai.rever.boss.cli
-            .configureHeadlessLogging()
-        try {
-            createBossCLI().main(args)
-            exitProcess(0)
-        } catch (e: ProgramResult) {
-            exitProcess(e.statusCode)
-        } catch (e: Exception) {
-            System.err.println("Error: ${e.message ?: "Failed to execute CLI command"}")
-            exitProcess(1)
-        }
+    // -------------------------------------------------------------------------
+    // Phase 1: Headless CLI & credential helper dispatch (before AWT / logging)
+    // -------------------------------------------------------------------------
+    when (val earlyResult = CliBootstrap.dispatchHeadless(args)) {
+        is CliDispatchResult.Exit -> exitProcess(earlyResult.code)
+        CliDispatchResult.Continue -> Unit
     }
 
     val startupBeganMs = System.currentTimeMillis()
 
-    // Logging FIRST, before anything that can log. Everything below this line does:
-    // setLinuxWMClass and setupNativeLibraryPaths both log, applyToSystemProperties emits the
-    // audit trail of which Chromium flags this session runs with, ChromiumFlagsSettingsManager's
-    // init warns about a corrupt settings file, and the Skiko block warns about an unrecognised
-    // backend. Configuring the level afterwards meant none of them respected BOSS_LOG_LEVEL - and
-    // the flag audit is the line most worth being able to turn up.
-    //
-    // Safe this early, checked rather than assumed: configureFromEnvironment only reads env and
-    // system properties, and initialize() only registers a shutdown hook. Neither resolves a path,
-    // so setupNativeLibraryPaths reassigning java.io.tmpdir below cannot affect them - file
-    // logging is opt-in through configure() with an explicit path.
+    // -------------------------------------------------------------------------
+    // Phase 2: Logging initialization
+    // -------------------------------------------------------------------------
     BossLogger.configureFromEnvironment()
     BossLogger.initialize() // Register shutdown hook for log flushing
 
-    applyMacAppearanceFromTheme()
+    // -------------------------------------------------------------------------
+    // Phase 3: Platform setup, pre-AWT properties & settings warm-up
+    // -------------------------------------------------------------------------
+    PlatformSetup.applyMacAppearanceFromTheme()
 
-    // Serve credential brokers to plugins. Registered from here rather than from
-    // BossAppStartupEffects because the implementation exchanges a Supabase session over
-    // HTTP and so lives in desktopMain, while the PluginContext that exposes it is
-    // commonMain. Safe this early: the object holds no state and touches nothing until a
-    // plugin actually asks for a broker.
-    ai.rever.boss.services.llm.BrokeredCredentialAccess
-        .initialize(ai.rever.boss.llm.BrokeredCredentialProviderImpl)
+    // Serve credential brokers to plugins
+    ai.rever.boss.services.llm.BrokeredCredentialAccess.initialize(
+        ai.rever.boss.llm.BrokeredCredentialProviderImpl,
+    )
 
-    // Same arrangement, for the dialog that offers a way out of a plugin version floor: the
-    // remedies reach the app updater, the plugin store and the plugins directory, all desktopMain,
-    // while the dialog is mounted from commonMain. Registered BEFORE any plugin loads, because the
-    // refusal this exists for happens during startup plugin loading - a refusal recorded before
-    // this runs would sit in the registry with nothing able to act on it.
-    ai.rever.boss.components.plugin.PluginLoadRemedyAccess
-        .initialize(ai.rever.boss.components.plugin.DesktopPluginLoadRemedyResolver)
+    // Plugin load remedy access resolver
+    ai.rever.boss.components.plugin.PluginLoadRemedyAccess.initialize(
+        ai.rever.boss.components.plugin.DesktopPluginLoadRemedyResolver,
+    )
 
-    // Warm the two settings singletons that load their file synchronously in `init`
-    // (WorkspaceSettingsManager and FocusModeSettingsManager). Both must be readable the
-    // instant a startup effect asks - the workspace one decides which layout a window opens
-    // on, and losing that read to an async load is the bug this replaced - but their first
-    // accessor would otherwise be a composition-thread LaunchedEffect, putting mkdirs, a
-    // read, and on the first launch after an upgrade a migration write, on the UI thread.
-    //
-    // This narrows that rather than eliminating it, and is correct either way: JVM class
-    // initialisation is locked, so a window that gets there first simply waits for this to
-    // finish instead of racing it. Launched here, hundreds of milliseconds of setup before
-    // any window composes, it has essentially always finished by then.
+    // Warm settings singletons on IO thread
     startupScope.launch(Dispatchers.IO) {
         ai.rever.boss.components.workspaces.WorkspaceSettingsManager.currentSettings
         ai.rever.boss.focusmode.FocusModeSettingsManager.currentSettings
     }
 
     // Set WM_CLASS for Linux desktop integration (must be before any AWT init)
-    setLinuxWMClass()
+    PlatformSetup.setLinuxWMClass()
 
     // Set up proper temp directories for native libraries
-    setupNativeLibraryPaths()
+    PlatformSetup.setupNativeLibraryPaths()
 
-    // Publish the Chromium flags chosen in Settings > Browser Engine as system properties, so
-    // every existing ConfigLoader read site picks them up without knowing settings exist.
-    // Position is load-bearing and this is as early as it can go: the Skiko block immediately
-    // below reads BOSS_SKIKO_RENDER_API before AWT initialises, and JxBrowserConfig.renderingMode
-    // is a `by lazy` that caches the first answer for the life of the process. An environment
-    // variable still outranks anything published here - see applyToSystemProperties.
-    ai.rever.boss.config.ChromiumFlagsSettingsManager
-        .applyToSystemProperties()
-
-    // The swipe setting, published for the browser PLUGIN rather than for a ConfigLoader read site.
-    // It runs in this process but in another repo, and PluginContext.settingsProvider only opens
-    // the Settings window - it reads nothing - so a system property is the only channel the two
-    // halves of this gesture share. Republished whenever the setting changes, because it is read
-    // per gesture and must not need a relaunch.
+    // Publish browser configuration flags as system properties
+    ChromiumFlagsSettingsManager.applyToSystemProperties()
     ai.rever.boss.config.SwipeNavSettingsManager
         .publish()
-
-    // Same channel, same reason: the browser plugin's hibernation guard must agree with the host
-    // about whether a call pops out when its tab is backgrounded, and the two live in different
-    // repos. Republished on change, because it is read per tab switch.
     ai.rever.boss.config.AutoPipSettingsManager
         .publish()
 
-    // Opt-in override for the Compose UI's own rendering backend (Skiko) - separate from the
-    // BROWSER's rendering mode in JxBrowserConfig. Lets a backend be A/B'd on a real machine
-    // without a rebuild: pin DIRECT3D, or confirm the GPU-less Windows RDP/VM cohort that falls
-    // back to software. UNSET by default so Skiko keeps its own auto-detection - forcing a
-    // backend that cannot initialize would break exactly the machines a pin is meant to help.
-    // Must run before any AWT/Skiko init, hence its position here.
-    //   BOSS_SKIKO_RENDER_API = DIRECT3D | OPENGL | METAL | SOFTWARE_FAST | SOFTWARE
-    // Validated against an allowlist, not forwarded raw: this runs before AWT/Skiko init, so an
-    // unrecognised value surfaces as a startup crash with no BOSS log line to explain it - on
-    // exactly the GPU-less RDP/VM machines the pin exists to help. Unknown values are ignored with
-    // a warning, matching how the other tunables added alongside this behave.
-    ai.rever.boss.config.ConfigLoader
+    // Compose UI rendering backend override (Skiko)
+    ConfigLoader
         .getConfig("BOSS_SKIKO_RENDER_API")
         ?.trim()
         ?.takeIf { it.isNotEmpty() }
         ?.let { requested ->
-            // Shared with the Settings dropdown, so it can never offer a value rejected here.
-            val known = ai.rever.boss.config.ChromiumFlagKeys.SKIKO_RENDER_APIS
+            val known = ChromiumFlagKeys.SKIKO_RENDER_APIS
             val normalized = requested.uppercase()
             if (normalized in known) {
                 System.setProperty("skiko.renderApi", normalized)
@@ -375,68 +249,51 @@ fun main(args: Array<String>) {
             }
         }
 
-    // Disable lightweight popups for HARDWARE_ACCELERATED rendering mode (#258)
-    // This ensures Swing popup menus (context menus) appear above the browser view
+    // Disable lightweight popups for HARDWARE_ACCELERATED rendering mode
     JPopupMenu.setDefaultLightWeightPopupEnabled(false)
 
-    // Uninstall hook (Windows): `BOSS.exe --unregister-protocol` removes the boss://
-    // handler that WindowsProtocolHandler registers at runtime, so uninstalling does not
-    // leave a registry handler pointing at a deleted executable. Handled before any
-    // app/single-instance initialization so it stays callable from an installer action.
-    // Exit codes are documented on unregisterProtocolExitCode().
-    if (args.contains("--unregister-protocol")) {
-        exitProcess(WindowsProtocolHandler.unregisterProtocolExitCode())
+    // Uninstall protocol hook (Windows)
+    when (val unregResult = CliBootstrap.handleProtocolUnregistration(args)) {
+        is CliDispatchResult.Exit -> exitProcess(unregResult.code)
+        CliDispatchResult.Continue -> Unit
     }
 
-    // Install crash handler after logger is ready
+    // -------------------------------------------------------------------------
+    // Phase 4: Crash handlers & single instance check
+    // -------------------------------------------------------------------------
     CrashHandler.install()
+    installCrashInterceptor()
+    PluginExecutionBoundary.installPluginIdResolver(hostPluginIdResolver())
 
-    // Install plugin crash interceptor (chains after CrashHandler to catch plugin-specific crashes)
-    ai.rever.boss.plugin.sandbox.ui
-        .installCrashInterceptor()
-
-    // Teach the attribution boundary how to identify a plugin classloader for real.
-    // Without this it falls back to asking the loader for its own id, which a plugin
-    // that defines classes through a nested loader of its own could answer with
-    // somebody else's - and attribution now decides which plugin gets disabled and
-    // written out of installed.json. A type check against a class only the host
-    // constructs cannot be forged. Installed before any plugin loads.
-    ai.rever.boss.plugin.sandbox.PluginExecutionBoundary
-        .installPluginIdResolver(
-            ai.rever.boss.crash
-                .hostPluginIdResolver(),
-        )
-
-    // Register notification callback for plugin crashes.
-    // Tab closing is handled directly by PluginCrashRegistry via the closeAction
-    // registered in BossMainPanelContent. This callback only shows the status message.
-    ai.rever.boss.plugin.sandbox.ui.PluginCrashRegistry.onCrashNotify = { pluginId, error ->
-        // Both halves are plugin-controlled and share one status-bar slot: the id
-        // comes from a manifest, and the message from plugin code. A newline or a
-        // few hundred characters in either pushes the rest of the line out of view.
+    PluginCrashRegistry.onCrashNotify = { pluginId, error ->
         val errorMsg =
             (error.message ?: error.javaClass.simpleName)
                 .map { if (it.isISOControl()) ' ' else it }
                 .joinToString("")
                 .take(60)
-        ai.rever.boss.components.bars.horizontal.StatusMessageManager.showMessage(
-            "Plugin '${ai.rever.boss.crash.displayPluginId(pluginId)}' crashed: $errorMsg",
+        StatusMessageManager.showMessage(
+            "Plugin '${displayPluginId(pluginId)}' crashed: $errorMsg",
             durationMs = 8000,
         )
     }
 
     logger.info(LogCategory.SYSTEM, "BOSS starting up")
 
-    // Initialize microkernel infrastructure (no-op in MONOLITH mode, which is default)
-    // On Windows ARM64, boss-ipc/boss-process-manager modules are excluded (no protoc),
-    // so KernelBootstrap may not be available — silently skip.
+    // Single-instance check: ensure only one BOSS instance runs
+    if (!SingleInstanceManager.acquireLock()) {
+        logger.info(LogCategory.SYSTEM, "Another BOSS instance is already running")
+        val forwarded = CliBootstrap.forwardToExistingInstance(args)
+        exitProcess(if (forwarded) 0 else 1)
+    }
+
+    // A forwarding launch must never bind the kernel socket or spawn a second service cohort.
+    // Saved KERNEL mode applies to later OS file/link launches too.
+    // Initialize microkernel infrastructure (no-op in MONOLITH mode)
     val kernelBootstrap: Any? =
         try {
             val bossMode =
-                System.getenv("BOSS_MODE")
-                    ?: ai.rever.boss.config.ConfigLoader
-                        .getConfig("BOSS_MODE")
-            if (bossMode == "KERNEL") {
+                ConfigLoader.getConfig("BOSS_MODE")
+            if (bossMode.equals("KERNEL", ignoreCase = true)) {
                 val cls = Class.forName("ai.rever.boss.kernel.KernelBootstrap")
                 val modeClass = Class.forName("ai.rever.boss.process.ProcessMode")
                 val kernelMode = modeClass.enumConstants.first { it.toString() == "KERNEL" }
@@ -452,464 +309,69 @@ fun main(args: Array<String>) {
             null
         }
 
-    // Single-instance check: ensure only one BOSS instance runs
-    // On Windows, this prevents multiple windows when clicking deep links
-    if (!SingleInstanceManager.acquireLock()) {
-        logger.info(LogCategory.SYSTEM, "Another BOSS instance is already running")
+    // -------------------------------------------------------------------------
+    // Phase 5: Shutdown hook registration
+    // -------------------------------------------------------------------------
+    ShutdownSequence.register { kernelBootstrap }
+    logger.info(LogCategory.SYSTEM, "Successfully acquired single-instance lock")
 
-        // Everything the OS is asking this launch to open, as `boss://` links.
-        // File paths count, not only URL schemes: on Windows and Linux a
-        // double-clicked file arrives as a path in argv, and this branch used to
-        // ignore it and exit 0 with "No URL to send", so the file never opened
-        // while BOSS was running. See OsOpenArguments.
-        val deepLinks = OsOpenArguments.deepLinksFrom(args)
-
-        if (deepLinks.isNotEmpty()) {
-            logger.info(
-                LogCategory.SYSTEM,
-                "Sending open requests to existing instance",
-                mapOf("count" to deepLinks.size),
-            )
-
-            // The origin is stated, not assumed: a `boss://` argument in this
-            // process's argv is how the OS protocol handler delivers a URL
-            // somebody asked it to open, so it is forwarded as external. The
-            // running instance takes that label rather than inferring anything
-            // from the fact that this process could present the channel token.
-
-            // Try to send with retry logic (important for auth deep links during sign-in)
-            // Note: runBlocking is acceptable here as this runs during pre-UI initialization,
-            // before the Compose application starts. No UI thread exists yet to block.
-            fun forward(link: String): Boolean =
-                ai.rever.boss.utils.forwardDeepLinkWithRetry(
-                    link = link,
-                    send = { attempt ->
-                        val accepted = SingleInstanceManager.sendToExistingInstance(link, DeepLinkOrigin.EXTERNAL)
-                        logger.info(
-                            LogCategory.SYSTEM,
-                            "Open request forwarding completed",
-                            mapOf("attempt" to attempt, "accepted" to accepted),
-                        )
-                        accepted
-                    },
-                    pause = { kotlinx.coroutines.runBlocking { kotlinx.coroutines.delay(500) } },
-                )
-
-            // Every link is attempted, and success means every one landed.
-            // `fold` rather than `all`, which would short-circuit and silently
-            // drop the rest of a multi-file selection after one failure.
-            val success = deepLinks.fold(true) { acc, link -> forward(link) && acc }
-
-            if (success) {
-                exitProcess(0)
-            } else {
-                // Forwarding failed or the action did not report success - DO NOT create a new window.
-                // This prevents duplicate windows during sign-in
-                logger.error(
-                    LogCategory.SYSTEM,
-                    "An open request did not report success in the existing instance",
-                )
-                exitProcess(1)
-            }
-        } else {
-            logger.info(LogCategory.SYSTEM, "No URL to send - existing BOSS window should be visible")
-            exitProcess(0)
-        }
-    }
-
-    // Brand any window BOSS does not compose itself - JxBrowser's own Swing dialogs, JFileChooser,
-    // a frame opened by a plugin - so none of them shows the JDK's default Java icon on Windows.
-    // Every window this app opens sets its own icon; this is only the net under them.
-    //
-    // Position is fenced on both sides. Registering an AWT event listener initialises the toolkit,
-    // so this cannot go up beside setLinuxWMClass: the ChromiumFlagsSettingsManager and
-    // BOSS_SKIKO_RENDER_API blocks up there have to publish their system properties before AWT/Skiko
-    // reads them, and skiko.renderApi in particular is read at init and never again. It also has to
-    // stay below the two paths that exit without ever showing a window - `--unregister-protocol`
-    // (an installer action) and the single-instance deep-link forward - which is why it is here
-    // rather than beside JPopupMenu.setDefaultLightWeightPopupEnabled: neither should be made to
-    // start a window system to do its job. Everything from here on is a session that gets a window.
+    // -------------------------------------------------------------------------
+    // Phase 6: Overlays, window nets & Chromium engine preparation
+    // -------------------------------------------------------------------------
+    // After headless exits and rendering properties: installing the AWT listener creates the
+    // toolkit, which reads those properties once. Before any application window can open.
     DefaultWindowIcon.install()
 
-    // Create ~/BossProjects before a window asks for it. Every no-project path now resolves
-    // there instead of to the home directory (see DefaultWorkingDirectory), and the first of
-    // them is a window opening a terminal - creating it on demand would put the mkdirs on the
-    // thread doing that. Best-effort and idempotent: ensureDefaultDirectory() creates the directory itself if
-    // this has not finished, or did not work.
-    //
-    // Here for the same reason the icon install above is - "everything from here on is a
-    // session that gets a window". Up with the other startup warm-ups it would run for
-    // `--unregister-protocol` and for a deep-link forward, both of which exitProcess after
-    // doing something headless, and neither should leave a folder in the user's home behind.
-    //
-    // Unconditional, on every platform, and that is the decision rather than an oversight: a
-    // browser-only user on Windows has no TCC prompts to avoid and may never create a
-    // project, so they get an empty folder they did not ask for. Gating it on macOS would
-    // buy that user nothing back - the placeholder fallback and every terminal resolve there
-    // on all three platforms, so the directory gets created on first use anyway - while
-    // giving the two platforms different startup states to reason about.
     startupScope.launch(Dispatchers.IO) {
         DefaultWorkingDirectory.ensureDefaultDirectory()
     }
 
-    // Register shutdown hook to release the single-instance lock AND close browser engine
-    Runtime.getRuntime().addShutdownHook(
-        Thread {
-            try {
-                // Save "Last Session" for the exits that never dispose a Compose
-                // composition, so the window-dispose save never runs: macOS
-                // app-menu Quit / Cmd+Q (the JDK's default QuitStrategy is
-                // NORMAL_EXIT, i.e. System.exit(0) - see com.apple.eawt
-                // ._AppEventHandler, and nothing here opts into
-                // CLOSE_ALL_WINDOWS), ApplicationRestarter's exitProcess paths
-                // (including quit-for-update), and SIGTERM.
-                //
-                // Runs first in the hook: window state is still live here, and
-                // BossLogger is shut down further down. No-op when a window
-                // dispose already saved this session (#19).
-                ai.rever.boss.app.LastSessionCoordinator.instance
-                    .saveOnProcessExit()
-            } catch (e: Exception) {
-                System.err.println("Error saving Last Session on exit: ${e.message}")
-            }
-            try {
-                // Stop performance monitoring to cancel background coroutines
-                ai.rever.boss.performance.PerformanceMonitor
-                    .stop()
-            } catch (e: Exception) {
-                // Can't use logger in shutdown hook reliably, use System.err
-                System.err.println("Error stopping performance monitor: ${e.message}")
-            }
-            try {
-                // Close browser engine first to release lock files
-                val engine = ai.rever.boss.plugin.browser.FluckEngine.currentEngine
-                if (engine != null && !engine.isClosed) {
-                    engine.close()
-                }
-            } catch (e: Exception) {
-                System.err.println("Error closing browser engine: ${e.message}")
-            }
-            try {
-                // Close HTTP client for high-quality favicon service
-                ai.rever.boss.cache.HighQualityFaviconService
-                    .close()
-            } catch (e: Exception) {
-                System.err.println("Error closing favicon HTTP client: ${e.message}")
-            }
-            try {
-                // Uninstall AWT keyboard interceptor
-                AWTKeyboardInterceptor.uninstall()
-            } catch (e: Exception) {
-                System.err.println("Error uninstalling keyboard interceptor: ${e.message}")
-            }
-            try {
-                // Stop app-update realtime subscription
-                ai.rever.boss.updater.AppUpdateRealtimeService.instance
-                    .dispose()
-            } catch (e: Exception) {
-                System.err.println("Error stopping app update realtime: ${e.message}")
-            }
-            try {
-                // App-level updater teardown: the ONLY place the process-wide
-                // updater is shut down. Window close releases its UpdateHandle
-                // instead, so closing one window no longer stops periodic checks
-                // or cancels a download for the windows still open (#19, #37).
-                ai.rever.boss.updater.UpdateCoordinator.instance
-                    .shutdown()
-            } catch (e: Exception) {
-                System.err.println("Error shutting down updater: ${e.message}")
-            }
-            try {
-                // Shutdown plugin store
-                PluginStoreSetup.shutdown()
-            } catch (e: Exception) {
-                System.err.println("Error shutting down plugin store: ${e.message}")
-            }
-            try {
-                // Shutdown BossLogger
-                BossLogger.shutdown()
-            } catch (e: Exception) {
-                System.err.println("Error shutting down logger: ${e.message}")
-            }
-            try {
-                // Shutdown microkernel infrastructure (child processes, IPC server)
-                kernelBootstrap?.let { kb ->
-                    kb.javaClass.getMethod("shutdown").invoke(kb)
-                }
-            } catch (e: Exception) {
-                System.err.println("Error shutting down kernel: ${e.message}")
-            }
-            SingleInstanceManager.release()
-        },
-    )
+    OverlaySetup.configure()
 
-    logger.info(LogCategory.SYSTEM, "Successfully acquired single-instance lock")
+    val (chromiumNeedsDownload, engineLabel) = ChromiumBootstrap.prepare()
 
-    // Route app overlays (context menus, dropdowns, tooltips) through heavyweight windows when the
-    // browser is GPU-composited. In HARDWARE_ACCELERATED mode the JxBrowser view is a heavyweight
-    // native surface that paints above lightweight Compose, so an ordinary Compose Popup renders
-    // BEHIND the page. Dormant - a no-op - wherever OFF_SCREEN is the mode (macOS, Linux), so the
-    // unchanged platforms cannot regress. See JxBrowserConfig.renderingMode and
-    // benchmarks/speedometer/win/WINDOWS.md.
-    // Install logging before the guarded renderers so startup registration conflicts are visible.
-    ai.rever.boss.plugin.ui.BossOverlayHost.diagnostics = { message ->
-        logger.warn(LogCategory.UI, message)
-    }
-    ai.rever.boss.components.overlays.OverlayConfig.heavyweightPopup =
-        { onDismiss, anchorInWindow, anchoring, popupOffset, focusable, popupContent ->
-            ai.rever.boss.components.overlays
-                .HeavyweightPopup(onDismiss, anchorInWindow, anchoring, popupOffset, focusable, popupContent)
-        }
-    ai.rever.boss.components.overlays.OverlayConfig.heavyweightModal = { properties, onDismiss, modalContent ->
-        ai.rever.boss.components.overlays
-            .HeavyweightModal(properties, onDismiss, modalContent)
-    }
-    // Lets host UI in commonMain offer to install a plugin it needs. The installer is built in
-    // desktopMain because resolving and downloading a plugin is a desktop concern; see
-    // MissingPluginOffer for why the seam exists at all.
-    ai.rever.boss.components.plugin.MissingPluginOffer.installerFactory = { manager ->
-        ai.rever.boss.plugin.MissingDependencyReporter
-            .installerFor(manager)
-    }
+    // -------------------------------------------------------------------------
+    // Phase 7: Post-lock CLI, keyboard interceptor, services & plugins
+    // -------------------------------------------------------------------------
+    CliBootstrap.dispatchPostLock(args)
 
-    ai.rever.boss.components.overlays.OverlayConfig.heavyweightTooltip = { text ->
-        ai.rever.boss.components.overlays.SwingTooltip
-            .show(text)
-    }
-    ai.rever.boss.components.overlays.OverlayConfig.hideHeavyweightTooltip = {
-        ai.rever.boss.components.overlays.SwingTooltip
-            .hide()
-    }
-    ai.rever.boss.components.overlays.OverlayConfig.heavyweightHud = { alignment, hudContent ->
-        ai.rever.boss.components.overlays
-            .HeavyweightHud(alignment, hudContent)
-    }
-    ai.rever.boss.components.overlays.OverlayConfig.heavyweightGhost = { size, hotspot, ghostContent ->
-        ai.rever.boss.components.overlays
-            .HeavyweightGhost(size, hotspot, ghostContent)
-    }
-    ai.rever.boss.components.overlays.OverlayConfig.heavyweightCorner = {
-        alignment,
-        initialSize,
-        inset,
-        focusable,
-        regionInWindow,
-        cornerContent,
-        ->
-        ai.rever.boss.components.overlays
-            .HeavyweightCorner(alignment, initialSize, inset, focusable, regionInWindow, cornerContent)
-    }
-    ai.rever.boss.components.overlays.OverlayConfig.useHeavyweightPopups =
-        ai.rever.boss.config.JxBrowserConfig.renderingMode ==
-        com.teamdev.jxbrowser.engine.RenderingMode.HARDWARE_ACCELERATED
-
-    // Proactively clean up stale JxBrowser lock files from previous sessions
-    // This is especially important for debug mode where shutdown hooks may not run
-    try {
-        ai.rever.boss.plugin.browser.FluckEngine
-            .proactiveCleanupOnStartup()
-    } catch (e: Exception) {
-        logger.warn(LogCategory.SYSTEM, "Proactive browser lock cleanup failed", error = e)
-    }
-
-    // Decide whether the installed engine is usable BEFORE anything boots it.
-    //
-    // This has to precede every engine-creating call below, and the ordering is
-    // load-bearing rather than cosmetic. JxBrowser resolves its native toolkit
-    // under Versions/<VersionInfo.chromiumVersion()>, baked into the jar, so an
-    // engine directory left over from an older app version fails the native load
-    // with an UnsatisfiedLinkError. That is recoverable — isChromiumInstalled
-    // spots the mismatch and the download UI below repairs it — but only if the
-    // check runs first. With the check downstream of the pre-warm and of
-    // PasskeyPlatformInit, both booted against the stale engine and threw before
-    // the repair path was ever reached, so shipping a JxBrowser bump broke the
-    // browser for every existing install instead of prompting a download.
-    //
-    // promotePendingInstall must also stay ahead of any engine creation: it
-    // renames the engine directory, which cannot be done safely once a running
-    // engine holds files inside it.
-    ChromiumAutoDownloader.promotePendingInstall()
-
-    // Ask the question we are about to act on: will an engine actually boot?
-    //
-    // isChromiumInstalled() answers a narrower one — "does the *cache* hold the
-    // right engine?" — which is the right input for deciding whether to download,
-    // but wrong for deciding whether to boot. FluckEngine prefers a bundled engine
-    // from the app image and only falls back to the cache, so a release that
-    // bundles one could pass the cache check and still boot something else, or fail
-    // it and skip the pre-warm despite a perfectly good bundled engine
-    // (BossConsole#121). resolveEngineDir applies the same priority order and the
-    // same version check the boot will.
-    // One read of the cache's health, shared by the resolver and the decision so
-    // the two can never disagree about it.
-    val cacheHealthy = ChromiumAutoDownloader.isChromiumInstalled()
-    val hasUsableEngine =
-        ai.rever.boss.plugin.browser.FluckEngine
-            .hasUsableEngine(cacheHealthy)
-    val engineAction =
-        ai.rever.boss.plugin.browser.FluckEngine
-            .engineStartupAction(hasUsableEngine, cacheHealthy)
-
-    // Named in the download dialog: it blocks the whole app for a several-hundred-MB
-    // fetch, and which engine it is turns out to be the first thing anyone asks when
-    // it appears unexpectedly — an engine mismatch is exactly what triggers it.
-    val engineLabel = "BOSS Browser Engine ${ChromiumAutoDownloader.effectiveVersion}"
-
-    val chromiumNeedsDownload =
-        engineAction == ai.rever.boss.plugin.browser.FluckEngine.EngineStartupAction.Download
-    when (engineAction) {
-        ai.rever.boss.plugin.browser.FluckEngine.EngineStartupAction.BootAndReport -> {
-            logger.error(
-                LogCategory.SYSTEM,
-                "Installed engine is healthy and stamped with the required version but is still " +
-                    "unusable - the published archive does not match this build; not re-downloading",
-                mapOf("required" to ChromiumAutoDownloader.effectiveVersion),
-            )
-        }
-
-        ai.rever.boss.plugin.browser.FluckEngine.EngineStartupAction.Download -> {
-            logger.info(
-                LogCategory.SYSTEM,
-                "No usable browser engine - will prompt for download",
-                mapOf("required" to ChromiumAutoDownloader.effectiveVersion),
-            )
-        }
-
-        ai.rever.boss.plugin.browser.FluckEngine.EngineStartupAction.Boot -> {
-            Unit
-        }
-    }
-
-    // Pre-warm the browser engine off the UI thread so the first browser tab
-    // opens against an already-running Chromium instead of paying the full
-    // engine boot inside its composition. Opt out with BOSS_BROWSER_PREWARM=false.
-    //
-    // Skipped when the engine needs downloading: pre-warming against a mismatched
-    // directory cannot succeed, and its only effect is to raise the very error
-    // the download is about to fix.
-    // The "is there a usable engine" precondition is no longer applied here. It used to be, for
-    // the BootAndReport case - no usable engine AND no download, where a boot could only burn an
-    // attempt and set an error - and that reasoning still holds; it just belongs in the one gate
-    // every caller passes through. prewarmDecision re-evaluates it, freshly rather than from this
-    // startup-time snapshot, and logs which reason refused the call. Two copies of a precondition
-    // are two things that can disagree.
-    try {
-        ai.rever.boss.plugin.browser.FluckEngine
-            .prewarmInBackground()
-    } catch (e: Exception) {
-        logger.warn(LogCategory.SYSTEM, "Browser engine pre-warm failed to start", error = e)
-    }
-
-    // Parse CLI arguments if provided
-    if (args.isNotEmpty()) {
-        try {
-            // What the OS is asking this cold start to open: URL-scheme args as
-            // before, plus file paths, which Clikt cannot parse (it has `boss
-            // file <path>`, no bare-path argument) and used to fail on with a
-            // usage error - so a double-clicked file did nothing on a cold start.
-            val osOpenRequests = OsOpenArguments.deepLinksFrom(args)
-
-            if (osOpenRequests.isEmpty()) {
-                // Not an OS open request, so it is the operator's CLI.
-                logger.debug(LogCategory.SYSTEM, "Processing CLI arguments", mapOf("args" to args.joinToString(" ")))
-                createBossCLI().main(args)
-                // Commands are queued, continue with app initialization
-            }
-            // Otherwise these are links and files the OS wants opened;
-            // `DeepLinkHandler.processCommandLineArgs` below is the single place
-            // that processes them, so nothing is opened twice.
-        } catch (e: Exception) {
-            logger.error(LogCategory.SYSTEM, "CLI error", error = e)
-            // Don't exit - let the app start normally
-            // CLI errors shouldn't prevent GUI from launching
-        }
-    }
-
-    // Process command line arguments for deep links (Windows).
-    // This first member access also triggers DeepLinkHandler's object init,
-    // so no separate bare-reference "initialization" line is needed.
-    DeepLinkHandler.processCommandLineArgs(args)
-
-    // Install AWT keyboard interceptor to capture shortcuts before BossTerm
-    // This ensures Cmd+N, Cmd+W, etc. work even when terminal has focus
     AWTKeyboardInterceptor.install()
-
-    // Apply the persisted app theme before any UI composes, so the app opens
-    // in the user's chosen look rather than flashing the default first.
-    //
-    // Not necessarily the FIRST such call any more: on macOS applyMacAppearanceFromTheme needs the
-    // theme before AWT starts, so it initialises there and this one is a no-op. Kept because it is
-    // the call every other platform relies on, and idempotent either way.
-    ai.rever.boss.theme.AppThemeSettingsManager
-        .ensureInitialized()
-
-    // Initialize passkey service for desktop platforms
+    // macOS already read the theme before AWT; other platforms still need this initialization.
+    AppThemeSettingsManager.ensureInitialized()
     PasskeyPlatformInit.initialize()
-
-    // Hand the settings index to the global search. Once, here, because the index is desktopMain
-    // and the search that reads it is commonMain - see SearchSources.
     SettingsSearchIndex.registerWithGlobalSearch()
-
-    // Initialize plugin store (remote repository, download cache, update manager)
     PluginStoreSetup.initialize()
 
-    // Start app-update Realtime push (Supabase) so the app learns about new releases
-    // instantly instead of polling; route events into the existing update manager.
-    // Off the main thread: building the Supabase client is not needed for first paint.
     startupScope.launch {
-        ai.rever.boss.updater.AppUpdateRealtimeService.instance.apply {
+        AppUpdateRealtimeService.instance.apply {
             onReleaseChanged = {
-                val updateCoordinator =
-                    ai.rever.boss.updater.UpdateCoordinator.instance
-
-                // Preserve the existing update notification behavior.
+                val updateCoordinator = UpdateCoordinator.instance
                 updateCoordinator.checkForUpdatesInBackground()
-
-                // Refresh the same cached list used by Settings and the Dashboard.
                 updateCoordinator.versionListManager.fetchVersions(forceRefresh = true)
             }
             start()
         }
     }
 
-    // Set up the persisted plugins loader for DefaultPlugin
     ai.rever.boss.components.plugin.DefaultPlugin.Companion.loadPersistedPluginsInternal = { manager ->
         PluginStoreSetup.loadPersistedPlugins(manager)
     }
 
-    // Note: no PSI or ProjectIndexer lifecycle here. The PSI stack lives in
-    // the editor-tab plugin's bundled BossEditor now — the plugin warms it up
-    // on register and shuts it down on dispose. (Indexing user.dir at startup
-    // was also actively harmful: for a packaged app launched from Finder,
-    // user.dir is "/", so the indexer walked the entire disk at 100% CPU.)
-
-    // Start global log capture from app startup
     GlobalLogCapture.start()
+    ResourceModeConfig.publishToPlugins()
 
-    // Hand the tier's browser settings to plugins, which cannot see host classes. Before any
-    // plugin loads, so fluck-browser sees it when it first builds a tab.
-    ai.rever.boss.config.ResourceModeConfig
-        .publishToPlugins()
-
-    // Start performance monitoring from app startup — unless the resource tier says the
-    // sampler's own overhead is not worth paying on this machine.
-    if (ai.rever.boss.config.ResourceModeConfig.mode.backgroundSamplingEnabled) {
-        ai.rever.boss.performance.PerformanceMonitor
-            .start()
+    if (ResourceModeConfig.mode.backgroundSamplingEnabled) {
+        PerformanceMonitor.start()
     } else {
         logger.info(
             LogCategory.SYSTEM,
             "Performance sampling disabled by the resource mode",
-            mapOf("mode" to ai.rever.boss.config.ResourceModeConfig.mode.name),
+            mapOf("mode" to ResourceModeConfig.mode.name),
         )
     }
 
-    // Watch for the case the startup decision cannot see: a machine with plenty of installed
-    // RAM that is nonetheless out of it, because of everything else the user is running.
-    ai.rever.boss.performance.MemoryPressureWatchdog
-        .start(startupScope)
+    MemoryPressureWatchdog.start(startupScope)
 
-    // Debug: Log environment info
     logger.debug(
         LogCategory.SYSTEM,
         "Environment info",
@@ -920,20 +382,7 @@ fun main(args: Array<String>) {
         ),
     )
 
-    // NOTE: there used to be an "API key availability" probe here, logging whether four LLM
-    // provider environment variables were set. It is gone because the host no longer owns any
-    // provider list — the secret-manager plugin does, and it knows seven providers plus custom,
-    // resolving each from `-D` properties, `launchctl getenv` and `~/.boss/env_vars` as well as
-    // the environment. A hardcoded four-name probe here could only ever disagree with it. The
-    // one credential the host itself still resolves is the AI-repair key, and
-    // SelfHealingSettings reports its own readiness.
-
-    // chromiumNeedsDownload was resolved far earlier, above the first engine boot
-    // — see the comment there for why that ordering matters.
-
     // Create initial window BEFORE application{} to prevent auto-recreation
-    // This runs once on startup, not during recomposition
-    // Note: Window creation is deferred if Chromium download is needed
     if (!chromiumNeedsDownload) {
         WindowManager.createNewWindow()
     }
@@ -946,6 +395,11 @@ fun main(args: Array<String>) {
         ),
     )
 
+    // -------------------------------------------------------------------------
+    // No PSI or ProjectIndexer lifecycle here: indexing user.dir on a Finder launch can walk
+    // the entire disk. Project indexing belongs to the editor plugin's project lifecycle.
+    // Phase 8: Compose Application Entry & Window Loop
+    // -------------------------------------------------------------------------
     application {
         // Provide a custom WindowExceptionHandlerFactory that intercepts plugin crashes
         // during composition. Compose's default factory shows an error dialog and disposes
@@ -1268,183 +722,5 @@ fun main(args: Array<String>) {
                 }
             }
         } // CompositionLocalProvider
-    }
-}
-
-private fun setupNativeLibraryPaths() {
-    // Ensure temp directories exist and are set properly
-    val bossDir = BossDirectories.rootDir
-    val tempDir = File(bossDir, "temp")
-    val pty4jDir = File(tempDir, "pty4j")
-
-    // Create directories if they don't exist
-    bossDir.mkdirs()
-    tempDir.mkdirs()
-    pty4jDir.mkdirs()
-
-    // Extract PTY4J native libraries from classpath if needed
-    extractPty4jNatives(pty4jDir)
-
-    // Set system properties for native libraries
-    System.setProperty("pty4j.tmpdir", pty4jDir.absolutePath)
-    System.setProperty("pty4j.preferred.native.folder", pty4jDir.absolutePath)
-
-    // Check if we're running from an app bundle
-    val appPath = System.getProperty("java.home")
-    if (appPath.contains(".app")) {
-        // We're in an app bundle, check for bundled natives
-        val bundledNatives = File(appPath, "../../app/pty4j-native")
-        if (bundledNatives.exists()) {
-            System.setProperty("pty4j.preferred.native.folder", bundledNatives.absolutePath)
-        }
-    }
-
-    // Also set java.io.tmpdir to a proper location
-    if (!System.getProperty("java.io.tmpdir").startsWith(System.getProperty("user.home"))) {
-        System.setProperty("java.io.tmpdir", tempDir.absolutePath)
-    }
-}
-
-private fun extractPty4jNatives(targetDir: File) {
-    try {
-        val osName = System.getProperty("os.name").lowercase()
-        val osArch = System.getProperty("os.arch").lowercase()
-
-        // Determine platform and library name
-        val (platformPath, libName) =
-            when {
-                osName.contains("mac") || osName.contains("darwin") -> {
-                    "darwin" to "libpty.dylib"
-                }
-
-                osName.contains("linux") -> {
-                    val arch =
-                        when {
-                            osArch == "aarch64" || osArch == "arm64" -> "aarch64"
-                            osArch == "amd64" || osArch == "x86_64" -> "x86-64"
-                            osArch.startsWith("arm") -> "arm"
-                            osArch == "ppc64le" -> "ppc64le"
-                            osArch == "mips64el" -> "mips64el"
-                            osArch == "riscv64" -> "riscv64"
-                            osArch.contains("86") -> "x86"
-                            else -> osArch
-                        }
-                    "linux/$arch" to "libpty.so"
-                }
-
-                osName.contains("freebsd") -> {
-                    val arch = if (osArch == "amd64" || osArch == "x86_64") "x86-64" else "x86"
-                    "freebsd/$arch" to "libpty.so"
-                }
-
-                else -> {
-                    logger.warn(
-                        LogCategory.SYSTEM,
-                        "Unsupported platform for PTY4J",
-                        mapOf(
-                            "os" to osName,
-                            "arch" to osArch,
-                        ),
-                    )
-                    return
-                }
-            }
-
-        // Create platform-specific directory
-        val platformDir = File(targetDir, platformPath)
-        if (!platformDir.exists()) {
-            platformDir.mkdirs()
-        }
-
-        // Check if native library already exists
-        val libptyFile = File(platformDir, libName)
-        if (libptyFile.exists() && libptyFile.length() > 0) {
-            logger.trace(LogCategory.SYSTEM, "PTY4J natives already extracted", mapOf("platform" to platformPath))
-            return
-        }
-
-        // Find PTY4J jar in classpath
-        val classLoader = Thread.currentThread().contextClassLoader
-
-        // Search for native resources - PTY4J stores them under resources/com/pty4j/native/
-        val nativeResources =
-            listOf(
-                "com/pty4j/native/$platformPath/$libName",
-                "resources/com/pty4j/native/$platformPath/$libName",
-                "$platformPath/$libName",
-                "native/$platformPath/$libName",
-            )
-
-        var extracted = false
-        for (resource in nativeResources) {
-            try {
-                val resourceStream = classLoader.getResourceAsStream(resource)
-                if (resourceStream != null) {
-                    resourceStream.use { input ->
-                        libptyFile.outputStream().use { output ->
-                            input.copyTo(output)
-                        }
-                    }
-                    libptyFile.setExecutable(true)
-                    logger.debug(
-                        LogCategory.SYSTEM,
-                        "Extracted PTY4J native",
-                        mapOf(
-                            "resource" to resource,
-                            "target" to libptyFile.absolutePath,
-                        ),
-                    )
-                    extracted = true
-                    break
-                }
-            } catch (e: Exception) {
-                // Try next resource
-                logger.debug(
-                    LogCategory.SYSTEM,
-                    "PTY4J native extraction failed for resource - trying next",
-                    mapOf("resource" to resource, "error" to e.toString()),
-                )
-            }
-        }
-
-        if (!extracted) {
-            // Expected in normal operation: BossTerm/pty4j is intentionally NOT a host
-            // dependency (see composeApp/build.gradle.kts). The terminal-tab plugin bundles
-            // pty4j inside its own JAR and extracts its natives from its own classloader, so
-            // the host classpath has no pty4j resources to extract. The pty4j.tmpdir /
-            // pty4j.preferred.native.folder system properties set above are still honored by
-            // the plugin. Logged at debug to avoid a misleading "terminal is broken" warning.
-            logger.debug(
-                LogCategory.SYSTEM,
-                "PTY4J natives not on host classpath (handled by terminal-tab plugin)",
-                mapOf(
-                    "platform" to platformPath,
-                    "searchedResources" to nativeResources.joinToString(),
-                ),
-            )
-        }
-    } catch (e: Exception) {
-        logger.error(LogCategory.SYSTEM, "Error extracting PTY4J natives", error = e)
-    }
-}
-
-/**
- * Set WM_CLASS for proper Linux desktop integration.
- * Must be called before any windows are created.
- * Requires JVM arg: --add-opens java.desktop/sun.awt.X11=ALL-UNNAMED
- */
-private fun setLinuxWMClass() {
-    if (!System.getProperty("os.name").lowercase().contains("linux")) return
-
-    try {
-        // Get toolkit instance (creates it if needed)
-        val toolkit = java.awt.Toolkit.getDefaultToolkit()
-        if (toolkit.javaClass.name == "sun.awt.X11.XToolkit") {
-            val field = toolkit.javaClass.getDeclaredField("awtAppClassName")
-            field.isAccessible = true
-            field.set(toolkit, "BOSS")
-        }
-    } catch (e: Exception) {
-        System.err.println("Could not set WM_CLASS: ${e.message}")
     }
 }
