@@ -26,6 +26,7 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -1115,7 +1116,7 @@ internal class McpToolRegistryCore(
         return McpToolArgs(map, arguments.ifBlank { "{}" })
     }
 
-    /** Convert a JSON element to a Kotlin scalar; nested objects/arrays become their raw JSON. */
+    /** Convert a JSON element to a Kotlin scalar or list; nested objects become their raw JSON. */
     private fun scalarOf(el: JsonElement): Any? =
         when {
             el is JsonNull -> {
@@ -1128,6 +1129,10 @@ internal class McpToolRegistryCore(
                 } else {
                     el.booleanOrNull ?: el.longOrNull ?: el.doubleOrNull ?: el.content
                 }
+            }
+
+            el is JsonArray -> {
+                el.map { scalarOf(it) }
             }
 
             else -> {
