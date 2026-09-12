@@ -7,6 +7,7 @@ import ai.rever.boss.components.bars.isBarVisible
 import ai.rever.boss.components.bars.withBarVisible
 import ai.rever.boss.components.dialogs.CLIInstallationDialog
 import ai.rever.boss.components.dialogs.ImportDataDialog
+import ai.rever.boss.components.overlays.CompanionWindow
 import ai.rever.boss.components.settings.sidebar.SettingsSection
 import ai.rever.boss.components.window_panel.components.main_window_panels.createBossAppContext
 import ai.rever.boss.components.workspaces.workspaceManager
@@ -1425,6 +1426,10 @@ fun ApplicationScope.BossWindow(
                 )
             }
         }
+    }
+
+    if (windowState.windowType == WindowType.MAIN) {
+        CompanionWindow()
     }
 }
 

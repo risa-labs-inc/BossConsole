@@ -159,6 +159,8 @@ data class RunningProcess(
     val command: String,
     val startTime: Long,
     val status: ProcessStatus,
+    val windowId: String,
+    val terminalId: String? = null,
 )
 
 // ============================================

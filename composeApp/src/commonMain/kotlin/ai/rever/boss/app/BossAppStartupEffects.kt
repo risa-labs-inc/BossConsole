@@ -1,5 +1,6 @@
 package ai.rever.boss.app
 
+import ai.rever.boss.companion.CompanionCoordinator
 import ai.rever.boss.components.plugin.DefaultPlugin
 import ai.rever.boss.components.plugin.PluginUpdateRegistry
 import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
@@ -583,6 +584,18 @@ internal fun BossAppStartupEffects(state: BossAppState) {
     // check (previously each new window restarted the loop and re-fired a check).
     LaunchedEffect(Unit) {
         startUpdaterForApp(logger)
+    }
+
+    LaunchedEffect(state.currentDefaultPlugin) {
+        val plugin = state.currentDefaultPlugin ?: return@LaunchedEffect
+        CompanionCoordinator.initialize(
+            applicationEvents =
+                plugin.applicationEventBus.eventsOfType(
+                    ai.rever.boss.plugin.api.CustomPluginEvent::class.java,
+                ),
+            scope = this,
+        )
+        CompanionCoordinator.instance.ensureStarted()
     }
 
     // Check and auto-update CLI version on startup

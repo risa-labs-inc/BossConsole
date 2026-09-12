@@ -1,5 +1,8 @@
 package ai.rever.boss.run
 
+import ai.rever.boss.components.events.RunProcessEvent
+import ai.rever.boss.components.events.RunProcessEventBus
+import ai.rever.boss.components.events.RunProcessStatus
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CoroutineScope
@@ -63,6 +66,7 @@ actual object RunExecutionService {
                     command = command,
                     startTime = System.currentTimeMillis(),
                     status = ProcessStatus.STARTING,
+                    windowId = windowId,
                 )
 
             // Add to running processes
@@ -70,10 +74,30 @@ actual object RunExecutionService {
 
             // Use RunnerTerminalService which respects sidebar/main panel setting
             logger.debug(LogCategory.TERMINAL, "Executing via RunnerTerminalService", mapOf("command" to command))
-            RunnerTerminalService.openRunnerTerminal(config, windowId)
+            val terminalId = RunnerTerminalService.openRunnerTerminal(config, windowId)
+
+            _runningProcesses.value =
+                _runningProcesses.value.map {
+                    if (it.id == processId) {
+                        it.copy(terminalId = terminalId)
+                    } else {
+                        it
+                    }
+                }
 
             // Update status to running
             updateProcessStatus(processId, ProcessStatus.RUNNING)
+
+            RunProcessEventBus.emit(
+                RunProcessEvent(
+                    processId = processId,
+                    configId = config.id,
+                    configName = config.name,
+                    windowId = windowId,
+                    terminalId = terminalId,
+                    status = RunProcessStatus.STARTED,
+                ),
+            )
 
             return process
         } catch (e: Exception) {
@@ -137,15 +161,6 @@ actual object RunExecutionService {
     ) {
         val status = if (failed) ProcessStatus.FAILED else ProcessStatus.STOPPED
         updateProcessStatus(processId, status)
-
-        // Clean up old completed processes after a delay
-        scope.launch {
-            kotlinx.coroutines.delay(5000)
-            _runningProcesses.value =
-                _runningProcesses.value.filter {
-                    it.id != processId || it.status == ProcessStatus.RUNNING || it.status == ProcessStatus.STARTING
-                }
-        }
     }
 
     private fun updateProcessStatus(
