@@ -1,5 +1,6 @@
 package ai.rever.boss.service.filesystem
 
+import ai.rever.boss.ipc.auth.IpcCall
 import ai.rever.boss.ipc.proto.Empty
 import ai.rever.boss.ipc.proto.services.*
 import com.google.protobuf.ByteString
@@ -50,6 +51,7 @@ class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutine
 
     override suspend fun scanDirectory(request: ScanDirectoryRequest): ScanDirectoryResponse =
         withContext(Dispatchers.IO) {
+            IpcCall.requireHost()
             logger.debug("scanDirectory: path={}, recursive={}", request.path, request.recursive)
             validatePath(request.path)
             val dir = File(request.path)
@@ -95,6 +97,7 @@ class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutine
 
     override suspend fun readFile(request: ReadFileRequest): ReadFileResponse =
         withContext(Dispatchers.IO) {
+            IpcCall.requireHost()
             logger.debug("readFile: path={}", request.path)
             validatePath(request.path)
             val file = File(request.path)
@@ -132,6 +135,7 @@ class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutine
 
     override suspend fun writeFile(request: WriteFileRequest): WriteFileResponse =
         withContext(Dispatchers.IO) {
+            IpcCall.requireHost()
             logger.debug("writeFile: path={}", request.path)
             validatePath(request.path)
             return@withContext try {
@@ -162,6 +166,7 @@ class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutine
 
     override suspend fun createFile(request: CreateFileRequest): Empty =
         withContext(Dispatchers.IO) {
+            IpcCall.requireHost()
             logger.info("createFile: path={}, isDirectory={}", request.path, request.isDirectory)
             validatePath(request.path)
             val file = File(request.path)
@@ -172,6 +177,7 @@ class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutine
 
     override suspend fun deleteFile(request: DeleteFileRequest): Empty =
         withContext(Dispatchers.IO) {
+            IpcCall.requireHost()
             logger.info("deleteFile: path={}, recursive={}", request.path, request.recursive)
             validatePath(request.path)
             val file = File(request.path)
@@ -228,6 +234,7 @@ class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutine
      */
     override suspend fun renameFile(request: RenameFileRequest): Empty =
         withContext(Dispatchers.IO) {
+            IpcCall.requireHost()
             logger.info("renameFile: from={}, to={}", request.sourcePath, request.destinationPath)
             validatePath(request.sourcePath)
             validatePath(request.destinationPath)
@@ -268,6 +275,7 @@ class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutine
 
     override fun watchFileChanges(request: WatchFileChangesRequest): Flow<FileChangeEvent> =
         flow {
+            IpcCall.requireHost()
             logger.info("watchFileChanges: path={}, recursive={}", request.path, request.recursive)
             validatePath(request.path)
             val root = Paths.get(request.path)

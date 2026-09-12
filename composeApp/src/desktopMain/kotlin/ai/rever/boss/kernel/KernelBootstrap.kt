@@ -1,9 +1,9 @@
 package ai.rever.boss.kernel
 
 import ai.rever.boss.config.SelfHealingSettingsManager
-import ai.rever.boss.ipc.BossIpcClient
 import ai.rever.boss.ipc.BossIpcServer
 import ai.rever.boss.ipc.IpcAddressResolver
+import ai.rever.boss.ipc.auth.IpcTlsIdentity
 import ai.rever.boss.ipc.auth.ProcessTokenRegistry
 import ai.rever.boss.ipc.proto.OrchestratorServiceGrpcKt
 import ai.rever.boss.ipc.proto.ProcessFailureReport
@@ -387,9 +387,6 @@ class KernelBootstrap(
      */
     private val serviceAddresses = ConcurrentHashMap<String, String>()
 
-    /** Cached orchestrator channel, keyed by the address it was opened against. */
-    private var orchestratorClient: Pair<String, BossIpcClient>? = null
-
     /**
      * Initialize the kernel infrastructure. No-op in MONOLITH mode.
      */
@@ -405,8 +402,15 @@ class KernelBootstrap(
         kernelAddress = IpcAddressResolver.kernelAddress()
         val registry = ProcessRegistry()
         val tokenRegistry = ProcessTokenRegistry()
+        val kernelIdentity = IpcTlsIdentity.create()
         // The spawner registers everything it spawns, so no call site can forget to.
-        val spawner = ProcessSpawner(kernelAddress!!, registry = registry, tokenRegistry = tokenRegistry)
+        val spawner =
+            ProcessSpawner(
+                kernelAddress!!,
+                registry = registry,
+                tokenRegistry = tokenRegistry,
+                kernelIdentity = kernelIdentity,
+            )
         processRegistry = registry
         processSpawner = spawner
         processTokenRegistry = tokenRegistry
@@ -468,7 +472,7 @@ class KernelBootstrap(
         // and never touches the socket. Adding a service to a running server is safe; the ordering above
         // is about existence, not about protecting streams.
         ipcServer =
-            BossIpcServer(kernelAddress!!, tokenRegistry)
+            BossIpcServer(kernelAddress!!, tokenRegistry, kernelIdentity)
                 .addService(kernelService!!)
                 .addService(eventBusService!!)
                 .addService(stateService!!)
@@ -609,16 +613,7 @@ class KernelBootstrap(
 
     /** A stub for the running orchestrator, or null while it has no registered address. */
     private fun orchestratorStub(): OrchestratorServiceGrpcKt.OrchestratorServiceCoroutineStub? {
-        val address = serviceAddresses[ORCHESTRATOR_PROCESS_ID] ?: return null
-        val cached = orchestratorClient
-        // Re-dial when the orchestrator comes back at a new address; the old channel is dead.
-        val client =
-            if (cached != null && cached.first == address) {
-                cached.second
-            } else {
-                cached?.second?.runCatching { shutdown() }
-                BossIpcClient(address).also { orchestratorClient = address to it }
-            }
+        val client = processRegistry?.getProcess(ORCHESTRATOR_PROCESS_ID)?.ipcClient ?: return null
         return OrchestratorServiceGrpcKt.OrchestratorServiceCoroutineStub(client.channel)
     }
 
@@ -904,10 +899,7 @@ class KernelBootstrap(
         // restart would otherwise come up still holding claims from processes that are now dead.
         RemoteUiSurfaceRegistry.shared.clear()
 
-        // 5. Close the orchestrator channel. Nothing else owns it, so a mode switch or in-process
-        // restart would otherwise leak the channel and its threads.
-        orchestratorClient?.second?.shutdown()
-        orchestratorClient = null
+        // 5. Channels were closed with their owning managed processes above.
         serviceAddresses.clear()
 
         // 6. Cancel scope

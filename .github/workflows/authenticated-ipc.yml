@@ -1,0 +1,65 @@
+name: Authenticated IPC boundaries
+
+on:
+  push:
+    branches: ['fix/security-authenticated-ipc', 'fix/filesystem-service-authorization']
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - 'modules/boss-ipc/**'
+      - 'modules/boss-process-manager/**'
+      - 'modules/boss-app-terminal/**'
+      - 'modules/boss-orchestrator/**'
+      - 'modules/boss-service-filesystem/**'
+      - '.github/workflows/authenticated-ipc.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ipc:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6.0.0
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Verify authenticated RPC and process ownership
+        shell: bash
+        run: >-
+          ./gradlew :boss-ipc:test :boss-ipc:nativeSmokeJvm :boss-process-manager:test
+          :boss-app-terminal:test :boss-orchestrator:test :boss-service-filesystem:test
+          :boss-ipc:ktlintCheck :boss-ipc:detekt
+          :boss-process-manager:ktlintCheck :boss-process-manager:detekt
+          :boss-app-terminal:ktlintCheck :boss-app-terminal:detekt
+          :boss-orchestrator:ktlintCheck :boss-orchestrator:detekt
+          :boss-service-filesystem:ktlintCheck :boss-service-filesystem:detekt
+          --no-daemon
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          version: '25.0'
+          distribution: graalvm
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and exercise native authenticated IPC
+        shell: bash
+        run: |
+          ./gradlew :boss-ipc:nativeCompile --no-daemon
+          ./modules/boss-ipc/build/native/nativeCompile/ipc-security-smoke
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: authenticated-ipc-${{ matrix.os }}
+          path: |
+            modules/boss-ipc/build/test-results
+            modules/boss-process-manager/build/test-results
+            modules/boss-app-terminal/build/test-results
+            modules/boss-orchestrator/build/test-results
+            modules/boss-service-filesystem/build/test-results

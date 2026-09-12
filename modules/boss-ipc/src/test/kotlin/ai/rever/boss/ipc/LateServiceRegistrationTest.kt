@@ -29,27 +29,22 @@ import kotlin.test.assertTrue
  * survived on timing; `PluginUIService.StreamUI`, whose whole job is to stay open, could not.
  */
 class LateServiceRegistrationTest {
+    private lateinit var testServer: IpcTestServer
     private var ipcServer: BossIpcServer? = null
     private var channel: ManagedChannel? = null
     private var port: Int = 0
 
     @Before
     fun setUp() {
-        // Port 0, then read back what was bound: "find a free port, then bind it" can lose the port to
-        // another process in between, which is the race the sibling suites avoid by construction.
-        // Only the kernel service at build time; everything else arrives late, as in KERNEL bootstrap.
-        ipcServer =
-            BossIpcServer("tcp://localhost:0")
-                .addService(KernelServiceImpl())
-                .start()
-        port = ipcServer!!.port
-        channel = ManagedChannelBuilder.forAddress("localhost", port).usePlaintext().build()
+        testServer = IpcTestServer(KernelServiceImpl())
+        ipcServer = testServer.server
+        port = testServer.server.port
+        channel = testServer.channelFor("late-registration-test")
     }
 
     @After
     fun tearDown() {
-        channel?.shutdownNow()
-        ipcServer?.stop(timeoutMs = 2_000)
+        testServer.close()
     }
 
     @Test

@@ -1,11 +1,16 @@
 package ai.rever.boss.orchestrator
 
+import ai.rever.boss.ipc.auth.ProcessAuthority
+import ai.rever.boss.ipc.auth.ProcessIdentityInterceptor
+import ai.rever.boss.ipc.auth.ProcessTokenRegistry
 import ai.rever.boss.ipc.proto.ProcessFailureReport
 import ai.rever.boss.ipc.proto.ProcessManifest
 import ai.rever.boss.ipc.proto.RepairAction
 import ai.rever.boss.ipc.proto.RepairApproval
 import ai.rever.boss.ipc.proto.RepairHint
 import ai.rever.boss.ipc.proto.RepairStrategy
+import io.grpc.Context
+import io.grpc.kotlin.GrpcContextElement
 import kotlinx.coroutines.test.runTest
 import java.io.File
 import java.nio.file.Files
@@ -18,6 +23,13 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class OrchestratorServiceImplTest {
+    private val callerRegistry = ProcessTokenRegistry()
+    private val hostToken = callerRegistry.issue("host", ProcessAuthority.HOST)
+    private val principalKey = ProcessIdentityInterceptor.CURRENT_PRINCIPAL
+    private val hostContext =
+        GrpcContextElement(
+            Context.current().withValue(principalKey, { callerRegistry.principalFor(hostToken) }),
+        )
     private lateinit var dataDir: File
     private lateinit var snapshots: SnapshotManager
 
@@ -69,7 +81,7 @@ class OrchestratorServiceImplTest {
 
     @Test
     fun `an approval whose execution fails is not reported as applied`() =
-        runTest {
+        runTest(hostContext) {
             val service =
                 OrchestratorServiceImpl(
                     repairEngine = engine(),
@@ -89,7 +101,7 @@ class OrchestratorServiceImplTest {
 
     @Test
     fun `an approval that is refused is not reported as applied`() =
-        runTest {
+        runTest(hostContext) {
             val service =
                 OrchestratorServiceImpl(
                     repairEngine = engine(),
@@ -107,7 +119,7 @@ class OrchestratorServiceImplTest {
 
     @Test
     fun `an approval that is carried out is reported as applied with the executor's message`() =
-        runTest {
+        runTest(hostContext) {
             val service =
                 OrchestratorServiceImpl(
                     repairEngine = engine(),
@@ -123,7 +135,7 @@ class OrchestratorServiceImplTest {
 
     @Test
     fun `a host that wires nothing to apply repairs reports the approval as not applied`() =
-        runTest {
+        runTest(hostContext) {
             val service = OrchestratorServiceImpl(repairEngine = engine())
             val parked = service.reportFailure(report("p4", RepairStrategy.REPAIR_STRATEGY_PATCH_SOURCE))
 
@@ -137,7 +149,7 @@ class OrchestratorServiceImplTest {
 
     @Test
     fun `an approved repair is handed the process it was reported for`() =
-        runTest {
+        runTest(hostContext) {
             val seen = mutableListOf<Pair<String, String>>()
             val service =
                 OrchestratorServiceImpl(
@@ -160,7 +172,7 @@ class OrchestratorServiceImplTest {
 
     @Test
     fun `applyApprovedRepair shuts down the reported process and never the repair id`() =
-        runTest {
+        runTest(hostContext) {
             val shutdown = mutableListOf<String>()
             val action =
                 RepairAction
@@ -178,7 +190,7 @@ class OrchestratorServiceImplTest {
 
     @Test
     fun `applyApprovedRepair refuses a strategy it cannot carry out and shuts down nothing`() =
-        runTest {
+        runTest(hostContext) {
             val shutdown = mutableListOf<String>()
             val action =
                 RepairAction
@@ -198,7 +210,7 @@ class OrchestratorServiceImplTest {
 
     @Test
     fun `a reset-state action names the snapshot the process comes back on`() =
-        runTest {
+        runTest(hostContext) {
             val snapshotId = snapshots.save("p5", "state".toByteArray())
             val service = OrchestratorServiceImpl(repairEngine = engine())
 
@@ -211,7 +223,7 @@ class OrchestratorServiceImplTest {
 
     @Test
     fun `a reset-state action with no snapshot recorded says so`() =
-        runTest {
+        runTest(hostContext) {
             val service = OrchestratorServiceImpl(repairEngine = engine())
 
             val action = service.reportFailure(report("p6", RepairStrategy.REPAIR_STRATEGY_RESET_STATE))
@@ -223,7 +235,7 @@ class OrchestratorServiceImplTest {
 
     @Test
     fun `an unknown repair id is still reported as not applied`() =
-        runTest {
+        runTest(hostContext) {
             val service = OrchestratorServiceImpl(repairEngine = engine())
 
             val response = service.approveRepair(approval("no-such-repair"))
@@ -234,7 +246,7 @@ class OrchestratorServiceImplTest {
 
     @Test
     fun `a rejected repair is not applied and is not parked twice`() =
-        runTest {
+        runTest(hostContext) {
             var applications = 0
             val service =
                 OrchestratorServiceImpl(
