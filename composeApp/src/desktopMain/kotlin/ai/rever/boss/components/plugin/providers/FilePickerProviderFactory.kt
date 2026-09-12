@@ -3,8 +3,10 @@ package ai.rever.boss.components.plugin.providers
 import ai.rever.boss.plugin.api.FilePickerProvider
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import java.awt.Dialog
 import java.awt.FileDialog
 import java.awt.Frame
+import java.awt.KeyboardFocusManager
 import java.io.File
 import javax.swing.JFileChooser
 import javax.swing.SwingUtilities
@@ -31,7 +33,7 @@ private class DesktopFilePickerProvider : FilePickerProvider {
         SwingUtilities.invokeLater {
             try {
                 if (isMacOS) {
-                    val dialog = FileDialog(null as Frame?, title ?: "Open File", FileDialog.LOAD)
+                    val dialog = createFileDialog(title ?: "Open File", FileDialog.LOAD)
                     if (!filters.isNullOrEmpty()) {
                         dialog.setFilenameFilter { _, name ->
                             filters.any { ext -> name.endsWith(".$ext", ignoreCase = true) }
@@ -45,6 +47,7 @@ private class DesktopFilePickerProvider : FilePickerProvider {
                     } else {
                         onResult(null)
                     }
+                    dialog.dispose()
                 } else {
                     val chooser =
                         JFileChooser().apply {
@@ -61,7 +64,7 @@ private class DesktopFilePickerProvider : FilePickerProvider {
                                 )
                             }
                         }
-                    val result = chooser.showOpenDialog(null)
+                    val result = chooser.showOpenDialog(activeWindow())
                     if (result == JFileChooser.APPROVE_OPTION) {
                         onResult(chooser.selectedFile?.absolutePath)
                     } else {
@@ -83,9 +86,14 @@ private class DesktopFilePickerProvider : FilePickerProvider {
         SwingUtilities.invokeLater {
             try {
                 if (isMacOS) {
-                    val dialog = FileDialog(null as Frame?, "Save File", FileDialog.SAVE)
+                    val dialog = createFileDialog("Save File", FileDialog.SAVE)
                     if (suggestedFileName != null) {
                         dialog.file = suggestedFileName
+                    }
+                    if (!filters.isNullOrEmpty()) {
+                        dialog.setFilenameFilter { _, name ->
+                            filters.any { ext -> name.endsWith(".$ext", ignoreCase = true) }
+                        }
                     }
                     dialog.isVisible = true
                     val dir = dialog.directory
@@ -95,6 +103,7 @@ private class DesktopFilePickerProvider : FilePickerProvider {
                     } else {
                         onResult(null)
                     }
+                    dialog.dispose()
                 } else {
                     val chooser =
                         JFileChooser().apply {
@@ -114,7 +123,7 @@ private class DesktopFilePickerProvider : FilePickerProvider {
                                 )
                             }
                         }
-                    val result = chooser.showSaveDialog(null)
+                    val result = chooser.showSaveDialog(activeWindow())
                     if (result == JFileChooser.APPROVE_OPTION) {
                         onResult(chooser.selectedFile?.absolutePath)
                     } else {
@@ -128,3 +137,25 @@ private class DesktopFilePickerProvider : FilePickerProvider {
         }
     }
 }
+
+/**
+ * Returns the AWT window currently receiving keyboard focus.
+ *
+ * Using the active window as the owner keeps native file dialogs attached to the
+ * BOSS window that initiated the request instead of allowing them to appear behind it.
+ */
+private fun activeWindow(): java.awt.Window? =
+    KeyboardFocusManager.getCurrentKeyboardFocusManager().activeWindow
+
+/**
+ * FileDialog has separate constructors for Frame and Dialog owners.
+ */
+private fun createFileDialog(
+    title: String,
+    mode: Int,
+): FileDialog =
+    when (val window = KeyboardFocusManager.getCurrentKeyboardFocusManager().activeWindow) {
+        is Frame -> FileDialog(window, title, mode)
+        is Dialog -> FileDialog(window, title, mode)
+        else -> FileDialog(null as Frame?, title, mode)
+    }
