@@ -37,7 +37,11 @@ import ai.rever.boss.window.ApplyBossWindowIcon
 import ai.rever.boss.window.BossWindow
 import ai.rever.boss.window.BossWindowIcon
 import ai.rever.boss.window.DefaultWindowIcon
+import ai.rever.boss.window.MacOSApplicationLifecycle
+import ai.rever.boss.window.WindowCloseDisposition
 import ai.rever.boss.window.WindowManager
+import ai.rever.boss.window.WindowType
+import ai.rever.boss.window.decideWindowCloseDisposition
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -66,6 +70,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import java.awt.Window
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.JPopupMenu
 import kotlin.system.exitProcess
 
@@ -934,7 +939,8 @@ fun main(args: Array<String>) {
     // Create initial window BEFORE application{} to prevent auto-recreation
     // This runs once on startup, not during recomposition
     // Note: Window creation is deferred if Chromium download is needed
-    if (!chromiumNeedsDownload) {
+    val canCreateMainWindow = AtomicBoolean(!chromiumNeedsDownload)
+    if (canCreateMainWindow.get()) {
         WindowManager.createNewWindow()
     }
 
@@ -945,6 +951,9 @@ fun main(args: Array<String>) {
             "elapsedMs" to (System.currentTimeMillis() - startupBeganMs).toString(),
         ),
     )
+
+    val macOSLifecycleRegistration =
+        MacOSApplicationLifecycle.install(canCreateMainWindow::get)
 
     application {
         // Provide a custom WindowExceptionHandlerFactory that intercepts plugin crashes
@@ -1066,6 +1075,7 @@ fun main(args: Array<String>) {
                             if (progress.isComplete) {
                                 // Download complete - create window and proceed
                                 WindowManager.createNewWindow()
+                                canCreateMainWindow.set(true)
                                 // The pre-warm was skipped at startup because the engine
                                 // was missing; now that it is installed, warm it so the
                                 // first tab does not pay the full boot.
@@ -1158,7 +1168,27 @@ fun main(args: Array<String>) {
                     key(windowState.id) {
                         BossWindow(
                             windowState = windowState,
-                            onCloseRequest = {
+                            onCloseRequest = closeWindow@{
+                                val hasOtherMainWindows =
+                                    WindowManager.windows.any {
+                                        it.id != windowState.id && it.windowType == WindowType.MAIN
+                                    }
+                                val closeDisposition =
+                                    decideWindowCloseDisposition(
+                                        isMacOS = SystemUtils.isMacOS,
+                                        closingWindowType = windowState.windowType,
+                                        hasOtherMainWindows = hasOtherMainWindows,
+                                    )
+                                if (closeDisposition == WindowCloseDisposition.HIDE_AND_RETAIN) {
+                                    windowState.isVisible = false
+                                    logger.debug(
+                                        LogCategory.UI,
+                                        "Hid final macOS main window without disposing its workspace",
+                                        mapOf("windowId" to windowState.id),
+                                    )
+                                    return@closeWindow
+                                }
+
                                 // Exit fullscreen/maximized BEFORE disposing browsers to prevent
                                 // SIGABRT crash in JxBrowser's getWindowHandle during macOS
                                 // fullscreen exit transition. requestToggleFullScreen() is async
@@ -1269,6 +1299,8 @@ fun main(args: Array<String>) {
             }
         } // CompositionLocalProvider
     }
+
+    macOSLifecycleRegistration?.close()
 }
 
 private fun setupNativeLibraryPaths() {
