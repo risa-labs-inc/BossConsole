@@ -4,7 +4,11 @@ import ai.rever.boss.ipc.proto.services.*
 import ai.rever.boss.plugin.api.CreateSecretRequestData
 import ai.rever.boss.plugin.api.SecretDataProvider
 import ai.rever.boss.plugin.api.SecretEntryData
+import ai.rever.boss.plugin.api.SecretEntryWithAccessData
+import ai.rever.boss.plugin.api.SecretEntryWithSharingAccessData
+import ai.rever.boss.plugin.api.SecretEntryWithSharingData
 import ai.rever.boss.plugin.api.SecretShareData
+import ai.rever.boss.plugin.api.SecretShareWithTargetData
 import ai.rever.boss.plugin.api.ShareSecretRequestData
 import ai.rever.boss.plugin.api.UnshareSecretRequestData
 import ai.rever.boss.plugin.api.UpdateSecretRequestData
@@ -13,7 +17,7 @@ class SecretServiceBridge(
     private val provider: SecretDataProvider,
 ) : SecretServiceGrpcKt.SecretServiceCoroutineImplBase() {
     override suspend fun getUserSecrets(request: SecretPaginatedRequest): PaginatedSecretsResponse {
-        val result = provider.getUserSecrets(request.limit, request.offset)
+        val result = provider.getUserSecretsWithAccess(request.limit, request.offset)
         return result.fold(
             onSuccess = { paginated ->
                 PaginatedSecretsResponse
@@ -34,7 +38,7 @@ class SecretServiceBridge(
     }
 
     override suspend fun getUserSecretsWithSharingInfo(request: SecretPaginatedRequest): PaginatedSecretsWithSharingResponse {
-        val result = provider.getUserSecretsWithSharingInfo(request.limit, request.offset)
+        val result = provider.getUserSecretsWithSharingAccess(request.limit, request.offset)
         return result.fold(
             onSuccess = { paginated ->
                 PaginatedSecretsWithSharingResponse
@@ -43,23 +47,8 @@ class SecretServiceBridge(
                         paginated.data.map { entry ->
                             SecretWithSharingProto
                                 .newBuilder()
-                                .setSecret(
-                                    SecretEntryProto
-                                        .newBuilder()
-                                        .setId(entry.id)
-                                        .setWebsite(entry.website)
-                                        .setUsername(entry.username)
-                                        .setPassword(entry.password)
-                                        .setNotes(entry.notes ?: "")
-                                        .setExpirationDate(entry.expirationDate ?: "")
-                                        .addAllTags(entry.tags)
-                                        .setCreatedAt(entry.createdAt)
-                                        .setUpdatedAt(entry.updatedAt)
-                                        .setIsOwner(entry.isOwner)
-                                        .setSharedByEmail(entry.sharedByEmail ?: "")
-                                        .setAccessLevel(entry.accessLevel)
-                                        .build(),
-                                ).build()
+                                .setSecret(entry.toProto())
+                                .build()
                         },
                     ).setHasMore(paginated.hasMore)
                     .setSuccess(true)
@@ -76,7 +65,7 @@ class SecretServiceBridge(
     }
 
     override suspend fun searchSecrets(request: SearchSecretsRequest): PaginatedSecretsResponse {
-        val result = provider.searchSecrets(request.query, request.limit, request.offset)
+        val result = provider.searchSecretsWithAccess(request.query, request.limit, request.offset)
         return result.fold(
             onSuccess = { paginated ->
                 PaginatedSecretsResponse
@@ -137,7 +126,7 @@ class SecretServiceBridge(
         provider.deleteSecret(request.id).toOperationResult()
 
     override suspend fun getSecretShares(request: SecretIdRequest): SecretShareListResponse {
-        val result = provider.getSecretShares(request.id)
+        val result = provider.getSecretSharesWithTargets(request.id)
         return result.fold(
             onSuccess = { shares ->
                 SecretShareListResponse
@@ -191,6 +180,43 @@ class SecretServiceBridge(
             .setUpdatedAt(updatedAt)
             .build()
 
+    private fun SecretEntryWithAccessData.toProto(): SecretEntryProto =
+        secret
+            .toProto()
+            .toBuilder()
+            .setOrgId(orgId ?: "")
+            .setOrgSlug(orgSlug ?: "")
+            .setIsOrgOwned(isOrgOwned)
+            .setCanManage(canManage)
+            .build()
+
+    private fun SecretEntryWithSharingData.toProto(): SecretEntryProto =
+        SecretEntryProto
+            .newBuilder()
+            .setId(id)
+            .setWebsite(website)
+            .setUsername(username)
+            .setPassword(password)
+            .setNotes(notes ?: "")
+            .setExpirationDate(expirationDate ?: "")
+            .addAllTags(tags)
+            .setCreatedAt(createdAt)
+            .setUpdatedAt(updatedAt)
+            .setIsOwner(isOwner)
+            .setSharedByEmail(sharedByEmail ?: "")
+            .setAccessLevel(accessLevel)
+            .build()
+
+    private fun SecretEntryWithSharingAccessData.toProto(): SecretEntryProto =
+        secret
+            .toProto()
+            .toBuilder()
+            .setOrgId(orgId ?: "")
+            .setOrgSlug(orgSlug ?: "")
+            .setIsOrgOwned(isOrgOwned)
+            .setCanManage(canManage)
+            .build()
+
     private fun SecretShareData.toShareProto(): SecretShareProto =
         SecretShareProto
             .newBuilder()
@@ -204,6 +230,14 @@ class SecretServiceBridge(
             .setCreatedAt(createdAt)
             .setExpiresAt(expiresAt ?: "")
             .setNotes(notes ?: "")
+            .build()
+
+    private fun SecretShareWithTargetData.toShareProto(): SecretShareProto =
+        share
+            .toShareProto()
+            .toBuilder()
+            .setSharedWithOrgId(sharedWithOrgId ?: "")
+            .setSharedWithOrgSlug(sharedWithOrgSlug ?: "")
             .build()
 
     private fun Result<Unit>.toOperationResult(): SecretOperationResult =

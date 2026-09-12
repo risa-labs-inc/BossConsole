@@ -2,12 +2,17 @@ package ai.rever.boss.services.supabase
 
 import ai.rever.boss.plugin.api.CreateSecretRequestData
 import ai.rever.boss.plugin.api.PaginatedSecretsData
+import ai.rever.boss.plugin.api.PaginatedSecretsWithAccessData
+import ai.rever.boss.plugin.api.PaginatedSecretsWithSharingAccessData
 import ai.rever.boss.plugin.api.PaginatedSecretsWithSharingData
 import ai.rever.boss.plugin.api.SecretDataProvider
 import ai.rever.boss.plugin.api.SecretEntryData
+import ai.rever.boss.plugin.api.SecretEntryWithAccessData
+import ai.rever.boss.plugin.api.SecretEntryWithSharingAccessData
 import ai.rever.boss.plugin.api.SecretEntryWithSharingData
 import ai.rever.boss.plugin.api.SecretMetadataData
 import ai.rever.boss.plugin.api.SecretShareData
+import ai.rever.boss.plugin.api.SecretShareWithTargetData
 import ai.rever.boss.plugin.api.ShareSecretRequestData
 import ai.rever.boss.plugin.api.UnshareSecretRequestData
 import ai.rever.boss.plugin.api.UpdateSecretRequestData
@@ -37,6 +42,17 @@ class SecretDataProviderImpl : SecretDataProvider {
             )
         }
 
+    override suspend fun getUserSecretsWithAccess(
+        limit: Int,
+        offset: Int,
+    ): Result<PaginatedSecretsWithAccessData> =
+        SecretService.getUserSecrets(limit, offset).map { paginated ->
+            PaginatedSecretsWithAccessData(
+                data = paginated.data.map { entry -> entry.toPluginAccessData(entry.toPluginData()) },
+                hasMore = paginated.hasMore,
+            )
+        }
+
     override suspend fun getUserSecretsWithSharingInfo(
         limit: Int,
         offset: Int,
@@ -60,6 +76,29 @@ class SecretDataProviderImpl : SecretDataProvider {
             )
         }
 
+    override suspend fun getUserSecretsWithSharingAccess(
+        limit: Int,
+        offset: Int,
+    ): Result<PaginatedSecretsWithSharingAccessData> =
+        SecretService.getUserSecretsWithSharingInfo(limit, offset).map { paginated ->
+            PaginatedSecretsWithSharingAccessData(
+                data = paginated.data.map { entry -> entry.toPluginSharingAccessData(entry.toPluginDataWithSharing()) },
+                hasMore = paginated.hasMore,
+            )
+        }
+
+    override suspend fun searchSecretsWithAccess(
+        query: String,
+        limit: Int,
+        offset: Int,
+    ): Result<PaginatedSecretsWithAccessData> =
+        SecretService.searchSecrets(query, limit, offset).map { paginated ->
+            PaginatedSecretsWithAccessData(
+                data = paginated.data.map { entry -> entry.toPluginAccessData(entry.toPluginData()) },
+                hasMore = paginated.hasMore,
+            )
+        }
+
     override suspend fun createSecret(request: CreateSecretRequestData): Result<Unit> =
         SecretService.createSecret(request.toServiceRequest())
 
@@ -71,6 +110,11 @@ class SecretDataProviderImpl : SecretDataProvider {
     override suspend fun getSecretShares(secretId: String): Result<List<SecretShareData>> =
         SecretService.getSecretShares(secretId).map { shares ->
             shares.map { it.toPluginData() }
+        }
+
+    override suspend fun getSecretSharesWithTargets(secretId: String): Result<List<SecretShareWithTargetData>> =
+        SecretService.getSecretShares(secretId).map { shares ->
+            shares.map { entry -> entry.toPluginTargetData(entry.toPluginData()) }
         }
 
     override suspend fun shareSecret(request: ShareSecretRequestData): Result<Unit> = SecretService.shareSecret(request.toServiceRequest())
@@ -187,3 +231,32 @@ class SecretDataProviderImpl : SecretDataProvider {
             targetRoleId = targetRoleId,
         )
 }
+
+/** Access-envelope projection kept visible to tests because null must never become an allow. */
+internal fun SecretEntry.toPluginAccessData(secretData: SecretEntryData): SecretEntryWithAccessData =
+    SecretEntryWithAccessData(
+        secret = secretData,
+        orgId = orgId,
+        orgSlug = orgSlug,
+        isOrgOwned = isOrgOwned == true,
+        canManage = canManageOrDeny,
+    )
+
+/** Organisation target projection shared by the in-process plugin path. */
+internal fun SecretShareEntry.toPluginTargetData(shareData: SecretShareData): SecretShareWithTargetData =
+    SecretShareWithTargetData(
+        share = shareData,
+        sharedWithOrgId = sharedWithOrgId,
+        sharedWithOrgSlug = sharedWithOrgSlug,
+    )
+
+/** Organisation ownership for read-only sharing rows, preserving the old row constructor. */
+@Suppress("MaxLineLength")
+internal fun SecretEntryWithSharing.toPluginSharingAccessData(secretData: SecretEntryWithSharingData): SecretEntryWithSharingAccessData =
+    SecretEntryWithSharingAccessData(
+        secret = secretData,
+        orgId = orgId,
+        orgSlug = orgSlug,
+        isOrgOwned = isOrgOwned == true,
+        canManage = canManageOrDeny,
+    )
