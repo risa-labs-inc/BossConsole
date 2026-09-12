@@ -209,6 +209,30 @@ class SplitViewActiveTabsTest {
     }
 
     @Test
+    fun `addTab with activate false leaves the previously active tab active`() {
+        // BossConsole's runner focusOnRun setting: a tab must be able to exist and run without
+        // becoming the panel's active tab. selectTab called conditionally right after an
+        // unconditional addTab does not achieve this - addTab itself has to honor the gate.
+        val panel = state.getPanel(state.activePanelId)!!
+        panel.tabsComponent.addTab(createTab("existing"))
+
+        val newIndex = panel.tabsComponent.addTab(createTab("background-run"), activate = false)
+
+        assertEquals(0, panel.tabsComponent.tabsState.value.activeIndex)
+        assertEquals(
+            "existing",
+            panel.tabsComponent.tabsState.value.activeTab
+                ?.id,
+        )
+        assertEquals(1, newIndex, "the tab still gets added, just not activated")
+        assertEquals(
+            listOf("existing", "background-run"),
+            panel.tabsComponent.tabsState.value.tabs
+                .map { it.id },
+        )
+    }
+
+    @Test
     fun `preserved workspace inventory survives switching and restoration`() {
         state.preserveCurrentState("ws1")
         val firstPanel = state.getPanel(state.activePanelId)!!

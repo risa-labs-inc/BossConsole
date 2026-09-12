@@ -1091,6 +1091,8 @@ kotlin {
                 "**/plugin/PluginStateDeltaTest.kt",
                 // Its process registry and production ID helper belong to the excluded OOP runtime.
                 "**/plugin/PluginProcessIdTest.kt",
+                // The source-isolation guard rejects this test's IPC package import.
+                "**/run/DesktopRunnerTerminalServiceTest.kt",
             )
         }
     }

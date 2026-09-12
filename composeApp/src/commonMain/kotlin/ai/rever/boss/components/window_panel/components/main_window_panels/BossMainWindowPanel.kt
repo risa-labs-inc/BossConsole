@@ -1957,7 +1957,19 @@ class BossTabsComponent(
     }
 
     // Add a new tab
-    fun addTab(config: TabInfo): Int {
+
+    /**
+     * @param activate Whether the new tab becomes the panel's active tab. Defaults to true.
+     *   `false` is for a caller that wants the tab to exist and run without taking focus away
+     *   from whatever the user is already looking at - see [ai.rever.boss.app.TerminalLinkOpener]'s
+     *   `focusOnRun` setting, the reason this parameter exists at all: `selectTab` called right
+     *   after `addTab` used to be a no-op, because `TabsNavigation.addTab` already made the new
+     *   tab active unconditionally.
+     */
+    fun addTab(
+        config: TabInfo,
+        activate: Boolean = true,
+    ): Int {
         // Create component for this tab, with its own lifecycle so tab close can destroy it
         // (fires the component's lifecycle.onDestroy — see tabLifecycles).
         val tabLifecycle = LifecycleRegistry()
@@ -1977,11 +1989,15 @@ class BossTabsComponent(
             TabUpdateRegistry.registerTab(config.id, componentId)
 
             // Add to navigation
-            val index = tabsNavigation.addTab(config)
-            // A newly opened tab becomes active; record it as most-recently-used and end
-            // any in-progress MRU cycle.
-            recordTabUsage(config.id)
-            tabCycleOrder = null
+            val index = tabsNavigation.addTab(config, activate)
+            // A newly opened tab that becomes active is recorded as most-recently-used, ending
+            // any in-progress MRU cycle. A tab added without activating leaves both alone - it
+            // isn't what the user is looking at, so it shouldn't count as "used" or interrupt a
+            // cycle already in progress.
+            if (activate) {
+                recordTabUsage(config.id)
+                tabCycleOrder = null
+            }
             publishSystemEvent(TabEvent(tabId = config.id, tabType = TabEventType.OPENED, windowId = windowId))
             return index
         }
