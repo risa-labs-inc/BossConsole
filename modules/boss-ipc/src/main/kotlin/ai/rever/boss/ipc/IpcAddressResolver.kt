@@ -63,6 +63,13 @@ object IpcAddressResolver {
     /** Regex for valid process identifiers — prevents path traversal in socket names. */
     private val PROCESS_ID_REGEX = Regex("^[a-zA-Z0-9._-]+$")
 
+    /** Shared by socket allocation and process-log creation, before either creates filesystem state. */
+    fun validateProcessIdentifier(value: String) {
+        require(value.length in 1..200 && value != "." && value != ".." && PROCESS_ID_REGEX.matches(value)) {
+            "Invalid process identifier: expected 1-200 letters, digits, dots, underscores, or hyphens"
+        }
+    }
+
     /**
      * Get the IPC address for a process.
      * Returns a UDS path on macOS/Linux, or TCP localhost address on Windows.
@@ -73,12 +80,8 @@ object IpcAddressResolver {
         processType: String,
         processId: String,
     ): String {
-        require(PROCESS_ID_REGEX.matches(processType)) {
-            "Invalid processType '$processType': must match [a-zA-Z0-9._-]+"
-        }
-        require(PROCESS_ID_REGEX.matches(processId)) {
-            "Invalid processId '$processId': must match [a-zA-Z0-9._-]+"
-        }
+        validateProcessIdentifier(processType)
+        validateProcessIdentifier(processId)
         return if (isWindows) {
             val key = "$processType:$processId"
             val port = tcpPortCache.computeIfAbsent(key) { findAvailableTcpPort() }
