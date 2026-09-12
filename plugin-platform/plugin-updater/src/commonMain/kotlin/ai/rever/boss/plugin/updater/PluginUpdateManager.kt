@@ -614,6 +614,17 @@ class PluginUpdateManager(
 
     /**
      * Check if version1 is newer than version2.
+     *
+     * Fails CLOSED when either side is unparseable: an unreadable version
+     * offers no update. This is the one comparator on the live update path
+     * (Toolbox -> PluginUpdateBridge -> this class).
+     *
+     * The repository-side counterpart, `PluginRepositoryManager.isNewerVersion`
+     * in plugin-repository, fails OPEN on an unparseable *installed* version:
+     * a plugin whose recorded version is already broken should not be stranded
+     * without updates. The two divergences are deliberate on each page; settling
+     * which behaviour is the right one is a change of its own, and until then
+     * this is the answer the user actually gets.
      */
     private fun isNewerVersion(
         version1: String,

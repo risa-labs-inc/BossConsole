@@ -1,5 +1,6 @@
 package ai.rever.boss.plugin.repository
 
+import ai.rever.boss.plugin.dependency.SemanticVersion
 import ai.rever.boss.plugin.logging.BossLogger
 import ai.rever.boss.plugin.logging.LogCategory
 import kotlinx.coroutines.async
@@ -333,6 +334,13 @@ class PluginRepositoryManager {
     /**
      * Check if any updates are available for installed plugins.
      *
+     * No production caller today: the Toolbox's update path goes
+     * PluginUpdateBridge -> PluginUpdateManager.checkForUpdates, which uses this
+     * manager only for lookups and downloads. It is kept because the repository
+     * layer should answer the same question the updater does if the paths are
+     * ever merged, and PluginRepositoryVersionTest drives it end to end so the
+     * offer/refusal branches cannot rot untested.
+     *
      * @param installedPlugins Map of plugin ID to installed version
      * @return List of plugins with available updates
      */
@@ -357,8 +365,8 @@ class PluginRepositoryManager {
                             error = failure,
                         )
                     }
-                    if (latestPlugin != null && isNewerVersion(latestPlugin.plugin.version, installedVersion)) {
-                        updates.add(latestPlugin)
+                    if (latestPlugin != null) {
+                        offerUpdateIfNewer(pluginId, installedVersion, latestPlugin, updates)
                     }
                 }
 
@@ -367,23 +375,72 @@ class PluginRepositoryManager {
         }
 
     /**
-     * Compare two version strings to determine if the first is newer.
+     * Append [latestPlugin] to [updates] when it is a genuine upgrade over the
+     * installed version, and leave a log trace when the refusal came from an
+     * unparseable store version rather than from an actual comparison.
      */
-    private fun isNewerVersion(
-        version1: String,
-        version2: String,
-    ): Boolean {
-        val v1Parts = version1.split(".").mapNotNull { it.toIntOrNull() }
-        val v2Parts = version2.split(".").mapNotNull { it.toIntOrNull() }
-
-        for (i in 0 until maxOf(v1Parts.size, v2Parts.size)) {
-            val v1 = v1Parts.getOrElse(i) { 0 }
-            val v2 = v2Parts.getOrElse(i) { 0 }
-
-            if (v1 > v2) return true
-            if (v1 < v2) return false
+    private fun offerUpdateIfNewer(
+        pluginId: String,
+        installedVersion: String,
+        latestPlugin: PluginWithSource,
+        updates: MutableList<PluginWithSource>,
+    ) {
+        val candidateVersion = latestPlugin.plugin.version
+        if (isNewerVersion(candidateVersion, installedVersion)) {
+            updates.add(latestPlugin)
+        } else if (SemanticVersion.parse(candidateVersion) == null) {
+            // The old comparison made a guess here; the new one refuses. The refusal is
+            // the right answer - you cannot order what you cannot read - but it must not
+            // vanish without a trace, for the same reason the lookup failure above is
+            // logged: "no update offered" and "we could not tell" must stay
+            // distinguishable in the log.
+            logger.debug(
+                LogCategory.SYSTEM,
+                "Update check did not offer a candidate whose store version is not parseable",
+                mapOf("pluginId" to pluginId, "version" to candidateVersion),
+            )
         }
+    }
 
-        return false
+    /**
+     * True when [candidate] is a genuine upgrade over [installed].
+     *
+     * Delegates to [SemanticVersion], which documents itself as the sole
+     * version-comparison primitive for plugin update and floor checks, and which
+     * PluginUpdateManager already uses. The hand-rolled comparison this
+     * replaced split on "." and dropped any segment that was not a bare integer,
+     * which shifted every later segment into the wrong position: "1.0.0+build.7"
+     * became [1, 0, 7] - the "0+build" segment dropped, the 7 landing in the
+     * PATCH slot - and so read as newer than an installed "1.0.0", offering an
+     * update to the version already installed on every check.
+     *
+     * An unparseable [candidate] is never offered, because nothing can be said
+     * about it. An unparseable [installed] with a parseable [candidate] IS
+     * offered: that is a plugin whose recorded version is already broken, and
+     * withholding the update would strand it there permanently.
+     *
+     * The live-path counterpart, `PluginUpdateManager.isNewerVersion` in
+     * plugin-updater, fails CLOSED on an unparseable installed version instead
+     * of open. The divergence is deliberate on both pages (see its KDoc) and
+     * belongs in its own change to settle, but until then a plugin with an
+     * unreadable installed record is offered an update by one path and withheld
+     * by the other.
+     *
+     * Internal for test access.
+     */
+    internal fun isNewerVersion(
+        candidate: String,
+        installed: String,
+    ): Boolean {
+        val candidateVersion = SemanticVersion.parse(candidate)
+        val installedVersion = SemanticVersion.parse(installed)
+        // Single expression rather than early returns: detekt caps this function at
+        // two, and widening the rule to keep a guard-clause shape would be the wrong
+        // trade for three mutually exclusive cases.
+        return when {
+            candidateVersion == null -> false
+            installedVersion == null -> true
+            else -> candidateVersion > installedVersion
+        }
     }
 }
