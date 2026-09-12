@@ -40,29 +40,29 @@ class FluckTabInfoTest {
 
     @Test
     fun `currentUrl returns initial URL when no navigation has occurred`() {
-        val tabInfo = createTabInfo(url = "https://initial.com")
+        var tabInfo = createTabInfo(url = "https://initial.com")
         assertEquals("https://initial.com", tabInfo.currentUrl)
     }
 
     @Test
     fun `currentUrl returns navigated URL after navigation`() {
-        val tabInfo = createTabInfo(url = "https://initial.com")
-        tabInfo.navigateToPage("Page B", "https://navigated.com")
+        var tabInfo = createTabInfo(url = "https://initial.com")
+        tabInfo = tabInfo.updateNavigation("Page B", "https://navigated.com")
 
         assertEquals("https://navigated.com", tabInfo.currentUrl)
     }
 
     @Test
     fun `currentUrl tracks multiple navigations correctly`() {
-        val tabInfo = createTabInfo(url = "https://a.com")
+        var tabInfo = createTabInfo(url = "https://a.com")
 
-        tabInfo.navigateToPage("Page B", "https://b.com")
+        tabInfo = tabInfo.updateNavigation("Page B", "https://b.com")
         assertEquals("https://b.com", tabInfo.currentUrl)
 
-        tabInfo.navigateToPage("Page C", "https://c.com")
+        tabInfo = tabInfo.updateNavigation("Page C", "https://c.com")
         assertEquals("https://c.com", tabInfo.currentUrl)
 
-        tabInfo.navigateToPage("Page D", "https://d.com")
+        tabInfo = tabInfo.updateNavigation("Page D", "https://d.com")
         assertEquals("https://d.com", tabInfo.currentUrl)
     }
 
@@ -70,9 +70,9 @@ class FluckTabInfoTest {
 
     @Test
     fun `navigateBack returns to previous URL`() {
-        val tabInfo = createTabInfo(url = "https://a.com")
-        tabInfo.navigateToPage("Page A", "https://a.com") // Add to history
-        tabInfo.navigateToPage("Page B", "https://b.com")
+        var tabInfo = createTabInfo(url = "https://a.com")
+        tabInfo = tabInfo.updateNavigation("Page A", "https://a.com") // Add to history
+        tabInfo = tabInfo.updateNavigation("Page B", "https://b.com")
 
         tabInfo.navigateBack()
 
@@ -81,9 +81,9 @@ class FluckTabInfoTest {
 
     @Test
     fun `navigateForward returns to next URL after navigateBack`() {
-        val tabInfo = createTabInfo(url = "https://a.com")
-        tabInfo.navigateToPage("Page A", "https://a.com")
-        tabInfo.navigateToPage("Page B", "https://b.com")
+        var tabInfo = createTabInfo(url = "https://a.com")
+        tabInfo = tabInfo.updateNavigation("Page A", "https://a.com")
+        tabInfo = tabInfo.updateNavigation("Page B", "https://b.com")
         tabInfo.navigateBack()
 
         tabInfo.navigateForward()
@@ -93,8 +93,8 @@ class FluckTabInfoTest {
 
     @Test
     fun `navigateBack at start of history does nothing`() {
-        val tabInfo = createTabInfo(url = "https://only.com")
-        tabInfo.navigateToPage("Only Page", "https://only.com")
+        var tabInfo = createTabInfo(url = "https://only.com")
+        tabInfo = tabInfo.updateNavigation("Only Page", "https://only.com")
 
         tabInfo.navigateBack() // Should not throw or change URL
 
@@ -103,8 +103,8 @@ class FluckTabInfoTest {
 
     @Test
     fun `navigateForward at end of history does nothing`() {
-        val tabInfo = createTabInfo(url = "https://last.com")
-        tabInfo.navigateToPage("Last Page", "https://last.com")
+        var tabInfo = createTabInfo(url = "https://last.com")
+        tabInfo = tabInfo.updateNavigation("Last Page", "https://last.com")
 
         tabInfo.navigateForward() // Should not throw or change URL
 
@@ -113,13 +113,13 @@ class FluckTabInfoTest {
 
     @Test
     fun `navigation after navigateBack truncates forward history`() {
-        val tabInfo = createTabInfo(url = "https://a.com")
-        tabInfo.navigateToPage("Page A", "https://a.com")
-        tabInfo.navigateToPage("Page B", "https://b.com")
-        tabInfo.navigateToPage("Page C", "https://c.com")
+        var tabInfo = createTabInfo(url = "https://a.com")
+        tabInfo = tabInfo.updateNavigation("Page A", "https://a.com")
+        tabInfo = tabInfo.updateNavigation("Page B", "https://b.com")
+        tabInfo = tabInfo.updateNavigation("Page C", "https://c.com")
 
         tabInfo.navigateBack() // Now at B
-        tabInfo.navigateToPage("Page D", "https://d.com") // Should truncate C
+        tabInfo = tabInfo.updateNavigation("Page D", "https://d.com") // Should truncate C
 
         assertEquals("https://d.com", tabInfo.currentUrl)
 
@@ -132,14 +132,14 @@ class FluckTabInfoTest {
 
     @Test
     fun `empty URL is handled gracefully`() {
-        val tabInfo = createTabInfo(url = "")
+        var tabInfo = createTabInfo(url = "")
         assertEquals("", tabInfo.currentUrl)
     }
 
     @Test
     fun `navigation to empty URL updates currentUrl`() {
-        val tabInfo = createTabInfo(url = "https://initial.com")
-        tabInfo.navigateToPage("Empty", "")
+        var tabInfo = createTabInfo(url = "https://initial.com")
+        tabInfo = tabInfo.updateNavigation("Empty", "")
 
         assertEquals("", tabInfo.currentUrl)
     }
@@ -148,7 +148,7 @@ class FluckTabInfoTest {
 
     @Test
     fun `concurrent navigation updates are thread-safe`() {
-        val tabInfo = createTabInfo(url = "https://initial.com")
+        var tabInfo = createTabInfo(url = "https://initial.com")
         val executor = Executors.newFixedThreadPool(10)
         val latch = CountDownLatch(100)
         val errors = mutableListOf<Throwable>()
@@ -156,7 +156,7 @@ class FluckTabInfoTest {
         repeat(100) { i ->
             executor.submit {
                 try {
-                    tabInfo.navigateToPage("Page $i", "https://page$i.com")
+                    tabInfo = tabInfo.updateNavigation("Page $i", "https://page$i.com")
                 } catch (e: Throwable) {
                     synchronized(errors) { errors.add(e) }
                 } finally {
@@ -175,7 +175,7 @@ class FluckTabInfoTest {
 
     @Test
     fun `concurrent reads and writes are thread-safe`() {
-        val tabInfo = createTabInfo(url = "https://initial.com")
+        var tabInfo = createTabInfo(url = "https://initial.com")
         val executor = Executors.newFixedThreadPool(10)
         val latch = CountDownLatch(200)
         val errors = mutableListOf<Throwable>()
@@ -185,7 +185,7 @@ class FluckTabInfoTest {
         repeat(100) { i ->
             executor.submit {
                 try {
-                    tabInfo.navigateToPage("Page $i", "https://page$i.com")
+                    tabInfo = tabInfo.updateNavigation("Page $i", "https://page$i.com")
                 } catch (e: Throwable) {
                     synchronized(errors) { errors.add(e) }
                 } finally {
@@ -225,11 +225,11 @@ class FluckTabInfoTest {
 
     @Test
     fun `duplicate consecutive navigation does not add to history`() {
-        val tabInfo = createTabInfo(url = "https://a.com")
-        tabInfo.navigateToPage("Page A", "https://a.com")
+        var tabInfo = createTabInfo(url = "https://a.com")
+        tabInfo = tabInfo.updateNavigation("Page A", "https://a.com")
         val initialHistorySize = tabInfo.navigationHistory.size
 
-        tabInfo.navigateToPage("Page A", "https://a.com") // Same URL
+        tabInfo = tabInfo.updateNavigation("Page A", "https://a.com") // Same URL
 
         assertEquals(initialHistorySize, tabInfo.navigationHistory.size)
     }
@@ -239,12 +239,12 @@ class FluckTabInfoTest {
     @Test
     fun `copy creates independent navigation history`() {
         // Create original tab with navigation history
-        val original = createTabInfo(url = "https://a.com")
-        original.navigateToPage("Page A", "https://a.com")
-        original.navigateToPage("Page B", "https://b.com")
+        var original = createTabInfo(url = "https://a.com")
+        original = original.updateNavigation("Page A", "https://a.com")
+        original = original.updateNavigation("Page B", "https://b.com")
 
         // Create a copy using updateTitle (which calls copy internally)
-        val copied = original.updateTitle("New Title")
+        var copied = original.updateTitle("New Title")
 
         // Verify initial state is the same
         assertEquals(2, original.navigationHistory.size)
@@ -253,7 +253,7 @@ class FluckTabInfoTest {
         assertEquals("https://b.com", copied.currentUrl)
 
         // Modify navigation on the copy
-        copied.navigateToPage("Page C", "https://c.com")
+        copied = copied.updateNavigation("Page C", "https://c.com")
 
         // Original should not be affected (this would fail with shallow copy)
         assertEquals(2, original.navigationHistory.size)
@@ -269,13 +269,13 @@ class FluckTabInfoTest {
     @Test
     fun `copy with back navigation creates independent history`() {
         // Create original tab with navigation history
-        val original = createTabInfo(url = "https://a.com")
-        original.navigateToPage("Page A", "https://a.com")
-        original.navigateToPage("Page B", "https://b.com")
-        original.navigateToPage("Page C", "https://c.com")
+        var original = createTabInfo(url = "https://a.com")
+        original = original.updateNavigation("Page A", "https://a.com")
+        original = original.updateNavigation("Page B", "https://b.com")
+        original = original.updateNavigation("Page C", "https://c.com")
 
         // Create a copy using updateTitle
-        val copied = original.updateTitle("Copied Tab")
+        var copied = original.updateTitle("Copied Tab")
 
         // Navigate back on the copy
         copied.navigateBack()
@@ -289,7 +289,7 @@ class FluckTabInfoTest {
         assertEquals(1, copied.historyIndex)
 
         // Navigate forward on original
-        original.navigateToPage("Page D", "https://d.com")
+        original = original.updateNavigation("Page D", "https://d.com")
 
         // Copy should not be affected
         assertEquals("https://b.com", copied.currentUrl)
@@ -298,11 +298,11 @@ class FluckTabInfoTest {
 
     @Test
     fun `equals is based on id and display content`() {
-        val tab1 = createTabInfo(url = "https://a.com")
-        tab1.navigateToPage("Page A", "https://a.com")
+        var tab1 = createTabInfo(url = "https://a.com")
+        tab1 = tab1.updateNavigation("Page A", "https://a.com")
 
-        val tab2 = createTabInfo(url = "https://b.com")
-        tab2.navigateToPage("Page B", "https://b.com")
+        var tab2 = createTabInfo(url = "https://b.com")
+        tab2 = tab2.updateNavigation("Page B", "https://b.com")
 
         // Same id but different content (title, URL) should NOT be equal
         assertTrue(tab1 != tab2)
@@ -311,14 +311,14 @@ class FluckTabInfoTest {
         assertEquals(tab1.hashCode(), tab2.hashCode())
 
         // Tabs with same id AND same content should be equal
-        val tab3 = createTabInfo(url = "https://a.com")
-        tab3.navigateToPage("Page A", "https://a.com")
+        var tab3 = createTabInfo(url = "https://a.com")
+        tab3 = tab3.updateNavigation("Page A", "https://a.com")
         assertEquals(tab1, tab3)
     }
 
     @Test
     fun `equals returns false for different ids`() {
-        val tab1 =
+        var tab1 =
             FluckTabInfo(
                 id = "tab-1",
                 typeId = TabTypeId("fluck"),
@@ -326,7 +326,7 @@ class FluckTabInfoTest {
                 url = "https://a.com",
             )
 
-        val tab2 =
+        var tab2 =
             FluckTabInfo(
                 id = "tab-2",
                 typeId = TabTypeId("fluck"),
@@ -353,17 +353,17 @@ class FluckTabInfoTest {
 
     @Test
     fun `real page keeps the default browser icon`() {
-        val tabInfo = createTabInfo(url = "https://example.com")
+        var tabInfo = createTabInfo(url = "https://example.com")
         assertEquals(Icons.Outlined.Language, tabInfo.icon)
         assertEquals(TabIcon.Vector(Icons.Outlined.Language), tabInfo.tabIcon)
     }
 
     @Test
     fun `icon follows navigation between home and real pages`() {
-        val tabInfo = createTabInfo(url = "about:blank")
+        var tabInfo = createTabInfo(url = "about:blank")
         assertEquals(Icons.Outlined.Home, tabInfo.icon)
 
-        val onPage = tabInfo.updateNavigation("Example", "https://example.com")
+        var onPage = tabInfo.updateNavigation("Example", "https://example.com")
         assertEquals(Icons.Outlined.Language, onPage.icon)
 
         val backHome = onPage.updateNavigation("", "about:blank")
@@ -373,7 +373,7 @@ class FluckTabInfoTest {
     @Test
     fun `explicit tabIcon override wins over the home icon`() {
         val override = TabIcon.Vector(Icons.Outlined.Warning)
-        val tabInfo = createTabInfo(url = "about:blank").updateTabIcon(override)
+        var tabInfo = createTabInfo(url = "about:blank").updateTabIcon(override)
         assertEquals(override, tabInfo.tabIcon)
     }
 
@@ -391,7 +391,7 @@ class FluckTabInfoTest {
         // The exact transform BossTabUpdateProvider.updateUrl applies when a
         // navigation lands on home: the previous page's title and favicon must
         // both be replaced by the home identity.
-        val onPage =
+        var onPage =
             FluckTabInfo(
                 id = "test-tab",
                 typeId = TabTypeId("fluck"),
@@ -417,17 +417,17 @@ class FluckTabInfoTest {
     @Test
     fun `copy for split view preserves current URL as initial URL`() {
         // Create tab and navigate away from initial URL
-        val original =
+        var original =
             FluckTabInfo(
                 id = "original-tab",
                 typeId = TabTypeId("fluck"),
                 _title = "Original",
                 url = "https://initial.com",
             )
-        original.navigateToPage("Current Page", "https://current.com")
+        original = original.updateNavigation("Current Page", "https://current.com")
 
         // Simulate split view copy with new ID and current URL
-        val splitCopy =
+        var splitCopy =
             original.copy(
                 id = "split-123",
                 url = original.currentUrl, // Should be current URL
