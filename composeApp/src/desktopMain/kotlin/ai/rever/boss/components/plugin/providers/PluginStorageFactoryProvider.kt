@@ -3,15 +3,22 @@ package ai.rever.boss.components.plugin.providers
 import ai.rever.boss.plugin.api.PluginStorageFactory
 import ai.rever.boss.plugin.api.PluginStorageProvider
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicMoveFrom
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.nio.file.Files
 import java.util.Properties
 import java.util.concurrent.ConcurrentHashMap
 
@@ -49,28 +56,28 @@ class PluginStorageFactoryImpl private constructor() : PluginStorageFactory {
 /**
  * Desktop implementation of PluginStorageProvider.
  * Stores data in ~/.boss/plugin-data/{pluginId}/storage.properties
+ *
+ * The factory shares one provider per plugin across windows. Mutations serialize the entire
+ * read-modify-persist-publish transaction; readers see only committed, immutable snapshots.
+ * Persistence errors propagate to the caller without publishing a value or change event.
  */
-class PluginStorageProviderImpl(
+class PluginStorageProviderImpl internal constructor(
     private val pluginId: String,
+    private val storageFile: File,
+    private val writeProperties: (File, Properties) -> Unit = ::writePluginProperties,
 ) : PluginStorageProvider {
     companion object {
         private val logger = BossLogger.forComponent("PluginStorage")
     }
 
-    private val storageDir: File by lazy {
-        val dir = BossDirectories.resolve("plugin-data/$pluginId")
-        if (!dir.exists()) {
-            dir.mkdirs()
-        }
-        dir
-    }
+    constructor(pluginId: String) : this(
+        pluginId,
+        File(BossDirectories.resolve("plugin-data/$pluginId"), "storage.properties"),
+    )
 
-    private val storageFile: File by lazy {
-        File(storageDir, "storage.properties")
-    }
-
-    // In-memory cache
-    private val cache = ConcurrentHashMap<String, String>()
+    @Volatile
+    private var cache: Map<String, String> = emptyMap()
+    private val mutationMutex = Mutex()
 
     // Change notification
     private val _changes = MutableSharedFlow<String>(extraBufferCapacity = 64)
@@ -88,9 +95,7 @@ class PluginStorageProviderImpl(
         key: String,
         value: String,
     ) {
-        cache[key] = value
-        saveToDisk()
-        _changes.tryEmit(key)
+        mutate(key) { it + (key to value) }
     }
 
     override suspend fun getString(
@@ -170,17 +175,13 @@ class PluginStorageProviderImpl(
     override suspend fun contains(key: String): Boolean = cache.containsKey(key)
 
     override suspend fun remove(key: String) {
-        cache.remove(key)
-        saveToDisk()
-        _changes.tryEmit(key)
+        mutate(key) { it - key }
     }
 
     override suspend fun getAllKeys(): Set<String> = cache.keys.toSet()
 
     override suspend fun clear() {
-        cache.clear()
-        saveToDisk()
-        _changes.tryEmit("*")
+        mutate("*") { emptyMap() }
     }
 
     override fun observeString(key: String): Flow<String?> =
@@ -203,9 +204,7 @@ class PluginStorageProviderImpl(
             if (storageFile.exists()) {
                 val properties = Properties()
                 storageFile.inputStream().use { properties.load(it) }
-                properties.forEach { key, value ->
-                    cache[key.toString()] = value.toString()
-                }
+                cache = properties.entries.associate { (key, value) -> key.toString() to value.toString() }
                 logger.debug(
                     LogCategory.SYSTEM,
                     "Loaded plugin storage",
@@ -227,26 +226,40 @@ class PluginStorageProviderImpl(
         }
     }
 
-    private suspend fun saveToDisk() {
+    private suspend fun mutate(
+        changedKey: String,
+        transform: (Map<String, String>) -> Map<String, String>,
+    ) {
         withContext(Dispatchers.IO) {
-            try {
-                val properties = Properties()
-                cache.forEach { (key, value) ->
-                    properties[key] = value
+            mutationMutex.withLock {
+                currentCoroutineContext().ensureActive()
+                // Waiting callers remain cancellable. Once admitted, a blocking file commit and
+                // cache publication must finish together even if the caller cancels during I/O.
+                withContext(NonCancellable) {
+                    val updated = transform(cache)
+                    val properties = Properties().apply { putAll(updated) }
+                    writeProperties(storageFile, properties)
+                    cache = updated
+                    _changes.tryEmit(changedKey)
                 }
-                storageFile.outputStream().use {
-                    properties.store(it, "Plugin storage for $pluginId")
-                }
-            } catch (e: Exception) {
-                logger.error(
-                    LogCategory.SYSTEM,
-                    "Failed to save plugin storage",
-                    mapOf(
-                        "pluginId" to pluginId,
-                    ),
-                    e,
-                )
             }
         }
+    }
+}
+
+internal fun writePluginProperties(
+    file: File,
+    properties: Properties,
+) {
+    val target = file.absoluteFile
+    target.parentFile.mkdirs()
+    val temporary = Files.createTempFile(target.parentFile.toPath(), "${target.name}.", ".tmp").toFile()
+    try {
+        // Keep OutputStream encoding: Properties.load(InputStream) expects Latin-1 with escaped
+        // Unicode, not the unescaped Unicode emitted by Properties.store(Writer).
+        temporary.outputStream().use { properties.store(it, "Plugin storage") }
+        target.atomicMoveFrom(temporary)
+    } finally {
+        temporary.delete()
     }
 }
