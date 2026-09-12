@@ -143,7 +143,18 @@ object LogSanitizer {
         endChar: Char,
         sensitiveParams: Set<String>,
     ): String {
-        val endIndex = if (endChar == '\u0000') uri.length else uri.indexOf(endChar).let { if (it < 0) uri.length else it }
+        // Searched from startIndex, not from 0. A URL whose fragment precedes its query
+        // (`https://app/#/reset?token=...`, the ordinary shape of a hash-routed callback)
+        // otherwise found the '#' BEFORE the segment being masked, producing an endIndex
+        // below startIndex and a StringIndexOutOfBoundsException out of substring. The
+        // caller's catch turned that into "[uri-mask-error]", so the whole URL was lost
+        // from the log rather than masked.
+        val endIndex =
+            if (endChar == '\u0000') {
+                uri.length
+            } else {
+                uri.indexOf(endChar, startIndex).let { if (it < 0) uri.length else it }
+            }
         val segment = uri.substring(startIndex, endIndex)
 
         val maskedSegment =
