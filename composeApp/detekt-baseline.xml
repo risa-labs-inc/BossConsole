@@ -1103,9 +1103,9 @@
     <ID>ReturnCount:DesktopBrowserAccessor.kt$private fun findBrowserForTab( splitViewState: ai.rever.boss.components.window_panel.SplitViewState, tabId: String, ): LockedBrowser?</ID>
     <ID>ReturnCount:DesktopLLMSettingsManager.kt$actual fun getEnvironmentVariable(name: String): String?</ID>
     <ID>ReturnCount:DesktopMainFunctionDetector.kt$DesktopMainFunctionDetector$private fun findProjectRootInternal(startDir: File?): File?</ID>
-    <ID>ReturnCount:DesktopMainFunctionDetector.kt$DesktopMainFunctionDetector$private fun generateJavaCommand( detected: DetectedMainFunction, projectDir: File, ): String</ID>
-    <ID>ReturnCount:DesktopMainFunctionDetector.kt$DesktopMainFunctionDetector$private fun generateKotlinCommand( detected: DetectedMainFunction, projectDir: File, ): String</ID>
-    <ID>ReturnCount:DesktopMainFunctionDetector.kt$DesktopMainFunctionDetector$private fun generateRustCommand( detected: DetectedMainFunction, projectDir: File, ): String</ID>
+    <ID>ReturnCount:DesktopMainFunctionDetector.kt$DesktopMainFunctionDetector$private fun generateJavaCommand( detected: DetectedMainFunction, projectDir: File, forWindows: Boolean, ): String</ID>
+    <ID>ReturnCount:DesktopMainFunctionDetector.kt$DesktopMainFunctionDetector$private fun generateKotlinCommand( detected: DetectedMainFunction, projectDir: File, forWindows: Boolean, tempDirPath: String, ): String</ID>
+    <ID>ReturnCount:DesktopMainFunctionDetector.kt$DesktopMainFunctionDetector$private fun generateRustCommand( detected: DetectedMainFunction, projectDir: File, forWindows: Boolean, tempDirPath: String, ): String</ID>
     <ID>ReturnCount:DesktopProjectCreationService.kt$ProjectCreationService$actual fun validateProjectLocation( parentDirectory: String, projectName: String, ): ValidationResult</ID>
     <ID>ReturnCount:DesktopRunnerTerminalService.kt$RunnerTerminalService$actual suspend fun stopRunner( windowId: String, configId: String, ): Boolean</ID>
     <ID>ReturnCount:DesktopUpdateService.kt$UpdateService$actual suspend fun checkForUpdates(): UpdateInfo</ID>
