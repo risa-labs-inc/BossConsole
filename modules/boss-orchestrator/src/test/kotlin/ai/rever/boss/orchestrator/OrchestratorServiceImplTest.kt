@@ -5,7 +5,12 @@ import ai.rever.boss.ipc.proto.ProcessManifest
 import ai.rever.boss.ipc.proto.RepairAction
 import ai.rever.boss.ipc.proto.RepairApproval
 import ai.rever.boss.ipc.proto.RepairHint
+import ai.rever.boss.ipc.proto.RepairHistoryRequest
 import ai.rever.boss.ipc.proto.RepairStrategy
+import io.grpc.Status
+import io.grpc.StatusRuntimeException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
 import java.io.File
 import java.nio.file.Files
@@ -13,6 +18,7 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
@@ -66,6 +72,78 @@ class OrchestratorServiceImplTest {
             ).build()
 
     // ---- the approval response says what happened ----
+
+    @Test
+    fun `completed history is bounded without evicting pending proposals`() =
+        runTest {
+            val service = OrchestratorServiceImpl(engine(), historyLimit = 3, pendingLimit = 2)
+            val pending = service.reportFailure(report("pending", RepairStrategy.REPAIR_STRATEGY_PATCH_SOURCE))
+            repeat(8) { service.reportFailure(report("done-$it", RepairStrategy.REPAIR_STRATEGY_RESTART)) }
+            val history = service.getRepairHistory(RepairHistoryRequest.getDefaultInstance()).entriesList
+            assertEquals(3, history.size)
+            assertEquals(setOf("pending", "done-6", "done-7"), history.map { it.processId }.toSet())
+            assertTrue(history.any { it.repairId == pending.repairId })
+        }
+
+    @Test
+    fun `pending capacity includes an approval while its execution is still running`() =
+        runTest {
+            val started = CompletableDeferred<Unit>()
+            val finish = CompletableDeferred<Unit>()
+            val service =
+                OrchestratorServiceImpl(
+                    engine(),
+                    historyLimit = 2,
+                    pendingLimit = 1,
+                    onRepairApproved = { _, _ ->
+                        started.complete(Unit)
+                        finish.await()
+                        ApprovalResult.Applied("Applied")
+                    },
+                )
+            val pending = service.reportFailure(report("one", RepairStrategy.REPAIR_STRATEGY_PATCH_SOURCE))
+            val execution = async { service.approveRepair(approval(pending.repairId)) }
+            started.await()
+            val refused =
+                assertFailsWith<StatusRuntimeException> {
+                    service.reportFailure(report("two", RepairStrategy.REPAIR_STRATEGY_PATCH_SOURCE))
+                }
+            assertEquals(Status.Code.RESOURCE_EXHAUSTED, refused.status.code)
+            assertFalse(service.approveRepair(approval(pending.repairId)).applied)
+            finish.complete(Unit)
+            assertTrue(execution.await().applied)
+            val next = service.reportFailure(report("two", RepairStrategy.REPAIR_STRATEGY_PATCH_SOURCE))
+            assertTrue(next.requiresUserApproval)
+        }
+
+    @Test
+    fun `analysis admission happens before restart side effects and recovers after completion`() =
+        runTest {
+            val started = CompletableDeferred<Unit>()
+            val finish = CompletableDeferred<Unit>()
+            var calls = 0
+            val service =
+                OrchestratorServiceImpl(
+                    engine { _, _ ->
+                        calls++
+                        started.complete(Unit)
+                        finish.await()
+                    },
+                    analysisLimit = 1,
+                )
+            val first = async { service.reportFailure(report("one", RepairStrategy.REPAIR_STRATEGY_RESTART)) }
+            started.await()
+            val refused =
+                assertFailsWith<StatusRuntimeException> {
+                    service.reportFailure(report("two", RepairStrategy.REPAIR_STRATEGY_RESTART))
+                }
+            assertEquals(Status.Code.RESOURCE_EXHAUSTED, refused.status.code)
+            assertEquals(1, calls)
+            finish.complete(Unit)
+            first.await()
+            service.reportFailure(report("three", RepairStrategy.REPAIR_STRATEGY_RESTART))
+            assertEquals(2, calls)
+        }
 
     @Test
     fun `an approval whose execution fails is not reported as applied`() =
