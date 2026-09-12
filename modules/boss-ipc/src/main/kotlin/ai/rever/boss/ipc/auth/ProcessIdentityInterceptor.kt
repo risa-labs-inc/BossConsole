@@ -14,12 +14,14 @@ import io.grpc.ServerInterceptor
  * Reads the [PROCESS_TOKEN_METADATA_KEY] header, resolves it through [registry], and — when it names
  * a real, currently-issued credential — publishes the owning process id under [AUTHENTICATED_PROCESS_ID]
  * for the rest of the call to read via [Context]. A missing or unrecognised token leaves that key unset
- * rather than failing the call outright: most of the kernel's IPC surface (fourteen other service
+ * rather than failing the call outright: most of the kernel's IPC surface (thirteen other service
  * bridges as of writing, none of them authenticated today) does not check identity at all, and
  * rejecting here would be authentication for services that never asked for it — the same reason a
  * missing/invalid token must not weaken or change behaviour for those. Whether the *absence* of an
- * identity is acceptable is each service's own call; [ai.rever.boss.kernel.services.PluginUIServiceBridge]
- * is the one that currently makes it.
+ * identity is acceptable is each service's own call; [ai.rever.boss.kernel.services.PluginUIServiceBridge],
+ * [ai.rever.boss.kernel.services.SecretServiceBridge] and
+ * [ai.rever.boss.kernel.services.RoleManagementServiceBridge] are the three that currently make it -
+ * BossConsole#53's own follow-up tracks closing the rest.
  */
 class ProcessIdentityInterceptor(
     private val registry: ProcessTokenRegistry,
