@@ -8,6 +8,7 @@ import ai.rever.boss.keymap.model.KeymapActions
 import ai.rever.boss.keymap.model.ShortcutContext
 import ai.rever.boss.keymap.model.TabSwitchMode
 import ai.rever.boss.keymap.model.canonicalModifiers
+import ai.rever.boss.keymap.model.primaryModifierPressed
 import ai.rever.boss.utils.SystemUtils
 import java.awt.KeyEventDispatcher
 import java.awt.KeyboardFocusManager
@@ -416,14 +417,33 @@ object AWTKeyboardInterceptor {
      * with the other primary modifier arms the modifier the user is actually holding. Arming
      * the wrong one wedges the switcher overlay open rather than merely losing a chord.
      */
-    internal fun cyclingModifierKeyCode(keystroke: KeyStroke): Int {
-        val hasCmd = "cmd" in canonicalModifiers(keystroke.modifiers)
-        return if (SystemUtils.isMacOS) {
+    internal fun cyclingModifierKeyCode(keystroke: KeyStroke): Int =
+        cyclingModifierKeyCodeFor(
+            hasCmd = "cmd" in canonicalModifiers(keystroke.modifiers),
+            isMacOS = SystemUtils.isMacOS,
+        )
+
+    /**
+     * The physical key that sustains the cycle, with [isMacOS] as a parameter so both branches are
+     * reachable from a test. The inline read this replaced is why the off-macOS answer went
+     * unexercised on the machines this is developed on.
+     *
+     * Must agree with [primaryModifierPressed] on which key it just accepted. On macOS the two
+     * spellings are different keys, so the answer follows the spelling. Off macOS both are Control,
+     * so both spellings arm Control: that is not a loss of precision, it is the only key that can
+     * be down, since a Super press no longer matches any chord there. Returning VK_META for an
+     * explicit "Ctrl" chord armed a key that is not held, and the KDoc above records what that
+     * costs.
+     */
+    internal fun cyclingModifierKeyCodeFor(
+        hasCmd: Boolean,
+        isMacOS: Boolean,
+    ): Int =
+        if (isMacOS) {
             if (hasCmd) KeyEvent.VK_META else KeyEvent.VK_CONTROL
         } else {
-            if (hasCmd) KeyEvent.VK_CONTROL else KeyEvent.VK_META
+            KeyEvent.VK_CONTROL
         }
-    }
 
     /**
      * Check if a key code represents a modifier-only key.
@@ -601,15 +621,13 @@ object AWTKeyboardInterceptor {
         val hasAlt = "alt" in canonical
 
         val primaryMatch =
-            if (hasCmd || hasCtrl) {
-                if (SystemUtils.isMacOS) {
-                    (hasCmd && event.isMetaDown) || (hasCtrl && event.isControlDown)
-                } else {
-                    (hasCmd && event.isControlDown) || (hasCtrl && event.isMetaDown)
-                }
-            } else {
-                !event.isMetaDown && !event.isControlDown
-            }
+            primaryModifierPressed(
+                hasCmd = hasCmd,
+                hasCtrl = hasCtrl,
+                metaDown = event.isMetaDown,
+                controlDown = event.isControlDown,
+                isMacOS = SystemUtils.isMacOS,
+            )
         return primaryMatch && hasShift == event.isShiftDown && hasAlt == event.isAltDown
     }
 

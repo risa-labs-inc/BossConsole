@@ -1,5 +1,6 @@
 package ai.rever.boss.keymap.model
 
+import ai.rever.boss.utils.SystemUtils
 import androidx.compose.ui.input.key.Key
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
@@ -24,6 +25,79 @@ internal fun canonicalModifiers(modifiers: List<String>): Set<String> =
                 else -> lower
             }
         }
+
+/**
+ * Whether the primary modifier a chord asks for is the one actually held.
+ *
+ * The ONE definition of the Cmd/Ctrl rule, taking [isMacOS] as a parameter rather than reading it,
+ * so both platform branches are reachable from a test on either machine. They were not: every
+ * matcher read `SystemUtils.isMacOS` inline, so on a Mac only the Mac branch ever ran, which is how
+ * the non-mac branch below stayed wrong.
+ *
+ * **On macOS the two spellings are different keys.** Cmd is Meta, Ctrl is Control, and a chord
+ * naming one must not fire on the other.
+ *
+ * **Off macOS they are the same key, and that key is Control.** `KeyStroke.displayString` already
+ * renders both "cmd" and "ctrl" as "Ctrl" there, and `KeyBinding.fromKeyEvent` already records
+ * "Ctrl" for a Control press. The previous rule sent an explicit "Ctrl" to the Meta key instead, so
+ * a chord the recorder produced was one the matcher refused, and the Settings page displayed a
+ * shortcut that could not fire. That was the whole of BossConsole#553, and the default preset's
+ * Ctrl+Tab was its most visible instance rather than its cause.
+ *
+ * The deliberate consequence is that Super cannot be bound off macOS. It could not be bound through
+ * the UI before either: [canonicalModifiers] has no token for it, so nothing could name it, and the
+ * recorder stores a Super press as "Cmd". What goes is an accidental behaviour no surface could
+ * display, not a capability.
+ */
+internal fun primaryModifierPressed(
+    hasCmd: Boolean,
+    hasCtrl: Boolean,
+    metaDown: Boolean,
+    controlDown: Boolean,
+    isMacOS: Boolean,
+): Boolean =
+    when {
+        !hasCmd && !hasCtrl -> !metaDown && !controlDown
+        isMacOS -> (hasCmd && metaDown) || (hasCtrl && controlDown)
+        else -> controlDown
+    }
+
+/**
+ * The modifier names to RECORD for the physical keys held, as the mirror of
+ * [primaryModifierPressed].
+ *
+ * The two have to be one decision. Before #553 the capture dialog had its own inline swap and the
+ * matchers had theirs, and they happened to agree; the default preset, written by hand, did not
+ * agree with either, and nothing could have told anyone because no test ran the non-mac branch.
+ *
+ * On macOS both primary modifiers are recorded, because they are different keys.
+ *
+ * Off macOS only Control is, and it is recorded as "Ctrl". That is the spelling
+ * [KeyStroke.displayString] renders on that platform and the spelling the default preset already
+ * uses, so what is written down, what is shown and what fires are the same thing. A Super press
+ * records NO primary modifier, because after the collapse no spelling means Super: recording one
+ * would hand back a binding that fires on a key the user did not press.
+ *
+ * "Cmd" remains accepted on read, so keymaps written by the previous capture dialog, which recorded
+ * a Control press as "Cmd" off macOS, keep working untouched. Nothing needs migrating.
+ */
+internal fun recordedModifiers(
+    metaDown: Boolean,
+    controlDown: Boolean,
+    shiftDown: Boolean,
+    altDown: Boolean,
+    isMacOS: Boolean,
+): List<String> =
+    buildList {
+        if (isMacOS) {
+            if (metaDown) add("Cmd")
+            if (controlDown) add("Ctrl")
+        } else {
+            if (controlDown) add("Ctrl")
+        }
+        if (shiftDown) add("Shift")
+        if (altDown) add("Alt")
+    }
 
 /**
  * The prefix `Key.toString()` renders in front of a key's name.
@@ -477,11 +551,18 @@ data class KeyBinding(
             category: String = "Other",
             description: String = "",
         ): KeyBinding {
-            val modifiers = mutableListOf<String>()
-            if (isMetaPressed) modifiers.add("Cmd")
-            if (isCtrlPressed) modifiers.add("Ctrl")
-            if (isShiftPressed) modifiers.add("Shift")
-            if (isAltPressed) modifiers.add("Alt")
+            // Was a third spelling of the Cmd/Ctrl rule, disagreeing with both the matcher and
+            // the capture dialog while having no caller. A third copy waiting for its first caller
+            // is the shape of every keymap bug this codebase has had, so it now shares the one
+            // definition rather than being deleted and re-added by the next person who needs it.
+            val modifiers =
+                recordedModifiers(
+                    metaDown = isMetaPressed,
+                    controlDown = isCtrlPressed,
+                    shiftDown = isShiftPressed,
+                    altDown = isAltPressed,
+                    isMacOS = SystemUtils.isMacOS,
+                )
 
             return KeyBinding(
                 actionId = actionId,
