@@ -1,354 +1,275 @@
 package ai.rever.boss.service.filesystem
 
+import ai.rever.boss.files.CreationPermissions
+import ai.rever.boss.files.CrossDeviceMoveException
+import ai.rever.boss.files.NativeDirectory
 import ai.rever.boss.ipc.proto.Empty
 import ai.rever.boss.ipc.proto.services.*
 import com.google.protobuf.ByteString
 import io.grpc.Status
 import io.grpc.StatusException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
-import org.slf4j.LoggerFactory
-import java.io.File
 import java.io.IOException
+import java.nio.ByteBuffer
 import java.nio.file.AccessDeniedException
-import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.FileAlreadyExistsException
-import java.nio.file.FileSystems
-import java.nio.file.Files
+import java.nio.file.NoSuchFileException
+import java.nio.file.NotDirectoryException
 import java.nio.file.Path
-import java.nio.file.Paths
-import java.nio.file.StandardCopyOption
-import java.nio.file.StandardWatchEventKinds
-import java.nio.file.WatchEvent
-import java.util.concurrent.TimeUnit
+import java.util.UUID
+import kotlin.coroutines.CoroutineContext
 
-/**
- * gRPC implementation of FileSystemService.
- * Provides real file I/O using Java NIO. WatchFileChanges uses
- * java.nio.file.WatchService for live filesystem change events.
- */
-class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutineImplBase() {
-    private val logger = LoggerFactory.getLogger(FileSystemServiceImpl::class.java)
-
-    /** Paths that must not be accessed via IPC — prevents privilege-escalation via path injection. */
-    private val BLOCKED_PATH_PREFIXES = listOf("/etc", "/sys", "/proc")
-
-    /**
-     * Validates that [path] does not traverse outside its intended root and does not
-     * target sensitive system directories. Throws [IllegalArgumentException] on violation.
-     */
-    private fun validatePath(path: String) {
-        require(!path.contains("..")) { "Path traversal sequences ('..') are not allowed: $path" }
-        BLOCKED_PATH_PREFIXES.forEach { prefix ->
-            require(!path.startsWith(prefix)) { "Access to system path '$prefix' is not allowed: $path" }
-        }
-    }
+/** Filesystem RPCs operate only through owned handles after canonical-path authorization. */
+class FileSystemServiceImpl internal constructor(
+    private val access: FileAccess,
+) : FileSystemServiceGrpcKt.FileSystemServiceCoroutineImplBase() {
+    constructor() : this(FileAccess())
 
     override suspend fun scanDirectory(request: ScanDirectoryRequest): ScanDirectoryResponse =
         withContext(Dispatchers.IO) {
-            logger.debug("scanDirectory: path={}, recursive={}", request.path, request.recursive)
-            validatePath(request.path)
-            val dir = File(request.path)
-            if (!dir.exists() || !dir.isDirectory) {
-                return@withContext ScanDirectoryResponse
-                    .newBuilder()
-                    .setErrorMessage("Directory not found: ${request.path}")
-                    .build()
-            }
-
-            val maxDepth = if (request.maxDepth > 0) request.maxDepth else Int.MAX_VALUE
-            val sequence: Sequence<File> =
-                if (request.recursive) {
-                    dir.walkTopDown().maxDepth(maxDepth)
-                } else {
-                    dir.listFiles()?.asSequence() ?: emptySequence()
+            access.policy.validate(request.path)
+            try {
+                access.directory(request.path).use { root ->
+                    val entries = BoundedDirectoryScan(request, currentCoroutineContext(), access.policy).scan(root)
+                    ScanDirectoryResponse.newBuilder().addAllEntries(entries).build()
                 }
-
-            val filterExtensions = request.extensionsList.toSet()
-
-            val entries =
-                sequence
-                    .filter { it != dir }
-                    .filter { request.includeHidden || !it.name.startsWith(".") }
-                    .filter { it.isDirectory || filterExtensions.isEmpty() || it.extension in filterExtensions }
-                    .map { f ->
-                        FileEntry
-                            .newBuilder()
-                            .setPath(f.absolutePath)
-                            .setName(f.name)
-                            .setIsDirectory(f.isDirectory)
-                            .setSizeBytes(if (f.isDirectory) 0L else f.length())
-                            .setModifiedAt(f.lastModified())
-                            .setIsHidden(f.name.startsWith("."))
-                            .build()
-                    }.toList()
-
-            ScanDirectoryResponse
-                .newBuilder()
-                .addAllEntries(entries)
-                .build()
+            } catch (_: NoSuchFileException) {
+                ScanDirectoryResponse.newBuilder().setErrorMessage("Directory not found: ${request.path}").build()
+            } catch (_: NotDirectoryException) {
+                ScanDirectoryResponse.newBuilder().setErrorMessage("Directory not found: ${request.path}").build()
+            }
         }
 
+    @Suppress("TooGenericExceptionCaught") // Preserve the RPC response error contract for file/read failures.
     override suspend fun readFile(request: ReadFileRequest): ReadFileResponse =
         withContext(Dispatchers.IO) {
-            logger.debug("readFile: path={}", request.path)
-            validatePath(request.path)
-            val file = File(request.path)
-            if (!file.exists()) {
-                return@withContext ReadFileResponse
-                    .newBuilder()
-                    .setErrorMessage("File not found: ${request.path}")
-                    .build()
-            }
-            return@withContext try {
-                val totalSize = file.length()
-                val bytes = file.readBytes()
-                val offsetBytes = request.offsetBytes.coerceAtLeast(0L).toInt()
-                val slice = if (offsetBytes > 0 && offsetBytes < bytes.size) bytes.drop(offsetBytes).toByteArray() else bytes
-                val maxBytes = request.maxBytes
-                val (content, truncated) =
-                    if (maxBytes > 0 && slice.size > maxBytes) {
-                        slice.take(maxBytes.toInt()).toByteArray() to true
-                    } else {
-                        slice to false
+            access.policy.validate(request.path)
+            try {
+                require(request.offsetBytes >= 0 && request.maxBytes >= 0) {
+                    "Read offsets and limits must be nonnegative"
+                }
+                val maximum = readLimit(request)
+                access.entry(request.path).use { entry ->
+                    entry.parent.file(entry.name).use { reader ->
+                        val total = reader.size()
+                        val buffer = ByteBuffer.allocate(maximum + 1)
+                        if (request.offsetBytes < total) {
+                            reader.position(request.offsetBytes)
+                            while (buffer.hasRemaining()) {
+                                currentCoroutineContext().ensureActive()
+                                if (reader.read(buffer) < 0) break
+                            }
+                        }
+                        val truncated = buffer.position() > maximum
+                        if (truncated && request.maxBytes == 0L) {
+                            throw fileSystemLimit(
+                                "File exceeds one response; read it using explicit byte limits and offsets",
+                            )
+                        }
+                        ReadFileResponse
+                            .newBuilder()
+                            .setContent(ByteString.copyFrom(buffer.array(), 0, buffer.position().coerceAtMost(maximum)))
+                            .setTotalSizeBytes(total)
+                            .setTruncated(truncated)
+                            .build()
                     }
-                ReadFileResponse
-                    .newBuilder()
-                    .setContent(ByteString.copyFrom(content))
-                    .setTotalSizeBytes(totalSize)
-                    .setTruncated(truncated)
-                    .build()
-            } catch (e: Exception) {
-                ReadFileResponse
-                    .newBuilder()
-                    .setErrorMessage(e.message ?: "Read failed")
-                    .build()
+                }
+            } catch (failure: CancellationException) {
+                throw failure
+            } catch (failure: FilePathDeniedException) {
+                throw failure
+            } catch (failure: Exception) {
+                ReadFileResponse.newBuilder().setErrorMessage(failure.message ?: "Read failed").build()
             }
         }
 
+    private fun readLimit(request: ReadFileRequest): Int =
+        request.maxBytes
+            .takeIf { it > 0 }
+            ?.coerceAtMost(FileSystemLimits.READ_BYTES.toLong())
+            ?.toInt() ?: FileSystemLimits.READ_BYTES
+
+    @Suppress("TooGenericExceptionCaught") // Preserve the RPC response error contract for file/write failures.
     override suspend fun writeFile(request: WriteFileRequest): WriteFileResponse =
         withContext(Dispatchers.IO) {
-            logger.debug("writeFile: path={}", request.path)
-            validatePath(request.path)
-            return@withContext try {
-                val file = File(request.path)
-                if (request.createParents) file.parentFile?.mkdirs()
-                if (!request.overwrite && file.exists()) {
-                    return@withContext WriteFileResponse
+            access.policy.validate(request.path)
+            try {
+                access.entry(request.path, request.createParents, followLeaf = true).use { entry ->
+                    val writer =
+                        try {
+                            entry.parent.file(
+                                entry.name,
+                                create = true,
+                                readable = false,
+                                permissions = CreationPermissions.INHERIT,
+                            )
+                        } catch (failure: FileAlreadyExistsException) {
+                            if (!request.overwrite) throw failure
+                            entry.parent.file(
+                                entry.name,
+                                writable = true,
+                                readable = false,
+                                permissions = CreationPermissions.INHERIT,
+                            )
+                        }
+                    writer.use {
+                        it.truncate(0)
+                        val bytes = request.content.asReadOnlyByteBuffer()
+                        while (bytes.hasRemaining()) {
+                            currentCoroutineContext().ensureActive()
+                            it.write(bytes)
+                        }
+                    }
+                    WriteFileResponse
                         .newBuilder()
-                        .setSuccess(false)
-                        .setErrorMessage("File already exists: ${request.path}")
+                        .setSuccess(true)
+                        .setBytesWritten(request.content.size().toLong())
                         .build()
                 }
-                val bytes = request.content.toByteArray()
-                file.writeBytes(bytes)
-                WriteFileResponse
-                    .newBuilder()
-                    .setSuccess(true)
-                    .setBytesWritten(bytes.size.toLong())
-                    .build()
-            } catch (e: Exception) {
+            } catch (failure: CancellationException) {
+                throw failure
+            } catch (failure: FilePathDeniedException) {
+                throw failure
+            } catch (failure: Exception) {
                 WriteFileResponse
                     .newBuilder()
                     .setSuccess(false)
-                    .setErrorMessage(e.message ?: "Write failed")
+                    .setErrorMessage(failure.message ?: "Write failed")
                     .build()
             }
         }
 
     override suspend fun createFile(request: CreateFileRequest): Empty =
         withContext(Dispatchers.IO) {
-            logger.info("createFile: path={}, isDirectory={}", request.path, request.isDirectory)
-            validatePath(request.path)
-            val file = File(request.path)
-            if (request.createParents) file.parentFile?.mkdirs()
-            if (request.isDirectory) file.mkdirs() else file.createNewFile()
+            access.entry(request.path, request.createParents || request.isDirectory).use { entry ->
+                // Preserve createFile's existing idempotence when the entry already exists.
+                if (entry.parent.info(entry.name) == null) {
+                    try {
+                        if (request.isDirectory) {
+                            entry.parent
+                                .child(entry.name, create = true, permissions = CreationPermissions.INHERIT)
+                                .close()
+                        } else {
+                            entry.parent
+                                .file(entry.name, create = true, permissions = CreationPermissions.INHERIT)
+                                .close()
+                        }
+                    } catch (_: FileAlreadyExistsException) {
+                        // Another creator won the exclusive create. Its entry is left intact.
+                    }
+                }
+            }
             Empty.getDefaultInstance()
         }
 
     override suspend fun deleteFile(request: DeleteFileRequest): Empty =
         withContext(Dispatchers.IO) {
-            logger.info("deleteFile: path={}, recursive={}", request.path, request.recursive)
-            validatePath(request.path)
-            val file = File(request.path)
-            if (request.recursive && file.isDirectory) {
-                file.deleteRecursively()
-            } else {
-                file.delete()
+            access.policy.validate(request.path)
+            try {
+                access.entry(request.path).use { entry ->
+                    access.policy.authorizeMutation(entry.canonical)
+                    delete(entry.parent, entry.name, entry.canonical, request.recursive, currentCoroutineContext())
+                }
+            } catch (failure: IOException) {
+                throw fileStatus(failure, "Delete", request.path)
             }
             Empty.getDefaultInstance()
         }
 
-    /**
-     * Moves [source] onto [dest], replacing [dest] if it exists.
-     *
-     * **Not `File.renameTo`.** That call's behaviour when the destination exists is
-     * platform-dependent in the direction that hides the bug during development: POSIX
-     * `rename(2)` replaces the target, so macOS and Linux work, while Win32 `MoveFile` fails with
-     * `ERROR_ALREADY_EXISTS`. `overwrite = true` — the request this API explicitly offers — was
-     * therefore the one case that could never work on Windows.
-     *
-     * `ATOMIC_MOVE` is tried first and dropped for a cross-volume move, which unlike the in-process
-     * caches is a real possibility for an arbitrary path pair from IPC. The non-atomic form then
-     * falls back to copy-and-delete.
-     *
-     * `composeApp` has an `atomicMoveFrom` doing the same job, but this module builds standalone —
-     * a GraalVM native image over `:boss-ipc` alone — so six lines here beat a dependency edge from
-     * the microkernel services into the app.
-     */
-    private fun moveReplacing(
-        source: Path,
-        dest: Path,
+    private fun delete(
+        parent: NativeDirectory,
+        name: String,
+        path: Path,
+        recursive: Boolean,
+        context: CoroutineContext,
     ) {
+        context.ensureActive()
+        access.policy.authorize(path)
+        val info = parent.info(name) ?: throw NoSuchFileException(path.toString())
+        val directory = info.isDirectory && !info.isLink
+        if (recursive && directory) {
+            parent.child(name).use { child ->
+                child.entries { descendant ->
+                    delete(child, descendant, path.resolve(descendant), true, context)
+                    true
+                }
+            }
+        }
+        // unlinkat / disposition operates on the entry, including a final symlink, without traversal.
+        parent.delete(name, directory)
+    }
+
+    override suspend fun renameFile(request: RenameFileRequest): Empty =
+        withContext(Dispatchers.IO) {
+            access.policy.validate(request.sourcePath)
+            access.policy.validate(request.destinationPath)
+            try {
+                access.entry(request.sourcePath).use { source ->
+                    access.entry(request.destinationPath).use { destination ->
+                        access.policy.authorizeMutation(source.canonical)
+                        access.policy.authorizeMutation(destination.canonical)
+                        try {
+                            source.parent.move(source.name, destination.parent, destination.name, request.overwrite)
+                        } catch (_: CrossDeviceMoveException) {
+                            moveAcrossVolumes(source, destination, request.overwrite)
+                        }
+                    }
+                }
+            } catch (failure: FileAlreadyExistsException) {
+                throw fileStatus(failure, "Rename", request.destinationPath)
+            } catch (failure: IOException) {
+                throw fileStatus(failure, "Rename", request.sourcePath)
+            }
+            Empty.getDefaultInstance()
+        }
+
+    private suspend fun moveAcrossVolumes(
+        source: FileEntryHandle,
+        destination: FileEntryHandle,
+        overwrite: Boolean,
+    ) {
+        val info = source.parent.info(source.name) ?: throw NoSuchFileException(source.visible.toString())
+        val temporary = ".boss-move-${UUID.randomUUID()}"
+        var installed = false
         try {
-            Files.move(source, dest, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
-        } catch (_: AtomicMoveNotSupportedException) {
-            Files.move(source, dest, StandardCopyOption.REPLACE_EXISTING)
+            source.parent.copyEntry(source.name, destination.parent, temporary)
+            currentCoroutineContext().ensureActive()
+            check(source.parent.info(source.name)?.identity == info.identity) {
+                "Source changed during cross-volume move"
+            }
+            destination.parent.move(temporary, destination.parent, destination.name, overwrite)
+            installed = true
+            source.parent.delete(source.name, info.isDirectory && !info.isLink)
+        } finally {
+            if (!installed) {
+                destination.parent.info(temporary)?.let {
+                    destination.parent.delete(temporary, it.isDirectory && !it.isLink)
+                }
+            }
         }
     }
 
-    /**
-     * Renames or moves a file.
-     *
-     * **Throws on failure.** This previously discarded `renameTo`'s boolean and returned `Empty`
-     * unconditionally, so every failure — a missing source, a permissions error, the Windows
-     * overwrite case above — was reported to the caller as success. A silent no-op is worse than
-     * the platform bug it was hiding.
-     *
-     * Failures are raised as [StatusException] rather than as the underlying [IOException], because
-     * only the former reaches the caller intact: gRPC deliberately does not leak exception messages,
-     * so an `IOException` out of a handler arrives as a bare `UNKNOWN` with no description, and a
-     * plugin author would see the same opaque failure for a missing source as for a refused
-     * overwrite. `Empty` leaves no response field to put an error in — unlike `readFile`/`writeFile`
-     * here, which hand-roll an `errorMessage` — so the status is the only channel there is.
-     */
-    override suspend fun renameFile(request: RenameFileRequest): Empty =
-        withContext(Dispatchers.IO) {
-            logger.info("renameFile: from={}, to={}", request.sourcePath, request.destinationPath)
-            validatePath(request.sourcePath)
-            validatePath(request.destinationPath)
-            val destinationExists = "Destination already exists: ${request.destinationPath}"
-            val source = Paths.get(request.sourcePath)
-            val dest = Paths.get(request.destinationPath)
-            try {
-                if (request.overwrite) {
-                    moveReplacing(source, dest)
-                } else {
-                    // The pre-check is kept for the message; the move enforces it again, so the
-                    // clobber window shrinks to the JDK's own stat-then-rename. On Windows MoveFile
-                    // refuses at the syscall; on POSIX rename(2) still replaces, so this narrows
-                    // the race rather than closing it — closing it needs renameat2(RENAME_NOREPLACE),
-                    // which the JDK does not expose.
-                    if (Files.exists(dest)) {
-                        throw status(Status.ALREADY_EXISTS, destinationExists, null)
-                    }
-                    Files.move(source, dest)
-                }
-            } catch (e: FileAlreadyExistsException) {
-                throw status(Status.ALREADY_EXISTS, destinationExists, e)
-            } catch (e: java.nio.file.NoSuchFileException) {
-                throw status(Status.NOT_FOUND, "No such file: ${e.file ?: request.sourcePath}", e)
-            } catch (e: AccessDeniedException) {
-                throw status(Status.PERMISSION_DENIED, "Access denied: ${e.file ?: request.sourcePath}", e)
-            } catch (e: IOException) {
-                throw status(Status.INTERNAL, "Rename failed: ${e.message ?: e::class.java.simpleName}", e)
-            }
-            Empty.getDefaultInstance()
+    private val watches = FileWatchRegistry(access)
+
+    override fun watchFileChanges(request: WatchFileChangesRequest): Flow<FileChangeEvent> = watches.watch(request)
+}
+
+private fun fileStatus(
+    failure: IOException,
+    operation: String,
+    path: String,
+): StatusException {
+    val code =
+        when (failure) {
+            is FileAlreadyExistsException -> Status.ALREADY_EXISTS
+            is NoSuchFileException -> Status.NOT_FOUND
+            is AccessDeniedException -> Status.PERMISSION_DENIED
+            else -> Status.INTERNAL
         }
-
-    private fun status(
-        code: Status,
-        description: String,
-        cause: Throwable?,
-    ) = StatusException(code.withDescription(description).withCause(cause))
-
-    override fun watchFileChanges(request: WatchFileChangesRequest): Flow<FileChangeEvent> =
-        flow {
-            logger.info("watchFileChanges: path={}, recursive={}", request.path, request.recursive)
-            validatePath(request.path)
-            val root = Paths.get(request.path)
-            if (!Files.exists(root)) {
-                logger.warn("watchFileChanges: path not found: {}", request.path)
-                return@flow
-            }
-
-            val kinds =
-                arrayOf(
-                    StandardWatchEventKinds.ENTRY_CREATE,
-                    StandardWatchEventKinds.ENTRY_MODIFY,
-                    StandardWatchEventKinds.ENTRY_DELETE,
-                )
-
-            val watchService = FileSystems.getDefault().newWatchService()
-            try {
-                // Register root (and subdirs if recursive)
-                root.register(watchService, *kinds)
-                if (request.recursive && Files.isDirectory(root)) {
-                    Files
-                        .walk(root)
-                        .filter { Files.isDirectory(it) && it != root }
-                        .forEach { dir ->
-                            try {
-                                dir.register(watchService, *kinds)
-                            } catch (_: Exception) {
-                            }
-                        }
-                }
-
-                while (currentCoroutineContext().isActive) {
-                    val key =
-                        withContext(Dispatchers.IO) {
-                            watchService.poll(500, TimeUnit.MILLISECONDS)
-                        } ?: continue
-
-                    for (event in key.pollEvents()) {
-                        if (event.kind() == StandardWatchEventKinds.OVERFLOW) continue
-
-                        @Suppress("UNCHECKED_CAST")
-                        val ev = event as WatchEvent<Path>
-                        val dir = key.watchable() as Path
-                        val filePath = dir.resolve(ev.context())
-
-                        val changeType =
-                            when (event.kind()) {
-                                StandardWatchEventKinds.ENTRY_CREATE -> FileChangeType.FILE_CHANGE_TYPE_CREATED
-                                StandardWatchEventKinds.ENTRY_MODIFY -> FileChangeType.FILE_CHANGE_TYPE_MODIFIED
-                                StandardWatchEventKinds.ENTRY_DELETE -> FileChangeType.FILE_CHANGE_TYPE_DELETED
-                                else -> FileChangeType.FILE_CHANGE_TYPE_UNSPECIFIED
-                            }
-
-                        // Register newly created directories for recursive watching
-                        if (request.recursive &&
-                            event.kind() == StandardWatchEventKinds.ENTRY_CREATE &&
-                            Files.isDirectory(filePath)
-                        ) {
-                            try {
-                                filePath.register(watchService, *kinds)
-                            } catch (_: Exception) {
-                            }
-                        }
-
-                        emit(
-                            FileChangeEvent
-                                .newBuilder()
-                                .setPath(filePath.toAbsolutePath().toString())
-                                .setChangeType(changeType)
-                                .setTimestamp(System.currentTimeMillis())
-                                .build(),
-                        )
-                    }
-
-                    if (!key.reset()) {
-                        logger.info("watchFileChanges: watch key invalid, stopping: {}", request.path)
-                        break
-                    }
-                }
-            } finally {
-                watchService.close()
-            }
-        }
+    return StatusException(code.withDescription("$operation failed: $path (${failure.message})").withCause(failure))
 }
