@@ -14,6 +14,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.CancellationException
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.ContinuationInterceptor
 import kotlin.coroutines.coroutineContext
 
@@ -112,7 +113,15 @@ internal class BoundedBrowserCall(
         block: () -> T?,
     ): T? {
         warnIfCallerIsConfinedToOurThread()
-        val job = scope.async { runCatching { block() } }
+        val job =
+            scope.async {
+                inFlightCount.incrementAndGet()
+                try {
+                    runCatching { block() }
+                } finally {
+                    inFlightCount.decrementAndGet()
+                }
+            }
         return try {
             val outcome = withContext(waitDispatcher) { withTimeoutOrNull(timeoutMs) { job.await() } }
             // Not `?.getOrElse`: on timeout `withTimeoutOrNull` answers null, which would short
@@ -184,17 +193,22 @@ internal class BoundedBrowserCall(
      */
     fun post(block: () -> Unit) {
         scope.launch {
-            // runCatching for the reason [call] uses it: JxBrowser throws from a torn-down frame,
-            // and the narrowest useful type here is Throwable. A backstop rather than the reporting
-            // path - callers own their own failures - but without it a throw from fire-and-forget
-            // work reaches the default handler and prints to stderr, bypassing BossLogger entirely.
-            runCatching { block() }.onFailure { error ->
-                logger.warn(
-                    LogCategory.BROWSER,
-                    "Fire-and-forget browser call failed",
-                    mapOf("thread" to threadName),
-                    error = error,
-                )
+            inFlightCount.incrementAndGet()
+            try {
+                // runCatching for the reason [call] uses it: JxBrowser throws from a torn-down frame,
+                // and the narrowest useful type here is Throwable. A backstop rather than the reporting
+                // path - callers own their own failures - but without it a throw from fire-and-forget
+                // work reaches the default handler and prints to stderr, bypassing BossLogger entirely.
+                runCatching { block() }.onFailure { error ->
+                    logger.warn(
+                        LogCategory.BROWSER,
+                        "Fire-and-forget browser call failed",
+                        mapOf("thread" to threadName),
+                        error = error,
+                    )
+                }
+            } finally {
+                inFlightCount.decrementAndGet()
             }
         }
     }
@@ -213,6 +227,39 @@ internal class BoundedBrowserCall(
      * the state it was written for - see `CoBrowseRtcPeerImpl.sendDom`.
      */
     val backlog: Int get() = executor.queue.size
+
+    /**
+     * Round trips that have **started** and not yet returned - the ones actually sitting inside
+     * JxBrowser right now.
+     *
+     * [backlog] cannot answer this: it reads the executor's queue, and a task is removed from that
+     * queue the moment the thread picks it up. So the single call that matters most - the one wedged
+     * in the native layer holding [dispatcher] - is the one [backlog] reports as zero.
+     *
+     * Why a caller wants it (BossConsole#300). A [call] that outlives its deadline is abandoned by
+     * its *caller*, not stopped: [call] answers null and returns, while the blocking work keeps this
+     * thread until the renderer answers. A caller that then tears the browser down is disposing
+     * underneath a live native call, which is documented elsewhere in this codebase as undefined,
+     * native-crash-class JxBrowser behaviour. Reading this first is how a teardown path can tell
+     * "nothing is running, disposing is safe" from "a call is still in there".
+     *
+     * It is a **snapshot, not a lock**: a call can start or finish immediately after it is read. It
+     * answers "is anything in flight right now", which is enough to defer a teardown or log why one
+     * was risky; it cannot make disposal atomic with respect to an in-flight call, and nothing at
+     * this layer can, since the blocking call has no interruption point.
+     */
+    val inFlight: Int get() = inFlightCount.get()
+
+    /**
+     * Everything this instance still owes: queued ([backlog]) plus started ([inFlight]).
+     *
+     * The number a teardown path wants, since a queued call will start the moment the thread frees
+     * and is no safer to dispose underneath than one already running.
+     */
+    val pending: Int get() = backlog + inFlight
+
+    /** Backs [inFlight]. Written from [dispatcher] only, read from anywhere, hence atomic. */
+    private val inFlightCount = AtomicInteger(0)
 
     /**
      * Stop accepting new calls.

@@ -179,6 +179,24 @@ interface BrowserHandle {
     suspend fun executeJavaScript(script: String): Any? = null
 
     /**
+     * Whether a browser round trip this handle owns is still queued or running.
+     *
+     * [executeJavaScript] blocks until the renderer replies, and a renderer parked on a modal
+     * dialog or being swapped out mid-navigation may never reply. The host bounds the *wait*, not
+     * the call: past the deadline [executeJavaScript] answers null and returns while the work keeps
+     * running underneath. Disposing the handle at that moment tears the browser down under a live
+     * native call, which is undefined behaviour in JxBrowser.
+     *
+     * So a teardown path that has just seen a null should consult this before disposing, and defer
+     * or log rather than race it.
+     *
+     * A snapshot, not a lock: a call can start or finish immediately after this is read, and
+     * nothing at this layer can make disposal atomic against one, since the blocking call has no
+     * interruption point. Default false for handles with no such calls to make.
+     */
+    val hasPendingBrowserCall: Boolean get() = false
+
+    /**
      * Get the current URL.
      *
      * @return The current URL, or empty string if invalid
