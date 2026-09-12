@@ -592,7 +592,8 @@ object FluckEngine {
      * generation first, so every live handle reports itself stale and every tab comes straight
      * back through the [engine] getter - observed at ~400ms, long before the doomed process is
      * gone. Without this gate that boot loses the race to the lock, and
-     * [createEngineWithProfile] quietly falls back to a throwaway `browser-profile-<millis>`
+     * [createEngineWithProfile] quietly falls back to a throwaway
+     * `browser-temporary-profile-<millis>`
      * directory: the user is signed out of every site they were signed into, and the session
      * they had is stranded in a directory nothing will read again.
      */
@@ -1049,7 +1050,7 @@ object FluckEngine {
      * remainder of the boot — a head start, not an exclusion.
      *
      * The gate checks the CONFIGURED primary profile directory; the boot itself
-     * may fall back to a temp profile (browser-profile-<ts>) if the primary is
+     * may fall back to a temp profile (`browser-temporary-profile-<ts>`) if the primary is
      * locked by another instance. The two profile notions intentionally differ —
      * the gate only decides whether the head start happens, never correctness.
      */
@@ -1771,61 +1772,40 @@ object FluckEngine {
         }
     }
 
-    /**
-     * Clean up old temporary profiles to prevent disk space accumulation.
-     * Deletes browser-profile-* directories older than 24 hours.
-     * Called during engine initialization (may run alongside active engine).
-     */
+    /** Clean up old engine-fallback profiles without touching named user profiles. */
     private fun cleanupOldTemporaryProfiles() {
         try {
-            val bossDir = BossDirectories.rootDir
             val oneDayAgo = System.currentTimeMillis() - (24 * 60 * 60 * 1000)
-
-            bossDir
-                .listFiles()
-                ?.filter {
-                    it.isDirectory &&
-                        it.name.startsWith("browser-profile-") &&
-                        it.name != "browser-profile" &&
-                        it.lastModified() < oneDayAgo
-                }?.forEach { dir ->
-                    dir.deleteRecursively()
-                }
+            val result = cleanupTemporaryProfiles(olderThanMillis = oneDayAgo)
+            if (result.failed > 0) {
+                logger.debug(
+                    LogCategory.BROWSER,
+                    "Some old temporary browser profiles could not be cleaned",
+                    mapOf("failedCount" to result.failed),
+                )
+            }
         } catch (e: Exception) {
             // Housekeeping only - old temp profiles are retried next startup
             logger.debug(LogCategory.BROWSER, "Old temporary profile cleanup failed", mapOf("error" to e.toString()))
         }
     }
 
-    /**
-     * Clean up ALL temporary profiles on startup.
-     * At startup time, no temp profiles should be in use — they are always
-     * leftovers from crashed/killed sessions. Safe to delete unconditionally.
-     */
+    /** Clean up every unregistered engine-fallback profile before an engine can use one. */
     private fun cleanupAllTemporaryProfiles() {
         try {
-            val bossDir = BossDirectories.rootDir
-            var cleanedCount = 0
-
-            bossDir
-                .listFiles()
-                ?.filter {
-                    it.isDirectory &&
-                        it.name.startsWith("browser-profile-") &&
-                        it.name != "browser-profile"
-                }?.forEach { dir ->
-                    if (dir.deleteRecursively()) {
-                        cleanedCount++
-                    }
-                }
-
-            if (cleanedCount > 0) {
+            val result = cleanupTemporaryProfiles(olderThanMillis = null)
+            if (result.deleted > 0) {
                 logger.info(
                     LogCategory.BROWSER,
                     "Cleaned up temporary browser profiles",
-                    mapOf(
-                        "count" to cleanedCount,
-                    ),
+                    mapOf("count" to result.deleted),
+                )
+            }
+            if (result.failed > 0) {
+                logger.debug(
+                    LogCategory.BROWSER,
+                    "Some temporary browser profiles could not be cleaned",
+                    mapOf("failedCount" to result.failed),
                 )
             }
         } catch (e: Exception) {
@@ -1838,6 +1818,14 @@ object FluckEngine {
             )
         }
     }
+
+    private fun cleanupTemporaryProfiles(olderThanMillis: Long?): TemporaryBrowserProfiles.CleanupResult =
+        TemporaryBrowserProfiles.cleanup(
+            root = BossDirectories.rootDir.toPath(),
+            registeredProfiles = BrowserSettings.availableProfiles.toSet(),
+            currentProfile = BrowserSettings.currentProfile,
+            olderThanMillis = olderThanMillis,
+        )
 
     private fun createEngineWithProfile(chromiumDir: java.nio.file.Path): Engine {
         val selectedProfile = BrowserSettings.currentProfile
@@ -1867,7 +1855,7 @@ object FluckEngine {
             }
 
             // Profile is genuinely in use by another process, use temporary
-            val tempProfile = "browser-profile-${System.currentTimeMillis()}"
+            val tempProfile = TemporaryBrowserProfiles.newName(System.currentTimeMillis())
             val tempProfilePath = BossDirectories.resolve(tempProfile).toPath()
             tempProfilePath.toFile().mkdirs()
 
