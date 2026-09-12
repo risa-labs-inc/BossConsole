@@ -1123,6 +1123,7 @@ the whole `TabTypeId`, whose equality includes `pluginId` and `defaultOrder`.
 - [Role Creation](docs/ROLE_CREATION_GUIDE.md) - Creating and managing roles
 - [Windows Deep Link](docs/WINDOWS_DEEP_LINK_SETUP.md) - Windows protocol handler setup
 - [Release Rebuild](docs/RELEASE_REBUILD_GUIDE.md) - Re-running release builds
+- [OOP Plugin & IPC Guide](docs/OOP_PLUGIN_DEVELOPMENT_GUIDE.md) - Out-of-process plugins, IPC protocols, and the microkernel runtime
 ### Governed MCP invocation (#371)
 
 The host policy applies to registry invocation; it does not isolate installed JVM
