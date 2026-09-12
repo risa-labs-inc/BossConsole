@@ -5,14 +5,13 @@
     <ID>CyclomaticComplexMethod:FileIcons.kt$FileIcons$fun forFile(fileName: String): FileIconInfo</ID>
     <ID>CyclomaticComplexMethod:FileIcons.kt$FileIcons$private fun forSpecialFileName(fileName: String): FileIconInfo?</ID>
     <ID>CyclomaticComplexMethod:LanguageIcons.kt$LanguageIcons$fun forDatabase(database: String): Pair&lt;ImageVector, Color&gt;</ID>
-    <ID>CyclomaticComplexMethod:LanguageIcons.kt$LanguageIcons$fun forExtension(extension: String): Pair&lt;ImageVector, Color&gt;</ID>
+    <ID>CyclomaticComplexMethod:LanguageIcons.kt$LanguageIcons$fun forExtensionOrNull(extension: String): Pair&lt;ImageVector, Color&gt;?</ID>
     <ID>CyclomaticComplexMethod:LanguageIcons.kt$LanguageIcons$fun forFramework(framework: String): Pair&lt;ImageVector, Color&gt;</ID>
     <ID>CyclomaticComplexMethod:LanguageIcons.kt$LanguageIcons$fun forLanguage(language: String): Pair&lt;ImageVector, Color&gt;</ID>
     <ID>LongMethod:FileIcons.kt$FileIcons$fun forFile(fileName: String): FileIconInfo</ID>
     <ID>LongMethod:FileIcons.kt$FileIcons$private fun forSpecialFileName(fileName: String): FileIconInfo?</ID>
-    <ID>LongMethod:LanguageIcons.kt$LanguageIcons$fun forExtension(extension: String): Pair&lt;ImageVector, Color&gt;</ID>
+    <ID>LongMethod:LanguageIcons.kt$LanguageIcons$fun forExtensionOrNull(extension: String): Pair&lt;ImageVector, Color&gt;?</ID>
     <ID>LongMethod:LanguageIcons.kt$LanguageIcons$fun forFramework(framework: String): Pair&lt;ImageVector, Color&gt;</ID>
-    <ID>MaxLineLength:FileIcons.kt$FileIcons$"png", "jpg", "jpeg", "gif", "bmp", "ico", "icns", "webp", "avif", "tiff", "tif" -&gt; FileIconInfo(image, Colors.image)</ID>
     <ID>WildcardImport:FileIcons.kt$import androidx.compose.material.icons.outlined.*</ID>
     <ID>WildcardImport:LanguageIcons.kt$import compose.icons.simpleicons.*</ID>
   </CurrentIssues>

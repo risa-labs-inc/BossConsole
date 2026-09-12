@@ -97,184 +97,98 @@ object FileIcons {
 
         // Handle by extension
         return when (extension) {
-            // Code files - delegate to LanguageIcons
-            "kt", "kts" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            "java" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            "scala", "sc" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            "py", "pyw", "pyx", "pxd", "pxi" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            "js", "mjs", "cjs" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            "ts", "mts", "cts" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            "jsx", "tsx" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            "go" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            "rs" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            "rb", "erb", "rake" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            "swift" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            "m", "mm" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            // Objective-C
-            "c", "h" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            "cpp", "cc", "cxx", "hpp", "hxx", "hh" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            "cs" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            "fs", "fsx", "fsi" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            // F#
-            "php" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            "lua" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            "pl", "pm" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            "r", "rmd" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            "dart" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            "ex", "exs" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            "erl", "hrl" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            // Erlang
-            "clj", "cljs", "cljc", "edn" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            "jl" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            "ml", "mli" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            "zig" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            "hs", "lhs" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            "nim", "nims" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            // Nim
-            "cr" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            // Crystal
-            "f", "f90", "f95", "f03", "f08", "for" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            // Fortran
-            "cob", "cbl" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            // COBOL
-            "asm", "s" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            // Assembly
-            "sol" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            // Solidity
-            "v" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            // V
-            "d" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            // D
-            "groovy", "gvy", "gy", "gsh" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            // Groovy
-            "res", "resi" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            // ReScript
-            "rkt" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            // Racket
-
-            // Web files - delegate to LanguageIcons
-            "html", "htm", "xhtml" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            "css", "scss", "sass", "less" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            "vue" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            "svelte" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            // Shell scripts - delegate to LanguageIcons
-            "sh", "bash", "zsh" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            "ps1", "psm1", "psd1" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            "bat", "cmd" -> FileIconInfo(LanguageIcons.powershell, LanguageIcons.Colors.powershell)
-
-            // Windows batch/cmd
-
-            // Data/Config files - delegate to LanguageIcons for supported types
-            "json" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            "yaml", "yml" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            "toml" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            "md", "markdown" -> LanguageIcons.forExtension(extension).toFileIconInfo()
+            // Windows batch - PowerShell icon, deliberately not the language mapping
+            "bat", "cmd" -> {
+                FileIconInfo(LanguageIcons.powershell, LanguageIcons.Colors.powershell)
+            }
 
             // Config files - use config icon
-            "xml" -> FileIconInfo(config, Colors.xml)
-
-            "plist" -> FileIconInfo(LanguageIcons.ios, LanguageIcons.Colors.ios)
+            "xml" -> {
+                FileIconInfo(config, Colors.xml)
+            }
 
             // Apple property list
-            "gradle" -> FileIconInfo(LanguageIcons.gradle, LanguageIcons.Colors.gradle)
+            "plist" -> {
+                FileIconInfo(LanguageIcons.ios, LanguageIcons.Colors.ios)
+            }
 
-            "properties", "ini", "cfg", "conf" -> FileIconInfo(config, Colors.config)
+            "properties", "ini", "cfg", "conf" -> {
+                FileIconInfo(config, Colors.config)
+            }
 
-            "env" -> FileIconInfo(lock, Colors.lock)
-
-            // Environment files often contain secrets
+            "env" -> {
+                FileIconInfo(lock, Colors.lock)
+            }
 
             // Documentation
-            "txt", "log", "text" -> FileIconInfo(document, Colors.document)
+            "txt", "log", "text" -> {
+                FileIconInfo(document, Colors.document)
+            }
 
-            "doc", "docx", "odt" -> FileIconInfo(document, Colors.document)
+            "doc", "docx", "odt" -> {
+                FileIconInfo(document, Colors.document)
+            }
 
-            "pdf" -> FileIconInfo(pdf, Colors.pdf)
+            "pdf" -> {
+                FileIconInfo(pdf, Colors.pdf)
+            }
 
-            "rtf" -> FileIconInfo(document, Colors.document)
+            "rtf" -> {
+                FileIconInfo(document, Colors.document)
+            }
 
             // Images
-            "png", "jpg", "jpeg", "gif", "bmp", "ico", "icns", "webp", "avif", "tiff", "tif" -> FileIconInfo(image, Colors.image)
+            "png", "jpg", "jpeg", "gif", "bmp", "ico", "icns", "webp", "avif", "tiff", "tif" -> {
+                FileIconInfo(image, Colors.image)
+            }
 
-            "svg" -> FileIconInfo(image, Colors.image)
+            "svg" -> {
+                FileIconInfo(image, Colors.image)
+            }
 
-            "psd", "ai", "sketch", "fig", "xd" -> FileIconInfo(image, Colors.image)
+            "psd", "ai", "sketch", "fig", "xd" -> {
+                FileIconInfo(image, Colors.image)
+            }
 
             // Audio
-            "mp3", "wav", "flac", "ogg", "aac", "m4a", "wma" -> FileIconInfo(audio, Colors.audio)
+            "mp3", "wav", "flac", "ogg", "aac", "m4a", "wma" -> {
+                FileIconInfo(audio, Colors.audio)
+            }
 
             // Video
-            "mp4", "mkv", "avi", "mov", "wmv", "webm", "m4v" -> FileIconInfo(video, Colors.video)
+            "mp4", "mkv", "avi", "mov", "wmv", "webm", "m4v" -> {
+                FileIconInfo(video, Colors.video)
+            }
 
             // Archives
-            "zip", "tar", "gz", "rar", "7z", "bz2", "xz" -> FileIconInfo(archive, Colors.archive)
+            "zip", "tar", "gz", "rar", "7z", "bz2", "xz" -> {
+                FileIconInfo(archive, Colors.archive)
+            }
 
-            "jar", "war", "ear" -> FileIconInfo(archive, LanguageIcons.Colors.java)
+            "jar", "war", "ear" -> {
+                FileIconInfo(archive, LanguageIcons.Colors.java)
+            }
 
             // Databases
-            "sql" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            "db", "sqlite", "sqlite3" -> FileIconInfo(database, LanguageIcons.Colors.sqlite)
+            "db", "sqlite", "sqlite3" -> {
+                FileIconInfo(database, LanguageIcons.Colors.sqlite)
+            }
 
             // Fonts
-            "ttf", "otf", "woff", "woff2", "eot" -> FileIconInfo(font, Colors.font)
-
-            // Git
-            "gitignore", "gitattributes", "gitmodules" -> LanguageIcons.forExtension(extension).toFileIconInfo()
-
-            // Docker
-            "dockerfile" -> LanguageIcons.forExtension(extension).toFileIconInfo()
+            "ttf", "otf", "woff", "woff2", "eot" -> {
+                FileIconInfo(font, Colors.font)
+            }
 
             // Default
-            else -> FileIconInfo(file, Colors.unknown)
+            // Anything else: ask LanguageIcons directly rather than keeping a second
+            // copy of its extension list here. The branches above stay ahead of this
+            // because they deliberately override it (a .xml is a config file, a .bat
+            // is PowerShell-coloured, a .env is a lock icon), and a jar/war/ear is an
+            // archive rather than Java source.
+            else -> {
+                LanguageIcons.forExtensionOrNull(extension)?.toFileIconInfo()
+                    ?: FileIconInfo(file, Colors.unknown)
+            }
         }
     }
 
