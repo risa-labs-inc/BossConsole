@@ -23,7 +23,7 @@ import ai.rever.boss.components.plugin.shouldShowMissingDependency
 import ai.rever.boss.components.window_panel.SplitViewState
 import ai.rever.boss.components.workspaces.WorkspaceSerializer
 import ai.rever.boss.components.workspaces.applyWorkspace
-import ai.rever.boss.components.workspaces.requiresProject
+import ai.rever.boss.components.workspaces.spaceToOpen
 import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.dashboard.DashboardStatsManager
 import ai.rever.boss.git.GitTerminalService
@@ -825,21 +825,14 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                     return@onEach
                 }
 
-                // A project-shaped workspace with no project is the hazard
-                // `shouldApplyOnFreshStart` exists to avoid: `{projectPath}` falls back to
-                // ~/BossProjects, so Claude Code here would start an agent in a directory
-                // nobody chose. Not a new risk - the split-template card had it too - but
-                // the home screen is now what a fresh launch opens on, so it is the click
-                // most likely to be made first. Say so instead of doing it.
-                if (workspace.requiresProject() &&
-                    windowProjectState.selectedProject.value.path
-                        .isEmpty()
-                ) {
-                    StatusMessageManager.showMessage(
-                        "Open a project first - \"${workspace.name}\" builds its tabs from the project you are in",
-                    )
-                    return@onEach
-                }
+                // A card on the home screen is a TEMPLATE when it still carries a project
+                // placeholder, and picking one materialises it: substituted, named for the
+                // project and saved as a Space. The hazard `shouldApplyOnFreshStart` exists to
+                // avoid is the OTHER branch, no project selected - `{projectPath}` falls back to
+                // ~/BossProjects, so Claude Code here would start an agent in a directory nobody
+                // chose - and `spaceToOpen` is where that is refused with a message now, rather
+                // than in a copy of the rule here.
+                val opened = spaceToOpen(workspace, windowProjectState.selectedProject.value.path)
 
                 // Preserve, load, apply: the same three steps the top bar's switch takes,
                 // so switching away and back keeps the tabs that were open.
@@ -847,8 +840,8 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                 if (currentWorkspace != null && currentWorkspace.id.isNotEmpty()) {
                     splitViewState.preserveCurrentState(currentWorkspace.id, currentWorkspace.name)
                 }
-                workspaceManager.loadWorkspace(workspace)
-                applyWorkspace(workspace, splitViewState, windowProjectState)
+                workspaceManager.loadWorkspace(opened)
+                applyWorkspace(opened, splitViewState, windowProjectState)
             }.launchIn(this)
 
         // Handle settings window events from the home screen.

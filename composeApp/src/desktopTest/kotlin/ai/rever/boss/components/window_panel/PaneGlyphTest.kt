@@ -2,6 +2,7 @@ package ai.rever.boss.components.window_panel
 
 import ai.rever.boss.components.window_panel.components.main_window_panels.paneAt
 import ai.rever.boss.components.window_panel.components.main_window_panels.paneGlyphFor
+import ai.rever.boss.components.window_panel.components.main_window_panels.paneGlyphs
 import ai.rever.boss.components.window_panel.components.main_window_panels.paneLabel
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -192,5 +193,25 @@ class PaneGlyphTest {
         val glyphs = listOf(null, paneGlyphFor(rightPane, listOf(leftPane, rightPane)))
         assertEquals(1, paneAt(glyphs, x = 0.1f, y = 0.1f))
         assertNull(paneAt(listOf(null, null), x = 0.5f, y = 0.5f))
+    }
+
+    @Test
+    fun `paneGlyphs normalises the whole set against the panes it could measure`() {
+        val measured = mapOf("a" to leftPane, "b" to rightPane)
+        val glyphs = paneGlyphs(listOf("a", "b"), measured::get)
+        assertEquals("Left", paneLabel(0, glyphs["a"]))
+        assertEquals("Right", paneLabel(1, glyphs["b"]))
+    }
+
+    @Test
+    fun `an unmeasured pane is absent rather than guessed at`() {
+        // Absent from the map AND excluded from the area, so the pane that DID measure is still
+        // normalised against something real. The caller then falls through to a number for the
+        // other one, which is what the tab bar's header already does.
+        val glyphs = paneGlyphs(listOf("a", "b"), mapOf("b" to rightPane)::get)
+        assertNull(glyphs["a"])
+        assertEquals("Pane 1", paneLabel(0, glyphs["a"]))
+        // One measured pane covers the whole area it defines, so no side describes it.
+        assertEquals("Pane 2", paneLabel(1, glyphs["b"]))
     }
 }

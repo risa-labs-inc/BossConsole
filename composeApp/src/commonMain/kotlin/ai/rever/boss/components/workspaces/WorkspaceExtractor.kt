@@ -48,6 +48,44 @@ fun extractCurrentWorkspace(
 }
 
 /**
+ * Every workspace this window is RUNNING, as the layouts a session record is written from.
+ *
+ * Not just the one on screen: switching does not tear a workspace down, so a window runs several
+ * at once (`SplitViewState.preserveCurrentState` keeps each whole split tree, live browsers and
+ * terminals in it) and all of them should come back after a restart.
+ *
+ * @param identityFor the saved Space with that id, if the manager knows one. Its name and
+ *   description are used, because they are the Space's and the tree does not carry them; a
+ *   workspace the manager has never heard of falls back to the name the tree was preserved under.
+ *   A parameter rather than a `WorkspaceManager` read so this stays testable and so it can run on
+ *   the shutdown-hook thread.
+ * @param projectPath the WINDOW's project, written into every entry. A window has one project at a
+ *   time, and every extracted tab already carries real absolute paths, so nothing in the restore
+ *   depends on a per-Space path - what it decides is which project the window comes back in, and
+ *   there is one answer to that. These entries are never written to a Space's own file, so this
+ *   cannot overwrite what a Space records for itself.
+ */
+fun extractRunningWorkspaces(
+    splitViewState: SplitViewState,
+    projectPath: String = "",
+    defaultWorkingDirectory: String = DefaultWorkingDirectory.nominalPath(),
+    identityFor: (workspaceId: String) -> LayoutWorkspace? = { null },
+): List<LayoutWorkspace> {
+    val now = Clock.System.now().toEpochMilliseconds()
+    return splitViewState.runningWorkspaces().map { running ->
+        val known = identityFor(running.workspaceId)
+        LayoutWorkspace(
+            id = running.workspaceId,
+            name = known?.name ?: running.workspaceName.ifEmpty { running.workspaceId },
+            description = known?.description ?: "Automatically saved session",
+            layout = extractSplitConfig(running.rootNode, defaultWorkingDirectory),
+            timestamp = now,
+            projectPath = projectPath.ifEmpty { null },
+        )
+    }
+}
+
+/**
  * @param defaultWorkingDirectory the no-project working directory, from
  *   `DefaultWorkingDirectory.nominalPath()` - see [extractCurrentWorkspace] for why not
  *   `ensureDefaultDirectory()`. A terminal sitting in it is persisted with a null

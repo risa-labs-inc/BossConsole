@@ -1,13 +1,13 @@
 package ai.rever.boss.components.workspaces
 
 import ai.rever.boss.components.buttons.BossActionButton
+import ai.rever.boss.components.icons.SpaceIcon
 import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.plugin.workspace.SplitConfig.SinglePanel
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Circle
-import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.RestartAlt
@@ -21,8 +21,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import compose.icons.FeatherIcons
-import compose.icons.feathericons.Briefcase
 
 /**
  * Platform-specific function to open workspace directory
@@ -44,8 +42,50 @@ fun WorkspaceButton(
     workspaceManager: WorkspaceManager,
     getCurrentWorkspace: (() -> LayoutWorkspace)? = null,
     onShowTopOfMind: (() -> Unit)? = null,
+    /**
+     * What a LEFT click does, when there is something better for it to do than drop this menu.
+     *
+     * The vertical bar's copy passes `openTopOfMindWorkspacePicker`, which opens the Top of Mind
+     * panel and asks it for its workspace picker - a searchable list, where this menu is an
+     * unfiltered one. It returns false when Top of Mind is not there to ask, and the click then
+     * falls through to the menu, which is also what the top bar's copy does with every click
+     * because it passes null.
+     *
+     * The menu is NOT removed either way. Its Options submenu is the only route to Open Workspace
+     * Folder and Reset to Default in the whole app - both need `WorkspaceManager` members that are
+     * not on the plugin api, so nothing else can offer them - so when the primary click is taken,
+     * the menu moves to the right click rather than going away.
+     */
+    onOpenWorkspacePicker: (() -> Boolean)? = null,
     /** Sized for the vertical tab bar rather than the top bar. See BossActionButton. */
     compact: Boolean = false,
+    /**
+     * Whether the Space on screen has changes that are not on disk.
+     *
+     * Marks the GLYPH, not the label. The label is capped at 130dp with an ellipsis in the
+     * vertical bar, so a marker appended to the text is the first thing a long Space name
+     * truncates away - the mark would be missing exactly on the names most likely to be a
+     * project's. `signalText` rather than `signal`, because this is a glyph and `signal` is the
+     * fill token, held to no text contrast floor.
+     *
+     * Off by default, so the top bar's copy of this button is untouched: the save affordance that
+     * answers the mark lives in the vertical bar's footer, and a mark with nothing beside it says
+     * there is a problem without saying what to do about it.
+     */
+    unsaved: Boolean = false,
+    /**
+     * Every Space THIS WINDOW holds unsaved changes to, for the menu rows.
+     *
+     * A set rather than the [unsaved] boolean because the menu marks every row, not only the one on
+     * screen: a window runs several Spaces at once and can have edited more than one of them. Per
+     * window for the reason `WorkspaceManager.unsavedWorkspaces` is - the live layout only exists
+     * in a window's own `SplitViewState`, so one flat set would mark a Space here because it was
+     * edited over there.
+     *
+     * Read through `spaceIsUnsaved` rather than by containment, so the menu and the bar answer with
+     * one rule - which is what puts a mark on Last Session, a slot that is never a document.
+     */
+    unsavedWorkspaceIds: Set<String> = emptySet(),
 ) {
     val currentWorkspace by workspaceManager.currentWorkspace.collectAsState()
     val workspaces by workspaceManager.workspaces.collectAsState()
@@ -67,7 +107,7 @@ fun WorkspaceButton(
             // Save workspace
             add(
                 ContextMenuItem(
-                    text = "Save Workspace...",
+                    text = "Save Space...",
                     icon = Icons.Outlined.Save,
                     onClick = { showSaveDialog = true },
                 ),
@@ -82,16 +122,14 @@ fun WorkspaceButton(
                 ),
             )
 
-            // Delete workspace section
-            val deletableWorkspaces =
-                workspaces.filter { workspace ->
-                    !PredefinedWorkspaces.allWorkspaces.any { it.name == workspace.name }
-                }
+            // Delete workspace section. By ID, not by name - see `deletableWorkspaces`, which is
+            // also what the dialog below filters with, so the entry and the list cannot disagree.
+            val deletable = deletableWorkspaces(workspaces)
 
-            if (deletableWorkspaces.isNotEmpty()) {
+            if (deletable.isNotEmpty()) {
                 add(
                     ContextMenuItem(
-                        text = "Delete Workspace...",
+                        text = "Delete Space...",
                         icon = Icons.Outlined.Delete,
                         onClick = { showDeleteDialog = true },
                     ),
@@ -103,7 +141,7 @@ fun WorkspaceButton(
             // Open workspace directory
             add(
                 ContextMenuItem(
-                    text = "Open Workspace Folder",
+                    text = "Open Space Folder",
                     icon = Icons.Outlined.FolderOpen,
                     onClick = {
                         openWorkspaceDirectory(workspaceManager.getWorkspaceDirectory())
@@ -154,31 +192,34 @@ fun WorkspaceButton(
         buildList {
             // Workspaces at the top
             workspaces.forEach { workspace ->
-                // Three states, not two: the workspace on screen here, one that is running
-                // somewhere - behind this one, or in another window - and one that is not running
-                // at all. The middle state had no mark, so a workspace whose tabs were live
-                // looked exactly like one that had never been opened.
-                val isCurrentWorkspace = currentWorkspace?.id == workspace.id
-                val isRunning = !isCurrentWorkspace && workspace.id in running
+                // Two independent facts per row - where it is running, and whether it holds
+                // work that is not on disk. See [SpaceRowMarks] for why they are not one mark.
+                val marks =
+                    spaceRowMarks(
+                        workspaceId = workspace.id,
+                        currentWorkspaceId = currentWorkspace?.id,
+                        runningWorkspaceIds = running,
+                        unsavedWorkspaceIds = unsavedWorkspaceIds,
+                    )
 
                 add(
                     ContextMenuItem(
                         text = workspace.name,
                         icon = null,
-                        // Filled for this window, outlined for another's: the same mark at two
-                        // strengths says "running" once and "yours" only on the one that is.
-                        trailingIcon =
-                            when {
-                                isCurrentWorkspace -> Icons.Filled.Circle
-                                isRunning -> Icons.Outlined.Circle
-                                else -> null
-                            },
+                        trailingIcon = marks.run.dotIcon(),
                         trailingIconColor =
-                            when {
-                                isCurrentWorkspace -> BossTheme.colors.ok
-                                isRunning -> BossTheme.colors.textSecondary
-                                else -> null
+                            when (marks.run) {
+                                SpaceRunState.Current -> BossTheme.colors.ok
+                                SpaceRunState.Running -> BossTheme.colors.textSecondary
+                                SpaceRunState.Idle -> null
                             },
+                        // The unsaved mark, in the second trailing slot so it sits beside the
+                        // running dot rather than replacing it. Same glyph and same `signalText`
+                        // as the vertical bar's dot, because it is the same fact: a reader should
+                        // not have to learn a second vocabulary between the bar and this menu.
+                        secondaryTrailingIcon = Icons.Filled.Circle.takeIf { marks.unsaved },
+                        secondaryTrailingIconColor = BossTheme.colors.signalText,
+                        secondaryTrailingDescription = SPACE_UNSAVED_ROW_DESCRIPTION,
                         onClick = {
                             workspaceManager.loadWorkspace(workspace)
                             onOpenWorkspace(workspace)
@@ -202,17 +243,33 @@ fun WorkspaceButton(
     Box {
         Box {
             BossActionButton(
-                leftIcon = FeatherIcons.Briefcase,
+                // The same glyph the Top of Mind footer opens a Space with
+                // (`SpaceIcon`), not a briefcase. A briefcase says "work", which is the half of
+                // the old word that got dropped when Workspace became Space, where a big pane
+                // beside two stacked ones is what a Space actually IS - on a card tipped back a
+                // few degrees, so the glyph says "panes, with some depth to them" rather than
+                // "a tile". And this button and that footer button do the same
+                // job, raising the same picker, so wearing different icons made one control read
+                // as two.
+                leftIcon = SpaceIcon,
                 compact = compact,
+                iconColor = if (unsaved) BossTheme.colors.signalText else null,
                 text =
                     currentWorkspace?.let { workspace ->
                         if (workspace.name != "Current") workspace.name else "Default"
                     } ?: "Default",
                 contextMenuItems = contextMenuItems,
+                primaryAction = onOpenWorkspacePicker,
                 hintText =
                     buildString {
-                        append("Layout Workspace: ${currentWorkspace?.description ?: "Default layout"}")
-                        append("\nWorkspaces saved to: ${workspaceManager.getWorkspaceDirectory()}")
+                        append("Layout Space: ${currentWorkspace?.description ?: "Default layout"}")
+                        // Only where the left click has been taken. Told to right-click a button
+                        // whose left click already opens the menu, a user right-clicks and gets
+                        // nothing.
+                        if (onOpenWorkspacePicker != null) append("\nRight-click for space options")
+                        // Said in the hint as well as drawn, because a colour is not a sentence.
+                        if (unsaved) append("\nUnsaved changes - use the save button beside this one")
+                        append("\nSpaces saved to: ${workspaceManager.getWorkspaceDirectory()}")
                     },
             )
         }
@@ -250,13 +307,13 @@ fun WorkspaceButton(
     // Delete dialog
     if (showDeleteDialog) {
         DeleteWorkspaceDialog(
-            workspaces =
-                workspaces.filter { workspace ->
-                    !PredefinedWorkspaces.allWorkspaces.any { it.name == workspace.name }
-                },
+            // The same id-keyed filter as the menu entry that opens this.
+            workspaces = deletableWorkspaces(workspaces),
             onDismiss = { showDeleteDialog = false },
-            onDelete = { workspaceName ->
-                workspaceManager.deleteWorkspace(workspaceName)
+            onDelete = { workspaceId ->
+                // By ID all the way through, so picking one of two same-named rows deletes the
+                // one that was ticked.
+                workspaceManager.deleteWorkspaceById(workspaceId)
                 showDeleteDialog = false
             },
         )

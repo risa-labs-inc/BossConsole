@@ -30,22 +30,19 @@ class WorkspaceDataProviderImpl(
 
     override fun exportWorkspace(workspace: LayoutWorkspace): String = workspaceManager.exportWorkspace(workspace)
 
+    // Both of these pass the name straight through, and the lookup-then-pass-the-id shape they
+    // replaced was a silent no-op. WorkspaceManager.deleteWorkspace and renameWorkspace both match
+    // on NAME (`_workspaces.value.find { it.name == ... }`), so handing them an id matched nothing
+    // and returned normally - the caller was told nothing was wrong and the workspace was still
+    // there. The sibling adapter in services/bookmarks/ always passed the name; this copy did not.
     override fun deleteWorkspace(name: String) {
-        // Find workspace by name and delete it
-        val workspace = workspaceManager.workspaces.value.find { it.name == name }
-        if (workspace != null) {
-            workspaceManager.deleteWorkspace(workspace.id)
-        }
+        workspaceManager.deleteWorkspace(name)
     }
 
     override fun renameWorkspace(
         oldName: String,
         newName: String,
     ) {
-        // Find workspace by old name and rename it
-        val workspace = workspaceManager.workspaces.value.find { it.name == oldName }
-        if (workspace != null) {
-            workspaceManager.renameWorkspace(workspace.id, newName)
-        }
+        workspaceManager.renameWorkspace(oldName, newName)
     }
 }

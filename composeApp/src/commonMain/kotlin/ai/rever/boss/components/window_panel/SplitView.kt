@@ -6,6 +6,7 @@ import ai.rever.boss.components.model.TabDraggableComponent
 import ai.rever.boss.components.model.TabDropResult
 import ai.rever.boss.components.model.TabDropTarget
 import ai.rever.boss.components.overlays.OverlayCorner
+import ai.rever.boss.components.overlays.PanelDropZoneOverlay
 import ai.rever.boss.components.plugin.TabTypeAvailability
 import ai.rever.boss.components.plugin.disposePluginBrowsers
 import ai.rever.boss.components.plugin.tab_types.PanelHostTabInfo
@@ -20,6 +21,8 @@ import ai.rever.boss.components.window_panel.components.main_window_panels.Windo
 import ai.rever.boss.components.window_panel.components.main_window_panels.WindowVerticalTabBar
 import ai.rever.boss.components.window_panel.components.main_window_panels.createBossAppContext
 import ai.rever.boss.components.window_panel.components.main_window_panels.overlayRegionInWindow
+import ai.rever.boss.components.window_panel.components.main_window_panels.paneGlyphs
+import ai.rever.boss.components.window_panel.components.main_window_panels.paneLabel
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberPinDrawerAction
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberTabBarLayout
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberTabBarRevealState
@@ -416,6 +419,48 @@ class SplitViewState(
      */
     val liveWorkspaceIds: Set<String>
         get() = preservedWorkspaceStates.keys + setOfNotNull(_currentWorkspaceId)
+
+    /**
+     * One workspace this window is running: which it is, and the split tree it is running.
+     *
+     * What the multi-Space session record is written from. `liveWorkspaceIds` answers WHICH
+     * workspaces are running and `panelsInWorkspace` answers what panes one has, but neither hands
+     * back the TREE, and the tree is the shape - a flat list of panes cannot say which of them are
+     * beside each other.
+     */
+    data class RunningWorkspace(
+        val workspaceId: String,
+        /**
+         * The name recorded when this tree was preserved, or "" for the one on screen.
+         *
+         * Empty for the current workspace because nothing has preserved it yet - the caller knows
+         * its name, from `WorkspaceManager.currentWorkspace`. A preserved state carries the name
+         * `preserveCurrentState` was given, which is the name of the workspace whose tree it is.
+         */
+        val workspaceName: String,
+        val rootNode: SplitNode,
+    )
+
+    /**
+     * Every workspace this window is running, preserved ones first and the one on screen LAST.
+     *
+     * The order matches [liveWorkspaceIds]'s composition and is not the order anything is restored
+     * in - `restoreOrder` derives that from which workspace was active, because what has to be
+     * applied last is whichever one was showing.
+     */
+    fun runningWorkspaces(): List<RunningWorkspace> =
+        preservedWorkspaceStates.map { (workspaceId, preserved) ->
+            RunningWorkspace(
+                workspaceId = workspaceId,
+                workspaceName = preserved.workspaceName,
+                rootNode = preserved.rootNode,
+            )
+        } +
+            listOfNotNull(
+                _currentWorkspaceId?.let { currentId ->
+                    RunningWorkspace(workspaceId = currentId, workspaceName = "", rootNode = _rootNode.value)
+                },
+            )
 
     // Data class to hold preserved state
     data class PreservedWorkspaceState(
@@ -1756,6 +1801,328 @@ class SplitViewState(
         }
     }
 
+    // ─────────────────────────────────────────────────────────────────────────────────────────
+    // Cross-workspace addressing
+    //
+    // collectAllActiveTabs walks the current tree AND the preserved ones, so a plugin can SEE
+    // every tab this window is running. Every write path below it - findPanel, getAllPanels,
+    // selectTabInPanel - reads _rootNode.value only, so nothing could ACT on a tab that was not
+    // on screen. These close that asymmetry.
+    // ─────────────────────────────────────────────────────────────────────────────────────────
+
+    /** Where a tab lives: which running workspace, and which panel inside it. */
+    data class TabLocation(
+        val workspaceId: String,
+        val panel: SplitNode.Panel,
+    )
+
+    /** The root of a workspace this window is running, current or preserved; null if it is not. */
+    private fun rootNodeForWorkspace(workspaceId: String): SplitNode? =
+        if (workspaceId == _currentWorkspaceId) {
+            _rootNode.value
+        } else {
+            preservedWorkspaceStates[workspaceId]?.rootNode
+        }
+
+    /** Every panel of a running workspace, in depth-first order. Empty if it is not running. */
+    fun panelsInWorkspace(workspaceId: String): List<SplitNode.Panel> =
+        rootNodeForWorkspace(workspaceId)?.let { getAllPanelsInNode(it) } ?: emptyList()
+
+    /**
+     * The panel a running workspace would activate, which is where a tab moved into it lands.
+     *
+     * Falls back to its first panel: a preserved state records the activePanelId from the moment
+     * it was preserved, and nothing keeps that honest if the panel was closed afterwards.
+     */
+    fun activePanelIdForWorkspace(workspaceId: String): String? {
+        val panels = panelsInWorkspace(workspaceId)
+        if (panels.isEmpty()) return null
+        val preferred =
+            if (workspaceId == _currentWorkspaceId) {
+                _activePanelId.value
+            } else {
+                preservedWorkspaceStates[workspaceId]?.activePanelId
+            }
+        return panels.firstOrNull { it.id == preferred }?.id ?: panels.first().id
+    }
+
+    /** Find a tab anywhere this window is running it, not only on screen. */
+    fun findTabLocation(tabId: String): TabLocation? {
+        for (workspaceId in liveWorkspaceIds) {
+            val panel =
+                panelsInWorkspace(workspaceId).firstOrNull { panel ->
+                    panel.tabsComponent.tabsState.value.tabs
+                        .any { it.id == tabId }
+                }
+            if (panel != null) return TabLocation(workspaceId, panel)
+        }
+        return null
+    }
+
+    /**
+     * Move a tab into another workspace this window is running, keeping it alive.
+     *
+     * The component instance and its lifecycle transfer as-is (see
+     * [BossTabsComponent.detachTab] / [BossTabsComponent.adoptTab]), so a browser tab keeps its
+     * page and its playing media rather than being destroyed here and rebuilt from config there.
+     *
+     * Deliberately does NOT switch workspaces and does NOT select the tab in its new panel: a move
+     * is usually filing something away, and both of those are the caller's to ask for afterwards.
+     *
+     * UI thread only, like every other tab mutation.
+     *
+     * @return true if the tab moved.
+     */
+    @Suppress("ReturnCount")
+    fun moveTabToWorkspace(
+        tabId: String,
+        targetWorkspaceId: String,
+        /**
+         * The pane to land in, or null to let the workspace's active pane take it.
+         *
+         * Named, this also makes a move WITHIN one workspace meaningful, which the workspace-only
+         * verb had to refuse: without a pane there is nothing to distinguish "move it to where it
+         * already is" from a real request. The same-pane check below still refuses that.
+         */
+        targetPanelId: String? = null,
+        /**
+         * Where in the destination pane's list the tab should sit, or null to append.
+         *
+         * Only meaningful alongside [targetPanelId]: an index into a pane nobody named is an index
+         * into a list the caller cannot see. It is also what makes a move WITHIN one pane a real
+         * request - a reorder - where without it there is nothing to do.
+         */
+        targetIndex: Int? = null,
+    ): Boolean {
+        val source = findTabLocation(tabId) ?: return false
+        if (targetPanelId == null && source.workspaceId == targetWorkspaceId) return false
+        val targetPanel = destinationPanel(targetWorkspaceId, targetPanelId) ?: return false
+        // Identity, not id. Panel ids are unique only WITHIN a tree, and every workspace's first
+        // pane is called "main" - comparing ids would reject the commonest move there is.
+        if (targetPanel.tabsComponent === source.panel.tabsComponent) {
+            // Landing in the pane it is already in is a REORDER when an index says where, and
+            // nothing at all when it does not. Detach and adopt would work here too and must not
+            // be used: it would destroy and rebuild a lifecycle to change a list position.
+            return targetIndex != null && reorderWithinPanel(targetPanel, tabId, targetIndex)
+        }
+
+        // Same shape as TabDropHandler.handleTabDropResult's MoveToPanel branch, and for the same
+        // reasons: transfer the live instance when we can; fall back to recreate-from-config only
+        // when the tab ENTRY survived without its component; drop the move when the tab is gone
+        // entirely, rather than resurrecting something that was closed underneath us.
+        val detached = source.panel.tabsComponent.detachTab(tabId)
+        val moved =
+            if (detached != null) {
+                // A non-null DetachedTab must be adopted or destroyed or its component leaks.
+                targetPanel.tabsComponent.adoptTab(detached) >= 0
+            } else {
+                val config =
+                    source.panel.tabsComponent.tabsState.value.tabs
+                        .firstOrNull { it.id == tabId }
+                if (config != null && source.panel.tabsComponent.removeTabById(tabId)) {
+                    targetPanel.tabsComponent.addTab(config) >= 0
+                } else {
+                    false
+                }
+            }
+        if (!moved) {
+            splitViewLogger.warn(
+                LogCategory.UI,
+                "moveTabToWorkspace: target refused the tab",
+                mapOf(
+                    "tabId" to tabId,
+                    "from" to source.workspaceId,
+                    "to" to targetWorkspaceId,
+                    "toPanel" to (targetPanelId ?: "active"),
+                ),
+            )
+            return false
+        }
+
+        // Adopted at the END of the destination's list, so an index is applied afterwards. There is
+        // no adopt-at-index on BossTabsComponent, and one move within the pane it just landed in is
+        // cheaper than adding one.
+        if (targetIndex != null) reorderWithinPanel(targetPanel, tabId, targetIndex)
+
+        pruneEmptyPanelsIn(source.workspaceId)
+        return true
+    }
+
+    /**
+     * The pane a move should land in, or null when there is not one.
+     *
+     * A NAMED pane that the workspace does not have is refused rather than fallen back on: a caller
+     * with the wrong idea of the layout must not have the tab quietly land somewhere else, where
+     * neither it nor the user watching the tab move would learn anything.
+     */
+    private fun destinationPanel(
+        targetWorkspaceId: String,
+        targetPanelId: String?,
+    ): SplitNode.Panel? {
+        val panels = panelsInWorkspace(targetWorkspaceId)
+        val wanted = targetPanelId ?: activePanelIdForWorkspace(targetWorkspaceId) ?: return null
+        return panels.firstOrNull { it.id == wanted }
+    }
+
+    /**
+     * Put [tabId] at [targetIndex] within [panel], and say whether anything moved.
+     *
+     * The index is clamped rather than rejected. A caller computes it from a list it read a frame
+     * ago - a tab can close in between - and "as near as asked" is a better answer to that than
+     * refusing a move the user has already committed to with a drop.
+     *
+     * Internal rather than private because the drag path needs the same two steps: `adoptTab`
+     * appends and there is no adopt-at-index, so `TabDropHandler` lands a cross-pane drop by
+     * adopting and then calling this. A second copy would be the one that forgot to clamp, or the
+     * one that reached `tabsNavigation.moveTab` directly and skipped `pinnedCountAfterMove`.
+     */
+    internal fun reorderWithinPanel(
+        panel: SplitNode.Panel,
+        tabId: String,
+        targetIndex: Int,
+    ): Boolean {
+        val tabs = panel.tabsComponent.tabsState.value.tabs
+        val from = tabs.indexOfFirst { it.id == tabId }
+        val to = targetIndex.coerceIn(0, tabs.lastIndex)
+        val moves = from >= 0 && from != to
+        if (moves) panel.tabsComponent.moveTab(from, to)
+        return moves
+    }
+
+    /**
+     * Close panes the move emptied.
+     *
+     * Two paths because the two kinds of tree are different objects. The current one is live and
+     * has activation history, bounds and focus requesters hanging off it, so it goes through
+     * [checkAndCloseEmptyPanels]. A preserved one is an immutable snapshot in a state map: it is
+     * rewritten, never mutated, and none of that bookkeeping applies to a tree nothing is showing.
+     */
+    @Suppress("ReturnCount")
+    private fun pruneEmptyPanelsIn(workspaceId: String) {
+        if (workspaceId == _currentWorkspaceId) {
+            checkAndCloseEmptyPanels()
+            return
+        }
+        val state = preservedWorkspaceStates[workspaceId] ?: return
+        val pruned = pruneEmptyPanels(state.rootNode) ?: return
+        if (pruned === state.rootNode) return
+        val survivors = getAllPanelsInNode(pruned).map { it.id }
+        preservedWorkspaceStates[workspaceId] =
+            state.copy(
+                rootNode = pruned,
+                // The recorded active panel may be the one we just dropped, and restorePreservedState
+                // writes it straight into _activePanelId - which would leave the restored workspace
+                // pointing at a panel that is not in its own tree.
+                activePanelId = state.activePanelId.takeIf { it in survivors } ?: survivors.first(),
+            )
+    }
+
+    /**
+     * Drop empty panes from a detached tree, collapsing splits that lose a side.
+     *
+     * Pure: returns a new tree, or the same instance when nothing was empty. Null only if EVERY
+     * pane is empty, which the caller reads as "leave it alone" - a workspace with no panels at
+     * all has nothing to restore into.
+     */
+    private fun pruneEmptyPanels(node: SplitNode): SplitNode? =
+        when (node) {
+            is SplitNode.Panel -> {
+                node.takeIf {
+                    it.tabsComponent.tabsState.value.tabs
+                        .isNotEmpty()
+                }
+            }
+
+            is SplitNode.VerticalSplit -> {
+                prunedSplit(node, node.left, node.right, SplitNode::VerticalSplit)
+            }
+
+            is SplitNode.HorizontalSplit -> {
+                prunedSplit(node, node.top, node.bottom, SplitNode::HorizontalSplit)
+            }
+        }
+
+    /** One side surviving collapses the split into it; both surviving unchanged reuses [original]. */
+    private fun prunedSplit(
+        original: SplitNode,
+        first: SplitNode,
+        second: SplitNode,
+        rebuild: (SplitNode, SplitNode) -> SplitNode,
+    ): SplitNode? {
+        val prunedFirst = pruneEmptyPanels(first)
+        val prunedSecond = pruneEmptyPanels(second)
+        if (prunedFirst == null || prunedSecond == null) return prunedFirst ?: prunedSecond
+        return if (prunedFirst === first && prunedSecond === second) original else rebuild(prunedFirst, prunedSecond)
+    }
+
+    /**
+     * Select a tab wherever this window is running it, including in a workspace that is not on
+     * screen - in which case it becomes that workspace's selected tab, ready for when you switch
+     * to it, without dragging the current workspace anywhere.
+     *
+     * @return true if the tab was found and selected.
+     */
+    @Suppress("ReturnCount")
+    fun selectTabAnywhere(tabId: String): Boolean {
+        val location = findTabLocation(tabId) ?: return false
+        val tabs = location.panel.tabsComponent.tabsState.value.tabs
+        val index = tabs.indexOfFirst { it.id == tabId }
+        if (index < 0) return false
+        location.panel.tabsComponent.selectTab(index)
+        if (location.workspaceId == _currentWorkspaceId) {
+            setActivePanel(location.panel.id)
+        } else {
+            // setActivePanel writes _activePanelId, which belongs to the tree on screen; pointing
+            // it at a panel from another workspace would leave the current workspace with no valid
+            // active panel. Record it on the preserved state instead, where restore reads it.
+            preservedWorkspaceStates[location.workspaceId]?.let { state ->
+                preservedWorkspaceStates[location.workspaceId] = state.copy(activePanelId = location.panel.id)
+            }
+        }
+        return true
+    }
+
+    /**
+     * Put a workspace this window is already RUNNING back on screen.
+     *
+     * The cheap half of a workspace switch. A normal switch has to read a saved [LayoutWorkspace]
+     * off disk and rebuild the tree from its config; this one does not, because the tree is still
+     * here - it was preserved when you left. So it is only ever preserve-the-current-one and
+     * restore-the-other, which is exactly what `applyWorkspace` collapses to for a live workspace
+     * anyway (it early-returns once [restorePreservedState] succeeds).
+     *
+     * **This moves the SPLIT VIEW only.** `WorkspaceManager.currentWorkspace` is a separate notion
+     * that the workspace menu and every plugin reading `WorkspaceDataProvider` observe, and nothing
+     * here can reach it. A caller must update that too or the two disagree about which workspace is
+     * showing - see `ApiActiveTabsProviderAdapter.selectTab`, which does both.
+     *
+     * UI thread only.
+     *
+     * @return false if that workspace is not running here, or is already the one on screen.
+     */
+    @Suppress("ReturnCount")
+    fun switchToLiveWorkspace(
+        workspaceId: String,
+        leavingWorkspaceName: String = "",
+    ): Boolean {
+        if (workspaceId == _currentWorkspaceId) return false
+        if (workspaceId !in liveWorkspaceIds) return false
+        // Preserves the CURRENT tree under the current id and then points _currentWorkspaceId at
+        // the target; restore then swaps the tree in. Both, in this order, or leaving a workspace
+        // drops its layout.
+        preserveCurrentState(workspaceId, leavingWorkspaceName)
+        return restorePreservedState(workspaceId)
+    }
+
+    /** Close a tab wherever this window is running it, including in a workspace not on screen. */
+    @Suppress("ReturnCount")
+    fun closeTabAnywhere(tabId: String): Boolean {
+        val location = findTabLocation(tabId) ?: return false
+        if (!location.panel.tabsComponent.removeTabById(tabId)) return false
+        pruneEmptyPanelsIn(location.workspaceId)
+        return true
+    }
+
     fun getPanelTabsComponent(panelId: String): BossTabsComponent? = findPanel(panelId)?.tabsComponent
 
     /**
@@ -1783,6 +2150,96 @@ class SplitViewState(
         }
     }
 
+    /**
+     * What the vertical tab bar calls each pane - a name the user gave it, else "Left", "Top right",
+     * "Pane 3" - or an empty map when there is only one pane and so nothing to distinguish.
+     *
+     * Line for line the same derivation `WindowVerticalTabBar` uses for its group headers: a
+     * `panelName` beats the derived position, the position comes from `paneLabel` over
+     * `paneGlyphs` on the panes' MEASURED rectangles, and an unmeasured pane falls through to
+     * "Pane N" rather than to nothing. Deliberately the same, so a panel listing these tabs and the
+     * bar listing the same tabs cannot disagree about what a pane is called.
+     *
+     * `ActiveTab.splitPosition` has carried a comment promising exactly these values since it was
+     * declared and was never once populated, so every consumer saw null and had to invent its own
+     * naming from the saved layout - a different source of truth, which goes stale the moment a pane
+     * is split without saving.
+     *
+     * Measured, so it is right for any arrangement, nested ones included, and follows a divider as
+     * it is dragged. Only the workspace on screen has bounds at all; a preserved one answers
+     * "Pane N", which is honest about position without inventing a side it may not be on.
+     */
+    private fun splitPositionsFor(panelsInOrder: List<SplitNode.Panel>): Map<String, String> {
+        if (panelsInOrder.size <= 1) return emptyMap()
+        val glyphs = paneGlyphs(panelsInOrder.map { it.id }, ::getPanelBounds)
+        return panelsInOrder.withIndex().associate { (index, panel) ->
+            panel.id to (panelName(panel.id) ?: paneLabel(index, glyphs[panel.id]))
+        }
+    }
+
+    /**
+     * What every tab collected out of one preserved workspace's tree has in common.
+     *
+     * One parameter rather than four: the two collectors recurse, so each addition was passed
+     * through every call site twice more, and the pane names are the fourth.
+     */
+    private data class WorkspaceTabContext(
+        val workspaceId: String,
+        val workspaceName: String,
+        val windowId: String,
+        val splitPositions: Map<String, String>,
+    )
+
+    /**
+     * The same names for a workspace running BEHIND the one on screen, where nothing was measured.
+     *
+     * A preserved workspace's panes were never composed, so they have no bounds; the rectangles
+     * come from its split tree with every divider assumed centred. That assumption cannot change
+     * the answer - [paneLabel] asks only which edges a pane touches and which axis it spans, and no
+     * divider position changes either - so a workspace names its panes identically before and after
+     * it comes on screen. Which is the point: Top of Mind lists every running workspace, and a
+     * naming that only worked for the one on screen would be the drift it exists to remove.
+     *
+     * Deliberately NOT consulting [panelName]. Panel ids are unique only within one tree - every
+     * workspace's first pane is called `main` - so a name the user gave a pane here would be
+     * returned for the pane of that name in every other workspace too. The pane on screen is
+     * `getAllPanels()`, which is one tree and has no such ambiguity.
+     */
+    private fun splitPositionsForNode(root: SplitNode): Map<String, String> {
+        val rects = mutableListOf<Pair<String, PanelBounds>>()
+        collectPaneRects(root, PanelBounds(0f, 0f, 1f, 1f), rects)
+        if (rects.size <= 1) return emptyMap()
+        val byId = rects.toMap()
+        val glyphs = paneGlyphs(rects.map { it.first }) { byId[it] }
+        return rects.withIndex().associate { (index, entry) ->
+            entry.first to paneLabel(index, glyphs[entry.first])
+        }
+    }
+
+    private fun collectPaneRects(
+        node: SplitNode,
+        area: PanelBounds,
+        into: MutableList<Pair<String, PanelBounds>>,
+    ) {
+        val halfWidth = area.width / 2f
+        val halfHeight = area.height / 2f
+        when (node) {
+            is SplitNode.Panel -> {
+                into.add(node.id to area)
+            }
+
+            is SplitNode.VerticalSplit -> {
+                collectPaneRects(node.left, PanelBounds(area.x, area.y, halfWidth, area.height), into)
+                collectPaneRects(node.right, PanelBounds(area.x + halfWidth, area.y, halfWidth, area.height), into)
+            }
+
+            is SplitNode.HorizontalSplit -> {
+                collectPaneRects(node.top, PanelBounds(area.x, area.y, area.width, halfHeight), into)
+                collectPaneRects(node.bottom, PanelBounds(area.x, area.y + halfHeight, area.width, halfHeight), into)
+            }
+        }
+    }
+
     fun collectAllActiveFluckTabs(windowId: String = "unknown"): List<ActiveTab> {
         val result = mutableListOf<ActiveTab>()
         val seenTabIds = mutableSetOf<String>()
@@ -1794,10 +2251,12 @@ class SplitViewState(
                 preservedWorkspaceStates[workspaceId]?.workspaceName
                     ?: when (workspaceId) {
                         "last-session" -> "Last Session"
-                        else -> "Current Workspace"
+                        else -> "Current Space"
                     }
 
-            getAllPanels().forEach { panel ->
+            val panels = getAllPanels()
+            val splitPositions = splitPositionsFor(panels)
+            panels.forEach { panel ->
                 panel.tabsComponent.tabsState.value.tabs.forEach { tab ->
                     if (!seenTabIds.contains(tab.id) && (tab is FluckTabInfo || tab.typeId.typeId == "fluck")) {
                         result.add(
@@ -1807,6 +2266,7 @@ class SplitViewState(
                                 workspaceName = workspaceName,
                                 panelId = panel.id,
                                 windowId = windowId,
+                                splitPosition = splitPositions[panel.id],
                             ),
                         )
                         seenTabIds.add(tab.id)
@@ -1818,7 +2278,17 @@ class SplitViewState(
         // Collect from preserved states (only if not already in current state)
         preservedWorkspaceStates.forEach { (workspaceId, state) ->
             if (workspaceId != _currentWorkspaceId) {
-                collectFluckTabsFromNode(state.rootNode, workspaceId, state.workspaceName, windowId, result, seenTabIds)
+                collectFluckTabsFromNode(
+                    state.rootNode,
+                    WorkspaceTabContext(
+                        workspaceId,
+                        state.workspaceName,
+                        windowId,
+                        splitPositionsForNode(state.rootNode),
+                    ),
+                    result,
+                    seenTabIds,
+                )
             }
         }
 
@@ -1876,14 +2346,16 @@ class SplitViewState(
                 ?: preservedWorkspaceStates[workspaceId]?.workspaceName
                 ?: when (workspaceId) {
                     "last-session" -> "Last Session"
-                    else -> "Workspace $workspaceId"
+                    else -> "Space $workspaceId"
                 }
 
         // Collect from current state (only if it has tabs)
         _currentWorkspaceId?.let { workspaceId ->
             val currentTabs = mutableListOf<ActiveTab>()
 
-            getAllPanels().forEach { panel ->
+            val panels = getAllPanels()
+            val splitPositions = splitPositionsFor(panels)
+            panels.forEach { panel ->
                 panel.tabsComponent.tabsState.value.tabs.forEach { tab ->
                     if (!seenTabIds.contains(tab.id)) {
                         currentTabs.add(
@@ -1893,6 +2365,7 @@ class SplitViewState(
                                 workspaceName = getWorkspaceName(workspaceId),
                                 panelId = panel.id,
                                 windowId = windowId,
+                                splitPosition = splitPositions[panel.id],
                             ),
                         )
                         seenTabIds.add(tab.id)
@@ -1910,7 +2383,17 @@ class SplitViewState(
         // Collect from preserved states (only if not already added)
         preservedWorkspaceStates.forEach { (workspaceId, state) ->
             if (!seenConfigIds.contains(workspaceId)) {
-                collectAllTabsFromNode(state.rootNode, workspaceId, getWorkspaceName(workspaceId), windowId, result, seenTabIds)
+                collectAllTabsFromNode(
+                    state.rootNode,
+                    WorkspaceTabContext(
+                        workspaceId,
+                        getWorkspaceName(workspaceId),
+                        windowId,
+                        splitPositionsForNode(state.rootNode),
+                    ),
+                    result,
+                    seenTabIds,
+                )
                 if (result.any { it.workspaceId == workspaceId }) {
                     seenConfigIds.add(workspaceId)
                 }
@@ -1922,9 +2405,7 @@ class SplitViewState(
 
     private fun collectFluckTabsFromNode(
         node: SplitNode,
-        workspaceId: String,
-        workspaceName: String,
-        windowId: String,
+        context: WorkspaceTabContext,
         result: MutableList<ActiveTab>,
         seenTabIds: MutableSet<String>,
     ) {
@@ -1935,10 +2416,11 @@ class SplitViewState(
                         result.add(
                             ActiveTab(
                                 tabInfo = tab,
-                                workspaceId = workspaceId,
-                                workspaceName = workspaceName,
+                                workspaceId = context.workspaceId,
+                                workspaceName = context.workspaceName,
                                 panelId = node.id,
-                                windowId = windowId,
+                                windowId = context.windowId,
+                                splitPosition = context.splitPositions[node.id],
                             ),
                         )
                         seenTabIds.add(tab.id)
@@ -1947,22 +2429,20 @@ class SplitViewState(
             }
 
             is SplitNode.VerticalSplit -> {
-                collectFluckTabsFromNode(node.left, workspaceId, workspaceName, windowId, result, seenTabIds)
-                collectFluckTabsFromNode(node.right, workspaceId, workspaceName, windowId, result, seenTabIds)
+                collectFluckTabsFromNode(node.left, context, result, seenTabIds)
+                collectFluckTabsFromNode(node.right, context, result, seenTabIds)
             }
 
             is SplitNode.HorizontalSplit -> {
-                collectFluckTabsFromNode(node.top, workspaceId, workspaceName, windowId, result, seenTabIds)
-                collectFluckTabsFromNode(node.bottom, workspaceId, workspaceName, windowId, result, seenTabIds)
+                collectFluckTabsFromNode(node.top, context, result, seenTabIds)
+                collectFluckTabsFromNode(node.bottom, context, result, seenTabIds)
             }
         }
     }
 
     private fun collectAllTabsFromNode(
         node: SplitNode,
-        workspaceId: String,
-        workspaceName: String,
-        windowId: String,
+        context: WorkspaceTabContext,
         result: MutableList<ActiveTab>,
         seenTabIds: MutableSet<String>,
     ) {
@@ -1973,10 +2453,11 @@ class SplitViewState(
                         result.add(
                             ActiveTab(
                                 tabInfo = tab,
-                                workspaceId = workspaceId,
-                                workspaceName = workspaceName,
+                                workspaceId = context.workspaceId,
+                                workspaceName = context.workspaceName,
                                 panelId = node.id,
-                                windowId = windowId,
+                                windowId = context.windowId,
+                                splitPosition = context.splitPositions[node.id],
                             ),
                         )
                         seenTabIds.add(tab.id)
@@ -1985,13 +2466,13 @@ class SplitViewState(
             }
 
             is SplitNode.VerticalSplit -> {
-                collectAllTabsFromNode(node.left, workspaceId, workspaceName, windowId, result, seenTabIds)
-                collectAllTabsFromNode(node.right, workspaceId, workspaceName, windowId, result, seenTabIds)
+                collectAllTabsFromNode(node.left, context, result, seenTabIds)
+                collectAllTabsFromNode(node.right, context, result, seenTabIds)
             }
 
             is SplitNode.HorizontalSplit -> {
-                collectAllTabsFromNode(node.top, workspaceId, workspaceName, windowId, result, seenTabIds)
-                collectAllTabsFromNode(node.bottom, workspaceId, workspaceName, windowId, result, seenTabIds)
+                collectAllTabsFromNode(node.top, context, result, seenTabIds)
+                collectAllTabsFromNode(node.bottom, context, result, seenTabIds)
             }
         }
     }
@@ -2385,8 +2866,12 @@ private fun RenderSplitNode(
                     }
                 }
 
-                // Track drop target for panel drop zone highlights
-                val dropTarget = tabDragComponent?.dropTarget
+                // Whether a drag is in flight at all, and whose tab it is. Both change twice in
+                // a whole drag, unlike the drop TARGET - which now carries an insertion index and
+                // so changes every time the pointer crosses a row. That is read inside
+                // PanelDropZoneOverlay, behind derivedStateOf, rather than here: reading it in
+                // this body would recompose one pane's entire subtree, its tab content included,
+                // at pointer rate.
                 val isDragging = tabDragComponent?.isDragging == true
                 val draggingTab = tabDragComponent?.draggingTab
 
@@ -2426,7 +2911,7 @@ private fun RenderSplitNode(
                     if (isDragging && draggingTab != null && draggingTab.sourcePanelId != node.id) {
                         PanelDropZoneOverlay(
                             panelId = node.id,
-                            dropTarget = dropTarget,
+                            tabDragComponent = tabDragComponent,
                             // The zones themselves start after a vertical tab bar that covers
                             // this panel's leading edge (see PanelDropZones.fromBounds), so the
                             // highlight has to as well - a left-split band painted over the bar
@@ -2506,100 +2991,6 @@ private fun RenderSplitNode(
                         showPanelTabBar = showPanelTabBar,
                     )
                 },
-            )
-        }
-    }
-}
-
-/**
- * Overlay that shows drop zone highlights on panel edges during drag operations.
- */
-@Composable
-private fun PanelDropZoneOverlay(
-    panelId: String,
-    dropTarget: TabDropTarget?,
-    leadingInset: Dp = 0.dp,
-) {
-    // Check which zone is highlighted
-    val isLeftHighlighted =
-        dropTarget is TabDropTarget.SplitPanel &&
-            dropTarget.panelId == panelId &&
-            dropTarget.orientation == SplitOrientation.VERTICAL
-
-    val isRightHighlighted = isLeftHighlighted // Same condition for vertical split
-
-    val isTopHighlighted =
-        dropTarget is TabDropTarget.SplitPanel &&
-            dropTarget.panelId == panelId &&
-            dropTarget.orientation == SplitOrientation.HORIZONTAL
-
-    val isBottomHighlighted = isTopHighlighted // Same condition for horizontal split
-
-    val isCenterHighlighted =
-        dropTarget is TabDropTarget.ExistingPanel &&
-            dropTarget.panelId == panelId
-
-    Box(modifier = Modifier.fillMaxSize().padding(start = leadingInset)) {
-        // Left edge highlight
-        if (isLeftHighlighted) {
-            Box(
-                modifier =
-                    Modifier
-                        .align(Alignment.CenterStart)
-                        .width(60.dp)
-                        .fillMaxHeight()
-                        .alpha(0.3f)
-                        .background(BossTheme.colors.signal),
-            )
-        }
-
-        // Right edge highlight
-        if (isRightHighlighted) {
-            Box(
-                modifier =
-                    Modifier
-                        .align(Alignment.CenterEnd)
-                        .width(60.dp)
-                        .fillMaxHeight()
-                        .alpha(0.3f)
-                        .background(BossTheme.colors.signal),
-            )
-        }
-
-        // Top edge highlight
-        if (isTopHighlighted) {
-            Box(
-                modifier =
-                    Modifier
-                        .align(Alignment.TopCenter)
-                        .fillMaxWidth()
-                        .height(60.dp)
-                        .alpha(0.3f)
-                        .background(BossTheme.colors.signal),
-            )
-        }
-
-        // Bottom edge highlight
-        if (isBottomHighlighted) {
-            Box(
-                modifier =
-                    Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .height(60.dp)
-                        .alpha(0.3f)
-                        .background(BossTheme.colors.signal),
-            )
-        }
-
-        // Center highlight (add to existing panel)
-        if (isCenterHighlighted) {
-            Box(
-                modifier =
-                    Modifier
-                        .fillMaxSize()
-                        .alpha(0.15f)
-                        .background(BossTheme.colors.signal),
             )
         }
     }

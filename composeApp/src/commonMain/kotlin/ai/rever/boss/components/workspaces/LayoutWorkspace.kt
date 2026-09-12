@@ -45,6 +45,33 @@ object PredefinedWorkspaces {
     /** Id of the terminal + browser workspace, the platform default everywhere else. */
     const val CLAUDE_CODE_ID = "workspace-claude-code"
 
+    // The other six, promoted from literals in the list below so the whole built-in SET is
+    // nameable in one place. What needs the set is the Space picker's Templates section: "a
+    // template" is "one of the eight we ship", which is identity and cannot be derived from the
+    // layout - a shipped layout with nothing to parameterise (Browser Only) is still one of ours,
+    // and `LayoutWorkspace.generateId()` mints `workspace-<epoch millis>`, so a saved Space carries
+    // the same `workspace-` prefix and a prefix test would call every Space a template.
+    const val CODE_REVIEW_ID = "workspace-code-review"
+    const val GEMINI_ID = "workspace-gemini"
+    const val CODEX_ID = "workspace-codex"
+    const val OPENCODE_ID = "workspace-opencode"
+    const val TERMINAL_BROWSER_ID = "workspace-terminal-browser"
+    const val DUAL_TERMINAL_ID = "workspace-dual-terminal"
+
+    /**
+     * Every id BOSS ships a layout for.
+     *
+     * **Identity, not shape.** This is what makes something a TEMPLATE in the Space picker, and it
+     * is deliberately a different question from [requiresProject], which asks whether a layout has
+     * placeholders left to substitute. The two agree on seven of these eight and disagree on
+     * Browser Only: a single browser panel on a fixed URL is one of the layouts we ship and has
+     * nothing to parameterise. Templates is the first question; materialising is the second.
+     *
+     * Derived from [allWorkspaces] rather than listed again, so a ninth built-in joins the set by
+     * existing. The constants above are for naming one; this is for asking about all of them.
+     */
+    val allIds: Set<String> get() = allWorkspaces.map { it.id }.toSet()
+
     /**
      * Home page the browser-only workspace opens with.
      *
@@ -98,7 +125,7 @@ object PredefinedWorkspaces {
             ),
             // Code Review: Editor (left) + Browser (right) + Terminal (bottom)
             LayoutWorkspace(
-                id = "workspace-code-review",
+                id = CODE_REVIEW_ID,
                 name = "Code Review",
                 description = "README + GitHub + Claude Code",
                 layout =
@@ -155,7 +182,7 @@ object PredefinedWorkspaces {
             ),
             // Gemini: Terminal + Browser
             LayoutWorkspace(
-                id = "workspace-gemini",
+                id = GEMINI_ID,
                 name = "Gemini",
                 description = "Gemini CLI + GitHub",
                 layout =
@@ -193,7 +220,7 @@ object PredefinedWorkspaces {
             ),
             // Codex: Terminal + Browser
             LayoutWorkspace(
-                id = "workspace-codex",
+                id = CODEX_ID,
                 name = "Codex",
                 description = "OpenAI Codex CLI + GitHub",
                 layout =
@@ -231,7 +258,7 @@ object PredefinedWorkspaces {
             ),
             // OpenCode: Terminal + Browser
             LayoutWorkspace(
-                id = "workspace-opencode",
+                id = OPENCODE_ID,
                 name = "OpenCode",
                 description = "OpenCode AI CLI + GitHub",
                 layout =
@@ -269,7 +296,7 @@ object PredefinedWorkspaces {
             ),
             // Terminal + Browser
             LayoutWorkspace(
-                id = "workspace-terminal-browser",
+                id = TERMINAL_BROWSER_ID,
                 name = "Terminal + Browser",
                 description = "Terminal on left, Browser on right",
                 layout =
@@ -307,7 +334,7 @@ object PredefinedWorkspaces {
             ),
             // Dual Terminal
             LayoutWorkspace(
-                id = "workspace-dual-terminal",
+                id = DUAL_TERMINAL_ID,
                 name = "Dual Terminal",
                 description = "Two terminals side by side",
                 layout =

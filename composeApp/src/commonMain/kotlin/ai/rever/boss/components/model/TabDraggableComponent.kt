@@ -90,6 +90,22 @@ sealed class TabDropTarget {
      */
     data class ExistingPanel(
         val panelId: String,
+        /**
+         * Which slot of that panel's list the tab would land in, or null to append.
+         *
+         * Nullable rather than defaulted to 0, because there are drops that genuinely name a
+         * PANEL and no position in it, and landing those at the head of the list would be a
+         * guess dressed up as an answer: the centre of a panel's content area (see
+         * `splitZoneTargetAt`), a sidebar panel dragged out onto a panel (`BossDraggableComponent`
+         * / `ProcessPendingPromoteToTab`), and a bar whose tabs have not been measured yet.
+         *
+         * Same index space as [Reorder.targetIndex] - an INSERTION index, so `tabs.size` means
+         * past the last tab - but computed against the TARGET panel's tab rectangles rather than
+         * the source's, and never adjusted down the way `endDrag` adjusts a reorder: the tab is
+         * not in the destination's list yet, so removing it takes nothing out from under the
+         * index.
+         */
+        val targetIndex: Int? = null,
     ) : TabDropTarget()
 
     /**
@@ -116,6 +132,14 @@ sealed class TabDropResult {
         val sourcePanelId: String,
         val sourceIndex: Int,
         val targetPanelId: String,
+        /**
+         * Where in the destination's list to put it, or null to append.
+         *
+         * Carried from [TabDropTarget.ExistingPanel.targetIndex]; see there for why it is
+         * nullable. `BossTabsComponent` has no adopt-at-index, so the handler adopts and then
+         * moves - the same shape `SplitViewState.moveTabToWorkspace` uses for a named pane.
+         */
+        val targetIndex: Int? = null,
     ) : TabDropResult()
 
     data class CreateSplit(
@@ -498,7 +522,18 @@ class TabDraggableComponent {
     private fun favoritesTargetAt(position: Offset): TabDropTarget? =
         TabDropTarget.Favorites.takeIf { favoritesBounds?.contains(position) == true }
 
-    /** Reorder within the dragged tab's own bar, or move into another panel's. */
+    /**
+     * Reorder within the dragged tab's own bar, or move into another panel's AT A POSITION.
+     *
+     * Both branches name a slot, and both take it from the same arithmetic - [reorderIndexFor]
+     * over the rectangles of the tabs the bar under the pointer has actually drawn. A second
+     * copy of that computation for the cross-pane case is how the two would drift, and it is
+     * already the one piece of the drag whose correctness is arithmetic rather than layout.
+     *
+     * The rectangles are the TARGET pane's, not the source's, which is the whole difference: a
+     * window-level bar registers one slice per pane and the tab bounds are keyed `panelId:tabId`,
+     * so a pane other than the source has its own measured rows to compare against.
+     */
     private fun tabBarTargetAt(
         position: Offset,
         dragging: DraggingTabInfo,
@@ -508,7 +543,7 @@ class TabDraggableComponent {
         return if (panelId == dragging.sourcePanelId) {
             TabDropTarget.Reorder(panelId, calculateReorderIndex(panelId, position))
         } else {
-            TabDropTarget.ExistingPanel(panelId)
+            TabDropTarget.ExistingPanel(panelId, insertionIndexIn(panelId, position))
         }
     }
 
@@ -546,19 +581,48 @@ class TabDraggableComponent {
 
     /**
      * Calculate the index where a tab would be inserted during reorder.
+     *
+     * A bar with nothing measured is 0 here rather than null: this is the tab's OWN bar, so it
+     * has at least the dragged tab in it and an empty answer would be a fact about the
+     * registration rather than about the drop.
      */
     private fun calculateReorderIndex(
         panelId: String,
         position: Offset,
-    ): Int =
-        reorderIndexFor(
-            tabs = tabBounds.entries.filter { (tabId, _) -> tabId.startsWith("$panelId:") }.map { it.value },
+    ): Int = insertionIndexIn(panelId, position) ?: 0
+
+    /**
+     * The slot of [panelId]'s list a drop at [position] names, or null when it names none.
+     *
+     * Null means "this bar has no measured tabs", which is a different answer from 0: the bar has
+     * not been laid out yet, or the panel draws no bar at all. See
+     * [TabDropTarget.ExistingPanel.targetIndex] for why that must append rather than land at the
+     * head of somebody else's list.
+     *
+     * A COLLAPSED group in the window bar draws one row for whichever tab the pane is showing,
+     * and that row carries its true model index (`TabBoundInfo.actualIndex`), so a drop on it
+     * lands next to the tab that was on screen rather than at some position the row only appears
+     * to hold. Springing the group open (see `SPRING_LOAD_DELAY_MS`) is what puts the rest of its
+     * rows there to aim at.
+     */
+    private fun insertionIndexIn(
+        panelId: String,
+        position: Offset,
+    ): Int? {
+        val tabs = tabBounds.entries.filter { (tabId, _) -> tabId.startsWith("$panelId:") }.map { it.value }
+        if (tabs.isEmpty()) return null
+        return reorderIndexFor(
+            tabs = tabs,
             position = position,
             vertical = tabBarBounds[panelId]?.vertical == true,
         )
+    }
 
     /**
      * End the drag and return the result, or null if cancelled.
+     *
+     * The state is cleared before the result is worked out, so an exception on the way out cannot
+     * leave the component believing a drag is still in flight.
      */
     fun endDrag(): TabDropResult? {
         val dragging = draggingTab
@@ -571,36 +635,52 @@ class TabDraggableComponent {
         dropTarget = null
 
         if (dragging == null) return null
+        return dropResultFor(dragging, target)
+    }
 
-        return when (target) {
+    /**
+     * What dropping [dragging] on [target] does, or null for a drop that changes nothing.
+     *
+     * Split out of [endDrag] so the state reset and the decision read as the two separate things
+     * they are - and because every arm here is a rule worth reading rather than a line of
+     * bookkeeping.
+     */
+    private fun dropResultFor(
+        dragging: DraggingTabInfo,
+        target: TabDropTarget?,
+    ): TabDropResult? =
+        when (target) {
             is TabDropTarget.Reorder -> {
+                // Nudged down when the source sat EARLIER in the same list: removing the tab
+                // shifts everything after it, so the insertion index the indicator drew is one
+                // more than the final position. Landing where it already is is nothing at all.
                 val toIndex =
-                    if (target.targetIndex > dragging.sourceIndex) {
-                        target.targetIndex - 1
-                    } else {
-                        target.targetIndex
-                    }
-                if (toIndex != dragging.sourceIndex) {
+                    if (target.targetIndex > dragging.sourceIndex) target.targetIndex - 1 else target.targetIndex
+                if (toIndex == dragging.sourceIndex) {
+                    null
+                } else {
                     TabDropResult.Reorder(
                         panelId = target.panelId,
                         fromIndex = dragging.sourceIndex,
                         toIndex = toIndex,
                     )
-                } else {
-                    null
                 }
             }
 
             is TabDropTarget.ExistingPanel -> {
-                if (target.panelId != dragging.sourcePanelId) {
+                if (target.panelId == dragging.sourcePanelId) {
+                    null
+                } else {
                     TabDropResult.MoveToPanel(
                         tabInfo = dragging.tabInfo,
                         sourcePanelId = dragging.sourcePanelId,
                         sourceIndex = dragging.sourceIndex,
                         targetPanelId = target.panelId,
+                        // Carried through UNADJUSTED, unlike a reorder's: a cross-pane move takes
+                        // nothing out of the destination's list, so the slot the indicator drew
+                        // is the slot the tab lands in.
+                        targetIndex = target.targetIndex,
                     )
-                } else {
-                    null
                 }
             }
 
@@ -622,11 +702,11 @@ class TabDraggableComponent {
                 )
             }
 
+            // Let go over nothing droppable.
             null -> {
                 null
             }
         }
-    }
 
     /**
      * Cancel the drag without performing any action.

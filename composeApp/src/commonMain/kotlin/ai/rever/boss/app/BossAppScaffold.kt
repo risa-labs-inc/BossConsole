@@ -19,6 +19,7 @@ import ai.rever.boss.components.overlays.TabDraggingOverlay
 import ai.rever.boss.components.plugin.LocalPanelPluginIdResolver
 import ai.rever.boss.components.plugin.LocalPluginUninstallable
 import ai.rever.boss.components.plugin.PanelIds
+import ai.rever.boss.components.plugin.openTopOfMindQuickSwitcher
 import ai.rever.boss.components.plugin.panels.left_bottom.TopOfMind.LocalSplitViewState
 import ai.rever.boss.components.plugin.panels.left_bottom.TopOfMind.LocalWorkspaceManager
 import ai.rever.boss.components.plugin.providers.TopOfMindDataProvider
@@ -67,6 +68,7 @@ import ai.rever.boss.window.LocalWindowGitState
 import ai.rever.boss.window.LocalWindowId
 import ai.rever.boss.window.LocalWindowProjectState
 import ai.rever.boss.window.LocalWindowRunnerState
+import ai.rever.boss.window.MenuActionsHandler
 import ai.rever.boss.window.TabBarPosition
 import ai.rever.boss.window.WindowAppearanceSettings
 import androidx.compose.animation.AnimatedVisibility
@@ -625,7 +627,7 @@ internal fun BossAppScaffold(
                                 extractCurrentWorkspace(splitViewState, selectedProject.path)
                             },
                             onShowTopOfMind = {
-                                state.showTopOfMindDialog = true
+                                openTopOfMindQuickSwitcher(state.windowId, state.coroutineScope)
                             },
                             onShowSettings = {
                                 state.settingsWindow.open()
@@ -789,6 +791,9 @@ internal fun BossAppScaffold(
                                     // cleared is not on screen, and the project and workspace
                                     // pickers live nowhere else.
                                     topBarHidden = !drawn.showTopBar,
+                                    // Only so the workspace button can open Top of Mind HERE: a
+                                    // panel open event is broadcast and filtered by window.
+                                    windowId = state.windowId,
                                     project = selectedProject,
                                     onOpenProject = { state.showProjectDialog = true },
                                     workspaceManager = workspaceManager,
@@ -796,7 +801,12 @@ internal fun BossAppScaffold(
                                     getCurrentWorkspace = {
                                         extractCurrentWorkspace(splitViewState, selectedProject.path)
                                     },
-                                    onShowTopOfMind = { state.showTopOfMindDialog = true },
+                                    onShowTopOfMind = {
+                                        openTopOfMindQuickSwitcher(state.windowId, state.coroutineScope)
+                                    },
+                                    // The File menu's own Save Space, not a second copy of it:
+                                    // one path extracts the live layout, writes it and reports.
+                                    onSaveWorkspace = { MenuActionsHandler.triggerSaveWorkspace(state.windowId) },
                                 )
                             },
                         )

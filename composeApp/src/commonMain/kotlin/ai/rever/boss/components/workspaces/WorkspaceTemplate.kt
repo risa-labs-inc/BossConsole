@@ -1,0 +1,242 @@
+package ai.rever.boss.components.workspaces
+
+import ai.rever.boss.components.bars.horizontal.StatusMessageManager
+import ai.rever.boss.dashboard.WorkspacePlaceholders
+import ai.rever.boss.plugin.workspace.SplitConfig.HorizontalSplit
+import ai.rever.boss.plugin.workspace.SplitConfig.SinglePanel
+import ai.rever.boss.plugin.workspace.SplitConfig.VerticalSplit
+import ai.rever.boss.project.DefaultWorkingDirectory
+import ai.rever.boss.utils.extractFileName
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlin.time.Clock
+
+private val logger = BossLogger.forComponent("WorkspaceTemplate")
+
+/*
+ * The built-in layouts are TEMPLATES, not Spaces, and picking one MATERIALISES it.
+ *
+ * `PredefinedWorkspaces.allWorkspaces` is a list of parameterised layouts: `{projectPath}`,
+ * `{gitRemoteUrl}` and friends stand in for a project nobody has chosen yet. Applying one
+ * resolves those placeholders on the way to building the tabs and throws the answers away, so
+ * the entry in the Space list still says `{projectPath}` afterwards and the layout on screen
+ * belongs to no Space at all.
+ *
+ * The predicate is `requiresProject()`, and there is deliberately no `isTemplate` field.
+ * Carrying an unsubstituted project placeholder is exactly what makes something a template, and a
+ * saved Space is written from live state by `WorkspaceExtractor` with real paths in it, so a
+ * saved Space can never satisfy it. `LayoutWorkspace` is the plugin api type - a typealias onto
+ * `plugin-workspace-types`, consumed by 33 plugin repos and member-checked by
+ * `BinaryCompatibilityValidator` - and a new constructor parameter on that data class rejects
+ * every already-built plugin (see the `@JvmOverloads` note on `PanelConfig`).
+ *
+ * So a template is answered from the layout, and a materialised Space is an ordinary Space from
+ * then on: it has real paths, so `requiresProject()` is false for it and nothing lists it as a
+ * template again.
+ */
+
+/**
+ * The name a materialised template is saved under.
+ *
+ * Template plus project, because that is what the Space is: "Claude Code" against `Boss` and
+ * "Claude Code" against `BossTerm` are two Spaces with two split trees and two sets of live
+ * terminals, and each wants its own row in the list.
+ *
+ * Through [uniqueWorkspaceName], which this used to bypass: materialising the SAME template against
+ * the SAME project twice minted two ids and one name, and while the name WAS the file path that
+ * meant the second one atomically destroyed the first one's layout - the data loss a suffix on
+ * adopted names was really guarding, reachable with no suffix in sight.
+ * `WorkspaceFileManagerCommon.fileNameForId` closed the loss; numbering keeps the list readable.
+ */
+internal fun materialisedTemplateName(
+    templateName: String,
+    projectName: String,
+    takenNames: Set<String> = emptySet(),
+): String = uniqueWorkspaceName("$templateName ($projectName)", takenNames)
+
+/**
+ * A project path's display name, the way `applyWorkspace` derives it when it restores a project.
+ */
+internal fun projectNameFor(projectPath: String): String =
+    projectPath
+        .trimEnd('/')
+        .trimEnd('\\')
+        .extractFileName()
+        .ifEmpty { "Project" }
+
+/**
+ * [template] with its placeholders resolved, under a fresh identity.
+ *
+ * Pure, and takes [substitute] rather than reaching for [WorkspacePlaceholders] itself, because
+ * the real substitution forks `git remote get-url origin` and lists `~/.claude/projects` - see
+ * [materialiseTemplateForProject], which supplies it.
+ *
+ * **The per-field rule is `createTabFromWorkspaceConfig`'s, field for field**, because the
+ * materialised Space is then byte-identical to what applying the template would have built:
+ * `initialCommand` is shell command content, so `{projectPath}` is substituted SHELL-QUOTED
+ * there and raw everywhere else. Getting that backwards would either break a project path with a
+ * space in it (`cd /Users/me/My Project && claude` is two arguments) or write a quoted path into
+ * a `filePath`, which is not shell-parsed and would be opened with the quotes in its name.
+ *
+ * [stamp] is a parameter so this is testable: [LayoutWorkspace.generateId] is a clock read, and
+ * two calls in one millisecond return the same id. The project NAME is not a parameter - it is
+ * [projectNameFor] of the path, so a caller cannot hand in a name that disagrees with the project
+ * the placeholders were resolved against.
+ */
+internal fun materialiseTemplate(
+    template: LayoutWorkspace,
+    stamp: MaterialisedStamp,
+    projectPath: String,
+    takenNames: Set<String> = emptySet(),
+    substitute: (content: String, quote: Boolean) -> String,
+): LayoutWorkspace =
+    template.copy(
+        id = stamp.id,
+        name = materialisedTemplateName(template.name, projectNameFor(projectPath), takenNames),
+        layout = template.layout.substituted(substitute),
+        timestamp = stamp.now,
+        projectPath = projectPath,
+    )
+
+/**
+ * The identity a materialisation mints: a fresh id and the moment it happened.
+ *
+ * One parameter rather than two, because they are one fact (this copy, made now) and because
+ * `materialiseTemplate` was over detekt's parameter ceiling with both spelled out.
+ */
+internal data class MaterialisedStamp(
+    val id: String,
+    val now: Long,
+)
+
+private fun SplitConfig.substituted(substitute: (String, Boolean) -> String): SplitConfig =
+    when (this) {
+        is SinglePanel -> SinglePanel(panel.copy(tabs = panel.tabs.map { it.substituted(substitute) }))
+        is VerticalSplit -> VerticalSplit(left.substituted(substitute), right.substituted(substitute))
+        is HorizontalSplit -> HorizontalSplit(top.substituted(substitute), bottom.substituted(substitute))
+    }
+
+private fun TabConfig.substituted(substitute: (String, Boolean) -> String): TabConfig =
+    copy(
+        url = url?.let { substitute(it, false) },
+        filePath = filePath?.let { substitute(it, false) },
+        // The one quoted field. See the KDoc above.
+        initialCommand = initialCommand?.let { substitute(it, true) },
+        workingDirectory = workingDirectory?.let { substitute(it, false) },
+    )
+
+/**
+ * [template] materialised against the project at [projectPath], off the main thread.
+ *
+ * The substitution is [WorkspacePlaceholders.processPlaceholders] - the app's ONE placeholder
+ * resolver, which is also what builds the tabs - rather than a second pass over the same four
+ * tokens. Its `{projectPath}` half is `substituteProjectPath`; the other three cost a `git`
+ * subprocess, a directory listing and possibly a `mkdir`, which is why this suspends onto IO.
+ */
+internal suspend fun materialiseTemplateForProject(
+    template: LayoutWorkspace,
+    projectPath: String,
+    takenNames: Set<String> = emptySet(),
+): LayoutWorkspace =
+    withContext(Dispatchers.IO) {
+        materialiseTemplate(
+            template = template,
+            stamp =
+                MaterialisedStamp(
+                    id = LayoutWorkspace.generateId(),
+                    now = Clock.System.now().toEpochMilliseconds(),
+                ),
+            projectPath = projectPath,
+            takenNames = takenNames,
+        ) { content, quote ->
+            WorkspacePlaceholders.processPlaceholders(content, projectPath, null, quoteProjectPath = quote)
+        }
+    }
+
+/**
+ * The Space to actually open when the user picks [picked], materialising a template on the way.
+ *
+ * The one door every pick goes through - the Space picker in Top of Mind, the Space button's own
+ * menu, the home screen's cards and the startup "which Space" prompt - so a template becomes a
+ * Space wherever it is picked from and not only in the picker that grouped it as one.
+ *
+ * **Being a template and being materialised are two different questions, and this answers only the
+ * second.** The picker's Templates section is IDENTITY - one of the eight ids in
+ * [PredefinedWorkspaces.allIds] - and this gate is SHAPE, [requiresProject]. They disagree on
+ * exactly one built-in: **Browser Only**, a single browser panel on a fixed URL, is one of the
+ * layouts we ship and has nothing to parameterise.
+ *
+ * **So picking Browser Only applies it directly, and does not save a copy.** That is a decision,
+ * not an oversight, and the reason is that there is nothing to put in the copy's name. The seven
+ * others are named for the project their placeholders resolve against; this layout references no
+ * project, and naming it after the one the window happens to have selected would claim a
+ * connection the layout does not have. The alternatives are a counter ("Browser Only 2") or an
+ * epoch, both of which put a Space in the user's list that they did not ask for and that says
+ * nothing about itself - on every pick. Applying the shipped layout is what the tile looks like it
+ * does.
+ *
+ * The known cost, which is not specific to Browser Only and is why it is not fixed here: while the
+ * current Space is a BUILT-IN, an explicit save writes a file whose name collides with the shipped
+ * entry, and `WorkspaceManager.loadAllWorkspaces` drops a saved file whose name matches a
+ * predefined one - so that write does not survive a relaunch (the layout still returns through Last
+ * Session). Every built-in applied as-is reaches that, including the seven whenever no project is
+ * selected, so it wants one rule in the save path rather than a special case in this function.
+ *
+ * Three outcomes:
+ *
+ * - **Nothing to substitute** - not a built-in at all, or Browser Only: returned unchanged. Nothing
+ *   is written and nothing is said.
+ * - **A template, with a project selected**: substituted, saved under
+ *   [materialisedTemplateName], and returned for the caller to load and apply. Saved BEFORE it is
+ *   applied, so a Space the user can switch back to exists from the moment its tabs do.
+ * - **A template, with NO project**: returned unchanged, so this is exactly today's behaviour -
+ *   the placeholders resolve to `~/BossProjects` while the layout stays unowned - and a status
+ *   message says so. Deliberately not a project picker: choosing a project mid-switch is a second
+ *   dialog on top of the one the user just used, and the message it replaces (the home screen's,
+ *   which refused the click outright) is the wording kept here.
+ */
+suspend fun spaceToOpen(
+    picked: LayoutWorkspace,
+    projectPath: String,
+    manager: WorkspaceManager = workspaceManager,
+): LayoutWorkspace {
+    val project = DefaultWorkingDirectory.selectedOrNull(projectPath)
+    return when {
+        !picked.requiresProject() -> {
+            picked
+        }
+
+        project == null -> {
+            StatusMessageManager.showMessage(
+                "Open a project first - \"${picked.name}\" builds its tabs from the project you are in",
+            )
+            picked
+        }
+
+        else -> {
+            materialisedAndSaved(picked, project, manager)
+        }
+    }
+}
+
+private suspend fun materialisedAndSaved(
+    template: LayoutWorkspace,
+    projectPath: String,
+    manager: WorkspaceManager,
+): LayoutWorkspace {
+    val materialised =
+        materialiseTemplateForProject(template, projectPath, savedSpaceNames(manager.workspaces.value))
+    // Load then save, which is how every other save in the app writes a Space:
+    // saveCurrentWorkspace() persists whatever the manager holds as current, under its own name.
+    manager.loadWorkspace(materialised)
+    manager.saveCurrentWorkspace()
+    logger.info(
+        LogCategory.WORKSPACE,
+        "Materialized template into a workspace",
+        mapOf("template" to template.name, "workspace" to materialised.name, "id" to materialised.id),
+    )
+    StatusMessageManager.showMessage("Created Space \"${materialised.name}\"")
+    return materialised
+}

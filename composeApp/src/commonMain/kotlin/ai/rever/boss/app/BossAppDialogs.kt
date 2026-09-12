@@ -15,7 +15,6 @@ import ai.rever.boss.components.dialogs.ShortcutHelpDialog
 import ai.rever.boss.components.dialogs.TabType
 import ai.rever.boss.components.dialogs.TerminalLinkOpenDialog
 import ai.rever.boss.components.dialogs.ToolLauncherDialog
-import ai.rever.boss.components.dialogs.TopOfMindDialog
 import ai.rever.boss.components.events.DashboardEventBus
 import ai.rever.boss.components.events.FileEventBus
 import ai.rever.boss.components.events.PanelEventBus
@@ -31,6 +30,7 @@ import ai.rever.boss.components.plugin.PluginLoadGateHost
 import ai.rever.boss.components.plugin.PluginLoadRemedyAccess
 import ai.rever.boss.components.plugin.PluginStoreVersionBridge
 import ai.rever.boss.components.plugin.PluginUpdateBridge
+import ai.rever.boss.components.plugin.openTopOfMindQuickSwitcher
 import ai.rever.boss.components.plugin.providers.GenericDialogHostContent
 import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
 import ai.rever.boss.components.registery.PanelComponentStoreRegistry
@@ -41,6 +41,7 @@ import ai.rever.boss.components.wizard.plugin.PluginWizardWindow
 import ai.rever.boss.components.wizard.plugin.rememberPluginInstallWizardState
 import ai.rever.boss.components.workspaces.SelectWorkspaceDialog
 import ai.rever.boss.components.workspaces.applyWorkspace
+import ai.rever.boss.components.workspaces.spaceToOpen
 import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.dashboard.DashboardStatsManager
 import ai.rever.boss.html.HtmlFileOpenMode
@@ -406,49 +407,12 @@ internal fun BossAppDialogs(state: BossAppState) {
                     if (currentWorkspace != null && currentWorkspace.id.isNotEmpty()) {
                         splitViewState.preserveCurrentState(currentWorkspace.id, currentWorkspace.name)
                     }
-                    workspaceManager.loadWorkspace(workspace)
-                    applyWorkspace(workspace, splitViewState, windowProjectState)
+                    // A template picked here is materialised into a Space first - see
+                    // `spaceToOpen`, which every pick in the app goes through.
+                    val opened = spaceToOpen(workspace, windowProjectState.selectedProject.value.path)
+                    workspaceManager.loadWorkspace(opened)
+                    applyWorkspace(opened, splitViewState, windowProjectState)
                 }
-                state.focusRequester.requestFocus()
-            },
-        )
-    }
-
-    // Top of mind quick switcher dialog
-    if (state.showTopOfMindDialog) {
-        TopOfMindDialog(
-            splitViewState = splitViewState,
-            workspaceManager = workspaceManager,
-            onDismiss = {
-                state.showTopOfMindDialog = false
-                state.focusRequester.requestFocus()
-            },
-            onTabSelect = { activeTab ->
-                state.showTopOfMindDialog = false
-                coroutineScope.launch {
-                    // Preserve current state before switching
-                    val currentWorkspace = workspaceManager.currentWorkspace.value
-                    if (currentWorkspace != null && currentWorkspace.id.isNotEmpty()) {
-                        splitViewState.preserveCurrentState(currentWorkspace.id, currentWorkspace.name)
-                    }
-
-                    // Find the workspace containing this tab
-                    val targetWorkspace =
-                        workspaceManager.workspaces.value.find {
-                            it.id == activeTab.workspaceId
-                        }
-
-                    if (targetWorkspace != null) {
-                        // Load and apply the target workspace
-                        workspaceManager.loadWorkspace(targetWorkspace)
-                        applyWorkspace(targetWorkspace, splitViewState, windowProjectState)
-
-                        // Focus the specific tab after a short delay to ensure workspace is applied
-                        delay(100)
-                        splitViewState.selectTabInPanel(activeTab.tabInfo.id, activeTab.panelId)
-                    }
-                }
-
                 state.focusRequester.requestFocus()
             },
         )
@@ -631,7 +595,7 @@ internal fun BossAppDialogs(state: BossAppState) {
                     }
 
                     KeymapActions.QUICK_SWITCHER_OPEN -> {
-                        state.showTopOfMindDialog = true
+                        openTopOfMindQuickSwitcher(windowId, coroutineScope)
                     }
 
                     KeymapActions.WORKSPACE_SAVE -> {

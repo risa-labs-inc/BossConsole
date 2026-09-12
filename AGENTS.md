@@ -339,6 +339,25 @@ not built for the two-window case.
 prompt for that plugin is already queued, so `offerIfMissing` returning true is not proof anything
 appeared. The press therefore logs whatever happens, matching the bookmarks shelf's call site.
 
+## The tools menu shows a scrollbar only when it scrolls
+
+`ToolLauncherDialog`'s grid is capped at `VISIBLE_ROWS`, and its scrollbar is pinned visible while
+there are more rows than that. It reads as one pattern with the Top of Mind plugin's Space picker,
+which does the same job and now uses the same tile vocabulary and the same 0.7 alpha.
+
+Two traps, both hit while wiring this:
+
+- **`Modifier.scrollbar` has no fits-the-viewport guard**, unlike `lazyListScrollbar`, which
+  refuses to draw. Given content that fits it computes `contentLength == viewport` and a
+  FULL-LENGTH thumb, so pinning `alpha` unconditionally paints a permanent bar down a grid with
+  nothing to scroll. Anything pinning that alpha has to gate it.
+- **The gate cannot be a scroll-state read.** `ScrollState.maxValue` starts at `Int.MAX_VALUE` and
+  holds it until the scrollable has measured, so `maxValue > 0` is true on every first
+  composition; `canScrollForward` is `value < maxValue`, so it is true then as well. Both were
+  tried and both drew a bar under three tiles - a probe printed 2147483647. Gate on layout
+  arithmetic instead, which is right on the first frame: here, the row count against
+  `VISIBLE_ROWS`, rounded UP so 13 tools in 4 columns is 4 rows.
+
 ## Retiring a plugin into another one
 
 `RetiredPlugins.sweep()` uninstalls a plugin whose job another plugin has taken over. It runs at
@@ -1033,6 +1052,156 @@ It replaced a `swift <tempfile>` shell-out per call, which needed Xcode installe
 and so could not work at all on most machines; the Swift scripts remain only as a
 fallback for URL schemes if `Native.load` fails.
 
+## The quick switcher belongs to a plugin now
+
+`Ctrl+Space` used to set `BossAppState.showTopOfMindDialog` and the host drew its own
+`TopOfMindDialog`. Both are **deleted**. It now dispatches `open-quick-switcher` at the Top of Mind
+plugin and opens that plugin's panel, exactly as the workspace button already did with
+`open-workspace-picker`; both helpers live in `components/plugin/TopOfMindActions.kt`.
+
+**The panel id is `PanelId("top-of-mind", 5)`, not `PanelIds.TOP_OF_MIND`.** That constant is
+`PanelId("topofmind", 2)` - a different id string from the one the plugin registers - so opening by
+it matches nothing at all, silently. Only the `panelId` and `pluginId` are compared, so the order
+is carried for honesty rather than for matching.
+
+**When `dispatch` returns false there is no fallback dialog, and that is the point.** Falling back
+would hide the fact that the plugin is missing behind a switcher that looks fine but sees only this
+window. `openTopOfMindQuickSwitcher` instead says why, reusing what already exists rather than
+adding a second install path:
+
+| State | What happens |
+|---|---|
+| not installed | `MissingPluginOffer.offerIfMissing`, which raises the host's store-backed `MissingDependencyDialog`. It is `userInitiated`, so a keypress re-asks after a previous dismissal. |
+| installed, switched off | An **Enable** button, through `MissingHandlerPluginEventBus` - the host's only enable-offering dialog. Installing something already installed cannot fix it. |
+| installed and running, no handler | A status line: an older plugin build, update it in the Toolbox. |
+| anything else | A status line naming the state (no access, incompatible, still starting). |
+
+The decision is `pluginSectionAbsence`, the same pure function `PluginSettingsUnavailableNotice`
+uses, **moved from `settings/sections/` (desktopMain) into `components/plugin/` (commonMain)** so
+both callers share one ordering. That ordering is the part worth not copying: permissions first
+because an inaccessible plugin is recorded DISABLED too, and incompatible/disabled before installed
+because `MissingPluginOffer.isInstalled` counts both as installed. `servesNoPanel` is passed `true`
+from the keypress path and reads there as "serves no such action" - reached only after `dispatch`
+has already said no.
+
+Two things the enable path knows that the install path does not. `MissingHandlerPluginBus` remembers
+a "Not now" for the session and drops every later report, so `wasDeclined` is asked first and a
+declined plugin falls through to the status line rather than to silence. And its `tabTypeId` field
+carries the action name here, which only feeds its log lines and the collector's "has it registered
+since?" re-check against `TabRegistry` - no tab type is called `open-quick-switcher`, so that
+re-check can never suppress the prompt.
+
+**The host still does not depend on the plugin.** api -> host is forced (`ActiveTabsProvider` is
+`@HostImplemented`) and plugin -> host is forced (`minBossVersion`); a host that required the plugin
+would close a cycle. It builds and runs without it and merely declines to do the job itself.
+
+`TopOfMindStateHolder` and `TabCollector` **stay**: `GlobalSearchService` reads the holder, and the
+plugin api's new `ActiveTabsProvider.allWindowTabs` is derived from it, with
+`refreshAllWindowTabs()` calling `TabCollector.refreshGlobalState`. That is deliberately the only
+cross-window tab walk - `ApiActiveTabsProviderAdapter` is per window, so an adapter collecting its
+own would have N windows each walking every other window's split trees on their own schedule.
+
+## One pane, one name
+
+`ActiveTabData.splitPosition` reaches every plugin with the name the window's own vertical tab bar
+prints on that pane's group header - "Left", "Top right", "Pane 3". It had carried a comment
+promising exactly those values since it was declared and was **never populated**, so every consumer
+saw null and invented its own naming from the saved `SplitConfig`: a different source of truth,
+which describes the tree rather than the screen (so a nested pane came out "TOP > LEFT" where the
+bar says "Top left") and goes stale the moment a pane is split without saving.
+
+`paneGlyphs` in `PaneGlyph.kt` is the normalisation both sides share. The answer for one pane
+depends on all of them, so it takes the whole set; `WindowVerticalTabBar` had the only copy, and a
+second one in `SplitViewState` is precisely how the two names would drift. `splitPositionsFor` then
+applies the bar's own two rules - a `panelName` the user gave beats the derived position, and an
+unmeasured pane falls through to "Pane N" - and answers nothing at all for a lone pane, because a
+position there claims a divider that does not exist.
+
+**A workspace running behind the one on screen answers too.** Its panes were never composed, so
+there are no measured rectangles; the rectangles come from its split tree with every divider
+assumed centred, which cannot change the answer - `paneLabel` asks only which edges a pane touches
+and which axis it spans, and no divider position changes either. So a workspace names its panes
+identically before and after it comes on screen. That path deliberately does **not** consult
+`panelName`: panel ids are unique only within one tree (every workspace's first pane is `main`), so
+a name given to one pane would be returned for the pane of that name in every other workspace.
+
+## Dropping a tab into a pane, at a position
+
+The window's vertical bar registers one rectangle per PANE (`RegisterGroupBounds` carves the
+scrolling column into slices), so "dropping anywhere in a pane targets that pane" has always
+worked. What it did not carry was a POSITION: `tabBarTargetAt` answered
+`TabDropTarget.ExistingPanel(panelId)` for any pane but the drag's source, which appended and drew
+no line, so the only way to say where a tab should sit was to move it and then reorder it.
+
+`ExistingPanel` now carries a nullable `targetIndex`, and the slot comes from the SAME arithmetic a
+reorder uses - `reorderIndexFor` over `tabBounds`, filtered to the target pane. Five things about
+that:
+
+- **The rectangles are the target pane's, not the source's.** Tab bounds are keyed
+  `panelId:tabId`, so a pane other than the source has its own measured rows to compare against.
+  Reading the source's is the bug the test `the index comes from the target pane's rows` pins.
+- **Null means append, and it has to stay expressible.** Three drops name a pane and no position
+  in it: the centre of a panel's content area, a sidebar panel dragged out onto one
+  (`ProcessPendingPromoteToTab`), and a bar whose tabs have not been measured yet. Defaulting
+  those to 0 would land the tab at the head of a list the user never pointed at.
+- **The index is carried through UNADJUSTED.** A reorder's is nudged down when the source sat
+  earlier in the same list, because removing the tab shifts everything after it. A cross-pane move
+  takes nothing out of the destination, so the slot the indicator drew is the slot the tab lands
+  in.
+- **`insertionEdgeFor` is the drawing rule, and it is pure.** Every slot is drawn by the row
+  BENEATH it, and the one slot with no row beneath - past the end - rides the last row's trailing
+  edge, so a boundary two rows touch is never drawn twice. `InsertionEdgeTest` asserts that as a
+  property over a whole list ("every slot is drawn exactly once") rather than case by case,
+  because a doubled boundary and a lost final slot each satisfy every individual case.
+- **The pane fill and the line say different things.** The fill (`PanelDropZoneOverlay`) is which
+  pane will take the tab; the line is where in it. Both are wanted, and the line is read through
+  one `derivedStateOf` inside each ROW rather than off `dropTarget` in the bar's body - this bar
+  renders every tab in the window, and `dropTarget` changes at pointer rate. The fill needed the
+  same treatment for the same reason: `ExistingPanel` used to be constant while the pointer moved
+  within one pane, and `RenderSplitNode` read it in its body, so a pane's whole subtree - its tab
+  content included - would now recompose every time the pointer crossed a row. It collapses to
+  `PanelDropHighlight`, three answers that change a handful of times in a drag, read inside the
+  overlay. That moved the overlay to `components/overlays/`, where an overlay belongs and where
+  the package name has no underscores for detekt's `PackageNaming` to reject.
+
+**Pinning still follows the line, and that is not automatic.** `BossMainWindowPanel` draws the
+indicator deliberately AFTER the pinned `SectionBreak`, so a line below the separator means the tab
+lands unpinned. That holds for an arriving tab because `TabDropHandler` adopts it (which appends,
+there being no adopt-at-index on `BossTabsComponent`) and then calls
+`SplitViewState.reorderWithinPanel` - the same helper `moveTabToWorkspace` uses for a named pane -
+which goes through `BossTabsComponent.moveTab` and therefore through `pinnedCountAfterMove`. Reach
+`TabsNavigation.moveTab` directly and the count silently stops matching the separator. The reorder
+runs AFTER `selectTab`, because `TabsNavigation.moveTab` carries `activeIndex` along with the tab
+it moves; selecting afterwards would need the post-move index, which is what the call establishes.
+
+Today the two cannot actually coexist - `showSections` is `!several`, so a multi-pane bar draws no
+separator at all - but the ordering is what makes the rule true if they ever do.
+
+**A collapsed pane springs open under a dragged tab**, after the same 550ms the Top of Mind panel
+gives its own headers (`SPRING_LOAD_DELAY_MS`, a second constant on purpose: nothing links the two
+repositories at compile time). A pane that is not being worked in shows one row plus a favicon
+summary, so the tabs a drop would land between are not on screen to aim at, and
+`TabBarGroup.hoverGroup` is wired to a real pointer hover which a captured drag does not produce.
+Four properties, each a decision:
+
+- **The delay is what makes dragging PAST a group free.** An ordinary drag crosses every group
+  between the tab and its destination, and reflowing at each one would move the target out from
+  under the pointer.
+- **It goes through `TabGroupExpansion.hover`**, the same sticky choice a resting pointer makes,
+  rather than a second notion of "this group is open" for the bar to reconcile.
+- **The pointer and the drag are re-checked AFTER the wait.** Snapshot invalidation and
+  recomposition are not synchronous, so the effect's own key can be stale even though it is what
+  cancelled every earlier attempt.
+- **It only ever OPENS.** Nothing collapses a group, and `barExited` is suppressed while a drag is
+  in flight for the same reason: a group that re-closed on exit would take with it the tabs that
+  were the reason to open it. Only panes that are not already expanded are candidates, so a spring
+  never closes a group the user opened.
+
+One difference from the plugin worth knowing: the plugin gives its collapsed summary row no index,
+because that row stands for whichever tab the pane is showing rather than the tab at position zero.
+The host's single collapsed row carries its true model index (`TabBoundInfo.actualIndex`), so a
+drop on it lands next to the tab that was on screen and needs no exception.
+
 ## A missing plugin no longer fails silently
 
 Browser, editor and terminal tabs are plugin-provided. `addTab` logged "Dropped
@@ -1068,6 +1237,629 @@ dependency prompt once already.
 literal table: the mapping lives in each plugin's `plugin.json` and when the
 plugin is absent there is no manifest to read. It keys on the **type string**, not
 the whole `TabTypeId`, whose equality includes `pluginId` and `defaultOrder`.
+
+## The built-in layouts are TEMPLATES, and picking one materialises it
+
+`PredefinedWorkspaces.allWorkspaces` is the eight layouts BOSS ships, not eight Spaces. Seven are
+parameterised - `{projectPath}`, `{gitRemoteUrl}`, `{currentFile}` and `{claudeContinueFlag}` stand
+in for a project nobody has chosen yet - and applying one resolved those placeholders on the way to
+building its tabs and threw the answers away, so the Space list still said `{projectPath}`
+afterwards and the layout on screen belonged to no Space at all.
+
+**Two different questions, and conflating them is a bug in either direction.**
+
+| | Browser Only | the other seven |
+|---|---|---|
+| a layout BOSS ships (`PredefinedWorkspaces.allIds`) | yes | yes |
+| has placeholders left to substitute (`requiresProject()`) | no | yes |
+
+Being a **TEMPLATE** is the first row: identity, "one of the eight we ship", which is what the Space
+picker groups on. Being **MATERIALISED** on pick is the second: shape, which is what `spaceToOpen`
+gates on. They agree on seven and disagree on Browser Only, a single browser panel on a fixed URL.
+Answering the first question with the second put one of the shipped layouts in with the user's own
+Spaces; answering the second with the first would try to name a copy of it after a project the
+layout does not reference.
+
+`spaceToOpen` (`components/workspaces/WorkspaceTemplate.kt`) is the one door every pick goes
+through, and it MATERIALISES a template: substitutes the placeholders, sets `projectPath`, names it
+`"<Template> (<project>)"`, mints a fresh `LayoutWorkspace.generateId()`, saves it, and hands the
+copy back for the caller to load and apply. Four call sites, deliberately all of them - the Top of
+Mind Space picker (through `SplitViewOperationsImpl.applyWorkspace`), the host's own Space button
+and menu (through `WorkspaceSwitch.resolve`), the home screen's cards
+(`BossAppEventBusEffects`) and the startup "which Space" prompt (`BossAppDialogs`) - because a
+template picked from the fourth of those is the same gesture as one picked from the first.
+
+- **Templates are the SET of built-in ids, and it cannot be a prefix test.**
+  `PredefinedWorkspaces.allIds` is derived from `allWorkspaces`, so a ninth built-in joins by
+  existing; all eight ids are named constants so one can be referred to. `LayoutWorkspace.generateId()`
+  mints `workspace-<epoch millis>`, so a saved Space carries the same `workspace-` prefix as a
+  built-in and `startsWith("workspace-")` would call every Space a template. The NAME is not the key
+  either - a user can save a Space called "Claude Code".
+- **There is deliberately NO `isTemplate` field on `LayoutWorkspace`.** It is the plugin api type,
+  and a new constructor parameter on it rejects every already-built plugin (see the `@JvmOverloads`
+  note on `PanelConfig`). The id it already carries is enough.
+- **Materialising is gated on `requiresProject()`, which is untouched**, and Browser Only must keep
+  answering false to it: `shouldApplyOnFreshStart` declines a layout that needs a project, so if
+  that flipped a new install with no project would come up on an empty window instead of on a
+  browser. Two tests depend on it. The template notion was added alongside it, not over it.
+- **A materialised Space is never a template again by construction**: it gets a fresh
+  `generateId()`, which is not in `allIds`.
+- **The substitution is `WorkspacePlaceholders.processPlaceholders`, not a second pass.** Per-field,
+  and the split is `createTabFromWorkspaceConfig`'s: `initialCommand` is shell content so
+  `{projectPath}` is substituted SHELL-QUOTED there and raw in `url`, `filePath` and
+  `workingDirectory`. Backwards either way is a real bug - an unquoted path with a space in it makes
+  `cd /Users/me/My Project` two arguments, and a quoted one in a `filePath` opens a file whose name
+  contains the quotes. Mutation-verified: swapping the two flags fails two named tests.
+- **The NAME carries the project because a Space's FILE is keyed by name.** `WorkspaceManager`
+  writes to `generateFileName(name)`, so a name without the project would make "Claude Code"
+  against a second project overwrite the first one's file. (The in-memory list is keyed by id -
+  see the next section.)
+- **With no project selected nothing is materialised.** The template is applied exactly as before
+  and a status message says why - the wording the home screen used to refuse the click with, which
+  is now `spaceToOpen`'s rather than a copy of the rule in one call site. A project picker at that
+  moment is a second dialog on top of the one the user just used, and is not built.
+- **Picking Browser Only applies it directly and saves no copy**, which is a decision rather than a
+  gap. There is nothing to put in the copy's name: the seven others are named for the project their
+  placeholders resolve against, this layout references no project, and naming it after whichever
+  project the window happens to have selected would claim a connection the layout does not have. The
+  alternatives are a counter ("Browser Only 2") or an epoch, both of which put a Space in the user's
+  list that they did not ask for and that says nothing about itself, on every pick. Applying the
+  shipped layout is what the tile looks like it does. The picker's section hint is worded to promise
+  neither behaviour for that reason.
+- **An explicit save while on a built-in creates the user's own copy** rather than writing over the
+  shipped entry - see the next section, which is the one rule in the save path this used to want.
+- **The plugin only GROUPS.** Top of Mind's picker has a Templates section, which needs the id set
+  over the api's own types, so `SpaceTemplates.kt` there repeats the eight ids and says so. The
+  drift is the mild direction: a built-in this repo ships and that list does not name shows under
+  Spaces, a tile in the wrong section and nothing else, because the host still owns both applying
+  and materialising. Nothing about those decisions lives on that side - resolving `{gitRemoteUrl}`
+  forks `git` in the project directory, which no plugin can do.
+
+## A saved Space is identified by its id, not its name
+
+`loadAllWorkspaces` deduped saved files against the shipped list **by name**:
+
+```kotlin
+// Only add if not already in predefined list
+if (allWorkspaces.none { ws -> ws.name == workspaceWithId.name }) { … }
+```
+
+Two distinct defects fell out of that one line, and the second is not about templates at all.
+
+- **A save made while the current Space was a built-in was silently discarded on relaunch.** The
+  save wrote the built-in's own id and name, so it landed as `Claude_Code.json` and this dropped it
+  in favour of the shipped entry at the next launch. The Save button exists so a modification
+  survives, so a save that vanishes is the button not working. Reachable on Browser Only always, and
+  on the other seven whenever no project was selected.
+- **A user's own Space vanished if its name happened to match a built-in.** Hand-roll one called
+  "Codex" and it was gone at the next launch, with nothing at all to say it had happened. Nothing to
+  do with templates, and worse than the first because there was no hint.
+
+Both close in `SavedSpaceMerge.kt`:
+
+- **`mergeSavedWorkspaces` dedupes by ID.** A saved file with an id of its own is a distinct Space
+  whatever it is called, so the shipped "Codex" and a user's "Codex" both stand.
+- **`savedCopyOfSlot` stops a save producing a slot's id in the first place.** Saving while the
+  current Space is a shipped layout creates the user's own copy: a fresh `generateId()` and the
+  layout's own name. The shipped entry stays pristine in Templates, which is what a template is
+  for. A name the user TYPED into "Save Space..." is honoured - only the id is forced.
+- **The manager's in-memory list update is keyed by id too.** By name, saving a Space of the user's
+  called "Codex" replaced the SHIPPED Codex in that list, so Templates lost a tile for the rest of
+  the session; and a rename appended a second entry rather than updating the one it renamed, since
+  the new name matched nothing.
+
+### What happens to a file whose id EQUALS a built-in id
+
+These exist on disk right now - the old auto-save wrote the built-in's own id and name every two
+seconds while you worked in one. **Checked rather than reasoned about:**
+`~/Documents/BOSS/workspaces` on the machine this was written on held four
+(`Browser_Only`, `Claude_Code`, `Code_Review`, `Gemini`), fully substituted, up to six tabs, and
+**every one of them was already being dropped on every launch** by the name dedupe.
+
+They are **ADOPTED** as distinct Spaces: id `<built-in id>-saved`, **the file's own name**, and the
+shipped layout stays where it is. The two alternatives are both worse:
+
+- **Dropping** them by id preserves exactly today's behaviour and loses layouts the user may have
+  meant to keep - and there is no way to tell an auto-save dump from a deliberate save, because the
+  old code wrote both identically.
+- **Replacing** the shipped entry takes the pristine template out of the Templates section, which is
+  the section's whole purpose, and files a fully substituted layout under a built-in id - so the
+  picker would call the user's own work a template.
+
+Nobody's disk gets worse: the alternative for these files today is oblivion. Run against a copy of
+that real directory, the merge leaves the eight shipped layouts and Last Session exactly as they
+were and adds `Code Review`, `Browser Only`, `Claude Code` and `Gemini` - the names their files
+carry, with no suffix. See the next section.
+
+Three properties of the adoption worth keeping:
+
+- **The derived id is deterministic, not generated.** A `generateId()` there would mint a different
+  id for the same file on every launch, so nothing could refer to that Space across a restart - the
+  session set records ids, and so does every preserved-state key.
+- **It cannot be mistaken for either kind of id.** No built-in id ends in `-saved`, and
+  `generateId()` produces `workspace-<epoch millis>`, so an adopted id is recognisable as one. The
+  plugin's template set is the eight literal ids, so an adopted Space files under Spaces.
+- **Nothing is rewritten on disk.** The migration is in memory, so a launch that reads a legacy file
+  cannot half-write anything, and the file keeps the name the user sees in the folder.
+
+Two saved files claiming one id keep the **newer** `timestamp` - reachable by hand-copying a file,
+and reachable through the adoption itself once the user re-saves an adopted Space.
+
+`SavedSpaceMergeTest` round-trips through a real `WorkspaceFileManager` on a temp directory, because
+the defect lived in the seam between writing and reading: the write was fine and the read threw it
+away, so a test on either half alone passes against the bug. Restoring the name dedupe fails
+`a saved Space named exactly like a built-in survives a reload`; dropping the new-id-on-save fails
+`a save made while on a built-in is still there after a reload`; both together - the code as it
+shipped - fail eight.
+
+Everything that was still keyed by name is id-keyed now - see the next section.
+
+## A name is identity; "unsaved" is state
+
+The Space button and the Open Space dialog showed `Code Review (unsaved)`. Wrong twice over: those
+four Spaces are real files on disk, and a name carrying a save-state word sat directly beside the
+dot and save button that report the actual state. The word was changed three times - `(saved)`,
+`(custom)`, `(unsaved)` - instead of being removed, which was the wrong fix each time.
+
+**Why the suffix was load-bearing, and why deleting it alone would have been data loss.**
+`WorkspaceFileManagerCommon.generateFileName` derived the path by sanitising the display NAME, and
+`DesktopWorkspaceFileManager` atomically replaces whatever sits there. One name was one file, so two
+Spaces sharing a name shared a file and the second save destroyed the first layout while both rows
+stayed in the list. A suffix on derived names made that collision improbable.
+
+It was **already reachable with no suffix in sight**, which is what settled fixing the path rather
+than the word: `materialisedTemplateName` minted a fresh id with no uniqueness check, so
+materialising one template twice against one project gave two ids and one file, and a name typed
+into "Save Space..." bypassed `uniqueWorkspaceName` entirely.
+
+### The path is the id
+
+`WorkspaceFileManagerCommon.fileNameForId` - copied from `WorkspaceServiceImpl.persistToDisk`, which
+has written `<id>.json` all along. An id is unique by construction, so the collision is impossible
+rather than improbable, and the name is free to be whatever the user wants.
+
+- **Nothing is rewritten or renamed on disk by an upgrade.** `loadAllWorkspaces` already read every
+  file's id out of its contents, so it now records an `id -> fileName` map as it scans and
+  `fileNameFor` prefers it. A Space read out of `Code_Review.json` keeps saving into
+  `Code_Review.json`; only a NEW Space gets `<id>.json`. Same in-memory-migration discipline as
+  `mergeSavedWorkspaces`, and for the same reason: a launch that half-wrote would be worse than any
+  naming.
+- **A rename no longer moves a file.** Writing the renamed Space to the same path IS the rename,
+  where the name-derived path needed a write-then-delete pair that left the old file behind whenever
+  the write failed.
+- **`generateFileName` survives as a reader only**, for the legacy paths already on disk.
+- **A reserved-path collision disappears as a class.** `generateFileName("Last Session Set")`
+  resolved to `Last_Session_Set.json`, so a Space with that name overwrote the session record and
+  was then skipped on load, and nothing refused the name. Ids are `workspace-*` or `last-session`,
+  so no id can land there.
+- **The id is sanitised too**, because it is a path component now and one read out of a hand-edited
+  file is arbitrary text.
+
+### Everything else is keyed on the id
+
+`isUserOwnedSpace(id)` replaced four copies of `allWorkspaces.any { it.name == … }`, and
+`deletableWorkspaces` is the one filter both `WorkspaceButton` call sites use. `deleteWorkspaceById`
+and `renameWorkspaceById` are the real implementations; the name-keyed forms resolve a name to ONE
+Space and delegate, because those signatures are the plugin api's shape. The delete dialog selects
+by id and reports an id - it selected by NAME, so two Spaces sharing one ticked together and the
+delete resolved to whichever the list found first, a way to destroy the wrong Space by pointing at
+the right one.
+
+Three duplicate-name failures that the path change alone does not cover, all now id-keyed:
+
+- `deleteWorkspace` **filtered the list by name**, so BOTH rows vanished while one file was deleted
+  and `onWorkspaceDeleted` fired once - the second Space gone from every list with its tabs never
+  torn down and its file still on disk.
+- `renameWorkspace` **mapped every matching row** to one value.
+- `importWorkspace` wrote the file and then declined to add a row when the name matched anything
+  already listed, so Open from File appeared to do nothing at all.
+
+And two name equalities on the session record, which was a live bug independent of naming: the
+watcher **re-stamped a Space merely CALLED "Last Session" with the record's identity** and never
+wrote its file again, and the startup restore would have loaded that Space instead of the record.
+Both read `id == LAST_SESSION_ID` now, which is also why `reservedNameRefused` could go: a Space may
+be called "Last Session" and be an ordinary Space.
+
+### The suffix is gone
+
+An adopted Space and a saved copy both take the plain name. `uniqueWorkspaceName` stays for genuine
+**user-vs-user** collisions, and the two paths that bypassed it - a typed name and
+`materialisedTemplateName` - go through it now.
+
+**It numbers against other SPACES only** (`savedSpaceNames`), never against the shipped layouts. A
+Space is allowed to be called "Code Review" while the shipped Code Review exists, because they are
+two sections of the picker. Numbering against the shipped names is not hypothetical: the first run
+of the round trip turned all four recovered Spaces into "Code Review 2".
+
+### Verified on a copy of the real directory
+
+`RecoveredSpacesRoundTripTest` runs against a copy of `~/Documents/BOSS/workspaces`, never the
+directory itself, and skips when the fixture is absent so CI stays green. Five files load; the merge
+produces the eight templates, the record, and four Spaces named `Code Review`, `Browser Only`,
+`Claude Code`, `Gemini`. All six source files stayed byte-identical (SHA-256 compared before and
+after), and its second test saves a recovered Space and asserts the write landed on
+`Gemini.json` - the file it was loaded from - with no second file created.
+
+Two failing-before tests justify the track, in `SpaceNameIsNotAPathTest`:
+
+- **two Spaces with one name both survive a save and reload with their own layouts.** Restoring the
+  name-derived path fails it, by destroying one layout.
+- **a Space named exactly like a template is the user's, so it can be deleted and renamed.**
+  Restoring the name-keyed deletable filter fails it.
+
+Re-adding the suffix to the adopted name fails `a Space adopted from a legacy file keeps the name
+the file carries` and the round trip. One mutation attempt did NOT fail anything and had to be
+replaced: `isUserOwnedSpace` takes only an id, so a faithful reproduction of the old veto has to be
+made on `deletableWorkspaces`, where the row's name is in scope.
+
+## Unsaved Spaces, and the save button in the vertical bar
+
+There was no dirty tracking in the app, only the bookkeeping for one:
+`TabTreeState.modifiedWorkspaces` was written from three places and READ FROM NONE, a leftover of
+the deleted host-side Top of Mind. It is gone; the state lives on `WorkspaceManager` now, where the
+vertical bar can watch it.
+
+- **`WorkspaceManager.unsavedWorkspaces` is a `Map<windowId, Set<workspaceId>>`, and the per-window
+  part is not optional.** Two windows run different Spaces and each one's layout is its own; one
+  flat set would light the Save button in a window with nothing to save the moment the other window
+  was edited. The window reports, exactly as it already reports which Spaces it is running through
+  `setWindowWorkspaces`, because the live layout only exists in its `SplitViewState`.
+- **The flag is DERIVED from both halves, so nothing has to remember to clear it.** The layout
+  watcher in `BossAppStartupEffects` recomputes on every extract, and a second collector recomputes
+  on every change to `workspaceManager.workspaces` - which is where a successful write lands. So
+  the File menu's Save Space and the bar's own button turn the affordance off by writing the file,
+  and neither calls a "mark saved". The saved side is read through `savedCopyOf`, off `workspaces`,
+  and deliberately NOT off `currentWorkspace` - a distinction that is now load-bearing twice over.
+  `updateCurrentWorkspace` writes the live layout into `currentWorkspace` BEFORE a save is
+  attempted, so comparing against it would read clean when a write was queued rather than when it
+  landed; and since the watcher stopped writing named Spaces, `currentWorkspace` runs ahead of the
+  file on purpose (see below), which is exactly the difference the mark is about.
+
+### The comparison, which was measured rather than reasoned
+
+`saved != live` is PERMANENTLY TRUE, and `WorkspaceDirtyStateTest` drives the real extractor and the
+real applier to prove each normalisation. What the first run printed:
+
+```
+two extracts of an UNCHANGED window
+  id        workspace-1788834771145   vs   workspace-1788834771152
+  timestamp 1788834771145             vs   1788834771152
+  layout    equal
+
+the SAME Space, extracted right after applying it
+  saved panel ids   [main, split--1997346227960953891]
+  live  panel ids   [main, split-2247261763438958480]
+  tabs, pinned counts and split shape all equal
+```
+
+So `comparable()` strips exactly four things, and each one is a false positive rather than
+leniency:
+
+- **`id` and `timestamp`**, because `extractCurrentWorkspace` mints a `generateId()` and reads the
+  clock on every call - it is a snapshot of a layout, not a Space.
+- **`name` and `description`**, because the extractor always writes "Current" / "Current layout
+  workspace" where the saved copy carries the Space's own. They are the saved Space's identity;
+  the live layout has no opinion about them.
+- **Panel ids, renumbered by POSITION**, because `applyWorkspace` throws the saved ids away
+  (`clearAllPanels()` then `splitPanel`, which mints one per pane) and maps panes back by position
+  in the tree. A saved id is a record of the session that wrote it and can never match the session
+  reading it. Renumbered rather than dropped: two panes in one tree have to stay distinguishable,
+  or a tab moved from the left pane to the right would compare equal to where it started.
+- **`breadcrumbConfig`**, the one reasoned entry: nothing in the app reads or writes it, so the
+  extractor can only ever produce the default, and a hand-edited file carrying anything else would
+  be permanently unsaved with no way for the user to clear it.
+
+What is NOT normalised, each with a test: the split shape, which pane holds which tab and in what
+order, each pane's `pinnedCount`, and `projectPath`. Three mutations are verified - dropping the
+panel-id renumbering, keeping the timestamp, and treating a missing saved copy as clean - and each
+fails a named test.
+
+### The affordance
+
+`SpaceRow` in `app/SpaceSaveAffordance.kt` wraps the vertical bar's Space button and puts a save
+button beside it while there is something to save. It presses
+`MenuActionsHandler.triggerSaveWorkspace(windowId)`, which is the File menu's own Save Space, so
+there is one save path rather than two.
+
+- **The Space button takes the Row's WEIGHT and the save button does not.** A `Row` measures its
+  unweighted children first, so the save button's 24dp is taken out before the 130dp label gets
+  anything. The other way round is the failure `HostActionsFlowRow` measured: a `Row` too narrow
+  for its children hands the LAST one zero width rather than clipping it, so the button silently is
+  not there at a width the user can reach by dragging. `SpaceSaveAffordanceLayoutTest` mounts the
+  row at the bar's 120dp floor and asserts the button's SIZE, not only its position, because a
+  zero-width rect at the origin is inside every bounds check that will ever be written. Dropping
+  the weight fails that test.
+- **Sized against `BossActionButton` in COMPACT mode**: a 24dp target around a 13dp glyph, which is
+  the bar's own leading-icon size, not the 20dp `iconSize` an icon-only top bar button gets.
+- **The Space is marked too, on its GLYPH rather than its label.** The label is capped at 130dp
+  with an ellipsis, so a marker appended to the text is the first thing a project-length Space name
+  truncates away. `signalText`, not `signal`: it is drawn as a glyph, and `signal` is the fill
+  token, held to no text contrast floor. The hint says it in words as well, because a colour is not
+  a sentence.
+- **The STATE has its own mark, and the description leads with it.** A floppy glyph labelled "Save
+  this space" is what a save button looks like whether or not anything has changed, so the one thing
+  the affordance exists to say was carried only by its presence. There is a filled dot between the
+  Space button and the save button now - the editor vocabulary for "modified", the same mark the
+  Space menu prints beside a running Space, and unmistakably not something to press - and the
+  description reads "Unsaved changes - press to save this space". Same `signalText` as the glyph at
+  6dp, so the three marks read as one thing saying one thing rather than three announcements. No
+  `contentDescription` on the dot: a screen reader would otherwise hear the state twice.
+- **A window with NO Space loaded reads as saved, deliberately.** It is a short-lived state - the
+  layout watcher writes the first change out as "Last Session" and the manager then has a current
+  Space - so lighting a button there would be a control that appears and vanishes on a new window.
+  "Never saved at all" is still covered for any Space that has an id, by `isUnsaved`'s
+  null-saved-copy branch: a template applied as-is has a list entry that still says `{projectPath}`
+  and no file matching the layout on screen.
+- **Last Session is ALWAYS marked unsaved, and getting that backwards hid the whole feature.**
+  See the next section: it is the state every launch lands in.
+
+### The watcher could not see a tab being added
+
+`snapshotFlow { extractCurrentWorkspace(…) }` re-emits when a **Compose snapshot** read inside it
+changes. Three kinds of layout state are Compose state and were observed all along: the split tree
+(`SplitViewState._rootNode`), each pane's `_pinnedCount`, and each tab's own `title`, `currentUrl`
+and `workingDirectory`. The fourth is not: `BossTabsComponent.tabsState` is a **Decompose `Value`**,
+and `WorkspaceExtractor` reads it as `node.tabsComponent.tabsState.value` - a plain property read
+that registers no snapshot read at all.
+
+So adding a tab changed nothing the watcher was watching. Nothing re-extracted, so the Space was
+never marked unsaved and nothing reached the Last Session record. Closing, reordering, pinning and
+a cross-pane move are the same blind spot; pinning turned out to be covered already, because
+`_pinnedCount` is `mutableStateOf`, so the affected set is exactly the ones that change the tab
+LIST: add, close, reorder, and move between panes (including the `detachTab`/`adoptTab` transfer).
+
+`SplitViewState.tabListChanges()` is the missing subscription. The bridge is the one the app already
+uses for this same `Value` - `subscribeAsState()` in `BossBottomBar` and `BossMainWindowPanel`
+inside a composition, a `callbackFlow` over `Value.subscribe` outside one - and the watcher now
+merges two sources, each the plain observation of its own kind of state.
+
+- **Observing the source, not counting mutations.** A revision counter would have to be bumped in
+  `addTab`, `removeTab`, `moveTab`, `reorderWithinPanel`, `detachTab` and `adoptTab`, and one
+  missed call site is this same silent bug again. The subscription cannot miss a mutation, because
+  the mutation is what publishes it.
+- **The outer half re-subscribes.** It is a `snapshotFlow` over the panel list, so a pane created by
+  a split gets a subscription too; a one-shot subscribe would leave every tab added to a new split
+  invisible. That is its own named test, and reducing the outer flow to `flowOf` fails it.
+- **`.conflate()`**, because a cross-pane move publishes twice, once either side, and the watcher
+  needs one re-extract rather than two.
+
+**A unit test on `isUnsaved` cannot catch this and did not.** Both halves were right in isolation -
+the extractor reads the tabs, the comparison notices the difference - and the SUBSCRIPTION between
+them was missing, which is exactly why it shipped with tests passing. `TabListChangesTest` collects
+the real flow against a real `SplitViewState` and mutates it. Unsubscribing the tab source fails
+four named tests, `adding a tab is observed` among them.
+
+**The bigger consequence, which is older than the save button.** This same flow is the only
+in-session writer of `Last_Session.json` (the other writer is the shutdown coordinator). So a tab
+added was NOT in the recovery record until some later tree, pin or title change happened to trigger
+an extract. Bounded twice over, which is why it was never reported as data loss:
+
+- **A clean exit is unaffected.** `LastSessionCoordinator` extracts fresh at teardown and writes
+  blocking, so closing the window, Cmd+Q, `quitForUpdate` and SIGTERM all record a complete layout.
+  Only a hard kill - SIGKILL, a native crash - never reaches the shutdown hook, and that is exactly
+  the case the record exists for.
+- **A window with a live browser or terminal re-extracted anyway**, because those update their
+  titles constantly and a title IS snapshot state. A window of editor tabs, whose titles are
+  static, is where the record went stale.
+
+Repaired by the same one change, since it is one flow; nothing was done to Last Session itself.
+
+### Last Session is a slot, not a document
+
+The mark used to be suppressed on Last Session, reasoning that the watcher keeps the record current
+so the file really does hold what is on screen. **True about the file and wrong about the user**, and
+wrong in the state that matters most: every launch restores Last Session as the current Space
+(`BossAppStartupEffects` finds the record by `LAST_SESSION_NAME` and loads it), so the affordance
+could never appear on a fresh launch, and the mark cleared itself inside the settle window - the
+exact defect already fixed once for named Spaces, surviving in the most visible place there is.
+
+**The record existing is not the same as the user's work being saved.** `last-session` is one
+app-level slot, overwritten on every layout change and by every window; nothing in it is
+addressable, nameable, or safe from the next session. Treating "the record matches the screen" as
+"saved" conflates a crash-recovery buffer with a document.
+
+- **`spaceIsUnsaved` answers Last Session unconditionally**, and the manager's per-window set is
+  left honest about DISK. Those are different questions and they disagree exactly here: `isUnsaved`
+  compares the live layout against a file that really does match it. Putting the exception in the
+  affordance's rule rather than in `reportUnsaved` keeps `savedCopyOf`-derived state from lying.
+- **Unconditional, rather than "only once the layout changed since the restore".** The earlier
+  argument against lighting a control the instant a window opens was about FLICKER - the no-Space
+  state lasts about two seconds and then goes away by itself, and a control that appears and
+  vanishes is noise. This mark is stable: it stays until the user saves, which is the action it
+  offers. The alternative needs a frozen per-window baseline captured at restore and reset on every
+  switch, which is more state in order to say "nothing is saved" slightly later.
+- **A window with NO Space still reads saved.** That one is the real flicker case, and the branch
+  above takes over the moment the watcher gives it a current Space.
+
+### Saving out of a slot
+
+`isSpaceSlot` is now the eight shipped layouts **and** `last-session`, and `savedCopyOfSlot` writes
+a new Space for either - a fresh `generateId()` and a name that collides with nothing.
+
+- **`"Last Session"` can never become a saved Space's name**, however it is asked for.
+  `loadAllWorkspaces` resolves the record BY NAME, so a second claim on it would make which one
+  restores a matter of scan order. `reservedNameRefused` drops it even when the user types it, and
+  a name is derived instead.
+- **The derived name differs by kind of slot**, because they have different things to say. A
+  shipped layout gives `"<Name> (saved)"`, since a copy of Claude Code is recognisably that. Last
+  Session gives `"Workspace <epoch seconds>"` - the convention the save path ALREADY uses for a
+  window with no current Space, so there is one answer to "keep this unnamed thing" rather than
+  two. `"Last Session (saved)"` would name the copy after a slot rather than after anything the
+  user recognises.
+- **A name the user typed still wins** (the "Save Space..." dialog asks), the reserved one aside.
+- **The result is an ordinary document**: a `generateId()` id, so it is not a slot and not a
+  template, it appears under Spaces, and its mark comes from the manager's set like any other
+  Space's.
+- **Known, and the judgement call:** `"Workspace 1788845279"` is not a nice name. Routing the bar's
+  button to the naming dialog instead would need a second save path - `WorkspaceButton` owns its
+  save dialog as an internal `remember` - and "one save path" is the property that keeps the File
+  menu, the bar and the plugin agreeing. The Space menu can rename it.
+
+**Last Session keeps recording afterwards**, which is the trade this must not make: after the save
+the window is in a named Space, and `layoutWatcherWrite` still returns the record as the only file
+it writes. Pinned by a test that follows the whole sequence - restore, edit, save out, edit again -
+and asserts the record still holds the layout on screen.
+
+`LastSessionIsNotADocumentTest` carries the headline, and **its second clause is the bug**: a test
+that only checks the instant after a tab is added passes against the old code, because `isUnsaved`
+was briefly true before the watcher rewrote the record. So it runs the watcher's write and asks
+again. Restoring the suppression fails it, and fails "reads unsaved even before anything is
+touched" too.
+
+### The watcher does not write a named Space any more
+
+The layout watcher used to write the Space you were working in two seconds after every change. That
+made "unsaved" a state that lasted two seconds and cleared itself, which is a save button that can
+never usefully be pressed - so the affordance above needed the auto-save changed rather than the
+comparison. Editor semantics now: the buffer is dirty until you save, and the file stays at its
+last explicit save. **An explicit save is the only thing that writes a named Space** - the bar's
+button and the File menu, both through `MenuActionsHandler.triggerSaveWorkspace`.
+
+`layoutWatcherWrite` (`components/workspaces/LayoutWatcherWrite.kt`) owns the decision and returns
+two things that have to agree:
+
+- **`record`** is the Last Session record, and the only file the watcher touches. It is written on
+  the same cadence as before (`LAYOUT_SETTLE_MS`), whichever Space is on screen - which is
+  **stronger than what it replaced, not weaker**. Before, working in a named Space wrote that Space
+  and left `Last_Session.json` stale from whenever the window last had no Space; the recovery record
+  now tracks the live layout the whole time. It is the only thing between an unsaved layout and a
+  crash, because the multi-Space set is written at shutdown and a hard kill never reaches that.
+- **`current`** is what the manager should hold as the window's current Space: the live layout under
+  the identity it already has. This is the dependency that is easy to lose along with the write.
+  `WorkspaceDataProvider` gives a plugin no way to reach the split tree, so Top of Mind's Save
+  button saves whatever the manager holds - and dropping the `updateCurrentWorkspace` would have
+  made that button silently save the layout as of load time. So the in-memory copy still tracks the
+  live layout; only the file write went away. A named Space keeps its own id, name and description,
+  so the watcher can never rename the Space someone is working in.
+
+`WorkspaceManager.saveLastSessionRecord` is the write. It refreshes the list entry (because
+`savedCopyOf` reads that list to answer "what is on disk") and deliberately does NOT touch
+`currentWorkspace`, which is the caller's to set.
+
+**What depended on the old behaviour, checked before removing it.** Nothing reads a named Space's
+file except the switch path, and only when there is no preserved tree to restore instead: applying a
+Space tries `restorePreservedState` first, so switching away and back within a session uses the live
+tree either way. The rebuild-from-file case is reached when the user answered CLOSE to the
+keep-or-close prompt (`WorkspaceSwitchAction`, default ASK), which is a user saying to throw that
+layout away - editor semantics again. `exportWorkspace` serialises whatever it is handed and reads
+no file. The Space picker's tiles draw the SAVED `SplitConfig`, so an unsaved split now shows as
+saved for longer - a cost that plugin's own docs already state, with the floors view as the live
+picture.
+
+`LayoutWatcherWriteTest` models the disk as a map keyed by NAME, which is how `WorkspaceManager`
+keys a write, so "which file did that write land on" is answerable. It pins that a named Space is
+still unsaved after the watcher has run and across repeated intervals, that an explicit save is what
+clears it, and that the Last Session record does hold the live layout. Reinstating the old write is a
+mutation that fails five of them.
+
+## Last Session is a SET of Spaces, not one Space
+
+A window RUNS several Spaces at once and shows one of them: `SplitViewState.preserveCurrentState`
+keeps the whole split tree of each, with live browsers and terminals in it. The session record was
+ONE `LayoutWorkspace` stamped `last-session`, so a restart brought back whichever Space happened to
+be on screen and silently dropped the rest.
+
+`LastSessionSet` (`components/workspaces/LastSessionSet.kt`) records every Space the window was
+running plus which one was showing. `restoreLastSessionSet` (`app/LastSessionSetRestore.kt`) brings
+them all back.
+
+- **ADDITIVE, in its own file.** `Last_Session_Set.json`, beside the Spaces. Not a field on
+  `LayoutWorkspace` (the plugin api type, member-checked against 33 plugin repos) and not a change
+  to `Last_Session.json`, which an installed build has on disk right now and which must keep
+  restoring.
+- **The old file goes on being written, unchanged, every session.** `saveLastSessionBlocking` is
+  untouched, so after a new-format save the directory holds BOTH: `Last_Session.json` with the
+  layout that was on screen, and `Last_Session_Set.json` with all of them. Three things follow, all
+  deliberate: a downgrade still restores the Space that was showing, the "Last Session" entry the
+  Space list has always had is still there, and restore reads the SET first and falls back to the
+  single file when there is none.
+- **A set is written only for two or more Spaces, and DELETED otherwise.** One running Space is
+  exactly what the old file records, and a second file saying the same thing is a second thing that
+  can disagree. The delete is not tidiness: the set is read in preference to the single file, so a
+  set left over from a three-Space session would reopen two Spaces the user had closed.
+  `sessionSetOf` answers both, and `isRestorable` asks the same question on the way back in.
+- **Still ONE writer, still app-level (Issue #19).** `LastSessionCoordinator` allows exactly one
+  window to produce the session record per session - every window's dispose used to write its own
+  layout into the one record, so closing a secondary window overwrote the primary's. That has not
+  changed: the set is a second write under the SAME claim, in `writeLastSession`, so the two files
+  are produced together by one window and cannot describe different sessions. A separate writer for
+  the set would have reintroduced #19 by another route.
+- **The active Space is restored LAST.** Applying a Space replaces what is on screen, so the last
+  apply is what is left showing; `restoreOrder` puts everything else first. Each Space is preserved
+  before the next is applied - the ordinary apply-then-preserve pair a workspace switch performs, so
+  a restored Space is a running Space in every sense and switching back to it restores a tree rather
+  than rebuilding a layout. There is no second mechanism.
+- **The preserve reads `splitViewState.currentWorkspaceId`, not the previous iteration.**
+  `preserveCurrentState` stores under the id it is CURRENTLY holding while its arguments describe
+  the workspace being left, so an apply that threw halfway - which leaves the split state holding
+  the id it had reached - would otherwise file its partial tree under the previous Space's name.
+- **One Space failing does not take the rest**, and above all not the active one, which is applied
+  last. Each apply is guarded and logged.
+- **Only the FIRST apply restores the project.** Every entry carries the WINDOW's project, because a
+  window has one at a time and every extracted tab already holds real absolute paths - so nothing in
+  the restore depends on a per-Space path, and what it decides is which project the window comes
+  back in. Selecting it must happen before any tabs are built, since `applyWorkspace` resolves the
+  directory its terminals open in from the window's selection.
+- **`WorkspaceManager.loadAllWorkspaces` skips the set file by NAME.**
+  `WorkspaceFileManager.listWorkspaces` is "every `*.json` in the directory" and the manager reads
+  each as a Space, so without the skip the set is deserialized as one on every launch, fails and
+  logs a warning for ever. `LastSessionSetTest` asserts that the set IS listed by the scan, so the
+  reason for the skip cannot be forgotten.
+- **`WorkspaceFileManager.writeDocumentBlocking` is one verb for write and remove**, `content =
+  null` meaning absent. The caller has one intention - make the record on disk be the truth - and
+  the class was at detekt's function ceiling.
+
+Known limit: a Space in the set whose id is not in `workspaceManager.workspaces` when the next
+`workspaces` emission arrives has its preserved state dropped by
+`SplitViewState.cleanupDeletedWorkspaces`, which removes preserved trees for Spaces that no longer
+exist. In practice every id in a set came from that list, since a Space has to have been opened to
+be running; the case that reaches it is a Space whose file was deleted while it was running, where
+dropping it is the existing behaviour.
+
+## The product word is "Space", the code word is `workspace`
+
+What a person reads in BOSS is a **Space**. What the code calls it is still `workspace`,
+everywhere. That split is deliberate: do not "finish the rename".
+
+**Renamed (display only)**: button and menu labels, dialog titles and bodies, tooltips, content
+descriptions, empty states, toasts, the Settings sidebar entry and its section titles and option
+descriptions, the Shortcuts category and its action descriptions, and MCP tool descriptions.
+
+**Kept as `workspace`**, each because changing it breaks something real:
+
+- **Identifiers** - `workspaceId`, `WorkspaceManager`, `LayoutWorkspace`, `WorkspaceDataProvider`,
+  `moveTabToWorkspace`, packages, files, classes, parameters. The plugin api under
+  `plugin-platform/` is consumed by 33 plugin repos and is binary-checked
+  (`WorkspaceStableFieldTest`, `PanelConfigBinaryCompatTest`); a member rename rejects every plugin.
+- **Action and permission ids** - `"workspace.save"` and anything of that shape. Matched as strings.
+- **Persisted keys and paths** - `BOSS/workspaces`, `workspace-settings.json`, serialized field
+  names, ids like `"workspace-claude-code"` and `"last-session"`.
+- **Workspace NAMES**, including defaults - `"Default Workspace"`, `"My Workspace"`,
+  `"Last Session"`, and the generated `"Workspace <epoch>"` with its `"Saved workspace"`
+  description. `WorkspaceDataProvider.deleteWorkspace(name)` and `WorkspaceManager` match by NAME,
+  so renaming a default orphans lookups against files already on a user's disk. This is the trap
+  that looks most like a UI string: check what a string is USED for before changing it.
+- **`boss://` hosts and parameter names**, the `boss workspace` CLI subcommand and its `--help`
+  prose (help that names a different word than the command it documents is worse than the old
+  word), MCP tool NAMES (`tabs_list`, `tab_move`), and `LogCategory.WORKSPACE`.
+- **Log message text.** Operator-facing diagnostics that people grep across versions, sitting
+  right beside the identifiers.
+
+**Settings search keeps the old word.** `workspaceEntries()` and `startupEntries()` in
+`SettingsSearchEntries.kt` carry `"workspace"`/`"workspaces"` keywords next to the new "Space"
+labels, plus a `sectionLevel` catch-all, so a year of habit still finds the page.
+`SettingsSearchIndexDriftTest` scans the sources, so a renamed `SettingsSection(title = ...)` has
+to be renamed in the index in the same commit.
+
+**Comments were left alone**, apart from two that quote a label that changed. A comment sitting
+next to `workspaceId` while saying "space" reads worse than either word on its own. Note that
+detekt baseline signatures embed KDoc and string text, so editing a comment inside a baselined
+declaration invalidates its baseline entry.
+
+Two user-visible strings deliberately still say "workspace", because there the word is generic
+English rather than the Space concept: the auth brand headline "The governed workspace for AI
+agents" (`AuthBrandArt.kt` and `auth-brand/index.html`) and the Toolbox wizard's "Customize your
+workspace by selecting the tools you need." Tools install app-wide, not into a Space.
 
 ## Documentation
 

@@ -57,7 +57,7 @@ fun SelectWorkspaceDialog(
 
     BossAlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Open a workspace") },
+        title = { Text("Open a space") },
         text = {
             Column(modifier = Modifier.widthIn(min = DIALOG_MIN_WIDTH)) {
                 Text(
@@ -69,7 +69,7 @@ fun SelectWorkspaceDialog(
 
                 if (workspaces.isEmpty()) {
                     Text(
-                        text = "No workspaces are available yet.",
+                        text = "No spaces are available yet.",
                         color = BossTheme.colors.textSecondary,
                         fontSize = 12.sp,
                     )

@@ -733,11 +733,24 @@ fun BossDraggableComponent.BossTopLeftBar(
 
     // Workspace button
     if (workspaceManager != null && onApplyWorkspace != null) {
+        // The menu rows are marked here as well as in the vertical bar's copy: it is the same
+        // menu answering the same question, and a state mark that appeared in only one of the two
+        // window configurations would make them disagree about the same Space. With the top bar on
+        // the vertical bar's footer is not drawn at all, so these rows are the ONLY place this
+        // window reports unsaved work.
+        //
+        // The button's own `unsaved` tint is deliberately NOT passed. A mark on the bar would sit
+        // in a dense row of chrome with no way to answer it: the save action is inside this
+        // button's Options submenu, so a mark in the MENU is next to its remedy while a mark on
+        // the button is not. Giving the top bar a save affordance of its own is a design change
+        // rather than a mark, and is left as follow-up work.
+        val unsavedWorkspaces by workspaceManager.unsavedWorkspaces.collectAsState()
         WorkspaceButton(
             onOpenWorkspace = onApplyWorkspace,
             workspaceManager = workspaceManager,
             getCurrentWorkspace = getCurrentWorkspace,
             onShowTopOfMind = onShowTopOfMind,
+            unsavedWorkspaceIds = unsavedWorkspaces[windowId].orEmpty(),
         )
     }
 
