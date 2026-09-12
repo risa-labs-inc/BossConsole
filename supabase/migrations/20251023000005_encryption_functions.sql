@@ -5,6 +5,17 @@
 -- Description: Core encryption/decryption functions for securing sensitive data.
 --              All encryption uses AES-256 with base64 encoding (NOT PGP).
 --              Master encryption key stored securely in Supabase Vault.
+--
+-- SUPERSEDED by 20260913000000_authenticated_secret_encryption.sql. The
+-- construction below is retained only as history; the "AES-256" claim was wrong
+-- as written. The 3-arg extensions.encrypt(plaintext, key, 'aes') used an
+-- all-zero IV (deterministic ciphertext) and encryption_key::bytea keyed on the
+-- ASCII bytes of the hex key rather than hex-decoding it, so pgcrypto kept only
+-- the first 32 characters - 128 bits of key material, not 256 - with no
+-- integrity tag. The forward migration replaces encrypt_text / decrypt_text with
+-- a versioned v2 envelope (random IV, encrypt-then-MAC, hex-decoded 32-byte key)
+-- and backfills existing rows. Editing this historical file would not change an
+-- installed database, which is why the fix ships as a new migration.
 -- Dependencies:
 --   - File 1: extensions_and_types.sql (pgcrypto extension)
 --   - Supabase Vault: master_encryption_key secret must be created

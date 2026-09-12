@@ -11,7 +11,11 @@
 --   - File 5: encryption_functions.sql (encrypt_text, decrypt_text) - created after
 --   - Note: Tables will be created in File 10 (secret_tables.sql)
 -- Functions: 9 total
--- Encryption: AES-256 + base64 encoding via encrypt_text()
+-- Encryption: via encrypt_text(). NOTE: the original "AES-256" description was
+--   inaccurate for the construction shipped here (deterministic, 128-bit key,
+--   no integrity); corrected by 20260913000000_authenticated_secret_encryption.sql,
+--   which makes encrypt_text a versioned v2 envelope (AES-256-CBC, random IV,
+--   encrypt-then-MAC). These callers are unchanged: the envelope is self-describing.
 -- Database Tables Used:
 --   - secrets: Main credential storage
 --   - secret_metadata: 2FA configuration (optional, one-to-one)

@@ -84,7 +84,10 @@
 --
 -- Encryption:
 --   - Passwords encrypted via encrypt_text() function
---   - Encryption method: AES-256 + base64 encoding
+--   - Encryption method: see encrypt_text(). The "AES-256" wording here described
+--     a construction that was actually deterministic and 128-bit; corrected by
+--     20260913000000_authenticated_secret_encryption.sql (versioned v2 envelope:
+--     AES-256-CBC, random IV, encrypt-then-MAC), which also backfills these columns.
 --   - Master key retrieved from Supabase Vault
 --   - Decryption via decrypt_text() function
 --

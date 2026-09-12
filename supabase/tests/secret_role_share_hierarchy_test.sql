@@ -14,7 +14,7 @@ begin;
 select plan(11);
 
 select vault.create_secret(
-    'cGd0YXAtaGllcmFyY2h5LWtleS0zMi1ieXRlcy1vaw',
+    '4444444444444444444444444444444444444444444444444444444444444444',
     'master_encryption_key',
     'pgTAP test key (transaction-local)');
 

@@ -195,9 +195,9 @@ declare existing uuid;
 begin
   select id into existing from vault.secrets where name = 'master_encryption_key';
   if existing is null then
-    perform vault.create_secret('cGd0YXAtdGVzdC1rZXktMzItYnl0ZXMtYWVzLW9r', 'master_encryption_key', 'transaction-local fixture');
+    perform vault.create_secret('5555555555555555555555555555555555555555555555555555555555555555', 'master_encryption_key', 'transaction-local fixture');
   else
-    perform vault.update_secret(existing, 'cGd0YXAtdGVzdC1rZXktMzItYnl0ZXMtYWVzLW9r', 'master_encryption_key', 'transaction-local fixture');
+    perform vault.update_secret(existing, '5555555555555555555555555555555555555555555555555555555555555555', 'master_encryption_key', 'transaction-local fixture');
   end if;
 end $fixture$;
 set local role authenticated;

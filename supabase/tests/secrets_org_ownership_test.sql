@@ -17,7 +17,7 @@ select plan(33);
 -- Vault key (rolled back). Without it encrypt_text raises and nothing works.
 -- ---------------------------------------------------------------------------
 select vault.create_secret(
-    'cGd0YXAtdGVzdC1rZXktMzItYnl0ZXMtYWVzLW9r',
+    '2222222222222222222222222222222222222222222222222222222222222222',
     'master_encryption_key',
     'pgTAP test key (transaction-local)');
 

@@ -33,7 +33,11 @@
 do $$
 declare
   old_key    text;
-  new_key    text := encode(extensions.gen_random_bytes(32), 'base64');
+  -- Hex, not base64: since 20260913000000 encrypt_text hex-decodes the vault key
+  -- to a 32-byte AES-256 key and rejects anything else, so the key the rotation
+  -- installs must be the documented `openssl rand -hex 32` form or every write
+  -- after the swap would fail.
+  new_key    text := encode(extensions.gen_random_bytes(32), 'hex');
   fingerprint_key bytea := extensions.gen_random_bytes(32);
   secret_id  uuid;
   backup_name text;
@@ -169,9 +173,13 @@ begin
     raise exception 'Unmapped encrypted column; extend rotation coverage before running';
   end if;
 
-  -- The old key may be the documented hex string or a deployed base64 key.
-  -- Decrypt with its original bytes, then encrypt with the new key's bytes;
-  -- equal textual lengths are not a cryptographic requirement.
+  -- Since 20260913000000 the stored form is a versioned 'v2:' envelope
+  -- (AES-256-CBC under a random IV, encrypt-then-MAC), and public.encrypt_text
+  -- hex-decodes the vault key. Re-encryption goes through
+  -- public.rekey_secret_envelope, which reads either a v2 body (HMAC-verified,
+  -- hex-decoded old key) or a legacy zero-IV row (old key's ASCII bytes) and
+  -- always writes a fresh v2 envelope under the hex new key - so a rotation
+  -- upgrades any legacy row and never reproduces the old deterministic form.
 
   -- 0. Every mapped row must be readable through its own read path BEFORE we
   -- touch anything. The safe_decrypt_* wrappers return NULL rather than raising,
@@ -228,12 +236,9 @@ begin
   for i in 1 .. array_length(cols, 1) loop
     execute format($f$
       update public.%1$I
-         set %2$I = %4$L || pg_catalog.encode(
-               extensions.encrypt(
-                 extensions.decrypt(pg_catalog.decode(pg_catalog.substr(%2$I, %5$s),'base64'), $1::bytea, 'aes'),
-                 $2::bytea, 'aes'), 'base64')
+         set %2$I = public.rekey_secret_envelope(%2$I, %4$L, $1, $2)
        where %2$I is not null
-    $f$, cols[i][1], cols[i][2], cols[i][3], cols[i][4], (length(cols[i][4]) + 1)::text)
+    $f$, cols[i][1], cols[i][2], cols[i][3], cols[i][4])
       using old_key, new_key;
   end loop;
 

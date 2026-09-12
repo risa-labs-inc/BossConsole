@@ -3,7 +3,7 @@
 -- function replacements and trigger changes are rolled back; never run on live data.
 BEGIN;
 SELECT no_plan();
-SELECT vault.create_secret('totp-test-key-0123456789abcdef0123', 'master_encryption_key', 'pgTAP only');
+SELECT vault.create_secret('1111111111111111111111111111111111111111111111111111111111111111', 'master_encryption_key', 'pgTAP only');
 INSERT INTO auth.users (id, email) VALUES
     ('d1700000-0000-4000-8000-000000000001', 'totp-owner@pgtap.test'),
     ('d1700000-0000-4000-8000-000000000002', 'totp-recipient@pgtap.test'),
