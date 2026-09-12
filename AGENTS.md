@@ -1141,6 +1141,17 @@ POLICY_PERSIST_FAILED and withhold the current execution. A queued approval cann
 replace a newer DENY or reset: each reset invalidates older authorizations before their
 final approval boundary, including queued once/session/persistent grants. Calls already
 authorized to execute are not cancelled. Reset remains host UI only, not an MCP tool.
+“Trust This Plugin” persists a provider-wide ALLOW covering every tool that provider
+contributes - weaker than an explicit tool-specific rule, reviewed and reset from
+“Trusted plugins” in the bottom bar rather than “Persisted MCP policies”. The same
+reset-invalidates-queued-grants guarantee applies to it: the write rechecks the
+prompting tool's revocation and DENY state under the policy lock, so a reset landing
+while the dialog is open refuses the write and withholds that call instead of persisting
+a grant the reset was meant to invalidate. Unlike the per-tool path, a provider-wide
+write that fails for a genuine disk error (not a stale-dialog refusal) still runs the
+already-approved call, falling back to session trust for that one tool only - a
+deliberate asymmetry, since the operator already approved the call in hand and a disk
+fault should not retroactively withhold it.
 Preserve a backup before manual recovery of a damaged policy;
 the fault flow withholds all tools until recovery. No automatic quarantine UI is
 provided. Ledger redaction is bounded and best effort, not a guarantee for secrets

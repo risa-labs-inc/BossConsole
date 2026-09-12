@@ -820,8 +820,13 @@ internal fun BossAppDialogs(state: BossAppState) {
         McpApprovalDialog(
             request = approvalRequest,
             pendingQueueSize = pendingList.size,
-            onApprove = { trustForSession, persistPolicy ->
-                McpToolRegistryImpl.approvalBus.approve(approvalRequest.id, trustForSession, persistPolicy)
+            onApprove = { trustForSession, persistPolicy, trustProvider ->
+                McpToolRegistryImpl.approvalBus.approve(
+                    approvalRequest.id,
+                    trustForSession,
+                    persistPolicy,
+                    trustProvider,
+                )
             },
             onDeny = { reason, persistPolicy ->
                 McpToolRegistryImpl.approvalBus.deny(approvalRequest.id, reason, persistPolicy)
@@ -945,7 +950,7 @@ internal fun BossAppDialogs(state: BossAppState) {
                                 state.currentDefaultPlugin?.pluginToastState?.show(
                                     ToastMessage(
                                         type = ToastType.SUCCESS,
-                                        // Neutral for a plan, because an element that became present between
+// Neutral for a plan, because an element that became present between
                                         // consent and install is a no-op success and "Plugins" would overstate.
                                         title = if (plan.order.size > 1) "Install complete" else "Plugin installed",
                                         message =

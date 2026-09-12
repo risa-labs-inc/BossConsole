@@ -49,19 +49,25 @@ import androidx.compose.ui.window.DialogProperties
  * Interactive dialog prompted when an AI agent attempts to execute a tool
  * governed by an ASK policy.
  *
- * Four scopes an operator can choose, in increasing durability: approve or deny just this one
+* Four scopes an operator can choose, in increasing durability: approve or deny just this one
  * call, trust it for the rest of this session only, or persist a rule to
  * `~/.boss/mcp-tool-policy.json` so the same tool never asks again - across restarts, not just
  * this run. The engine behind the persisted scope ([ai.rever.boss.mcp.McpPolicyEngine
  * .setToolPolicy]) already existed and was already tested; this dialog was the only thing
  * standing between it and an operator who wanted to use it without hand-editing that file.
+ *
+ * "Trust This Plugin" persists an ALLOW for every tool [McpApprovalRequest.providerId]
+ * contributes, not just this one call or this one tool - the answer to a plugin whose tools get
+ * approved one at a time in the same session. It is weaker than an explicit per-tool rule (see
+ * [ai.rever.boss.mcp.McpPolicyEngine.policyFor]), and revocable from "Trusted plugins" in the
+ * bottom bar.
  */
 @Composable
 @Suppress("LongMethod") // Declarative Compose layout.
 fun McpApprovalDialog(
     request: McpApprovalRequest,
     pendingQueueSize: Int = 1,
-    onApprove: (trustForSession: Boolean, persistPolicy: Boolean) -> Unit,
+    onApprove: (trustForSession: Boolean, persistPolicy: Boolean, trustProvider: Boolean) -> Unit,
     onDeny: (reason: String, persistPolicy: Boolean) -> Unit,
 ) {
     val colors = BossTheme.colors
@@ -211,6 +217,32 @@ fun McpApprovalDialog(
                     )
                 }
 
+                // Provider-wide trust: a separate, visually secondary row, not another button in
+                // the main action row - it is the broadest grant this dialog can make (every
+                // tool the plugin contributes, not just this one, and persisted across restarts),
+                // so it should take a deliberate reach rather than sit next to "Approve Once"
+                // where a fast click could land on it by mistake.
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Trusts every tool from \"${request.providerId}\", across restarts.",
+                        fontSize = 10.sp,
+                        color = colors.textSecondary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    TextButton(
+                        onClick = { onApprove(false, false, true) },
+                        colors = ButtonDefaults.textButtonColors(contentColor = colors.warn),
+                    ) {
+                        Text("Trust This Plugin", fontSize = 11.sp)
+                    }
+                }
+
                 if (showReasonInput) {
                     Spacer(modifier = Modifier.height(12.dp))
                     OutlinedTextField(
@@ -260,7 +292,7 @@ fun McpApprovalDialog(
                     Spacer(modifier = Modifier.width(8.dp))
 
                     TextButton(
-                        onClick = { onApprove(false, true) },
+                        onClick = { onApprove(false, true, false) },
                         colors = ButtonDefaults.textButtonColors(contentColor = colors.warn),
                     ) {
                         Text("Always Allow", fontSize = 11.sp)
@@ -298,7 +330,7 @@ fun McpApprovalDialog(
                     Spacer(modifier = Modifier.width(8.dp))
 
                     OutlinedButton(
-                        onClick = { onApprove(true, false) },
+                        onClick = { onApprove(true, false, false) },
                         border = ButtonDefaults.outlinedBorder,
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.textPrimary),
                     ) {
@@ -308,7 +340,7 @@ fun McpApprovalDialog(
                     Spacer(modifier = Modifier.width(8.dp))
 
                     Button(
-                        onClick = { onApprove(false, false) },
+                        onClick = { onApprove(false, false, false) },
                         colors = ButtonDefaults.buttonColors(backgroundColor = colors.signal),
                     ) {
                         Text("Approve Once", color = colors.onSignal, fontSize = 12.sp)
