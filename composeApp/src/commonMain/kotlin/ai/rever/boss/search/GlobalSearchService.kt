@@ -375,17 +375,18 @@ object GlobalSearchService {
         for (tab in tabs) {
             val title = tab.tabInfo.title
             val titleMatch = FuzzyMatcher.match(query, title, title.lowercase())
-            
+
             var tabUrl: String? = null
             var tabFilePath: String? = null
             var urlScore: Int? = null
             var filePathScore: Int? = null
+            val tabInfo = tab.tabInfo
 
-            if (tab.tabInfo is ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo) {
-                tabUrl = (tab.tabInfo as ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo).currentUrl
+            if (tabInfo is ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo) {
+                tabUrl = tabInfo.currentUrl
                 urlScore = proseScore(query, queryLower, tabUrl)
-            } else if (tab.tabInfo is ai.rever.boss.plugin.tab.codeeditor.EditorTabInfo) {
-                tabFilePath = (tab.tabInfo as ai.rever.boss.plugin.tab.codeeditor.EditorTabInfo).filePath
+            } else if (tabInfo is ai.rever.boss.plugin.tab.codeeditor.EditorTabInfo) {
+                tabFilePath = tabInfo.filePath
                 filePathScore = FuzzyMatcher.match(query, tabFilePath, tabFilePath.lowercase())?.score
             }
 
