@@ -1,3 +1,4 @@
+import { limitPasskeyRequest } from "../utils/request-limits.ts"
 import { createRoute, OpenAPIHono } from "@hono/zod-openapi"
 import type { PasskeyContext } from "../types/context.ts"
 import { requireAuthenticatedCaller } from "../utils/authorization.ts"
@@ -13,6 +14,7 @@ import {
 } from "../types/schemas.ts"
 
 const management = new OpenAPIHono<{ Variables: PasskeyContext }>()
+management.use("*", limitPasskeyRequest)
 
 /**
  * Resolves the account these management routes may act on.
