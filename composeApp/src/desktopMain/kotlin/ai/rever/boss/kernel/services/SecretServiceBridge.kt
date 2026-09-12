@@ -1,5 +1,6 @@
 package ai.rever.boss.kernel.services
 
+import ai.rever.boss.ipc.auth.ProcessIdentityInterceptor
 import ai.rever.boss.ipc.proto.services.*
 import ai.rever.boss.plugin.api.CreateSecretRequestData
 import ai.rever.boss.plugin.api.SecretDataProvider
@@ -8,11 +9,28 @@ import ai.rever.boss.plugin.api.SecretShareData
 import ai.rever.boss.plugin.api.ShareSecretRequestData
 import ai.rever.boss.plugin.api.UnshareSecretRequestData
 import ai.rever.boss.plugin.api.UpdateSecretRequestData
+import ai.rever.boss.plugin.logging.BossLogger
+import ai.rever.boss.plugin.logging.LogCategory
+import io.grpc.Status
+import io.grpc.StatusException
 
+/**
+ * Kernel-side proxy over the password vault (BossConsole#53).
+ *
+ * Every RPC here reads or mutates a user's stored credentials - `getUserSecrets` returns
+ * plaintext passwords and TOTP recovery codes, and `shareSecret`/`unshareSecret` grant or revoke
+ * another user's or role's access to them. None of that was gated on who was calling: any process
+ * that could open a connection to the kernel IPC server, not only the plugins the host itself
+ * loaded, could read or reshare every secret the signed-in user owns. [authenticatedCallerOrRefuse]
+ * closes that the same way [PluginUIServiceBridge] and BossConsole#53's other bridges do - refusing
+ * a call with no verified [ProcessIdentityInterceptor] identity rather than letting it through to a
+ * provider that does not itself distinguish callers.
+ */
 class SecretServiceBridge(
     private val provider: SecretDataProvider,
 ) : SecretServiceGrpcKt.SecretServiceCoroutineImplBase() {
     override suspend fun getUserSecrets(request: SecretPaginatedRequest): PaginatedSecretsResponse {
+        authenticatedCallerOrRefuse("GetUserSecrets")
         val result = provider.getUserSecrets(request.limit, request.offset)
         return result.fold(
             onSuccess = { paginated ->
@@ -34,6 +52,7 @@ class SecretServiceBridge(
     }
 
     override suspend fun getUserSecretsWithSharingInfo(request: SecretPaginatedRequest): PaginatedSecretsWithSharingResponse {
+        authenticatedCallerOrRefuse("GetUserSecretsWithSharingInfo")
         val result = provider.getUserSecretsWithSharingInfo(request.limit, request.offset)
         return result.fold(
             onSuccess = { paginated ->
@@ -76,6 +95,7 @@ class SecretServiceBridge(
     }
 
     override suspend fun searchSecrets(request: SearchSecretsRequest): PaginatedSecretsResponse {
+        authenticatedCallerOrRefuse("SearchSecrets")
         val result = provider.searchSecrets(request.query, request.limit, request.offset)
         return result.fold(
             onSuccess = { paginated ->
@@ -97,6 +117,7 @@ class SecretServiceBridge(
     }
 
     override suspend fun createSecret(request: CreateSecretProtoRequest): SecretOperationResult {
+        authenticatedCallerOrRefuse("CreateSecret")
         val result =
             provider.createSecret(
                 CreateSecretRequestData(
@@ -115,6 +136,7 @@ class SecretServiceBridge(
     }
 
     override suspend fun updateSecret(request: UpdateSecretProtoRequest): SecretOperationResult {
+        authenticatedCallerOrRefuse("UpdateSecret")
         val result =
             provider.updateSecret(
                 UpdateSecretRequestData(
@@ -133,10 +155,13 @@ class SecretServiceBridge(
         return result.toOperationResult()
     }
 
-    override suspend fun deleteSecret(request: SecretIdRequest): SecretOperationResult =
-        provider.deleteSecret(request.id).toOperationResult()
+    override suspend fun deleteSecret(request: SecretIdRequest): SecretOperationResult {
+        authenticatedCallerOrRefuse("DeleteSecret")
+        return provider.deleteSecret(request.id).toOperationResult()
+    }
 
     override suspend fun getSecretShares(request: SecretIdRequest): SecretShareListResponse {
+        authenticatedCallerOrRefuse("GetSecretShares")
         val result = provider.getSecretShares(request.id)
         return result.fold(
             onSuccess = { shares ->
@@ -152,6 +177,7 @@ class SecretServiceBridge(
     }
 
     override suspend fun shareSecret(request: ShareSecretProtoRequest): SecretOperationResult {
+        authenticatedCallerOrRefuse("ShareSecret")
         val result =
             provider.shareSecret(
                 ShareSecretRequestData(
@@ -166,6 +192,7 @@ class SecretServiceBridge(
     }
 
     override suspend fun unshareSecret(request: UnshareSecretProtoRequest): SecretOperationResult {
+        authenticatedCallerOrRefuse("UnshareSecret")
         val result =
             provider.unshareSecret(
                 UnshareSecretRequestData(
@@ -219,4 +246,26 @@ class SecretServiceBridge(
                     .build()
             },
         )
+
+    /**
+     * The verified identity behind this call, or a thrown `PERMISSION_DENIED` when there is none.
+     *
+     * Fails closed, same as [PluginUIServiceBridge]'s helper of the same name: a call with no
+     * credential, or one [ProcessIdentityInterceptor] could not resolve to a live process, is
+     * refused here rather than reaching [provider] with a caller nothing has vouched for.
+     */
+    private fun authenticatedCallerOrRefuse(rpc: String): String =
+        ProcessIdentityInterceptor.AUTHENTICATED_PROCESS_ID.get() ?: run {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Refused $rpc: no verified process identity on this call",
+            )
+            throw StatusException(Status.PERMISSION_DENIED.withDescription(NO_IDENTITY))
+        }
+
+    private companion object {
+        val logger = BossLogger.forComponent("SecretServiceBridge")
+
+        const val NO_IDENTITY = "This call presented no verified process identity"
+    }
 }
