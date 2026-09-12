@@ -221,4 +221,51 @@ class WindowFocusManagerTest {
         tracker.onUnregistered("window-b")
         assertFalse(tracker.isFocused("window-b"))
     }
+
+    @Test
+    fun `focusWindow restores an ICONIFIED frame to NORMAL`() {
+        if (java.awt.GraphicsEnvironment.isHeadless()) return
+        val frame = java.awt.Frame("Test")
+        javax.swing.SwingUtilities.invokeAndWait { WindowFocusManager.registerWindow("test-id-iconified", frame) }
+        try {
+            frame.state = java.awt.Frame.ICONIFIED
+            val result = WindowFocusManager.focusWindow("test-id-iconified")
+            assertTrue(result)
+
+            // Wait for EDT to process the SwingUtilities.invokeLater block
+            javax.swing.SwingUtilities.invokeAndWait {}
+
+            assertEquals(java.awt.Frame.NORMAL, frame.state)
+            assertTrue(frame.isVisible)
+        } finally {
+            javax.swing.SwingUtilities.invokeAndWait { WindowFocusManager.unregisterWindow("test-id-iconified") }
+            frame.dispose()
+        }
+    }
+
+    @Test
+    fun `focusWindow keeps a NORMAL frame in NORMAL state`() {
+        if (java.awt.GraphicsEnvironment.isHeadless()) return
+        val frame = java.awt.Frame("Test")
+        javax.swing.SwingUtilities.invokeAndWait { WindowFocusManager.registerWindow("test-id-normal", frame) }
+        try {
+            frame.state = java.awt.Frame.NORMAL
+            val result = WindowFocusManager.focusWindow("test-id-normal")
+            assertTrue(result)
+
+            javax.swing.SwingUtilities.invokeAndWait {}
+
+            assertEquals(java.awt.Frame.NORMAL, frame.state)
+            assertTrue(frame.isVisible)
+        } finally {
+            javax.swing.SwingUtilities.invokeAndWait { WindowFocusManager.unregisterWindow("test-id-normal") }
+            frame.dispose()
+        }
+    }
+
+    @Test
+    fun `focusWindow preserves failure behavior for invalid or unregistered target`() {
+        val result = WindowFocusManager.focusWindow("invalid-unregistered-id")
+        assertFalse(result)
+    }
 }

@@ -546,6 +546,10 @@ actual object WindowFocusManager {
                     window.isVisible = true
                 }
 
+                if (window is java.awt.Frame && window.state == java.awt.Frame.ICONIFIED) {
+                    window.state = java.awt.Frame.NORMAL
+                }
+
                 // Bring to front
                 window.toFront()
 
@@ -567,6 +571,10 @@ actual object WindowFocusManager {
                 // Make window visible if minimized
                 if (!window.isVisible) {
                     window.isVisible = true
+                }
+
+                if (window is java.awt.Frame && window.state == java.awt.Frame.ICONIFIED) {
+                    window.state = java.awt.Frame.NORMAL
                 }
 
                 // Bring to front
