@@ -2,6 +2,7 @@ package ai.rever.boss.app
 
 import ai.rever.boss.components.plugin.DefaultPlugin
 import ai.rever.boss.components.plugin.PluginUpdateRegistry
+import ai.rever.boss.components.plugin.currentPluginHealth
 import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
 import ai.rever.boss.components.plugin.tab_types.registerPanelHostTab
 import ai.rever.boss.components.registery.PanelComponentStoreRegistry
@@ -21,6 +22,7 @@ import ai.rever.boss.components.workspaces.resolveOnProjectSelection
 import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.consumePendingInitialProject
 import ai.rever.boss.consumePendingInitialTab
+import ai.rever.boss.health.WorkspaceHealthSources
 import ai.rever.boss.performance.BrowserTabInfo
 import ai.rever.boss.performance.EditorTabResourceInfo
 import ai.rever.boss.performance.PerformanceState
@@ -423,7 +425,15 @@ internal fun BossAppStartupEffects(state: BossAppState) {
         ai.rever.boss.services.editor.EditorAPIAccess
             .initialize(plugin)
 
+        // Let `boss status` and `boss doctor` report this window's plugin health. DefaultPlugin's
+        // init already created the manager, so a health query reads it and creates nothing.
+        val pluginHealthSource = { currentPluginHealth(plugin.dynamicPluginManager) }
+        WorkspaceHealthSources.registerPlugins(windowId, pluginHealthSource)
+
         onDispose {
+            // Unregister first, before the plugin is disposed, so a health query never reads a disposed manager.
+            WorkspaceHealthSources.unregisterPlugins(windowId, pluginHealthSource)
+
             // NOTE: Browser disposal moved to main.kt onCloseRequest handler
             // Browsers must be disposed BEFORE Compose disposal begins, not during it
             // See main.kt onCloseRequest for the disposeAllBrowsersBlocking() call

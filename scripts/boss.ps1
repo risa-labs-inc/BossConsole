@@ -128,6 +128,7 @@ function Show-Help {
     Write-Host ""
     Write-Host "Commands:"
     Write-Host "  status                 Queries status and health of the running BOSS instance"
+    Write-Host "  doctor                 Reports problems in the running BOSS instance (exit 2 when degraded)"
     Write-Host "  mcp <action> [args]    Discovers and invokes desktop MCP tools (list, describe, invoke)"
     Write-Host "  completion <shell>     Generates shell completion script (bash, zsh, fish)"
     Write-Host "  url <url>              Opens a URL in Fluck browser"
@@ -237,7 +238,7 @@ switch ($Command.ToLower()) {
         Open-BossDeepLink $deepLink
     }
 
-    { $_ -in "status", "mcp", "completion" } {
+    { $_ -in "status", "doctor", "mcp", "completion" } {
         $bossExe = $env:BOSS_EXE
         if ($bossExe -and -not (Test-Path $bossExe -PathType Leaf)) {
             [Console]::Error.WriteLine("Error: BOSS_EXE does not name an executable file.")

@@ -191,6 +191,7 @@ class BossStatusCommand : CliktCommand(name = "status") {
                     val heapPct = mem["heapPercent"]?.jsonPrimitive?.contentOrNull ?: "?"
                     appendLine("  JVM Memory:     ${used}MB / ${max}MB ($heapPct%)")
                 }
+                healthSummaryOf(element)?.let { appendLine("  Health:         $it") }
             } catch (_: Exception) {
                 appendLine(rawJson)
             }
@@ -565,6 +566,7 @@ fun createBossCLI(): BossCommand =
         BossFolderCommand(),
         BossTerminalCommand(),
         BossStatusCommand(),
+        BossDoctorCommand(),
         BossMcpCommand(),
         BossCompletionCommand(),
     )
