@@ -41,6 +41,8 @@ class SettingsSearchIndexDriftTest {
             // BrowserEngineSettings: staging progress, not controls.
             "Staged - restart to apply",
             "Status",
+            "Installed version",
+            "Target version",
         )
 
     /**

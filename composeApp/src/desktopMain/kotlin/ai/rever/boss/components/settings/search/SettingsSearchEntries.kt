@@ -316,14 +316,12 @@ private fun defaultAppsEntries() =
 
 private fun browserEngineEntries() =
     section(SettingsSection.BROWSER_ENGINE) {
-        group("Current Engine")
-        setting("Installed version", "Current Engine", "chromium", "jxbrowser")
-        setting("App default version", "Current Engine")
-        group("Engine Version")
-        setting("Engine version", "Engine Version", "chromium", "jxbrowser", "update")
-        setting("Download and stage the selected version", "Engine Version")
-        setting("Staged - restart to apply", "Engine Version")
-        setting("Status", "Engine Version")
+        group("Embedded Browser Engine")
+        setting("Installed version", "Embedded Browser Engine", "chromium", "jxbrowser")
+        setting("Target version", "Embedded Browser Engine")
+        setting("Download and stage the target version", "Embedded Browser Engine")
+        setting("Staged - restart to apply", "Embedded Browser Engine")
+        setting("Status", "Embedded Browser Engine")
         group("Effective Chromium command line")
         setting("Active this session", "Effective Chromium command line")
         setting("After the next restart", "Effective Chromium command line")

@@ -1,5 +1,4 @@
 {
-  "version": "9.3.0",
   "win": {
     "executableName": "boss-browser",
     "processDisplayName": "BOSS",
