@@ -10,6 +10,7 @@ import ai.rever.boss.config.JxBrowserConfig
 import ai.rever.boss.platform.FileNameSanitizer
 import ai.rever.boss.platform.FileSystemUtils
 import ai.rever.boss.platform.MacOSScreenCapture
+import ai.rever.boss.platform.confirmExecutableDownload
 import ai.rever.boss.platform.pickSaveFile
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.plugin.ui.BossThemeController
@@ -3256,16 +3257,24 @@ object FluckEngine {
                     if (!FileSystemUtils.ensureParentDirectoryExists(savePath)) {
                         // Bailing before setupDownloadEventListeners means none of the three
                         // terminal handlers will run, so the claim is released here or never.
-                        FileSystemUtils.releaseFilePath(savePath, owner = downloadId)
-                        action.cancel()
+                        cancelPendingDownload(savePath, downloadId, downloadUrl, activeDownloadUrls, action::cancel)
                         return@StartDownloadCallback
                     }
 
-                    // Warn for executable files
-                    if (downloadSettings.warnForExecutables &&
-                        FileNameSanitizer.isExecutableFile(sanitizedFileName)
+                    // Warn for executable files. Read live from BrowserSettings, not the
+                    // unpersisted downloadSettings copy, so a toggle in Settings > Browser >
+                    // Downloads applies to this download without an application restart.
+                    if (!executableDownloadAllowed(
+                            BrowserSettings.warnForExecutables,
+                            sanitizedFileName,
+                            savedFileName,
+                            ::confirmExecutableDownload,
+                        )
                     ) {
-                        // TODO: Show user warning dialog (for now, just proceed)
+                        // Same cleanup as the parent-directory-failure bail above: none of
+                        // the three terminal handlers will run, so the claim is released here.
+                        cancelPendingDownload(savePath, downloadId, downloadUrl, activeDownloadUrls, action::cancel)
+                        return@StartDownloadCallback
                     }
 
                     // Start the download
@@ -3320,8 +3329,8 @@ object FluckEngine {
                     // Initiate the download
                     action.download(downloadPath)
                 } else {
-                    // User cancelled save dialog
-                    action.cancel()
+                    // No terminal listener is registered when the save dialog is cancelled.
+                    cancelPendingDownload(null, downloadId, downloadUrl, activeDownloadUrls, action::cancel)
                 }
             },
         )

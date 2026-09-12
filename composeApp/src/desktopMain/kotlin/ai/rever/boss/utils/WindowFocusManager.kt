@@ -532,6 +532,19 @@ actual object WindowFocusManager {
         )
 
     /**
+     * Every registered window, ordered the same way [resolveActionableWindowId] prioritizes ids -
+     * the resolved id's window first (when it still resolves to one), then every other registered
+     * window. For a caller that needs an actual usable owner rather than just an id: a window this
+     * function names can be disposed-but-not-yet-unregistered (the EDT unregister hasn't run yet),
+     * so a caller like [ai.rever.boss.platform.pickDialogOwner] still has to check `isDisplayable`
+     * itself - this only fixes "which windows are worth checking", not "is the first one usable".
+     */
+    fun candidateWindowsForDialogOwner(): List<Window> {
+        val primary = resolveActionableWindowId()?.let(::getWindow)
+        return listOfNotNull(primary) + windows.values.filter { it !== primary }
+    }
+
+    /**
      * Bring a specific window to front by its ID
      *
      * @param windowId The ID of the window to focus

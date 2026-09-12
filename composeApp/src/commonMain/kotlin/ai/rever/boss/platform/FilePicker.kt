@@ -42,3 +42,16 @@ expect fun pickSaveFile(
     initialDirectory: String? = null,
     allowedExtensions: List<String> = emptyList(),
 ): String?
+
+/**
+ * Synchronously asks the user to confirm downloading a file recognized as executable
+ * (see [ai.rever.boss.platform.FileNameSanitizer.isExecutableFile]). Used for the
+ * download-start handler, which currently waits for consent before answering the
+ * asynchronous JxBrowser callback, just as [pickSaveFile] waits for a save location.
+ *
+ * @param fileName The name of the file being downloaded, shown in the prompt
+ * @return true if the user chose to proceed, false to cancel the download (including
+ *   when the confirmation dialog itself could not be shown - the safer default for a
+ *   warning that exists to stop an unwanted executable landing on disk)
+ */
+expect fun confirmExecutableDownload(fileName: String): Boolean

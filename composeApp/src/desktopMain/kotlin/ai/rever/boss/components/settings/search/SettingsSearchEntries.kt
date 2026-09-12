@@ -223,6 +223,19 @@ private fun EntryScope.fileAndLinkEntries() {
     setting("Reset Link Behavior", "Terminal Links")
 }
 
+private fun EntryScope.downloadsEntries() {
+    group("Downloads")
+    setting(
+        "Warn before downloading executable files",
+        "Downloads",
+        "executable",
+        "exe",
+        "download warning",
+        "malware",
+        "security",
+    )
+}
+
 private fun browserEntries() =
     section(SettingsSection.FLUCK) {
         group("Default Browser")
@@ -253,6 +266,7 @@ private fun browserEntries() =
         group("User Agent")
         setting("Browser Identity", "User Agent", "user agent", "ua", "spoof")
         setting("Custom User Agent String", "User Agent", "ua string")
+        downloadsEntries()
         fileAndLinkEntries()
         group("Secret Manager")
         setting(

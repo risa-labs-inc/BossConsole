@@ -193,6 +193,27 @@ fun FluckBrowserSettings() {
             }
         }
 
+        // Downloads
+        SettingsSection(title = "Downloads") {
+            var warnForExecutables by remember { mutableStateOf(BrowserSettings.warnForExecutables) }
+
+            SettingsToggle(
+                label = "Warn before downloading executable files",
+                checked = warnForExecutables,
+                onCheckedChange = { enabled ->
+                    warnForExecutables = enabled
+                    BrowserSettings.warnForExecutables = enabled
+                    coroutineScope.launch {
+                        BrowserSettingsManager.saveSettings()
+                    }
+                },
+                description =
+                    "Ask for confirmation before saving a file with a recognized executable " +
+                        "extension. Filename checks, save location and cancellation still apply " +
+                        "either way.",
+            )
+        }
+
         // Default Browser
         DefaultBrowserSection()
 
