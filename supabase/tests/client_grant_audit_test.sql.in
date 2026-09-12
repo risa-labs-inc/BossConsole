@@ -1,0 +1,119 @@
+-- Exercise the standing client-grant audit against the real schema, then prove
+-- each check detects the shape it exists for and ignores the shapes it must not.
+begin;
+select plan(10);
+
+create temporary table grant_snapshot as
+\ir ../audit/client_grant_audit.sql
+
+-- ---------------------------------------------------------------------------
+-- Gates on the live schema.
+-- ---------------------------------------------------------------------------
+select is(finding, 'HEALTHY', "check") from grant_snapshot
+where "check" = 'CHECK G1: client-reachable table without RLS';
+
+-- G2 is asserted as a subset rather than as HEALTHY, on purpose. The two
+-- policies named below are the open bug that #538 removes, and they are still
+-- on `dev` at the time of writing. Writing `is(finding, 'HEALTHY')` here would
+-- fail today; writing `is(finding, '<those two>')` would pass today and then
+-- fail the moment #538 merged, which is a landmine for whoever merges it. The
+-- subtraction below passes in both states and still fails on anything NEW, so
+-- it gates the regression without encoding the bug's lifetime. When #538 lands,
+-- the array can be emptied and this becomes a plain HEALTHY assertion.
+select is(
+  (select coalesce(
+            nullif(
+              array_to_string(
+                array(
+                  select unnest(string_to_array(finding, ', '))
+                  except
+                  select unnest(array[
+                    'plugin_api_key_logs.Service role can insert API key logs',
+                    'secret_access_log.secret_access_log_insert'
+                  ])
+                ), ', '),
+              ''),
+            'HEALTHY')
+   from grant_snapshot
+   where "check" = 'CHECK G2: permissive write policy for a client role'),
+  'HEALTHY',
+  'no permissive client write policy beyond the two #538 removes'
+);
+
+-- ---------------------------------------------------------------------------
+-- Detection fixtures. A check that never fires proves nothing, so each check is
+-- shown naming a planted violation and staying silent on its near misses.
+-- ---------------------------------------------------------------------------
+
+-- G1: granted to a client role, no RLS. The violation.
+create table public.pgtap_grant_no_rls(id int);
+grant select on public.pgtap_grant_no_rls to authenticated;
+
+-- G1 near miss: same grant, RLS on.
+create table public.pgtap_grant_with_rls(id int);
+alter table public.pgtap_grant_with_rls enable row level security;
+grant select on public.pgtap_grant_with_rls to authenticated;
+
+-- G1 near miss: no RLS, but no client role can reach it either.
+create table public.pgtap_grant_unreachable(id int);
+revoke all on public.pgtap_grant_unreachable from anon, authenticated;
+
+-- G2: permissive INSERT with no TO clause, which is the shape that applies to
+-- PUBLIC and produced all three recurrences.
+create table public.pgtap_policy_open_insert(id int);
+alter table public.pgtap_policy_open_insert enable row level security;
+grant insert on public.pgtap_policy_open_insert to authenticated;
+create policy pgtap_open_insert on public.pgtap_policy_open_insert
+  for insert with check (true);
+
+-- G2: scoped USING, permissive WITH CHECK on UPDATE. Reachable row, any shape.
+create table public.pgtap_policy_open_update(id int, owner uuid);
+alter table public.pgtap_policy_open_update enable row level security;
+grant update on public.pgtap_policy_open_update to authenticated;
+create policy pgtap_open_update on public.pgtap_policy_open_update
+  for update to authenticated using (owner = auth.uid()) with check (true);
+
+-- G2 near miss: permissive, but the grantee is not a client role. This is
+-- exactly #538's replacement policy and it must stay silent.
+create table public.pgtap_policy_service_role(id int);
+alter table public.pgtap_policy_service_role enable row level security;
+create policy pgtap_service_write on public.pgtap_policy_service_role
+  for insert to service_role with check (true);
+
+-- G2 near miss: permissive SELECT. Read exposure is CHECK 3's question.
+create table public.pgtap_policy_open_select(id int);
+alter table public.pgtap_policy_open_select enable row level security;
+grant select on public.pgtap_policy_open_select to authenticated;
+create policy pgtap_open_select on public.pgtap_policy_open_select
+  for select to authenticated using (true);
+
+-- G2 near miss: a write policy that actually restricts.
+create table public.pgtap_policy_scoped_write(id int, owner uuid);
+alter table public.pgtap_policy_scoped_write enable row level security;
+grant insert on public.pgtap_policy_scoped_write to authenticated;
+create policy pgtap_scoped_write on public.pgtap_policy_scoped_write
+  for insert to authenticated with check (owner = auth.uid());
+
+create temporary table grant_planted as
+\ir ../audit/client_grant_audit.sql
+
+select ok(finding like '%pgtap_grant_no_rls%', 'G1 names a client-granted table without RLS')
+from grant_planted where "check" = 'CHECK G1: client-reachable table without RLS';
+select ok(finding not like '%pgtap_grant_with_rls%', 'G1 ignores the same table once RLS is on')
+from grant_planted where "check" = 'CHECK G1: client-reachable table without RLS';
+select ok(finding not like '%pgtap_grant_unreachable%', 'G1 ignores a table no client role can reach')
+from grant_planted where "check" = 'CHECK G1: client-reachable table without RLS';
+
+select ok(finding like '%pgtap_open_insert%', 'G2 names a permissive INSERT policy with no TO clause')
+from grant_planted where "check" = 'CHECK G2: permissive write policy for a client role';
+select ok(finding like '%pgtap_open_update%', 'G2 names a permissive WITH CHECK on a scoped UPDATE')
+from grant_planted where "check" = 'CHECK G2: permissive write policy for a client role';
+select ok(finding not like '%pgtap_service_write%', 'G2 ignores a permissive policy scoped to service_role')
+from grant_planted where "check" = 'CHECK G2: permissive write policy for a client role';
+select ok(finding not like '%pgtap_open_select%', 'G2 ignores a permissive SELECT policy')
+from grant_planted where "check" = 'CHECK G2: permissive write policy for a client role';
+select ok(finding not like '%pgtap_scoped_write%', 'G2 ignores a write policy that restricts')
+from grant_planted where "check" = 'CHECK G2: permissive write policy for a client role';
+
+select * from finish();
+rollback;
