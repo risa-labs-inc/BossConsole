@@ -82,6 +82,7 @@ import ai.rever.boss.plugin.api.UserManagementProvider
 import ai.rever.boss.plugin.api.WorkspaceDataProvider
 import ai.rever.boss.plugin.api.ZoomSettingsProvider
 import ai.rever.boss.plugin.browser.BrowserService
+import ai.rever.boss.plugin.launchpad.DevPluginArtifacts
 import ai.rever.boss.plugin.loader.PluginLoadException
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.plugin.sandbox.PluginSandboxManager
@@ -175,6 +176,40 @@ class DefaultPlugin(
         var loadPersistedPluginsInternal: suspend (DynamicPluginManager) -> Unit = { _ ->
             // Default no-op - platform-specific code should set this
         }
+
+        internal fun findActiveDevJars(devDir: File): List<File> =
+            ai.rever.boss.plugin.launchpad.DevPluginArtifacts
+                .findAllActiveDevJars(devDir)
+
+        internal fun extractPluginId(jarFile: File): String =
+            try {
+                java.util.jar.JarFile(jarFile).use { jar ->
+                    val entry =
+                        jar.getJarEntry("META-INF/boss-plugin/plugin.json")
+                            ?: jar.getJarEntry("plugin.json")
+                    if (entry != null) {
+                        val text = jar.getInputStream(entry).bufferedReader().readText()
+                        val match = Regex(""""(?:id|pluginId)"\s*:\s*"([^"]+)"""").find(text)
+                        match?.groupValues?.get(1)
+                    } else {
+                        null
+                    }
+                } ?: jarFile.nameWithoutExtension
+            } catch (_: Exception) {
+                jarFile.nameWithoutExtension
+            }
+
+        internal fun deduplicateJars(jars: List<File>): List<File> =
+            jars
+                .groupBy { extractPluginId(it) }
+                .mapValues { (_, group) ->
+                    group.maxByOrNull { file ->
+                        val isVersionRotated = file.parentFile?.name?.startsWith("v") == true
+                        val versionBonus = if (isVersionRotated) 10_000_000_000_000L else 0L
+                        versionBonus + file.lastModified()
+                    } ?: group.first()
+                }.values
+                .toList()
     }
 
     private val logger = BossLogger.forComponent("DefaultPlugin")
@@ -1167,12 +1202,15 @@ class DefaultPlugin(
                 // updater can replace jars while startup is in flight — a listing
                 // captured at init would try already-deleted files and never see
                 // freshly downloaded ones.
-                val jarFiles =
+                val standardJars =
                     pluginDir.listFiles { file ->
                         file.isFile && file.extension == "jar" &&
                             // Skip microkernel runtime — it's a classpath dependency for OOP plugins, not a loadable plugin
                             !file.name.startsWith(MicrokernelRuntime.ARTIFACT_PREFIX)
                     } ?: emptyArray()
+
+                val devJars = findActiveDevJars(File(pluginDir, "dev"))
+                val jarFiles = deduplicateJars(standardJars.toList() + devJars)
 
                 if (jarFiles.isEmpty()) {
                     logger.debug(
@@ -1206,61 +1244,93 @@ class DefaultPlugin(
                         .toSet()
 
                 for (jarFile in jarFiles) {
-                    if (jarFile.absolutePath in trackedJarPaths) continue
-                    try {
-                        logger.info(
-                            LogCategory.SYSTEM,
-                            "Installing external plugin",
-                            mapOf(
-                                "file" to jarFile.name,
-                            ),
-                        )
-
-                        val result = manager.installPlugin(jarFile.absolutePath)
-
-                        if (result.isSuccess) {
-                            val info = result.getOrThrow()
-                            logger.info(
-                                LogCategory.SYSTEM,
-                                "External plugin loaded successfully",
-                                mapOf(
-                                    "pluginId" to info.manifest.pluginId,
-                                    "version" to info.manifest.version,
-                                    "displayName" to info.manifest.displayName,
-                                ),
-                            )
-                        } else if (result.exceptionOrNull()?.message?.startsWith(PluginLoadException.ALREADY_LOADED_PREFIX) == true) {
-                            // A second jar for a plugin that's already running — a
-                            // stale old version left in the directory, not a failure.
-                            logger.info(
-                                LogCategory.SYSTEM,
-                                "Skipping duplicate jar for already-loaded plugin",
-                                mapOf(
-                                    "file" to jarFile.name,
-                                ),
-                            )
-                        } else {
-                            logger.error(
-                                LogCategory.SYSTEM,
-                                "Failed to load external plugin",
-                                mapOf(
-                                    "file" to jarFile.name,
-                                    "error" to (result.exceptionOrNull()?.message ?: "unknown"),
-                                ),
-                            )
-                        }
-                    } catch (e: Exception) {
-                        logger.error(
-                            LogCategory.SYSTEM,
-                            "Exception loading external plugin",
-                            mapOf(
-                                "file" to jarFile.name,
-                            ),
-                            e,
-                        )
-                    }
+                    installSingleExternalPlugin(manager, jarFile, trackedJarPaths)
                 }
             }
+    }
+
+    @Suppress("LongMethod")
+    private suspend fun installSingleExternalPlugin(
+        manager: DynamicPluginManager,
+        jarFile: File,
+        trackedJarPaths: Set<String>,
+    ) {
+        if (jarFile.absolutePath in trackedJarPaths) return
+        val pluginId = extractPluginId(jarFile)
+        prioritizeDevPluginIfNecessary(manager, jarFile, pluginId)
+        try {
+            logger.info(
+                LogCategory.SYSTEM,
+                "Installing external plugin",
+                mapOf(
+                    "file" to jarFile.name,
+                ),
+            )
+
+            val result = manager.installPlugin(jarFile.absolutePath)
+
+            if (result.isSuccess) {
+                val info = result.getOrThrow()
+                logger.info(
+                    LogCategory.SYSTEM,
+                    "External plugin loaded successfully",
+                    mapOf(
+                        "pluginId" to info.manifest.pluginId,
+                        "version" to info.manifest.version,
+                        "displayName" to info.manifest.displayName,
+                    ),
+                )
+            } else if (result.exceptionOrNull()?.message?.startsWith(PluginLoadException.ALREADY_LOADED_PREFIX) == true) {
+                // A second jar for a plugin that's already running — a
+                // stale old version left in the directory, not a failure.
+                logger.info(
+                    LogCategory.SYSTEM,
+                    "Skipping duplicate jar for already-loaded plugin",
+                    mapOf(
+                        "file" to jarFile.name,
+                    ),
+                )
+            } else {
+                logger.error(
+                    LogCategory.SYSTEM,
+                    "Failed to load external plugin",
+                    mapOf(
+                        "file" to jarFile.name,
+                        "error" to (result.exceptionOrNull()?.message ?: "unknown"),
+                    ),
+                )
+            }
+        } catch (e: Exception) {
+            logger.error(
+                LogCategory.SYSTEM,
+                "Exception loading external plugin",
+                mapOf(
+                    "file" to jarFile.name,
+                ),
+                e,
+            )
+        }
+    }
+
+    private suspend fun prioritizeDevPluginIfNecessary(
+        manager: DynamicPluginManager,
+        jarFile: File,
+        pluginId: String,
+    ) {
+        val isDev = DevPluginArtifacts.isDevPluginJar(jarFile)
+        val currentlyLoaded = manager.getPluginInfo(pluginId)
+        if (isDev && currentlyLoaded != null && currentlyLoaded.jarPath != jarFile.absolutePath) {
+            logger.info(
+                LogCategory.SYSTEM,
+                "Prioritizing active dev plugin over installed plugin",
+                mapOf(
+                    "pluginId" to pluginId,
+                    "installedJar" to currentlyLoaded.jarPath,
+                    "devJar" to jarFile.absolutePath,
+                ),
+            )
+            manager.uninstallPlugin(pluginId, force = true, waitForGC = true)
+        }
     }
 
     // ============================================================

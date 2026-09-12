@@ -17,6 +17,7 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
+import java.net.ConnectException
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.StandardProtocolFamily
@@ -71,6 +72,29 @@ internal const val VERB_MCP_LIST = "MCP_LIST"
 /** Asks the running instance to invoke an MCP tool. */
 internal const val VERB_MCP_INVOKE = "MCP_INVOKE"
 
+/** Asks the running instance to reload a plugin in development mode. */
+internal const val VERB_PLUGIN_DEV_RELOAD = "PLUGIN_DEV_RELOAD"
+
+sealed interface ReloadResult {
+    data object Success : ReloadResult
+
+    data class HostOffline(
+        val message: String = "BossConsole is not running",
+    ) : ReloadResult
+
+    /**
+     * The host is running but did not confirm the reload within the client budget. The reload
+     * may still be in progress on the host; the staged JAR is on disk for the next launch.
+     */
+    data class TimedOut(
+        val message: String,
+    ) : ReloadResult
+
+    data class Failed(
+        val reason: String,
+    ) : ReloadResult
+}
+
 internal const val RESPONSE_OK = "OK"
 internal const val RESPONSE_PONG = "PONG"
 internal const val RESPONSE_REJECTED = "REJECTED"
@@ -96,6 +120,11 @@ private const val MCP_INVOKE_TIMEOUT_MS = 60000L
 // not a longer-budget candidate), so this wait must leave room for that budget to
 // still close a genuinely wedged connection rather than race it.
 private const val OPEN_ACTION_TIMEOUT_MS = 5000L
+
+// A dev reload on the host unloads the running instance and installs fresh bytes.
+// This is the client budget: above anything a healthy reload spends, below the
+// 60s server connection budget the verb gets from isLongerBudgetCandidate.
+internal const val PLUGIN_DEV_RELOAD_TIMEOUT_MS = 45_000L
 
 /**
  * Ceiling on a single request. Bounds what one caller can make the app buffer,
@@ -218,8 +247,11 @@ internal data class SingleInstanceRequest(
  *
  * The line is `<protocol> <token> <verb> ...`
  */
+@Suppress("ReturnCount")
 internal fun parseRequestLine(line: String): SingleInstanceRequest? {
-    val parts = line.trim().split(' ', limit = 5)
+    val trimmed = line.trim()
+    val parts = trimmed.split(' ', limit = 5)
+
     if (parts.size < 3 || parts[0] != PROTOCOL_VERSION) return null
 
     val token = parts[1]
@@ -244,6 +276,15 @@ internal fun parseRequestLine(line: String): SingleInstanceRequest? {
             parseMcpInvokeRequest(token, parts)
         }
 
+        VERB_PLUGIN_DEV_RELOAD -> {
+            val pluginId = parts.getOrNull(3).orEmpty()
+            if (validPluginDevId(pluginId)) {
+                SingleInstanceRequest(token, VERB_PLUGIN_DEV_RELOAD, DeepLinkOrigin.OPERATOR_CLI, null, pluginId)
+            } else {
+                null
+            }
+        }
+
         else -> {
             null
         }
@@ -252,6 +293,16 @@ internal fun parseRequestLine(line: String): SingleInstanceRequest? {
 
 private fun validMcpToolName(toolName: String): Boolean =
     toolName.length in 1..MAX_TOOL_NAME_LENGTH && toolName.none { it.isWhitespace() || it.isISOControl() }
+
+/**
+ * A plugin id crosses the wire as a bare token and the host joins it straight onto
+ * the dev staging root, so it must never carry a path separator or traverse out of it.
+ * Whitespace cannot survive the wire format anyway; the separators and `..` can.
+ */
+private fun validPluginDevId(pluginId: String): Boolean =
+    pluginId.length in 1..MAX_TOOL_NAME_LENGTH &&
+        pluginId.none { it.isWhitespace() || it.isISOControl() || it == '/' || it == '\\' } &&
+        pluginId != ".."
 
 private fun parseMcpInvokeRequest(
     token: String,
@@ -808,6 +859,41 @@ private fun buildMcpInvokeResponse(
     }
 }
 
+private fun buildPluginDevReloadResponse(
+    pluginId: String,
+    handler: ((String) -> Boolean)?,
+): String {
+    if (pluginId.isBlank()) {
+        return "RELOAD_FAILED Missing pluginId parameter"
+    }
+    val result =
+        runCatching {
+            checkNotNull(handler) { "Development plugin reload is not available in this host" }.invoke(pluginId)
+        }
+    return result.fold(
+        onSuccess = { success ->
+            if (success) {
+                "RELOAD_OK $pluginId"
+            } else {
+                "RELOAD_FAILED Failed to reload plugin $pluginId"
+            }
+        },
+        onFailure = { error ->
+            val rootCause =
+                generateSequence(error) { it.cause?.takeIf { cause -> cause !== it } }
+                    .take(15)
+                    .last()
+            val errorName = rootCause::class.simpleName ?: "Error"
+            val errorDetail = rootCause.message ?: error.message ?: "No detailed cause"
+            val sanitizedMessage =
+                "$errorName: $errorDetail"
+                    .replace(Regex("[\\r\\n]+"), " ")
+                    .take(250)
+            "RELOAD_FAILED $sanitizedMessage"
+        },
+    )
+}
+
 internal fun encodeMcpTools(tools: List<ai.rever.boss.plugin.api.RegisteredMcpTool>): String =
     JsonArray(
         tools.map { registeredTool ->
@@ -947,6 +1033,9 @@ object SingleInstanceManager {
 
     /** Test seam / host hook for MCP tool invocation response. */
     internal var mcpInvokeHandlerOverride: (suspend (String, String) -> McpToolResult)? = null
+
+    /** Test seam / host hook for dev plugin reload response. */
+    internal var pluginReloadHandlerOverride: ((String) -> Boolean)? = null
 
     @Volatile
     private var isListening: Boolean = false
@@ -1091,7 +1180,11 @@ object SingleInstanceManager {
 
     private val isLongerBudgetCandidate: (SingleInstanceRequest) -> Boolean
         get() = { request ->
-            (request.verb == VERB_LLM_TOKEN || request.verb == VERB_MCP_INVOKE) && presentsLiveToken(request)
+            (
+                request.verb == VERB_LLM_TOKEN ||
+                    request.verb == VERB_MCP_INVOKE ||
+                    request.verb == VERB_PLUGIN_DEV_RELOAD
+            ) && presentsLiveToken(request)
         }
 
     /**
@@ -1110,6 +1203,7 @@ object SingleInstanceManager {
      * back. A request that does not present the live token is refused here,
      * before its contents mean anything.
      */
+    @Suppress("TooGenericExceptionCaught", "CyclomaticComplexMethod")
     private fun responseFor(request: SingleInstanceRequest?): String {
         if (request == null || !presentsLiveToken(request)) {
             logger.warn(LogCategory.SYSTEM, "Refused a malformed single-instance request or missing channel token")
@@ -1156,6 +1250,10 @@ object SingleInstanceManager {
                 val toolName = request.toolName.orEmpty()
                 val argsJson = request.argsJson.orEmpty()
                 buildMcpInvokeResponse(toolName, argsJson, mcpInvokeHandlerOverride)
+            }
+
+            request.verb == VERB_PLUGIN_DEV_RELOAD -> {
+                buildPluginDevReloadResponse(request.toolName.orEmpty(), pluginReloadHandlerOverride)
             }
 
             else -> {
@@ -1397,6 +1495,73 @@ object SingleInstanceManager {
     }
 
     /**
+     * Dispatches dev reload signal for [pluginId] to the running BossConsole instance
+     * with synchronous request-response verification and timeout handling.
+     *
+     * A response that never arrives is split into its two causes: nothing answering the
+     * channel means the host is offline, while a host that answers a probe but not the
+     * reload is busy, and the staged JAR is still picked up at the next launch.
+     */
+    @Suppress("ReturnCount")
+    fun reloadDevPlugin(
+        pluginId: String,
+        timeoutMs: Int = PLUGIN_DEV_RELOAD_TIMEOUT_MS.toInt(),
+    ): ReloadResult {
+        if (!validPluginDevId(pluginId)) {
+            return ReloadResult.Failed("Invalid plugin id for dev reload: '$pluginId'")
+        }
+        val target =
+            SingleInstanceFiles.read()
+                ?: return ReloadResult.HostOffline("BossConsole is not running.")
+        val message = "$PROTOCOL_VERSION ${target.token} $VERB_PLUGIN_DEV_RELOAD $pluginId"
+        return try {
+            val response =
+                SingleInstanceWire.exchange(
+                    target,
+                    message,
+                    timeoutMs = timeoutMs.toLong(),
+                    maxResponseBytes = MAX_RESPONSE_BYTES,
+                ) ?: return if (SingleInstanceWire.respondsToPing(target)) {
+                    ReloadResult.TimedOut(
+                        "BossConsole is running but did not confirm the reload within $timeoutMs ms; " +
+                            "it may still be reloading",
+                    )
+                } else {
+                    ReloadResult.HostOffline("BossConsole is offline or the channel stopped answering")
+                }
+
+            when {
+                response.startsWith("RELOAD_OK") -> {
+                    ReloadResult.Success
+                }
+
+                response.startsWith("RELOAD_FAILED") -> {
+                    ReloadResult.Failed(response.removePrefix("RELOAD_FAILED").trim())
+                }
+
+                response == RESPONSE_OK -> {
+                    ReloadResult.Success
+                }
+
+                else -> {
+                    ReloadResult.Failed("Malformed IPC response: $response")
+                }
+            }
+        } catch (
+            @Suppress("SwallowedException") e: ConnectException,
+        ) {
+            logger.debug(
+                LogCategory.SYSTEM,
+                "IPC host connection refused; host is offline",
+                mapOf("pluginId" to pluginId),
+            )
+            ReloadResult.HostOffline("BossConsole is offline (connection refused)")
+        } catch (e: Exception) {
+            ReloadResult.Failed("IPC communication error: ${e.message}")
+        }
+    }
+
+    /**
      * Start listening for URLs from new instances.
      *
      * Note: the channel is already listening once [acquireLock] succeeds; this
@@ -1420,6 +1585,7 @@ object SingleInstanceManager {
         statusProviderOverride = null
         mcpListProviderOverride = null
         mcpInvokeHandlerOverride = null
+        pluginReloadHandlerOverride = null
 
         try {
             serverChannel?.close()

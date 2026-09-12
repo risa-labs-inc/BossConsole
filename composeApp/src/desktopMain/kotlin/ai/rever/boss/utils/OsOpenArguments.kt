@@ -37,7 +37,7 @@ internal object OsOpenArguments {
      * double-open, which is easy to miss and hard to attribute.
      */
     internal val CLI_SUBCOMMANDS =
-        setOf("url", "workspace", "file", "folder", "terminal", "status", "mcp", "completion")
+        setOf("url", "workspace", "file", "folder", "terminal", "status", "mcp", "completion", "plugin")
 
     /** What a path on disk is, for deciding which deep link to build. */
     internal enum class OpenTargetKind { FILE, DIRECTORY, ABSENT }

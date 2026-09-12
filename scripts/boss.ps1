@@ -227,14 +227,37 @@ switch ($Command.ToLower()) {
     }
 
     "plugin" {
-        if ([string]::IsNullOrEmpty($Argument)) {
-            Write-Error "Error: Plugin ID required"
-            Write-Host "Usage: boss.ps1 plugin <id>"
+        $subcommands = @("init", "validate", "link", "--help", "-h", "help")
+        if (-not [string]::IsNullOrEmpty($Argument) -and $Argument.ToLower() -notin $subcommands -and $args.Count -le 2) {
+            $encoded = [System.Uri]::EscapeDataString($Argument)
+            $deepLink = "boss://plugin?id=$encoded"
+            Open-BossDeepLink $deepLink
+        } else {
+            $bossExe = $env:BOSS_EXE
+            if ($bossExe -and -not (Test-Path $bossExe -PathType Leaf)) {
+                [Console]::Error.WriteLine("Error: BOSS_EXE does not name an executable file.")
+                exit 1
+            }
+            if (-not $bossExe -or -not (Test-Path $bossExe)) {
+                $bossExe = "$env:LOCALAPPDATA\Programs\BOSS\BOSS.exe"
+            }
+            if (-not (Test-Path $bossExe)) {
+                $bossExe = "$env:ProgramFiles\BOSS\BOSS.exe"
+            }
+            if (-not (Test-Path $bossExe)) {
+                $bossExe = "$PSScriptRoot\..\composeApp\build\compose\binaries\main\app\BOSS\BOSS.exe"
+            }
+            if (Test-Path $bossExe) {
+                $forwardArgs = @($args)
+                if ($PSVersionTable.PSVersion -ge [Version]"7.3") {
+                    $PSNativeCommandArgumentPassing = 'Standard'
+                }
+                & $bossExe @forwardArgs | Out-Host
+                exit $LASTEXITCODE
+            }
+            [Console]::Error.WriteLine("Error: BOSS application binary not found. Set BOSS_EXE to the packaged executable.")
             exit 1
         }
-        $encoded = [System.Uri]::EscapeDataString($Argument)
-        $deepLink = "boss://plugin?id=$encoded"
-        Open-BossDeepLink $deepLink
     }
 
     { $_ -in "status", "mcp", "completion" } {
@@ -257,7 +280,7 @@ switch ($Command.ToLower()) {
             if ($PSVersionTable.PSVersion -ge [Version]"7.3") {
                 $PSNativeCommandArgumentPassing = 'Standard'
             }
-            & $bossExe @forwardArgs
+            & $bossExe @forwardArgs | Out-Host
             exit $LASTEXITCODE
         }
         [Console]::Error.WriteLine("Error: BOSS application binary not found. Set BOSS_EXE to the packaged executable.")

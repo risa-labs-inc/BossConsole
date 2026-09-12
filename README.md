@@ -87,7 +87,7 @@ Absolute scores were depressed by heavy co-tenancy - **800–1300% ambient CPU**
 - [Case study: the DNA Origami Inventor](#case-study-the-dna-origami-inventor)
 - [Design System](#design-system)
 - [Development](#development)
-- [CLI](#cli) · [CI/CD](#cicd) · [Documentation](#documentation) · [Open source & ecosystem](#open-source--ecosystem)
+- [CLI & Agent Harness](#cli--agent-harness) · [CI/CD](#cicd) · [Documentation](#documentation) · [Open source & ecosystem](#open-source--ecosystem)
 
 ---
 
@@ -410,9 +410,13 @@ boss status --json                 # Query running application status
 boss mcp list --filter browser     # Discover registered MCP tools
 boss mcp describe <tool>           # Fetch tool schema on demand
 boss mcp invoke <tool> --args ...  # Execute tool headlessly via authenticated IPC
+boss plugin init <name>            # Scaffold a new plugin Gradle project
+boss plugin validate <path>        # Validate plugin manifest and bytecode
+boss plugin link <path>            # Stage plugin into BOSS_HOME with hot-reload
 ```
 
 See [docs/CLI.md](docs/CLI.md) for full options, exit codes, stream guarantees, and agent integration recipes.
+See [docs/PLUGIN_LAUNCHPAD.md](docs/PLUGIN_LAUNCHPAD.md) for plugin authoring, templates, and hot-reload workflows.
 
 **Installation:** Toolbox / Tools → Install BOSS CLI (or via Homebrew / installers).
 
@@ -421,6 +425,7 @@ See [docs/CLI.md](docs/CLI.md) for full options, exit codes, stream guarantees, 
 ## Documentation
 
 - [Command Line Interface (CLI)](docs/CLI.md) - CLI Agent Harness, `boss status`, `boss mcp`, and agent scripting
+- [Plugin Launchpad](docs/PLUGIN_LAUNCHPAD.md) - Developer CLI (`boss plugin init`, `validate`, `link`) & hot-reload
 - [Core Subsystems](docs/SUBSYSTEMS.md) - Auth, UI, keyboard shortcuts, threading
 - [Design System](docs/DESIGN_SYSTEM.md) - "Operator's Console" tokens, themes, and the live styleguide
 - [BossEditor Module](docs/BOSSEDITOR.md) - LSP, PSI, editor features
