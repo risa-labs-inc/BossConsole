@@ -1,7 +1,9 @@
 package ai.rever.boss.plugin.browser
 
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.runBlocking
 import java.io.File
+import kotlin.coroutines.CoroutineContext
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -299,6 +301,44 @@ class UrlHistoryManagerTest {
         // What survives is the best-ranked tail, not an arbitrary 1000.
         assertTrue(distinctPageKey("https://site1201.example/") in pastSlack)
         assertTrue(distinctPageKey("https://site1.example/") !in pastSlack)
+    }
+
+    @Test
+    fun `consecutive deletions survive reversed background scheduling`() {
+        val previousContext = UrlHistoryManager.persistenceContext
+        val dispatcher = NewestFirstDispatcher()
+        UrlHistoryManager.persistenceContext = dispatcher
+        try {
+            UrlHistoryManager.addUrl("https://first.example/", "First")
+            UrlHistoryManager.addUrl("https://second.example/", "Second")
+            UrlHistoryManager.deleteUrl("https://first.example/")
+            UrlHistoryManager.deleteUrl("https://second.example/")
+
+            // Force the later save to start first, rather than relying on an IO race.
+            dispatcher.drainNewestFirst()
+            runBlocking { UrlHistoryManager.awaitPendingWrites() }
+            UrlHistoryManager.loadHistory()
+
+            assertTrue(UrlHistoryManager.getSuggestions("example").isEmpty())
+        } finally {
+            dispatcher.drainNewestFirst()
+            UrlHistoryManager.persistenceContext = previousContext
+        }
+    }
+
+    private class NewestFirstDispatcher : CoroutineDispatcher() {
+        private val queued = ArrayDeque<Runnable>()
+
+        override fun dispatch(
+            context: CoroutineContext,
+            block: Runnable,
+        ) {
+            queued.addLast(block)
+        }
+
+        fun drainNewestFirst() {
+            while (queued.isNotEmpty()) queued.removeLast().run()
+        }
     }
 
     private companion object {
