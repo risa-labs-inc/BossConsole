@@ -1,9 +1,12 @@
 package ai.rever.boss.window
 
 import ai.rever.boss.plugin.api.TabInfo
+import ai.rever.boss.utils.WindowFocusManager
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.window.Project
+import java.awt.event.WindowEvent
+import javax.swing.SwingUtilities
 
 /**
  * Desktop implementation of window operations
@@ -67,11 +70,31 @@ actual object WindowOperations {
     }
 
     /**
-     * Force close a window by ID
+     * Request that a window close through its native close handler.
+     *
+     * Routing keyboard and menu actions through the same handler as the native
+     * close button keeps lifecycle policy and resource teardown consistent.
      *
      * @param windowId The window ID to close
      */
     actual fun closeWindow(windowId: String) {
-        WindowManager.closeWindow(windowId)
+        val window = WindowFocusManager.getWindow(windowId)
+        if (window == null) {
+            logger.warn(
+                LogCategory.UI,
+                "Cannot request close for an unregistered window",
+                mapOf("windowId" to windowId),
+            )
+            return
+        }
+
+        val requestClose = {
+            window.dispatchEvent(WindowEvent(window, WindowEvent.WINDOW_CLOSING))
+        }
+        if (SwingUtilities.isEventDispatchThread()) {
+            requestClose()
+        } else {
+            SwingUtilities.invokeLater(requestClose)
+        }
     }
 }

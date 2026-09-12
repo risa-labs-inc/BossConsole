@@ -148,6 +148,7 @@ fun ApplicationScope.BossWindow(
 
     Window(
         onCloseRequest = onCloseRequest,
+        visible = windowState.isVisible,
         title = windowState.title,
         state = composeWindowState,
         icon = BossWindowIcon.painter,
