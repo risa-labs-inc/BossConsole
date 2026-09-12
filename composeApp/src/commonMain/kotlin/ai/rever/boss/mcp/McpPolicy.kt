@@ -108,7 +108,12 @@ object McpMutatingToolCatalog {
         )
 
     /**
-     * Determine if a tool is mutating based on known tool catalog and naming heuristics.
+     * Determine if a tool is mutating from its name alone, using the known tool catalog
+     * and naming heuristics.
+     *
+     * This is a guess about a fact the tool itself declares. Prefer the overload taking
+     * `declaredReadOnly` wherever the [ai.rever.boss.plugin.api.McpToolDefinition] is in
+     * hand, which is every call site that governs an actual invocation.
      */
     fun isMutating(toolName: String): Boolean {
         if (toolName in KNOWN_MUTATING_TOOLS) return true
@@ -117,14 +122,45 @@ object McpMutatingToolCatalog {
     }
 
     /**
+     * Whether a tool mutates, given both its name and what it declares about itself.
+     *
+     * [declaredReadOnly] is `McpToolDefinition.readOnly`, which the plugin author sets.
+     * A declaration can only ever ADD caution here, never remove it, and the asymmetry
+     * is the whole point:
+     *
+     * - `readOnly = false` is an explicit statement that the tool has side effects, so it
+     *   is believed outright. This is what the name heuristic cannot reach: a mutating
+     *   tool called `git_push`, `send_email` or `publish_release` is in neither
+     *   [KNOWN_MUTATING_TOOLS] nor [MUTATING_SUFFIXES], so on the name alone it resolves
+     *   to [McpToolPolicyConfig.defaultReadOnlyAction] and runs with no operator prompt.
+     * - `readOnly = true` is NOT believed, because it is the field's default. A tool whose
+     *   author never considered the question is indistinguishable from one that answered
+     *   "no side effects", so trusting it would let any plugin opt out of approval by
+     *   saying nothing at all. The name heuristic still applies, and nothing the catalog
+     *   already catches is weakened.
+     *
+     * The composition is therefore fail-safe in both directions: mutating if the tool says
+     * so, or if its name says so.
+     */
+    fun isMutating(
+        toolName: String,
+        declaredReadOnly: Boolean,
+    ): Boolean = !declaredReadOnly || isMutating(toolName)
+
+    /**
      * Resolve the action for a given tool name against [config].
+     *
+     * [declaredReadOnly] defaults to `true` so that a caller with no definition in hand
+     * gets exactly the previous name-only behaviour: `!true` is false, and the expression
+     * collapses to the name heuristic.
      */
     fun resolveAction(
         toolName: String,
         config: McpToolPolicyConfig,
+        declaredReadOnly: Boolean = true,
     ): McpPolicyAction {
         config.rules[toolName]?.let { return it }
-        return if (isMutating(toolName)) {
+        return if (isMutating(toolName, declaredReadOnly)) {
             config.defaultMutatingAction
         } else {
             config.defaultReadOnlyAction

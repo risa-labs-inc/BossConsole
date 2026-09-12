@@ -52,6 +52,12 @@ data class McpApprovalRequest(
     val arguments: Map<String, Any?>,
     val timeoutMs: Long,
     val riskAssessment: McpRiskAssessment? = null,
+    /**
+     * The invoked tool's own `McpToolDefinition.readOnly`. Carried so the dialog can warn
+     * from the declaration rather than re-deriving it from the tool's name, which is what
+     * put the request on screen in the first place.
+     */
+    val declaredReadOnly: Boolean = true,
     val requestedAt: Long = System.currentTimeMillis(),
     val deferred: CompletableDeferred<McpApprovalDecision> = CompletableDeferred(),
 )
@@ -82,13 +88,17 @@ open class McpApprovalBus(
      * Suspends the calling coroutine until the operator answers via the UI
      * or [timeoutMs] elapses (in which case it fails closed).
      */
-    @Suppress("ReturnCount") // Both active and delivery queues must reject overflow before awaiting an answer.
+    // ReturnCount: both active and delivery queues must reject overflow before awaiting an answer.
+    // LongParameterList: these are one approval request's fields, mirroring McpApprovalRequest itself.
+    // A parameter object would move the same list one call site further out without shortening it.
+    @Suppress("ReturnCount", "LongParameterList")
     suspend fun requestApproval(
         toolName: String,
         providerId: String,
         arguments: Map<String, Any?>,
         timeoutMs: Long = defaultTimeoutMs,
         riskAssessment: McpRiskAssessment? = null,
+        declaredReadOnly: Boolean = true,
     ): McpApprovalDecision {
         val request =
             McpApprovalRequest(
@@ -97,6 +107,7 @@ open class McpApprovalBus(
                 arguments = McpArgumentSanitizer.sanitize(arguments),
                 timeoutMs = timeoutMs,
                 riskAssessment = riskAssessment,
+                declaredReadOnly = declaredReadOnly,
             )
 
         synchronized(lock) {
