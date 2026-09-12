@@ -2,12 +2,14 @@ package ai.rever.boss.components.wizard.plugin
 
 import ai.rever.boss.components.plugin.DynamicPluginInfo
 import ai.rever.boss.components.plugin.DynamicPluginManager
+import ai.rever.boss.components.plugin.PluginDependencyResolution
 import ai.rever.boss.plugin.MissingDependencyReporter
 import ai.rever.boss.plugin.PluginPersistence
 import ai.rever.boss.plugin.PluginStoreSetup
 import ai.rever.boss.plugin.api.PluginManifest
 import ai.rever.boss.plugin.api.PluginState
 import ai.rever.boss.plugin.repository.PluginWithSource
+import ai.rever.boss.plugin.sandbox.ui.PluginCrashRegistry
 import ai.rever.boss.utils.atomicMoveFrom
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -97,8 +99,16 @@ class PluginInstallService(
                         continue
                     }
 
-                    // Check if already installed
-                    if (dynamicPluginManager.isInstalled(plugin.id)) {
+                    // `installedAndOnDisk`, not the manager's `isInstalled`. That one is
+                    // `pluginStates.containsKey`, and an entry is not the same as a usable
+                    // plugin: `installPlugin` registers a DISABLED entry for a jar it rejected
+                    // as binary-incompatible and then deletes the jar. An entry-only check
+                    // therefore reports "already installed, skipping" for a plugin that is not
+                    // there, adds its id to installedIds, and the wizard finishes claiming it
+                    // installed something it never did. This is the same trap the dependency
+                    // prompt already hit once, which is why there is one definition of the
+                    // predicate to reach for; this file already uses it after the loop.
+                    if (plugin.id in installedAndUsable()) {
                         logger.info(
                             LogCategory.SYSTEM,
                             "Plugin already installed, skipping",
@@ -317,6 +327,20 @@ class PluginInstallService(
      * The manifest id is authoritative, so a mismatch with the wizard's expectation is logged and
      * the install continues.
      */
+
+    /**
+     * Plugin ids that are installed AND usable, by the codebase's single definition.
+     *
+     * Recomputed per call rather than hoisted: the loop installs plugins, so a snapshot taken
+     * before it would go stale exactly when a later entry in the batch depends on an earlier one.
+     */
+    private fun installedAndUsable(): Set<String> =
+        PluginDependencyResolution.installedAndOnDisk(
+            states = dynamicPluginManager.pluginStates.value,
+            exists = { File(it).isFile },
+            isIncompatible = { PluginCrashRegistry.isIncompatible(it) },
+        )
+
     private fun warnOnIdMismatch(
         plugin: WizardPluginInfo,
         manifest: PluginManifest,
