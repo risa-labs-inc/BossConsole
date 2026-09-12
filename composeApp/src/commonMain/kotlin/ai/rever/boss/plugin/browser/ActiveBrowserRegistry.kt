@@ -58,7 +58,8 @@ object ActiveBrowserRegistry {
     /**
      * Windows where a browser is the surface the user is actually in.
      *
-     * The browser menu items (Back, Forward, Developer Tools) must grey out where the chord
+     * The browser menu items (Back, Forward, Developer Tools, Actual Size, Zoom In, Zoom Out, Reload)
+     * must grey out where the chord
      * should not act, and not merely no-op: a Compose MenuBar accelerator fires from anywhere in
      * the window regardless of the binding's ShortcutContext, so an always-enabled item silently
      * swallows its chord for every other tab type. Cmd+[ and Cmd+] are outdent/indent in an
@@ -201,8 +202,10 @@ object ActiveBrowserRegistry {
  * surface of the panel the user is in, so a sidebar-slot browser or the background half of a
  * split answers false. The menu items this gates fire their accelerator window-wide regardless
  * of ShortcutContext, so "a browser exists somewhere" would swallow Cmd+[ and Cmd+] from an
- * editor. Zoom and Reload stay ungated and keep acting on [selectActiveHandleId]'s broader
- * answer, which predates this and is out of scope here.
+ * editor. The menu gate is deliberately stricter than the dispatch target: a sidebar-slot
+ * browser or the background half of a split can no longer be zoomed or reloaded from the View
+ * menu - accepted, because the broader "a browser exists somewhere" gate would swallow Ctrl+R
+ * (and Cmd+[/Cmd+]) from a terminal or editor tab.
  */
 internal fun activeBrowserWindows(
     candidates: Collection<ActiveBrowserRegistry.Entry>,

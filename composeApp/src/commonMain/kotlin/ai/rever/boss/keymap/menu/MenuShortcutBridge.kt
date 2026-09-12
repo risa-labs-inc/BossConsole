@@ -5,8 +5,40 @@ import ai.rever.boss.keymap.model.KeymapActions
 import ai.rever.boss.keymap.model.KeymapSettings
 import ai.rever.boss.keymap.model.canonicalKeyName
 import ai.rever.boss.keymap.model.canonicalModifiers
+import ai.rever.boss.utils.SystemUtils
 import androidx.compose.ui.input.key.Key
 import java.awt.event.KeyEvent as AwtKeyEvent
+
+/** The (ctrl, meta) pair a Compose menu accelerator carries for a binding's primary modifiers. */
+internal data class MenuAcceleratorModifiers(
+    val ctrl: Boolean,
+    val meta: Boolean,
+)
+
+/**
+ * The (ctrl, meta) pair a Compose [androidx.compose.ui.input.key.KeyShortcut] must carry for a
+ * binding with [hasCmd] and [hasCtrl] on the platform named by [isMacOS].
+ *
+ * Pure, and taking the platform as a parameter, so a test can pin BOTH branches on any runner:
+ * `SystemUtils.isMacOS` is an `actual val` initialised once from `os.name`, which a test cannot
+ * override, so a platform-conditional test only ever exercises the branch of the OS it runs on.
+ *
+ * The rest of the keymap system treats "Cmd" as the primary modifier (Meta on macOS, Ctrl on
+ * Windows/Linux). Compose Desktop's KeyShortcut uses `meta` for the Super/Windows key, so a
+ * "Cmd" binding on non-mac must swap to `ctrl` or it would incorrectly require the Super key.
+ * Note that we do *not* also map a literal "Ctrl" binding to `meta` on non-mac: the native menu
+ * accelerator and its display string both speak in the same physical key, while the AWT/Compose
+ * interceptors swap the two to give non-mac users a way to trigger an explicit Ctrl binding.
+ */
+internal fun menuAcceleratorModifiers(
+    hasCmd: Boolean,
+    hasCtrl: Boolean,
+    isMacOS: Boolean,
+): MenuAcceleratorModifiers {
+    val ctrl = if (isMacOS) hasCtrl else hasCtrl || hasCmd
+    val meta = if (isMacOS) hasCmd else false
+    return MenuAcceleratorModifiers(ctrl = ctrl, meta = meta)
+}
 
 /**
  * Bridge between menu items and the keymap system.
@@ -67,10 +99,12 @@ class MenuShortcutBridge(
         val hasShift = "shift" in modifiers
         val hasAlt = "alt" in modifiers
 
+        val (effectiveCtrl, effectiveMeta) = menuAcceleratorModifiers(hasCmd, hasCtrl, SystemUtils.isMacOS)
+
         return androidx.compose.ui.input.key.KeyShortcut(
             key = key,
-            meta = hasCmd,
-            ctrl = hasCtrl,
+            meta = effectiveMeta,
+            ctrl = effectiveCtrl,
             shift = hasShift,
             alt = hasAlt,
         )
