@@ -12,7 +12,6 @@ import com.teamdev.jxbrowser.callback.Advisable
 import java.awt.Dialog
 import java.awt.FileDialog
 import java.awt.Frame
-import java.awt.KeyboardFocusManager
 import java.io.File
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicBoolean
@@ -246,8 +245,6 @@ private const val PDF = "pdf"
 /**
  * Asks `NSOpenPanel` for a directory rather than a file. Process-wide; see [showModal].
  */
-private const val MAC_DIRECTORY_MODE = "apple.awt.fileDialogForDirectories"
-
 private fun showOpen(
     suggestedDirectory: String,
     extensions: List<String>,
@@ -305,21 +302,13 @@ private fun newDialog(
     title: String,
     mode: Int,
     suggestedDirectory: String,
-): FileDialog {
-    val dialog =
-        when (val active = KeyboardFocusManager.getCurrentKeyboardFocusManager().activeWindow) {
-            is Frame -> FileDialog(active, title, mode)
-            is Dialog -> FileDialog(active, title, mode)
-            else -> FileDialog(null as Frame?, title, mode)
-        }
-    return dialog.apply {
-        isAlwaysOnTop = true
+): FileDialog =
+    ownedFileDialog(title, mode).apply {
         val suggested = File(suggestedDirectory)
         if (suggestedDirectory.isNotBlank() && suggested.isDirectory) {
             directory = suggested.absolutePath
         }
     }
-}
 
 /**
  * Show the panel, then always give the native peer back.
@@ -341,22 +330,6 @@ private fun newDialog(
  * wider change than this one. `SAVE` dialogs are immune either way: the flag only affects
  * `NSOpenPanel`.
  */
-private fun FileDialog.showModal(directories: Boolean) {
-    val previous = System.getProperty(MAC_DIRECTORY_MODE)
-    System.setProperty(MAC_DIRECTORY_MODE, directories.toString())
-    try {
-        isVisible = true
-    } finally {
-        if (previous == null) {
-            System.clearProperty(MAC_DIRECTORY_MODE)
-        } else {
-            System.setProperty(MAC_DIRECTORY_MODE, previous)
-        }
-        // These are user-driven and repeatable, so the native peer is not left to
-        // finalization the way the one-shot pickers elsewhere leave theirs.
-        dispose()
-    }
-}
 
 /**
  * Narrow the panel to [extensions], unless the page said any file will do.
