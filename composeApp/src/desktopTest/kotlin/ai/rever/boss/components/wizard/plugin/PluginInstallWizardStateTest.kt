@@ -45,13 +45,34 @@ class PluginInstallWizardStateTest {
         )
 
     @Test
-    fun `fresh state selects default and mandatory plugins only`() {
+    fun `fresh state waits for an explicit profile choice`() {
         val state = state()
+
+        assertFalse(state.isPluginSelected(defaultPlugin.id))
+        assertFalse(state.isPluginSelected(mandatoryPlugin.id))
+        assertFalse(state.isPluginSelected(optionalPlugin.id))
+        assertFalse(state.hasSelectedPlugins())
+        assertEquals(null, state.selectedProfile)
+    }
+
+    @Test
+    fun `general profile keeps core tools and removes developer tools`() {
+        val state = state()
+
+        state.applyProfile(ToolboxProfile.GENERAL)
 
         assertTrue(state.isPluginSelected(defaultPlugin.id))
         assertTrue(state.isPluginSelected(mandatoryPlugin.id))
         assertFalse(state.isPluginSelected(optionalPlugin.id))
-        assertTrue(state.hasSelectedPlugins())
+    }
+
+    @Test
+    fun `everything profile selects every available tool`() {
+        val state = state()
+
+        state.applyProfile(ToolboxProfile.EVERYTHING)
+
+        assertEquals(3, state.getSelectedPlugins().size)
     }
 
     @Test
@@ -69,7 +90,7 @@ class PluginInstallWizardStateTest {
     fun `retry reset preserves plugin selections`() {
         val state = state()
 
-        state.setPluginSelected(optionalPlugin.id, true)
+        state.applyProfile(ToolboxProfile.DEVELOPER)
         state.startInstallation()
         state.failInstallation("temporary failure")
 
@@ -78,6 +99,21 @@ class PluginInstallWizardStateTest {
         assertTrue(state.isPluginSelected(defaultPlugin.id))
         assertTrue(state.isPluginSelected(mandatoryPlugin.id))
         assertTrue(state.isPluginSelected(optionalPlugin.id))
+    }
+
+    @Test
+    fun `installation retry stays on the current selection`() {
+        val state = state()
+        state.applyProfile(ToolboxProfile.DEVELOPER)
+        state.startInstallation()
+        state.updateProgress(0.4f, "Installing")
+        state.failInstallation("temporary failure")
+
+        state.prepareInstallationRetry()
+
+        assertFalse(state.installationAttempted)
+        assertEquals(null, state.installationError)
+        assertEquals(3, state.getSelectedPlugins().size)
     }
 
     @Test

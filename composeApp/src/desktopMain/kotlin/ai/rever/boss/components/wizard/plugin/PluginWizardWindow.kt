@@ -10,12 +10,14 @@ actual fun PluginWizardWindow(
     state: PluginInstallWizardState,
     onDismiss: () -> Unit,
     onComplete: () -> Unit,
+    onSetupBossTerm: () -> Unit,
     onInstallPlugins: suspend (List<WizardPluginInfo>, (Float, String) -> Unit) -> Result<PluginInstallResult>,
 ) {
     PluginInstallWizardWindow(
         state = state,
         onDismiss = onDismiss,
         onComplete = onComplete,
+        onSetupBossTerm = onSetupBossTerm,
         onInstallPlugins = onInstallPlugins,
     )
 }
