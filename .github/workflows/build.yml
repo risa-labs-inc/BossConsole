@@ -104,6 +104,16 @@ jobs:
         # two languages and drift into a gesture that silently does nothing.
         run: node scripts/test/test-swipe-nav.js
 
+      - name: 🧪 Form field detector
+        # FormFieldDetector is JavaScript inside a Kotlin string too, and it is the one with
+        # no Kotlin test at all - so until now nothing read it, by grep or by execution, while
+        # it was injected into every frame of every page. This runs both of its scripts against
+        # a fake DOM. It also pins the keys the script emits against the ones parseFieldInfoJson
+        # picks back out: those are hand-matched across two files and two languages, and a
+        # rename on either side does not fail, it silently yields an empty string for that
+        # field forever.
+        run: node scripts/test/test-form-field-detector.js
+
       - name: ✍️ No new em-dashes in prose
         # House style is a spaced hyphen. Scoped to ADDED lines on purpose: the
         # sweep left code comments alone by design, so a whole-tree check would
