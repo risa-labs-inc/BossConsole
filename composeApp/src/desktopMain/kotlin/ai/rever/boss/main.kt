@@ -254,6 +254,8 @@ fun main(args: Array<String>) {
 
     if (isHeadlessCli) {
         ai.rever.boss.cli
+            .configureHeadlessOutputEncoding()
+        ai.rever.boss.cli
             .configureHeadlessLogging()
         try {
             createBossCLI().main(args)
