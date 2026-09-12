@@ -434,6 +434,27 @@ removed. `noticeFor` **groups by replacement**: the function only exists for the
 case, which is exactly the case where two retirements can point at different replacements, and
 taking `first().replacementDisplayName` told the user their panel moved somewhere it did not.
 
+## Sandbox coroutine teardown
+
+`InProcessPluginSandbox.stop()` cancels and boundedly joins jobs owned by
+`PluginContext.pluginScope` before retiring the executor. Executor termination
+alone misses work suspended on another dispatcher. Normal loaded-plugin uninstall
+awaits `removeSandbox` before the loader closes.
+
+Restart remains non-blocking because it retains the classloader. Unfinished job
+generations are retained until completion so a subsequent stop waits for them too.
+The join has one two-second budget across generations; expiry logs the plugin ID
+and timeout, then permits teardown. The join and executor wait finish under
+`NonCancellable` once cancellation has begun, even if the unload caller is cancelled.
+This is a bounded opportunity to unwind, not proof that no plugin code remains.
+
+**Scope limit for #207:** independently created plugin/library scopes are not
+children of the sandbox job. BossTerm's `TabController` creates its own
+`SupervisorJob` for terminal sessions. Joining the sandbox does not join those
+sessions, so this change alone does not fix the reported startup terminal orphan.
+That needs terminal-session quiescence or a separately validated startup ordering
+change. The tests here exercise sandbox-owned jobs only.
+
 ## Configuration
 
 Create `local.properties`:
