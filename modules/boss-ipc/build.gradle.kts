@@ -3,6 +3,34 @@ import com.google.protobuf.gradle.*
 plugins {
     alias(libs.plugins.kotlinJvm)
     alias(libs.plugins.protobuf)
+    alias(libs.plugins.graalvmNative)
+}
+
+// Validate the authenticated transport in the same native-image environment used by child services.
+graalvmNative {
+    toolchainDetection.set(false)
+    metadataRepository {
+        enabled.set(true)
+    }
+    binaries {
+        named("main") {
+            imageName.set("ipc-security-smoke")
+            mainClass.set("ai.rever.boss.ipc.IpcSecuritySmokeKt")
+            classpath.from(sourceSets.test.get().runtimeClasspath)
+            buildArgs.add("--no-fallback")
+            buildArgs.add("-H:+ReportExceptionStackTraces")
+        }
+    }
+}
+
+tasks.named("nativeCompile") {
+    dependsOn(tasks.testClasses)
+}
+
+tasks.register<JavaExec>("nativeSmokeJvm") {
+    dependsOn(tasks.testClasses)
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("ai.rever.boss.ipc.IpcSecuritySmokeKt")
 }
 
 group = "ai.rever.boss.ipc"
@@ -33,6 +61,7 @@ dependencies {
 
     // gRPC Netty transport (supports Unix domain sockets)
     implementation(libs.grpc.netty)
+    implementation(libs.bouncycastle.pkix)
 
     // MutableHandlerRegistry, for adding a service to an already-running server
     implementation(libs.grpc.util)

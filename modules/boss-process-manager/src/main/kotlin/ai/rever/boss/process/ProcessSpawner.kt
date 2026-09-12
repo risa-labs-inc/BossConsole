@@ -1,7 +1,8 @@
 package ai.rever.boss.process
 
-import ai.rever.boss.ipc.BossIpcClient
 import ai.rever.boss.ipc.IpcAddressResolver
+import ai.rever.boss.ipc.auth.IpcEnvironment
+import ai.rever.boss.ipc.auth.IpcTlsIdentity
 import ai.rever.boss.ipc.auth.ProcessTokenRegistry
 import org.slf4j.LoggerFactory
 import java.io.File
@@ -32,20 +33,9 @@ class ProcessSpawner
                 "logs",
             ),
         private val registry: ProcessRegistry? = null,
-        /**
-         * When present, every spawned process is minted a fresh IPC credential and handed it as
-         * `BOSS_PROCESS_TOKEN`, so it can prove its identity to the kernel independently of any
-         * `process_id` it later puts in a request (BossConsole#53). Null (the default) spawns exactly
-         * as before — no token, no behaviour change for a caller that has no use for one (every
-         * existing test in this module, and any host not wired with a `ProcessTokenRegistry`).
-         *
-         * `@JvmOverloads` on this constructor is load-bearing, not style: Kotlin emits only the
-         * full-arity constructor plus a synthetic defaults bridge for trailing default parameters, so
-         * without it the 3-arg `(String, File, ProcessRegistry)` shape this class used to be would stop
-         * existing reflectively the moment this parameter was added - exactly the failure
-         * `KernelReflectionContractTest` exists to catch (see its KDoc).
-         */
+        /** The host registry is required for a managed IPC child. Plain subprocesses may omit it. */
         private val tokenRegistry: ProcessTokenRegistry? = null,
+        private val kernelIdentity: IpcTlsIdentity? = null,
     ) {
         private val logger = LoggerFactory.getLogger(ProcessSpawner::class.java)
 
@@ -87,24 +77,26 @@ class ProcessSpawner
 
             // Set environment variables
             processBuilder.environment().apply {
+                putAll(config.environment)
                 put("BOSS_KERNEL_IPC_ADDR", kernelIpcAddress)
                 put("BOSS_PROCESS_ID", config.processId)
                 put("BOSS_PROCESS_TYPE", config.processType.name)
                 put("BOSS_IPC_ADDR", ipcAddress)
-                putAll(config.environment)
+                IpcEnvironment.removeCredentials(this)
                 // Minted after config.environment, so nothing a caller supplies can shadow the real
                 // credential — only the kernel gets to say what a process's own token is. Never logged.
             }
 
-            val token = tokenRegistry?.issue(config.processId)
+            var security: SpawnIpcSecurity? = null
             val process =
                 runCatching {
-                    token?.let { processBuilder.environment()["BOSS_PROCESS_TOKEN"] = it }
+                    security = SpawnIpcSecurity.create(tokenRegistry, kernelIdentity, config, ipcAddress)
+                    security?.install(processBuilder.environment())
                     processBuilder.start()
                 }.onFailure {
-                    tokenRegistry?.revokeIfCurrent(config.processId, token)
+                    security?.revoke()
                 }.getOrThrow()
-            process.onExit().thenRun { tokenRegistry?.revokeIfCurrent(config.processId, token) }
+            process.onExit().thenRun { security?.revoke() }
 
             logger.info(
                 "Process started: id={}, pid={}, ipc={}",
@@ -118,7 +110,7 @@ class ProcessSpawner
                 process = process,
                 ipcAddress = ipcAddress,
             ).also {
-                it.ipcClient = BossIpcClient(ipcAddress)
+                it.ipcClient = security?.client
                 registry?.register(config.processId, it)
             }
         }

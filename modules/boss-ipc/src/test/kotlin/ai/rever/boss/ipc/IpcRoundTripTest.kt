@@ -1,5 +1,6 @@
 package ai.rever.boss.ipc
 
+import ai.rever.boss.ipc.auth.ProcessAuthority
 import ai.rever.boss.ipc.proto.*
 import ai.rever.boss.ipc.services.KernelServiceImpl
 import io.grpc.ManagedChannelBuilder
@@ -23,43 +24,25 @@ import kotlin.test.assertTrue
  * Uses TCP (not UDS) for simplicity in tests — avoids platform-specific socket configuration.
  */
 class IpcRoundTripTest {
-    private var server: io.grpc.Server? = null
-    private var channel: io.grpc.ManagedChannel? = null
-    private var port: Int = 0
+    private lateinit var testServer: IpcTestServer
 
     private lateinit var kernelService: KernelServiceImpl
 
     @Before
     fun setUp() {
-        // Find available port
-        port = ServerSocket(0).use { it.localPort }
-
         kernelService = KernelServiceImpl()
-
-        server =
-            ServerBuilder
-                .forPort(port)
-                .addService(kernelService)
-                .build()
-                .start()
-
-        channel =
-            ManagedChannelBuilder
-                .forAddress("localhost", port)
-                .usePlaintext()
-                .build()
+        testServer = IpcTestServer(kernelService)
     }
 
     @After
     fun tearDown() {
-        channel?.shutdownNow()
-        server?.shutdownNow()
+        testServer.close()
     }
 
     @Test
     fun `registerProcess returns success with assigned process ID`() =
         runBlocking {
-            val stub = KernelServiceGrpcKt.KernelServiceCoroutineStub(channel!!)
+            val stub = stubFor("test-process-001", 59999)
 
             val manifest =
                 ProcessManifest
@@ -100,21 +83,9 @@ class IpcRoundTripTest {
                 KernelServiceImpl(
                     onProcessRegistered = { id, _, _ -> callbackProcessId = id },
                 )
-            val testPort = ServerSocket(0).use { it.localPort }
-            val testServer =
-                ServerBuilder
-                    .forPort(testPort)
-                    .addService(kernelWithCallback)
-                    .build()
-                    .start()
-            val testChannel =
-                ManagedChannelBuilder
-                    .forAddress("localhost", testPort)
-                    .usePlaintext()
-                    .build()
-
-            try {
-                val stub = KernelServiceGrpcKt.KernelServiceCoroutineStub(testChannel)
+            IpcTestServer(kernelWithCallback).use { callbackServer ->
+                val callbackChannel = callbackServer.channelFor("callback-test-process", "tcp://localhost:59998")
+                val stub = KernelServiceGrpcKt.KernelServiceCoroutineStub(callbackChannel)
                 val manifest =
                     ProcessManifest
                         .newBuilder()
@@ -131,9 +102,6 @@ class IpcRoundTripTest {
                 )
 
                 assertEquals("callback-test-process", callbackProcessId)
-            } finally {
-                testChannel.shutdownNow()
-                testServer.shutdownNow()
             }
         }
 
@@ -141,7 +109,7 @@ class IpcRoundTripTest {
     fun `heartbeat stream sends pongs for each ping`() =
         runBlocking {
             withTimeout(10_000) {
-                val stub = KernelServiceGrpcKt.KernelServiceCoroutineStub(channel!!)
+                val stub = stubFor("heartbeat-test-process", 59997)
 
                 // Register first
                 val manifest =
@@ -185,7 +153,7 @@ class IpcRoundTripTest {
     @Test
     fun `getProcessStatus returns STOPPED for unknown process`() =
         runBlocking {
-            val stub = KernelServiceGrpcKt.KernelServiceCoroutineStub(channel!!)
+            val stub = stubFor("nonexistent-process", 59995)
 
             val status =
                 stub.getProcessStatus(
@@ -201,7 +169,7 @@ class IpcRoundTripTest {
     @Test
     fun `getProcessStatus returns RUNNING for registered process`() =
         runBlocking {
-            val stub = KernelServiceGrpcKt.KernelServiceCoroutineStub(channel!!)
+            val stub = stubFor("status-test-process", 59996)
 
             val manifest =
                 ProcessManifest
@@ -231,9 +199,8 @@ class IpcRoundTripTest {
     @Test
     fun `listProcesses returns all registered processes`() =
         runBlocking {
-            val stub = KernelServiceGrpcKt.KernelServiceCoroutineStub(channel!!)
-
             repeat(3) { i ->
+                val stub = stubFor("list-test-process-$i", 59990 + i)
                 val manifest =
                     ProcessManifest
                         .newBuilder()
@@ -249,7 +216,8 @@ class IpcRoundTripTest {
                 )
             }
 
-            val list = stub.listProcesses(Empty.getDefaultInstance())
+            val host = testServer.channelFor("host", authority = ProcessAuthority.HOST)
+            val list = KernelServiceGrpcKt.KernelServiceCoroutineStub(host).listProcesses(Empty.getDefaultInstance())
 
             assertEquals(3, list.processesCount, "Should list all 3 registered processes")
         }
@@ -257,7 +225,7 @@ class IpcRoundTripTest {
     @Test
     fun `requestShutdown removes process from registry`() =
         runBlocking {
-            val stub = KernelServiceGrpcKt.KernelServiceCoroutineStub(channel!!)
+            val stub = stubFor("shutdown-test-process", 59989)
 
             val manifest =
                 ProcessManifest
@@ -286,4 +254,10 @@ class IpcRoundTripTest {
 
             assertEquals(0, kernelService.registeredCount, "Process should be removed after shutdown")
         }
+
+    private fun stubFor(
+        processId: String,
+        port: Int,
+    ): KernelServiceGrpcKt.KernelServiceCoroutineStub =
+        KernelServiceGrpcKt.KernelServiceCoroutineStub(testServer.channelFor(processId, "tcp://localhost:$port"))
 }

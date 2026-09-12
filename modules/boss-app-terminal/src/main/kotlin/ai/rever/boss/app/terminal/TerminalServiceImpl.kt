@@ -1,5 +1,8 @@
 package ai.rever.boss.app.terminal
 
+import ai.rever.boss.ipc.auth.IpcCall
+import ai.rever.boss.ipc.auth.IpcEnvironment
+import ai.rever.boss.ipc.auth.ProcessAuthority
 import ai.rever.boss.ipc.proto.Empty
 import ai.rever.boss.ipc.proto.services.*
 import com.google.protobuf.ByteString
@@ -28,6 +31,7 @@ class TerminalServiceImpl : TerminalServiceGrpcKt.TerminalServiceCoroutineImplBa
 
     private data class TerminalSession(
         val id: String,
+        val ownerInstance: String,
         val workingDirectory: String,
         val command: List<String>,
         @Volatile var cols: Int = 80,
@@ -43,6 +47,7 @@ class TerminalServiceImpl : TerminalServiceGrpcKt.TerminalServiceCoroutineImplBa
     private val sessions = ConcurrentHashMap<String, TerminalSession>()
 
     override suspend fun createSession(request: CreateSessionRequest): CreateSessionResponse {
+        val ownerInstance = IpcCall.current().instanceId
         val sessionId = UUID.randomUUID().toString()
         val workDir = request.workingDirectory.ifBlank { System.getProperty("user.home") }
         val cmd =
@@ -69,11 +74,14 @@ class TerminalServiceImpl : TerminalServiceGrpcKt.TerminalServiceCoroutineImplBa
             env["LINES"] = (request.rows.takeIf { it > 0 } ?: 24).toString()
             request.environmentMap.forEach { (k, v) -> env[k] = v }
 
+            IpcEnvironment.removeCredentials(env)
+            IpcCall.requireOwner(ownerInstance)
             val process = pb.start()
             val outputFlow = MutableSharedFlow<TerminalOutputChunk>(extraBufferCapacity = 256)
             val session =
                 TerminalSession(
                     id = sessionId,
+                    ownerInstance = ownerInstance,
                     workingDirectory = workDir,
                     command = cmd,
                     cols = request.cols.takeIf { it > 0 } ?: 80,
@@ -137,7 +145,7 @@ class TerminalServiceImpl : TerminalServiceGrpcKt.TerminalServiceCoroutineImplBa
     }
 
     override suspend fun sendInput(request: SendInputRequest): Empty {
-        val session = sessions[request.sessionId]
+        val session = ownedSession(request.sessionId)
         if (session == null) {
             logger.warn("sendInput: session not found: {}", request.sessionId)
             return Empty.getDefaultInstance()
@@ -154,16 +162,19 @@ class TerminalServiceImpl : TerminalServiceGrpcKt.TerminalServiceCoroutineImplBa
 
     override fun streamOutput(request: StreamOutputRequest): Flow<TerminalOutputChunk> =
         flow {
-            val session = sessions[request.sessionId]
+            val session = ownedSession(request.sessionId)
             if (session == null) {
                 logger.warn("streamOutput: session not found: {}", request.sessionId)
                 return@flow
             }
-            session.outputFlow.collect { chunk -> emit(chunk) }
+            session.outputFlow.collect { chunk ->
+                IpcCall.requireOwner(session.ownerInstance)
+                emit(chunk)
+            }
         }
 
     override suspend fun resize(request: ResizeRequest): Empty {
-        val session = sessions[request.sessionId]
+        val session = ownedSession(request.sessionId)
         if (session != null) {
             session.cols = request.cols
             session.rows = request.rows
@@ -173,8 +184,9 @@ class TerminalServiceImpl : TerminalServiceGrpcKt.TerminalServiceCoroutineImplBa
     }
 
     override suspend fun closeSession(request: CloseSessionRequest): Empty {
-        val session = sessions.remove(request.sessionId)
+        val session = ownedSession(request.sessionId)
         if (session != null) {
+            sessions.remove(request.sessionId, session)
             session.process.destroyForcibly()
             logger.info("closeSession: id={}", request.sessionId)
         } else {
@@ -184,8 +196,13 @@ class TerminalServiceImpl : TerminalServiceGrpcKt.TerminalServiceCoroutineImplBa
     }
 
     override suspend fun listSessions(request: Empty): ListSessionsResponse {
+        val caller = IpcCall.current()
+        val visible =
+            sessions.values.filter {
+                caller.authority == ProcessAuthority.HOST || it.ownerInstance == caller.instanceId
+            }
         val infos =
-            sessions.values.map { s ->
+            visible.map { s ->
                 TerminalSessionInfo
                     .newBuilder()
                     .setSessionId(s.id)
@@ -196,5 +213,10 @@ class TerminalServiceImpl : TerminalServiceGrpcKt.TerminalServiceCoroutineImplBa
                     .build()
             }
         return ListSessionsResponse.newBuilder().addAllSessions(infos).build()
+    }
+
+    private fun ownedSession(id: String): TerminalSession? {
+        IpcCall.current()
+        return sessions[id]?.also { IpcCall.requireOwner(it.ownerInstance) }
     }
 }
