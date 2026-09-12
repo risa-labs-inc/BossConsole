@@ -20,6 +20,16 @@ import kotlin.test.assertTrue
 class MainFunctionDetectorTest {
     private val detector = DesktopMainFunctionDetector()
 
+    /**
+     * Which shell [DesktopMainFunctionDetector.generateCommand] builds for. Named rather
+     * than passed as a bare boolean so an expectation says which shell it belongs to, and
+     * so both are exercised from any runner - the host's own OS decides nothing here.
+     */
+    private companion object {
+        const val POSIX = false
+        const val WINDOWS = true
+    }
+
     private fun lines(vararg lines: String) = lines.joinToString("\n")
 
     // ==================== Kotlin ====================
@@ -297,7 +307,8 @@ class MainFunctionDetectorTest {
 
     @Test
     fun `python command single-quotes the path`() {
-        val command = detector.generateCommand(detectedIn("/no-such-root/app.py", Language.PYTHON), "/no-such-root")
+        val command =
+            detector.generateCommand(detectedIn("/no-such-root/app.py", Language.PYTHON), "/no-such-root", POSIX)
         assertEquals("python3 '/no-such-root/app.py'", command)
     }
 
@@ -307,13 +318,15 @@ class MainFunctionDetectorTest {
             detector.generateCommand(
                 detectedIn("/no-such-root/\$(rm -rf ~)/app.py", Language.PYTHON),
                 "/no-such-root",
+                POSIX,
             )
         assertEquals("python3 '/no-such-root/\$(rm -rf ~)/app.py'", command)
     }
 
     @Test
     fun `single quote in path is escaped with the quote-backslash-quote idiom`() {
-        val command = detector.generateCommand(detectedIn("/no-such-root/it's.py", Language.PYTHON), "/no-such-root")
+        val command =
+            detector.generateCommand(detectedIn("/no-such-root/it's.py", Language.PYTHON), "/no-such-root", POSIX)
         assertEquals("python3 '/no-such-root/it'\\''s.py'", command)
     }
 
@@ -321,11 +334,11 @@ class MainFunctionDetectorTest {
     fun `javascript and typescript commands use node and ts-node`() {
         assertEquals(
             "node '/no-such-root/tool.js'",
-            detector.generateCommand(detectedIn("/no-such-root/tool.js", Language.JAVASCRIPT), "/no-such-root"),
+            detector.generateCommand(detectedIn("/no-such-root/tool.js", Language.JAVASCRIPT), "/no-such-root", POSIX),
         )
         assertEquals(
             "npx ts-node '/no-such-root/tool.ts'",
-            detector.generateCommand(detectedIn("/no-such-root/tool.ts", Language.TYPESCRIPT), "/no-such-root"),
+            detector.generateCommand(detectedIn("/no-such-root/tool.ts", Language.TYPESCRIPT), "/no-such-root", POSIX),
         )
     }
 
@@ -333,7 +346,7 @@ class MainFunctionDetectorTest {
     fun `go command runs the file directly`() {
         assertEquals(
             "go run '/no-such-root/main.go'",
-            detector.generateCommand(detectedIn("/no-such-root/main.go", Language.GO), "/no-such-root"),
+            detector.generateCommand(detectedIn("/no-such-root/main.go", Language.GO), "/no-such-root", POSIX),
         )
     }
 
@@ -341,7 +354,96 @@ class MainFunctionDetectorTest {
     fun `kts scripts run via kotlinc -script`() {
         assertEquals(
             "kotlinc -script '/no-such-root/build tool.kts'",
-            detector.generateCommand(detectedIn("/no-such-root/build tool.kts", Language.KOTLIN), "/no-such-root"),
+            detector.generateCommand(
+                detectedIn("/no-such-root/build tool.kts", Language.KOTLIN),
+                "/no-such-root",
+                POSIX,
+            ),
+        )
+    }
+
+    // ==================== generateCommand: the Windows branch ====================
+    //
+    // The POSIX single-quote escape (`'\''`) is a parse error in PowerShell, which is
+    // what these used to emit on every platform: PowerShell reads `'it'` then a bare
+    // backslash, then `''s'` opens a string that never closes. An embedded quote is
+    // doubled there instead. These assert the Windows branch explicitly rather than
+    // through the host, so they cover it from any runner.
+
+    @Test
+    fun `windows quotes a path with an apostrophe the way PowerShell parses it`() {
+        assertEquals(
+            "python3 'C:\\Users\\it''s\\app.py'",
+            detector.generateCommand(detectedIn("C:\\Users\\it's\\app.py", Language.PYTHON), "C:\\Users", WINDOWS),
+        )
+    }
+
+    @Test
+    fun `windows leaves a plain path and its backslashes alone`() {
+        assertEquals(
+            "go run 'C:\\dev\\app\\main.go'",
+            detector.generateCommand(detectedIn("C:\\dev\\app\\main.go", Language.GO), "C:\\dev", WINDOWS),
+        )
+    }
+
+    // ==================== generateCommand: compile-then-run fallbacks ====================
+    //
+    // Build output used to go to a hardcoded `/tmp/…`. Windows has no `/tmp`: a leading
+    // slash there resolves against the current drive, so the artifact landed in `C:\tmp`
+    // (the drive root, created on demand) rather than the user's temp directory.
+
+    @Test
+    fun `standalone kotlin compiles into the temp directory and runs the jar`() {
+        assertEquals(
+            "kotlinc '/no-such-root/Main.kt' -include-runtime -d '/var/tmp/Main.jar' && java -jar '/var/tmp/Main.jar'",
+            detector.generateCommand(
+                detectedIn("/no-such-root/Main.kt", Language.KOTLIN),
+                "/no-such-root",
+                POSIX,
+                "/var/tmp",
+            ),
+        )
+    }
+
+    @Test
+    fun `standalone kotlin on windows uses the windows temp directory and separator`() {
+        assertEquals(
+            "kotlinc 'C:\\dev\\Main.kt' -include-runtime -d 'C:\\Temp\\Main.jar'; java -jar 'C:\\Temp\\Main.jar'",
+            detector.generateCommand(detectedIn("C:\\dev\\Main.kt", Language.KOTLIN), "C:\\dev", WINDOWS, "C:\\Temp"),
+        )
+    }
+
+    @Test
+    fun `standalone rust compiles into the temp directory and runs the binary`() {
+        assertEquals(
+            "rustc '/no-such-root/main.rs' -o '/var/tmp/main' && '/var/tmp/main'",
+            detector.generateCommand(
+                detectedIn("/no-such-root/main.rs", Language.RUST),
+                "/no-such-root",
+                POSIX,
+                "/var/tmp",
+            ),
+        )
+    }
+
+    @Test
+    fun `standalone rust on windows uses the windows temp directory and separator`() {
+        assertEquals(
+            "rustc 'C:\\dev\\main.rs' -o 'C:\\Temp\\main'; 'C:\\Temp\\main'",
+            detector.generateCommand(detectedIn("C:\\dev\\main.rs", Language.RUST), "C:\\dev", WINDOWS, "C:\\Temp"),
+        )
+    }
+
+    @Test
+    fun `a trailing separator on the temp directory does not double up`() {
+        assertEquals(
+            "rustc '/no-such-root/main.rs' -o '/var/tmp/main' && '/var/tmp/main'",
+            detector.generateCommand(
+                detectedIn("/no-such-root/main.rs", Language.RUST),
+                "/no-such-root",
+                POSIX,
+                "/var/tmp/",
+            ),
         )
     }
 
