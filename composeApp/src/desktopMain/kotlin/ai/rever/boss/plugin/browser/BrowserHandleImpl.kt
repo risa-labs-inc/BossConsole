@@ -1471,27 +1471,22 @@ internal class BrowserHandleImpl(
         subscriptions +=
             browser.on(BrowserClosed::class.java) {
                 logger.debug(LogCategory.BROWSER, "Browser closed", mapOf("handleId" to id))
-                audioSource.close()
-                disposed.set(true)
-                pageInjection.onGone()
-                nativeDisposal.start()
-                // Stop streaming: the underlying page is gone.
-                coBrowseCapturing = false
-                coBrowseSink = null
-                coBrowseBridge.onEvent = null
-                // Same for the page event channel. dispose() clears this too, but a browser can
-                // close without one (a crashed renderer, an engine recycle), and a sink still
-                // pointing at a plugin is the half that matters.
-                pageEventScript = null
-                pageEventBridge.onEvent = null
-                pageEventBridge.urlProvider = { "" }
-                // And drop the injectors HERE, not only in dispose(). This handler sets
-                // disposed = true, and dispose() returns on its first line when that is already
-                // set - so for a browser that closed on its own (crashed renderer, engine recycle)
-                // dispose() never reaches its unregister call, and the entry pins this handle for
-                // the rest of the session. That is the leak the unregister was added to fix,
-                // arriving through the one path that skips it.
-                BrowserInjectDispatcher.unregister(browser)
+                // A browser can close without a dispose() call (a crashed renderer, an engine recycle).
+                // Call dispose() to ensure all scopes are cancelled and the handle is unregistered.
+                // It is idempotent, so a dispose() from the UI will safely no-op.
+                //
+                // Posted to the EDT, like the sibling BrowserClosed handlers (closePopOutWhenBrowserDies,
+                // BrowserPopupWindow): this callback arrives on a JxBrowser thread, and dispose() makes
+                // two bounded 2s EDT round trips (closePopOutOnEdt, exitFullscreen) that must not stall
+                // it - on an engine recycle every browser closes at once and the stalls would serialize.
+                // The browser is already gone here, so the "run before browser.close()" ordering the UI
+                // path needs from the top of dispose() does not apply.
+                //
+                // Telemetry note: dispose() now runs for externally closed browsers too, so
+                // visitTracker.closed() emits PAGE_LEFT + TAB_CLOSED for a crashed renderer or engine
+                // recycle. That is more accurate (the visit really did end), but a plugin counting
+                // TAB_CLOSED sees events it previously did not.
+                SwingUtilities.invokeLater { this@BrowserHandleImpl.dispose() }
             }
     }
 
@@ -3329,13 +3324,16 @@ internal class BrowserHandleImpl(
      */
 
     /**
-     * Closes the pop-out when the browser behind it dies without a dispose().
+     * Closes the pop-out when the browser behind it dies.
      *
-     * `BrowserClosed` sets `disposed = true`, and `dispose()` returns on its first line when that
-     * is already set - so a crashed renderer or an engine recycle never reaches the cleanup.
      * The tab is backgrounded by definition while popped out, so nothing tears its composition
-     * down either: without this the window stays on screen, undecorated and always-on-top, over
-     * a dead surface. `showPopupInWindow` subscribes to the same event for the same reason.
+     * down: without this the window stays on screen, undecorated and always-on-top, over a dead
+     * surface. `showPopupInWindow` subscribes to the same event for the same reason.
+     *
+     * The unified BrowserClosed handler reaches the pop-out too, through dispose()'s
+     * closePopOutOnEdt() - but this direct EDT post is the fast path, and keeping it means the
+     * surface closes even if dispose() is delayed behind other EDT work. closeSurfacePopOut
+     * no-ops once the frame is gone, so the two cannot conflict.
      */
     private fun closePopOutWhenBrowserDies() {
         runCatching {
@@ -4279,8 +4277,10 @@ internal class BrowserHandleImpl(
             coBrowseInjectRegistered.set(true)
             pageEventInjectRegistered.set(true)
 
-            // Unsubscribe from all events
-            subscriptions.forEach { it.unsubscribe() }
+            // Unsubscribe from all events. runCatching, as in the BrowserPopupWindow handler: a
+            // browser that closed on its own reaches dispose() with the native side already gone,
+            // and a dead-transport throw here must not abort the teardown.
+            subscriptions.forEach { runCatching { it.unsubscribe() } }
             subscriptions.clear()
 
             // Clear listeners
@@ -4293,12 +4293,14 @@ internal class BrowserHandleImpl(
             // Release find-in-page state and its timers before closing the browser: a debounce that
             // fires afterwards would search a closed object.
             BrowserFindController.dispose(browser)
-
+        } finally {
             // Unconditional, unlike the composition's token-guarded removal: the handle is gone, so
             // there is no successor registration this could delete. Covers a handle disposed out from
             // under a surface that is still composed - an engine generation bump does exactly that.
+            // In the finally, not the try: a throw anywhere above (a dead-transport unsubscribe,
+            // for instance) must not skip the unregister - pinning the handle for the session is the
+            // leak the BrowserClosed routing above exists to close.
             ActiveBrowserRegistry.unregister(id)
-        } finally {
             // Do not turn a caller deadline into permission to close a live native call.
             // This also covers direct plugin/window disposal and local teardown failures.
             finishLocalBrowserDisposal(
