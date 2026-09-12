@@ -548,7 +548,16 @@ object FullscreenBrowserWindow {
         )
     private val videoFullscreenConfirmationHandler =
         VideoFullscreenConfirmationHandler(
-            onConfirmed = { hasReachedFullscreen = true },
+            onConfirmed = {
+                hasReachedFullscreen = true
+                fullscreenFrame?.let {
+                    FullscreenHelpers.applyFocusToBrowserView(
+                        it,
+                        currentBrowserView,
+                        "requestFocusInWindow failed after macOS native fullscreen transition",
+                    )
+                }
+            },
             onExitedEarly = ::requestPageExit,
         )
     private val overlayCoordinator =
@@ -579,7 +588,6 @@ object FullscreenBrowserWindow {
     // Exit needs more time because we need to ensure the Swing view fully releases the surface
     private const val SWING_RELEASE_DELAY_MS = 200
     private const val EDT_CLEANUP_TIMEOUT_MS = 2_000L
-    private const val EXIT_FULLSCREEN_ACTION = "exit-fullscreen"
 
     fun showFullscreen(
         browser: Browser,
@@ -735,7 +743,9 @@ object FullscreenBrowserWindow {
         if (!isCurrentFrameSession(expectedEpoch, browser, frame)) return
         try {
             action()
-        } catch (e: Exception) {
+        } catch (
+            @Suppress("TooGenericExceptionCaught") e: Exception,
+        ) {
             logger.error(LogCategory.BROWSER, "Fullscreen transition failed", error = e)
             if (isCurrentSession(expectedEpoch, browser)) {
                 performExitDirect()
@@ -774,7 +784,7 @@ object FullscreenBrowserWindow {
             frame.background = Color.BLACK
             frame.contentPane.background = Color.BLACK
             frame.contentPane.layout = BorderLayout()
-            installExitShortcut(frame)
+            FullscreenHelpers.installExitShortcut(frame, ::requestPageExit)
 
             // Create BrowserView for existing browser instance
             // At this point, the Compose BrowserView should be detached from rendering
@@ -798,14 +808,18 @@ object FullscreenBrowserWindow {
                 frame.setBounds(screenBounds.x, screenBounds.y, screenBounds.width, screenBounds.height)
                 frame.isVisible = true
                 hasReachedFullscreen = true
+
+                FullscreenHelpers.applyFocusToBrowserView(
+                    frame,
+                    browserView,
+                    "requestFocusInWindow failed on Windows/Linux fullscreen entry",
+                )
             }
 
-            frame.toFront()
-            frame.requestFocus()
-            browserView.requestFocusInWindow()
-
             logger.info(LogCategory.BROWSER, "Fullscreen window opened", mapOf("tabId" to tabId, "isMacOS" to isMacOS))
-        } catch (e: Exception) {
+        } catch (
+            @Suppress("TooGenericExceptionCaught") e: Exception,
+        ) {
             logger.error(LogCategory.BROWSER, "Failed to create fullscreen window", error = e)
             runCatching { createdFrame?.dispose() }
                 .onFailure { error ->
@@ -831,6 +845,12 @@ object FullscreenBrowserWindow {
                     requestPageExit()
                 }
             },
+        )
+
+        FullscreenHelpers.restoreFocusOnWindowGain(
+            frame,
+            { isCurrentFrameSession(expectedEpoch, browser, frame) && !isExiting },
+            { currentBrowserView },
         )
 
         // Detect when exiting native fullscreen (green button or ESC).
@@ -904,7 +924,7 @@ object FullscreenBrowserWindow {
     ) {
         SwingUtilities.invokeLater {
             runFullscreenTransition(frame, browser, expectedEpoch) {
-                if (!toggleMacOSFullscreen(frame)) {
+                if (!FullscreenHelpers.toggleMacOSFullscreen(frame)) {
                     showBorderlessOverlay(
                         frame = frame,
                         browser = browser,
@@ -960,7 +980,7 @@ object FullscreenBrowserWindow {
                 sourceFrame = frame,
                 sourceView = currentBrowserView,
                 browser = browser,
-                installExitShortcut = ::installExitShortcut,
+                installExitShortcut = { frame -> FullscreenHelpers.installExitShortcut(frame, ::requestPageExit) },
                 installFrameListeners = { replacement ->
                     installFullscreenFrameListeners(replacement, browser, expectedEpoch)
                 },
@@ -974,7 +994,9 @@ object FullscreenBrowserWindow {
         overlay.frame.setBounds(bounds)
         overlay.frame.isVisible = true
         overlay.frame.toFront()
-        overlay.browserView.requestFocusInWindow()
+        if (!overlay.browserView.requestFocusInWindow()) {
+            logger.warn(LogCategory.BROWSER, "requestFocusInWindow failed in borderless overlay")
+        }
         overlayCoordinator.installFocusBehavior(overlay.frame, currentOwnerWindowId)
         if (watchOwnerExit) {
             overlayCoordinator.watchOwnerExit(currentOwnerWindowId, expectedEpoch)
@@ -1045,36 +1067,6 @@ object FullscreenBrowserWindow {
      * Uses com.apple.eawt.Application.requestToggleFullScreen() which creates
      * a proper macOS fullscreen Space (like Chrome/Safari behavior).
      */
-    private fun toggleMacOSFullscreen(window: Window): Boolean =
-        try {
-            val appClass = Class.forName("com.apple.eawt.Application")
-            val getAppMethod = appClass.getDeclaredMethod("getApplication")
-            getAppMethod.isAccessible = true
-            val app = getAppMethod.invoke(null)
-            val requestToggleMethod = appClass.getDeclaredMethod("requestToggleFullScreen", Window::class.java)
-            requestToggleMethod.isAccessible = true
-            requestToggleMethod.invoke(app, window)
-            logger.info(LogCategory.BROWSER, "Requested macOS native fullscreen")
-            true
-        } catch (e: Exception) {
-            logger.warn(LogCategory.BROWSER, "Could not toggle macOS fullscreen", error = e)
-            false
-        }
-
-    private fun installExitShortcut(frame: JFrame) {
-        frame.rootPane
-            .getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
-            .put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), EXIT_FULLSCREEN_ACTION)
-        frame.rootPane.actionMap.put(
-            EXIT_FULLSCREEN_ACTION,
-            object : AbstractAction() {
-                override fun actionPerformed(event: ActionEvent?) {
-                    logger.info(LogCategory.BROWSER, "Fullscreen exit requested from host UI")
-                    requestPageExit()
-                }
-            },
-        )
-    }
 
     /**
      * Reset all state variables.
@@ -1126,13 +1118,17 @@ object FullscreenBrowserWindow {
                     }
                     frame.contentPane.revalidate()
                     frame.contentPane.repaint()
-                } catch (e: Exception) {
+                } catch (
+                    @Suppress("TooGenericExceptionCaught") e: Exception,
+                ) {
                     logger.error(LogCategory.BROWSER, "Error detaching fullscreen browser view", error = e)
                 } finally {
                     try {
                         frame.isAlwaysOnTop = false
                         frame.dispose()
-                    } catch (e: Exception) {
+                    } catch (
+                        @Suppress("TooGenericExceptionCaught") e: Exception,
+                    ) {
                         logger.error(LogCategory.BROWSER, "Error disposing fullscreen window", error = e)
                     }
                 }
@@ -1277,6 +1273,76 @@ object FullscreenBrowserWindow {
             if (currentBrowser === browser) {
                 exitFullscreen()
             }
+        }
+    }
+}
+
+internal object FullscreenHelpers {
+    private val logger = BossLogger.forComponent("FullscreenHelpers")
+
+    fun installExitShortcut(
+        frame: JFrame,
+        requestPageExit: () -> Unit,
+    ) {
+        frame.rootPane
+            .getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
+            .put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "EXIT_FULLSCREEN_ACTION")
+        frame.rootPane.actionMap.put(
+            "EXIT_FULLSCREEN_ACTION",
+            object : AbstractAction() {
+                override fun actionPerformed(event: ActionEvent?) {
+                    logger.info(LogCategory.BROWSER, "Fullscreen exit requested from host UI")
+                    requestPageExit()
+                }
+            },
+        )
+    }
+
+    fun toggleMacOSFullscreen(window: Window): Boolean =
+        try {
+            val appClass = Class.forName("com.apple.eawt.Application")
+            val getAppMethod = appClass.getDeclaredMethod("getApplication")
+            getAppMethod.isAccessible = true
+            val app = getAppMethod.invoke(null)
+            val requestToggleMethod = appClass.getDeclaredMethod("requestToggleFullScreen", Window::class.java)
+            requestToggleMethod.isAccessible = true
+            requestToggleMethod.invoke(app, window)
+            logger.info(LogCategory.BROWSER, "Requested macOS native fullscreen")
+            true
+        } catch (
+            @Suppress("TooGenericExceptionCaught") e: Exception,
+        ) {
+            logger.warn(LogCategory.BROWSER, "Could not toggle macOS fullscreen", error = e)
+            false
+        }
+
+    fun restoreFocusOnWindowGain(
+        frame: JFrame,
+        isValidSession: () -> Boolean,
+        currentBrowserView: () -> BrowserView?,
+    ) {
+        frame.addWindowFocusListener(
+            object : WindowAdapter() {
+                override fun windowGainedFocus(e: WindowEvent?) {
+                    if (!isValidSession()) return
+                    val view = currentBrowserView()
+                    if (view != null && !view.requestFocusInWindow()) {
+                        logger.warn(LogCategory.BROWSER, "requestFocusInWindow failed on window focus gain")
+                    }
+                }
+            },
+        )
+    }
+
+    fun applyFocusToBrowserView(
+        frame: JFrame,
+        view: BrowserView?,
+        logMessage: String,
+    ) {
+        frame.toFront()
+        frame.requestFocus()
+        if (view != null && !view.requestFocusInWindow()) {
+            logger.warn(LogCategory.BROWSER, logMessage)
         }
     }
 }

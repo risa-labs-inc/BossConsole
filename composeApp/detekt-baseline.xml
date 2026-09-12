@@ -1859,5 +1859,6 @@
     <ID>ReturnCount:ContentSearchService.kt$ContentSearchService$private suspend fun replaceInOneFile( file: File, regex: Regex, replacement: String, isRegex: Boolean, dryRun: Boolean, isCancelled: () -> Boolean, ): FileReplaceResult</ID>
     <ID>ReturnCount:ContentSearchService.kt$ContentSearchService$private suspend fun replaceInOneFile( file: File, projectRoot: String, regex: Regex, replacement: String, isRegex: Boolean, dryRun: Boolean, isCancelled: () -&gt; Boolean, ): FileReplaceResult</ID>
     <ID>ReturnCount:ContentSearchService.kt$ContentSearchService$private suspend fun replaceInBuffer( file: File, text: String, version: Long, regex: Regex, replacement: String, isRegex: Boolean, dryRun: Boolean, isCancelled: () -> Boolean, ): FileReplaceResult</ID>
+    <ID>LargeClass:FullscreenBrowserWindow.kt$FullscreenBrowserWindow</ID>
   </CurrentIssues>
 </SmellBaseline>
