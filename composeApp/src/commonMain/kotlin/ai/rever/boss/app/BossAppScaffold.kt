@@ -281,8 +281,10 @@ internal fun BossAppScaffold(
     // clearing is not on screen however the preference reads. See asDrawn.
     val drawn = appearance.asDrawn(focusModeSettings)
 
-    // Whether the hover-revealed bar is up, reported by SplitViewPanel. It decides where the
-    // host's actions render while the bar is collapsed - see the placement below.
+    // Whether the hover-revealed bar is up, reported by SplitViewPanel. The placement decision
+    // deliberately ignores it (the rail keeps its actions while the drawer is open - see
+    // verticalBarHost), but the value and its reporting chain are kept as a documented hedge
+    // for a future decision that does need the drawer's state.
     var drawerVisible by remember { mutableStateOf(false) }
 
     // Whether the bar in the layout is the RAIL, reported by SplitViewPanel once it has measured.
@@ -316,8 +318,10 @@ internal fun BossAppScaffold(
         )
 
     // Whether the collapsed tab-bar rail has enough height for its quick actions.
-    // Keep the measured answer while a hover drawer temporarily owns the actions. The rail
-    // stays composed behind that drawer and will not report again unless its fit changes.
+    // Keep the measured answer while the drawer is open: the rail stays composed behind that
+    // drawer and will not report again unless its fit changes. Consequence of the rail no
+    // longer handing its actions to the drawer: with the fit false and the bar collapsed, the
+    // actions now fall through to PANEL_FOOTER/FLOATING instead of the drawer's roomy foot.
     var railActionsFit by remember { mutableStateOf(true) }
 
     // Gated, so the measurement costs nothing in the configuration that will never use it. With

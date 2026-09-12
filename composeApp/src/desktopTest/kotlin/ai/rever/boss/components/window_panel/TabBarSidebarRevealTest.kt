@@ -2,8 +2,12 @@ package ai.rever.boss.components.window_panel
 
 import ai.rever.boss.components.window_panel.components.main_window_panels.SIDEBAR_REVEAL_CLOSE_DELAY_MS
 import ai.rever.boss.components.window_panel.components.main_window_panels.SIDEBAR_REVEAL_OPEN_DELAY_MS
+import ai.rever.boss.components.window_panel.components.main_window_panels.besideLeadingRail
 import ai.rever.boss.components.window_panel.components.main_window_panels.hoverRevealTarget
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.dp
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -30,9 +34,8 @@ class TabBarSidebarRevealTest {
 
     @Test
     fun `pointer on the drawer keeps it revealed`() {
-        // The handoff: the drawer slides OVER the rail, so hover moves between two different
-        // nodes - and under HARDWARE between two different windows. Without this vote the drawer
-        // closes the instant it finishes opening.
+        // The drawer sits beside the rail, but they remain separate nodes and under HARDWARE
+        // separate windows. Without this vote the drawer closes during that handoff.
         assertTrue(reveal(pointerOnRail = false, pointerOnDrawer = true))
     }
 
@@ -68,5 +71,27 @@ class TabBarSidebarRevealTest {
         // Load-bearing rather than cosmetic: the close grace has to cover the rail-to-drawer
         // handoff, which itself takes the open delay. Equal or shorter and the drawer flickers.
         assertTrue(SIDEBAR_REVEAL_CLOSE_DELAY_MS > SIDEBAR_REVEAL_OPEN_DELAY_MS)
+    }
+
+    @Test
+    fun `the drawer region begins after the retained rail`() {
+        val panel = IntRect(left = 40, top = 12, right = 520, bottom = 612)
+
+        assertEquals(
+            IntRect(left = 76, top = 12, right = 520, bottom = 612),
+            panel.besideLeadingRail(36.dp),
+        )
+    }
+
+    @Test
+    fun `a panel narrower than the rail coerces to a zero-width region`() {
+        // left + railWidth passes right, so the drawer gets nothing beside the rail; the
+        // zero-width answer is what resolveRegion's documented inset fallback then acts on.
+        // Pin the coercion direction so that inheritance stays a deliberate choice.
+        val panel = IntRect(left = 40, top = 12, right = 50, bottom = 612)
+        val region = panel.besideLeadingRail(36.dp)
+
+        assertEquals(50, region.left)
+        assertEquals(region.left, region.right, "the drawer region is zero-width, not negative")
     }
 }

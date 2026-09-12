@@ -35,10 +35,12 @@ import kotlin.test.assertNull
  *
  * The first test exists because that second failure SHIPPED in this change's first draft: one slot
  * was handed to both the collapsed rail and the hover drawer on the reasoning that "a rail is
- * TAB_BAR_RAIL and a full bar is TAB_BAR_FOOTER, never both". `SplitViewPanel` composes the rail
- * and the drawer TOGETHER - the drawer is an overlay over the rail, not a replacement - so with
- * the drawer up the rail drew the full bar's wrapping row at 36dp wide, four lines of squeezed
- * icons, visible for the frame after dismissal.
+ * TAB_BAR_RAIL and a full bar is TAB_BAR_FOOTER, never both". Back then the drawer was an overlay
+ * over the rail, and with the drawer up the rail drew the full bar's wrapping row at 36dp wide -
+ * four lines of squeezed icons, visible for the frame after dismissal. The drawer now reveals
+ * BESIDE the rail, and the invariant the test pins is the conclusion of that fix: `SplitViewPanel`
+ * still composes rail and drawer together, but the rail keeps its one slot in every drawer state
+ * and the drawer never takes it.
  */
 class HostActionsWiringTest {
     @get:Rule
@@ -61,7 +63,7 @@ class HostActionsWiringTest {
     )
 
     @Test
-    fun `the hover drawer moves the actions out of the rail, never doubles them`() {
+    fun `the hover drawer keeps the actions in the rail without doubling them`() {
         val drawerVisible = mutableStateOf(false)
         rule.setContent {
             val placement = placementFor(drawerVisible = drawerVisible.value)
@@ -83,11 +85,11 @@ class HostActionsWiringTest {
 
         drawerVisible.value = true
         rule.waitForIdle()
-        assertOnly(VERTICAL_BAR_HOST_ACTIONS_TAG, "the drawer is a full bar, so its foot takes them")
+        assertOnly(VERTICAL_BAR_RAIL_ACTIONS_TAG, "the drawer opens beside the rail, which keeps the actions")
 
         drawerVisible.value = false
         rule.waitForIdle()
-        assertOnly(VERTICAL_BAR_RAIL_ACTIONS_TAG, "and dismissing it hands them back to the rail")
+        assertOnly(VERTICAL_BAR_RAIL_ACTIONS_TAG, "and dismissing it leaves them there")
     }
 
     /** Exactly one of the two bar layouts on screen, and it is [expected]. */

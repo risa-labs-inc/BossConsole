@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -24,7 +25,7 @@ import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 
 /**
- * The full vertical tab bar shown as a temporary drawer over a panel whose bar is down to its
+ * The full vertical tab bar shown as a temporary drawer beside a panel whose bar is down to its
  * rail.
  *
  * **Why this is not just a Box with an offset.** Under HARDWARE_ACCELERATED JxBrowser - the
@@ -45,9 +46,11 @@ import kotlin.math.roundToInt
  *   reveal decision needs it alongside the rail's.
  * @param panelRegion this panel's rectangle in dp relative to the window's content pane. Null
  *   means not yet measured, and nothing is drawn - see [overlayRegionInWindow].
- * @param onDismissOutside installs a click-catcher over the rest of the panel that invokes this.
- *   Non-null only for a drawer opened by the chevron; a hover-revealed one must NOT swallow the
- *   click that focuses the content behind it, since the pointer leaving is what closes it.
+ * @param onDismissOutside installs a click-catcher over the part of the panel the drawer does not
+ *   cover - the retained rail is excluded, because pressing the sidebar is not an outside click -
+ *   that invokes this. Non-null only for a drawer opened by the chevron; a hover-revealed one
+ *   must NOT swallow the click that focuses the content behind it, since the pointer leaving is
+ *   what closes it.
  */
 @Composable
 fun BoxScope.VerticalTabBarDrawer(
@@ -55,16 +58,25 @@ fun BoxScope.VerticalTabBarDrawer(
     hoverSource: MutableInteractionSource,
     hoverEnabled: Boolean,
     width: Dp,
+    railWidth: Dp,
     panelRegion: IntRect?,
     onDismissOutside: (() -> Unit)?,
     content: @Composable () -> Unit,
 ) {
     if (onDismissOutside != null && visible) {
+        // The retained rail stays interactive under the drawer: SplitView composes it before
+        // this catcher, so an unpadded fillMaxSize sits on top of it - pressing a retained
+        // quick action would dismiss the drawer instead of firing, and the rail would get no
+        // hover at all, so its labels never appear. The rail is part of the sidebar, and
+        // pressing the sidebar is not an "outside" click.
         Box(
             modifier =
-                Modifier.fillMaxSize().pointerInput(Unit) {
-                    detectTapGestures(onPress = { onDismissOutside() })
-                },
+                Modifier
+                    .fillMaxSize()
+                    .padding(start = railWidth)
+                    .pointerInput(Unit) {
+                        detectTapGestures(onPress = { onDismissOutside() })
+                    },
         )
     }
 
@@ -72,13 +84,14 @@ fun BoxScope.VerticalTabBarDrawer(
 
     val region = panelRegion ?: return
     val heavyweight = overlayCornerIsHeavyweight()
+    val drawerRegion = region.besideLeadingRail(railWidth)
 
     if (heavyweight) {
         OverlayCorner(
             alignment = Alignment.TopStart,
             // First-frame size only; later measurements use the parent region.
-            initialSize = DpSize(width, region.height.dp),
-            regionInWindow = region,
+            initialSize = DpSize(width, drawerRegion.height.dp),
+            regionInWindow = drawerRegion,
         ) {
             Box(modifier = Modifier.hoverable(hoverSource, enabled = hoverEnabled)) { content() }
         }
@@ -89,13 +102,34 @@ fun BoxScope.VerticalTabBarDrawer(
         // animating a native window's bounds per frame is a different and much worse trade.
         AnimatedVisibility(
             visible = true,
-            modifier = Modifier.align(Alignment.CenterStart).fillMaxHeight(),
+            modifier =
+                Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = railWidth)
+                    .fillMaxHeight(),
             enter = slideInHorizontally(initialOffsetX = { -it }),
             exit = slideOutHorizontally(targetOffsetX = { -it }),
         ) {
             Box(modifier = Modifier.hoverable(hoverSource, enabled = hoverEnabled)) { content() }
         }
     }
+}
+
+/**
+ * The drawer's usable overlay region after preserving the in-flow collapsed rail.
+ *
+ * In dp, like its receiver: [overlayRegionInWindow] has already divided the pixel bounds by
+ * density, so [railWidth] is added dp-plus-dp and HiDPI is handled by that invariant rather
+ * than by any arithmetic here. Do not reintroduce a density multiply.
+ *
+ * A panel narrower than the rail coerces to a zero-width region; `resolveRegion` then answers
+ * with its documented inset fallback (the drawer lands at the content pane corner rather than
+ * beside the rail). That "wrong but visible" choice is inherited, not handled here, and only
+ * bites for a panel narrower than the rail itself.
+ */
+internal fun IntRect.besideLeadingRail(railWidth: Dp): IntRect {
+    val railEnd = (left + railWidth.value.roundToInt()).coerceAtMost(right)
+    return copy(left = railEnd)
 }
 
 /**
