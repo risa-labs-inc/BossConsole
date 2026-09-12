@@ -1,3 +1,4 @@
+
 package ai.rever.boss.plugin.browser
 
 import ai.rever.boss.config.ConfigLoader
@@ -205,12 +206,15 @@ private fun closeAbandoned(box: AtomicReference<Browser?>) {
  * is only the wiring between them and the [FluckEngine.isEngineHealthy] signal.
  */
 private object WedgeRecovery {
-    private val detector = EngineWedgeDetector()
+    private val detectors = java.util.concurrent.ConcurrentHashMap<String, EngineWedgeDetector>()
+
+    private fun getDetector(profileId: String) = detectors.computeIfAbsent(profileId) { EngineWedgeDetector() }
 
     /** A browser was created, so the engine is demonstrably fine. */
-    fun recordSuccess() {
-        detector.recordSuccess()
+    fun recordSuccess(profileId: String) {
+        getDetector(profileId).recordSuccess()
         FluckEngine.reportWedgeUnrecoverable(false)
+        // Note: reportWedgeUnrecoverable should be per profile if needed, but the original was singleton.
     }
 
     /**
@@ -218,13 +222,15 @@ private object WedgeRecovery {
      *
      * @return true when a fresh engine is in place and the creation is worth retrying.
      */
-    suspend fun recycleIfWedged(): Boolean {
-        val generation = FluckEngine.currentEngineGeneration
+    suspend fun recycleIfWedged(profileId: String): Boolean {
+        val detector = getDetector(profileId)
+        val generation = FluckEngine.currentEngineGeneration(profileId)
         val shouldRecycle = detector.recordFailure(System.currentTimeMillis(), generation)
         FluckEngine.reportWedgeUnrecoverable(detector.isExhausted)
         if (!shouldRecycle) return false
         return FluckEngine.recycleWedgedEngine(
             "newBrowser() failed repeatedly (auto-recycle #${detector.recycleAttempts})",
+            profileId,
         )
     }
 }
@@ -396,7 +402,9 @@ object BrowserServiceImpl : BrowserService {
         }
     }
 
-    override fun isAvailable(): Boolean =
+    override fun isAvailable(): Boolean = isAvailableForProfile(BrowserSettings.currentProfile)
+
+    fun isAvailableForProfile(profileId: String): Boolean =
         try {
             // Deliberately does NOT touch FluckEngine.engine: that getter performs
             // the full synchronous Chromium boot, and this method gets called from
@@ -404,7 +412,7 @@ object BrowserServiceImpl : BrowserService {
             // closed-and-recreatable) engine reports available — initialization
             // happens lazily inside createBrowser, whose failure paths callers
             // already surface with retry UI.
-            val initErr = FluckEngine.initError
+            val initErr = FluckEngine.initError(profileId)
             val available = initErr == null
             if (!available) {
                 logger.warn(
@@ -448,7 +456,11 @@ object BrowserServiceImpl : BrowserService {
         config: BrowserConfig,
     ): BrowserHandle? {
         require(windowId.isNotBlank()) { "Browser owner windowId must not be blank" }
-        return createBrowserWithRetry(config, ownerWindowId = windowId)
+        val profileId =
+            ai.rever.boss.window.WindowManager
+                .getWindow(windowId)
+                ?.browserProfileId ?: BrowserSettings.currentProfile
+        return createBrowserWithRetry(config, ownerWindowId = windowId, profileId = profileId)
     }
 
     internal fun finishBrowserCreation(windowId: String) {
@@ -479,6 +491,7 @@ object BrowserServiceImpl : BrowserService {
     private suspend fun createBrowserWithRetry(
         config: BrowserConfig,
         ownerWindowId: String,
+        profileId: String,
     ): BrowserHandle? {
         // At most two attempts. When the first fails inside the engine's own newBrowser() and
         // that trips the wedge detector, the engine is recycled and the creation is retried
@@ -486,9 +499,9 @@ object BrowserServiceImpl : BrowserService {
         // is what used to persist until the Chromium process happened to die on its own.
         var attemptsLeft = 2
         while (attemptsLeft-- > 0) {
-            val outcome = attemptCreateBrowser(config, ownerWindowId)
+            val outcome = attemptCreateBrowser(config, ownerWindowId, profileId)
             if (outcome is CreationOutcome.Created) {
-                WedgeRecovery.recordSuccess()
+                WedgeRecovery.recordSuccess(profileId)
                 return outcome.handle
             }
             val retry =
@@ -500,7 +513,7 @@ object BrowserServiceImpl : BrowserService {
                     // Only an engine-level failure is worth recycling for, and only while the
                     // detector agrees; anything else is this request's own problem and fails as
                     // it always did.
-                    is CreationOutcome.EngineFailure -> WedgeRecovery.recycleIfWedged()
+                    is CreationOutcome.EngineFailure -> WedgeRecovery.recycleIfWedged(profileId)
 
                     else -> false
                 }
@@ -509,9 +522,11 @@ object BrowserServiceImpl : BrowserService {
         return null
     }
 
+    @Suppress("LongMethod", "CyclomaticComplexMethod", "NestedBlockDepth")
     private suspend fun attemptCreateBrowser(
         config: BrowserConfig,
         ownerWindowId: String,
+        profileId: String,
     ): CreationOutcome {
         // Declared outside the try so the outer catch can release the managed profile
         // if anything after newBrowser() throws (see the catch below).
@@ -528,11 +543,11 @@ object BrowserServiceImpl : BrowserService {
         return try {
             // Read as one step: the generation that is current when this browser is created is
             // the only one it can honestly claim. See FluckEngine.engineWithGeneration.
-            val (engine, generation) = FluckEngine.engineWithGeneration()
+            val (engine, generation) = FluckEngine.engineWithGeneration(profileId)
 
             // Optionally run on an isolated managed profile (ephemeral or named),
             // seeding auth into it first. Null = the engine default profile (tabs).
-            val m = acquireManagedProfile(config)
+            val m = acquireManagedProfile(config, profileId)
             managed = m
             val browser: Browser =
                 try {
@@ -564,7 +579,7 @@ object BrowserServiceImpl : BrowserService {
             // Checked before touching the browser at all, since settings() would be the first
             // such call. Ordered after creation for a reason: a check on the way in cannot see
             // a recycle that has not happened yet, which is the whole failure mode.
-            if (FluckEngine.currentEngineGeneration != generation) {
+            if (FluckEngine.currentEngineGeneration(profileId) != generation) {
                 engineRecycled = true
                 // Best-effort: against a closed engine this is a no-op or a dead-IPC failure,
                 // but the browser is unreachable from any dispose path once we throw, and a
@@ -619,6 +634,7 @@ object BrowserServiceImpl : BrowserService {
                     config = effectiveConfig,
                     engineGeneration = generation,
                     ownerWindowId = ownerWindowId,
+                    profileId = profileId,
                 )
             handleId = handle.id
             activeBrowsers[handle.id] = handle
@@ -828,12 +844,11 @@ object BrowserServiceImpl : BrowserService {
 
     @Volatile private var loaded = false
 
-    @Volatile private var sweptOrphans = false
-
     /** A handle's managed profile: its fence name, the JxBrowser profile, and (named only) lock + id. */
     private class ManagedRef(
         val profileName: String,
         val profile: Profile,
+        val engineProfileId: String,
         val ephemeral: Boolean,
         val namedId: String?,
         val heldMutex: Mutex?,
@@ -845,16 +860,26 @@ object BrowserServiceImpl : BrowserService {
      * so concurrent creates on the same name serialize. Ephemeral profiles get a
      * fresh generated name, deleted on dispose.
      */
-    private suspend fun acquireManagedProfile(config: BrowserConfig): ManagedRef? {
+    private suspend fun acquireManagedProfile(
+        config: BrowserConfig,
+        profileId: String,
+    ): ManagedRef? {
         // Plain tabs (no profile requested) skip all managed-profile machinery.
         if (!config.ephemeralProfile && config.profileName == null) return null
         ensureLoaded()
-        sweepOrphansOnce()
+        sweepOrphansOnce(profileId)
         return when {
             config.ephemeralProfile -> {
                 val name = EPHEMERAL_PREFIX + UUID.randomUUID().toString().replace("-", "")
                 inUse.add(name)
-                ManagedRef(name, FluckEngine.newRpaProfile(name), ephemeral = true, namedId = null, heldMutex = null)
+                ManagedRef(
+                    name,
+                    FluckEngine.newRpaProfile(name, profileId),
+                    engineProfileId = profileId,
+                    ephemeral = true,
+                    namedId = null,
+                    heldMutex = null,
+                )
             }
 
             config.profileName != null -> {
@@ -865,11 +890,18 @@ object BrowserServiceImpl : BrowserService {
                 try {
                     inUse.add(fence)
                     val profile =
-                        FluckEngine.findProfile(fence) ?: run {
-                            evictIfNeeded()
-                            FluckEngine.newRpaProfile(fence)
+                        FluckEngine.findProfile(fence, profileId) ?: run {
+                            evictIfNeeded(profileId)
+                            FluckEngine.newRpaProfile(fence, profileId)
                         }
-                    ManagedRef(fence, profile, ephemeral = false, namedId = namedId, heldMutex = mutex)
+                    ManagedRef(
+                        fence,
+                        profile,
+                        engineProfileId = profileId,
+                        ephemeral = false,
+                        namedId = namedId,
+                        heldMutex = mutex,
+                    )
                 } catch (e: Throwable) {
                     inUse.remove(fence)
                     mutex.unlock()
@@ -888,7 +920,7 @@ object BrowserServiceImpl : BrowserService {
         inUse.remove(ref.profileName)
         if (ref.ephemeral) {
             try {
-                FluckEngine.deleteRpaProfile(ref.profile)
+                FluckEngine.deleteRpaProfile(ref.profile, ref.engineProfileId)
             } catch (_: Exception) {
             }
         }
@@ -908,14 +940,14 @@ object BrowserServiceImpl : BrowserService {
         inUse.remove(ref.profileName)
         try {
             if (ref.ephemeral) {
-                FluckEngine.deleteRpaProfile(ref.profile)
+                FluckEngine.deleteRpaProfile(ref.profile, ref.engineProfileId)
             } else if (ref.namedId != null) {
                 meta[ref.namedId]?.let { m ->
                     val size = withContext(Dispatchers.IO) { dirSize(File(m.path)) }
                     meta[ref.namedId] = m.copy(lastUsedMs = System.currentTimeMillis(), diskBytes = size)
                 }
                 persistMeta()
-                evictIfNeeded()
+                evictIfNeeded(ref.engineProfileId)
             }
         } finally {
             ref.heldMutex?.unlock()
@@ -926,6 +958,14 @@ object BrowserServiceImpl : BrowserService {
         profileName: String,
         auth: BrowserAuthSpec?,
     ) {
+        seedProfile(profileName, auth, BrowserSettings.currentProfile)
+    }
+
+    suspend fun seedProfile(
+        profileName: String,
+        auth: BrowserAuthSpec?,
+        profileId: String,
+    ) {
         ensureLoaded()
         require(profileName.isNotBlank()) { "profileName must not be blank" }
         val fence = NAMED_PREFIX + sanitize(profileName)
@@ -934,9 +974,9 @@ object BrowserServiceImpl : BrowserService {
         try {
             inUse.add(fence)
             val profile =
-                FluckEngine.findProfile(fence) ?: run {
-                    evictIfNeeded()
-                    FluckEngine.newRpaProfile(fence)
+                FluckEngine.findProfile(fence, profileId) ?: run {
+                    evictIfNeeded(profileId)
+                    FluckEngine.newRpaProfile(fence, profileId)
                 }
             if (auth != null) {
                 seedManagedProfileAuthentication(profile, auth)
@@ -966,14 +1006,21 @@ object BrowserServiceImpl : BrowserService {
         }
     }
 
-    override fun deleteProfile(profileName: String): Boolean {
+    @Suppress("MaxLineLength")
+    override fun deleteProfile(profileName: String): Boolean = deleteProfile(profileName, BrowserSettings.currentProfile)
+
+    @Suppress("ReturnCount")
+    fun deleteProfile(
+        profileName: String,
+        profileId: String,
+    ): Boolean {
         ensureLoaded()
         val fence = NAMED_PREFIX + sanitize(profileName)
         val mutex = mutexFor(profileName)
         if (!mutex.tryLock()) return false
         try {
             if (inUse.contains(fence)) return false
-            FluckEngine.findProfile(fence)?.let { FluckEngine.deleteRpaProfile(it) }
+            FluckEngine.findProfile(fence, profileId)?.let { FluckEngine.deleteRpaProfile(it, profileId) }
             meta.remove(profileName)
             persistMeta()
             return true
@@ -1125,12 +1172,14 @@ object BrowserServiceImpl : BrowserService {
     // One mutex per distinct named profileId, cached for the process lifetime (few/long-lived ids).
     private fun mutexFor(id: String): Mutex = idMutexes.computeIfAbsent(id) { Mutex() }
 
-    private fun sweepOrphansOnce() {
-        if (sweptOrphans) return
+    private val sweptProfiles = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
+    private fun sweepOrphansOnce(profileId: String) {
+        if (sweptProfiles[profileId] == true) return
         synchronized(this) {
-            if (sweptOrphans) return
-            FluckEngine.cleanupOrphanedRpaProfiles(EPHEMERAL_PREFIX)
-            sweptOrphans = true
+            if (sweptProfiles[profileId] == true) return
+            FluckEngine.cleanupOrphanedRpaProfiles(EPHEMERAL_PREFIX, profileId)
+            sweptProfiles[profileId] = true
         }
     }
 
@@ -1169,7 +1218,7 @@ object BrowserServiceImpl : BrowserService {
      * walks the FS when over cap. A freshly-created profile caches diskBytes=0 until
      * its first dispose refreshes it, so the cap can be transiently exceeded.
      */
-    private suspend fun evictIfNeeded() =
+    private suspend fun evictIfNeeded(profileId: String) =
         withContext(Dispatchers.IO) {
             try {
                 if (meta.values.sumOf { it.diskBytes } <= diskCapBytes) return@withContext
@@ -1186,7 +1235,9 @@ object BrowserServiceImpl : BrowserService {
                         if (!vm.tryLock()) continue
                         try {
                             val m = meta[id] ?: continue
-                            FluckEngine.findProfile(m.name)?.let { FluckEngine.deleteRpaProfile(it) }
+                            FluckEngine.findProfile(m.name, profileId)?.let {
+                                FluckEngine.deleteRpaProfile(it, profileId)
+                            }
                             meta.remove(id)
                             logger.info(LogCategory.BROWSER, "Evicted LRU managed profile", mapOf("id" to id))
                         } finally {

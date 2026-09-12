@@ -65,7 +65,7 @@ class CrossDeviceBrowserManager {
             logger.debug(LogCategory.BROWSER, "Initializing WebAuthn using shared FluckEngine")
 
             // Use the existing FluckEngine singleton which has proper licensing and configuration
-            webAuthnEngine = FluckEngine.engine
+            webAuthnEngine = FluckEngine.getEngine(ai.rever.boss.plugin.browser.BrowserSettings.currentProfile)
             webAuthnBrowser = webAuthnEngine?.newBrowser()?.also { installBrowserChromeOrClose(it) }
 
             logger.info(LogCategory.BROWSER, "WebAuthn engine initialized successfully using FluckEngine")

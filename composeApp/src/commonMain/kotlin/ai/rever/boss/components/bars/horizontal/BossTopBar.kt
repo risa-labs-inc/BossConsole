@@ -70,6 +70,7 @@ private val TOP_BAR_START_INDENT = 36.dp
 
 @Composable
 fun BossDraggableComponent.BossTopBar(
+    windowId: String? = null,
     workspaceManager: WorkspaceManager? = null,
     onApplyWorkspace: ((LayoutWorkspace) -> Unit)? = null,
     getCurrentWorkspace: (() -> LayoutWorkspace)? = null,
@@ -111,6 +112,7 @@ fun BossDraggableComponent.BossTopBar(
             BossTopRunBar()
             Spacer(modifier = Modifier.weight(0.1f))
             BossTopRightBar(
+                windowId = windowId,
                 onShowSettings = onShowSettings,
                 toolbox = toolbox,
                 onShowSearch = onShowSearch,
@@ -791,6 +793,7 @@ fun BossDraggableComponent.BossTopLeftBar(
 
 @Composable
 fun BossTopRightBar(
+    windowId: String? = null,
     onShowSettings: (() -> Unit)? = null,
     onShowSearch: (() -> Unit)? = null,
     // Required - see BossTopBar's onSignOut.
@@ -824,6 +827,11 @@ fun BossTopRightBar(
         hintText = QuickActionHints.SIGN_OUT,
     ) {
         onSignOut()
+    }
+
+    // Browser Profile Picker
+    if (windowId != null) {
+        BrowserProfilePicker(windowId)
     }
 
     // Global search button (Issue #92)

@@ -8,6 +8,7 @@ object BrowserSettings {
     var userAgent: String? = null
     var customUserAgent: String? = null
     var currentProfile: String = "browser-profile"
+    var defaultProfile: String = "browser-profile"
     val availableProfiles = mutableListOf("browser-profile")
 
     // Browser initialization retry settings (configurable via Settings)

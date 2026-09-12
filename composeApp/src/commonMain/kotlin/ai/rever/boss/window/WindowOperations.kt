@@ -19,7 +19,10 @@ expect object WindowOperations {
      *
      * @param tabInfo The tab to open in a new window
      */
-    fun openTabInNewWindow(tabInfo: TabInfo)
+    fun openTabInNewWindow(
+        tabInfo: TabInfo,
+        browserProfileId: String = "browser-profile",
+    )
 
     /**
      * Check if multi-window support is available on this platform
@@ -44,7 +47,7 @@ expect object WindowOperations {
      * On desktop: Creates a new window instance
      * On mobile/web: May do nothing
      */
-    fun createNewWindow()
+    fun createNewWindow(browserProfileId: String = "browser-profile")
 
     /**
      * Create a new window with an initial project
@@ -54,7 +57,10 @@ expect object WindowOperations {
      *
      * @param project The project to open in the new window
      */
-    fun createNewWindowWithProject(project: Project)
+    fun createNewWindowWithProject(
+        project: Project,
+        browserProfileId: String = "browser-profile",
+    )
 
     /**
      * Force close a window by ID

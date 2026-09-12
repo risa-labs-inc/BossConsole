@@ -1,3 +1,4 @@
+
 package ai.rever.boss.components.auth.forms
 
 import ai.rever.boss.plugin.browser.FluckEngine
@@ -92,7 +93,7 @@ private suspend fun unpackBrandPage(): String {
 // get past, so ANY way the engine can fail - no licence, headless, a Chromium that did not unpack, a
 // browser closed under us - has to end at the drawn art rather than at a crashed sign-in screen.
 // Narrowing to JxBrowser's own exception types would let exactly the unforeseen failure through.
-@Suppress("TooGenericExceptionCaught")
+@Suppress("TooGenericExceptionCaught", "LongMethod")
 @Composable
 internal actual fun AuthBrandSite(
     onReady: () -> Unit,
@@ -120,12 +121,16 @@ internal actual fun AuthBrandSite(
             // the same lock.
             created =
                 withContext(Dispatchers.IO) {
-                    FluckEngine.engine.newBrowser().also { installBrowserChromeOrClose(it) }
+                    FluckEngine
+                        .getEngine(
+                            ai.rever.boss.plugin.browser.BrowserSettings.currentProfile,
+                        ).newBrowser()
+                        .also { installBrowserChromeOrClose(it) }
                 }
-            created.navigation().on(LoadFinished::class.java) {
+            created?.navigation()?.on(LoadFinished::class.java) {
                 scope.launch(Dispatchers.Main) { loaded = true }
             }
-            created.navigation().loadUrl(page)
+            created?.navigation()?.loadUrl(page)
             browser = created
             // Park until cancelled, so the `finally` below is this panel's disposal hook.
             awaitCancellation()

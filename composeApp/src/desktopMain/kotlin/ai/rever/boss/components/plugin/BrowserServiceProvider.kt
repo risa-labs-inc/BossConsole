@@ -1,3 +1,4 @@
+
 package ai.rever.boss.components.plugin
 
 import ai.rever.boss.plugin.browser.BrowserConfig
@@ -36,6 +37,39 @@ private class WindowScopedBrowserService(
     private val lifecycleLock = Any()
     private val disposalStarted = AtomicBoolean(false)
     private var closed = false
+
+    override fun isAvailable(): Boolean {
+        val profileId =
+            ai.rever.boss.window.WindowManager
+                .getWindow(windowId)
+                ?.browserProfileId
+                ?: ai.rever.boss.plugin.browser.BrowserSettings.currentProfile
+        return ai.rever.boss.plugin.browser.BrowserServiceImpl
+            .isAvailableForProfile(profileId)
+    }
+
+    override fun deleteProfile(profileName: String): Boolean {
+        val profileId =
+            ai.rever.boss.window.WindowManager
+                .getWindow(windowId)
+                ?.browserProfileId
+                ?: ai.rever.boss.plugin.browser.BrowserSettings.currentProfile
+        return ai.rever.boss.plugin.browser.BrowserServiceImpl
+            .deleteProfile(profileName, profileId)
+    }
+
+    override suspend fun seedProfile(
+        profileName: String,
+        auth: ai.rever.boss.plugin.browser.BrowserAuthSpec?,
+    ) {
+        val profileId =
+            ai.rever.boss.window.WindowManager
+                .getWindow(windowId)
+                ?.browserProfileId
+                ?: ai.rever.boss.plugin.browser.BrowserSettings.currentProfile
+        ai.rever.boss.plugin.browser.BrowserServiceImpl
+            .seedProfile(profileName, auth, profileId)
+    }
 
     override suspend fun createBrowser(config: BrowserConfig): BrowserHandle? {
         val creationStarted =

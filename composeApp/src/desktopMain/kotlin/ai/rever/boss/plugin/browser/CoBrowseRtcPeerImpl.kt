@@ -1,3 +1,4 @@
+
 package ai.rever.boss.plugin.browser
 
 import ai.rever.boss.plugin.api.CoBrowseRtcPeer
@@ -129,7 +130,13 @@ internal class CoBrowseRtcPeerImpl(
     init {
         scope.launch {
             try {
-                val b = FluckEngine.engine.newBrowser().also { installBrowserChromeOrClose(it) }
+                val b =
+                    FluckEngine
+                        .getEngine(ai.rever.boss.plugin.browser.BrowserSettings.currentProfile)
+                        .newBrowser()
+                        .also {
+                            installBrowserChromeOrClose(it)
+                        }
                 browser = b
                 logger.info(LogCategory.BROWSER, "WebRTC peer browser created")
                 // Auto-select the shared tab as the capture source (no picker UI).

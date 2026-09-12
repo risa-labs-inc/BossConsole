@@ -46,7 +46,7 @@ actual fun PasskeyBrowserView(
             logger.debug(LogCategory.BROWSER, "Initializing JxBrowser for WebAuthn")
 
             // Get browser instance from FluckEngine (throws exception if initialization fails)
-            val engine = FluckEngine.engine
+            val engine = FluckEngine.getEngine(ai.rever.boss.plugin.browser.BrowserSettings.currentProfile)
 
             // Create new browser instance for WebAuthn
             val newBrowser =

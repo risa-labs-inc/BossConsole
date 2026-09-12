@@ -1,3 +1,4 @@
+
 package ai.rever.boss.plugin.browser
 
 import ai.rever.boss.components.plugin.tab_types.fluck.DownloadItem
@@ -116,7 +117,7 @@ object FluckEngine {
     fun setColorScheme(dark: Boolean) {
         preferredColorSchemeDark = dark
         try {
-            _engine?.setTheme(if (dark) Theme.DARK else Theme.LIGHT)
+            _engines.values.forEach { it.setTheme(if (dark) Theme.DARK else Theme.LIGHT) }
         } catch (e: Exception) {
             logger.debug(LogCategory.BROWSER, "Failed to apply engine color scheme", mapOf("error" to (e.message ?: "unknown")))
         }
@@ -127,11 +128,10 @@ object FluckEngine {
     // initError/isAvailable() on the UI thread. Pre-warm moves the writes to a
     // background thread on every normal launch, so the unlocked reads need a
     // happens-before edge (safe publication for _engine included).
-    @Volatile private var _engine: Engine? = null
-
-    @Volatile private var initializationError: Throwable? = null
-
-    @Volatile private var attemptCount = 0
+    // Profile-keyed engine state
+    private val _engines = java.util.concurrent.ConcurrentHashMap<String, Engine>()
+    private val initializationErrors = java.util.concurrent.ConcurrentHashMap<String, Throwable>()
+    private val attemptCounts = java.util.concurrent.ConcurrentHashMap<String, Int>()
     private var proactiveCleanupDone = false
 
     /**
@@ -149,27 +149,26 @@ object FluckEngine {
     // @Volatile for the same reason as _engine above — mutated under engineLock
     // (possibly on the pre-warm thread), read lock-free via currentEngineGeneration.
     // Also: non-volatile Long writes aren't guaranteed atomic on the JVM.
-    @Volatile private var _engineGeneration = 0L
-    private val _engineGenerationFlow = MutableStateFlow(0L)
+    private val _engineGenerations = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private val _engineGenerationFlows = java.util.concurrent.ConcurrentHashMap<String, MutableStateFlow<Long>>()
 
-    /**
-     * Observable flow of engine generation changes.
-     * Browser tabs should collect this and invalidate/reload when generation changes.
-     */
-    val engineGenerationFlow: StateFlow<Long> = _engineGenerationFlow.asStateFlow()
+    fun getEngineGenerationFlow(profileId: String): kotlinx.coroutines.flow.StateFlow<Long> =
+        _engineGenerationFlows
+            .computeIfAbsent(profileId) {
+                MutableStateFlow(0L)
+            }.asStateFlow()
 
     /**
      * Current engine generation. Browsers created before this generation are stale.
      */
-    val currentEngineGeneration: Long
-        get() = _engineGeneration
 
     /**
      * Classified initialization error for better user feedback.
      * Returns null if no error or engine initialized successfully.
      */
-    val initError: EngineInitError?
-        get() = initializationError?.let { classifyError(it) }
+    fun initError(profileId: String): EngineInitError? = initializationErrors[profileId]?.let { classifyError(it) }
+
+    fun currentEngineGeneration(profileId: String): Long = _engineGenerations[profileId] ?: 0L
 
     /**
      * Classify the initialization error for user-friendly messages.
@@ -229,7 +228,10 @@ object FluckEngine {
     /**
      * Reset initialization state to allow retry after fixing network issues.
      */
-    fun resetInitializationState() {
+    fun resetInitializationState(profileId: String = BrowserSettings.defaultProfile) {
+        initializationErrors.remove(profileId)
+        attemptCounts[profileId] = 0
+
         // Deliberately NOT synchronized(engineLock): the engine getter holds that
         // lock for the entire multi-second boot, and this is called from UI-thread
         // click handlers (Retry Engine) — taking engineLock here would block the
@@ -237,8 +239,7 @@ object FluckEngine {
         // exists to remove. Both fields are @Volatile; an interleave with a
         // concurrent boot can only briefly reorder these benign counters, which
         // the getter's own retry logic absorbs.
-        initializationError = null
-        attemptCount = 0
+        // Managed per-profile now
     }
 
     /**
@@ -249,8 +250,7 @@ object FluckEngine {
         if (proactiveCleanupDone) return
         proactiveCleanupDone = true
 
-        val selectedProfile = BrowserSettings.currentProfile
-        val profileDirPath = BossDirectories.resolve(selectedProfile).toPath()
+        val profileDirPath = BossDirectories.resolve(BrowserSettings.currentProfile).toPath()
 
         // First, kill any stale Chromium processes from previous sessions
         killStaleChromiumProcesses()
@@ -461,8 +461,9 @@ object FluckEngine {
     private val activeDownloads = Collections.synchronizedMap(mutableMapOf<String, Download>())
 
     // Expose current engine instance for shutdown purposes
-    val currentEngine: Engine?
-        get() = _engine
+    fun currentEngine(profileId: String): Engine? = _engines[profileId]
+
+    fun getAllEngines(): List<Engine> = _engines.values.toList()
 
     /**
      * Check if a URL is currently being downloaded.
@@ -607,32 +608,26 @@ object FluckEngine {
         wedgeUnrecoverable = unrecoverable
     }
 
-    val engine: Engine
-        get() =
-            synchronized(engineLock) {
-                // Return cached engine if available AND not closed
-                _engine?.let { cachedEngine ->
-                    if (!cachedEngine.isClosed) {
-                        return@synchronized cachedEngine
-                    }
-                    // Engine was closed (e.g., during app restart/update flow)
-                    // Clear cache and reinitialize
-                    _engine = null
-                    initializationError = null
-                    attemptCount = 0
-                    // Increment generation to notify browser tabs that they need to reload
-                    _engineGeneration++
-                    _engineGenerationFlow.value = _engineGeneration
-                }
-
-                // Throw cached error if initialization failed before and we've tried too many times
-                if (attemptCount > 3) {
-                    initializationError?.let { throw it }
-                }
-
-                // Try to initialize
-                initializeEngine()
+    fun getEngine(profileId: String): Engine =
+        synchronized(engineLock) {
+            val cachedEngine = _engines[profileId]
+            if (cachedEngine != null && !cachedEngine.isClosed) {
+                return@synchronized cachedEngine
             }
+            if (cachedEngine != null) {
+                _engines.remove(profileId)
+                initializationErrors.remove(profileId)
+                attemptCounts[profileId] = 0
+                val nextGen = (_engineGenerations[profileId] ?: 0L) + 1L
+                _engineGenerations[profileId] = nextGen
+                _engineGenerationFlows.computeIfAbsent(profileId) { MutableStateFlow(0L) }.value = nextGen
+            }
+            val attempts = attemptCounts[profileId] ?: 0
+            if (attempts > 3) {
+                initializationErrors[profileId]?.let { throw it }
+            }
+            return@synchronized initializeEngine(profileId)
+        }
 
     /**
      * The engine together with the generation it belongs to, read as one atomic step.
@@ -647,7 +642,11 @@ object FluckEngine {
      * through it throws ObjectClosedException — which is a crash inside whichever plugin made
      * the call, not a recoverable browser error.
      */
-    fun engineWithGeneration(): Pair<Engine, Long> = synchronized(engineLock) { engine to _engineGeneration }
+    fun engineWithGeneration(profileId: String): Pair<Engine, Long> =
+        synchronized(engineLock) {
+            getEngine(profileId) to
+                (_engineGenerations[profileId] ?: 0L)
+        }
 
     /**
      * Force-replace an engine that is alive but can no longer create browsers.
@@ -662,12 +661,15 @@ object FluckEngine {
      *
      * @return true if an engine was dropped, false if there was nothing cached to recycle.
      */
-    suspend fun recycleWedgedEngine(reason: String): Boolean {
+    suspend fun recycleWedgedEngine(
+        reason: String,
+        profileId: String = BrowserSettings.defaultProfile,
+    ): Boolean {
         val drain = CountDownLatch(1)
         val doomed: Engine
         val doomedProcesses: List<ProcessHandle>
         synchronized(engineLock) {
-            val cached = _engine ?: return false
+            val cached = _engines[profileId] ?: return false
             // Snapshot the doomed engine's Chromium processes HERE: under the lock, while
             // _engine still points at it and before the generation bump. No replacement can
             // exist yet, so every Chromium child of this JVM belongs to the engine being
@@ -679,11 +681,15 @@ object FluckEngine {
             // drop the cached instance, clear the retry budget, and bump the generation
             // so every live BrowserHandle reports itself invalid and its tab reloads onto
             // the replacement (BrowserHandleImpl.isValid / Fluck.kt's generation effect).
-            _engine = null
-            initializationError = null
-            attemptCount = 0
-            _engineGeneration++
-            _engineGenerationFlow.value = _engineGeneration
+            _engines.remove(profileId)
+            initializationErrors.remove(profileId)
+            attemptCounts[profileId] = 0
+            val nextGen = (_engineGenerations[profileId] ?: 0L) + 1L
+            _engineGenerations[profileId] = nextGen
+            _engineGenerationFlows
+                .computeIfAbsent(profileId) {
+                    kotlinx.coroutines.flow.MutableStateFlow(0L)
+                }.value = nextGen
         }
 
         logger.warn(
@@ -691,7 +697,7 @@ object FluckEngine {
             "Recycling wedged browser engine",
             mapOf(
                 "reason" to reason,
-                "newGeneration" to _engineGeneration,
+                "newGeneration" to _engineGenerations[profileId],
                 "chromiumProcesses" to doomedProcesses.size,
             ),
         )
@@ -841,12 +847,21 @@ object FluckEngine {
     // multiple RPAs with different credentials concurrently.
 
     /** Create a fresh isolated profile for an RPA run. Caller must delete it when done. */
-    fun newRpaProfile(name: String): com.teamdev.jxbrowser.profile.Profile = synchronized(engineLock) { engine.profiles().newProfile(name) }
+    fun newRpaProfile(
+        name: String,
+        profileId: String,
+    ): com.teamdev.jxbrowser.profile.Profile =
+        synchronized(engineLock) {
+            getEngine(profileId).profiles().newProfile(name)
+        }
 
     /** Look up an existing profile by name, or null. */
-    fun findProfile(name: String): com.teamdev.jxbrowser.profile.Profile? =
+    fun findProfile(
+        name: String,
+        profileId: String,
+    ): com.teamdev.jxbrowser.profile.Profile? =
         try {
-            synchronized(engineLock) { engine.profiles().list().firstOrNull { it.name() == name } }
+            synchronized(engineLock) { getEngine(profileId).profiles().list().firstOrNull { it.name() == name } }
         } catch (e: Exception) {
             logger.debug(
                 LogCategory.BROWSER,
@@ -857,9 +872,12 @@ object FluckEngine {
         }
 
     /** Delete an RPA profile and its on-disk data. Safe to call if already gone. */
-    fun deleteRpaProfile(profile: com.teamdev.jxbrowser.profile.Profile) {
+    fun deleteRpaProfile(
+        profile: com.teamdev.jxbrowser.profile.Profile,
+        profileId: String,
+    ) {
         try {
-            synchronized(engineLock) { engine.profiles().delete(profile) }
+            synchronized(engineLock) { getEngine(profileId).profiles().delete(profile) }
         } catch (e: Exception) {
             logger.debug(LogCategory.BROWSER, "Error deleting RPA profile", mapOf("error" to (e.message ?: "unknown")))
         }
@@ -870,10 +888,13 @@ object FluckEngine {
      * "rpa-eph-" profiles orphaned by a previous/crashed session). Returns the
      * number removed. Never touches the default profile.
      */
-    fun cleanupOrphanedRpaProfiles(prefix: String): Int =
+    fun cleanupOrphanedRpaProfiles(
+        prefix: String,
+        profileId: String,
+    ): Int =
         try {
             synchronized(engineLock) {
-                val profiles = engine.profiles()
+                val profiles = getEngine(profileId).profiles()
                 val orphans = profiles.list().filter { !it.isDefault && it.name().startsWith(prefix) }
                 orphans.forEach { profiles.delete(it) }
                 if (orphans.isNotEmpty()) {
@@ -1053,14 +1074,17 @@ object FluckEngine {
      * locked by another instance. The two profile notions intentionally differ —
      * the gate only decides whether the head start happens, never correctness.
      */
-    fun prewarmInBackground(force: Boolean = false) {
+    fun prewarmInBackground(
+        force: Boolean = false,
+        profileId: String = BrowserSettings.currentProfile,
+    ) {
         val decision =
             prewarmDecision(
                 prewarmDisabled = configIsFalse(ChromiumFlagKeys.PREWARM),
                 force = force,
-                engineRunning = { _engine != null && isEngineHealthy() },
+                engineRunning = { _engines.isNotEmpty() },
                 engineUsable = { hasUsableEngine(cacheIsHealthy()) },
-                profileExists = { BossDirectories.resolve(BrowserSettings.currentProfile).exists() },
+                profileExists = { BossDirectories.resolve(profileId).exists() },
             )
         if (decision != PrewarmDecision.RUN) {
             // The reason, not a guess at it, and as a field rather than interpolated into the
@@ -1087,7 +1111,7 @@ object FluckEngine {
             logger.debug(LogCategory.BROWSER, "Engine pre-warm already under way")
             return
         }
-        startPrewarmThread()
+        startPrewarmThread(profileId)
     }
 
     /**
@@ -1096,8 +1120,8 @@ object FluckEngine {
      * Separate from [prewarmInBackground] so the decision and the boot each read as one thing, and
      * so the slot's two release paths sit next to each other.
      */
-    private fun startPrewarmThread() {
-        val thread = Thread(::runPrewarmBoot, "fluck-engine-prewarm").apply { isDaemon = true }
+    private fun startPrewarmThread(profileId: String) {
+        val thread = Thread({ runPrewarmBoot(profileId) }, "fluck-engine-prewarm").apply { isDaemon = true }
         // The slot's only other release lives inside the thread body, so a start that throws (OOM,
         // a thread limit) would strand it claimed for the process - no pre-warm ever again,
         // including the just-finished-download one. The same failure the release-in-finally exists
@@ -1109,18 +1133,18 @@ object FluckEngine {
     }
 
     /** The boot itself, on the pre-warm thread, holding the slot for its lifetime. */
-    private fun runPrewarmBoot() {
+    private fun runPrewarmBoot(profileId: String) {
         try {
             // A live engine needs no head start, and saying it was pre-warmed here would be this
             // method claiming credit for a boot somebody else paid for. The decision above answers
             // this too, from the caller's thread; this is the backstop for the window between the
             // slot claim and here.
-            if (isEngineHealthy() && _engine != null) {
+            if (isEngineHealthy(profileId) && _engines[profileId] != null) {
                 logger.debug(LogCategory.BROWSER, "Engine pre-warm skipped - engine already running")
                 return
             }
             val startNs = System.nanoTime()
-            engine
+            getEngine(profileId)
             logger.info(
                 LogCategory.BROWSER,
                 "Browser engine pre-warmed",
@@ -1147,7 +1171,7 @@ object FluckEngine {
                     ),
                 )
             }
-            clearInitStateIfErrorIs(e)
+            clearInitStateIfErrorIs(e, profileId)
         } finally {
             // Covers all three exits - booted, skipped as already running, failed. A failed
             // attempt bought nothing and must not refuse the next caller with a reason to ask
@@ -1241,17 +1265,20 @@ object FluckEngine {
      * fails, and nothing is cleared — the correct outcome, since nothing was
      * poisoned in the first place.
      */
-    private fun clearInitStateIfErrorIs(expected: Throwable) {
+    private fun clearInitStateIfErrorIs(
+        expected: Throwable,
+        profileId: String,
+    ) {
         synchronized(engineLock) {
-            if (initializationError === expected) {
-                initializationError = null
-                attemptCount = 0
+            if (initializationErrors[profileId] === expected) {
+                initializationErrors.remove(profileId)
+                attemptCounts[profileId] = 0
             }
         }
     }
 
-    private fun initializeEngine(): Engine {
-        attemptCount++
+    private fun initializeEngine(profileId: String): Engine {
+        attemptCounts[profileId] = (attemptCounts[profileId] ?: 0) + 1
 
         // Nothing below can boot while the engine this one replaces is still holding the
         // profile directory open. See [recycleDrain] for what that costs when it is skipped.
@@ -1277,7 +1304,7 @@ object FluckEngine {
                     "No usable browser engine",
                     mapOf("reason" to (e.message ?: "unknown")),
                 )
-                initializationError = e
+                initializationErrors[profileId] = e
                 throw e
             }
 
@@ -1288,7 +1315,7 @@ object FluckEngine {
         cleanupOldTemporaryProfiles()
 
         // Try to create engine with profile handling
-        return createEngineWithProfile(chromiumDir)
+        return createEngineWithProfile(chromiumDir, profileId)
     }
 
     /**
@@ -1839,13 +1866,15 @@ object FluckEngine {
         }
     }
 
-    private fun createEngineWithProfile(chromiumDir: java.nio.file.Path): Engine {
-        val selectedProfile = BrowserSettings.currentProfile
-        val profileDirPath = BossDirectories.resolve(selectedProfile).toPath()
+    private fun createEngineWithProfile(
+        chromiumDir: java.nio.file.Path,
+        profileId: String,
+    ): Engine {
+        val profileDirPath = BossDirectories.resolve(profileId).toPath()
         profileDirPath.toFile().mkdirs()
 
         return try {
-            createEngineInstance(chromiumDir, profileDirPath)
+            createEngineInstance(chromiumDir, profileDirPath, profileId)
         } catch (e: UserDataDirectoryAlreadyInUseException) {
             logger.warn(
                 LogCategory.BROWSER,
@@ -1855,7 +1884,7 @@ object FluckEngine {
             // Try to clean up stale lock files first
             if (cleanupStaleLockFiles(profileDirPath)) {
                 try {
-                    return createEngineInstance(chromiumDir, profileDirPath)
+                    return createEngineInstance(chromiumDir, profileDirPath, profileId)
                 } catch (e2: Exception) {
                     // Retry after cleanup still failed - fall through to temporary profile
                     logger.warn(
@@ -1872,12 +1901,12 @@ object FluckEngine {
             tempProfilePath.toFile().mkdirs()
 
             try {
-                createEngineInstance(chromiumDir, tempProfilePath)
+                createEngineInstance(chromiumDir, tempProfilePath, profileId)
             } catch (e2: Exception) {
                 throw e2
             }
         } catch (e: Exception) {
-            initializationError = e
+            initializationErrors[profileId] = e
             throw e
         }
     }
@@ -2333,9 +2362,11 @@ object FluckEngine {
     /** Pure part of [applyRemoteDebuggingPort], split out so the guard is unit-testable. */
     internal fun parseRemoteDebuggingPort(raw: String?): Int? = raw?.trim()?.toIntOrNull()?.takeIf { it in 1024..65535 }
 
+    @Suppress("CyclomaticComplexMethod")
     private fun createEngineInstance(
         chromiumDir: java.nio.file.Path,
         profileDirPath: java.nio.file.Path,
+        profileId: String,
     ): Engine {
         // Evaluated once per boot: feeds both the container-only switches and the
         // sandbox decision below, so the two can never disagree.
@@ -2393,8 +2424,7 @@ object FluckEngine {
         // A successful boot invalidates any earlier failure — clear it so the
         // recorded state is unambiguous (previously a stale error from a failed
         // attempt survived a later successful boot).
-        initializationError = null
-        attemptCount = 0
+        // Managed per-profile now
 
         // Activate Widevine DRM for protected content (Netflix, Disney+, etc.).
         // Deliberately NOT joined: activation can hit the network (CDM download on
@@ -2415,7 +2445,7 @@ object FluckEngine {
         // Set up permission handlers for the engine
         setupPermissionHandlers(newEngine)
 
-        _engine = newEngine
+        _engines[profileId] = newEngine
 
         // Match Chromium's theme to the active BOSS host theme on (re)creation.
         try {
@@ -3448,7 +3478,8 @@ object FluckEngine {
      *
      * @return ResetResult with detailed status of each step
      */
-    suspend fun resetBrowserProfile(): ResetResult =
+    @Suppress("LongMethod")
+    suspend fun resetBrowserProfile(profileId: String = BrowserSettings.defaultProfile): ResetResult =
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             var engineClosed = false
             var profileDeleted = false
@@ -3456,7 +3487,7 @@ object FluckEngine {
 
             try {
                 // Step 1: Close current engine if it exists
-                _engine?.let { engine ->
+                _engines[profileId]?.let { engine ->
                     if (!engine.isClosed) {
                         try {
                             engine.close()
@@ -3474,12 +3505,12 @@ object FluckEngine {
                 }
 
                 // Step 2: Clear cached state (must happen even if engine close had issues)
-                _engine = null
-                initializationError = null
-                attemptCount = 0
-                // Increment generation to notify browser tabs that they need to reload
-                _engineGeneration++
-                _engineGenerationFlow.value = _engineGeneration
+                _engines.remove(profileId)
+                initializationErrors.remove(profileId)
+                attemptCounts[profileId] = 0
+                val nextGen = (_engineGenerations[profileId] ?: 0L) + 1L
+                _engineGenerations[profileId] = nextGen
+                _engineGenerationFlows.computeIfAbsent(profileId) { MutableStateFlow(0L) }.value = nextGen
 
                 // Step 3: Kill any stale Chromium processes
                 try {
@@ -3494,7 +3525,7 @@ object FluckEngine {
                 }
 
                 // Step 4: Delete browser profile directory
-                val selectedProfile = BrowserSettings.currentProfile
+                val selectedProfile = profileId
                 val profileDir = BossDirectories.resolve(selectedProfile)
 
                 if (profileDir.exists()) {
@@ -3553,20 +3584,20 @@ object FluckEngine {
      *
      * @return true if reset was successful, false otherwise
      */
-    fun resetBrowserProfileBlocking(): Boolean =
+    fun resetBrowserProfileBlocking(profileId: String = BrowserSettings.defaultProfile): Boolean =
         kotlinx.coroutines.runBlocking {
-            resetBrowserProfile().success
+            resetBrowserProfile(profileId).success
         }
 
     /**
      * Check if browser engine is in a healthy state.
      * Used to determine if reset might be needed.
      */
-    fun isEngineHealthy(): Boolean {
+    fun isEngineHealthy(profileId: String): Boolean {
         // isClosed alone cannot see a wedged engine: its Chromium process is still alive, so
         // JxBrowser reports it open while every newBrowser() fails. BrowserServiceImpl's
         // detector supplies that signal once auto-recycling has given up on repairing it.
         if (wedgeUnrecoverable) return false
-        return _engine?.let { !it.isClosed } ?: true // null engine is "healthy" (will initialize on demand)
+        return _engines[profileId]?.let { !it.isClosed } ?: true
     }
 }

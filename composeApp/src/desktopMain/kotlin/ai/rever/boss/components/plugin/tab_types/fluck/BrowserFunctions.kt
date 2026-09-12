@@ -1,3 +1,4 @@
+
 package ai.rever.boss.components.plugin.tab_types.fluck
 
 import ai.rever.boss.plugin.browser.BrowserFindController
@@ -265,8 +266,11 @@ private fun configureBrowserPopupHandler(
     )
 }
 
-actual fun createBrowser(): Any {
-    val browser = FluckEngine.engine.newBrowser().also { installBrowserChromeOrClose(it) }
+actual fun createBrowser(profileId: String?): Any {
+    val browser =
+        FluckEngine.getEngine(profileId ?: "browser-profile").newBrowser().also {
+            installBrowserChromeOrClose(it)
+        }
     browser.settings().enableOverscrollHistoryNavigation()
     FluckEngine.setupBrowserDownloadHandler(browser as com.teamdev.jxbrowser.browser.Browser)
     FluckEngine.setupCaptureSessionHandler(browser)
@@ -274,7 +278,8 @@ actual fun createBrowser(): Any {
     return browser
 }
 
-actual suspend fun resetBrowserProfile(): Boolean = FluckEngine.resetBrowserProfile().success
+actual suspend fun resetBrowserProfile(profileId: String?): Boolean =
+    FluckEngine.resetBrowserProfile(profileId ?: "browser-profile").success
 
 actual fun disposeBrowser(browser: Any) {
     try {
@@ -369,20 +374,22 @@ actual fun disposeBrowserViewState(browserViewState: Any) {
     // BrowserViewState doesn't have explicit disposal on JVM
 }
 
+@Suppress("CyclomaticComplexMethod", "ReturnCount")
 actual fun getBrowserState(
+    profileId: String?,
     url: String,
     onOpenInNewTab: ((String) -> Unit)?,
     onBrowserClosed: (() -> Unit)?,
     window: Any?,
 ): Pair<Any, Any>? {
     return try {
-        val engine = FluckEngine.engine
+        val engine = FluckEngine.getEngine(profileId ?: "browser-profile")
         if (engine.isClosed) {
             logger.warn(LogCategory.BROWSER, "getBrowserState: Engine is closed, cannot create browser")
             return null
         }
 
-        val browser = createBrowser() as Browser
+        val browser = createBrowser(profileId) as Browser
 
         if (browser.isClosed) {
             logger.warn(LogCategory.BROWSER, "getBrowserState: Browser was closed immediately after creation")
@@ -445,7 +452,8 @@ actual fun getBrowserState(
     }
 }
 
-actual fun getEngineGeneration(): Long = FluckEngine.currentEngineGeneration
+actual fun getEngineGeneration(profileId: String?): Long =
+    FluckEngine.currentEngineGeneration(profileId ?: ai.rever.boss.plugin.browser.BrowserSettings.currentProfile)
 
 actual fun isBrowserValid(browser: Any?): Boolean {
     if (browser == null) return false
@@ -459,7 +467,7 @@ actual fun isBrowserValid(browser: Any?): Boolean {
 }
 
 actual fun getEngineInitError(): String? =
-    FluckEngine.initError?.let { error ->
+    FluckEngine.initError(ai.rever.boss.plugin.browser.BrowserSettings.currentProfile)?.let { error ->
         when (error) {
             is EngineInitError.LicenseValidation -> error.message
             is EngineInitError.NetworkError -> error.message
@@ -468,7 +476,7 @@ actual fun getEngineInitError(): String? =
     }
 
 actual fun resetEngineInitialization() {
-    FluckEngine.resetInitializationState()
+    FluckEngine.resetInitializationState(ai.rever.boss.plugin.browser.BrowserSettings.currentProfile)
 }
 
 actual fun getMaxInitRetries(): Int = BrowserSettings.maxInitRetries
@@ -476,8 +484,11 @@ actual fun getMaxInitRetries(): Int = BrowserSettings.maxInitRetries
 actual fun getMaxRecoveryAttempts(): Int = BrowserSettings.maxRecoveryAttempts
 
 @Composable
-actual fun collectEngineGeneration(): Long {
-    val generation by FluckEngine.engineGenerationFlow.collectAsState()
+actual fun collectEngineGeneration(profileId: String?): Long {
+    val generation by FluckEngine
+        .getEngineGenerationFlow(
+            profileId ?: ai.rever.boss.plugin.browser.BrowserSettings.currentProfile,
+        ).collectAsState()
     return generation
 }
 

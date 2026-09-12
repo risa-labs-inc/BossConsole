@@ -619,6 +619,7 @@ internal fun BossAppScaffold(
                         modifier = Modifier.hoverable(interactionSource = reveal.topBarInteractionSource),
                     ) {
                         BossTopBar(
+                            windowId = state.windowId,
                             workspaceManager = workspaceManager,
                             onApplyWorkspace = applyWorkspaceAndPreserve,
                             getCurrentWorkspace = {

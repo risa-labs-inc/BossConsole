@@ -207,7 +207,7 @@ object ApplicationRestarter {
     private suspend fun performGracefulShutdown() {
         try {
             // Close browser engine if it exists
-            val engine = FluckEngine.currentEngine
+            val engine = FluckEngine.currentEngine(ai.rever.boss.plugin.browser.BrowserSettings.currentProfile)
             if (engine != null && !engine.isClosed) {
                 logger.debug(LogCategory.SYSTEM, "Closing browser engine")
                 engine.close()

@@ -269,6 +269,7 @@ internal class BrowserHandleImpl(
     private val config: BrowserConfig,
     private val engineGeneration: Long,
     private val ownerWindowId: String,
+    val profileId: String,
 ) : BrowserHandle {
     private val logger = BossLogger.forComponent("BrowserHandleImpl")
 
@@ -2509,7 +2510,7 @@ internal class BrowserHandleImpl(
         get() =
             !disposed.get() &&
                 !connectionDead.get() &&
-                FluckEngine.currentEngineGeneration == engineGeneration &&
+                FluckEngine.currentEngineGeneration(profileId) == engineGeneration &&
                 runCatching { !browser.isClosed }.getOrDefault(false)
 
     /**
