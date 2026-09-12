@@ -6,8 +6,11 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeout
 import org.slf4j.LoggerFactory
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * DAG execution engine for mastery workflows.
@@ -40,8 +43,11 @@ class MasteryExecutor(
 
             // Accumulates node outputs; "INPUT" is the virtual source node
             val nodeOutputs = mutableMapOf<String, Map<String, String>>("INPUT" to input)
+            val outputBudget = AtomicLong()
+            val slots = Semaphore(8)
 
             try {
+                reserveOutput("INPUT", input, outputBudget)
                 val levels =
                     TopologicalSort.sort(
                         nodes = mastery.nodes,
@@ -62,8 +68,10 @@ class MasteryExecutor(
                             level
                                 .map { node ->
                                     async {
-                                        executeNode(node, snapshot) { progress ->
-                                            this@channelFlow.send(progress)
+                                        slots.withPermit {
+                                            executeNode(node, snapshot, outputBudget) { progress ->
+                                                this@channelFlow.send(progress)
+                                            }
                                         }
                                     }
                                 }.awaitAll()
@@ -83,6 +91,7 @@ class MasteryExecutor(
     private suspend fun executeNode(
         node: MasteryNode,
         nodeOutputs: Map<String, Map<String, String>>,
+        outputBudget: AtomicLong,
         emit: suspend (MasteryProgress) -> Unit,
     ): Pair<String, Map<String, String>> {
         emit(
@@ -94,35 +103,64 @@ class MasteryExecutor(
 
         val resolvedInput = resolveNodeInput(node, nodeOutputs)
         val nodeStart = System.currentTimeMillis()
-        var lastError: Throwable? = null
+        val output = invokeWithRetries(node, resolvedInput, emit)
+        reserveOutput(node.id, output, outputBudget)
+        emit(MasteryProgress.NodeCompleted(node.id, output, System.currentTimeMillis() - nodeStart))
+        return node.id to output
+    }
+
+    private suspend fun invokeWithRetries(
+        node: MasteryNode,
+        resolvedInput: Map<String, String>,
+        emit: suspend (MasteryProgress) -> Unit,
+    ): Map<String, String> {
+        var lastError: String? = null
 
         for (attempt in 0..node.maxRetries) {
             try {
-                val output =
-                    withTimeout(node.timeoutMs) {
-                        capabilityResolver.invoke(node.pluginId, node.action, resolvedInput)
-                    }
-                val duration = System.currentTimeMillis() - nodeStart
-                emit(MasteryProgress.NodeCompleted(node.id, output, duration))
-                return node.id to output
+                return withTimeout(node.timeoutMs) {
+                    capabilityResolver.invoke(node.pluginId, node.action, resolvedInput)
+                }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                lastError = e
+                lastError = e.message?.take(2048)
                 val willRetry = attempt < node.maxRetries
-                emit(MasteryProgress.NodeFailed(node.id, e.message ?: "Unknown error", willRetry))
+                emit(MasteryProgress.NodeFailed(node.id, e.message?.take(2048) ?: "Unknown error", willRetry))
                 logger.warn(
                     "Node {} attempt {}/{} failed: {}",
                     node.id,
                     attempt + 1,
                     node.maxRetries + 1,
-                    e.message,
+                    e.message?.take(2048),
                 )
                 if (willRetry) delay(1_000L * (attempt + 1))
             }
         }
 
-        throw NodeExecutionException(node.id, lastError?.message ?: "Max retries exceeded")
+        throw NodeExecutionException(node.id, lastError ?: "Max retries exceeded")
+    }
+
+    /** Bound map overhead and UTF-16 strings before buffering progress or retaining a node result. */
+    private fun reserveOutput(
+        nodeId: String,
+        output: Map<String, String>,
+        budget: AtomicLong,
+    ) {
+        val characters =
+            if (output.size <= 1024) {
+                output.entries.sumOf { (key, value) -> key.length.toLong() + value.length }
+            } else {
+                0
+            }
+        val rejection =
+            when {
+                output.size > 1024 -> "Node output exceeds 1024 entries"
+                characters > 262_144 -> "Node output exceeds 256 Ki characters"
+                budget.addAndGet(characters) > 2_097_152 -> "Execution output exceeds 2 Mi characters"
+                else -> null
+            }
+        if (rejection != null) throw NodeExecutionException(nodeId, rejection)
     }
 
     /**
