@@ -123,6 +123,10 @@ object McpToolRegistryImpl : McpToolRegistry {
             ledger = ledger,
         )
 
+    init {
+        registerProvider(ai.rever.boss.recovery.RecoveryIntegration.provider)
+    }
+
     override val allTools: StateFlow<List<RegisteredMcpTool>> get() = core.allTools
     override val disabledToolNames: StateFlow<Set<String>> get() = core.disabledToolNames
     override val tools: StateFlow<List<RegisteredMcpTool>> get() = core.tools
