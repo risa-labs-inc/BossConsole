@@ -1,3 +1,4 @@
+import { authFailureDetails } from "./logging.ts"
 /**
  * Caller authentication for the passkey function.
  *
@@ -78,7 +79,7 @@ export async function verifyCallerToken(
     const { data, error } = await supabase.auth.getUser(token)
 
     if (error || !data?.user?.id) {
-      console.error('❌ Caller token rejected:', error?.message ?? 'no user for token')
+      console.error('❌ Caller token rejected:', authFailureDetails(error))
       return { success: false, error: 'Invalid or expired session', status: 401 }
     }
 
@@ -93,7 +94,7 @@ export async function verifyCallerToken(
       caller: { userId: user.id, email: user.email ?? undefined }
     }
   } catch (error) {
-    console.error('❌ Failed to verify caller token:', error)
+    console.error('❌ Failed to verify caller token:', authFailureDetails(error))
     return { success: false, error: 'Invalid or expired session', status: 401 }
   }
 }
