@@ -68,6 +68,7 @@ import ai.rever.boss.search.SearchSources
 import ai.rever.boss.search.ToolSearchRecord
 import ai.rever.boss.services.auth.UserDataStorage
 import ai.rever.boss.services.bookmarks.BookmarkAPIAccess
+import ai.rever.boss.services.terminal.TerminalAPIAccess
 import ai.rever.boss.terminal.TerminalLinkSettingsManager
 import ai.rever.boss.utils.extractFileName
 import ai.rever.boss.utils.logging.LogCategory
@@ -1131,6 +1132,14 @@ internal fun BossAppDialogs(state: BossAppState) {
                 state.focusRequester.requestFocus()
                 logger.info(LogCategory.SYSTEM, "Plugin wizard completed")
             },
+            onSetupBossTerm = {
+                coroutineScope.launch(Dispatchers.IO) {
+                    UserDataStorage.setPluginWizardCompleted(true)
+                }
+                state.showPluginInstallWizard = false
+                state.showTerminalOnboardingWizard = true
+                logger.info(LogCategory.SYSTEM, "Plugin wizard completed; opening BOSS Term setup")
+            },
             onInstallPlugins = { plugins, onProgress ->
                 when {
                     dynamicPluginManager != null -> {
@@ -1154,6 +1163,19 @@ internal fun BossAppDialogs(state: BossAppState) {
                         Result.failure(Exception("Toolbox not available"))
                     }
                 }
+            },
+        )
+    }
+
+    if (state.showTerminalOnboardingWizard) {
+        TerminalAPIAccess.TerminalOnboardingWizard(
+            onDismiss = {
+                state.showTerminalOnboardingWizard = false
+                state.focusRequester.requestFocus()
+            },
+            onComplete = {
+                state.showTerminalOnboardingWizard = false
+                state.focusRequester.requestFocus()
             },
         )
     }

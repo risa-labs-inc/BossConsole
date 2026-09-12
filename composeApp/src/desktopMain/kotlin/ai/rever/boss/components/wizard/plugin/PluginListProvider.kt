@@ -44,16 +44,13 @@ object PluginListProvider {
         setOf(
             "ai.rever.boss.plugin.dynamic.terminal",
             "ai.rever.boss.plugin.dynamic.console",
-            "ai.rever.boss.plugin.dynamic.fluck",
+            "ai.rever.boss.plugin.dynamic.fluckagent",
+            "ai.rever.boss.plugin.dynamic.aigateway",
             // Was `usersecretlist` ("My Secrets") until that plugin was retired into
             // secret-manager's "Shared with me" section. Installing the read-only half by
             // default and never the half that can add a key was backwards anyway: AI provider
             // settings live in secret-manager, so a default install could not configure AI.
             "ai.rever.boss.plugin.dynamic.secretmanager",
-            "ai.rever.boss.plugin.dynamic.downloads",
-            "ai.rever.boss.plugin.dynamic.codebase",
-            "ai.rever.boss.plugin.dynamic.bookmarks",
-            "ai.rever.boss.plugin.dynamic.topofmind",
         )
 
     /**
@@ -87,14 +84,15 @@ object PluginListProvider {
             // Essential (includes mandatory tab plugins)
             "ai.rever.boss.plugin.dynamic.terminal" to PluginCategory.ESSENTIAL,
             "ai.rever.boss.plugin.dynamic.console" to PluginCategory.ESSENTIAL,
-            "ai.rever.boss.plugin.dynamic.fluck" to PluginCategory.ESSENTIAL,
+            "ai.rever.boss.plugin.dynamic.fluckagent" to PluginCategory.ESSENTIAL,
+            "ai.rever.boss.plugin.dynamic.aigateway" to PluginCategory.ESSENTIAL,
             // Not an admin tool, despite living under ADMIN until 9.4.7 and PRODUCTIVITY
             // after it. It is a per-user credential vault (every RPC behind it is
             // auth.uid()-scoped), it is the only place anyone adds an AI provider key, and
             // since the My Secrets panel was retired into it, it is the only secrets panel
             // there is - so it takes that panel's place among the essentials.
             "ai.rever.boss.plugin.dynamic.secretmanager" to PluginCategory.ESSENTIAL,
-            "ai.rever.boss.plugin.dynamic.downloads" to PluginCategory.ESSENTIAL,
+            "ai.rever.boss.plugin.dynamic.downloads" to PluginCategory.PRODUCTIVITY,
             "ai.rever.boss.plugin.dynamic.fluckbrowser" to PluginCategory.ESSENTIAL,
             "ai.rever.boss.plugin.dynamic.editortab" to PluginCategory.ESSENTIAL,
             "ai.rever.boss.plugin.dynamic.terminaltab" to PluginCategory.ESSENTIAL,
@@ -102,6 +100,7 @@ object PluginListProvider {
             "ai.rever.boss.plugin.dynamic.codebase" to PluginCategory.DEVELOPER,
             "ai.rever.boss.plugin.dynamic.gitstatus" to PluginCategory.DEVELOPER,
             "ai.rever.boss.plugin.dynamic.gitlog" to PluginCategory.DEVELOPER,
+            "ai.rever.boss.plugin.dynamic.runconfigurations" to PluginCategory.DEVELOPER,
             // Productivity
             "ai.rever.boss.plugin.dynamic.bookmarks" to PluginCategory.PRODUCTIVITY,
             "ai.rever.boss.plugin.dynamic.topofmind" to PluginCategory.PRODUCTIVITY,
@@ -136,6 +135,8 @@ object PluginListProvider {
             "ai.rever.boss.plugin.dynamic.secretmanager" to Icons.Default.Key,
             "ai.rever.boss.plugin.dynamic.performance" to Icons.Default.AutoAwesome,
             "ai.rever.boss.plugin.dynamic.fluck" to Icons.Default.Psychology,
+            "ai.rever.boss.plugin.dynamic.fluckagent" to Icons.Default.Psychology,
+            "ai.rever.boss.plugin.dynamic.aigateway" to Icons.Default.AutoAwesome,
             "ai.rever.boss.plugin.dynamic.runconfigurations" to Icons.Default.PlayArrow,
             // Mandatory tab plugins
             "ai.rever.boss.plugin.dynamic.fluckbrowser" to Icons.Default.Web,
@@ -310,11 +311,20 @@ object PluginListProvider {
                     category = PluginCategory.ESSENTIAL,
                 ),
                 WizardPluginInfo(
-                    id = "ai.rever.boss.plugin.dynamic.fluck",
-                    name = "ChatGPT",
-                    description = "AI-powered chat assistant",
+                    id = "ai.rever.boss.plugin.dynamic.fluckagent",
+                    name = "Fluck Agent",
+                    description = "BOSS assistant with workspace tools and BOSS AI",
                     version = "1.0.0",
                     icon = Icons.Default.Psychology,
+                    isDefault = true,
+                    category = PluginCategory.ESSENTIAL,
+                ),
+                WizardPluginInfo(
+                    id = "ai.rever.boss.plugin.dynamic.aigateway",
+                    name = "AI Gateway",
+                    description = "Connects Fluck Agent to managed AI providers",
+                    version = "1.0.0",
+                    icon = Icons.Default.AutoAwesome,
                     isDefault = true,
                     category = PluginCategory.ESSENTIAL,
                 ),
@@ -333,8 +343,8 @@ object PluginListProvider {
                     description = "Manage downloaded files",
                     version = "1.0.0",
                     icon = Icons.Default.Download,
-                    isDefault = true,
-                    category = PluginCategory.ESSENTIAL,
+                    isDefault = false,
+                    category = PluginCategory.PRODUCTIVITY,
                 ),
                 // Developer
                 WizardPluginInfo(
@@ -343,7 +353,7 @@ object PluginListProvider {
                     description = "File browser and code navigation",
                     version = "1.0.0",
                     icon = Icons.Default.Folder,
-                    isDefault = true,
+                    isDefault = false,
                     category = PluginCategory.DEVELOPER,
                 ),
                 WizardPluginInfo(
@@ -371,7 +381,7 @@ object PluginListProvider {
                     description = "Save and organize your favorite tabs",
                     version = "1.0.0",
                     icon = Icons.Default.Bookmark,
-                    isDefault = true,
+                    isDefault = false,
                     category = PluginCategory.PRODUCTIVITY,
                 ),
                 WizardPluginInfo(
@@ -380,7 +390,7 @@ object PluginListProvider {
                     description = "Quick access to recent and important tabs",
                     version = "1.0.0",
                     icon = Icons.Default.Lightbulb,
-                    isDefault = true,
+                    isDefault = false,
                     category = PluginCategory.PRODUCTIVITY,
                 ),
                 // Automation

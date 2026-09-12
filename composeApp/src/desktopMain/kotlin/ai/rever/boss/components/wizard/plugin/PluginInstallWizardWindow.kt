@@ -1,7 +1,7 @@
 package ai.rever.boss.components.wizard.plugin
 
-import ai.rever.boss.components.wizard.WizardStepIndicator
 import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.services.terminal.TerminalAPIAccess
 import ai.rever.boss.window.ApplyBossWindowIcon
 import ai.rever.boss.window.BossWindowIcon
 import androidx.compose.animation.AnimatedContent
@@ -9,16 +9,16 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.*
+import androidx.compose.material.ProvideTextStyle
 import androidx.compose.material.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogWindow
 import androidx.compose.ui.window.rememberDialogState
-import kotlinx.coroutines.launch
 
 /**
  * Desktop-specific plugin installation wizard that opens in a separate window.
@@ -36,13 +36,19 @@ fun PluginInstallWizardWindow(
     state: PluginInstallWizardState,
     onDismiss: () -> Unit,
     onComplete: () -> Unit,
+    onSetupBossTerm: () -> Unit,
     onInstallPlugins: suspend (List<WizardPluginInfo>, (Float, String) -> Unit) -> Result<PluginInstallResult>,
 ) {
     val currentStep = state.wizardState.currentStep
+    val terminalInstalled =
+        TERMINAL_TAB_PLUGIN_ID in state.installedPluginIds &&
+            state.failedPlugins.none { it.first == TERMINAL_TAB_PLUGIN_ID }
+    val canContinueToTerminalSetup =
+        terminalInstalled && state.failedPlugins.isEmpty() && TerminalAPIAccess.getProvider() != null
 
-    // Handle installation when we reach the Installing step
-    // Use installationAttempted flag to prevent re-triggering (fixes race condition)
-    LaunchedEffect(currentStep) {
+    // Do not key this effect on installationAttempted: startInstallation changes that
+    // value and would cancel its own installation coroutine as it leaves composition.
+    LaunchedEffect(currentStep, state.installationRunId) {
         if (currentStep is PluginInstallStep.Installing && !state.isInstalling && !state.installationAttempted) {
             val selectedPlugins = state.getSelectedPlugins()
             if (selectedPlugins.isEmpty()) {
@@ -70,123 +76,122 @@ fun PluginInstallWizardWindow(
 
     DialogWindow(
         onCloseRequest = {
-            // Allow users to close the wizard window
-            onDismiss()
+            // Cancelling this composition also cancels the observing installation coroutine.
+            // Keep the window alive until this batch reaches a terminal state.
+            if (currentStep !is PluginInstallStep.Installing || state.installationError != null) onDismiss()
         },
-        title = "BOSS Plugin Setup",
+        title = "BOSS Toolbox Setup",
         resizable = false,
-        state = rememberDialogState(size = DpSize(700.dp, 600.dp)),
+        state = rememberDialogState(size = DpSize(900.dp, 650.dp)),
         icon = BossWindowIcon.painter,
     ) {
         ApplyBossWindowIcon(window)
-        Surface(
-            modifier = Modifier.fillMaxSize(),
-            color = BossTheme.colors.panel,
-        ) {
-            Box(
-                modifier =
-                    Modifier
-                        .fillMaxSize()
-                        .padding(32.dp),
+        ProvideTextStyle(BossTheme.type.body) {
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = BossTheme.colors.ink,
             ) {
-                Column(
-                    modifier = Modifier.fillMaxSize(),
+                Box(
+                    modifier =
+                        Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 28.dp, vertical = 24.dp),
+                    contentAlignment = Alignment.TopCenter,
                 ) {
-                    // Header
-                    WizardHeader(
-                        currentStep = currentStep,
-                        onBack =
-                            if (!state.wizardState.isFirstStep && !state.isInstalling && currentStep !is PluginInstallStep.Complete) {
-                                { state.goToPreviousStep() }
-                            } else {
-                                null
-                            },
-                        onDismiss = null, // Remove cross button - users must complete wizard or skip
-                    )
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    // Step indicator (hidden during Installing and Complete)
-                    if (currentStep !is PluginInstallStep.Installing && currentStep !is PluginInstallStep.Complete) {
-                        WizardStepIndicator(
-                            currentStep = state.wizardState.currentVisibleStepIndex + 1,
-                            totalSteps = state.wizardState.totalVisibleSteps,
-                            modifier = Modifier.fillMaxWidth(),
+                    Column(
+                        modifier = Modifier.fillMaxHeight().widthIn(max = 760.dp),
+                    ) {
+                        WizardHeader(
+                            currentStep = currentStep,
+                            onBack =
+                                if (!state.wizardState.isFirstStep && !state.isInstalling && currentStep !is PluginInstallStep.Complete) {
+                                    { state.goToPreviousStep() }
+                                } else {
+                                    null
+                                },
+                            onDismiss =
+                                if (
+                                    currentStep is PluginInstallStep.Welcome ||
+                                    currentStep is PluginInstallStep.Profile ||
+                                    currentStep is PluginInstallStep.Review
+                                ) {
+                                    onDismiss
+                                } else {
+                                    null
+                                },
                         )
-                        Spacer(modifier = Modifier.height(24.dp))
-                    }
 
-                    // Content
-                    Box(modifier = Modifier.weight(1f)) {
-                        AnimatedContent(
-                            targetState = currentStep,
-                            transitionSpec = {
-                                fadeIn() togetherWith fadeOut()
-                            },
-                            label = "wizard_step_content",
-                        ) { step ->
-                            when (step) {
-                                is PluginInstallStep.Welcome -> {
-                                    WelcomeStepContent()
-                                }
+                        Spacer(modifier = Modifier.height(22.dp))
 
-                                is PluginInstallStep.EssentialPlugins,
-                                is PluginInstallStep.DeveloperPlugins,
-                                is PluginInstallStep.ProductivityPlugins,
-                                is PluginInstallStep.AutomationPlugins,
-                                is PluginInstallStep.AdminPlugins,
-                                is PluginInstallStep.OtherPlugins,
-                                -> {
-                                    step.category?.let { category ->
-                                        CategoryStepContent(
-                                            category = category,
-                                            plugins = state.getPluginsForCategory(category),
-                                            isPluginSelected = { state.isPluginSelected(it) },
-                                            onTogglePlugin = { state.togglePlugin(it) },
-                                            onSelectAll = { state.selectAllInCategory(category) },
-                                            onDeselectAll = { state.deselectAllInCategory(category) },
+                        Box(modifier = Modifier.weight(1f)) {
+                            AnimatedContent(
+                                targetState = currentStep,
+                                transitionSpec = {
+                                    fadeIn() togetherWith fadeOut()
+                                },
+                                label = "wizard_step_content",
+                            ) { step ->
+                                when (step) {
+                                    is PluginInstallStep.Welcome -> {
+                                        WelcomeStepContent()
+                                    }
+
+                                    is PluginInstallStep.Profile -> {
+                                        ProfileStepContent(
+                                            selectedProfile = state.selectedProfile,
+                                            toolCount = state::recommendedToolCount,
+                                            onSelectProfile = state::applyProfile,
+                                        )
+                                    }
+
+                                    is PluginInstallStep.Review -> {
+                                        ReviewStepContent(
+                                            plugins = state.availablePlugins,
+                                            isPluginSelected = state::isPluginSelected,
+                                            onTogglePlugin = state::togglePlugin,
+                                            selectedProfile = state.selectedProfile,
+                                        )
+                                    }
+
+                                    is PluginInstallStep.Installing -> {
+                                        InstallingStepContent(
+                                            progress = state.installationProgress,
+                                            status = state.installationStatus,
+                                            error = state.installationError,
+                                            plugins = state.getSelectedPlugins(),
+                                            onRetry = state::prepareInstallationRetry,
+                                        )
+                                    }
+
+                                    is PluginInstallStep.Complete -> {
+                                        CompleteStepContent(
+                                            installedCount = state.installedPluginIds.size,
+                                            failedPlugins = state.failedPlugins,
+                                            bossTermReady = canContinueToTerminalSetup,
+                                            onSetupBossTerm = onSetupBossTerm,
+                                            onFinish = onComplete,
                                         )
                                     }
                                 }
-
-                                is PluginInstallStep.Installing -> {
-                                    InstallingStepContent(
-                                        progress = state.installationProgress,
-                                        status = state.installationStatus,
-                                        error = state.installationError,
-                                        onRetry = {
-                                            state.reset()
-                                        },
-                                    )
-                                }
-
-                                is PluginInstallStep.Complete -> {
-                                    CompleteStepContent(
-                                        installedCount = state.installedPluginIds.size,
-                                        failedPlugins = state.failedPlugins,
-                                    )
-                                }
                             }
                         }
+
+                        Spacer(modifier = Modifier.height(18.dp))
+
+                        if (!(currentStep is PluginInstallStep.Complete && canContinueToTerminalSetup)) {
+                            WizardNavigation(
+                                currentStep = currentStep,
+                                selectedCount = state.getSelectedPlugins().size,
+                                profileSelected = state.selectedProfile != null,
+                                onNext = { state.goToNextStep() },
+                                onFinish = onComplete,
+                            )
+                        }
                     }
-
-                    Spacer(modifier = Modifier.height(24.dp))
-
-                    // Navigation buttons
-                    WizardNavigation(
-                        currentStep = currentStep,
-                        isInstalling = state.isInstalling,
-                        hasSelectedPlugins = state.hasSelectedPlugins(),
-                        onBack = { state.goToPreviousStep() },
-                        onNext = { state.goToNextStep() },
-                        onSkip = {
-                            // Skip all remaining category steps and go to Installing
-                            state.skipToInstalling()
-                        },
-                        onFinish = onComplete,
-                    )
                 }
             }
         }
     }
 }
+
+private const val TERMINAL_TAB_PLUGIN_ID = "ai.rever.boss.plugin.dynamic.terminaltab"

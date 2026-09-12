@@ -60,6 +60,28 @@ class PluginInstallWizardContentTest {
     }
 
     @Test
+    fun `successful terminal install offers the real terminal setup continuation`() {
+        var setupRequests = 0
+        var finishRequests = 0
+        rule.setContent {
+            CompleteStepContent(
+                installedCount = 9,
+                bossTermReady = true,
+                onSetupBossTerm = { setupRequests++ },
+                onFinish = { finishRequests++ },
+            )
+        }
+
+        rule.onNodeWithText("Set up BOSS Term too?").assertIsDisplayed()
+        rule.onNodeWithText("Set up BOSS Term").performClick()
+        rule.onNodeWithText("Not now").performClick()
+        rule.runOnIdle {
+            assertEquals(1, setupRequests)
+            assertEquals(1, finishRequests)
+        }
+    }
+
+    @Test
     fun `required label remains readable beside a long plugin name`() {
         val plugin =
             WizardPluginInfo(
@@ -71,13 +93,10 @@ class PluginInstallWizardContentTest {
             )
         rule.setContent {
             Box(Modifier.size(400.dp, 400.dp).clipToBounds()) {
-                CategoryStepContent(
-                    category = PluginCategory.OTHER,
+                ReviewStepContent(
                     plugins = listOf(plugin),
                     isPluginSelected = { true },
                     onTogglePlugin = {},
-                    onSelectAll = {},
-                    onDeselectAll = {},
                 )
             }
         }
@@ -94,16 +113,13 @@ class PluginInstallWizardContentTest {
         var toggles = 0
         val plugin = WizardPluginInfo("optional", "Optional tool", "Useful tool", "1.0.0")
         rule.setContent {
-            CategoryStepContent(
-                category = PluginCategory.OTHER,
+            ReviewStepContent(
                 plugins = listOf(plugin),
                 isPluginSelected = { false },
                 onTogglePlugin = { toggles++ },
-                onSelectAll = {},
-                onDeselectAll = {},
             )
         }
-        rule.onNodeWithText("Optional").assertIsEnabled().performClick()
+        rule.onNodeWithText("Optional tool").assertIsEnabled().performClick()
         rule.runOnIdle { assertEquals(1, toggles) }
     }
 

@@ -17,22 +17,56 @@ enum class PluginCategory(
     OTHER("Other", "Additional tools"),
 }
 
+/** A human-readable starting point for the toolbox recommendation. */
+enum class ToolboxProfile(
+    val displayName: String,
+    val description: String,
+    internal val categories: Set<PluginCategory>,
+    internal val additionalPluginIds: Set<String> = emptySet(),
+) {
+    DEVELOPER(
+        "Software development",
+        "Tools for writing, reviewing, running, and shipping software.",
+        setOf(PluginCategory.DEVELOPER),
+    ),
+    PRODUCT_DESIGN(
+        "Product & design",
+        "Tools for research, planning, documentation, and product work.",
+        setOf(PluginCategory.PRODUCTIVITY),
+    ),
+    OPERATIONS_AUTOMATION(
+        "Operations & automation",
+        "Tools for repeatable workflows, administration, and automation.",
+        setOf(PluginCategory.AUTOMATION, PluginCategory.ADMIN),
+    ),
+    GENERAL(
+        "General use",
+        "A focused setup for browsing, files, downloads, and everyday work.",
+        emptySet(),
+        setOf(
+            "ai.rever.boss.plugin.dynamic.bookmarks",
+            "ai.rever.boss.plugin.dynamic.downloads",
+        ),
+    ),
+    EVERYTHING(
+        "Everything",
+        "Every available tool for development, product, design, operations, automation, and general use.",
+        PluginCategory.entries.toSet(),
+    ),
+}
+
 /**
  * Steps in the plugin installation wizard.
  *
  * The wizard flows through:
  * 1. Welcome - Introduction to the plugin system
- * 2. Essential Plugins - Critical plugins (pre-selected)
- * 3. Developer Plugins - Code and git tools
- * 4. Productivity Plugins - Workflow enhancement
- * 5. Automation Plugins - Task automation
- * 6. Admin Plugins - Administration tools
- * 7. Installing - Installation progress
- * 8. Complete - Success summary
+ * 2. Profile - A role-based recommendation
+ * 3. Review - The exact, editable tool selection
+ * 4. Installing - Installation progress
+ * 5. Complete - Success summary
  */
 sealed class PluginInstallStep(
     override val title: String,
-    val category: PluginCategory? = null,
     override val canSkip: Boolean = false,
 ) : WizardStep {
     /**
@@ -40,63 +74,15 @@ sealed class PluginInstallStep(
      */
     data object Welcome : PluginInstallStep(
         title = "Welcome",
-        category = null,
         canSkip = false,
     )
 
-    /**
-     * Essential plugins step (Terminal, Console).
-     * These are pre-selected by default.
-     */
-    data object EssentialPlugins : PluginInstallStep(
-        title = "Essential Tools",
-        category = PluginCategory.ESSENTIAL,
-        canSkip = true,
+    data object Profile : PluginInstallStep(
+        title = "Your profile",
     )
 
-    /**
-     * Developer tools step (Codebase, Git Status, Git Log).
-     */
-    data object DeveloperPlugins : PluginInstallStep(
-        title = "Developer Tools",
-        category = PluginCategory.DEVELOPER,
-        canSkip = true,
-    )
-
-    /**
-     * Productivity plugins step (Bookmarks, TopOfMind, Downloads).
-     */
-    data object ProductivityPlugins : PluginInstallStep(
-        title = "Productivity",
-        category = PluginCategory.PRODUCTIVITY,
-        canSkip = true,
-    )
-
-    /**
-     * Automation plugins step (LLM RPA, RPA Recorder, RPA Engine).
-     */
-    data object AutomationPlugins : PluginInstallStep(
-        title = "Automation",
-        category = PluginCategory.AUTOMATION,
-        canSkip = true,
-    )
-
-    /**
-     * Admin plugins step (Role Management, Role Creation, Secret Manager).
-     */
-    data object AdminPlugins : PluginInstallStep(
-        title = "Admin Tools",
-        category = PluginCategory.ADMIN,
-        canSkip = true,
-    )
-
-    /**
-     * Other plugins step (additional plugins from the store).
-     */
-    data object OtherPlugins : PluginInstallStep(
-        title = "Other Tools",
-        category = PluginCategory.OTHER,
-        canSkip = true,
+    data object Review : PluginInstallStep(
+        title = "Review tools",
     )
 
     /**
@@ -104,7 +90,6 @@ sealed class PluginInstallStep(
      */
     data object Installing : PluginInstallStep(
         title = "Installing",
-        category = null,
         canSkip = false,
     )
 
@@ -113,7 +98,6 @@ sealed class PluginInstallStep(
      */
     data object Complete : PluginInstallStep(
         title = "Complete",
-        category = null,
         canSkip = false,
     )
 
@@ -124,19 +108,10 @@ sealed class PluginInstallStep(
         val allSteps: List<PluginInstallStep> =
             listOf(
                 Welcome,
-                EssentialPlugins,
-                DeveloperPlugins,
-                ProductivityPlugins,
-                AutomationPlugins,
-                AdminPlugins,
-                OtherPlugins,
+                Profile,
+                Review,
                 Installing,
                 Complete,
             )
-
-        /**
-         * Category selection steps only.
-         */
-        val categorySteps: List<PluginInstallStep> = allSteps.filter { it.category != null }
     }
 }
