@@ -117,6 +117,14 @@ object BossLogger {
     /** File logging */
     private var logFile: File? = null
     private var fileLoggingEnabled = false
+
+    /**
+     * The lowest level the file receives. Applied after [globalLevel], so it can narrow what goes
+     * to disk but never widen it: with the console at INFO and this at DEBUG, the file gets INFO.
+     * TRACE means "everything the console gets", which is what [configure] callers had before
+     * the threshold existed.
+     */
+    private var fileMinLevel: LogLevel = LogLevel.TRACE
     private val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS")
 
     /** File rotation settings */
@@ -141,6 +149,27 @@ object BossLogger {
 
     /** Maximum log entries to keep in memory (for UI) */
     private const val MAX_LOG_ENTRIES = 1000
+
+    /** The path value that means "no file", so a default-on install can still say no. */
+    private const val FILE_LOGGING_OFF = "off"
+
+    /**
+     * What the file receives when nothing names a level. ERROR because the case that motivated the
+     * file (a plugin disabled by the restart budget, #394) logs at ERROR, and because it is the
+     * smaller surface; `BOSS_LOG_FILE_LEVEL=WARN` widens it to the fleet-readiness lines.
+     */
+    private val DEFAULT_FILE_LEVEL = LogLevel.ERROR
+
+    /**
+     * Whether the host writes a log file when nothing asks for one. Opt-in for now: the question of
+     * default-on was raised on #394 and not yet answered, and off is the reading that cannot
+     * surprise anyone's disk. Flipping this is the whole change to make it default-on.
+     *
+     * Note for the flip: defaultLogFilePath() is `~/.boss/logs/boss.log` and does not follow
+     * BossDirectories' dev-mode switch to `~/.boss_debug`, so until that is reconciled a dev
+     * run with the default on would write into the production data directory.
+     */
+    private const val FILE_LOGGING_ON_BY_DEFAULT = false
     private val recentLogs = ArrayDeque<LogEntry>(MAX_LOG_ENTRIES)
     private val recentLogsLock = Any()
 
@@ -160,15 +189,6 @@ object BossLogger {
     private val shutdownLock = Any()
 
     /**
-     * Configure the logger from environment or system properties.
-     *
-     * Checks for:
-     * - BOSS_LOG_LEVEL environment variable
-     * - boss.log.level system property
-     * - Defaults to INFO for production, DEBUG if "dev" mode detected
-     */
-
-    /**
      * The level a given set of inputs resolves to, split out so the blank rule is testable.
      *
      * A JVM cannot set its own environment variables, so this is the only place the
@@ -184,6 +204,62 @@ object BossLogger {
             ?: propLevel?.takeIf { it.isNotBlank() }?.let { LogLevel.fromString(it) }
             ?: if (devMode) LogLevel.DEBUG else LogLevel.INFO
 
+    /**
+     * Whether, where and at what level to write a log file, split out for the same reason as
+     * [resolveLevel]: a JVM cannot set its own environment variables.
+     *
+     * Path precedence is env, then system property, then [defaultPath]; level precedence is env,
+     * then system property, then [DEFAULT_FILE_LEVEL]. Blank counts as unset at every step, as in
+     * [resolveLevel]. Two things disable the file outright: a path of `off` (any case) and a level
+     * of `OFF`, and `off` above an explicit path below it still disables, because it is the one
+     * way to say "no file" when a default is on.
+     *
+     * An unrecognised level falls through to the next source rather than to INFO the way
+     * [LogLevel.fromString] does: a typo in `BOSS_LOG_FILE_LEVEL` must not quietly write every
+     * INFO line to disk. Whether the file is on by default is the caller's decision, expressed as
+     * [defaultPath]: a path for default-on, null for opt-in. Nothing else here changes with it.
+     */
+    internal fun resolveFileLogging(
+        envPath: String?,
+        propPath: String?,
+        envLevel: String?,
+        propLevel: String?,
+        defaultPath: String?,
+    ): FileLogTarget? {
+        val path = firstSet(envPath, propPath) ?: defaultPath ?: return null
+        val level = firstLevel(envLevel, propLevel) ?: DEFAULT_FILE_LEVEL
+        val disabled = path.equals(FILE_LOGGING_OFF, ignoreCase = true) || level == LogLevel.OFF
+        return if (disabled) null else FileLogTarget(path, level)
+    }
+
+    private fun firstSet(vararg values: String?): String? =
+        values.firstNotNullOfOrNull { value -> value?.trim()?.takeIf(String::isNotEmpty) }
+
+    private fun firstLevel(vararg values: String?): LogLevel? =
+        values.firstNotNullOfOrNull { value ->
+            value
+                ?.trim()
+                ?.takeIf(String::isNotEmpty)
+                ?.let { name -> LogLevel.entries.find { it.name.equals(name, ignoreCase = true) } }
+        }
+
+    /** Where the host log goes when nothing names a path and file logging is on by default. */
+    fun defaultLogFilePath(): String = File(System.getProperty("user.home"), ".boss/logs/boss.log").path
+
+    /**
+     * Configure the logger from environment or system properties.
+     *
+     * Console level: `BOSS_LOG_LEVEL`, then `boss.log.level`, then INFO (DEBUG in dev mode).
+     * File: `BOSS_LOG_FILE` / `boss.log.file` for the path, `BOSS_LOG_FILE_LEVEL` /
+     * `boss.log.file.level` for the threshold (default ERROR), `BOSS_LOG_FILE=off` to disable.
+     * File logging is opt-in until [FILE_LOGGING_ON_BY_DEFAULT] says otherwise; flipping that one
+     * constant turns it on at [defaultLogFilePath] for every install.
+     *
+     * This is the host's only entry point (`main.kt` calls it once at startup; nothing calls
+     * [configure]), which is why the file wiring lives here: until it did, the file writer existed
+     * and could not be reached, and a plugin disabled by the restart budget left an ERROR on stdout
+     * and nothing on disk (#394).
+     */
     fun configureFromEnvironment() {
         // Blank counts as UNSET throughout: `export BOSS_LOG_LEVEL=` yields an empty string,
         // which is non-null, so it used to win here and resolve through LogLevel.fromString to
@@ -198,6 +274,20 @@ object BossLogger {
                 propLevel = System.getProperty("boss.log.level"),
                 devMode = isDevMode,
             )
+
+        val target =
+            resolveFileLogging(
+                envPath = System.getenv("BOSS_LOG_FILE"),
+                propPath = System.getProperty("boss.log.file"),
+                envLevel = System.getenv("BOSS_LOG_FILE_LEVEL"),
+                propLevel = System.getProperty("boss.log.file.level"),
+                defaultPath = if (FILE_LOGGING_ON_BY_DEFAULT) defaultLogFilePath() else null,
+            )
+        if (target == null) {
+            disableFileLogging()
+        } else {
+            enableFileLogging(File(target.path), target.minLevel)
+        }
     }
 
     /**
@@ -233,6 +323,10 @@ object BossLogger {
             categoryLevels.putAll(config.categoryLevels)
         }
 
+        // No threshold here on purpose: BossLoggerConfig is one of the classes boss-plugin-api also
+        // ships, so adding a constructor parameter changes its `<init>` and `copy` signatures and
+        // fails ApiPackageDivergenceTest. configure() has no host caller anyway; the host's
+        // threshold comes from configureFromEnvironment. TRACE keeps the prior semantics.
         if (config.fileLoggingEnabled && config.logFilePath != null) {
             enableFileLogging(File(config.logFilePath))
         } else {
@@ -278,11 +372,30 @@ object BossLogger {
 
     /**
      * Enable file logging.
+     *
+     * Kept with exactly this signature: `ai.rever.boss.plugin.logging` also ships inside
+     * boss-plugin-api, and `ApiPackageDivergenceTest` fails the build if the host copy lacks any
+     * public member the api has. A defaulted parameter would have replaced this one-arg method
+     * with a two-arg one plus a synthetic bridge, and a plugin calling this would fail to link at
+     * load. New behaviour goes in an overload, never in place of an api signature.
      */
     fun enableFileLogging(file: File) {
+        enableFileLogging(file, LogLevel.TRACE)
+    }
+
+    /**
+     * Enable file logging at [minLevel] and above (after the global level; see [fileMinLevel]).
+     * Host-only overload; not in the api jar, so plugins cannot see it, which is fine: the
+     * threshold is the host's decision.
+     */
+    fun enableFileLogging(
+        file: File,
+        minLevel: LogLevel,
+    ) {
         try {
             file.parentFile?.mkdirs()
             logFile = file
+            fileMinLevel = minLevel
             fileLoggingEnabled = true
             startFileWriter()
         } catch (e: Exception) {
@@ -297,7 +410,15 @@ object BossLogger {
         fileLoggingEnabled = false
         stopFileWriter()
         logFile = null
+        fileMinLevel = LogLevel.TRACE
     }
+
+    /**
+     * Whether an entry at [level] goes to the file, given the current file settings. Split out so
+     * the threshold is testable without writing a file; [log] is the only production caller.
+     */
+    internal fun writesToFile(level: LogLevel): Boolean =
+        fileLoggingEnabled && level != LogLevel.OFF && level.priority >= fileMinLevel.priority
 
     /**
      * Start the background file writer coroutine.
@@ -467,7 +588,7 @@ object BossLogger {
         }
 
         // Queue for async file logging
-        if (fileLoggingEnabled) {
+        if (writesToFile(entry.level)) {
             val result = fileWriteChannel.trySend(entry)
             if (result.isFailure) {
                 val count = droppedLogCount.incrementAndGet()
@@ -616,6 +737,14 @@ data class BossLoggerConfig(
     val maxFileSize: Long = 10 * 1024 * 1024, // 10 MB
     val maxBackupFiles: Int = 5,
     val stackTraceDepth: Int = 10,
+)
+
+/**
+ * Where the host log file goes and what it receives, as resolved by [BossLogger.resolveFileLogging].
+ */
+data class FileLogTarget(
+    val path: String,
+    val minLevel: LogLevel,
 )
 
 /**
