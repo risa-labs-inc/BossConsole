@@ -369,13 +369,30 @@ object GlobalSearchService {
             return emptyList()
         }
 
+        val queryLower = query.lowercase()
         val results = mutableListOf<SearchResult.TabResult>()
 
         for (tab in tabs) {
             val title = tab.tabInfo.title
             val titleMatch = FuzzyMatcher.match(query, title, title.lowercase())
 
-            if (titleMatch != null && titleMatch.score >= MIN_SCORE) {
+            var tabUrl: String? = null
+            var tabFilePath: String? = null
+            var urlScore: Int? = null
+            var filePathScore: Int? = null
+            val tabInfo = tab.tabInfo
+
+            if (tabInfo is ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo) {
+                tabUrl = tabInfo.currentUrl
+                urlScore = proseScore(query, queryLower, tabUrl)
+            } else if (tabInfo is ai.rever.boss.plugin.tab.codeeditor.EditorTabInfo) {
+                tabFilePath = tabInfo.filePath
+                filePathScore = FuzzyMatcher.match(query, tabFilePath, tabFilePath.lowercase())?.score
+            }
+
+            val bestScore = listOfNotNull(titleMatch?.score, urlScore, filePathScore).maxOrNull()
+
+            if (bestScore != null && bestScore >= MIN_SCORE) {
                 results.add(
                     SearchResult.TabResult(
                         title = title,
@@ -384,10 +401,10 @@ object GlobalSearchService {
                         windowId = tab.windowId,
                         panelId = tab.panelId,
                         tabType = tab.tabInfo.typeId.typeId,
-                        url = null, // Would need FluckTabInfo check
-                        filePath = null, // Would need EditorTabInfo check
-                        score = titleMatch.score + 30, // Bonus for tabs (currently visible)
-                        matchRanges = titleMatch.matchRanges,
+                        url = tabUrl,
+                        filePath = tabFilePath,
+                        score = bestScore + 30, // Bonus for tabs (currently visible)
+                        matchRanges = titleMatch?.matchRanges ?: emptyList(),
                     ),
                 )
             }
