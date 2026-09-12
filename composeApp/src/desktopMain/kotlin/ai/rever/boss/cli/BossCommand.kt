@@ -519,9 +519,16 @@ class BossMcpCommand : CliktCommand(name = "mcp") {
             } else {
                 appendLine("Access:   Standard")
             }
-            // A tool that predates the field, or a response from a list override, carries no
-            // claim at all. Say so rather than printing the api default as though the author
-            // had chosen it. "Declared" is deliberate wording: nothing checks the claim.
+            // A tool that predates the field carries no claim at all, and so does an older
+            // host: PROTOCOL_VERSION is deliberately not bumped for this, because adding a
+            // JSON key is compatible in both directions. So a newer `boss` CLI querying an
+            // instance that is still running an older build - the ordinary state after an
+            // in-place update and before a restart, which is precisely what the
+            // single-instance channel exists to serve - gets a payload with no `readOnly`
+            // at all.
+            //
+            // Say so rather than printing the api default as though the author had chosen
+            // it. "Declared" is deliberate wording: nothing checks the claim.
             when (obj["readOnly"]?.jsonPrimitive?.booleanOrNull) {
                 true -> appendLine("Effect:   Declared read-only (hint, not verified)")
                 false -> appendLine("Effect:   Declares that it changes state")
