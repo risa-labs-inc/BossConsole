@@ -10,6 +10,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -18,28 +19,34 @@ import kotlinx.coroutines.launch
 /**
  * Implementation of ProjectDataProvider that wraps ProjectState.
  * Converts between composeApp's Project type and plugin's ProjectData type.
+ *
+ * Built per window ([DefaultPlugin]'s `projectDataProviderDelegate`), but [scope]'s collector
+ * subscribes to [ProjectState.recentProjects] - a process-wide singleton, not this window's own
+ * state - so it outlives the window unless [dispose] cancels it (BossConsole#520).
+ *
+ * [dispose] cannot freeze a KERNEL client's watch stream, even though in KERNEL mode the
+ * instance is also handed to the process-wide
+ * [ai.rever.boss.kernel.services.ProjectDataServiceBridge]: that bridge reads
+ * [ProjectState.recentProjects] directly rather than this per-window [recentProjects]
+ * mirror, so cancelling the mirror at window close leaves the watched source untouched.
+ *
+ * What [dispose] does not cover (pre-existing, not introduced here): the bridge's write
+ * path still routes [selectProject] through this per-window instance, so a select that
+ * arrives after the owning window closes is a no-op. Closing that gap means giving the
+ * write path its own window-affinity rule - a separate change.
  */
 class ProjectDataProviderImpl(
     private val windowProjectState: WindowProjectState?,
     // Injectable purely for tests. Dispatchers.Main has no implementation in a plain test JVM, so
-    // a hard-coded one forces every test that builds this to install a global Main dispatcher -
-    // and, since nothing cancels the scope below, to leak a live collector into whatever
-    // scheduler that was. Passing Dispatchers.Unconfined keeps the leak inert and local.
+    // a hard-coded one forces every test that builds this to install a global Main dispatcher.
+    // Passing Dispatchers.Unconfined keeps any test-built collector inert and local.
     dispatcher: CoroutineDispatcher = Dispatchers.Main,
-) : ProjectDataProvider {
+) : ProjectDataProvider,
+    DisposableProvider {
     // SupervisorJob, matching DefaultPlugin.pluginScope. There is one collector today, so this
     // is future-proofing rather than a fix: with a plain Job a second one added later would be
     // its sibling, and a failure in either would cancel the scope and take the other with it -
     // silently, since nothing awaits them.
-    //
-    // NOT DisposableProvider, deliberately. This scope does outlive the window that built it -
-    // `pluginScope` is not its scope - but in KERNEL mode the instance is also handed to a
-    // process-wide ProjectDataServiceBridge, whose watchRecentProjects collects this StateFlow.
-    // Cancelling on window close would leave that gRPC stream open and simply never changing:
-    // a silent freeze for every out-of-process plugin, which is worse than the leak. Closing it
-    // properly means the bridge reading ProjectState directly instead of a per-window provider,
-    // which is its own change - see the PR discussion. logDataProvider and gitDataProvider are
-    // registered in the same group and want the same look.
     private val scope = CoroutineScope(dispatcher + SupervisorJob())
 
     // Map ProjectState's recentProjects to plugin's ProjectData type
@@ -71,6 +78,11 @@ class ProjectDataProviderImpl(
     // see ProjectChangeAnnouncer. Publishing here too would double-fire on this path.
     override fun selectProject(project: ProjectData) {
         selectProjectInWindow(windowProjectState, project.toProject())
+    }
+
+    /** Stops mirroring [ProjectState.recentProjects] into [recentProjects]. See the class KDoc. */
+    override fun dispose() {
+        scope.cancel()
     }
 
     // Extension functions for type conversion

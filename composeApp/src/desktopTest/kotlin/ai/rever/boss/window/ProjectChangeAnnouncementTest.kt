@@ -182,9 +182,8 @@ class ProjectChangeAnnouncementTest {
     @Test
     fun `a plugin-initiated selection is announced exactly once`() {
         val state = WindowProjectStateRegistry.getOrCreate("w-plugin")
-        // Unconfined rather than a global setMain: the provider's collector is never
-        // cancelled, so on a TestCoroutineScheduler it would be something every later
-        // runTest in the suite waits on. This keeps the leak inert and local.
+        // Unconfined rather than a global setMain: Dispatchers.Main has no implementation in a
+        // plain test JVM, so the provider's collector gets an inert local dispatcher instead.
         val provider = ProjectDataProviderImpl(state, Dispatchers.Unconfined)
         try {
             provider.selectProject(ProjectData(name = "plugin", path = PLUGIN_PATH, lastOpened = 0L))
@@ -193,6 +192,7 @@ class ProjectChangeAnnouncementTest {
             assertEquals(PLUGIN_PATH, event.projectPath)
             assertEquals("w-plugin", event.windowId)
         } finally {
+            provider.dispose()
             WindowProjectStateRegistry.unregister("w-plugin")
             ProjectState.removeRecentProject(PLUGIN_PATH)
         }
@@ -280,10 +280,14 @@ class ProjectChangeAnnouncementTest {
     /** Documented behaviour change: no state means no selection happened, so nothing is announced. */
     @Test
     fun `a null window state announces nothing rather than an empty windowId`() {
-        ProjectDataProviderImpl(windowProjectState = null, dispatcher = Dispatchers.Unconfined)
-            .selectProject(ProjectData(name = "nowhere", path = "/tmp/boss-pca-nowhere", lastOpened = 0L))
+        val provider = ProjectDataProviderImpl(windowProjectState = null, dispatcher = Dispatchers.Unconfined)
+        try {
+            provider.selectProject(ProjectData(name = "nowhere", path = "/tmp/boss-pca-nowhere", lastOpened = 0L))
 
-        assertTrue(changes().isEmpty(), "selectProjectInWindow no-ops on null; the old code still published")
+            assertTrue(changes().isEmpty(), "selectProjectInWindow no-ops on null; the old code still published")
+        } finally {
+            provider.dispose()
+        }
     }
 
     /** The other half of the restore path: a workspace that restores no project announces nothing. */
