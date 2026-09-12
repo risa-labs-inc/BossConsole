@@ -17,6 +17,7 @@ import ai.rever.boss.crash.hasFatalCause
 import ai.rever.boss.crash.noteRecoveryOutcome
 import ai.rever.boss.logging.GlobalLogCapture
 import ai.rever.boss.performance.PerformanceDataProviderImpl
+import ai.rever.boss.pet.BossPetHost
 import ai.rever.boss.plugin.PluginStoreSetup
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.plugin.sandbox.ui.PluginCrashInterceptor
@@ -1266,6 +1267,8 @@ fun main(args: Array<String>) {
                         )
                     }
                 }
+
+                BossPetHost()
             }
         } // CompositionLocalProvider
     }
