@@ -78,6 +78,7 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
@@ -85,6 +86,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -251,6 +253,11 @@ internal fun BossAppCompositionLocals(
  * split-view main content, bottom bar, focus-mode hover strips, and the drag /
  * toast / tab-cycle overlays. Bars hide and hover-reveal in focus mode.
  */
+@Suppress(
+    "LongParameterList",
+    "detekt.LongMethod",
+    "detekt.CyclomaticComplexMethod",
+)
 @Composable
 internal fun BossAppScaffold(
     state: BossAppState,
@@ -697,6 +704,8 @@ internal fun BossAppScaffold(
                                 .weight(1f)
                                 .reportContentInset(density) { contentInset = it },
                     ) {
+                        val drawerSignOutInteractionSource = remember { MutableInteractionSource() }
+
                         BossWindow(
                             modifier = Modifier.fillMaxSize(),
                             tabsComponent = state.tabsComponent,
@@ -753,16 +762,9 @@ internal fun BossAppScaffold(
                             onDrawerVisibleChange = { visible -> drawerVisible = visible },
                             onBarRailedChange = { railed -> barRailed = railed },
                             verticalBarBelowMap = {
-                                VerticalBarHostActions(
-                                    actions =
-                                        focusQuickActionsFooter(
-                                            placement = quickActionsPlacement,
-                                            onShowSettings = { state.settingsWindow.open() },
-                                            toolbox = hostToolbox,
-                                            onShowSearch = { state.showGlobalSearchDialog = true },
-                                            onSignOut = { state.showLogoutDialog = true },
-                                            toolLauncher = hostToolLauncher,
-                                        ),
+                                LogoutFullRow(
+                                    onSignOut = { state.showLogoutDialog = true },
+                                    interactionSource = drawerSignOutInteractionSource,
                                 )
                             },
                             // The rail's own layout for the same actions, in its OWN slot: the
@@ -782,6 +784,25 @@ internal fun BossAppScaffold(
                                     showActions = quickActionsPlacement == FocusQuickActionsPlacement.TAB_BAR_RAIL,
                                     onFitsChange = { fits -> railActionsFit = fits },
                                 )
+                            },
+                            drawerIconColumn = {
+                                // Reused by `DrawerIconColumn`, so this one handles BOTH states
+                                // and the receiver throws away what it shouldn't draw.
+                                val actions =
+                                    focusQuickActionButtons(
+                                        hintDirection = right,
+                                        modifier = Modifier.size(SIDEBAR_ICON_SIZE),
+                                        onShowSettings = { state.settingsWindow.open() },
+                                        toolbox = hostToolbox,
+                                        onShowSearch = { state.showGlobalSearchDialog = true },
+                                        onSignOut = { state.showLogoutDialog = true },
+                                        toolLauncher = hostToolLauncher,
+                                        signOutInteractionSource = drawerSignOutInteractionSource,
+                                    )
+                                // The sign out button (index 0) is omitted from the icon column
+                                // because it is rendered as a full-width row underneath both columns.
+                                val actionsWithoutSignOut = actions.toMutableList().apply { set(0, null) }
+                                DrawerIconColumn(actions = actionsWithoutSignOut)
                             },
                             verticalBarFooter = {
                                 VerticalBarWindowControls(

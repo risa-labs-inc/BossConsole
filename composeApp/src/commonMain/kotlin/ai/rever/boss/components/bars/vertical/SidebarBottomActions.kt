@@ -42,7 +42,7 @@ internal const val SIDEBAR_BOTTOM_ACTIONS_TAG = "sidebar-bottom-actions"
  * menu bar and a keyboard shortcut as the only ways to reach them.
  */
 @Composable
-internal fun ColumnScope.SidebarBottomActions(actions: List<@Composable () -> Unit>) {
+internal fun ColumnScope.SidebarBottomActions(actions: List<(@Composable () -> Unit)?>) {
     if (actions.isEmpty()) return
 
     SDivider()
@@ -60,7 +60,7 @@ internal fun ColumnScope.SidebarBottomActions(actions: List<@Composable () -> Un
     ) {
         // No `key`: the list is fixed-length and fixed-order, so positional identity is already
         // what a key would give, and `QuickActions` invokes the same list the same way.
-        actions.forEach { action ->
+        actions.filterNotNull().forEach { action ->
             Box(modifier = Modifier.padding(vertical = ROW_GAP)) { action() }
         }
     }

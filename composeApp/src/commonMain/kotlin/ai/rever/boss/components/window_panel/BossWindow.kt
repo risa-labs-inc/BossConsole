@@ -48,6 +48,8 @@ fun BossDraggableComponent.BossWindow(
     verticalBarBelowMap: @Composable () -> Unit = {},
     /** The same chrome for the foot of the bar's collapsed rail. See [SplitViewPanel]. */
     verticalBarRailActions: @Composable () -> Unit = {},
+    /** The icon column for the expanded drawer, unconditional. See [SplitViewPanel]. */
+    drawerIconColumn: @Composable () -> Unit = {},
     /** Clearance above the vertical bar, for the macOS traffic lights. See [SplitViewPanel]. */
     verticalBarTopInset: Dp = 0.dp,
     /** Reports whether the hover-revealed bar is on screen. See [SplitViewPanel]. */
@@ -184,6 +186,7 @@ fun BossDraggableComponent.BossWindow(
                         verticalBarFooter = verticalBarFooter,
                         verticalBarBelowMap = verticalBarBelowMap,
                         verticalBarRailActions = verticalBarRailActions,
+                        drawerIconColumn = drawerIconColumn,
                         verticalBarTopInset = verticalBarTopInset,
                         onDrawerVisibleChange = onDrawerVisibleChange,
                         onBarRailedChange = onBarRailedChange,

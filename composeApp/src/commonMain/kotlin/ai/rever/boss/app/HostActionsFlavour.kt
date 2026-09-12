@@ -38,7 +38,7 @@ internal fun focusQuickActionsFor(
     toolbox: (@Composable (hintDirection: Panel, modifier: Modifier) -> Unit)? = null,
     toolLauncher: (@Composable (hintDirection: Panel, modifier: Modifier) -> Unit)? = null,
     modifier: Modifier = Modifier.size(SIDEBAR_ICON_SIZE),
-): List<@Composable () -> Unit> =
+): List<(@Composable () -> Unit)?> =
     if (placement != owner) {
         emptyList()
     } else {

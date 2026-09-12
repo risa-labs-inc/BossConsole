@@ -4,24 +4,53 @@ import ai.rever.boss.components.buttons.BossActionButton
 import ai.rever.boss.components.workspaces.LayoutWorkspace
 import ai.rever.boss.components.workspaces.WorkspaceButton
 import ai.rever.boss.components.workspaces.WorkspaceManager
+import ai.rever.boss.layout.BossChrome
 import ai.rever.boss.plugin.api.Panel
 import ai.rever.boss.plugin.api.Panel.Companion.right
 import ai.rever.boss.plugin.api.Panel.Companion.top
 import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.services.supabase.AuthService
 import ai.rever.boss.window.Project
+import androidx.compose.foundation.Indication
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Divider
+import androidx.compose.material.Icon
+import androidx.compose.material.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Folder
 
@@ -63,45 +92,44 @@ internal fun VerticalBarWindowControls(
 ) {
     if (!topBarHidden) return
 
-    Divider(color = BossTheme.colors.line)
     Column(
         // Tight on purpose. These are two rows of a narrow bar, not a toolbar: the padding that
         // reads as breathing room across a 1500dp top bar reads as dead space down a 200dp one,
         // and there is a split map below them competing for the same inches.
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
-        // Not zero. Two 24dp rows flush against each other put their click targets in direct
-        // contact, and a click a pixel off the one you meant activates the other - which for
-        // these two means opening the wrong thing entirely, a project dialog or a workspace menu.
-        verticalArrangement = Arrangement.spacedBy(ROW_GAP),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
     ) {
-        BossActionButton(
-            // A folder rather than the top bar's project LOGO tile. That tile is 28dp of solid
-            // colour built to anchor a wide bar; down a 200dp column it is the loudest thing on
-            // screen and it is decoration.
-            leftIcon = FeatherIcons.Folder,
-            // A project with no path is no project: the button then offers the action rather than
-            // naming the empty one, which is what the top bar's copy does too.
-            text = if (project.path.isEmpty()) "Open Project" else project.name,
-            // The top bar's copy hangs a recent-projects menu off this button. Here it opens the
-            // project dialog instead - the same one the File menu and the dashboard open - rather
-            // than standing up a second recent-projects menu with its own remove and rename
-            // dialogs behind it. One control, one window-level dialog.
-            //
-            // Null, not emptyList: a non-null list makes the button open a menu on click, and an
-            // empty one would open an empty menu on top of the dialog.
-            contextMenuItems = null,
-            hintText = if (project.path.isEmpty()) "Open a project" else project.path,
-            maxTextWidth = LABEL_MAX_WIDTH,
-            compact = true,
-            onClick = onOpenProject,
-        )
-        WorkspaceButton(
-            onOpenWorkspace = onApplyWorkspace,
-            workspaceManager = workspaceManager,
-            getCurrentWorkspace = getCurrentWorkspace,
-            onShowTopOfMind = onShowTopOfMind,
-            compact = true,
-        )
+        Box(Modifier.height(32.dp), contentAlignment = Alignment.CenterStart) {
+            BossActionButton(
+                // A folder rather than the top bar's project LOGO tile. That tile is 28dp of solid
+                // colour built to anchor a wide bar; down a 200dp column it is the loudest thing on
+                // screen and it is decoration.
+                leftIcon = FeatherIcons.Folder,
+                // A project with no path is no project: the button then offers the action rather than
+                // naming the empty one, which is what the top bar's copy does too.
+                text = if (project.path.isEmpty()) "Open Project" else project.name,
+                // The top bar's copy hangs a recent-projects menu off this button. Here it opens the
+                // project dialog instead - the same one the File menu and the dashboard open - rather
+                // than standing up a second recent-projects menu with its own remove and rename
+                // dialogs behind it. One control, one window-level dialog.
+                //
+                // Null, not emptyList: a non-null list makes the button open a menu on click, and an
+                // empty one would open an empty menu on top of the dialog.
+                contextMenuItems = null,
+                hintText = if (project.path.isEmpty()) "Open a project" else project.path,
+                maxTextWidth = LABEL_MAX_WIDTH,
+                compact = true,
+                onClick = onOpenProject,
+            )
+        }
+        Box(Modifier.height(32.dp), contentAlignment = Alignment.CenterStart) {
+            WorkspaceButton(
+                onOpenWorkspace = onApplyWorkspace,
+                workspaceManager = workspaceManager,
+                getCurrentWorkspace = getCurrentWorkspace,
+                onShowTopOfMind = onShowTopOfMind,
+                compact = true,
+            )
+        }
     }
 }
 
@@ -112,9 +140,6 @@ internal fun VerticalBarWindowControls(
  * without a cap a long project name pushes the chevron off the end of its own button.
  */
 private val LABEL_MAX_WIDTH = 130.dp
-
-/** Air between the two rows: enough that a click near the boundary cannot land on the other. */
-private val ROW_GAP = 4.dp
 
 /**
  * The host's own actions at the very foot of the vertical tab bar, under the split map.
@@ -131,8 +156,8 @@ private val ROW_GAP = 4.dp
  * somewhere else is exactly the bar that existed before this.
  */
 @Composable
-internal fun VerticalBarHostActions(actions: List<@Composable () -> Unit>) {
-    if (actions.isEmpty()) return
+internal fun VerticalBarHostActions(actions: List<(@Composable () -> Unit)?>) {
+    if (actions.isEmpty() || actions.all { it == null }) return
 
     // No background of its own: this row sits inside the bar, which fills itself with
     // `colors.panel`. The panel foot, whose column stops where the plugin's content does, has to
@@ -177,7 +202,7 @@ internal const val VERTICAL_BAR_HOST_ACTIONS_TAG = "vertical-bar-host-actions"
 @Composable
 internal fun HostActionsFlowRow(
     tag: String,
-    actions: List<@Composable () -> Unit>,
+    actions: List<(@Composable () -> Unit)?>,
     modifier: Modifier = Modifier,
 ) {
     FlowRow(
@@ -191,7 +216,7 @@ internal fun HostActionsFlowRow(
     ) {
         // No key: the list is fixed-order for a given placement, so positional identity is what a
         // key would give - the same call SidebarBottomActions makes about the same actions.
-        actions.forEach { action -> action() }
+        actions.filterNotNull().forEach { action -> action() }
     }
 }
 
@@ -228,7 +253,7 @@ internal fun focusQuickActionsFooter(
     onSignOut: () -> Unit,
     toolbox: (@Composable (hintDirection: Panel, modifier: Modifier) -> Unit)? = null,
     toolLauncher: (@Composable (hintDirection: Panel, modifier: Modifier) -> Unit)? = null,
-): List<@Composable () -> Unit> =
+): List<(@Composable () -> Unit)?> =
     focusQuickActionsFor(
         owner = FocusQuickActionsPlacement.TAB_BAR_FOOTER,
         hintDirection = top,
@@ -258,23 +283,81 @@ internal fun focusQuickActionsFooter(
  * somewhere else is exactly the rail that existed before this.
  */
 @Composable
-internal fun VerticalBarRailActions(actions: List<@Composable () -> Unit>) {
-    if (actions.isEmpty()) return
+internal fun VerticalBarRailActions(actions: List<(@Composable () -> Unit)?>) {
+    if (actions.isEmpty() || actions.all { it == null }) return
+    ActionIconColumnBody(
+        actions = actions,
+        modifier = Modifier.testTag(VERTICAL_BAR_RAIL_ACTIONS_TAG),
+    )
+}
+
+/**
+ * The icon column for the expanded drawer, rendered unconditionally.
+ *
+ * Structurally identical to [VerticalBarRailActions] — same heights, same order — but without
+ * the placement gate that makes the rail's version return empty when the drawer is open. Both
+ * delegate to [ActionIconColumnBody] so a height or spacing change is made once and cannot
+ * drift between the two.
+ *
+ * Renders nothing when [actions] is empty, same as the rail, so a scaffold that passes an empty
+ * list renders no column at all.
+ */
+@Composable
+internal fun DrawerIconColumn(actions: List<(@Composable () -> Unit)?>) {
+    if (actions.isEmpty() || actions.all { it == null }) return
+
+    ActionIconColumnBody(
+        actions = actions,
+        modifier = Modifier.testTag(DRAWER_ICON_COLUMN_TAG),
+    )
+}
+
+/** Test tag of the drawer's icon column. */
+internal const val DRAWER_ICON_COLUMN_TAG = "drawer-icon-column"
+
+/**
+ * The shared Column body for [VerticalBarRailActions] and [DrawerIconColumn].
+ *
+ * One layout, two callers, so a future height or spacing change cannot be made in one and
+ * forgotten in the other — which is the exact drift bug that caused this fix to exist.
+ *
+ * Index order matches [focusQuickActionButtons]:
+ * 0: Sign Out, 1: Settings, 2: Toolbox, 3: ToolLauncher, 4: Search.
+ */
+@Composable
+private fun ActionIconColumnBody(
+    actions: List<(@Composable () -> Unit)?>,
+    modifier: Modifier = Modifier,
+) {
+    val signOut = actions.getOrNull(0)
+    val settings = actions.getOrNull(1)
+    val toolbox = actions.getOrNull(2)
+    val toolLauncher = actions.getOrNull(3)
+    val search = actions.getOrNull(4)
 
     Column(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .testTag(VERTICAL_BAR_RAIL_ACTIONS_TAG)
-                .padding(vertical = BossTheme.space.xs),
-        verticalArrangement = Arrangement.spacedBy(BossTheme.space.xs),
+        modifier = modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        // The rail's own kind of separator - a short centred rule, the same one it draws between
-        // its panes - rather than a full-width divider, which at this width reads as a bar end.
-        Divider(color = BossTheme.colors.line, modifier = Modifier.fillMaxWidth(0.6f))
-        // No key: fixed-order for a given placement, so positional identity is what a key gives.
-        actions.forEach { action -> action() }
+        if (search != null) {
+            Box(Modifier.height(32.dp), contentAlignment = Alignment.Center) { search.invoke() }
+        }
+        if (toolbox != null) {
+            Box(Modifier.height(32.dp), contentAlignment = Alignment.Center) { toolbox.invoke() }
+        }
+        val hasSettingsGroup = toolLauncher != null || settings != null
+        if (hasSettingsGroup) {
+            Box(Modifier.height(140.dp), contentAlignment = Alignment.Center) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(BossTheme.space.xs),
+                ) {
+                    toolLauncher?.invoke()
+                    settings?.invoke()
+                }
+            }
+        }
+        signOut?.let { Box(Modifier.height(40.dp), contentAlignment = Alignment.Center) { it.invoke() } }
     }
 }
 
@@ -304,7 +387,7 @@ internal fun focusQuickActionsTabRail(
     onSignOut: () -> Unit,
     toolbox: (@Composable (hintDirection: Panel, modifier: Modifier) -> Unit)? = null,
     toolLauncher: (@Composable (hintDirection: Panel, modifier: Modifier) -> Unit)? = null,
-): List<@Composable () -> Unit> =
+): List<(@Composable () -> Unit)?> =
     focusQuickActionsFor(
         owner = FocusQuickActionsPlacement.TAB_BAR_RAIL,
         hintDirection = right,
@@ -350,3 +433,46 @@ internal fun verticalBarHost(
         !barCollapsed || drawerVisible -> VerticalBarHost.FOOT
         else -> VerticalBarHost.RAIL
     }
+
+@Composable
+internal fun LogoutFullRow(
+    onSignOut: () -> Unit,
+    modifier: Modifier = Modifier,
+    interactionSource: MutableInteractionSource? = null,
+) {
+    val currentUser by AuthService.currentUser.collectAsState()
+    val source = interactionSource ?: remember { MutableInteractionSource() }
+    val colors = BossTheme.colors
+
+    val marginStart = (BossChrome.dimens.stripWidth - 32.dp) / 2
+
+    Box(
+        modifier
+            .fillMaxWidth()
+            .height(40.dp)
+            .padding(start = marginStart, end = BossTheme.space.xs),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.size(32.dp), contentAlignment = Alignment.Center) {
+                BossActionButton(
+                    imageVector = Icons.AutoMirrored.Outlined.Logout,
+                    text = "Sign Out",
+                    interactionSource = source,
+                    onClick = onSignOut,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = currentUser?.email ?: "Sign Out",
+                color = colors.textSecondary,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}

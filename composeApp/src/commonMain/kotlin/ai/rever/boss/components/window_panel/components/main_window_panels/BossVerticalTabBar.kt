@@ -1,5 +1,4 @@
 package ai.rever.boss.components.window_panel.components.main_window_panels
-
 import ai.rever.boss.components.bars.getPanelScrollbarConfig
 import ai.rever.boss.components.bars.lazyListScrollbar
 import ai.rever.boss.components.dividers.SDivider
@@ -52,9 +51,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.constrainHeight
+import androidx.compose.ui.unit.constrainWidth
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -181,20 +183,46 @@ fun BossTabRail(
     onExpand: () -> Unit,
     onNewTab: () -> Unit,
     belowTabs: @Composable () -> Unit = {},
+    favoritesSpacer: @Composable () -> Unit = {},
 ) {
     val colors = BossTheme.colors
     Column(
-        modifier = Modifier.fillMaxSize().padding(vertical = 4.dp),
+        modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        Box(Modifier.fillMaxWidth()) {
+            MeasureFavoritesShelf(favoritesSpacer)
+
+            // Visible Chevron, positioned identically to how it sits in the Drawer
+            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                Spacer(Modifier.height(FAVORITES_SHELF_PADDING))
+                RailIconButton(
+                    icon = Icons.Default.ChevronRight,
+                    contentDescription = "Expand tab bar",
+                    onClick = onExpand,
+                )
+            }
+
+            // Visible Divider pinned to the exact bottom of the reserved Favorites block
+            Box(
+                Modifier
+                    .fillMaxWidth(0.6f)
+                    .height(1.dp)
+                    .background(colors.line)
+                    .align(Alignment.BottomCenter),
+            )
+        }
+
+        // 11.dp perfectly centers the '+' button when the tab list is empty,
+        // balancing the 5.dp spacer below it + the 6.dp spacer before the bottom line.
+        Spacer(Modifier.height(11.dp))
         RailIconButton(
-            icon = Icons.Default.ChevronRight,
-            contentDescription = "Expand tab bar",
-            onClick = onExpand,
+            icon = Icons.Default.Add,
+            contentDescription = "New Tab",
+            onClick = onNewTab,
+            iconSize = 14.dp,
         )
-        Spacer(Modifier.height(4.dp))
-        Box(Modifier.fillMaxWidth(0.6f).height(1.dp).background(colors.line))
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(5.dp))
 
         // A plain verticalScroll rather than a LazyColumn: a rail tab is 24dp of icon, so
         // virtualising them buys less than the subcomposition costs, and the rail is the case
@@ -221,15 +249,10 @@ fun BossTabRail(
 
         Spacer(Modifier.height(6.dp))
         Box(Modifier.fillMaxWidth(0.6f).height(1.dp).background(colors.line))
-        Spacer(Modifier.height(4.dp))
-        RailIconButton(
-            icon = Icons.Default.Add,
-            contentDescription = "New Tab",
-            onClick = onNewTab,
-        )
-        // Below the "+", not above it: that button belongs to the tabs this rail is a list of,
-        // and these belong to the app. The slot draws its own rule, so a rail with nothing to put
-        // here ends at the "+" exactly as it always did.
+        Spacer(Modifier.height(BossTheme.space.xs)) // BossTheme.space.xs is 4.dp
+
+        // Below the tabs, not above it: these belong to the app. The slot draws its own rule,
+        // so a rail with nothing to put here ends at the bottom exactly as it always did.
         belowTabs()
     }
 }
@@ -316,6 +339,7 @@ private fun RailIconButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     contentDescription: String,
     onClick: () -> Unit,
+    iconSize: Dp? = null,
 ) {
     Box(
         modifier =
@@ -332,7 +356,7 @@ private fun RailIconButton(
             imageVector = icon,
             contentDescription = contentDescription,
             tint = BossTheme.colors.textSecondary,
-            modifier = Modifier.size(16.dp),
+            modifier = if (iconSize != null) Modifier.size(iconSize) else Modifier,
         )
     }
 }
@@ -366,3 +390,15 @@ fun verticalTabBarWidth(
     collapsed: Boolean,
     width: Dp,
 ): Dp = if (collapsed) tabBarRailWidth else width
+
+/** Reserves the shelf height without placing invisible bookmark buttons into hit testing. */
+@Composable
+private fun MeasureFavoritesShelf(content: @Composable () -> Unit) {
+    Layout(content = content) { measurables, constraints ->
+        val measured = measurables.map { it.measure(constraints) }
+        layout(
+            constraints.constrainWidth(measured.maxOfOrNull { it.width } ?: 0),
+            constraints.constrainHeight(measured.maxOfOrNull { it.height } ?: 0),
+        ) {}
+    }
+}

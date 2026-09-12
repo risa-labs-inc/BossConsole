@@ -143,7 +143,7 @@ class HostActionsWiringTest {
                     {},
                     toolbox = { hint, _ -> panelHint = hint },
                 ),
-            ).forEach { actions -> actions.forEach { action -> action() } }
+            ).forEach { actions -> actions.forEach { action -> action?.invoke() } }
         }
         rule.waitForIdle()
 

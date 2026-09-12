@@ -1,10 +1,10 @@
 package ai.rever.boss.window
 
 import ai.rever.boss.layout.ChromeDensity
+import ai.rever.boss.plugin.logging.BossLogger
+import ai.rever.boss.plugin.logging.LogCategory
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.SystemUtils
-import ai.rever.boss.utils.logging.BossLogger
-import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow

@@ -49,6 +49,7 @@ fun BossActionButton(
     isSelected: Boolean,
     modifier: Modifier,
     hintDirection: Panel = bottom,
+    interactionSource: MutableInteractionSource = remember { MutableInteractionSource() },
     onClick: () -> Unit,
 ) = BossActionButton(
     imageVector = imageVector,
@@ -58,9 +59,11 @@ fun BossActionButton(
     hintText = text,
     showHintWithDelay = false,
     hintDirection = hintDirection,
+    interactionSource = interactionSource,
     onClick = onClick,
 )
 
+@Suppress("detekt.LongMethod", "detekt.CyclomaticComplexMethod")
 @Composable
 fun BossActionButton(
     imageVector: ImageVector? = null,
@@ -88,6 +91,7 @@ fun BossActionButton(
      * bar - where every one of these numbers was chosen - is untouched.
      */
     compact: Boolean = false,
+    interactionSource: MutableInteractionSource = remember { MutableInteractionSource() },
     onClick: () -> Unit = {},
 ) {
     // Resolved icon color - use iconColor if provided, otherwise fall back to color
@@ -150,7 +154,6 @@ fun BossActionButton(
         )
 
     // Use interaction source to track states
-    val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
     val isFocused by interactionSource.collectIsFocusedAsState()
 
@@ -183,174 +186,176 @@ fun BossActionButton(
             }
     }
 
-    // Show context menu if enabled
-    if (showContextMenu && contextMenuItems != null) {
-        ContextMenu(
-            items = contextMenuItems,
-            offset = computeMenuPosition(),
-            onDismissRequest = { showContextMenu = false },
-            modifier =
-                Modifier.onGloballyPositioned { coordinates ->
-                    contextMenuSizeRef[0] = coordinates.size.width
-                    contextMenuSizeRef[1] = coordinates.size.height
-                },
-        )
-    }
+    Box {
+        // Show context menu if enabled
+        if (showContextMenu && contextMenuItems != null) {
+            ContextMenu(
+                items = contextMenuItems,
+                offset = computeMenuPosition(),
+                onDismissRequest = { showContextMenu = false },
+                modifier =
+                    Modifier.onGloballyPositioned { coordinates ->
+                        contextMenuSizeRef[0] = coordinates.size.width
+                        contextMenuSizeRef[1] = coordinates.size.height
+                    },
+            )
+        }
 
-    // Show hover popup if hovering and hint text is provided
-    // Use hoverState.capturedText to prevent flickering when content updates during hover
-    val displayHintText = hoverState.capturedText ?: hintText
-    if (hoverState.isShowing && displayHintText != null) {
-        val heavyweightTooltip = OverlayConfig.heavyweightTooltip
-        if (OverlayConfig.useHeavyweightPopups && heavyweightTooltip != null) {
-            // HARDWARE_ACCELERATED: a lightweight Compose Popup renders BEHIND the
-            // browser's heavyweight surface, so this hover hint would be hidden by the
-            // page. Show it in a small native window instead, and take it down when the
-            // hover ends. OFF_SCREEN keeps the Compose path below unchanged.
-            DisposableEffect(displayHintText) {
-                heavyweightTooltip(displayHintText)
-                onDispose { OverlayConfig.hideHeavyweightTooltip?.invoke() }
-            }
-        } else {
-            Popup(
-                alignment = Alignment.TopStart,
-                offset = computeHoverPopupPosition(),
-                properties = PopupProperties(focusable = false),
-            ) {
-                Surface(
-                    modifier =
-                        Modifier
-                            .onGloballyPositioned { coordinates ->
-                                hintPopupSizeRef[0] = coordinates.size.width
-                                hintPopupSizeRef[1] = coordinates.size.height
-                            },
-                    color = colors.raised,
-                    shape = RoundedCornerShape(radii.input),
+        // Show hover popup if hovering and hint text is provided
+        // Use hoverState.capturedText to prevent flickering when content updates during hover
+        val displayHintText = hoverState.capturedText ?: hintText
+        if (hoverState.isShowing && displayHintText != null) {
+            val heavyweightTooltip = OverlayConfig.heavyweightTooltip
+            if (OverlayConfig.useHeavyweightPopups && heavyweightTooltip != null) {
+                // HARDWARE_ACCELERATED: a lightweight Compose Popup renders BEHIND the
+                // browser's heavyweight surface, so this hover hint would be hidden by the
+                // page. Show it in a small native window instead, and take it down when the
+                // hover ends. OFF_SCREEN keeps the Compose path below unchanged.
+                DisposableEffect(displayHintText) {
+                    heavyweightTooltip(displayHintText)
+                    onDispose { OverlayConfig.hideHeavyweightTooltip?.invoke() }
+                }
+            } else {
+                Popup(
+                    alignment = Alignment.TopStart,
+                    offset = computeHoverPopupPosition(),
+                    properties = PopupProperties(focusable = false),
                 ) {
-                    Row(
+                    Surface(
                         modifier =
                             Modifier
-                                .defaultMinSize(2.dp)
-                                .padding(vertical = 0.dp, horizontal = 12.dp),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically,
+                                .onGloballyPositioned { coordinates ->
+                                    hintPopupSizeRef[0] = coordinates.size.width
+                                    hintPopupSizeRef[1] = coordinates.size.height
+                                },
+                        color = colors.raised,
+                        shape = RoundedCornerShape(radii.input),
                     ) {
-                        Text(
-                            text = displayHintText,
-                            color = colors.textPrimary,
-                            fontSize = 12.sp,
-                            modifier = Modifier.padding(bottom = 4.dp),
-                        )
+                        Row(
+                            modifier =
+                                Modifier
+                                    .defaultMinSize(2.dp)
+                                    .padding(vertical = 0.dp, horizontal = 12.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = displayHintText,
+                                color = colors.textPrimary,
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(bottom = 4.dp),
+                            )
+                        }
                     }
                 }
             }
         }
-    }
 
-    @Composable
-    fun MainText() {
-        Text(
-            text = text,
-            color = if (isActive) color else color.copy(alpha = 0.8f),
-            fontSize = if (compact) COMPACT_FONT_SIZE else fontSize,
-            fontWeight = if (isActive) FontWeight.Medium else FontWeight.Normal,
-            textAlign = TextAlign.Center,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = if (maxTextWidth != null) Modifier.widthIn(max = maxTextWidth) else Modifier,
-        )
-    }
-
-    @Composable
-    fun MainIcon(
-        icon: ImageVector = Icons.Outlined.KeyboardArrowDown,
-        size: Dp = if (compact) COMPACT_ICON_SIZE else 16.dp,
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = text,
-            modifier = Modifier.size(size),
-            tint = if (isActive) resolvedIconColor else resolvedIconColor.copy(alpha = 0.8f),
-        )
-    }
-
-    var _leftLogo = leftLogo
-    var _contentPadding = contentPadding
-
-    // A leading slot sets the padding, because the numbers differ between a logo and an icon and
-    // no caller was picking them. Compact keeps that arrangement and only tightens it.
-    leftLogo?.let {
-        _contentPadding =
-            if (compact) COMPACT_PADDING else PaddingValues(vertical = 2.dp, horizontal = 10.dp)
-    } ?: leftIcon?.let {
-        _contentPadding =
-            if (compact) COMPACT_PADDING else PaddingValues(vertical = 6.dp, horizontal = 10.dp)
-        _leftLogo = { MainIcon(it) }
-    }
-
-    // Define button click handler
-    val handleClick = {
-        if (contextMenuItems != null) {
-            showContextMenu = true
-            hoverState.isShowing = false // Hide hover popup when showing context menu
+        @Composable
+        fun MainText() {
+            Text(
+                text = text,
+                color = if (isActive) color else color.copy(alpha = 0.8f),
+                fontSize = if (compact) COMPACT_FONT_SIZE else fontSize,
+                fontWeight = if (isActive) FontWeight.Medium else FontWeight.Normal,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = if (maxTextWidth != null) Modifier.widthIn(max = maxTextWidth) else Modifier,
+            )
         }
-        // Always call the provided onClick handler
-        onClick()
-    }
 
-    // Use Button instead of IconButton to get better hover support
-    TextButton(
-        onClick = handleClick,
-        interactionSource = interactionSource,
-        colors =
-            ButtonDefaults.buttonColors(
-                backgroundColor =
-                    if (isSelected) {
-                        if (isFocused) {
-                            colors.signal
+        @Composable
+        fun MainIcon(
+            icon: ImageVector = Icons.Outlined.KeyboardArrowDown,
+            size: Dp = if (compact) COMPACT_ICON_SIZE else 16.dp,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = text,
+                modifier = Modifier.size(size),
+                tint = if (isActive) resolvedIconColor else resolvedIconColor.copy(alpha = 0.8f),
+            )
+        }
+
+        var _leftLogo = leftLogo
+        var _contentPadding = contentPadding
+
+        // A leading slot sets the padding, because the numbers differ between a logo and an icon and
+        // no caller was picking them. Compact keeps that arrangement and only tightens it.
+        leftLogo?.let {
+            _contentPadding =
+                if (compact) COMPACT_PADDING else PaddingValues(vertical = 2.dp, horizontal = 10.dp)
+        } ?: leftIcon?.let {
+            _contentPadding =
+                if (compact) COMPACT_PADDING else PaddingValues(vertical = 6.dp, horizontal = 10.dp)
+            _leftLogo = { MainIcon(it) }
+        }
+
+        // Define button click handler
+        val handleClick = {
+            if (contextMenuItems != null) {
+                showContextMenu = true
+                hoverState.isShowing = false // Hide hover popup when showing context menu
+            }
+            // Always call the provided onClick handler
+            onClick()
+        }
+
+        // Use Button instead of IconButton to get better hover support
+        TextButton(
+            onClick = handleClick,
+            interactionSource = interactionSource,
+            colors =
+                ButtonDefaults.buttonColors(
+                    backgroundColor =
+                        if (isSelected) {
+                            if (isFocused) {
+                                colors.signal
+                            } else {
+                                color.copy(alpha = 0.1f)
+                            }
                         } else {
-                            color.copy(alpha = 0.1f)
+                            Color.Transparent
+                        },
+                    contentColor = color,
+                ),
+            contentPadding = _contentPadding,
+            modifier =
+                modifier
+                    .defaultMinSize(minHeight = 2.dp, minWidth = 2.dp)
+                    // A FIXED height, not a smaller minimum.
+                    //
+                    // This is a Material TextButton, and Material sizes its content Row with
+                    // defaultMinSize(MinHeight = 36.dp) from the inside. The defaultMinSize above is
+                    // not enough to undo that - measured on screen, compact rows still came out 36dp
+                    // tall, which is half again the height of the bar's own rows. A fixed height sets
+                    // min == max, which the inner minimum cannot argue with.
+                    .then(if (compact) Modifier.height(COMPACT_ROW_HEIGHT) else Modifier)
+                    .run {
+                        if (imageVector != null) {
+                            size(BOSS_ACTION_BUTTON_ICON_SIZE).hoverable(interactionSource)
+                        } else {
+                            hoverable(interactionSource)
                         }
-                    } else {
-                        Color.Transparent
+                    }.onGloballyPositioned { coordinates ->
+                        val pos = coordinates.positionInParent()
+                        buttonPositionRef[0] = pos.x
+                        buttonPositionRef[1] = pos.y
+                        buttonSizeRef[0] = coordinates.size.width
+                        buttonSizeRef[1] = coordinates.size.height
                     },
-                contentColor = color,
-            ),
-        contentPadding = _contentPadding,
-        modifier =
-            modifier
-                .defaultMinSize(minHeight = 2.dp, minWidth = 2.dp)
-                // A FIXED height, not a smaller minimum.
-                //
-                // This is a Material TextButton, and Material sizes its content Row with
-                // defaultMinSize(MinHeight = 36.dp) from the inside. The defaultMinSize above is
-                // not enough to undo that - measured on screen, compact rows still came out 36dp
-                // tall, which is half again the height of the bar's own rows. A fixed height sets
-                // min == max, which the inner minimum cannot argue with.
-                .then(if (compact) Modifier.height(COMPACT_ROW_HEIGHT) else Modifier)
-                .run {
-                    if (imageVector != null) {
-                        size(BOSS_ACTION_BUTTON_ICON_SIZE).hoverable(interactionSource)
-                    } else {
-                        hoverable(interactionSource)
-                    }
-                }.onGloballyPositioned { coordinates ->
-                    val pos = coordinates.positionInParent()
-                    buttonPositionRef[0] = pos.x
-                    buttonPositionRef[1] = pos.y
-                    buttonSizeRef[0] = coordinates.size.width
-                    buttonSizeRef[1] = coordinates.size.height
-                },
-    ) {
-        if (_leftLogo != null) {
-            _leftLogo()
-            Spacer(modifier = Modifier.width(if (compact) COMPACT_GAP else 8.dp))
-            MainText()
-            MainIcon()
-        } else if (imageVector != null) {
-            MainIcon(imageVector, iconSize)
-        } else {
-            MainText()
+        ) {
+            if (_leftLogo != null) {
+                _leftLogo?.invoke()
+                Spacer(modifier = Modifier.width(if (compact) COMPACT_GAP else 8.dp))
+                MainText()
+                MainIcon()
+            } else if (imageVector != null) {
+                MainIcon(imageVector, iconSize)
+            } else {
+                MainText()
+            }
         }
     }
 }

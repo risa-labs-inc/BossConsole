@@ -115,7 +115,7 @@ internal fun hostActionsPanelEdge(
 @Composable
 internal fun PanelFooterHostActions(
     actionCount: Int,
-    actions: List<@Composable () -> Unit>,
+    actions: List<(@Composable () -> Unit)?>,
     onColumnFitsChange: (Boolean) -> Unit,
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
@@ -245,7 +245,7 @@ internal fun focusQuickActionsPanelFooter(
     onSignOut: () -> Unit,
     toolbox: (@Composable (hintDirection: Panel, modifier: Modifier) -> Unit)? = null,
     toolLauncher: (@Composable (hintDirection: Panel, modifier: Modifier) -> Unit)? = null,
-): List<@Composable () -> Unit> =
+): List<(@Composable () -> Unit)?> =
     focusQuickActionsFor(
         owner = FocusQuickActionsPlacement.PANEL_FOOTER,
         hintDirection = top,
