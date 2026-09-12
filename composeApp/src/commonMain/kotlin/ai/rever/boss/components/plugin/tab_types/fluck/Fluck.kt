@@ -225,6 +225,11 @@ class FluckTabInfo(
         }
     }
 
+    @Deprecated(
+        message = "Use goBack() for immutable state updates",
+        replaceWith = ReplaceWith("goBack()"),
+        level = DeprecationLevel.WARNING,
+    )
     @Synchronized
     fun navigateBack() {
         if (historyIndex > 0) {
@@ -233,12 +238,39 @@ class FluckTabInfo(
         }
     }
 
+    @Deprecated(
+        message = "Use goForward() for immutable state updates",
+        replaceWith = ReplaceWith("goForward()"),
+        level = DeprecationLevel.WARNING,
+    )
     @Synchronized
     fun navigateForward() {
         if (historyIndex < navigationHistory.size - 1) {
             historyIndex++
             _currentUrl = navigationHistory[historyIndex].second
         }
+    }
+
+    fun goBack(): FluckTabInfo {
+        if (historyIndex > 0) {
+            val newIndex = historyIndex - 1
+            return copy(
+                historyIndex = newIndex,
+                _currentUrl = navigationHistory[newIndex].second,
+            )
+        }
+        return this
+    }
+
+    fun goForward(): FluckTabInfo {
+        if (historyIndex < navigationHistory.size - 1) {
+            val newIndex = historyIndex + 1
+            return copy(
+                historyIndex = newIndex,
+                _currentUrl = navigationHistory[newIndex].second,
+            )
+        }
+        return this
     }
 
     companion object {

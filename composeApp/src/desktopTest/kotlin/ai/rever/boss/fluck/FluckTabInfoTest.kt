@@ -1,4 +1,4 @@
-package ai.rever.boss.fluck
+﻿package ai.rever.boss.fluck
 
 import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
 import ai.rever.boss.plugin.api.TabIcon
@@ -74,7 +74,7 @@ class FluckTabInfoTest {
         tabInfo = tabInfo.updateNavigation("Page A", "https://a.com") // Add to history
         tabInfo = tabInfo.updateNavigation("Page B", "https://b.com")
 
-        tabInfo.navigateBack()
+        tabInfo = tabInfo.goBack()
 
         assertEquals("https://a.com", tabInfo.currentUrl)
     }
@@ -84,9 +84,9 @@ class FluckTabInfoTest {
         var tabInfo = createTabInfo(url = "https://a.com")
         tabInfo = tabInfo.updateNavigation("Page A", "https://a.com")
         tabInfo = tabInfo.updateNavigation("Page B", "https://b.com")
-        tabInfo.navigateBack()
+        tabInfo = tabInfo.goBack()
 
-        tabInfo.navigateForward()
+        tabInfo = tabInfo.goForward()
 
         assertEquals("https://b.com", tabInfo.currentUrl)
     }
@@ -96,7 +96,7 @@ class FluckTabInfoTest {
         var tabInfo = createTabInfo(url = "https://only.com")
         tabInfo = tabInfo.updateNavigation("Only Page", "https://only.com")
 
-        tabInfo.navigateBack() // Should not throw or change URL
+        tabInfo = tabInfo.goBack() // Should not throw or change URL
 
         assertEquals("https://only.com", tabInfo.currentUrl)
     }
@@ -106,7 +106,7 @@ class FluckTabInfoTest {
         var tabInfo = createTabInfo(url = "https://last.com")
         tabInfo = tabInfo.updateNavigation("Last Page", "https://last.com")
 
-        tabInfo.navigateForward() // Should not throw or change URL
+        tabInfo = tabInfo.goForward() // Should not throw or change URL
 
         assertEquals("https://last.com", tabInfo.currentUrl)
     }
@@ -118,13 +118,13 @@ class FluckTabInfoTest {
         tabInfo = tabInfo.updateNavigation("Page B", "https://b.com")
         tabInfo = tabInfo.updateNavigation("Page C", "https://c.com")
 
-        tabInfo.navigateBack() // Now at B
+        tabInfo = tabInfo.goBack() // Now at B
         tabInfo = tabInfo.updateNavigation("Page D", "https://d.com") // Should truncate C
 
         assertEquals("https://d.com", tabInfo.currentUrl)
 
         // Forward should not go to C (it was truncated)
-        tabInfo.navigateForward()
+        tabInfo = tabInfo.goForward()
         assertEquals("https://d.com", tabInfo.currentUrl) // Still at D
     }
 
@@ -278,7 +278,7 @@ class FluckTabInfoTest {
         var copied = original.updateTitle("Copied Tab")
 
         // Navigate back on the copy
-        copied.navigateBack()
+        copied = copied.goBack()
 
         // Original should not be affected
         assertEquals("https://c.com", original.currentUrl)
@@ -444,3 +444,4 @@ class FluckTabInfoTest {
         assertEquals("https://current.com", original.currentUrl)
     }
 }
+
