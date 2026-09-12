@@ -92,6 +92,7 @@ actual object PluginUpdateBridge {
         }
     }
 
+    @Suppress("LongMethod", "ReturnCount")
     actual suspend fun performUpdate(
         pluginId: String,
         manager: DynamicPluginManager,
@@ -147,6 +148,9 @@ actual object PluginUpdateBridge {
         }
 
         val ownsTransfer = beginTransfer(pluginId, update, currentCoroutineContext()[Job])
+        if (!ownsTransfer) {
+            return Result.failure(IllegalStateException("Update already in progress for plugin $pluginId."))
+        }
         // Set from `onInstalling`; see discardPartialDownload for what it gates.
         var swapStarted = false
         val result =
