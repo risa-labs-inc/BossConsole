@@ -583,10 +583,20 @@ class DefaultPlugin(
     }
 
     // ============================================================
-    // MCP TOOL PROVIDER REGISTRATION
+    // MCP TOOL AND EXECUTION OBSERVER REGISTRATION
     // Plugins contribute tools to the `boss` MCP server; the terminal-tab
     // plugin bridges McpToolRegistryImpl onto the live MCP server.
     // ============================================================
+
+    override fun registerMcpToolExecutionObserver(observer: ai.rever.boss.plugin.api.McpToolExecutionObserver) {
+        ai.rever.boss.mcp.McpToolRegistryImpl
+            .registerExecutionObserver(observer)
+    }
+
+    override fun unregisterMcpToolExecutionObserver(observerId: String) {
+        ai.rever.boss.mcp.McpToolRegistryImpl
+            .unregisterExecutionObserver(observerId)
+    }
 
     override fun registerMcpToolProvider(provider: ai.rever.boss.plugin.api.McpToolProvider) {
         ai.rever.boss.mcp.McpToolRegistryImpl
