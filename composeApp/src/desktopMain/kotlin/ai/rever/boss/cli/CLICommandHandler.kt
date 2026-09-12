@@ -289,8 +289,11 @@ class CLICommandHandler private constructor() {
             return
         }
 
-        // Validate path for security (prevent path traversal)
-        if (!CLISecurityValidator.isValidPath(file.absolutePath)) {
+        // The workspace file is read and parsed as JSON, never handed to a shell, so this
+        // takes the read-target rules. isValidPath rejects `$`, `&`, `;`, `|` and a backtick,
+        // which are ordinary characters in a directory name: a workspace saved under
+        // ~/work/R&D could not be loaded at all, and said only "security check failed".
+        if (!CLISecurityValidator.isValidOpenTargetPath(file.absolutePath)) {
             logger.warn(LogCategory.SYSTEM, "Invalid workspace path (security check failed)", mapOf("path" to file.absolutePath))
             return
         }
@@ -428,8 +431,11 @@ class CLICommandHandler private constructor() {
             return
         }
 
-        // Security validation
-        if (!CLISecurityValidator.isValidPath(folder.absolutePath)) {
+        // Read-target rules, for the same reason as handleLoadWorkspace: the folder becomes
+        // Project.path, and nothing interpolates it into a command line. It does later become
+        // a terminal's working directory, which is passed as a directory rather than as text
+        // in a command, so shell metacharacters still buy nothing here.
+        if (!CLISecurityValidator.isValidOpenTargetPath(folder.absolutePath)) {
             logger.warn(LogCategory.SYSTEM, "Invalid folder path (security check failed)", mapOf("path" to folder.absolutePath))
             return
         }

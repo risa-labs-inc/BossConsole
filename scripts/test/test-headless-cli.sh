@@ -26,4 +26,12 @@ BOSS_BIN="$scratch/missing" bash "$root/scripts/boss" status > "$scratch/out" 2>
 [[ "$status" == 1 ]]
 [[ ! -s "$scratch/out" ]]
 grep -q 'binary not found' "$scratch/err"
+# The shim's urlencode must percent-encode UTF-8 bytes under every bash it may
+# run in: macOS /bin/bash is 3.2 and reports high bytes as negative, which a
+# bare %02X prints as 16 hex digits. Test the real function text from the shim.
+awk '/^urlencode\(\) \{/{found=1} found {print} found && /^\}/{exit}' "$root/scripts/boss" > "$scratch/urlencode.sh"
+. "$scratch/urlencode.sh"
+[[ "$(urlencode 'R&D notes.md')" == "R%26D%20notes.md" ]]
+[[ "$(urlencode 'résumé.md')" == "r%C3%A9sum%C3%A9.md" ]]
+[[ "$(urlencode '中文.txt')" == "%E4%B8%AD%E6%96%87.txt" ]]
 echo 'Headless launcher tests passed'
