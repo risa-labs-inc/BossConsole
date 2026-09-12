@@ -1,5 +1,6 @@
 package ai.rever.boss.components.plugin
 
+import ai.rever.boss.components.plugin.remote.PluginProcessMonitor
 import ai.rever.boss.ipc.BossIpcClient
 import ai.rever.boss.ipc.IpcVersion
 import ai.rever.boss.kernel.KernelBootstrap
@@ -16,10 +17,13 @@ import ai.rever.boss.process.ProcessSpawner
 import ai.rever.boss.process.ProcessType
 import ai.rever.boss.process.RestartPolicy
 import io.grpc.ManagedChannel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.slf4j.LoggerFactory
 import java.io.File
 import java.security.MessageDigest
@@ -39,6 +43,7 @@ import java.util.concurrent.ConcurrentHashMap
  * The spawner tracks all managed processes and provides connection info
  * (gRPC channel) for [PluginStateBridge] and remote UI components.
  */
+@Suppress("TooManyFunctions")
 class OutOfProcessPluginSpawnerImpl(
     private val processSpawner: ProcessSpawner,
     private val windowId: String = "",
@@ -54,6 +59,12 @@ class OutOfProcessPluginSpawnerImpl(
 
     /** State bridges keyed by plugin ID. */
     private val stateBridges = ConcurrentHashMap<String, PluginStateBridge>()
+
+    private val pluginLifecycleMutexes =
+        java.util.concurrent.ConcurrentHashMap<String, Mutex>()
+
+    private val processMonitor =
+        PluginProcessMonitor(this).also { it.start() }
 
     /**
      * Classpath for the plugin runtime fat JAR.
@@ -83,6 +94,15 @@ class OutOfProcessPluginSpawnerImpl(
     }
 
     override suspend fun spawn(
+        manifest: PluginManifest,
+        jarPath: String,
+    ): Result<Unit> =
+        withPluginLifecycleLock(manifest.pluginId) {
+            spawnUnderLifecycleLock(manifest, jarPath)
+        }
+
+    @Suppress("LongMethod")
+    private suspend fun spawnUnderLifecycleLock(
         manifest: PluginManifest,
         jarPath: String,
     ): Result<Unit> {
@@ -195,6 +215,18 @@ class OutOfProcessPluginSpawnerImpl(
                 bridge.start()
                 stateBridges[pluginId] = bridge
 
+                processMonitor.monitor(
+                    pluginId = pluginId,
+                    displayName = manifest.displayName,
+                    maxRestarts = manifest.sandbox.maxRestartAttempts,
+                    restartAction = {
+                        restartAfterCrash(manifest, jarPath)
+                    },
+                    terminalFailureAction = {
+                        cleanupAfterTerminalFailure(pluginId)
+                    },
+                )
+
                 logger.info(
                     "Out-of-process plugin ready: id={}, pid={}, ipc={}",
                     pluginId,
@@ -235,13 +267,54 @@ class OutOfProcessPluginSpawnerImpl(
     }
 
     override suspend fun terminate(pluginId: String): Result<Unit> =
+        withPluginLifecycleLock(pluginId) {
+            processMonitor.unmonitor(pluginId)
+            terminateManagedProcess(pluginId)
+        }
+
+    private suspend fun restartAfterCrash(
+        manifest: PluginManifest,
+        jarPath: String,
+    ): Result<Unit> {
+        val pluginId = manifest.pluginId
+
+        return withPluginLifecycleLock(pluginId) {
+            if (!processMonitor.isMonitored(pluginId)) {
+                return@withPluginLifecycleLock Result.failure(
+                    IllegalStateException("Plugin is no longer monitored: $pluginId"),
+                )
+            }
+
+            val terminated = terminateManagedProcess(pluginId)
+            if (terminated.isFailure) {
+                return@withPluginLifecycleLock terminated
+            }
+
+            if (!processMonitor.isMonitored(pluginId)) {
+                return@withPluginLifecycleLock Result.failure(
+                    IllegalStateException("Plugin restart was cancelled: $pluginId"),
+                )
+            }
+
+            spawnUnderLifecycleLock(manifest, jarPath)
+        }
+    }
+
+    private suspend fun cleanupAfterTerminalFailure(pluginId: String) {
+        withPluginLifecycleLock(pluginId) {
+            if (processMonitor.isMonitored(pluginId)) {
+                terminateManagedProcess(pluginId).getOrThrow()
+            }
+        }
+    }
+
+    private suspend fun terminateManagedProcess(pluginId: String): Result<Unit> =
         withContext(Dispatchers.IO) {
             val process = managedProcesses.remove(pluginId)
+
             try {
-                // Dispose state bridge
                 stateBridges.remove(pluginId)?.dispose()
 
-                // Shutdown gRPC channel with timeout
                 pluginChannels.remove(pluginId)?.let { channel ->
                     channel.shutdown()
                     if (!channel.awaitTermination(3, java.util.concurrent.TimeUnit.SECONDS)) {
@@ -250,24 +323,34 @@ class OutOfProcessPluginSpawnerImpl(
                     }
                 }
 
-                // Destroy process
                 if (process != null) {
                     logger.info("Terminating plugin process: id={}, pid={}", pluginId, process.pid)
                     process.destroy()
 
-                    // Wait for graceful shutdown, then force kill
-                    withTimeout(5_000) {
-                        while (process.isAlive) {
-                            delay(100)
+                    // A child that outlives the grace window is the normal exit of this
+                    // wait, not an error: force-kill it and succeed, matching dev's
+                    // pre-cancellation behaviour. withTimeout would surface the same
+                    // outcome as TimeoutCancellationException, a CancellationException
+                    // that callers and the health loop treat as caller cancellation.
+                    val exited =
+                        withTimeoutOrNull(5_000) {
+                            while (process.isAlive) {
+                                delay(100)
+                            }
                         }
+                    if (exited == null) {
+                        logger.warn("Plugin process outlived the 5s destroy grace, forcing: id={}", pluginId)
+                        process.destroyForcibly()
                     }
                 } else {
                     logger.warn("No managed process found for plugin: {}", pluginId)
                 }
 
                 Result.success(Unit)
+            } catch (e: CancellationException) {
+                runCatching { process?.destroyForcibly() }
+                throw e
             } catch (e: Exception) {
-                // Force kill if graceful shutdown failed
                 process?.destroyForcibly()
                 logger.warn("Force-killed plugin process: id={}", pluginId, e)
                 Result.success(Unit)
@@ -276,9 +359,25 @@ class OutOfProcessPluginSpawnerImpl(
                 // implies reapable" has to hold for as long as the child is alive, so a host exit
                 // part-way through an unload still reaps it; and removing by id alone could evict
                 // a replacement that a concurrent respawn had already registered.
-                process?.let { kernelRegistry()?.unregisterIfSame(it.config.processId, it) }
+                process?.let {
+                    kernelRegistry()?.unregisterIfSame(it.config.processId, it)
+                }
             }
         }
+
+    private suspend fun <T> withPluginLifecycleLock(
+        pluginId: String,
+        action: suspend () -> T,
+    ): T {
+        val mutex = pluginLifecycleMutexes.computeIfAbsent(pluginId) { Mutex() }
+        mutex.lock()
+
+        return try {
+            action()
+        } finally {
+            mutex.unlock()
+        }
+    }
 
     /**
      * Get the state bridge for a plugin.
@@ -294,6 +393,10 @@ class OutOfProcessPluginSpawnerImpl(
      * Check if a plugin process is alive.
      */
     fun isAlive(pluginId: String): Boolean = managedProcesses[pluginId]?.isAlive == true
+
+    override fun dispose() {
+        processMonitor.dispose()
+    }
 
     private fun buildJvmArgs(): List<String> =
         buildList {
