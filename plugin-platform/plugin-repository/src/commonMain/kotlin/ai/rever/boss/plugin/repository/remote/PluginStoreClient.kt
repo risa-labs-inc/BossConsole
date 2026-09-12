@@ -14,6 +14,7 @@ import io.ktor.http.*
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * HTTP client for the remote plugin store Edge Function.
@@ -211,6 +212,15 @@ object PluginStoreClient {
 
     /**
      * GET /plugin-store/health - Check if the service is available
+     *
+     * Answers `false` for anything that stops the request from succeeding, because every caller
+     * wants one bit and has nothing useful to do with the reason. A caller's cancellation is the
+     * one exception and is rethrown: on the JVM `CancellationException` is an `Exception`, so it
+     * used to be caught here and answered as "the store is down" - an answer that outlives the
+     * cancelled caller, since `RemotePluginRepository.isAvailable` and the readiness check in
+     * `PluginStoreSetup` both key off it. Closing a dialog mid-check could mark a healthy store
+     * offline. Same rule the six store calls in RemotePluginRepository take, at the one site that
+     * returns a bare `Boolean` rather than a `Result`.
      */
     suspend fun checkHealth(): Boolean =
         try {
@@ -219,6 +229,8 @@ object PluginStoreClient {
                     header("apikey", PluginStoreConfig.anonKey)
                 }
             response.status.isSuccess()
+        } catch (e: CancellationException) {
+            throw e
         } catch (_: Exception) {
             false
         }
