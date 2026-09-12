@@ -2614,6 +2614,9 @@ internal class BrowserHandleImpl(
         }
     }
 
+    /** See [BrowserHandle.hasPendingBrowserCall]. Reads this handle's own call thread, nobody else's. */
+    override val hasPendingBrowserCall: Boolean get() = handleCall.pending > 0
+
     override fun getCurrentUrl(): String = syncCall("url", "") { browser.url() }
 
     override fun getTitle(): String = syncCall("title", "") { browser.title() }
