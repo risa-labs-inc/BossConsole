@@ -93,10 +93,55 @@ class WebsiteMatchingUtilTest {
     }
 
     @Test
+    fun `matching is case-insensitive`() {
+        // The case fold must reach the exact-match check: a secret stored as
+        // "GOOGLE.COM" still resolves on "google.com".
+        val result = WebsiteMatchingUtil.calculateMatchScore("GOOGLE.COM", "google.com")
+        assertEquals(1.0f, result.score)
+        assertEquals("exact", result.reason)
+    }
+
+    @Test
+    fun `surrounding whitespace is trimmed before matching`() {
+        // Both sides: the secret's stored website AND the page domain can arrive
+        // padded, and either trim must run or the pair would miss.
+        val result = WebsiteMatchingUtil.calculateMatchScore(" google.com ", "google.com")
+        assertEquals(1.0f, result.score)
+        assertEquals("exact", result.reason)
+
+        val paddedDomain = WebsiteMatchingUtil.calculateMatchScore("google.com", " google.com ")
+        assertEquals(1.0f, paddedDomain.score)
+        assertEquals("exact", paddedDomain.reason)
+    }
+
+    @Test
     fun `a subdomain still matches its parent domain`() {
         val score = WebsiteMatchingUtil.calculateMatchScore("google.com", "login.google.com")
         assertEquals(0.9f, score.score)
         assertEquals("subdomain", score.reason)
+    }
+
+    @Test
+    fun `a deep subdomain still matches its parent domain`() {
+        val result = WebsiteMatchingUtil.calculateMatchScore("google.com", "login.auth.google.com")
+        assertEquals(0.9f, result.score)
+        assertEquals("subdomain", result.reason)
+    }
+
+    @Test
+    fun `subdomain matching is case-insensitive as well`() {
+        // The case fold must reach the endsWith check, not only the equality check:
+        // the ".$domainNorm" boundary is the easier one to rebuild from an un-normalised
+        // value in a future edit.
+        val result = WebsiteMatchingUtil.calculateMatchScore("google.com", "Login.Auth.GOOGLE.COM")
+        assertEquals(0.9f, result.score)
+        assertEquals("subdomain", result.reason)
+
+        // Mixed case AND padding on the secret side: the fold must also reach inside the
+        // interpolated ".$domainNorm" operand, and the secret's trim must run on this path.
+        val mixed = WebsiteMatchingUtil.calculateMatchScore(" Login.GOOGLE.com ", "google.com")
+        assertEquals(0.9f, mixed.score)
+        assertEquals("subdomain", mixed.reason)
     }
 
     @Test
@@ -132,9 +177,74 @@ class WebsiteMatchingUtilTest {
     }
 
     @Test
+    fun `a suffix-confused domain does not match its victim`() {
+        // apple.com.evil is NOT a subdomain of apple.com - it is a different
+        // registrable domain that merely ends with the string "apple.com". The
+        // dot-boundary check exists to stop this, where an unanchored substring
+        // check would hand the victim's credentials to the impostor.
+        val result = WebsiteMatchingUtil.calculateMatchScore("apple.com", "apple.com.evil")
+        assertEquals(0.0f, result.score)
+        assertEquals("no_match", result.reason)
+    }
+
+    @Test
+    fun `a hostile saved secret does not match the legitimate site`() {
+        // The mirror of the case above, and the more dangerous one: a poisoned
+        // vault entry for "apple.com.evil" must not be offered on the real
+        // apple.com. Each negative pins the operand that is live in that direction -
+        // in the test above that is `domainNorm.endsWith(".$secretNorm")` (the secret is a
+        // substring of the domain); here it is `secretNorm.endsWith(".$domainNorm")`
+        // (the domain is a substring of the secret). In each, the other operand is
+        // vacuous: its needle is longer than its haystack, so no anchoring mutation
+        // could ever flip it.
+        val result = WebsiteMatchingUtil.calculateMatchScore("apple.com.evil", "apple.com")
+        assertEquals(0.0f, result.score)
+        assertEquals("no_match", result.reason)
+    }
+
+    @Test
+    fun `a subdomain of a multi-part TLD still matches its parent domain`() {
+        // .co.uk is two labels long, so the subdomain boundary has to sit after the
+        // whole registrable domain, not after a single label.
+        val result = WebsiteMatchingUtil.calculateMatchScore("example.co.uk", "login.example.co.uk")
+        assertEquals(0.9f, result.score)
+        assertEquals("subdomain", result.reason)
+    }
+
+    @Test
+    fun `a fake domain sharing a multi-part TLD does not match`() {
+        // "badexample.co.uk" shares the ".co.uk" tail and most of the registrable
+        // label, but the boundary check anchors on the full "example.co.uk".
+        val result = WebsiteMatchingUtil.calculateMatchScore("example.co.uk", "badexample.co.uk")
+        assertEquals(0.0f, result.score)
+        assertEquals("no_match", result.reason)
+    }
+
+    @Test
+    fun `a fake multi-part TLD domain does not match as a hostile secret either`() {
+        // The mirror of the case above: the same live-operand logic on the .co.uk pair -
+        // here `secretNorm.endsWith(".$domainNorm")` is the operand a mutation could flip.
+        val result = WebsiteMatchingUtil.calculateMatchScore("badexample.co.uk", "example.co.uk")
+        assertEquals(0.0f, result.score)
+        assertEquals("no_match", result.reason)
+    }
+
+    @Test
     fun `blank sides do not vacuously exact-match each other`() {
-        assertEquals(0.0f, WebsiteMatchingUtil.calculateMatchScore("", "").score)
-        assertEquals(0.0f, WebsiteMatchingUtil.calculateMatchScore("", "example.com").score)
+        // Without the empty guard, "" == "" would satisfy the exact-match check: a
+        // secret with no recorded website (or a domain extraction that failed to an
+        // empty string) would exact-match every other blank side.
+        val bothEmpty = WebsiteMatchingUtil.calculateMatchScore("", "")
+        assertEquals(0.0f, bothEmpty.score)
+        assertEquals("no_match", bothEmpty.reason)
+
+        val emptySecret = WebsiteMatchingUtil.calculateMatchScore("", "example.com")
+        assertEquals(0.0f, emptySecret.score)
+        assertEquals("no_match", emptySecret.reason)
+
+        val emptyDomain = WebsiteMatchingUtil.calculateMatchScore("example.com", "")
+        assertEquals(0.0f, emptyDomain.score)
+        assertEquals("no_match", emptyDomain.reason)
     }
 
     // ---- End to end: the actual suggestion path a user sees ----
