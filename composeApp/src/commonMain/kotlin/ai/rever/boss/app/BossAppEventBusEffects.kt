@@ -10,6 +10,7 @@ import ai.rever.boss.components.events.NavigationTargetBus
 import ai.rever.boss.components.events.PanelEventBus
 import ai.rever.boss.components.events.RunEventBus
 import ai.rever.boss.components.events.RunnerTerminalEventBus
+import ai.rever.boss.components.events.TabEventBus
 import ai.rever.boss.components.events.TerminalEventBus
 import ai.rever.boss.components.events.TerminalLinkEventBus
 import ai.rever.boss.components.events.URLEventBus
@@ -60,6 +61,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
@@ -70,9 +72,17 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
+ * Pause before applying a tab selection received from another window. UX grace, not a
+ * correctness barrier - see the comment at the call site.
+ */
+private const val TAB_SELECT_FOCUS_GRACE_MS = 50L
+
+/**
  * Event-bus listeners for one BossApp window. Every bus is window-filtered by
  * sourceWindowId (Issues #498/#506) so events only affect the window they came
- * from. Handlers translate bus events into split-view / panel / dialog actions.
+ * from - except [TabEventBus], which is destination-addressed and filtered on
+ * the target window instead (see its listener below). Handlers translate bus
+ * events into split-view / panel / dialog actions.
  */
 @Composable
 internal fun BossAppEventBusEffects(state: BossAppState) {
@@ -93,6 +103,20 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                 if (event.line > 0) {
                     NavigationTargetBus.navigateTo(event.filePath, event.line, event.column, sourceWindowId = windowId)
                 }
+            }.launchIn(this)
+    }
+
+    // Listen for tab selection events from other windows (destination-addressed, unlike the
+    // source-addressed buses above)
+    LaunchedEffect(splitViewState, windowId) {
+        TabEventBus.tabSelectEvents
+            .filter { event -> event.targetWindowId == windowId }
+            .onEach { event ->
+                // UX grace, not correctness: selectTabInPanel below is a pure state mutation
+                // and this window is already composed. The pause only lets the focused
+                // window's UI come to the front before the tab switches underneath it.
+                delay(TAB_SELECT_FOCUS_GRACE_MS)
+                splitViewState.selectTabInPanel(event.tabId, event.panelId)
             }.launchIn(this)
     }
 

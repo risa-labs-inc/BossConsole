@@ -19,6 +19,7 @@ import ai.rever.boss.components.dialogs.TopOfMindDialog
 import ai.rever.boss.components.events.DashboardEventBus
 import ai.rever.boss.components.events.FileEventBus
 import ai.rever.boss.components.events.PanelEventBus
+import ai.rever.boss.components.events.TabEventBus
 import ai.rever.boss.components.plugin.DependentRestartDeclinedException
 import ai.rever.boss.components.plugin.DependentRestartDialog
 import ai.rever.boss.components.plugin.DynamicPluginManager
@@ -73,6 +74,7 @@ import ai.rever.boss.services.bookmarks.BookmarkAPIAccess
 import ai.rever.boss.settings.MICROKERNEL_MODE_CONFIRMATION_MESSAGE
 import ai.rever.boss.settings.MicrokernelModePreference
 import ai.rever.boss.terminal.TerminalLinkSettingsManager
+import ai.rever.boss.utils.WindowFocusManager
 import ai.rever.boss.utils.extractFileName
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.window.MenuActionsHandler
@@ -527,6 +529,20 @@ internal fun BossAppDialogs(state: BossAppState) {
                     coroutineScope.launch {
                         delay(100)
                         splitViewState.selectTabInPanel(tabId, panelId)
+                    }
+                } else {
+                    // Returns false when the window closed while the dialog was open. The bus
+                    // has no replay, so an emit then would go nowhere - log it instead.
+                    if (WindowFocusManager.focusWindow(targetWindowId)) {
+                        coroutineScope.launch {
+                            TabEventBus.selectTab(targetWindowId, panelId, tabId, sourceWindowId = windowId)
+                        }
+                    } else {
+                        logger.warn(
+                            LogCategory.UI,
+                            "Cross-window tab select dropped: target window is no longer open",
+                            mapOf("targetWindowId" to targetWindowId, "tabId" to tabId),
+                        )
                     }
                 }
                 state.focusRequester.requestFocus()

@@ -856,7 +856,7 @@ class KernelBootstrap(
     }
 
     /**
-     * Wire the IPC event bridge to all 12 event buses so events are forwarded
+     * Wire the IPC event bridge to all 13 event buses so events are forwarded
      * cross-process in KERNEL mode (M8 fix).
      */
     private fun wireEventBridges(bridge: IpcEventBridgeImpl) {
@@ -867,12 +867,13 @@ class KernelBootstrap(
         ai.rever.boss.components.events.URLEventBus.ipcBridge = bridge
         ai.rever.boss.components.events.GitTerminalEventBus.ipcBridge = bridge
         ai.rever.boss.components.events.PanelEventBus.ipcBridge = bridge
+        ai.rever.boss.components.events.TabEventBus.ipcBridge = bridge
         ai.rever.boss.components.events.RunEventBus.ipcBridge = bridge
         ai.rever.boss.components.events.RunnerTerminalEventBus.ipcBridge = bridge
         ai.rever.boss.components.events.FileEventBus.ipcBridge = bridge
         ai.rever.boss.components.events.TerminalEventBus.ipcBridge = bridge
         ai.rever.boss.components.events.TerminalLinkEventBus.ipcBridge = bridge
-        logger.info("IPC event bridges wired to all 12 event buses")
+        logger.info("IPC event bridges wired to all 13 event buses")
     }
 
     /**
