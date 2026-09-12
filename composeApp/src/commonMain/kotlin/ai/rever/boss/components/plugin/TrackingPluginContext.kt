@@ -37,6 +37,7 @@ import ai.rever.boss.plugin.api.PluginContext
 import ai.rever.boss.plugin.api.PluginManifest
 import ai.rever.boss.plugin.api.PluginSandboxRef
 import ai.rever.boss.plugin.api.PluginStorageFactory
+import ai.rever.boss.plugin.api.PluginStorageProvider
 import ai.rever.boss.plugin.api.PluginStoreApiKeyProvider
 import ai.rever.boss.plugin.api.ProjectSearchProvider
 import ai.rever.boss.plugin.api.RoleManagementProvider
@@ -384,8 +385,11 @@ class TrackingPluginContext(
     // Phase 4: Application event bus - delegate to underlying context
     override val applicationEventBus: ApplicationEventBus? get() = delegate.applicationEventBus
 
-    // Phase 4: Plugin storage factory - delegate to underlying context
-    override val pluginStorageFactory: PluginStorageFactory? get() = delegate.pluginStorageFactory
+    // Phase 4: Plugin storage factory - bound to this plugin's own id (see
+    // ScopedPluginStorageFactory below), not a bare pass-through to the delegate.
+    override val pluginStorageFactory: PluginStorageFactory? by lazy {
+        delegate.pluginStorageFactory?.let { ScopedPluginStorageFactory(pluginId, it) }
+    }
 
     // Phase 4: Generic dialog provider - delegate to underlying context
     override val genericDialogProvider: GenericDialogProvider? get() = delegate.genericDialogProvider
@@ -551,4 +555,23 @@ class TrackingPluginContext(
         // Clear tracking records
         tracker.clearPlugin(pluginId)
     }
+}
+
+/**
+ * Binds [PluginStorageFactory.createStorage] to the plugin that owns this context,
+ * ignoring whatever pluginId the caller passes in.
+ *
+ * The underlying factory persists to `~/.boss/plugin-data/{pluginId}/storage.properties`
+ * keyed purely by the `pluginId` argument `createStorage` is called with - there is no
+ * check anywhere that this id is the caller's own. Exposing the raw factory (as this
+ * context used to) let any installed plugin call `createStorage("some-other-plugin-id")`
+ * and read, overwrite, or `clear()` a different plugin's persisted data. Mirrors
+ * DownloadCenterProviderImpl.forPlugin: identity is bound once at construction, from a
+ * source the plugin does not control, rather than trusted from a per-call argument.
+ */
+private class ScopedPluginStorageFactory(
+    private val ownPluginId: String,
+    private val delegate: PluginStorageFactory,
+) : PluginStorageFactory {
+    override fun createStorage(pluginId: String): PluginStorageProvider = delegate.createStorage(ownPluginId)
 }
