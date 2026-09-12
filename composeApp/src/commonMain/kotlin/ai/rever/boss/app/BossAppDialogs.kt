@@ -31,6 +31,7 @@ import ai.rever.boss.components.plugin.PluginHealthCenterDialog
 import ai.rever.boss.components.plugin.PluginLoadGateHost
 import ai.rever.boss.components.plugin.PluginLoadRemedyAccess
 import ai.rever.boss.components.plugin.PluginStoreVersionBridge
+import ai.rever.boss.components.plugin.PluginUpdateAlreadyInProgressException
 import ai.rever.boss.components.plugin.PluginUpdateBridge
 import ai.rever.boss.components.plugin.providers.GenericDialogHostContent
 import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
@@ -128,6 +129,12 @@ internal fun BossAppDialogs(state: BossAppState) {
                             r.isSuccess -> {
                                 StatusMessageManager.showMessage(
                                     "Updated ${prompt.displayName} to v${r.getOrNull()}",
+                                )
+                            }
+
+                            cause is PluginUpdateAlreadyInProgressException -> {
+                                StatusMessageManager.showMessage(
+                                    "${prompt.displayName} is already being updated",
                                 )
                             }
 

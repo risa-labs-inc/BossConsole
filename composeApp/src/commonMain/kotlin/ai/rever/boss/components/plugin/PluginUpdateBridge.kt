@@ -12,7 +12,12 @@ expect object PluginUpdateBridge {
     /** Check a single plugin on demand; also refreshes its [PluginUpdateRegistry] entry. */
     suspend fun checkOne(ref: InstalledPluginRef): UpdateCheckOutcome
 
-    /** Download + install the latest compatible version, reusing [manager] to unload/load. */
+    /**
+     * Download and install the latest compatible version, reusing [manager] to unload/load.
+     *
+     * Concurrent requests for the same plugin fail with
+     * [PluginUpdateAlreadyInProgressException] without starting the update operation.
+     */
     suspend fun performUpdate(
         pluginId: String,
         manager: DynamicPluginManager,
