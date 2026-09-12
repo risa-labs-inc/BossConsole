@@ -49,10 +49,14 @@ actual object PluginStoreVersionBridge {
                 )
         // Both failure shapes, flattened. This used to be `runCatching { … }` around the call with
         // `result.getOrNull()?.getOrNull()` inside, which looked like it distinguished a broken lookup
-        // from an unpublished plugin and did not: `RemotePluginRepository.getPlugin` RETURNS
-        // `Result.failure` instead of throwing, so the inner `getOrNull()` swallowed the error, the
-        // outer `isFailure` was always false, and every failure fell through to NotPublished. A single
-        // undecodable dependency entry in a store row was reported to the user as "not published".
+        // from an unpublished plugin and did not: `getPlugin` returns `Result.failure` instead of
+        // throwing, so the inner `getOrNull()` swallowed the error, the outer `isFailure` was always
+        // false, and every failure fell through to NotPublished. A single undecodable dependency
+        // entry in a store row was reported to the user as "not published". The flatten covers both
+        // arrival shapes because the `PluginRepository` interface permits either: the bundled
+        // `RemotePluginRepository` rethrows a caller's cancellation while returning
+        // `Result.failure` for a genuine store error, and a third-party implementation may fold
+        // the cancellation into the returned `Result.failure` too.
         val lookup = runCatching { store.getPlugin(pluginId) }.getOrElse { Result.failure(it) }
         // The repository logs the detail; this only needs a line short enough to render.
         lookup.exceptionOrNull()?.let { failure ->
