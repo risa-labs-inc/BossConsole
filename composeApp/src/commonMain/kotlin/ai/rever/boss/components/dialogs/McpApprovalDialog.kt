@@ -157,6 +157,30 @@ fun McpApprovalDialog(
                         )
                     }
 
+                    request.contextToken?.let { token ->
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "Target: ",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = colors.textSecondary,
+                            )
+                            Text(
+                                text = if (token.hasProject) token.projectPath else "(No project open)",
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = if (token.hasProject) colors.textPrimary else colors.warn,
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "[Window: ${token.windowId} · Gen: ${token.generation}]",
+                                fontSize = 10.sp,
+                                color = colors.textSecondary,
+                            )
+                        }
+                    }
+
                     val sanitizedArguments =
                         remember(request.arguments) {
                             McpArgumentSanitizer.sanitize(request.arguments)

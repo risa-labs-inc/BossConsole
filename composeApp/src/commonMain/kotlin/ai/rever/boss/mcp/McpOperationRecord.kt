@@ -8,6 +8,9 @@ import kotlinx.serialization.Serializable
  * Persisted to `~/.boss/mcp-calls.jsonl` as an append-only JSONL record.
  * Arguments are strictly sanitized before recording so secrets/passwords/tokens never
  * land in the persistent log.
+ *
+ * Includes causal context metadata ([windowId], [projectPath], [contextGeneration])
+ * to support post-incident audit correlation and stale result attribution.
  */
 @Serializable
 data class McpOperationRecord(
@@ -21,4 +24,7 @@ data class McpOperationRecord(
     val isError: Boolean,
     val sanitizedArgs: Map<String, String>,
     val errorSnippet: String? = null,
+    val windowId: String? = null,
+    val projectPath: String? = null,
+    val contextGeneration: Long? = null,
 )
