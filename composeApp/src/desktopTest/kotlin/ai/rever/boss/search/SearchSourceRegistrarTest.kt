@@ -76,9 +76,6 @@ class SearchSourceRegistrarTest {
         // absent and wrong for the three below, which exist to exercise the production default.
         // Those re-clear with useProductionDefaults for themselves.
         SearchSources.clearForTests()
-        GlobalSearchService.clearResults()
-        GlobalSearchService.clearIndex()
-        GlobalSearchService.setActiveCategory(SearchCategory.ALL)
     }
 
     @AfterTest
@@ -87,8 +84,6 @@ class SearchSourceRegistrarTest {
         tempPagesFile.parentFile?.deleteRecursively()
 
         SearchSources.clearForTests()
-        GlobalSearchService.clearResults()
-        GlobalSearchService.setActiveCategory(SearchCategory.ALL)
     }
 
     @Test
@@ -96,7 +91,7 @@ class SearchSourceRegistrarTest {
         SettingsSearchIndex.registerWithGlobalSearch()
 
         val hit =
-            runBlocking { GlobalSearchService.search("show title bar", windowId = null) }
+            runBlocking { GlobalSearchService.search("show title bar", windowId = null, indexedFiles = emptyList()) }
                 .filterIsInstance<SearchResult.SettingResult>()
                 .firstOrNull { it.label == "Show Title Bar" }
 
@@ -119,7 +114,7 @@ class SearchSourceRegistrarTest {
         SettingsSearchIndex.registerWithGlobalSearch()
 
         val labels =
-            runBlocking { GlobalSearchService.search("title bar", windowId = null) }
+            runBlocking { GlobalSearchService.search("title bar", windowId = null, indexedFiles = emptyList()) }
                 .filterIsInstance<SearchResult.SettingResult>()
                 .map { it.label }
 
@@ -134,7 +129,7 @@ class SearchSourceRegistrarTest {
         SettingsSearchIndex.registerWithGlobalSearch()
 
         val labels =
-            runBlocking { GlobalSearchService.search("passkey", windowId = null) }
+            runBlocking { GlobalSearchService.search("passkey", windowId = null, indexedFiles = emptyList()) }
                 .filterIsInstance<SearchResult.SettingResult>()
                 .map { it.label }
 
@@ -196,7 +191,7 @@ class SearchSourceRegistrarTest {
         McpToolRegistryImpl.registerProvider(provider)
         try {
             val hits =
-                runBlocking { GlobalSearchService.search("registrar_probe", windowId = null) }
+                runBlocking { GlobalSearchService.search("registrar_probe", windowId = null, indexedFiles = emptyList()) }
                     .filterIsInstance<SearchResult.McpToolResult>()
 
             assertEquals(listOf("registrar_probe"), hits.map { it.name })
@@ -223,7 +218,7 @@ class SearchSourceRegistrarTest {
                 }
             }
             val hits =
-                runBlocking { GlobalSearchService.search("registrar probe", windowId = null) }
+                runBlocking { GlobalSearchService.search("registrar probe", windowId = null, indexedFiles = emptyList()) }
                     .filterIsInstance<SearchResult.PageResult>()
 
             assertTrue(
@@ -239,7 +234,7 @@ class SearchSourceRegistrarTest {
     fun `an unregistered settings source contributes nothing rather than failing the search`() {
         // The startup state. Registering is a single call in main(), so the failure mode if it is
         // ever dropped is silence - worth pinning that it is silence and not a crash.
-        val results = runBlocking { GlobalSearchService.search("show title bar", windowId = null) }
+        val results = runBlocking { GlobalSearchService.search("show title bar", windowId = null, indexedFiles = emptyList()) }
 
         assertTrue(results.filterIsInstance<SearchResult.SettingResult>().isEmpty())
     }

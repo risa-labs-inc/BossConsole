@@ -2,6 +2,7 @@ package ai.rever.boss.search
 
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -38,6 +39,12 @@ class FileIndexer {
 
     private val _indexedPath = MutableStateFlow<String?>(null)
     val indexedPath: StateFlow<String?> = _indexedPath.asStateFlow()
+
+    /**
+     * A controllable scanner for deterministic indexer tests. Production leaves this null and
+     * continues to scan the filesystem on [Dispatchers.IO].
+     */
+    internal var scanForTest: (suspend (String) -> List<IndexedFile>)? = null
 
     /**
      * Directories to exclude from indexing.
@@ -91,47 +98,45 @@ class FileIndexer {
         projectPath: String,
         forceReindex: Boolean = false,
     ) {
-        // Try to acquire lock without blocking - if already indexing, skip
-        if (!indexingMutex.tryLock()) {
-            logger.debug(LogCategory.FILE, "Index already in progress, skipping")
-            return
-        }
-
-        try {
-            // Check if already indexed (inside lock to prevent race)
-            if (!forceReindex && _indexedPath.value == projectPath && _indexedFiles.value.isNotEmpty()) {
-                logger.debug(LogCategory.FILE, "Project already indexed", mapOf("path" to projectPath))
-                return
-            }
-
-            _isIndexing.value = true
-
-            logger.info(LogCategory.FILE, "Starting file indexing", mapOf("path" to projectPath))
-            val startTime = System.currentTimeMillis()
-
-            val files =
-                withContext(Dispatchers.IO) {
-                    scanProjectFiles(projectPath)
+        indexingMutex.withLock {
+            try {
+                // Check if already indexed (inside lock to prevent race)
+                if (!forceReindex && _indexedPath.value == projectPath && _indexedFiles.value.isNotEmpty()) {
+                    logger.debug(LogCategory.FILE, "Project already indexed", mapOf("path" to projectPath))
+                    return@withLock
                 }
 
-            _indexedFiles.value = files
-            _indexedPath.value = projectPath
+                _isIndexing.value = true
 
-            val elapsed = System.currentTimeMillis() - startTime
-            logger.info(
-                LogCategory.FILE,
-                "File indexing complete",
-                mapOf(
-                    "path" to projectPath,
-                    "fileCount" to files.size,
-                    "elapsedMs" to elapsed,
-                ),
-            )
-        } catch (e: Exception) {
-            logger.error(LogCategory.FILE, "Error indexing project", error = e)
-        } finally {
-            _isIndexing.value = false
-            indexingMutex.unlock()
+                logger.info(LogCategory.FILE, "Starting file indexing", mapOf("path" to projectPath))
+                val startTime = System.currentTimeMillis()
+
+                val files =
+                    scanForTest?.invoke(projectPath)
+                        ?: withContext(Dispatchers.IO) {
+                            scanProjectFiles(projectPath)
+                        }
+
+                _indexedFiles.value = files
+                _indexedPath.value = projectPath
+
+                val elapsed = System.currentTimeMillis() - startTime
+                logger.info(
+                    LogCategory.FILE,
+                    "File indexing complete",
+                    mapOf(
+                        "path" to projectPath,
+                        "fileCount" to files.size,
+                        "elapsedMs" to elapsed,
+                    ),
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                logger.error(LogCategory.FILE, "Error indexing project", error = e)
+            } finally {
+                _isIndexing.value = false
+            }
         }
     }
 

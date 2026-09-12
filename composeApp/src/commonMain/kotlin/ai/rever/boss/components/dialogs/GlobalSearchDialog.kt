@@ -6,6 +6,7 @@ import ai.rever.boss.mcp.McpToolRegistryImpl
 import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.plugin.ui.BossThemeController
+import ai.rever.boss.search.FileIndexer
 import ai.rever.boss.search.GlobalSearchService
 import ai.rever.boss.search.MatchRange
 import ai.rever.boss.search.SearchCategory
@@ -62,6 +63,18 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private val globalSearchLogger = BossLogger.forComponent("GlobalSearchDialog")
+
+/**
+ * Mutable state that belongs to one Spotlight dialog instance. Keeping it beside the composable
+ * makes project/session ownership explicit without adding another application-wide registry.
+ */
+internal class SpotlightDialogState {
+    var query by mutableStateOf("")
+    var results by mutableStateOf<List<SearchResult>>(emptyList())
+    var activeCategory by mutableStateOf(SearchCategory.ALL)
+    var selectedIndex by mutableStateOf(0)
+    var isSearching by mutableStateOf(false)
+}
 
 // Theme colors — reactive getters into the BOSS design system tokens
 // (getters, not cached vals, so theme switches re-skin the dialog).
@@ -145,28 +158,26 @@ fun GlobalSearchDialog(
     onPageSelect: ((url: String) -> Unit)? = null,
     onMcpToolSelect: ((result: SearchResult.McpToolResult) -> Unit)? = null,
 ) {
-    var searchQuery by remember { mutableStateOf("") }
-    var selectedIndex by remember { mutableStateOf(0) }
+    val dialogState = remember(projectPath) { SpotlightDialogState() }
+    val fileIndexer = remember(projectPath) { FileIndexer() }
     // Track if selection was changed by keyboard (to enable scroll) vs hover (no scroll)
-    var scrollToSelected by remember { mutableStateOf(false) }
-    val allResults by GlobalSearchService.searchResults.collectAsState()
-    val activeCategory by GlobalSearchService.activeCategory.collectAsState()
-    val isIndexing by GlobalSearchService.isIndexing.collectAsState()
-    val isSearching by GlobalSearchService.isSearching.collectAsState()
+    var scrollToSelected by remember(projectPath) { mutableStateOf(false) }
+    val indexedFiles by fileIndexer.indexedFiles.collectAsState()
+    val isIndexing by fileIndexer.isIndexing.collectAsState()
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     val searchFieldFocusRequester = remember { FocusRequester() }
 
     // Get filtered results based on active category
     val filteredResults =
-        remember(allResults, activeCategory) {
-            GlobalSearchService.getFilteredResults()
+        remember(dialogState.results, dialogState.activeCategory) {
+            GlobalSearchService.getFilteredResults(dialogState.results, dialogState.activeCategory)
         }
 
     // Get result counts by category
     val resultCounts =
-        remember(allResults) {
-            GlobalSearchService.getResultCounts()
+        remember(dialogState.results) {
+            GlobalSearchService.getResultCounts(dialogState.results)
         }
 
     // Animation state for staggered appearance
@@ -190,32 +201,37 @@ fun GlobalSearchDialog(
             return@LaunchedEffect
         }
         globalSearchLogger.debug(LogCategory.UI, "Indexing project for search", mapOf("path" to projectPath))
-        GlobalSearchService.indexProject(projectPath)
+        fileIndexer.indexProject(projectPath)
     }
 
     // Debounced search as user types
     // 50ms debounce balances responsiveness with avoiding excessive searches while typing fast
-    LaunchedEffect(searchQuery) {
-        if (searchQuery.isBlank()) {
-            GlobalSearchService.clearResults()
+    LaunchedEffect(dialogState.query) {
+        if (dialogState.query.isBlank()) {
+            dialogState.results = emptyList()
             return@LaunchedEffect
         }
         delay(50)
         // This window, so the Tools rows come from the sidebar this dialog can actually open, and
         // so a signpost is offered only when its panel is present here - see SearchSources.
-        GlobalSearchService.search(searchQuery, windowId)
+        dialogState.isSearching = true
+        try {
+            dialogState.results = GlobalSearchService.search(dialogState.query, windowId, indexedFiles)
+        } finally {
+            dialogState.isSearching = false
+        }
     }
 
     // Auto-scroll to selected item (only when triggered by keyboard)
-    LaunchedEffect(selectedIndex, scrollToSelected) {
+    LaunchedEffect(dialogState.selectedIndex, scrollToSelected) {
         if (scrollToSelected && filteredResults.isNotEmpty()) {
-            val clampedIndex = selectedIndex.coerceIn(0, filteredResults.size - 1)
+            val clampedIndex = dialogState.selectedIndex.coerceIn(0, filteredResults.size - 1)
             coroutineScope.launch {
                 // A RESULT index is not a LazyColumn item index when sections are shown: each
                 // section contributes a header and a trailing spacer of its own, so the two drift
                 // by two per section above the selection. Arrowing into a late category used to
                 // scroll visibly short of the row it had selected.
-                val grouped = activeCategory == SearchCategory.ALL
+                val grouped = dialogState.activeCategory == SearchCategory.ALL
                 listState.animateScrollToItem(listItemIndexFor(clampedIndex, filteredResults, showSections = grouped))
             }
             scrollToSelected = false
@@ -225,25 +241,17 @@ fun GlobalSearchDialog(
     // Clamp selected index when results change
     LaunchedEffect(filteredResults.size) {
         if (filteredResults.isNotEmpty()) {
-            val clampedIndex = selectedIndex.coerceIn(0, filteredResults.size - 1)
-            if (clampedIndex != selectedIndex) {
-                selectedIndex = clampedIndex
+            val clampedIndex = dialogState.selectedIndex.coerceIn(0, filteredResults.size - 1)
+            if (clampedIndex != dialogState.selectedIndex) {
+                dialogState.selectedIndex = clampedIndex
             }
         }
     }
 
     // Reset selected index when category changes
-    LaunchedEffect(activeCategory) {
-        selectedIndex = 0
+    LaunchedEffect(dialogState.activeCategory) {
+        dialogState.selectedIndex = 0
         scrollToSelected = true
-    }
-
-    // Clear results when dialog closes
-    DisposableEffect(Unit) {
-        onDispose {
-            GlobalSearchService.clearResults()
-            GlobalSearchService.setActiveCategory(SearchCategory.ALL)
-        }
     }
 
     // Handle result selection
@@ -344,7 +352,7 @@ fun GlobalSearchDialog(
 
                                 Key.DirectionUp -> {
                                     if (filteredResults.isNotEmpty()) {
-                                        selectedIndex = (selectedIndex - 1).coerceAtLeast(0)
+                                        dialogState.selectedIndex = (dialogState.selectedIndex - 1).coerceAtLeast(0)
                                         scrollToSelected = true
                                     }
                                     true
@@ -352,15 +360,16 @@ fun GlobalSearchDialog(
 
                                 Key.DirectionDown -> {
                                     if (filteredResults.isNotEmpty()) {
-                                        selectedIndex = (selectedIndex + 1).coerceAtMost(filteredResults.size - 1)
+                                        dialogState.selectedIndex =
+                                            (dialogState.selectedIndex + 1).coerceAtMost(filteredResults.size - 1)
                                         scrollToSelected = true
                                     }
                                     true
                                 }
 
                                 Key.Enter -> {
-                                    if (filteredResults.isNotEmpty() && selectedIndex < filteredResults.size) {
-                                        selectResult(filteredResults[selectedIndex])
+                                    if (filteredResults.isNotEmpty() && dialogState.selectedIndex < filteredResults.size) {
+                                        selectResult(filteredResults[dialogState.selectedIndex])
                                     }
                                     true
                                 }
@@ -372,15 +381,15 @@ fun GlobalSearchDialog(
                                     // "No Tools Found" with nothing on the chip row to say where
                                     // the user was. Four more categories made that four times
                                     // likelier, so it stopped being survivable.
-                                    val categories = visibleCategories(resultCounts, activeCategory)
-                                    val currentIndex = categories.indexOf(activeCategory)
+                                    val categories = visibleCategories(resultCounts, dialogState.activeCategory)
+                                    val currentIndex = categories.indexOf(dialogState.activeCategory)
                                     val nextIndex =
                                         if (event.isShiftPressed) {
                                             (currentIndex - 1 + categories.size) % categories.size
                                         } else {
                                             (currentIndex + 1) % categories.size
                                         }
-                                    GlobalSearchService.setActiveCategory(categories[nextIndex])
+                                    dialogState.activeCategory = categories[nextIndex]
                                     true
                                 }
 
@@ -408,7 +417,7 @@ fun GlobalSearchDialog(
                     enter = fadeIn(tween(200)) + slideInVertically(tween(200)) { -it / 2 },
                 ) {
                     SearchDialogHeader(
-                        fileCount = GlobalSearchService.getIndexedFileCount(),
+                        fileCount = indexedFiles.size,
                         isIndexing = isIndexing,
                         onClose = onDismiss,
                     )
@@ -422,13 +431,13 @@ fun GlobalSearchDialog(
                     enter = fadeIn(tween(200, delayMillis = 50)) + slideInVertically(tween(200, delayMillis = 50)) { -it / 2 },
                 ) {
                     SearchInputField(
-                        query = searchQuery,
+                        query = dialogState.query,
                         onQueryChange = { newQuery ->
-                            searchQuery = newQuery
-                            selectedIndex = 0
+                            dialogState.query = newQuery
+                            dialogState.selectedIndex = 0
                         },
                         focusRequester = searchFieldFocusRequester,
-                        isSearching = isSearching,
+                        isSearching = dialogState.isSearching,
                     )
                 }
 
@@ -436,20 +445,20 @@ fun GlobalSearchDialog(
 
                 // Category filter tabs (only show when there are results)
                 AnimatedVisibility(
-                    visible = showContent && searchQuery.isNotBlank() && allResults.isNotEmpty(),
+                    visible = showContent && dialogState.query.isNotBlank() && dialogState.results.isNotEmpty(),
                     enter = fadeIn(tween(200, delayMillis = 75)),
                 ) {
                     CategoryTabs(
-                        activeCategory = activeCategory,
+                        activeCategory = dialogState.activeCategory,
                         resultCounts = resultCounts,
                         onCategorySelect = { category ->
-                            GlobalSearchService.setActiveCategory(category)
-                            selectedIndex = 0
+                            dialogState.activeCategory = category
+                            dialogState.selectedIndex = 0
                         },
                     )
                 }
 
-                if (searchQuery.isNotBlank() && allResults.isNotEmpty()) {
+                if (dialogState.query.isNotBlank() && dialogState.results.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(12.dp))
                 }
 
@@ -465,7 +474,7 @@ fun GlobalSearchDialog(
                                 .weight(1f),
                     ) {
                         when {
-                            searchQuery.isBlank() -> {
+                            dialogState.query.isBlank() -> {
                                 EmptySearchState()
                             }
 
@@ -473,16 +482,16 @@ fun GlobalSearchDialog(
                                 IndexingState()
                             }
 
-                            filteredResults.isEmpty() && !isSearching -> {
-                                NoResultsState(query = searchQuery, category = activeCategory)
+                            filteredResults.isEmpty() && !dialogState.isSearching -> {
+                                NoResultsState(query = dialogState.query, category = dialogState.activeCategory)
                             }
 
                             else -> {
                                 SearchResultsList(
                                     results = filteredResults,
-                                    selectedIndex = selectedIndex,
+                                    selectedIndex = dialogState.selectedIndex,
                                     listState = listState,
-                                    showSections = activeCategory == SearchCategory.ALL,
+                                    showSections = dialogState.activeCategory == SearchCategory.ALL,
                                     onResultClick = { result -> selectResult(result) },
                                 )
                             }

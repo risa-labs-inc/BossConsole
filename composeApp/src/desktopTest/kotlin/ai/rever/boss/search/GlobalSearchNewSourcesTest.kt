@@ -30,21 +30,14 @@ class GlobalSearchNewSourcesTest {
     @BeforeTest
     fun setUp() {
         SearchSources.clearForTests()
-        GlobalSearchService.clearResults()
-        // Files leak in from whatever indexed a project earlier in this JVM otherwise, and these
-        // tests read whole result lists in places.
-        GlobalSearchService.clearIndex()
-        GlobalSearchService.setActiveCategory(SearchCategory.ALL)
     }
 
     @AfterTest
     fun tearDown() {
         SearchSources.clearForTests()
-        GlobalSearchService.clearResults()
-        GlobalSearchService.setActiveCategory(SearchCategory.ALL)
     }
 
-    private fun searchFor(query: String): List<SearchResult> = runBlocking { GlobalSearchService.search(query, WINDOW) }
+    private fun searchFor(query: String): List<SearchResult> = runBlocking { GlobalSearchService.search(query, WINDOW, emptyList()) }
 
     private inline fun <reified T : SearchResult> resultsOf(q: String) = searchFor(q).filterIsInstance<T>()
 
@@ -432,20 +425,11 @@ class GlobalSearchNewSourcesTest {
     @Test
     fun `results from the new sources survive the category filter`() {
         registerTools(tool("bookmarks", "Bookmarks"))
-        searchFor("bookmark")
+        val results = searchFor("bookmark")
+        val filtered = GlobalSearchService.getFilteredResults(results, SearchCategory.TOOLS)
 
-        // The category is global state on a singleton, so the restore goes in a finally: an
-        // assertion failing here would otherwise leave a filter set for whatever runs next in
-        // this JVM, and the failure would be reported against that test instead of this one.
-        try {
-            GlobalSearchService.setActiveCategory(SearchCategory.TOOLS)
-            val filtered = GlobalSearchService.getFilteredResults()
-
-            assertTrue(filtered.isNotEmpty(), "the TOOLS chip must show tools")
-            assertTrue(filtered.all { it.category == SearchCategory.TOOLS })
-        } finally {
-            GlobalSearchService.setActiveCategory(SearchCategory.ALL)
-        }
+        assertTrue(filtered.isNotEmpty(), "the TOOLS chip must show tools")
+        assertTrue(filtered.all { it.category == SearchCategory.TOOLS })
     }
 
     @Test

@@ -19,15 +19,11 @@ class GlobalSearchOrderingTest {
     @BeforeTest
     fun setUp() {
         SearchSources.clearForTests()
-        GlobalSearchService.clearResults()
-        GlobalSearchService.setActiveCategory(SearchCategory.ALL)
     }
 
     @AfterTest
     fun tearDown() {
         SearchSources.clearForTests()
-        GlobalSearchService.clearResults()
-        GlobalSearchService.setActiveCategory(SearchCategory.ALL)
     }
 
     private companion object {
@@ -62,8 +58,8 @@ class GlobalSearchOrderingTest {
         SearchSources.registerTools(WINDOW) { listOf(ToolSearchRecord(panelId = "atlas", label = "Atlas")) }
         registerSettings("Atlas")
 
-        runBlocking { GlobalSearchService.search("atlas", WINDOW) }
-        val ordered = GlobalSearchService.getFilteredResults()
+        val results = runBlocking { GlobalSearchService.search("atlas", WINDOW, emptyList()) }
+        val ordered = GlobalSearchService.getFilteredResults(results, SearchCategory.ALL)
 
         assertTrue(ordered.isNotEmpty())
         assertEquals(SearchCategory.TOOLS, ordered.first().category, "Tools must lead the All view")
@@ -81,8 +77,8 @@ class GlobalSearchOrderingTest {
         }
         registerSettings("Atlas", "Atlas Bar")
 
-        runBlocking { GlobalSearchService.search("atlas", WINDOW) }
-        val categories = GlobalSearchService.getFilteredResults().map { it.category }
+        val results = runBlocking { GlobalSearchService.search("atlas", WINDOW, emptyList()) }
+        val categories = GlobalSearchService.getFilteredResults(results, SearchCategory.ALL).map { it.category }
 
         assertEquals(categories.distinct(), categories.distinct().sortedBy { it.ordinal }, "declaration order")
         assertEquals(categories.distinct().size, categories.zipWithNext().count { it.first != it.second } + 1)
@@ -94,8 +90,8 @@ class GlobalSearchOrderingTest {
         // which is what the exact-label test in GlobalSearchNewSourcesTest depends on.
         registerSettings("Passkeys", "Passkeys Extra Long")
 
-        runBlocking { GlobalSearchService.search("passkeys", WINDOW) }
-        val scores = GlobalSearchService.getFilteredResults().map { it.score }
+        val results = runBlocking { GlobalSearchService.search("passkeys", WINDOW, emptyList()) }
+        val scores = GlobalSearchService.getFilteredResults(results, SearchCategory.ALL).map { it.score }
 
         assertEquals(scores.sortedDescending(), scores)
     }
@@ -103,17 +99,11 @@ class GlobalSearchOrderingTest {
     @Test
     fun `filtering to one category keeps pure score order`() {
         registerSettings("Passkeys", "Passkeys Extra Long")
-        runBlocking { GlobalSearchService.search("passkeys", WINDOW) }
+        val results = runBlocking { GlobalSearchService.search("passkeys", WINDOW, emptyList()) }
+        val scores = GlobalSearchService.getFilteredResults(results, SearchCategory.SETTINGS).map { it.score }
 
-        try {
-            GlobalSearchService.setActiveCategory(SearchCategory.SETTINGS)
-            val scores = GlobalSearchService.getFilteredResults().map { it.score }
-
-            assertEquals(scores.sortedDescending(), scores)
-            assertTrue(scores.isNotEmpty())
-        } finally {
-            GlobalSearchService.setActiveCategory(SearchCategory.ALL)
-        }
+        assertEquals(scores.sortedDescending(), scores)
+        assertTrue(scores.isNotEmpty())
     }
 
     @Test
