@@ -3,6 +3,65 @@
  * Templates embedded as template literals for Edge Runtime compatibility
  */
 
+/**
+ * Escapes a value for safe inclusion as HTML text content. `email`,
+ * `sessionId`, `rpName` and `credentialDisplayName` all reach these
+ * templates as caller-supplied strings (query parameters or user-chosen
+ * credential names) with no character restriction upstream, so every value
+ * substituted into HTML text must be escaped here rather than trusted.
+ */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+}
+
+/**
+ * Escapes a value for safe inclusion inside a single-quoted JavaScript
+ * string literal within an inline <script> block. Beyond quote/backslash
+ * escaping (so the value cannot terminate the literal early and inject
+ * adjacent script), this also neutralizes "<" and ">" so a value cannot
+ * spell out "</script>" and close the surrounding script element entirely -
+ * a `<script>`-context XSS is not stopped by quote-escaping alone - and
+ * escapes raw CR/LF, which are illegal inside an unescaped single-line
+ * string literal (a raw newline would otherwise be a syntax error, not just
+ * odd formatting).
+ */
+function escapeJsString(value: string): string {
+  return value
+    .replace(/\\/g, "\\\\")
+    .replace(/'/g, "\\'")
+    .replace(/</g, "\\u003C")
+    .replace(/>/g, "\\u003E")
+    .replace(/\r/g, "\\r")
+    .replace(/\n/g, "\\n")
+}
+
+/**
+ * Substitutes every `{{PLACEHOLDER}}` in one pass. Two properties matter:
+ *
+ * - **Function-form replacement.** `String.prototype.replace` applies
+ *   `$`-pattern expansion (`$$`, `$&`, `$` + backtick, `$'`) to *string*
+ *   replacements, and that happens *after* escaping: a sessionId of `$&`
+ *   would echo the raw placeholder back into the page, and a `$` + backtick
+ *   payload would splice the entire pre-match document into the string
+ *   literal and kill the inline script. A function replacement returns the
+ *   escaped value verbatim.
+ * - **One pass.** Sequential per-placeholder replaces would expand a value
+ *   that literally contains a *later* placeholder name (e.g. a sessionId of
+ *   `{{ANON_KEY_JS}}` would render the anon key into it). Scanning the
+ *   original template once means substituted values are never re-read.
+ *
+ * A placeholder absent from the map is left verbatim, the same failure mode
+ * as a missing per-placeholder replace.
+ */
+function renderTemplate(template: string, values: Record<string, string>): string {
+  return template.replace(/{{(\w+)}}/g, (match, key) => (Object.hasOwn(values, key) ? values[key] : match))
+}
+
 const REGISTRATION_TEMPLATE = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -231,7 +290,7 @@ const REGISTRATION_TEMPLATE = `<!DOCTYPE html>
 
             <div class="email-badge">
                 <div class="label">Account</div>
-                <div class="value">{{EMAIL}}</div>
+                <div class="value">{{EMAIL_HTML}}</div>
             </div>
 
             <button id="registerBtn" class="button">
@@ -258,13 +317,13 @@ const REGISTRATION_TEMPLATE = `<!DOCTYPE html>
     </div>
 
     <script>
-        const challenge = '{{CHALLENGE}}';
-        const userId = '{{USER_ID}}';
-        const email = '{{EMAIL}}';
-        const sessionId = '{{SESSION_ID}}';
-        const rpId = '{{RP_ID}}';
-        const rpName = '{{RP_NAME}}';
-        const anonKey = '{{ANON_KEY}}';
+        const challenge = '{{CHALLENGE_JS}}';
+        const userId = '{{USER_ID_JS}}';
+        const email = '{{EMAIL_JS}}';
+        const sessionId = '{{SESSION_ID_JS}}';
+        const rpId = '{{RP_ID_JS}}';
+        const rpName = '{{RP_NAME_JS}}';
+        const anonKey = '{{ANON_KEY_JS}}';
 
         function base64urlToBuffer(base64url) {
             try {
@@ -677,16 +736,16 @@ const AUTHENTICATION_TEMPLATE = `<!DOCTYPE html>
 
             <div class="account-info">
                 <div class="label">Account</div>
-                <div class="value">{{EMAIL}}</div>
+                <div class="value">{{EMAIL_HTML}}</div>
 
                 <div class="credential-details">
                     <div class="row">
                         <span class="label">Credential</span>
-                        <span class="value">{{CREDENTIAL_DISPLAY_NAME}}</span>
+                        <span class="value">{{CREDENTIAL_DISPLAY_NAME_HTML}}</span>
                     </div>
                     <div class="row">
                         <span class="label">Created</span>
-                        <span class="value">{{CREDENTIAL_CREATED_AT}}</span>
+                        <span class="value">{{CREDENTIAL_CREATED_AT_HTML}}</span>
                     </div>
                 </div>
             </div>
@@ -715,12 +774,12 @@ const AUTHENTICATION_TEMPLATE = `<!DOCTYPE html>
     </div>
 
     <script>
-        const challenge = '{{CHALLENGE}}';
-        const email = '{{EMAIL}}';
-        const credentialId = '{{CREDENTIAL_ID}}';
-        const sessionId = '{{SESSION_ID}}';
-        const rpId = '{{RP_ID}}';
-        const anonKey = '{{ANON_KEY}}';
+        const challenge = '{{CHALLENGE_JS}}';
+        const email = '{{EMAIL_JS}}';
+        const credentialId = '{{CREDENTIAL_ID_JS}}';
+        const sessionId = '{{SESSION_ID_JS}}';
+        const rpId = '{{RP_ID_JS}}';
+        const anonKey = '{{ANON_KEY_JS}}';
 
         function base64urlToBuffer(base64url) {
             let base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
@@ -1046,7 +1105,7 @@ const ERROR_TEMPLATE = `<!DOCTYPE html>
 
                 <div class="error-message">
                     <div class="title">Error Details</div>
-                    <div class="message">{{MESSAGE}}</div>
+                    <div class="message">{{MESSAGE_HTML}}</div>
                 </div>
 
                 <div class="actions">
@@ -1099,15 +1158,17 @@ export async function getMobileRegistrationHTML(
   rpName: string
 ): Promise<string> {
   const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
-  
-  return REGISTRATION_TEMPLATE
-    .replace(/{{CHALLENGE}}/g, challenge)
-    .replace(/{{USER_ID}}/g, userId)
-    .replace(/{{EMAIL}}/g, email)
-    .replace(/{{SESSION_ID}}/g, sessionId)
-    .replace(/{{RP_ID}}/g, rpId)
-    .replace(/{{RP_NAME}}/g, rpName)
-    .replace(/{{ANON_KEY}}/g, anonKey);
+
+  return renderTemplate(REGISTRATION_TEMPLATE, {
+    EMAIL_HTML: escapeHtml(email),
+    CHALLENGE_JS: escapeJsString(challenge),
+    USER_ID_JS: escapeJsString(userId),
+    EMAIL_JS: escapeJsString(email),
+    SESSION_ID_JS: escapeJsString(sessionId),
+    RP_ID_JS: escapeJsString(rpId),
+    RP_NAME_JS: escapeJsString(rpName),
+    ANON_KEY_JS: escapeJsString(anonKey),
+  })
 }
 
 export async function getMobileAuthenticationHTML(
@@ -1121,18 +1182,22 @@ export async function getMobileAuthenticationHTML(
 ): Promise<string> {
   const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
   const createdAtFormatted = new Date(credentialCreatedAt).toLocaleDateString();
-  
-  return AUTHENTICATION_TEMPLATE
-    .replace(/{{CHALLENGE}}/g, challenge)
-    .replace(/{{EMAIL}}/g, email)
-    .replace(/{{SESSION_ID}}/g, sessionId)
-    .replace(/{{RP_ID}}/g, rpId)
-    .replace(/{{CREDENTIAL_ID}}/g, credentialId)
-    .replace(/{{CREDENTIAL_DISPLAY_NAME}}/g, credentialDisplayName)
-    .replace(/{{CREDENTIAL_CREATED_AT}}/g, createdAtFormatted)
-    .replace(/{{ANON_KEY}}/g, anonKey);
+
+  return renderTemplate(AUTHENTICATION_TEMPLATE, {
+    EMAIL_HTML: escapeHtml(email),
+    CREDENTIAL_DISPLAY_NAME_HTML: escapeHtml(credentialDisplayName),
+    CREDENTIAL_CREATED_AT_HTML: escapeHtml(createdAtFormatted),
+    CHALLENGE_JS: escapeJsString(challenge),
+    EMAIL_JS: escapeJsString(email),
+    SESSION_ID_JS: escapeJsString(sessionId),
+    RP_ID_JS: escapeJsString(rpId),
+    CREDENTIAL_ID_JS: escapeJsString(credentialId),
+    ANON_KEY_JS: escapeJsString(anonKey),
+  })
 }
 
 export async function getMobileErrorHTML(message: string): Promise<string> {
-  return ERROR_TEMPLATE.replace(/{{MESSAGE}}/g, message);
+  return renderTemplate(ERROR_TEMPLATE, {
+    MESSAGE_HTML: escapeHtml(message),
+  })
 }
