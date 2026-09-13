@@ -90,6 +90,10 @@ object McpMutatingToolCatalog {
             "run_in_panel",
             "send_input",
             "project_replace",
+            // Workspace Recovery
+            "recovery_rewind",
+            "recovery_create_checkpoint",
+            "recovery_verify_claim",
         )
 
     private val MUTATING_SUFFIXES =

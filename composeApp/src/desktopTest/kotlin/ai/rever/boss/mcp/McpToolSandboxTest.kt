@@ -105,6 +105,43 @@ class McpToolSandboxTest {
         assertTrue(destructiveAssessment.reason.contains("destructive command pattern"))
     }
 
+    @Test
+    fun `recovery tools are classified as mutating and their risks are evaluated`() {
+        assertTrue(
+            McpMutatingToolCatalog.isMutating("recovery_rewind"),
+            "recovery_rewind deletes and overwrites workspace files and must be classified as mutating",
+        )
+        assertTrue(
+            McpMutatingToolCatalog.isMutating("recovery_create_checkpoint"),
+            "recovery_create_checkpoint byte-copies the workspace tree into storage",
+        )
+        assertTrue(
+            McpMutatingToolCatalog.isMutating("recovery_verify_claim"),
+            "recovery_verify_claim executes a shell command with host authority",
+        )
+        assertFalse(
+            McpMutatingToolCatalog.isMutating("recovery_preview_rewind"),
+            "preview is a dry run and must stay non-mutating",
+        )
+        assertFalse(
+            McpMutatingToolCatalog.isMutating("recovery_list_checkpoints"),
+            "listing checkpoints is read-only",
+        )
+
+        val evaluator = DefaultMcpRiskEvaluator()
+        val emptyArgs = McpToolArgs(emptyMap())
+        assertEquals(McpRiskLevel.HIGH, evaluator.evaluateRisk("recovery_rewind", emptyArgs).level)
+
+        val safeCmdArgs = McpToolArgs(mapOf("command" to "git status"), """{"command":"git status"}""")
+        assertEquals(McpRiskLevel.HIGH, evaluator.evaluateRisk("recovery_verify_claim", safeCmdArgs).level)
+
+        val destructiveCmdArgs =
+            McpToolArgs(mapOf("command" to "rm -rf /tmp/test"), """{"command":"rm -rf /tmp/test"}""")
+        val destructiveAssessment = evaluator.evaluateRisk("recovery_verify_claim", destructiveCmdArgs)
+        assertEquals(McpRiskLevel.CRITICAL, destructiveAssessment.level)
+        assertTrue(destructiveAssessment.reason.contains("destructive command pattern"))
+    }
+
     // ---------------------------------------------------------------------
     // Sandbox Execution & Policy Gate Integration Tests
     // ---------------------------------------------------------------------
