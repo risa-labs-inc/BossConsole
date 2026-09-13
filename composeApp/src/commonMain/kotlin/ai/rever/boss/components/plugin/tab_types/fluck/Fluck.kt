@@ -251,6 +251,8 @@ class FluckTabInfo(
         }
     }
 
+    /** Returns a snapshot; the caller must publish it to the tab owner. */
+    @Synchronized
     fun goBack(): FluckTabInfo {
         if (historyIndex > 0) {
             val newIndex = historyIndex - 1
@@ -262,6 +264,8 @@ class FluckTabInfo(
         return this
     }
 
+    /** Returns a snapshot; the caller must publish it to the tab owner. */
+    @Synchronized
     fun goForward(): FluckTabInfo {
         if (historyIndex < navigationHistory.size - 1) {
             val newIndex = historyIndex + 1
