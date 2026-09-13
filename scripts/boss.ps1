@@ -179,7 +179,7 @@ switch ($Command.ToLower()) {
             exit 1
         }
         $encoded = [System.Uri]::EscapeDataString($Argument)
-        $deepLink = "boss://workspace?config=$encoded"
+        $deepLink = "boss://workspace?path=$encoded"
         Open-BossDeepLink $deepLink
     }
 
