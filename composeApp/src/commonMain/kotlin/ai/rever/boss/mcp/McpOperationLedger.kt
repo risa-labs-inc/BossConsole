@@ -56,6 +56,9 @@ class McpOperationLedger(
         isError: Boolean,
         rawArgs: Map<String, Any?>,
         errorSnippet: String? = null,
+        windowId: String? = null,
+        projectPath: String? = null,
+        contextGeneration: Long? = null,
     ): McpOperationRecord {
         val sanitized = sanitizeArguments(rawArgs)
         val sanitizedErrorSnippet = errorSnippet?.let { McpArgumentSanitizer.sanitizeMessage(it).take(4096) }
@@ -71,6 +74,9 @@ class McpOperationLedger(
                 isError = isError,
                 sanitizedArgs = sanitized,
                 errorSnippet = sanitizedErrorSnippet,
+                windowId = windowId,
+                projectPath = projectPath,
+                contextGeneration = contextGeneration,
             )
 
         // 1. Update in-memory telemetry ring buffer

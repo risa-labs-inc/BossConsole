@@ -4,8 +4,10 @@ package ai.rever.boss.utils
 
 import ai.rever.boss.plugin.api.McpToolResult
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.plugin.window.WorkspaceContextToken
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.window.WindowProjectStateRegistry
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -768,6 +770,14 @@ private fun buildMcpListResponse(listProviderOverride: (() -> String)?): String 
     }
 }
 
+private fun resolveActiveContextToken(): WorkspaceContextToken? {
+    val windowId = WindowFocusManager.resolveActionableWindowId()
+        ?: WindowProjectStateRegistry.getAllWindowIds().singleOrNull()
+        ?: return null
+    val state = WindowProjectStateRegistry.get(windowId) ?: return null
+    return state.currentContextToken()
+}
+
 @Suppress("ReturnCount", "TooGenericExceptionCaught", "LongMethod")
 private fun buildMcpInvokeResponse(
     toolName: String,
@@ -793,8 +803,9 @@ private fun buildMcpInvokeResponse(
                     if (invokeHandlerOverride != null) {
                         invokeHandlerOverride.invoke(toolName, argsJson)
                     } else {
+                        val activeContext = resolveActiveContextToken()
                         ai.rever.boss.mcp.McpToolRegistryImpl
-                            .invoke(toolName, argsJson)
+                            .invoke(toolName, argsJson, activeContext)
                     }
                 } ?: McpToolResult(
                     text = "Tool '$toolName' timed out after 30s",

@@ -37,6 +37,8 @@ enum class McpApprovalDisposition {
     CANCELLED_AWAITING_APPROVAL,
     CANCELLED_IN_FLIGHT,
     QUEUE_FULL,
+    CONTEXT_STALE,
+    CONTEXT_UNBOUND_REJECTED,
 }
 
 /**
@@ -62,12 +64,24 @@ object McpMutatingToolCatalog {
      */
     val KNOWN_MUTATING_TOOLS: Set<String> =
         setOf(
+            // Git operations
+            "git_commit",
+            "git_push",
+            "git_checkout",
+            "git_branch_create",
+            "git_branch_delete",
+            "git_merge",
+            "git_rebase",
+            "git_reset",
+            "git_stash",
+            "git_tag",
             // Kubernetes
             "k8s_delete",
             "k8s_exec",
             "k8s_apply",
             "k8s_scale",
             "k8s_rollout_restart",
+            "k8s_use_context",
             // Docker
             "docker_rm",
             "docker_stop",
@@ -76,6 +90,7 @@ object McpMutatingToolCatalog {
             "docker_build",
             "docker_start",
             "docker_restart",
+            "docker_run",
             // Helm
             "helm_install",
             "helm_upgrade",
@@ -83,12 +98,18 @@ object McpMutatingToolCatalog {
             "helm_uninstall",
             // Secrets
             "secret_get",
+            "secret_create",
+            "secret_update",
+            "secret_delete",
             // File & OS Execution
             "codebase_write",
+            "file_write",
+            "file_delete",
             "run_command",
             "run_in_sidebar",
             "run_in_panel",
             "send_input",
+            "terminal_exec",
             "project_replace",
         )
 
@@ -105,15 +126,69 @@ object McpMutatingToolCatalog {
             "_install",
             "_uninstall",
             "_stop",
+            "_commit",
+            "_push",
+            "_create",
+            "_update",
+            "_run",
+            "_checkout",
+            "_reset",
+        )
+
+    private val MUTATING_VERBS =
+        setOf(
+            "create",
+            "update",
+            "delete",
+            "modify",
+            "patch",
+            "remove",
+            "rm",
+            "set",
+            "write",
+            "exec",
+            "execute",
+            "run",
+            "kill",
+            "restart",
+            "start",
+            "stop",
+            "revert",
+            "rollback",
+            "reset",
+            "apply",
+            "install",
+            "uninstall",
+            "rename",
+            "move",
+            "edit",
+            "append",
+            "overwrite",
+            "upload",
+            "deploy",
+            "purge",
+            "drop",
+            "clean",
+            "commit",
+            "push",
+            "checkout",
+            "stash",
+            "merge",
+            "rebase",
+            "replace",
         )
 
     /**
      * Determine if a tool is mutating based on known tool catalog and naming heuristics.
+     * Checks exact catalog membership, mutating suffixes, and tokenized verb matching
+     * (e.g. rename_file, update_config, patch_resource, modify_secret, set_permission).
      */
     fun isMutating(toolName: String): Boolean {
         if (toolName in KNOWN_MUTATING_TOOLS) return true
         val lower = toolName.lowercase()
-        return MUTATING_SUFFIXES.any { lower.endsWith(it) }
+        if (MUTATING_SUFFIXES.any { lower.endsWith(it) }) return true
+        val tokens = lower.split('_', '-', '.')
+        return tokens.any { it in MUTATING_VERBS }
     }
 
     /**

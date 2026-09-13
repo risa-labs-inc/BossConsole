@@ -1,16 +1,16 @@
 package ai.rever.boss.mcp
 
 import ai.rever.boss.mcp.sandbox.McpRiskAssessment
+import ai.rever.boss.plugin.window.WorkspaceContextToken
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
@@ -44,6 +44,9 @@ sealed interface McpApprovalDecision {
 
 /**
  * An interactive prompt asking the operator to permit or reject a tool call.
+ *
+ * @property contextToken Optional causal workspace context identifying the window,
+ *   project, and generation epoch that authorized this invocation.
  */
 data class McpApprovalRequest(
     val id: String = UUID.randomUUID().toString(),
@@ -52,6 +55,7 @@ data class McpApprovalRequest(
     val arguments: Map<String, Any?>,
     val timeoutMs: Long,
     val riskAssessment: McpRiskAssessment? = null,
+    val contextToken: WorkspaceContextToken? = null,
     val requestedAt: Long = System.currentTimeMillis(),
     val deferred: CompletableDeferred<McpApprovalDecision> = CompletableDeferred(),
 )
@@ -59,8 +63,9 @@ data class McpApprovalRequest(
 /**
  * Central event bus for routing interactive tool approval requests to the UI.
  *
- * Uses a buffered Channel to ensure the calling MCP suspend coroutine can submit
- * its request without blocking or stalling background threads.
+ * Uses a buffered SharedFlow with window-affinity claiming to ensure each request
+ * is routed only to the window that initiated it (preventing cross-window prompt stealing),
+ * while supporting reactive invalidation if the workspace context shifts while queued.
  */
 open class McpApprovalBus(
     private val defaultTimeoutMs: Long = 45_000L,
@@ -69,18 +74,25 @@ open class McpApprovalBus(
     private val logger = BossLogger.forComponent("McpApprovalBus")
     private val lock = Any()
 
-    private val _requests = Channel<McpApprovalRequest>(maxPendingRequests)
-    val requests: Flow<McpApprovalRequest> = _requests.receiveAsFlow()
+    private val _requests =
+        MutableSharedFlow<McpApprovalRequest>(
+            replay = 0,
+            extraBufferCapacity = maxPendingRequests * 4,
+        )
+    val requests: Flow<McpApprovalRequest> = _requests.asSharedFlow()
+    val subscriptionCount: StateFlow<Int> = _requests.subscriptionCount
 
     private val activeRequests = ConcurrentHashMap<String, McpApprovalRequest>()
+    private val claimedWindows = ConcurrentHashMap<String, String>() // requestId -> windowId
+
     private val _pendingList = MutableStateFlow<List<McpApprovalRequest>>(emptyList())
     val pendingList: StateFlow<List<McpApprovalRequest>> = _pendingList.asStateFlow()
 
     /**
      * Request approval from the operator for [toolName].
      *
-     * Suspends the calling coroutine until the operator answers via the UI
-     * or [timeoutMs] elapses (in which case it fails closed).
+     * Suspends the calling coroutine until the operator answers via the UI,
+     * [timeoutMs] elapses (failing closed), or the context transitions.
      */
     @Suppress("ReturnCount") // Both active and delivery queues must reject overflow before awaiting an answer.
     suspend fun requestApproval(
@@ -89,6 +101,7 @@ open class McpApprovalBus(
         arguments: Map<String, Any?>,
         timeoutMs: Long = defaultTimeoutMs,
         riskAssessment: McpRiskAssessment? = null,
+        contextToken: WorkspaceContextToken? = null,
     ): McpApprovalDecision {
         val request =
             McpApprovalRequest(
@@ -97,6 +110,7 @@ open class McpApprovalBus(
                 arguments = McpArgumentSanitizer.sanitize(arguments),
                 timeoutMs = timeoutMs,
                 riskAssessment = riskAssessment,
+                contextToken = contextToken,
             )
 
         synchronized(lock) {
@@ -112,7 +126,7 @@ open class McpApprovalBus(
             _pendingList.update { it + request }
         }
 
-        if (_requests.trySend(request).isFailure) {
+        if (!_requests.tryEmit(request)) {
             synchronized(lock) {
                 activeRequests.remove(request.id)
                 _pendingList.update { list -> list.filterNot { it.id == request.id } }
@@ -123,7 +137,14 @@ open class McpApprovalBus(
         logger.info(
             LogCategory.SYSTEM,
             "Approval requested for MCP tool",
-            mapOf("tool" to toolName, "requestId" to request.id, "timeoutMs" to timeoutMs),
+            mapOf(
+                "tool" to toolName,
+                "requestId" to request.id,
+                "timeoutMs" to timeoutMs,
+                "windowId" to contextToken?.windowId,
+                "project" to contextToken?.projectPath,
+                "generation" to contextToken?.generation,
+            ),
         )
 
         return try {
@@ -143,9 +164,66 @@ open class McpApprovalBus(
             decision
         } finally {
             request.deferred.complete(McpApprovalDecision.Denied("Approval request expired"))
+            claimedWindows.remove(request.id)
             synchronized(lock) {
                 activeRequests.remove(request.id)
                 _pendingList.update { list -> list.filterNot { it.id == request.id } }
+            }
+        }
+    }
+
+    /**
+     * Atomically claims [requestId] for [windowId].
+     * Returns true if successfully claimed by this window, false if already claimed or ineligible.
+     */
+    fun claimRequest(requestId: String, windowId: String?): Boolean {
+        val req = activeRequests[requestId] ?: return false
+        if (req.deferred.isCompleted) return false
+        val targetWindow = req.contextToken?.windowId
+        if (targetWindow != null && windowId != null && targetWindow != windowId) {
+            return false
+        }
+        val claimKey = windowId ?: "unbound"
+        return claimedWindows.putIfAbsent(requestId, claimKey) == null
+    }
+
+    /** Releases a window's claim on [requestId]. */
+    fun releaseClaim(requestId: String) {
+        claimedWindows.remove(requestId)
+    }
+
+    /**
+     * Reactively invalidates and denies all pending approvals for [windowId] whose
+     * generation token has been superseded by [newGeneration].
+     */
+    fun invalidateForWindow(windowId: String, newGeneration: Long) {
+        activeRequests.values.forEach { req ->
+            val token = req.contextToken
+            if (token != null && token.windowId == windowId && token.generation < newGeneration) {
+                logger.info(
+                    LogCategory.SYSTEM,
+                    "Cancelling stale MCP approval request due to project transition",
+                    mapOf("requestId" to req.id, "windowId" to windowId, "oldGen" to token.generation, "newGen" to newGeneration),
+                )
+                req.deferred.complete(McpApprovalDecision.Denied("Workspace context changed while awaiting operator approval"))
+            }
+        }
+    }
+
+    /**
+     * Cancels any approval request targeted to or claimed by a window that is closing.
+     */
+    fun invalidateForClosedWindow(windowId: String) {
+        activeRequests.values.forEach { req ->
+            val token = req.contextToken
+            val claimedBy = claimedWindows[req.id]
+            if ((token != null && token.windowId == windowId) || claimedBy == windowId) {
+                logger.info(
+                    LogCategory.SYSTEM,
+                    "Cancelling MCP approval request due to window close",
+                    mapOf("requestId" to req.id, "windowId" to windowId),
+                )
+                req.deferred.complete(McpApprovalDecision.Denied("Window '$windowId' closed while awaiting operator approval"))
             }
         }
     }
@@ -191,16 +269,35 @@ open class McpApprovalBus(
     }
 }
 
-/** Each delivered request belongs to one window until answered, timed out or that window closes. */
-suspend fun McpApprovalBus.consumeApprovals(show: (McpApprovalRequest?) -> Unit) {
+/**
+ * Consumes approval requests for [targetWindowId]. If [targetWindowId] is specified,
+ * filters out requests targeted at other windows, preventing cross-window prompt stealing.
+ */
+suspend fun McpApprovalBus.consumeApprovals(
+    targetWindowId: String? = null,
+    show: (McpApprovalRequest?) -> Unit,
+) {
     requests.collect { request ->
-        if (!request.deferred.isCompleted) {
-            try {
-                show(request)
-                request.deferred.await()
-            } finally {
-                request.deferred.complete(McpApprovalDecision.Denied("Approval window closed"))
-                show(null)
+        val reqWindowId = request.contextToken?.windowId
+        if (reqWindowId != null && targetWindowId != null && reqWindowId != targetWindowId) {
+            return@collect
+        }
+        if (claimRequest(request.id, targetWindowId)) {
+            if (!request.deferred.isCompleted) {
+                try {
+                    show(request)
+                    request.deferred.await()
+                } finally {
+                    request.deferred.complete(
+                        McpApprovalDecision.Denied(
+                            if (targetWindowId != null) "Approval window '$targetWindowId' closed" else "Approval window closed",
+                        ),
+                    )
+                    releaseClaim(request.id)
+                    show(null)
+                }
+            } else {
+                releaseClaim(request.id)
             }
         }
     }

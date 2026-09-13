@@ -10,9 +10,12 @@ import ai.rever.boss.plugin.api.McpToolResult
 import ai.rever.boss.plugin.api.RegisteredMcpTool
 import ai.rever.boss.plugin.logging.LogSanitizer
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.plugin.window.WorkspaceContextToken
+import ai.rever.boss.plugin.window.use
 import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.window.WindowProjectStateRegistry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -111,6 +114,8 @@ object McpToolRegistryImpl : McpToolRegistry {
             ledgerFile = BossDirectories.resolve("mcp-calls.jsonl"),
         )
 
+    val contextValidator: McpContextValidator = DefaultMcpContextValidator
+
     private val core =
         McpToolRegistryCore(
             disabledFile = BossDirectories.resolve("mcp-disabled-tools.json"),
@@ -121,6 +126,7 @@ object McpToolRegistryImpl : McpToolRegistry {
             policyEngine = policyEngine,
             approvalBus = approvalBus,
             ledger = ledger,
+            contextValidator = contextValidator,
         )
 
     override val allTools: StateFlow<List<RegisteredMcpTool>> get() = core.allTools
@@ -166,6 +172,12 @@ object McpToolRegistryImpl : McpToolRegistry {
         toolName: String,
         arguments: String,
     ): McpToolResult = core.invoke(toolName, arguments)
+
+    suspend fun invoke(
+        toolName: String,
+        arguments: String,
+        contextToken: WorkspaceContextToken?,
+    ): McpToolResult = core.invoke(toolName, arguments, contextToken)
 }
 
 /**
@@ -380,6 +392,7 @@ internal class McpToolRegistryCore(
     val policyEngine: McpPolicyEngine = McpPolicyEngine(),
     val approvalBus: McpApprovalBus = McpApprovalBus(),
     val ledger: McpOperationLedger = McpOperationLedger(),
+    val contextValidator: McpContextValidator = DefaultMcpContextValidator,
 ) {
     private val logger = BossLogger.forComponent("McpToolRegistry")
 
@@ -735,10 +748,11 @@ internal class McpToolRegistryCore(
     /** Mirrors host RBAC. The rule itself is [mcpToolPermitted], which is where it is tested. */
     private fun permitted(def: McpToolDefinition): Boolean = mcpToolPermitted(def, isAdmin, permissions)
 
-    @Suppress("LongMethod") // Keep authorization and execution inside the same cancellation audit boundary.
+    @Suppress("LongMethod", "CyclomaticComplexMethod") // Keep authorization and execution inside the same cancellation audit boundary.
     suspend fun invoke(
         toolName: String,
         arguments: String,
+        contextToken: WorkspaceContextToken? = null,
     ): McpToolResult {
         val tool =
             _tools.value.firstOrNull { it.definition.name == toolName }
@@ -750,8 +764,27 @@ internal class McpToolRegistryCore(
         var disposition = McpApprovalDisposition.AUTO_ALLOWED
         var result: McpToolResult? = null
         var executionStarted = false
+        val isMutating = McpMutatingToolCatalog.isMutating(toolName)
+
         try {
-            val authorization = authorizeInvocation(tool, args, policy, revocation)
+            if (isMutating) {
+                val preCheck = contextValidator.validate(contextToken)
+                if (preCheck !is ContextValidationResult.Valid) {
+                    disposition = McpApprovalDisposition.CONTEXT_UNBOUND_REJECTED
+                    val reason = preCheck.failureReason() ?: "Invalid workspace context"
+                    result = McpToolResult("Mutating MCP tool '$toolName' rejected: $reason", isError = true)
+                    return result
+                }
+            }
+
+            val authorization =
+                authorizeInvocation(
+                    tool,
+                    args,
+                    policy,
+                    revocation,
+                    contextToken,
+                )
             disposition = authorization.first
             val denial = authorization.second
             result =
@@ -766,8 +799,54 @@ internal class McpToolRegistryCore(
                     }
 
                     else -> {
-                        executionStarted = true
-                        executeAuthorized(tool, args)
+                        if (contextToken != null) {
+                            val windowState = WindowProjectStateRegistry.get(contextToken.windowId)
+                            val preDispatch = contextValidator.validate(contextToken)
+                            val lease =
+                                if (preDispatch is ContextValidationResult.Valid) {
+                                    windowState?.acquireExecutionLease(contextToken)
+                                } else {
+                                    null
+                                }
+
+                            if (lease == null) {
+                                disposition = McpApprovalDisposition.CONTEXT_STALE
+                                val reason =
+                                    (preDispatch as? ContextValidationResult.Valid)?.let {
+                                        "Workspace context transitioned before execution lease could be acquired"
+                                    } ?: preDispatch.failureReason() ?: "Workspace context became stale before dispatch"
+                                McpToolResult("Execution aborted: $reason", isError = true)
+                            } else {
+                                lease.use {
+                                    if (disposition == McpApprovalDisposition.SESSION_TRUSTED) {
+                                        policyEngine.trustForSession(toolName)
+                                    }
+                                    executionStarted = true
+                                    val execResult = executeAuthorized(tool, args)
+                                    val postDispatch = contextValidator.validate(contextToken)
+                                    if (!lease.isValid || postDispatch !is ContextValidationResult.Valid) {
+                                        disposition = McpApprovalDisposition.CONTEXT_STALE
+                                        val reason = postDispatch.failureReason() ?: "Workspace context drifted during execution"
+                                        logger.warn(
+                                            LogCategory.SYSTEM,
+                                            "Workspace context drifted during execution of '$toolName'",
+                                            mapOf("reason" to reason),
+                                        )
+                                        val warning =
+                                            "\n\n[BOSS CAUTION: Workspace context drifted during execution ($reason). Side effects may have affected a switched workspace.]"
+                                        execResult.copy(text = execResult.text + warning)
+                                    } else {
+                                        execResult
+                                    }
+                                }
+                            }
+                        } else {
+                            if (disposition == McpApprovalDisposition.SESSION_TRUSTED) {
+                                policyEngine.trustForSession(toolName)
+                            }
+                            executionStarted = true
+                            executeAuthorized(tool, args)
+                        }
                     }
                 }
             return requireNotNull(result)
@@ -792,9 +871,12 @@ internal class McpToolRegistryCore(
                     errorSnippet =
                         when {
                             result == null -> "Execution cancelled by caller"
-                            result?.isError == true -> result?.text
+                            result.isError -> result.text
                             else -> null
                         },
+                    windowId = contextToken?.windowId,
+                    projectPath = contextToken?.projectPath,
+                    contextGeneration = contextToken?.generation,
                 )
             }
         }
@@ -891,6 +973,7 @@ internal class McpToolRegistryCore(
         args: McpToolArgs,
         policy: McpPolicyAction,
         revocation: Long,
+        contextToken: WorkspaceContextToken? = null,
     ): Pair<McpApprovalDisposition, String?> =
         when (policy) {
             McpPolicyAction.DENY -> {
@@ -905,10 +988,11 @@ internal class McpToolRegistryCore(
                 when (
                     val decision =
                         approvalBus.requestApproval(
-                            tool.definition.name,
-                            tool.providerId,
-                            McpArgumentSanitizer.parseArguments(args.raw),
+                            toolName = tool.definition.name,
+                            providerId = tool.providerId,
+                            arguments = McpArgumentSanitizer.parseArguments(args.raw),
                             riskAssessment = DefaultMcpRiskEvaluator().evaluateRisk(tool.definition.name, args),
+                            contextToken = contextToken,
                         )
                 ) {
                     is McpApprovalDecision.Approved -> {
@@ -917,12 +1001,24 @@ internal class McpToolRegistryCore(
 
                     is McpApprovalDecision.Denied -> {
                         val disposition =
-                            if (decision.persistPolicy) {
+                            if (decision.reason.contains("Workspace context changed") ||
+                                (decision.reason.contains("Window") && decision.reason.contains("closed"))
+                            ) {
+                                McpApprovalDisposition.CONTEXT_STALE
+                            } else if (decision.persistPolicy) {
                                 persistentDenialDisposition(tool.definition.name, revocation)
                             } else {
                                 McpApprovalDisposition.DENIED_BY_OPERATOR
                             }
-                        disposition to "MCP tool rejected by operator: ${decision.reason}"
+
+                        val message =
+                            if (disposition == McpApprovalDisposition.CONTEXT_STALE) {
+                                "MCP tool approval cancelled: ${decision.reason}"
+                            } else {
+                                "MCP tool rejected by operator: ${decision.reason}"
+                            }
+
+                        disposition to message
                     }
 
                     McpApprovalDecision.QueueFull -> {
