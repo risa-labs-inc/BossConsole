@@ -13,6 +13,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -49,9 +50,11 @@ internal class DrainingBrowserExecutor(
                     pendingCount.decrementAndGet()
                 }
             }
-        } catch (error: RuntimeException) {
+        } catch (rejected: RejectedExecutionException) {
+            // The only failure `execute` declares. Catching RuntimeException here would also
+            // swallow a bug in the accounting itself and report it as a rejected submission.
             pendingCount.decrementAndGet()
-            throw error
+            throw rejected
         }
     }
 
