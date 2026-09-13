@@ -425,8 +425,30 @@ class TrackingPluginContext(
     // Diagnostic provider - delegate to underlying context
     override val diagnosticProvider: DiagnosticProvider? get() = delegate.diagnosticProvider
 
-    // MCP tool provider registration - track per plugin so tools are removed
-    // automatically in unregisterAll() when the plugin is disabled/unloaded.
+    // A unique context namespace prevents collisions and late cleanup from an older plugin load.
+    private val observerNamespace =
+        java.util.UUID
+            .randomUUID()
+            .toString()
+
+    private fun scopedObserverId(id: String): String = "$observerNamespace:$id"
+
+    // MCP execution observers belong to this plugin context, including teardown registrations.
+    override fun registerMcpToolExecutionObserver(observer: ai.rever.boss.plugin.api.McpToolExecutionObserver) {
+        val id = scopedObserverId(observer.observerId)
+        val scoped =
+            object : ai.rever.boss.plugin.api.McpToolExecutionObserver by observer {
+                override val observerId = id
+            }
+        delegate.registerMcpToolExecutionObserver(scoped)
+        tracker.recordUiExtensionRegistration(pluginId) { delegate.unregisterMcpToolExecutionObserver(id) }
+    }
+
+    override fun unregisterMcpToolExecutionObserver(observerId: String) {
+        delegate.unregisterMcpToolExecutionObserver(scopedObserverId(observerId))
+    }
+
+    // MCP tool providers are removed automatically on plugin disable/unload.
     override fun registerMcpToolProvider(provider: McpToolProvider) {
         tracker.recordMcpToolProviderRegistration(pluginId, provider.providerId)
         delegate.registerMcpToolProvider(provider)

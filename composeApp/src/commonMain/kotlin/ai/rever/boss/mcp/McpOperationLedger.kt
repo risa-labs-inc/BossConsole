@@ -48,6 +48,7 @@ class McpOperationLedger(
      */
     @Suppress("LongParameterList") // One complete audit record, matching the persisted schema.
     fun record(
+        id: String = UUID.randomUUID().toString(),
         toolName: String,
         providerId: String,
         policyApplied: McpPolicyAction,
@@ -61,7 +62,7 @@ class McpOperationLedger(
         val sanitizedErrorSnippet = errorSnippet?.let { McpArgumentSanitizer.sanitizeMessage(it).take(4096) }
         val record =
             McpOperationRecord(
-                id = UUID.randomUUID().toString(),
+                id = id,
                 timestamp = System.currentTimeMillis(),
                 toolName = toolName,
                 providerId = providerId,

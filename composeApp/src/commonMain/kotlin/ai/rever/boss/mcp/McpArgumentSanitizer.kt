@@ -19,8 +19,8 @@ import kotlinx.serialization.json.JsonPrimitive
  * sk_/pk_ vendor key) - never on length alone.
  */
 object McpArgumentSanitizer {
-    private val sensitiveKeyWords =
-        setOf("token", "password", "secret", "api_key", "apikey", "key", "credential")
+    internal val sensitiveKeyWords =
+        setOf("token", "password", "secret", "key", "credential", "auth")
 
     /** Same credential shapes [LogSanitizer] recognizes: a JWT, a GitHub token, or a vendor sk_/pk_ key. */
     private val credentialShapePattern =
@@ -53,7 +53,7 @@ object McpArgumentSanitizer {
         depth: Int,
     ): Map<String, String> =
         args.mapValues { (key, value) ->
-            if (sensitiveKeyWords.any { key.contains(it, ignoreCase = true) } || key.contains("auth", true)) {
+            if (sensitiveKeyWords.any { key.contains(it, ignoreCase = true) }) {
                 "[REDACTED]"
             } else {
                 sanitizeValue(value, depth).take(4096)
@@ -97,7 +97,7 @@ object McpArgumentSanitizer {
 
     private val sensitiveAssignment =
         Regex(
-            """(?i)(?:password|token|secret|api[_-]?key|authorization|credential)""" +
+            """(?i)"?(?:password|token|secret|api[_-]?key|authorization|credential)"?""" +
                 """\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s&,;}]+)""",
         )
     private val bearer = Regex("""(?i)Bearer\s+[^\s"',;}]+""")

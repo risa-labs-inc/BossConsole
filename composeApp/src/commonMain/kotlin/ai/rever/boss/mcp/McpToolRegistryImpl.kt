@@ -2,8 +2,12 @@ package ai.rever.boss.mcp
 
 import ai.rever.boss.components.bars.horizontal.StatusMessageManager
 import ai.rever.boss.mcp.sandbox.DefaultMcpRiskEvaluator
+import ai.rever.boss.plugin.api.McpExecutionError
+import ai.rever.boss.plugin.api.McpExecutionOutcome
+import ai.rever.boss.plugin.api.McpExecutionRequest
 import ai.rever.boss.plugin.api.McpToolArgs
 import ai.rever.boss.plugin.api.McpToolDefinition
+import ai.rever.boss.plugin.api.McpToolExecutionObserver
 import ai.rever.boss.plugin.api.McpToolProvider
 import ai.rever.boss.plugin.api.McpToolRegistry
 import ai.rever.boss.plugin.api.McpToolResult
@@ -161,6 +165,10 @@ object McpToolRegistryImpl : McpToolRegistry {
         isAdmin: Boolean,
         permissions: Set<String>,
     ) = core.updateAccess(isAdmin, permissions)
+
+    fun registerExecutionObserver(observer: McpToolExecutionObserver) = core.registerExecutionObserver(observer)
+
+    fun unregisterExecutionObserver(observerId: String) = core.unregisterExecutionObserver(observerId)
 
     override suspend fun invoke(
         toolName: String,
@@ -493,6 +501,14 @@ internal class McpToolRegistryCore(
     private val _tools = MutableStateFlow<List<RegisteredMcpTool>>(emptyList())
     val tools: StateFlow<List<RegisteredMcpTool>> = _tools.asStateFlow()
 
+    private val executionObservers = McpObserverSubscriptions<McpToolExecutionObserver>()
+
+    fun registerExecutionObserver(observer: McpToolExecutionObserver) {
+        executionObservers.register(observer.observerId, observer)
+    }
+
+    fun unregisterExecutionObserver(observerId: String) = executionObservers.unregister(observerId)
+
     fun registerProvider(provider: McpToolProvider) {
         // Query the plugin's tools() OUTSIDE the lock — see mutationLock KDoc.
         // A throwing provider registers with an empty tool set (and a warning)
@@ -746,6 +762,10 @@ internal class McpToolRegistryCore(
         val args = parseArgs(arguments)
         val revocation = policyEngine.revocationVersion(toolName)
         val policy = policyEngine.policyFor(toolName)
+        val executionId =
+            java.util.UUID
+                .randomUUID()
+                .toString()
         val startTime = System.nanoTime()
         var disposition = McpApprovalDisposition.AUTO_ALLOWED
         var result: McpToolResult? = null
@@ -767,7 +787,7 @@ internal class McpToolRegistryCore(
 
                     else -> {
                         executionStarted = true
-                        executeAuthorized(tool, args)
+                        executeAuthorized(executionId, tool, args)
                     }
                 }
             return requireNotNull(result)
@@ -782,6 +802,7 @@ internal class McpToolRegistryCore(
         } finally {
             withContext(NonCancellable + Dispatchers.IO) {
                 ledger.record(
+                    id = executionId,
                     toolName = toolName,
                     providerId = tool.providerId,
                     policyApplied = policy,
@@ -937,9 +958,42 @@ internal class McpToolRegistryCore(
         }
 
     private suspend fun executeAuthorized(
+        executionId: String,
         tool: RegisteredMcpTool,
         args: McpToolArgs,
-    ): McpToolResult = capResult(tool.definition.name, executeUncapped(tool, args))
+    ): McpToolResult {
+        val subscriptions = executionObservers.snapshot()
+        if (subscriptions.isEmpty()) return capResult(tool.definition.name, executeUncapped(tool, args))
+        val request = McpExecutionRequest(executionId, tool.definition.name, McpObservationPreview.sanitize(args.raw))
+        dispatchObservation(subscriptions) { it.onExecutionStarted(request) }
+        var terminal: McpExecutionOutcome? = null
+        val result =
+            capResult(
+                tool.definition.name,
+                executeUncapped(tool, args) { outcome ->
+                    terminal = outcome
+                    if (outcome is McpExecutionOutcome.Cancelled) {
+                        dispatchObservation(subscriptions) { it.onExecutionFinished(request, outcome) }
+                    }
+                },
+            )
+        // Keep preview bounds no larger than a configured caller cap, including smaller test caps.
+        val outcome =
+            terminal ?: McpExecutionOutcome.Success(
+                result.copy(text = McpObservationPreview.sanitize(result.text, maxResultChars)),
+            )
+        dispatchObservation(subscriptions) { it.onExecutionFinished(request, outcome) }
+        return result
+    }
+
+    private fun dispatchObservation(
+        subscriptions: List<McpObserverSubscriptions.Subscription<McpToolExecutionObserver>>,
+        action: (McpToolExecutionObserver) -> Unit,
+    ) {
+        subscriptions.forEach { subscription ->
+            subscription.dispatch(action)
+        }
+    }
 
     /**
      * Bound the text a plugin answers with, whatever it asked to say.
@@ -970,14 +1024,21 @@ internal class McpToolRegistryCore(
     }
 
     @Suppress("TooGenericExceptionCaught") // Plugin handlers may throw any implementation-specific exception.
-    private suspend fun executeUncapped(tool: RegisteredMcpTool, args: McpToolArgs): McpToolResult =
+    private suspend fun executeUncapped(
+        tool: RegisteredMcpTool,
+        args: McpToolArgs,
+        onTerminal: (McpExecutionOutcome) -> Unit = {},
+    ): McpToolResult =
         try {
             withTimeout(invokeTimeoutMs) { tool.definition.handler.call(args) }
         } catch (_: TimeoutCancellationException) {
+            onTerminal(McpExecutionOutcome.Timeout(McpExecutionError("Timeout", "[OMITTED: exception details]")))
             McpToolResult("Tool '${tool.definition.name}' timed out after ${invokeTimeoutMs / 1000}s", isError = true)
         } catch (cancelled: CancellationException) {
+            onTerminal(McpExecutionOutcome.Cancelled(McpExecutionError("Cancelled", "[OMITTED: exception details]")))
             throw cancelled
         } catch (failure: Throwable) {
+            onTerminal(McpExecutionOutcome.Failure(McpExecutionError("Failure", "[OMITTED: exception details]")))
             // The tool caller receives a sanitized failure; never log the raw plugin exception.
             val reason = LogSanitizer.sanitizeExceptionMessage(failure.message ?: failure::class.simpleName)
             McpToolResult("Tool '${tool.definition.name}' failed: $reason", isError = true)

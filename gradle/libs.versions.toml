@@ -154,7 +154,10 @@ intellij-platform = "243.21565.199"
 # implementor. Every addition also carries a default body, so no existing implementor
 # gains an abstract member. The host needs the bump only so a plugin calling these
 # resolves them against the api the host loads, rather than finding them absent.
-boss-plugin-api = "1.0.88"
+# Observation methods are proposed in boss-plugin-api#52. v1.0.89 is not published yet;
+# do not merge this host pin until the released artifact is verified to contain that contract.
+# Local sibling jars are not evidence that the released observation contract is available.
+boss-plugin-api = "1.0.89"
 
 [libraries]
 kotlin-test-junit = { module = "org.jetbrains.kotlin:kotlin-test-junit", version.ref = "kotlin" }
