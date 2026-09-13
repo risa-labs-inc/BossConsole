@@ -19,7 +19,7 @@ import kotlin.test.assertTrue
 
 class ExclusivePluginUpdatesTest {
     @Test
-    fun `a second window cannot delete the first updates downloaded jar`(
+    fun `rejected operation cannot delete the owners downloaded jar`(
         @TempDir dir: File,
     ) {
         runBlocking {

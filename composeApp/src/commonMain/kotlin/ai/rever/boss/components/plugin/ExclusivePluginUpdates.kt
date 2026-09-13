@@ -12,17 +12,19 @@ internal class PluginUpdateAlreadyInProgressException(
 /**
  * Rejects overlapping host updates for the same plugin while allowing different
  * plugins to update concurrently. One instance must be shared across host windows.
+ *
+ * Only PluginUpdateBridge.performUpdate participates. Store-version swaps,
+ * dependency installs, and other processes do not share this admission set.
  */
 internal class ExclusivePluginUpdates {
     private val admissionMutex = Mutex()
     private val activePluginIds = mutableSetOf<String>()
 
     /**
-     * Rejects overlapping host updates for the same plugin while allowing different
-     * plugins to update concurrently. One instance must be shared across host windows.
-     *
+     * Returns a failed result for a busy plugin; exceptions from [operation] propagate.
      * Admission is retained until [operation] returns or throws, including its failure
-     * and cancellation cleanup.
+     * and cancellation cleanup. The bridge acquires it before dependent-restart consent,
+     * so it can remain held through the prompt's five-minute timeout before downloading.
      */
     suspend fun <T> run(
         pluginId: String,

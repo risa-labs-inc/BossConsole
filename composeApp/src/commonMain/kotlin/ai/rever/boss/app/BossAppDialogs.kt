@@ -141,7 +141,7 @@ internal fun BossAppDialogs(state: BossAppState) {
 
                             cause is PluginUpdateAlreadyInProgressException -> {
                                 StatusMessageManager.showMessage(
-                                    "${prompt.displayName} is already being updated",
+                                    "${prompt.displayName} update is still in progress",
                                 )
                             }
 
