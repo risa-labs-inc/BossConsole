@@ -127,3 +127,6 @@ supabase/tests/master_key_rotation_test.sql
 supabase/tests/db_access_audit_test.sql
 # Generated copies for pg_prove's tests-only container mount
 supabase/tests/.migration-fixtures/
+
+# Keep local security audit reports out of accidental bulk commits.
+/AUDIT_REPORT*.md
