@@ -19,7 +19,6 @@ import com.teamdev.jxbrowser.navigation.event.LoadStarted
 import com.teamdev.jxbrowser.view.compose.BrowserView
 import com.teamdev.jxbrowser.view.compose.BrowserViewState
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
 import java.awt.Frame
 import java.awt.Window
@@ -114,10 +113,22 @@ actual fun PasskeyBrowserView(
             remember(localWindow) {
                 localWindow ?: Window.getWindows().firstOrNull() ?: Frame()
             }
+        // The composition's scope, not a fresh `MainScope()` that nothing cancels, and the state closed
+        // when it is replaced or dropped - the pairing JxBrowser's own `rememberBrowserViewState` uses.
+        // Closing the browser on disposal does not cover a view re-attached to a different window.
         val browserViewState =
             remember(browser, window) {
-                BrowserViewState(browser!!, MainScope(), window)
+                BrowserViewState(browser!!, coroutineScope, window)
             }
+        DisposableEffect(browserViewState) {
+            onDispose {
+                try {
+                    browserViewState.close()
+                } catch (e: Exception) {
+                    logger.warn(LogCategory.BROWSER, "Error closing browser view", error = e)
+                }
+            }
+        }
 
         BrowserView(
             state = browserViewState,
