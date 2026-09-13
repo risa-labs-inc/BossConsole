@@ -186,6 +186,44 @@ object TerminalAPIAccess {
     val resetGeneration: StateFlow<Int>
         get() = getProvider()?.resetGeneration ?: MutableStateFlow(0)
 
+    // ==================== Call Boss (Voice Calling) ====================
+
+    /**
+     * Start a Call Boss voice session for the given window and terminal.
+     */
+    fun startCallBoss(
+        windowId: String,
+        terminalId: String,
+        config: VoiceCallConfig = VoiceCallConfig(),
+    ): VoiceCallSessionManager {
+        val session = VoiceCallSessionManager.getOrCreate(windowId, terminalId, config)
+        session.startCall()
+        return session
+    }
+
+    /**
+     * End an active Call Boss voice session.
+     */
+    fun endCallBoss(
+        windowId: String,
+        terminalId: String,
+    ) {
+        VoiceCallSessionManager.get(windowId, terminalId)?.endCall()
+    }
+
+    /**
+     * Get the active Call Boss session manager for a window and terminal, if any.
+     */
+    fun getCallBossSession(
+        windowId: String,
+        terminalId: String,
+    ): VoiceCallSessionManager? = VoiceCallSessionManager.get(windowId, terminalId)
+
+    /**
+     * Remove all Call Boss sessions for a closing window.
+     */
+    fun removeAllVoiceCallsForWindow(windowId: String): Int = VoiceCallSessionManager.removeAllForWindow(windowId)
+
     // ==================== Composable Bridges (Settings & Onboarding) ====================
 
     @Composable
