@@ -808,6 +808,24 @@ private fun buildMcpInvokeResponse(
     }
 }
 
+/**
+ * Project the registry's tools onto the channel's discovery response.
+ *
+ * [ai.rever.boss.plugin.api.McpToolDefinition.readOnly] is included alongside the
+ * other two governance fields it sits next to in the definition, `requiresAdmin`
+ * and `requiredPermissions`. It used to be the one field of the three that was
+ * dropped here, so a channel consumer could see who may call a tool but not
+ * whether calling it changes anything - which is the question a client asks when
+ * it decides what to confirm with a person before invoking.
+ *
+ * It is a **hint and not a guarantee**, and callers must treat it as one. The
+ * field defaults to `true` in the api, so a tool whose author never considered
+ * the question reports itself read-only; nothing verifies the claim against what
+ * the handler does. That matches MCP's own `readOnlyHint`, which the
+ * specification defines as untrusted metadata that a client must not rely on for
+ * a security decision. Use it to decide what to *ask* about, never to decide what
+ * is safe to skip asking about.
+ */
 internal fun encodeMcpTools(tools: List<ai.rever.boss.plugin.api.RegisteredMcpTool>): String =
     JsonArray(
         tools.map { registeredTool ->
@@ -818,6 +836,7 @@ internal fun encodeMcpTools(tools: List<ai.rever.boss.plugin.api.RegisteredMcpTo
                 put("pluginId", registeredTool.providerId)
                 put("requiresAdmin", def.requiresAdmin)
                 put("requiredPermissions", JsonArray(def.requiredPermissions.map(::JsonPrimitive)))
+                put("readOnly", def.readOnly)
                 put("inputSchema", parseToolSchema(def.inputSchema))
             }
         },

@@ -221,6 +221,52 @@ class BossMcpCliTest {
         assertTrue(output.contains("Navigate to URL"))
     }
 
+    /**
+     * `describe` reads three states out of one nullable field, and nothing pinned any of them.
+     *
+     * The distinction this PR argues for is that an absent `readOnly` must not be printed as
+     * though the author had chosen the api default. Without these, collapsing the read to
+     * `?: false` prints "Declares that it changes state" for a tool that declared nothing, and
+     * `?: true` prints "Declared read-only" for the same tool; both leave the whole suite green.
+     *
+     * Separate from `McpToolDiscoveryFieldsTest`, which covers the encoder, because the two fail
+     * for different reasons: that one catches the api flipping its default, this one catches the
+     * host inventing a declaration the wire never sent.
+     */
+    private fun describeEffectLine(toolJson: String): String {
+        SingleInstanceManager.mcpListProviderOverride = { "[$toolJson]" }
+        assertTrue(SingleInstanceManager.acquireLock())
+        val outContent = ByteArrayOutputStream()
+        System.setOut(PrintStream(outContent))
+        createBossCLI().parse(listOf("mcp", "describe", "t"))
+        return outContent
+            .toString()
+            .lineSequence()
+            .first { it.startsWith("Effect:") }
+            .trim()
+    }
+
+    @Test
+    fun `describe reports a declared read-only tool as a hint, not a guarantee`() {
+        val line = describeEffectLine("""{"name":"t","description":"d","pluginId":"p","readOnly":true}""")
+        assertEquals("Effect:   Declared read-only (hint, not verified)", line)
+    }
+
+    @Test
+    fun `describe reports a tool that declares side effects`() {
+        val line = describeEffectLine("""{"name":"t","description":"d","pluginId":"p","readOnly":false}""")
+        assertEquals("Effect:   Declares that it changes state", line)
+    }
+
+    @Test
+    fun `describe does not invent a declaration the wire never sent`() {
+        // The case that matters. An older still-running host answers a newer CLI with no
+        // readOnly key at all, because the protocol is deliberately not versioned for an
+        // additive field. Printing either boolean here would be a fabricated claim.
+        val line = describeEffectLine("""{"name":"t","description":"d","pluginId":"p"}""")
+        assertEquals("Effect:   Not declared", line)
+    }
+
     @Test
     fun `mcp describe in json mode outputs single tool json`() {
         val fakeTools = """[
