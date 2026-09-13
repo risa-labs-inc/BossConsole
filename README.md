@@ -155,14 +155,14 @@ BOSS is agent-agnostic. Open a terminal, launch your preferred CLI, and - once a
 An agent with tools is only as safe as the controls around it. BOSS is a **governed** environment for tool-using agents - not a black box.
 
 - **Server-enforced RBAC.** Roles and permissions live in Postgres and are enforced server-side via row-level security (Supabase). Plugins declare the permissions they need; a plugin - and its tools - only appear for users whose role grants them. See the [RBAC Guide](docs/RBAC_GUIDE.md).
-- **A kill-switch for every tool.** Every `mcp__boss__*` tool an agent can call is listed in **Toolbox → MCP**, and you can toggle any of them off. The exposed set is `all tools − your disabled set − permission-denied`, persisted to `~/.boss/mcp-disabled-tools.json` and enforced on the live server. Disable a plugin and its tools vanish from every agent instantly.
+- **A kill-switch for each registry-contributed tool.** Each tool contributed through the host MCP registry is listed in **Toolbox → MCP**, and you can toggle any of them off. The exposed set is `all tools − your disabled set − permission-denied`, persisted to `~/.boss/mcp-disabled-tools.json` and enforced on the live server. Disable a plugin and its tools vanish from every agent instantly.
 - **User-scoped secrets.** The [Secret Manager](#security--secrets) stores encrypted credentials that are row-level-scoped to you. Its **browser auto-fill** injects a username/password straight into a web page's form fields - the value goes to the page, never to the model. (A secret is handed to an agent only if you explicitly call the permission-gated `secret_get` tool, which you can also toggle off - and see the admin-bypass note below, since "permission-gated" means nothing for an admin user.)
 - **Signed plugins.** Plugins installed from the BOSS Plugin Store carry a store signature binding `pluginId | version | sha256`; a **tampered or invalid signature fails closed** at download and load time - a re-signed or swapped JAR won't load.
 - **Fault isolation.** Each plugin runs in a supervised scope with a watchdog and auto-restart, so a crashing or hung plugin can't take down the host.
 
 > **Honest scope:** the `boss` MCP server is loopback-only and single-user (local machine), and plugins run in-process (crash-isolated, not OS-sandboxed). BOSS's guarantees are about **governance** - RBAC, per-tool toggles, secret scoping, and signed plugins - giving you fine-grained say over what an agent can do, rather than OS-level process sandboxing.
 >
-> Two specifics worth knowing before you rely on RBAC: **an admin user bypasses every permission check** (`McpToolRegistryCore.permitted()` returns early on `isAdmin`), so on a single-user desktop the per-tool kill-switch - which admin does *not* bypass - is the control that actually holds; and **permission coverage is per-tool, not blanket**, so some mutating tools declare no permission at all. [**Guardrails for the infrastructure plugins**](#guardrails-for-the-infrastructure-plugins) works this through for Docker and Kubernetes, with the exhaustive list.
+> Two specifics worth knowing before you rely on RBAC: **an admin user bypasses every permission check** (`McpToolRegistryCore.permitted()` returns early on `isAdmin`), so on a single-user desktop the registry per-tool kill-switch - which admin does *not* bypass - still applies to registry-contributed tools; and **permission coverage is per-tool, not blanket**, so some mutating tools declare no permission at all. [**Guardrails for the infrastructure plugins**](#guardrails-for-the-infrastructure-plugins) works this through for Docker and Kubernetes, with the exhaustive list.
 
 ---
 
@@ -179,6 +179,8 @@ BOSS speaks the **Model Context Protocol**. The `terminal-tab` plugin hosts a lo
 | Secrets | `secrets_list`, `secret_search`, `secret_get`, `secret_create` |
 | Automation | `flow_run`, `rpa_run`, `rpa_record_toggle`, `llmrpa_run`, `evolver_evolve` |
 | Productivity | `bookmarks_list`, `bookmark_add`, `downloads_list`, `plugins_list` |
+
+> **Terminal exception:** The Terminal row is exposed by terminal-tab and BossTerm outside the host `McpToolRegistry`, rather than contributed through `McpToolProvider`. These tools still surface through the same loopback MCP server and agent-facing namespace, but the host registry's policy, approval, and operation-ledger paths cannot receive them. The host registry's Toolbox toggles, search inventory, and tool permission filter do not cover these terminal tools either; they have a separate server management path.
 
 Plugin authors add tools by implementing `McpToolProvider` (boss-plugin-api 1.0.51+). Full reference: [**PLUGIN_DEVELOPMENT.md**](https://github.com/risa-labs-inc/boss-plugins/blob/main/PLUGIN_DEVELOPMENT.md) in boss-plugins.
 
