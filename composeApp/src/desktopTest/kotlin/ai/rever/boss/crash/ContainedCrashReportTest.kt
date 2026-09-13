@@ -2,6 +2,7 @@ package ai.rever.boss.crash
 
 import ai.rever.boss.plugin.sandbox.PluginExecutionBoundary
 import java.io.File
+import java.io.IOException
 import java.nio.file.Files
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -89,7 +90,7 @@ class ContainedCrashReportTest {
         CrashHandler.recordContained(uniqueThrowable("write"))
         awaitFiles(1)
 
-        val text = reports().single().readText()
+        val text = readReport(reports().single())
         assertTrue(text.contains("contained render fault"), "the file should say what it is")
         assertTrue(text.contains("plugin:"), "pluginId is the most useful field on this path")
         assertTrue(text.contains("contained-report-test write"), "the original message should survive")
@@ -111,7 +112,7 @@ class ContainedCrashReportTest {
 
             val temp = tempFiles().single()
             assertTrue(
-                temp.readText().contains("contained-report-test atomic-publish"),
+                readReport(temp).contains("contained-report-test atomic-publish"),
                 "the temp file must be complete",
             )
         } finally {
@@ -119,7 +120,7 @@ class ContainedCrashReportTest {
         }
 
         awaitFiles(1)
-        assertTrue(reports().single().readText().contains("contained-report-test atomic-publish"))
+        assertTrue(readReport(reports().single()).contains("contained-report-test atomic-publish"))
         assertTrue(tempFiles().isEmpty(), "the temp file must be removed after publication")
     }
 
@@ -200,7 +201,7 @@ class ContainedCrashReportTest {
 
         assertEquals(
             PROBE_PLUGIN,
-            attributionOf(reports().single().readText()),
+            attributionOf(readReport(reports().single())),
             "the plugin scope held at the fault must survive the hop to the writer thread",
         )
     }
@@ -223,7 +224,7 @@ class ContainedCrashReportTest {
 
         val attributions =
             reports()
-                .map { it.readText() }
+                .map { readReport(it) }
                 .associate { text -> markerOf(text) to attributionOf(text) }
 
         assertEquals(
@@ -243,7 +244,7 @@ class ContainedCrashReportTest {
         CrashHandler.recordContained(uniqueThrowable("host-fault"))
         awaitFiles(1)
 
-        val text = reports().single().readText()
+        val text = readReport(reports().single())
         assertEquals("(unattributed)", attributionOf(text), "a host fault must not be blamed on a plugin")
     }
 
@@ -262,6 +263,23 @@ class ContainedCrashReportTest {
             .first { it.startsWith("message:") }
             .substringAfter("contained-report-test ")
             .trim()
+
+    /**
+     * Publication does not guarantee immediate read access on Windows: a transient
+     * sharing violation can reject opening an already-visible report. Retry only
+     * I/O failures, not empty/incorrect content, and preserve a persistent failure.
+     */
+    private fun readReport(file: File): String {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        while (true) {
+            try {
+                return file.readText()
+            } catch (e: IOException) {
+                if (System.nanoTime() >= deadline) throw e
+                Thread.sleep(20)
+            }
+        }
+    }
 
     /** The write is handed to a background thread, so poll rather than sleep a fixed span. */
     private fun awaitFiles(count: Int) {
@@ -289,12 +307,11 @@ class ContainedCrashReportTest {
             // readText via runCatching: the writer thread sweeps old reports while
             // we are listing, so a file can vanish between listFiles and the read.
             val written = reports().filter { runCatching { it.readText() }.getOrDefault("").contains(text) }
-            if (written.isNotEmpty()) {
-                written.forEach { it.delete() }
-                return
-            }
+            // Windows can temporarily deny deletion too. The marker must be gone
+            // before callers assert the number of reports; otherwise keep polling.
+            if (written.isNotEmpty() && written.all { it.delete() || !it.exists() }) return
             Thread.sleep(20)
         }
-        throw AssertionError("the contained-report writer never drained")
+        throw AssertionError("the contained-report writer never drained or its marker could not be deleted")
     }
 }

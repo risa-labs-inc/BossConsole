@@ -1,21 +1,23 @@
 package ai.rever.boss.components.events
 
 import ai.rever.boss.keymap.KeymapSettingsManager
-import ai.rever.boss.keymap.handler.KeymapMatcher
+import ai.rever.boss.keymap.handler.KeymapHandler
 import ai.rever.boss.keymap.model.ShortcutContext
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalWindowInfo
 import kotlinx.coroutines.launch
 
 /**
@@ -44,6 +46,10 @@ internal val MODIFIER_ONLY_KEYS =
  * Use this to wrap components that consume all keyboard input (like terminals, browsers)
  * to ensure global/workspace shortcuts still work.
  *
+ * Recognizes shortcut chords on KeyDown and emits a KeyUp event to KeyboardEventBus.
+ * Modifier-first release cancels, matching the AWT dispatcher. Place this modifier before
+ * the wrapped component's focus target so its focus observer can clear pending state.
+ *
  * @param windowId The current window ID for event routing
  * @param source The event source identifier (e.g., COMPONENT_TERMINAL, COMPONENT_BROWSER)
  * @param context The shortcut context for matching (e.g., TERMINAL, BROWSER)
@@ -56,36 +62,35 @@ fun Modifier.interceptKeyboardShortcuts(
     context: ShortcutContext,
 ): Modifier {
     val settings by KeymapSettingsManager.currentSettings.collectAsState()
-    val matcher = remember(settings) { KeymapMatcher(settings) }
+    val handler = remember(settings, windowId, context) { KeymapHandler(settings) }
     val coroutineScope = rememberCoroutineScope()
-
-    return this.onPreviewKeyEvent { keyEvent ->
-        // Only handle key down events
-        if (keyEvent.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-
-        // Skip modifier-only keys
-        if (keyEvent.key in MODIFIER_ONLY_KEYS) return@onPreviewKeyEvent false
-
-        // Check if this key combo matches any shortcut
-        val binding = matcher.match(keyEvent, context)
-
-        if (binding != null) {
-            // Emit to KeyboardEventBus for action execution
-            coroutineScope.launch {
-                KeyboardEventBus.emit(
-                    KeyboardEvent(
-                        keyEvent = keyEvent,
-                        source = source,
-                        context = context,
-                        sourceWindowId = windowId,
-                    ),
-                )
-            }
-            true // Consume the event - don't let wrapped component handle it
-        } else {
-            false // Let wrapped component handle regular input
+    val windowInfo = LocalWindowInfo.current
+    LaunchedEffect(handler, windowInfo) {
+        snapshotFlow { windowInfo.isWindowFocused }.collect { focused ->
+            if (!focused) handler.clearPendingShortcut()
         }
     }
+    DisposableEffect(handler) {
+        onDispose { handler.clearPendingShortcut() }
+    }
+
+    return this
+        .onFocusChanged { if (!it.hasFocus) handler.clearPendingShortcut() }
+        .onPreviewKeyEvent { keyEvent ->
+            handler.handleKeyEvent(keyEvent, context) {
+                coroutineScope.launch {
+                    KeyboardEventBus.emit(
+                        KeyboardEvent(
+                            keyEvent = keyEvent,
+                            source = source,
+                            context = context,
+                            sourceWindowId = windowId,
+                        ),
+                    )
+                }
+                true
+            }
+        }
 }
 
 /**

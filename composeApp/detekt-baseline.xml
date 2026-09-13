@@ -80,9 +80,8 @@
     <ID>ConstructorParameterNaming:UpdateService.kt$GitHubRelease$val tag_name: String</ID>
     <ID>ConstructorParameterNaming:UserService.kt$UserBasicInfo$val created_at: String? = null</ID>
     <ID>ConstructorParameterNaming:UserService.kt$UserBasicInfo$val updated_at: String? = null</ID>
-    <ID>CyclomaticComplexMethod:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$fun install()</ID>
     <ID>CyclomaticComplexMethod:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$private fun chordMatchesEvent( modifiers: Collection&lt;String&gt;, event: KeyEvent, ): Boolean</ID>
-    <ID>CyclomaticComplexMethod:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$internal fun dispatchAction( actionId: String, windowId: String, ): Boolean</ID>
+    <ID>CyclomaticComplexMethod:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$internal fun dispatchAction( actionId: String, windowId: String, perform: Boolean = true, ): Boolean</ID>
     <ID>CyclomaticComplexMethod:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$internal fun getKeyName(keyCode: Int): String</ID>
     <ID>CyclomaticComplexMethod:AuthScreenContainer.kt$@Composable fun AuthScreenContainer(onLoginSuccess: () -&gt; Unit)</ID>
     <ID>CyclomaticComplexMethod:BossActionButton.kt$@Composable fun BossActionButton( imageVector: ImageVector? = null, leftLogo: (@Composable () -&gt; Unit)? = null, leftIcon: ImageVector? = null, text: String, fontSize: TextUnit = 13.sp, color: Color = BossTheme.colors.textPrimary, iconColor: Color? = null, // Optional separate icon color (defaults to color if null) iconSize: Dp = 20.dp, // Icon size for imageVector mode maxTextWidth: Dp? = null, // Optional max width for text (truncates with ellipsis) modifier: Modifier = Modifier, contentPadding: PaddingValues = PaddingValues(2.dp), isSelected: Boolean = false, contextMenuItems: List&lt;ContextMenuItem&gt;? = null, contextDirection: Panel = bottom, hintText: String? = null, showHintWithDelay: Boolean = true, hintDirection: Panel = bottom, /** * Sized for a narrow column rather than the top bar. * * The vertical tab bar is 200dp wide and its own rows are 24dp of 10sp text; a control built * for a 40dp horizontal bar sits in it like furniture in the wrong room. Opt-in, so the top * bar - where every one of these numbers was chosen - is untouched. */ compact: Boolean = false, onClick: () -&gt; Unit = {}, )</ID>
@@ -233,8 +232,7 @@
     <ID>LargeClass:PluginStoreSetup.kt$PluginStoreSetup</ID>
     <ID>LargeClass:SplitView.kt$SplitViewState</ID>
     <ID>LargeClass:UpdateScriptGenerator.kt$UpdateScriptGenerator</ID>
-    <ID>LongMethod:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$fun install()</ID>
-    <ID>LongMethod:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$internal fun dispatchAction( actionId: String, windowId: String, ): Boolean</ID>
+    <ID>LongMethod:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$internal fun dispatchAction( actionId: String, windowId: String, perform: Boolean = true, ): Boolean</ID>
     <ID>LongMethod:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$internal fun getKeyName(keyCode: Int): String</ID>
     <ID>LongMethod:ActionCard.kt$@Composable fun ActionCard( icon: ImageVector, title: String, shortcut: String? = null, onClick: () -&gt; Unit, modifier: Modifier = Modifier, )</ID>
     <ID>LongMethod:AdvancedSettings.kt$@Composable fun AdvancedSettings()</ID>
@@ -510,7 +508,6 @@
     <ID>MatchingDeclarationName:SettingsSidebar.kt$SettingsSection</ID>
     <ID>MatchingDeclarationName:SidebarIconLimits.kt$SidebarIconRail</ID>
     <ID>MatchingDeclarationName:SupabaseModels.kt$User</ID>
-    <ID>MaxLineLength:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$if</ID>
     <ID>MaxLineLength:AdvancedSettings.kt$"Max plugin allocation: ${"%.1f".format(totalPluginMb / 1024f)} GB (16 plugins × ${pluginHeap.toInt()} MB)"</ID>
     <ID>MaxLineLength:AdvancedSettings.kt$var pluginInitHeap by remember(perfSettings) { mutableStateOf(perfSettings.pluginJvmInitialHeapMb.toFloat()) }</ID>
     <ID>MaxLineLength:AuthScreenContainer.kt$logger.debug(LogCategory.PASSKEY, "Passkey state changed to ShowEmbeddedBrowser, navigating to browser screen")</ID>
@@ -1069,6 +1066,8 @@
     <ID>RethrowCaughtException:FluckEngine.kt$FluckEngine$throw e2</ID>
     <ID>ReturnCount:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$private fun detectContextFromAwtComponent(component: java.awt.Component?): ShortcutContext</ID>
     <ID>ReturnCount:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$private fun findMatchingPluginDefault(event: KeyEvent): String?</ID>
+    <ID>ReturnCount:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$internal fun handleKeyPressed( event: KeyEvent, windowId: String, ): Boolean</ID>
+    <ID>ReturnCount:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$internal fun handleKeyReleased(event: KeyEvent): Boolean</ID>
     <ID>ReturnCount:ApplicationRestarter.kt$ApplicationRestarter$private fun buildRelaunchCommand(): List&lt;String&gt;</ID>
     <ID>ReturnCount:ApplicationRestarter.kt$ApplicationRestarter$private fun detectMacAppBundle(launcher: String?): String?</ID>
     <ID>ReturnCount:BossDraggableComponent.kt$BossDraggableComponent$fun getItemsForSlot( slot: Panel, hidden: Set&lt;String&gt;, ): List&lt;SidebarItem&gt;</ID>

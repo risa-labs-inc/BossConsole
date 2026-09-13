@@ -69,10 +69,7 @@ select set_eq(
               -- everyone gets their own vault and Settings > AI Providers. Inherited,
               -- not direct: this role still cannot share a secret with a role, which is
               -- what the secret.share.role assertion below pins.
-              ('secret.read'),
-              -- Managed AI is also a baseline user permission (20260912000000).
-              -- Model access still requires a published model and an allowance.
-              ('ai.use') $$,
+              ('secret.read') $$,
     'boss_plugin_admin EFFECTIVE = direct + the inherited user.* baseline'
 );
 

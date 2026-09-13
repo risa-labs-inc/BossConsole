@@ -10,6 +10,7 @@ import ai.rever.boss.components.plugin.PluginDependencyResolution
 import ai.rever.boss.plugin.api.PluginManifest
 import ai.rever.boss.plugin.loader.ApiClassLoader
 import ai.rever.boss.plugin.sandbox.ui.PluginCrashRegistry
+import ai.rever.boss.utils.WindowFocusManager
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import java.io.File
@@ -70,6 +71,12 @@ class MissingDependencyReporter(
             val installed = installedPluginIds()
             logUnofferable(manifest, installed)
 
+            // Best-effort: the window that is actionable right now, at the moment the install
+            // this dependency was found on finishes. Same imprecision every other consumer of
+            // resolveActionableWindowId already accepts (deep links, CLI commands) - not a new
+            // standard, just applied here too so the prompt has a window to prefer.
+            val windowId = WindowFocusManager.resolveActionableWindowId()
+
             PluginDependencyResolution
                 .missingFor(manifest, installed)
                 .forEach { missing ->
@@ -82,7 +89,7 @@ class MissingDependencyReporter(
                             "optional" to missing.optional,
                         ),
                     )
-                    bus.report(MissingDependencyPrompt(missing, installer))
+                    bus.report(MissingDependencyPrompt(missing, installer, windowId = windowId))
                 }
         }.onFailure { error ->
             logger.warn(
@@ -142,12 +149,18 @@ class MissingDependencyReporter(
          * re-solve. One construction site also keeps both callers on one definition of
          * "installed", which AGENTS.md records as having broken the dependency prompt once
          * already when two halves disagreed.
+         *
+         * Keep the reporting manager while it is live. After its window closes, resolve another
+         * live manager at use time. With none left, loading fails explicitly instead of reviving
+         * the disposed manager. Presence and load both use this policy.
          */
         fun installerFor(manager: DynamicPluginManager): MissingDependencyInstaller {
+            fun activeManager(): DynamicPluginManager? = DynamicPluginManager.activeManagerOrFallback(manager)
+
             val installedNow: (String) -> Boolean = { pluginId ->
                 pluginId in
                     PluginDependencyResolution.installedAndOnDisk(
-                        states = manager.pluginStates.value,
+                        states = activeManager()?.pluginStates?.value.orEmpty(),
                         exists = { File(it).isFile },
                         isIncompatible = { PluginCrashRegistry.isIncompatible(it) },
                     )
@@ -158,7 +171,12 @@ class MissingDependencyReporter(
                 hooks =
                     InstallerHooks(
                         installedNow = installedNow,
-                        load = { jarPath -> manager.installPlugin(jarPath) },
+                        load = { jarPath ->
+                            activeManager()?.installPlugin(jarPath)
+                                ?: Result.failure<Unit>(
+                                    IllegalStateException("No active window is available to install the plugin."),
+                                )
+                        },
                     ),
             )
         }

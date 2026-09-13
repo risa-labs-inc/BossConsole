@@ -32,6 +32,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
+import kotlinx.coroutines.CancellationException
 
 /**
  * Offers to install or enable the plugin that would have rendered something BOSS
@@ -67,8 +68,12 @@ fun MissingHandlerPluginDialog(
     val resolvedName by
         produceState(initialValue = missing.pluginId, missing.pluginId) {
             runCatching { prompt.displayName() }
-                .getOrNull()
-                ?.takeIf { it.isNotBlank() }
+                .getOrElse { error ->
+                    // Same contract as MissingDependencyDialog: a dismissed dialog is not a
+                    // lookup failure, and the two dialogs should not disagree about that.
+                    if (error is CancellationException) throw error
+                    null
+                }?.takeIf { it.isNotBlank() }
                 ?.let { value = it }
         }
 

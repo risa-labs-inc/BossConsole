@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Fault explaining why the MCP policy state is degraded or cannot be persisted.
@@ -46,12 +47,14 @@ sealed interface McpPolicyFault {
  * In-memory session trust ([trustForSession]) allows an operator to approve a tool
  * for the duration of the current application run without writing a permanent rule.
  */
+@Suppress("TooManyFunctions") // Policy resolution, approval guards and durable updates share one state and lock.
 class McpPolicyEngine(
     private val policyFile: File? = null,
     private val onFault: (McpPolicyFault) -> Unit = {},
 ) {
     private val logger = BossLogger.forComponent("McpPolicyEngine")
     private val lock = Any()
+    private val revocations = ConcurrentHashMap<String, Long>()
     private val json =
         Json {
             ignoreUnknownKeys = true
@@ -66,6 +69,24 @@ class McpPolicyEngine(
 
     private val _sessionTrustedTools = MutableStateFlow<Set<String>>(emptySet())
     val sessionTrustedTools: StateFlow<Set<String>> = _sessionTrustedTools.asStateFlow()
+
+    /** Capture before reading policy; a reset invalidates every older authorization. */
+    internal fun revocationVersion(toolName: String): Long = revocations[toolName] ?: 0L
+
+    /** Final authorization boundary. Session grants and operator resets use the same lock. */
+    internal fun confirmInvocation(
+        toolName: String,
+        expectedRevocation: Long,
+        grantSessionTrust: Boolean,
+    ): Boolean =
+        synchronized(lock) {
+            if (revocationVersion(toolName) != expectedRevocation || policyFor(toolName) == McpPolicyAction.DENY) {
+                false
+            } else {
+                if (grantSessionTrust) trustForSession(toolName)
+                true
+            }
+        }
 
     /**
      * Resolve the effective policy action for [toolName].
@@ -125,35 +146,102 @@ class McpPolicyEngine(
     }
 
     /**
-     * Set a persistent policy rule for [toolName].
+     * Replaces the rule map and persists it, publishing the result the same way for every
+     * caller - [setToolPolicy]'s add/replace and [revokePersistedPolicy]'s remove both go
+     * through this, so a future change to how a persist failure is reported (or logged, or
+     * faulted) cannot update one path and silently miss the other.
+     */
+    private fun applyRules(
+        toolName: String,
+        updatedRules: Map<String, McpPolicyAction>,
+        successMessage: String,
+        failureMessage: String,
+    ): Boolean {
+        val updated = _config.value.copy(rules = updatedRules)
+        val error = persistConfig(updated)
+        return if (error != null) {
+            val faultObj = McpPolicyFault.PolicyPersistFailed(toolName, error)
+            if (_fault.value !is McpPolicyFault.PersistedPolicyUnreadable) _fault.value = faultObj
+            notifyFault(faultObj)
+            logger.warn(LogCategory.SYSTEM, failureMessage, mapOf("tool" to toolName, "error" to error))
+            false
+        } else {
+            _config.value = updated
+            _fault.value = null
+            logger.info(LogCategory.SYSTEM, successMessage, mapOf("tool" to toolName))
+            true
+        }
+    }
+
+    /**
+     * Set a persistent policy rule for [toolName], returning whether it was saved.
+     * [preserveDeny] keeps a queued approval from replacing a newer denial.
      */
     fun setToolPolicy(
         toolName: String,
         action: McpPolicyAction,
-    ) {
+        preserveDeny: Boolean = false,
+        expectedRevocation: Long? = null,
+    ): Boolean =
         synchronized(lock) {
-            val updated = _config.value.copy(rules = _config.value.rules + (toolName to action))
-            val error = persistConfig(updated)
-            if (error != null) {
-                val faultObj = McpPolicyFault.PolicyPersistFailed(toolName, error)
-                if (_fault.value !is McpPolicyFault.PersistedPolicyUnreadable) _fault.value = faultObj
-                notifyFault(faultObj)
-                logger.warn(
-                    LogCategory.SYSTEM,
-                    "Failed to persist MCP policy update",
-                    mapOf("tool" to toolName, "error" to error),
-                )
-            } else {
-                _config.value = updated
-                _fault.value = null
-                logger.info(
-                    LogCategory.SYSTEM,
-                    "Updated tool policy",
-                    mapOf("tool" to toolName, "action" to action.name),
-                )
+            if (expectedRevocation != null && revocationVersion(toolName) != expectedRevocation) {
+                return@synchronized false
             }
+            if (preserveDeny && policyFor(toolName) == McpPolicyAction.DENY) return@synchronized false
+            applyRules(
+                toolName,
+                _config.value.rules + (toolName to action),
+                successMessage = "Updated tool policy: ${action.name}",
+                failureMessage = "Failed to persist MCP policy update",
+            )
         }
-    }
+
+    /**
+     * The operator-facing undo for [setToolPolicy]'s persistent scope: removes [toolName]'s rule
+     * entirely, so the next call falls through to whatever [McpToolPolicyConfig.defaultMutatingAction]
+     * / `defaultReadOnlyAction` actually say - not to a hardcoded ASK.
+     *
+     * **Removes the key rather than rewriting it to ASK.** An earlier version did the latter by
+     * calling `setToolPolicy(toolName, ASK)`, which - because [setToolPolicy] always writes
+     * `rules + (toolName to action)` - left the key in the map forever, just holding ASK instead
+     * of its old value. Three consequences that all trace back to that one line: the bottom bar's
+     * "Persisted MCP policies (n)" count never dropped after a revoke, because the row was still
+     * there; the policy manager dialog kept listing the "revoked" tool with a Reset button that
+     * rewrote the same value and reported success; and on a config with `defaultMutatingAction =
+     * DENY`, the explicit ASK a revoke left behind was *weaker* than the operator's own configured
+     * default - the opposite of what "reset to default" should mean. `rules - toolName` fixes all
+     * three: [policyFor] sees no configured rule and falls through to the real default, and the
+     * row genuinely disappears everywhere that reads [config] directly.
+     *
+     * Clears session trust for the same tool too, not only the persisted rule. [policyFor]
+     * checks session trust *before* a non-DENY configured rule, so a tool that happens to hold
+     * both (session-trusted, then separately given a persistent rule) would otherwise keep
+     * answering ALLOW from the session-trust check alone even after its persisted rule was
+     * reset - "revoke" has to mean the call asks again, not "asks again unless it also had the
+     * other kind of standing grant."
+     *
+     * Returns whether the persisted half succeeded, via the same disk-write path
+     * [setToolPolicy] uses - a caller surfaces `false` as a real failure, not a silent no-op,
+     * since a revoke that did not actually take effect on disk is worse than useless: the UI
+     * would show the tool as reset while the file, and the next restart, still say otherwise.
+     */
+    fun revokePersistedPolicy(toolName: String): Boolean =
+        synchronized(lock) {
+            // Even a failed reset invalidates queued answers. The previous durable rule remains
+            // visible on failure, but an older answer cannot restore trust behind this reset.
+            revokeSessionTrust(toolName)
+            val saved =
+                applyRules(
+                    toolName,
+                    _config.value.rules - toolName,
+                    successMessage = "Revoked persisted tool policy",
+                    failureMessage = "Failed to persist MCP policy revocation",
+                )
+            // Publish last: a caller observing this version must also see the reset policy.
+            // Calls that captured the previous version cannot pass the locked approval guard.
+            revocations[toolName] = revocationVersion(toolName) + 1
+            saved
+        }
 
     // An absent file uses defaults; I/O and JSON failures withhold tools.
     @Suppress("ReturnCount", "TooGenericExceptionCaught")

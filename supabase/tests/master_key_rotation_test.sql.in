@@ -1,0 +1,121 @@
+-- The broker schemas are operated outside this repository. Model their exact
+-- encrypted-column contract locally; no production keys or rows are used.
+begin;
+select plan(16);
+set local datestyle = 'ISO, YMD';
+create table public.qbo_token_state (
+    id integer primary key, client_id_enc text, client_secret_enc text,
+    refresh_token_enc text, access_token_enc text);
+create table public.google_token_state (
+    id integer primary key, private_key_enc text, access_token_enc text);
+-- Provision the fixture key without assuming the database has none: a seed, a
+-- migration or a previous run may already hold the name, and vault.secrets.name
+-- is unique. Unconditional create_secret() made the whole suite fail in exactly
+-- that case.
+do $fixture$
+declare existing uuid;
+begin
+  select id into existing from vault.secrets where name = 'master_encryption_key';
+  if existing is null then
+    perform vault.create_secret(encode(extensions.gen_random_bytes(32), 'hex'), 'master_encryption_key', 'transaction-local rotation fixture');
+  else
+    perform vault.update_secret(existing, encode(extensions.gen_random_bytes(32), 'hex'), 'master_encryption_key', 'transaction-local rotation fixture');
+  end if;
+end $fixture$;
+insert into auth.users(id, email, email_confirmed_at) values
+    ('42399999-0000-0000-0000-000000000001', 'rotation@pgtap.test', now());
+select set_config('request.jwt.claims',
+    '{"sub":"42399999-0000-0000-0000-000000000001","role":"authenticated"}', true);
+-- All three storage shapes, because they rotate differently: a plain base64
+-- column, a column read back through a safe_decrypt_* wrapper, and #417's
+-- versioned 'v1:' envelope. twofa_secret is written as PLAINTEXT on purpose -
+-- the encrypt_twofa_secret_trigger applies the envelope, which is the only way
+-- to produce the real stored form.
+-- p_twofa_enabled is what creates the secret_metadata row at all; without it
+-- create_secret writes no metadata and both the recovery-code and TOTP
+-- assertions below would pass over an empty set.
+select public.create_secret('rotation.example', 'fixture', 'core-fixture',
+    p_twofa_enabled => true, p_twofa_type => 'app',
+    p_recovery_codes => array['recovery-one', 'recovery-two']);
+update public.secret_metadata sm set twofa_secret = 'JBSWY3DPEHPK3PXP'
+  from public.secrets sec where sec.id = sm.secret_id and sec.website = 'rotation.example';
+insert into public.qbo_token_state values (1, public.encrypt_text('client'),
+    public.encrypt_text('secret'), public.encrypt_text('refresh'), public.encrypt_text('access'));
+insert into public.google_token_state values (1, public.encrypt_text('pem'), public.encrypt_text('token'));
+create view public.pgtap_broker_view as select client_id_enc from public.qbo_token_state;
+create temp table rotation_initial_key as
+select public.get_encryption_key() as value, clock_timestamp() as started_at,
+       (select count(*) from vault.secrets where name like 'master\_encryption\_key\_retired\_%') as retired_before;
+\ir ../ops/rotate_master_encryption_key.sql
+select isnt(public.get_encryption_key(), (select value from rotation_initial_key),
+    'rotation replaces the master key');
+select is((select public.decrypt_text(client_secret_enc) from public.qbo_token_state where id=1),
+    'secret', 'QBO value survives rotation');
+select is((select public.decrypt_text(private_key_enc) from public.google_token_state where id=1),
+    'pem', 'Google key survives rotation');
+select is((select password from public.get_user_secrets(50,0) where website='rotation.example'),
+    'core-fixture', 'core secret survives rotation from documented hex key');
+select ok(to_regclass('pg_temp.rot_fp') is null, 'rotation removes temporary fingerprints itself');
+select is(public.safe_decrypt_twofa_secret((select sm.twofa_secret from public.secret_metadata sm
+      join public.secrets sec on sec.id = sm.secret_id where sec.website = 'rotation.example')),
+    'JBSWY3DPEHPK3PXP', 'TOTP secret survives rotation through its own read path');
+select ok((select sm.twofa_secret from public.secret_metadata sm
+      join public.secrets sec on sec.id = sm.secret_id where sec.website = 'rotation.example') like 'v1:%',
+    'rotation preserves the v1 storage envelope rather than flattening it');
+select is((select public.safe_decrypt_recovery_codes(sm.recovery_codes_encrypted)::jsonb
+      from public.secret_metadata sm join public.secrets sec on sec.id = sm.secret_id
+      where sec.website = 'rotation.example'),
+    '["recovery-one","recovery-two"]'::jsonb, 'recovery codes survive rotation through their own read path');
+select ok((select substring(description from '^Master key for encrypting user secrets[.] Rotated (.+)[.]$')::timestamptz
+    between (select started_at from rotation_initial_key) and clock_timestamp()
+    from vault.secrets where name = 'master_encryption_key'), 'live key description records actual rotation time');
+-- Repeat inside this same transaction, with no test-side cleanup.
+\ir ../ops/rotate_master_encryption_key.sql
+select is((select count(*) from vault.secrets where name like 'master\_encryption\_key\_retired\_%')
+    - (select retired_before from rotation_initial_key),
+    2::bigint, 'both outgoing keys are retained across repeated rotations');
+select is((select public.decrypt_text(refresh_token_enc) from public.qbo_token_state where id=1),
+    'refresh', 'value survives the second rotation');
+select is(public.safe_decrypt_twofa_secret((select sm.twofa_secret from public.secret_metadata sm
+      join public.secrets sec on sec.id = sm.secret_id where sec.website = 'rotation.example')),
+    'JBSWY3DPEHPK3PXP', 'the envelope column survives a repeated rotation');
+-- A core-only deployment must rotate too, without inventing broker tables.
+drop view public.pgtap_broker_view;
+drop table public.qbo_token_state, public.google_token_state;
+\ir ../ops/rotate_master_encryption_key.sql
+select is((select count(*) from vault.secrets where name like 'master\_encryption\_key\_retired\_%')
+    - (select retired_before from rotation_initial_key),
+    3::bigint, 'core-only deployment rotates without optional brokers');
+select is((select password from public.get_user_secrets(50,0) where website='rotation.example'),
+    'core-fixture', 'core secret survives without optional brokers');
+
+-- v1 is now supported, but "an unrecognised format stops the rotation" is still
+-- the contract. Both negative cases raise before anything is mutated, so they
+-- leave the retained-key counts asserted above untouched.
+alter table public.secret_metadata disable trigger encrypt_twofa_secret_trigger;
+update public.secret_metadata sm set twofa_secret = 'v2:' || substr(sm.twofa_secret, 4)
+  from public.secrets sec where sec.id = sm.secret_id and sec.website = 'rotation.example';
+select throws_ok($rot$
+\ir ../ops/rotate_master_encryption_key.sql
+$rot$, 'P0001',
+    'secret_metadata.twofa_secret holds an unrecognised storage envelope; extend rotation coverage before running',
+    'an unknown envelope version refuses to rotate');
+update public.secret_metadata sm set twofa_secret = 'v1:' || substr(sm.twofa_secret, 4)
+  from public.secrets sec where sec.id = sm.secret_id and sec.website = 'rotation.example';
+alter table public.secret_metadata enable trigger encrypt_twofa_secret_trigger;
+
+-- A safe_decrypt_* wrapper is this codebase's signal for "bespoke storage
+-- format". A new one with no adapter must stop the rotation, which is how #417
+-- itself would have been caught: twofa_secret matches neither _enc nor
+-- _encrypted, so the column-name sweep alone would have missed it.
+create function public.safe_decrypt_pgtap_unmapped(t text) returns text
+    language sql as $unmapped$ select t $unmapped$;
+select throws_ok($rot$
+\ir ../ops/rotate_master_encryption_key.sql
+$rot$, 'P0001',
+    'No rotation adapter for public.safe_decrypt_pgtap_unmapped; extend rotation coverage before running',
+    'a new safe_decrypt_* wrapper with no adapter refuses to rotate');
+drop function public.safe_decrypt_pgtap_unmapped(text);
+
+select * from finish();
+rollback;

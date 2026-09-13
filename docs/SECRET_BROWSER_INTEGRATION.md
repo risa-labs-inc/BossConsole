@@ -57,9 +57,9 @@ suspend fun getCurrentFocusedField(browser: Browser): FormFieldInfo?
 **Location**: `composeApp/src/commonMain/kotlin/ai/rever/boss/utils/WebsiteMatchingUtil.kt`
 
 Handles domain extraction and secret matching:
-- **Domain normalization** (removes www, common subdomains)
+- **Hostname normalization** (removes a leading www, preserves other subdomains)
 - **Exact and dot-boundary matching** with confidence scores
-- **Limited suffix handling** using six hardcoded two-part suffixes, not a public-suffix list
+- **No suffix guessing**: full hostnames remain distinct, including under multipart and private suffixes
 
 **Scoring System**:
 ```
@@ -68,9 +68,19 @@ Subdomain match (login.google.com):          0.9
 Blank or unrelated domains:                  0.0
 ```
 
-The scorer rejects substring and shared-token matches. The extractor can still collapse
-unrelated domains under unlisted public or private suffixes; these scores do not establish
-a complete registrable-domain or hosted-tenant isolation policy.
+The scorer rejects substring and shared-token matches. The extractor preserves full hostnames,
+so `google.com.mx` and `apple.com.mx`, or `victim.github.io` and `attacker.github.io`, remain
+distinct. A secret saved for `accounts.google.com` is not suggested on `login.google.com`.
+Save it explicitly for `google.com` to share it with those subdomains. The scorer still allows
+parent/subdomain matches in either direction and does not validate public suffixes; saving a
+secret against a broad suffix would deliberately broaden its matches. This is not a complete
+public-suffix policy. Existing entries saved for a specific sibling host stop matching other
+siblings; entries explicitly saved for the parent continue matching its subdomains.
+
+Display names retain hosts with more than two labels in full, so `accounts.google.com` and
+`google.com.evil.com` cannot be reduced to an ambiguous or impersonated brand label. Exact
+known hosts such as `google.com` retain their brand spelling; simple generic domains such as
+`example-site.com` retain the existing `Example Site` formatting.
 
 This section describes the host utility. Current Fluck plugin matching is implemented in
 the separate `boss-plugin-fluck-browser` repository; the host ViewModel construction below

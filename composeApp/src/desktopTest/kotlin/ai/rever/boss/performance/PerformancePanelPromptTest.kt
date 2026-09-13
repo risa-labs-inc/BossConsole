@@ -184,12 +184,13 @@ class PerformancePanelPromptTest {
             val bus = PluginDependencyBus()
             bus.report(prompt())
             bus.report(prompt())
-            val first = bus.missingDependencies.first()
+            val first = bus.missingDependencies.first { bus.claim(it) }
             assertEquals(PERFORMANCE_PLUGIN_ID, first.missing.missingPluginId)
-            // The queued slot is released as the first is delivered, so a later click can ask
-            // again; what must not happen is two arriving from two clicks made back to back.
+            // The duplicate report was a no-op (same key, already pending), so once the one
+            // prompt it left behind is claimed there is nothing left for a second collector -
+            // what must not happen is two arriving from two clicks made back to back.
             assertNull(
-                withTimeoutOrNull(200) { bus.missingDependencies.first() },
+                withTimeoutOrNull(200) { bus.missingDependencies.first { bus.claim(it) } },
             )
         }
 

@@ -40,6 +40,7 @@ class InProcessPluginSandbox(
     /** Readable by the manager, which enforces this plugin's restart budget. */
     internal val config: SandboxConfig = SandboxConfig(),
 ) : PluginSandbox {
+    private val disabled = AtomicBoolean(false)
     private val logger = BossLogger.forComponent("InProcessPluginSandbox")
 
     // State management
@@ -383,52 +384,58 @@ class InProcessPluginSandbox(
      * `rememberCoroutineScope`, so closing the tab or switching side panels
      * during the up-to-two-second `awaitTermination` cancelled exactly here.
      */
-    override suspend fun restart(): Result<Unit> {
-        logger.info(
-            LogCategory.SYSTEM,
-            "Restarting plugin sandbox",
-            mapOf(
-                "pluginId" to pluginId,
-                "restartAttempt" to (_healthMetrics.value.restartAttempts + 1),
-            ),
-        )
+    override suspend fun restart(): Result<Unit> =
+        if (disabled.get()) {
+            Result.failure(IllegalStateException("Plugin sandbox is disabled"))
+        } else {
+            logger.info(
+                LogCategory.SYSTEM,
+                "Restarting plugin sandbox",
+                mapOf(
+                    "pluginId" to pluginId,
+                    "restartAttempt" to (_healthMetrics.value.restartAttempts + 1),
+                ),
+            )
 
-        val retiredExecutor =
-            runCatching { swapInFreshRuntime() }
-                .getOrElse { error ->
-                    // Only reachable if the fresh pool cannot be created at all.
-                    // UNHEALTHY rather than RESTARTING because the watchdog
-                    // still looks at UNHEALTHY, so a sandbox this failed on can
-                    // still be seen and retried.
+            val swap = runCatching { swapInFreshRuntime() }
+            val retiredExecutor = swap.getOrNull()
+            when {
+                swap.isFailure -> {
                     _state.value = SandboxState.UNHEALTHY
+                    val error = requireNotNull(swap.exceptionOrNull())
                     logger.error(
                         LogCategory.SYSTEM,
                         "Failed to restart plugin sandbox",
+                        mapOf("pluginId" to pluginId),
+                        error,
+                    )
+                    Result.failure(error)
+                }
+
+                retiredExecutor == null -> {
+                    Result.failure(IllegalStateException("Plugin sandbox was disabled during restart"))
+                }
+
+                else -> {
+                    logger.info(
+                        LogCategory.SYSTEM,
+                        "Plugin sandbox restarted successfully",
                         mapOf(
                             "pluginId" to pluginId,
                         ),
-                        error,
                     )
-                    return Result.failure(error)
+
+                    // Cleanup of the pool the plugin no longer runs on. It has already had
+                    // shutdown() called under the lock, so it drains either way; this only
+                    // waits for it and force-kills a pool that will not go. Cancellation
+                    // here is allowed to propagate - the sandbox is already running, and
+                    // swallowing a CancellationException into Result.failure would report a
+                    // restart that did happen as one that did not.
+                    shutdownExecutor(retiredExecutor)
+                    Result.success(Unit)
                 }
-
-        logger.info(
-            LogCategory.SYSTEM,
-            "Plugin sandbox restarted successfully",
-            mapOf(
-                "pluginId" to pluginId,
-            ),
-        )
-
-        // Cleanup of the pool the plugin no longer runs on. It has already had
-        // shutdown() called under the lock, so it drains either way; this only
-        // waits for it and force-kills a pool that will not go. Cancellation
-        // here is allowed to propagate - the sandbox is already running, and
-        // swallowing a CancellationException into Result.failure would report a
-        // restart that did happen as one that did not.
-        shutdownExecutor(retiredExecutor)
-        return Result.success(Unit)
-    }
+            }
+        }
 
     /**
      * Swap in a fresh pool and bring the sandbox back to [SandboxState.RUNNING].
@@ -439,19 +446,19 @@ class InProcessPluginSandbox(
      *
      * @return the retired pool, for the caller to wait on.
      */
-    private fun swapInFreshRuntime(): ExecutorService {
-        _state.value = SandboxState.RESTARTING
-
-        // Record the crash
-        _healthMetrics.update { it.withCrash() }
-
-        // Cancel heartbeat job
-        heartbeatJob?.cancel()
-        heartbeatJob = null
-
+    private fun swapInFreshRuntime(): ExecutorService? {
         // Synchronize executor/job swap to prevent other threads from accessing stale references
         val retiredExecutor: ExecutorService
         synchronized(restartLock) {
+            if (disabled.get()) return null
+            _state.value = SandboxState.RESTARTING
+
+            // Record the crash
+            _healthMetrics.update { it.withCrash() }
+
+            // Cancel heartbeat job
+            heartbeatJob?.cancel()
+            heartbeatJob = null
             // Cancel the plugin's in-flight coroutines and re-arm the scope
             // for new work. The scope object itself is deliberately kept -
             // see the note on [sandboxScope].
@@ -465,15 +472,14 @@ class InProcessPluginSandbox(
             // Under the lock, so a concurrent stop() cannot capture the
             // pool this restart just installed and retire it instead.
             retiredExecutor.shutdown()
+            // Publish the running generation under the same lock that accepts
+            // a restart. Otherwise setDisabled() can win between the check and
+            // this state write, leaving a disabled sandbox reporting RUNNING.
+            _healthMetrics.update { it.withSuccessfulRestart() }
+            _state.value = SandboxState.RUNNING
+            isRunning.set(true)
+            startHeartbeatJob()
         }
-
-        // Mark as running with successful restart metrics
-        _healthMetrics.update { it.withSuccessfulRestart() }
-        _state.value = SandboxState.RUNNING
-        isRunning.set(true)
-
-        // Start automatic heartbeat recording
-        startHeartbeatJob()
 
         return retiredExecutor
     }
@@ -591,7 +597,17 @@ class InProcessPluginSandbox(
                 "pluginId" to pluginId,
             ),
         )
-        _state.value = SandboxState.DISABLED
+        synchronized(restartLock) {
+            disabled.set(true)
+            _state.value = SandboxState.DISABLED
+        }
+    }
+
+    /** Only the manager's explicit enable path may re-arm a disabled sandbox. */
+    internal fun clearDisabledForEnable() {
+        synchronized(restartLock) {
+            disabled.set(false)
+        }
     }
 
     /**

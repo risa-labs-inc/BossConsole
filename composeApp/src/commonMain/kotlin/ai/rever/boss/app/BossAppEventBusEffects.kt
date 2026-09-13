@@ -18,8 +18,8 @@ import ai.rever.boss.components.plugin.DependentRestartEventBus
 import ai.rever.boss.components.plugin.MissingHandlerPluginEventBus
 import ai.rever.boss.components.plugin.PanelIds
 import ai.rever.boss.components.plugin.PluginDependencyEventBus
+import ai.rever.boss.components.plugin.claimMissingDependencyForWindow
 import ai.rever.boss.components.plugin.resolveRegisteredPanelId
-import ai.rever.boss.components.plugin.shouldShowMissingDependency
 import ai.rever.boss.components.window_panel.SplitViewState
 import ai.rever.boss.components.workspaces.WorkspaceSerializer
 import ai.rever.boss.components.workspaces.applyWorkspace
@@ -51,6 +51,7 @@ import ai.rever.boss.services.TerminalHandlerService
 import ai.rever.boss.services.URLHandlerService
 import ai.rever.boss.terminal.TerminalLinkOpenMode
 import ai.rever.boss.terminal.TerminalLinkSettingsManager
+import ai.rever.boss.utils.WindowFocusManager
 import ai.rever.boss.utils.awaitRegistryCondition
 import ai.rever.boss.utils.logging.ComponentLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -231,38 +232,30 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
     LaunchedEffect(windowId) {
         PluginDependencyEventBus.missingDependencies
             .collect { prompt ->
-                // Re-check rather than trusting the report: two dependents of one missing
-                // plugin each raise a prompt, so installing for the first satisfies the
-                // second, whose dialog would otherwise claim something untrue and reinstall
-                // what is already loaded. Off the UI thread because the check stats the jar.
-                val present =
-                    withContext(Dispatchers.IO) {
-                        prompt.installer.isInstalled(prompt.missing.missingPluginId)
-                    }
-                // The rule itself lives in `shouldShowMissingDependency`, so it can be tested
-                // against rather than restated here. Notably it exempts a prompt a person asked
-                // for by pressing something: without that, dismissing the offer once left the
-                // control silent for the rest of the session.
-                val show =
-                    shouldShowMissingDependency(
+                val claimed =
+                    PluginDependencyEventBus.claimMissingDependencyForWindow(
                         prompt = prompt,
-                        present = present,
-                        declined = PluginDependencyEventBus.wasDeclined(prompt.missing),
-                    )
-                if (!show) {
-                    return@collect
-                }
+                        collectorWindowId = windowId,
+                        targetWindowOpen = prompt.windowId?.let { WindowFocusManager.isWindowOpen(it) } == true,
+                        isPresent = {
+                            withContext(Dispatchers.IO) {
+                                prompt.installer.isInstalled(prompt.missing.missingPluginId)
+                            }
+                        },
+                    ) ?: return@collect
+                // Publish immediately after claiming, without another suspension.
                 // Reset here rather than relying on the previous dialog's exit path having
                 // cleared them: the three fields are reused for every prompt, and ordering
                 // between that clear and this assignment should not be load-bearing.
                 state.installingMissingDependency = false
                 state.missingDependencyError = null
-                state.pendingMissingPluginDependency = prompt
-                // Back-pressure instead of a queue: the next prompt stays in the channel until
-                // this one is answered, so a second missing dependency is asked about after the
-                // first rather than replacing it or being dropped. Cancelling this effect (the
-                // window closing) leaves whatever is still in the channel for another window -
-                // though a prompt already received here and not yet shown does go with it.
+                state.pendingMissingPluginDependency = claimed
+                // Back-pressure instead of a queue: this collect loop does not move on to the
+                // next broadcast emission until this one is answered, so a second missing
+                // dependency in this same window is asked about after the first rather than
+                // replacing it. The prompt is already claimed (removed from the bus) by this
+                // point, so cancelling this effect - the window closing mid-dialog - would strand
+                // it; that is an accepted, narrow gap, not a claim to loop back and reclaim it.
                 snapshotFlow { state.pendingMissingPluginDependency }.first { it == null }
             }
     }

@@ -315,6 +315,15 @@ internal fun BossAppMenuActionEffects(
             }.launchIn(this)
     }
 
+    LaunchedEffect(windowId) {
+        MenuActionsHandler.confirmMicrokernelModeEvents
+            .onEach { eventWindowId ->
+                if (eventWindowId == windowId) {
+                    state.microkernelModeConfirmation.request()
+                }
+            }.launchIn(this)
+    }
+
     // Handle View menu events
     LaunchedEffect(windowId) {
         MenuActionsHandler.toggleFocusModeEvents
@@ -614,6 +623,13 @@ internal fun BossAppMenuActionEffects(
                     val count = result.getOrElse { 0 }
                     StatusMessageManager.showMessage("Reloaded $count plugin(s)")
                 }
+            }.launchIn(this)
+    }
+
+    LaunchedEffect(windowId) {
+        MenuActionsHandler.showPluginHealthCenterEvents
+            .onEach { eventWindowId ->
+                if (eventWindowId == windowId) state.showPluginHealthCenter = true
             }.launchIn(this)
     }
 

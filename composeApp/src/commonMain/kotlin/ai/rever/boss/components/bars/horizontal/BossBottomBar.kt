@@ -5,6 +5,7 @@ import ai.rever.boss.components.bars.getBarScrollbarConfig
 import ai.rever.boss.components.bars.horizontalScrollWithScrollbar
 import ai.rever.boss.components.bars.rememberBarContextMenuItems
 import ai.rever.boss.components.buttons.BossActionButton
+import ai.rever.boss.components.dialogs.McpPolicyManagerDialog
 import ai.rever.boss.components.events.PanelEventBus
 import ai.rever.boss.components.overlays.contextMenu
 import ai.rever.boss.components.plugin.registries.StatusBarRegistryImpl
@@ -46,7 +47,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.arkivanov.decompose.extensions.compose.subscribeAsState
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun BossBottomBar(tabsComponent: BossTabsComponent? = null) {
@@ -230,6 +233,36 @@ fun BossRightBottomBar() {
         androidx.compose.material.TextButton(onClick = { McpToolRegistryImpl.policyEngine.clearSessionTrusts() }) {
             Text("Revoke MCP session trust (${trustedTools.size})", color = BossTheme.colors.alert)
         }
+    }
+
+    // Inspection/revocation for a rule saved via the approval dialog's "Always Allow"/"Always
+    // Deny" - the gap AGENTS.md's governance section names as reachable only by hand-editing
+    // ~/.boss/mcp-tool-policy.json and restarting.
+    val persistedPolicyConfig by McpToolRegistryImpl.policyEngine.config.collectAsState()
+    var showPolicyManager by remember { mutableStateOf(false) }
+    if (persistedPolicyConfig.rules.isNotEmpty()) {
+        androidx.compose.material.TextButton(onClick = { showPolicyManager = true }) {
+            Text(
+                "Persisted MCP policies (${persistedPolicyConfig.rules.size})",
+                color = BossTheme.colors.textSecondary,
+            )
+        }
+    }
+    if (showPolicyManager) {
+        McpPolicyManagerDialog(
+            rules = persistedPolicyConfig.rules,
+            // Dispatchers.IO: revokePersistedPolicy does a synchronized atomicWriteText disk
+            // write, and setToolPolicy already made the equivalent invocation-path write take
+            // this same dispatcher (McpToolRegistryImpl) - this call site was the one still
+            // running it on the UI thread, where a click could block behind another write
+            // holding the same lock from a slow, networked or AV-scanned home directory.
+            onRevoke = { toolName ->
+                withContext(Dispatchers.IO) {
+                    McpToolRegistryImpl.policyEngine.revokePersistedPolicy(toolName)
+                }
+            },
+            onDismiss = { showPolicyManager = false },
+        )
     }
 
     val policyFault by McpToolRegistryImpl.policyFault.collectAsState()

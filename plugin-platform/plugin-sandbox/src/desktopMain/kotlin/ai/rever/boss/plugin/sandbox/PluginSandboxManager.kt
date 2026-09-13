@@ -102,7 +102,8 @@ interface PluginSandboxManager {
     suspend fun restartPlugin(pluginId: String): Result<Unit>
 
     /**
-     * Disable a plugin. It will be stopped and won't auto-restart.
+     * Disable an existing plugin. It will be stopped and won't auto-restart.
+     * A missing sandbox is already stopped and is a no-op.
      * @param pluginId Plugin identifier
      * @return Result indicating success or failure
      */
@@ -172,6 +173,7 @@ interface PluginSandboxListener {
  */
 class PluginSandboxManagerImpl(
     private val defaultConfig: SandboxConfig = SandboxConfig(),
+    private val awaitRestartBackoff: suspend (Long) -> Unit = { delay -> kotlinx.coroutines.delay(delay) },
 ) : PluginSandboxManager {
     private val logger = BossLogger.forComponent("PluginSandboxManager")
 
@@ -321,8 +323,8 @@ class PluginSandboxManagerImpl(
     override fun getSandbox(pluginId: String): PluginSandbox? = sandboxes[pluginId]
 
     /**
-     * Note the watchdog-then-sandbox order here, in [disablePlugin] and in
-     * [fullyUnloadPlugin]. It is safe at these three sites only because none of
+     * Note the watchdog-then-sandbox order here and in [fullyUnloadPlugin].
+     * It is safe at these two sites only because neither of
      * them is reached from inside a watchdog coroutine. The same order in
      * [handleRestartRequest] stopped the coroutine that was executing it and so
      * skipped the suspending pool teardown entirely - see the comment there
@@ -343,7 +345,11 @@ class PluginSandboxManagerImpl(
 
         // Stop and remove sandbox
         sandboxes[pluginId]?.stop()
-        sandboxes.remove(pluginId)
+        synchronized(sandboxes) {
+            sandboxes.remove(pluginId)
+            // Disable state belongs to the removed instance, not its future replacement.
+            disabledPlugins.remove(pluginId)
+        }
 
         // Unregister from health monitor
         healthMonitor.unregisterSandbox(pluginId)
@@ -381,10 +387,11 @@ class PluginSandboxManagerImpl(
 
             // 3. Stop sandbox
             sandboxes[pluginId]?.stop()
-            sandboxes.remove(pluginId)
-
-            // 4. Remove from disabled set if present
-            disabledPlugins.remove(pluginId)
+            synchronized(sandboxes) {
+                sandboxes.remove(pluginId)
+                // 4. Remove from disabled set if present
+                disabledPlugins.remove(pluginId)
+            }
 
             // 5. Unregister from health monitor
             healthMonitor.unregisterSandbox(pluginId)
@@ -411,6 +418,11 @@ class PluginSandboxManagerImpl(
             sandboxes[pluginId]
                 ?: return Result.failure(IllegalArgumentException("No sandbox found for plugin: $pluginId"))
 
+        return restartSandbox(sandbox)
+    }
+
+    private suspend fun restartSandbox(sandbox: InProcessPluginSandbox): Result<Unit> {
+        val pluginId = sandbox.pluginId
         logger.info(
             LogCategory.SYSTEM,
             "Restarting plugin",
@@ -440,6 +452,23 @@ class PluginSandboxManagerImpl(
         }
     }
 
+    /** Admit a delayed watchdog restart only for the sandbox generation that scheduled it. */
+    private suspend fun restartIfCurrentAndEnabled(sandbox: InProcessPluginSandbox): Result<Unit> {
+        val admitted =
+            synchronized(sandboxes) {
+                sandboxes[sandbox.pluginId] === sandbox && sandbox.pluginId !in disabledPlugins
+            }
+        if (!admitted) {
+            logger.info(
+                LogCategory.SYSTEM,
+                "Skipping stale plugin watchdog restart",
+                mapOf("pluginId" to sandbox.pluginId),
+            )
+            return Result.failure(IllegalStateException("Plugin sandbox restart is no longer current"))
+        }
+        return restartSandbox(sandbox)
+    }
+
     override suspend fun disablePlugin(pluginId: String): Result<Unit> =
         runCatching {
             logger.info(
@@ -450,19 +479,27 @@ class PluginSandboxManagerImpl(
                 ),
             )
 
-            disabledPlugins.add(pluginId)
-
+            // Missing/removed instances must not leave a disable flag for a future replacement.
             val sandbox = sandboxes[pluginId]
-            if (sandbox != null) {
-                // Stop the watchdog to prevent auto-restart
-                watchdogs[pluginId]?.stop()
-
-                // Stop the sandbox and set state to DISABLED
-                sandbox.stop()
-                sandbox.setDisabled()
+            if (sandbox == null) {
+                logger.debug(
+                    LogCategory.SYSTEM,
+                    "Disable skipped: sandbox already removed",
+                    mapOf("pluginId" to pluginId),
+                )
+                return@runCatching
             }
-
-            notifyListeners { it.onPluginDisabled(pluginId) }
+            val watchdog = watchdogs[pluginId]
+            if (markDisabledIfCurrent(sandbox)) {
+                // Publish disabled before teardown so a backoff that wakes while stop() suspends
+                // cannot admit a restart for this sandbox generation.
+                sandbox.stop()
+                // stop() publishes STOPPED; retain the explicit terminal state for callers.
+                sandbox.setDisabled()
+                // Guard the watchdog too: a replacement may have arrived between the map reads.
+                watchdog?.stop()
+                notifyListeners { it.onPluginDisabled(pluginId) }
+            }
         }
 
     override suspend fun enablePlugin(pluginId: String): Result<Unit> =
@@ -479,6 +516,7 @@ class PluginSandboxManagerImpl(
 
             val sandbox = sandboxes[pluginId]
             if (sandbox != null) {
+                sandbox.clearDisabledForEnable()
                 // Restart the watchdog
                 val watchdog =
                     PluginWatchdog(
@@ -498,6 +536,18 @@ class PluginSandboxManagerImpl(
     override fun isPluginDisabled(pluginId: String): Boolean = disabledPlugins.contains(pluginId)
 
     override fun getDisabledPlugins(): Set<String> = disabledPlugins.toSet()
+
+    /** A cancelled watchdog must not publish disable state for a removed or replaced instance. */
+    internal fun markDisabledIfCurrent(sandbox: InProcessPluginSandbox): Boolean =
+        synchronized(sandboxes) {
+            if (sandboxes[sandbox.pluginId] !== sandbox) {
+                false
+            } else {
+                sandbox.setDisabled()
+                disabledPlugins.add(sandbox.pluginId)
+                true
+            }
+        }
 
     /**
      * What the watchdog asks for when a plugin looks dead. Internal rather than
@@ -536,12 +586,14 @@ class PluginSandboxManagerImpl(
             // plugin disabled this way stranded a two-thread non-daemon pool
             // for the life of the process. So: tear the sandbox down first,
             // and stop the watchdog once nothing is left that needs to suspend.
-            sandbox.stop()
-            sandbox.setDisabled()
-            disabledPlugins.add(pluginId)
-            notifyListeners { it.onPluginDisabled(pluginId) }
-            // Last: prevents further restart attempts, and cancels us.
-            watchdogs[pluginId]?.stop()
+            val watchdog = watchdogs[pluginId]
+            if (markDisabledIfCurrent(sandbox)) {
+                sandbox.stop()
+                sandbox.setDisabled()
+                notifyListeners { it.onPluginDisabled(pluginId) }
+                // Last: stop this instance's watchdog, never a replacement's.
+                watchdog?.stop()
+            }
             return
         }
 
@@ -556,8 +608,8 @@ class PluginSandboxManagerImpl(
             ),
         )
 
-        kotlinx.coroutines.delay(backoffDelay)
-        restartPlugin(pluginId)
+        awaitRestartBackoff(backoffDelay)
+        restartIfCurrentAndEnabled(sandbox)
     }
 
     private fun calculateBackoff(
