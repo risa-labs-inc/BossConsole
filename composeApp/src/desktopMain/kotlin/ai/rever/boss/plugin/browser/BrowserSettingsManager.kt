@@ -6,8 +6,10 @@ import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.io.IOException
 
 @Serializable
 data class BrowserSettingsData(
@@ -28,14 +30,40 @@ data class BrowserSettingsData(
     val showShareButton: Boolean = false,
 )
 
+internal sealed interface BrowserSettingsFileResult {
+    data class Loaded(
+        val settings: BrowserSettingsData,
+    ) : BrowserSettingsFileResult
+
+    data object Missing : BrowserSettingsFileResult
+
+    data class Failed(
+        val error: Exception,
+    ) : BrowserSettingsFileResult
+}
+
+private val browserSettingsJson =
+    Json {
+        prettyPrint = true
+        ignoreUnknownKeys = true
+    }
+
+internal fun readBrowserSettingsFile(file: File): BrowserSettingsFileResult {
+    return try {
+        if (!file.exists()) return BrowserSettingsFileResult.Missing
+        BrowserSettingsFileResult.Loaded(browserSettingsJson.decodeFromString(file.readText()))
+    } catch (e: IOException) {
+        BrowserSettingsFileResult.Failed(e)
+    } catch (e: SerializationException) {
+        BrowserSettingsFileResult.Failed(e)
+    } catch (e: SecurityException) {
+        BrowserSettingsFileResult.Failed(e)
+    }
+}
+
 object BrowserSettingsManager {
     private val logger = BossLogger.forComponent("BrowserSettingsManager")
     private val settingsFile = BossDirectories.resolve("browser-settings.json")
-    private val json =
-        Json {
-            prettyPrint = true
-            ignoreUnknownKeys = true
-        }
 
     init {
         // Ensure directory exists
@@ -55,15 +83,16 @@ object BrowserSettingsManager {
     fun ensureLoaded() { /* referencing this object already ran loadSettingsSync() */ }
 
     private fun loadSettingsSync() {
-        try {
-            if (settingsFile.exists()) {
-                val content = settingsFile.readText()
-                val settings = json.decodeFromString<BrowserSettingsData>(content)
-
+        when (val result = readBrowserSettingsFile(settingsFile)) {
+            is BrowserSettingsFileResult.Loaded -> {
+                val settings = result.settings
                 // Apply loaded settings
                 BrowserSettings.userAgent = settings.userAgent
                 BrowserSettings.customUserAgent = settings.customUserAgent
-                BrowserSettings.currentProfile = settings.currentProfile
+                BrowserSettings.installPersistedProfiles(
+                    currentProfile = settings.currentProfile,
+                    availableProfiles = settings.availableProfiles,
+                )
                 // Validate retry/recovery settings to prevent invalid values from manual file editing
                 BrowserSettings.maxInitRetries = settings.maxInitRetries.coerceIn(1, 10)
                 BrowserSettings.maxRecoveryAttempts = settings.maxRecoveryAttempts.coerceIn(1, 10)
@@ -73,27 +102,29 @@ object BrowserSettingsManager {
                 BrowserSettings.offerToSavePasswords = settings.offerToSavePasswords
                 // Tab sharing (setter mirrors to the system property the plugin reads)
                 BrowserSettings.showShareButton = settings.showShareButton
-
-                // Update available profiles if we have more
-                if (settings.availableProfiles.isNotEmpty()) {
-                    BrowserSettings.availableProfiles.clear()
-                    BrowserSettings.availableProfiles.addAll(settings.availableProfiles)
-                }
             }
-        } catch (e: Exception) {
-            logger.warn(LogCategory.BROWSER, "Failed to load browser settings", error = e)
+
+            BrowserSettingsFileResult.Missing -> {
+                BrowserSettings.markLegacyProfileNamesUntrusted()
+            }
+
+            is BrowserSettingsFileResult.Failed -> {
+                BrowserSettings.markLegacyProfileNamesUntrusted()
+                logger.warn(LogCategory.BROWSER, "Failed to load browser settings", error = result.error)
+            }
         }
     }
 
     suspend fun saveSettings() =
         withContext(Dispatchers.IO) {
             try {
+                val profileSnapshot = BrowserSettings.profileProtectionSnapshot()
                 val settings =
                     BrowserSettingsData(
                         userAgent = BrowserSettings.userAgent,
                         customUserAgent = BrowserSettings.customUserAgent,
-                        currentProfile = BrowserSettings.currentProfile,
-                        availableProfiles = BrowserSettings.availableProfiles.toList(),
+                        currentProfile = profileSnapshot.currentProfile,
+                        availableProfiles = profileSnapshot.availableProfiles.toList(),
                         maxInitRetries = BrowserSettings.maxInitRetries,
                         maxRecoveryAttempts = BrowserSettings.maxRecoveryAttempts,
                         discretePasswordFill = BrowserSettings.discretePasswordFill,
@@ -102,7 +133,7 @@ object BrowserSettingsManager {
                         showShareButton = BrowserSettings.showShareButton,
                     )
 
-                val content = json.encodeToString(settings)
+                val content = browserSettingsJson.encodeToString(settings)
                 settingsFile.writeText(content)
             } catch (e: Exception) {
                 logger.warn(LogCategory.BROWSER, "Failed to save browser settings", error = e)

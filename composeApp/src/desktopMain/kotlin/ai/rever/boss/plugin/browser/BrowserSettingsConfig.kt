@@ -5,10 +5,62 @@ import java.awt.Window
 
 // User agent settings
 object BrowserSettings {
+    data class ProfileProtectionSnapshot(
+        val currentProfile: String,
+        val availableProfiles: Set<String>,
+        val legacyProfileNamesTrusted: Boolean,
+    )
+
+    private val profileStateLock = Any()
+    private var selectedProfile = "browser-profile"
+    private val profiles = linkedSetOf("browser-profile")
+    private var legacyProfileNamesTrusted = false
+
     var userAgent: String? = null
     var customUserAgent: String? = null
-    var currentProfile: String = "browser-profile"
-    val availableProfiles = mutableListOf("browser-profile")
+    var currentProfile: String
+        get() = synchronized(profileStateLock) { selectedProfile }
+        set(value) {
+            synchronized(profileStateLock) {
+                selectedProfile = value
+            }
+        }
+
+    val availableProfiles: List<String>
+        get() = synchronized(profileStateLock) { profiles.toList() }
+
+    fun registerProfile(profile: String) {
+        synchronized(profileStateLock) {
+            profiles += profile
+        }
+    }
+
+    internal fun installPersistedProfiles(
+        currentProfile: String,
+        availableProfiles: List<String>,
+    ) {
+        synchronized(profileStateLock) {
+            selectedProfile = currentProfile
+            profiles.clear()
+            profiles += availableProfiles.ifEmpty { listOf("browser-profile") }
+            legacyProfileNamesTrusted = true
+        }
+    }
+
+    internal fun markLegacyProfileNamesUntrusted() {
+        synchronized(profileStateLock) {
+            legacyProfileNamesTrusted = false
+        }
+    }
+
+    internal fun profileProtectionSnapshot(): ProfileProtectionSnapshot =
+        synchronized(profileStateLock) {
+            ProfileProtectionSnapshot(
+                currentProfile = selectedProfile,
+                availableProfiles = profiles.toSet(),
+                legacyProfileNamesTrusted = legacyProfileNamesTrusted,
+            )
+        }
 
     // Browser initialization retry settings (configurable via Settings)
     var maxInitRetries: Int = 3

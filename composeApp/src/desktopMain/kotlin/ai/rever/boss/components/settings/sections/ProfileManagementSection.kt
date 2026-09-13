@@ -206,7 +206,7 @@ fun ProfileManagementSection(
                         if (newProfileName.isNotBlank()) {
                             val profileName = "browser-profile-${newProfileName.replace(" ", "-").lowercase()}"
                             availableProfiles.add(profileName)
-                            BrowserSettings.availableProfiles.add(profileName)
+                            BrowserSettings.registerProfile(profileName)
                             onProfileChange(profileName)
                             showNewProfileDialog = false
                             newProfileName = ""

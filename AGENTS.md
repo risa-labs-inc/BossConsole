@@ -686,6 +686,15 @@ logger.error(LogCategory.NETWORK, "Request failed", error = exception)
 
 **Config**: Set `BOSS_LOG_LEVEL` env var or `boss.log.level` system property (TRACE/DEBUG/INFO/WARN/ERROR)
 
+## Browser profile namespaces
+
+Named profiles and engine fallbacks must remain in disjoint namespaces. Settings-owned profiles
+use `browser-profile-<slug>`; disposable engine fallbacks use
+`browser-temporary-profile-<epochMillis>`. The legacy `browser-profile-<13 digits>` fallback shape
+is migration-only and may be removed only after persisted profile names loaded successfully. Any
+current, registered, locally active, or Chromium-locked profile is protected regardless of age.
+Cleanup may resolve the configured BOSS root once, but it must not follow child symlinks.
+
 ## Browser native disposal
 
 `BrowserHandleImpl.dispose()` invalidates the handle and detaches its UI, then
