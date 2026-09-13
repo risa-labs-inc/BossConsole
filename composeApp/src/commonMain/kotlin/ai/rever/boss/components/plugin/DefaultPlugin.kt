@@ -318,7 +318,12 @@ class DefaultPlugin(
                             ).newInstance(
                                 kernelSpawner,
                                 windowId ?: "",
-                                windowProjectState?.selectedProject?.value?.path ?: "",
+                                // Explicit substitution at the native boundary, as the
+                                // selectedProjectPath KDoc recommends: a blank path means "no
+                                // project" for the in-process surface, so the out-of-process
+                                // launch must agree instead of handing a blank string to
+                                // File() and BOSS_PROJECT_PATH.
+                                windowProjectState?.selectedProjectPath ?: "",
                             ) as OutOfProcessPluginSpawner
                     } else {
                         null
@@ -427,9 +432,16 @@ class DefaultPlugin(
     override val windowId: String?
         get() = _windowId
 
-    // Project path for project-specific operations
+    // Project path for project-specific operations.
+    //
+    // Reads through selectedProjectPath rather than off the flow, because the flow
+    // never holds null: before anything is chosen it carries a "No Project" sentinel
+    // whose path is the empty string. The api declares this String? and documents
+    // null for "no project selected", so handing back the sentinel meant a plugin's
+    // `context.projectPath ?: fallback` never took the fallback, and an empty path
+    // resolves against the filesystem root instead of failing.
     override val projectPath: String?
-        get() = windowProjectState?.selectedProject?.value?.path
+        get() = windowProjectState?.selectedProjectPath
 
     // Project-wide content search (boss-plugin-api 1.0.87). Host-side engine.
     //
