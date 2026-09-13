@@ -12,11 +12,11 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.coroutines.CoroutineContext
 
 @Serializable
 data class UrlHistoryEntry(
@@ -466,6 +466,9 @@ object UrlHistoryManager {
     private val history = ConcurrentHashMap<String, UrlHistoryEntry>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    /** Test seam for exercising write scheduling without the real IO pool. */
+    internal var persistenceContext: CoroutineContext = Dispatchers.IO
+
     /**
      * One writer at a time. [saveHistory] is public and fires from several directions —
      * the browser plugin on every page load, a deletion, an eviction — and two overlapping
@@ -510,7 +513,13 @@ object UrlHistoryManager {
         }
     }
 
-    suspend fun saveHistory() = writeTo(historyFile, entriesToPersist())
+    /**
+     * Wait for this snapshot and earlier queued saves to finish attempting persistence.
+     * Write failures are logged. Cancelling the caller stops its wait, not the queued save.
+     */
+    suspend fun saveHistory() {
+        persistInBackground().join()
+    }
 
     /**
      * The entries a save would write: best first, capped.
@@ -534,7 +543,7 @@ object UrlHistoryManager {
     private suspend fun writeTo(
         target: File,
         entries: List<UrlHistoryEntry>,
-    ) = withContext(Dispatchers.IO) {
+    ) {
         saveLock.withLock {
             try {
                 // Atomic: a crash or a concurrent writer leaves the previous file intact
@@ -610,13 +619,23 @@ object UrlHistoryManager {
         }
     }
 
-    private fun persistInBackground() {
+    @Synchronized
+    private fun persistInBackground(): Job {
         val target = historyFile
         val entries = entriesToPersist()
-        pendingWrite = scope.launch { writeTo(target, entries) }
+        val previous = pendingWrite
+        // IO dispatch order is not request order. Chain snapshots so an older save
+        // cannot restore an entry removed by a later deletion or eviction.
+        val write =
+            scope.launch(persistenceContext) {
+                previous?.join()
+                writeTo(target, entries)
+            }
+        pendingWrite = write
+        return write
     }
 
-    /** Wait for any background write to reach disk. */
+    /** Waiting for the latest write also drains its earlier writes in the chain. */
     internal suspend fun awaitPendingWrites() {
         pendingWrite?.join()
     }
