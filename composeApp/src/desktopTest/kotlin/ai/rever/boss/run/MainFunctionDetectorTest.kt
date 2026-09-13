@@ -381,8 +381,8 @@ class MainFunctionDetectorTest {
     @Test
     fun `windows leaves a plain path and its backslashes alone`() {
         assertEquals(
-            "go run 'C:\\dev\\app\\main.go'",
-            detector.generateCommand(detectedIn("C:\\dev\\app\\main.go", Language.GO), "C:\\dev", WINDOWS),
+            "go run 'C:\\no-such-root\\app\\main.go'",
+            detector.generateCommand(detectedIn("C:\\no-such-root\\app\\main.go", Language.GO), "C:\\no-such-root", WINDOWS),
         )
     }
 
@@ -408,8 +408,8 @@ class MainFunctionDetectorTest {
     @Test
     fun `standalone kotlin on windows uses the windows temp directory and separator`() {
         assertEquals(
-            "kotlinc 'C:\\dev\\Main.kt' -include-runtime -d 'C:\\Temp\\Main.jar'; java -jar 'C:\\Temp\\Main.jar'",
-            detector.generateCommand(detectedIn("C:\\dev\\Main.kt", Language.KOTLIN), "C:\\dev", WINDOWS, "C:\\Temp"),
+            "kotlinc 'C:\\no-such-root\\Main.kt' -include-runtime -d 'C:\\Temp\\Main.jar'; java -jar 'C:\\Temp\\Main.jar'",
+            detector.generateCommand(detectedIn("C:\\no-such-root\\Main.kt", Language.KOTLIN), "C:\\no-such-root", WINDOWS, "C:\\Temp"),
         )
     }
 
@@ -429,16 +429,16 @@ class MainFunctionDetectorTest {
     @Test
     fun `standalone rust on windows uses the windows temp directory and separator`() {
         assertEquals(
-            "rustc 'C:\\dev\\main.rs' -o 'C:\\Temp\\main.exe'; & 'C:\\Temp\\main.exe'",
-            detector.generateCommand(detectedIn("C:\\dev\\main.rs", Language.RUST), "C:\\dev", WINDOWS, "C:\\Temp"),
+            "rustc 'C:\\no-such-root\\main.rs' -o 'C:\\Temp\\main.exe'; & 'C:\\Temp\\main.exe'",
+            detector.generateCommand(detectedIn("C:\\no-such-root\\main.rs", Language.RUST), "C:\\no-such-root", WINDOWS, "C:\\Temp"),
         )
     }
 
     @Test
     fun `windows rust invokes a quoted executable in a temp path with spaces and apostrophes`() {
         assertEquals(
-            "rustc 'C:\\dev\\main.rs' -o 'C:\\it''s temp\\main.exe'; & 'C:\\it''s temp\\main.exe'",
-            detector.generateCommand(detectedIn("C:\\dev\\main.rs", Language.RUST), "C:\\dev", WINDOWS, "C:\\it's temp"),
+            "rustc 'C:\\no-such-root\\main.rs' -o 'C:\\it''s temp\\main.exe'; & 'C:\\it''s temp\\main.exe'",
+            detector.generateCommand(detectedIn("C:\\no-such-root\\main.rs", Language.RUST), "C:\\no-such-root", WINDOWS, "C:\\it's temp"),
         )
     }
 
@@ -452,6 +452,15 @@ class MainFunctionDetectorTest {
 
     @Test
     fun `a trailing separator on the temp directory does not double up`() {
+        assertEquals(
+            "rustc 'C:\\no-such-root\\main.rs' -o 'C:\\Temp\\main.exe'; & 'C:\\Temp\\main.exe'",
+            detector.generateCommand(
+                detectedIn("C:\\no-such-root\\main.rs", Language.RUST),
+                "C:\\no-such-root",
+                WINDOWS,
+                "C:\\Temp\\",
+            ),
+        )
         assertEquals(
             "rustc '/no-such-root/main.rs' -o '/var/tmp/main' && '/var/tmp/main'",
             detector.generateCommand(
