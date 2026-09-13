@@ -21,7 +21,6 @@ import com.teamdev.jxbrowser.view.compose.BrowserView
 import com.teamdev.jxbrowser.view.compose.BrowserViewState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -172,8 +171,8 @@ internal actual fun AuthBrandSite(
     // exception here escapes composition and takes the whole sign-in screen with it, which is the one
     // outcome this panel must never cause. Falling through leaves the art, like every other failure.
     val state =
-        remember(current, window) {
-            runCatching { BrowserViewState(current, MainScope(), window) }
+        remember(current, window, scope) {
+            runCatching { BrowserViewState(current, scope, window) }
                 .onFailure { e ->
                     logger.warn(
                         LogCategory.BROWSER,
