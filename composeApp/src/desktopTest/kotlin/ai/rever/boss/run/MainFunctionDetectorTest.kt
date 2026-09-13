@@ -429,8 +429,24 @@ class MainFunctionDetectorTest {
     @Test
     fun `standalone rust on windows uses the windows temp directory and separator`() {
         assertEquals(
-            "rustc 'C:\\dev\\main.rs' -o 'C:\\Temp\\main'; 'C:\\Temp\\main'",
+            "rustc 'C:\\dev\\main.rs' -o 'C:\\Temp\\main.exe'; & 'C:\\Temp\\main.exe'",
             detector.generateCommand(detectedIn("C:\\dev\\main.rs", Language.RUST), "C:\\dev", WINDOWS, "C:\\Temp"),
+        )
+    }
+
+    @Test
+    fun `windows rust invokes a quoted executable in a temp path with spaces and apostrophes`() {
+        assertEquals(
+            "rustc 'C:\\dev\\main.rs' -o 'C:\\it''s temp\\main.exe'; & 'C:\\it''s temp\\main.exe'",
+            detector.generateCommand(detectedIn("C:\\dev\\main.rs", Language.RUST), "C:\\dev", WINDOWS, "C:\\it's temp"),
+        )
+    }
+
+    @Test
+    fun `posix output stem preserves a literal backslash in a filename`() {
+        assertEquals(
+            "rustc '/no-such-root/a\\b.rs' -o '/var/tmp/a\\b' && '/var/tmp/a\\b'",
+            detector.generateCommand(detectedIn("/no-such-root/a\\b.rs", Language.RUST), "/no-such-root", POSIX, "/var/tmp"),
         )
     }
 

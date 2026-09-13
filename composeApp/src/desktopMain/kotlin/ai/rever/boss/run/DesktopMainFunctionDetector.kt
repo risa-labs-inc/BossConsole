@@ -485,7 +485,7 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
         }
 
         // Fallback: compile and run with kotlinc (for simple standalone files)
-        val jarName = File(filePath).nameWithoutExtension.replace("'", "_")
+        val jarName = outputStem(filePath, forWindows)
         val jarPath = quoteArg(tempFilePath(tempDirPath, "$jarName.jar", forWindows), forWindows)
         val compileCmd = "kotlinc ${quoteArg(filePath, forWindows)} -include-runtime -d $jarPath"
         val runCmd = "java -jar $jarPath"
@@ -623,6 +623,16 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
         vararg commands: String,
     ): String = commands.joinToString(ShellUtils.separatorFor(forWindows))
 
+    private fun outputStem(
+        filePath: String,
+        forWindows: Boolean,
+    ): String {
+        // A Windows path must also be understood when the explicit seam runs on POSIX.
+        // Backslashes remain valid filename characters for the POSIX branch.
+        val path = if (forWindows) filePath.replace('\\', '/') else filePath
+        return path.substringAfterLast('/').substringBeforeLast('.').replace("'", "_")
+    }
+
     /**
      * Where a compile-then-run fallback writes its build output.
      *
@@ -656,10 +666,12 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
         }
 
         // Fallback: Compile and run the specific Rust file directly
-        val outputName = File(filePath).nameWithoutExtension.replace("'", "_")
-        val binaryPath = quoteArg(tempFilePath(tempDirPath, outputName, forWindows), forWindows)
+        val outputName = outputStem(filePath, forWindows)
+        val binaryName = outputName + if (forWindows) ".exe" else ""
+        val binaryPath = quoteArg(tempFilePath(tempDirPath, binaryName, forWindows), forWindows)
         val compileCmd = "rustc ${quoteArg(filePath, forWindows)} -o $binaryPath"
-        return chain(forWindows, compileCmd, binaryPath)
+        val runCmd = if (forWindows) "& $binaryPath" else binaryPath
+        return chain(forWindows, compileCmd, runCmd)
     }
 
     /**
