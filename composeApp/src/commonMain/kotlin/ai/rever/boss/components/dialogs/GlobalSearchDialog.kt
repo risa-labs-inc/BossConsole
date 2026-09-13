@@ -1461,7 +1461,7 @@ private fun TabResultItem(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = "${result.tabType} • ${result.workspaceName}",
+                text = result.url ?: result.filePath ?: "${result.tabType} • ${result.workspaceName}",
                 fontSize = 11.sp,
                 color = BossTheme.colors.textSecondary,
                 maxLines = 1,

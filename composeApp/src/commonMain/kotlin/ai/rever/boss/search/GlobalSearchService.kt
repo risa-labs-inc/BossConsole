@@ -387,7 +387,7 @@ object GlobalSearchService {
                 urlScore = proseScore(query, queryLower, tabUrl)
             } else if (tabInfo is ai.rever.boss.plugin.tab.codeeditor.EditorTabInfo) {
                 tabFilePath = tabInfo.filePath
-                filePathScore = FuzzyMatcher.match(query, tabFilePath, tabFilePath.lowercase())?.score
+                filePathScore = proseScore(query, queryLower, tabFilePath)
             }
 
             val bestScore = listOfNotNull(titleMatch?.score, urlScore, filePathScore).maxOrNull()
@@ -401,8 +401,8 @@ object GlobalSearchService {
                         windowId = tab.windowId,
                         panelId = tab.panelId,
                         tabType = tab.tabInfo.typeId.typeId,
-                        url = tabUrl,
-                        filePath = tabFilePath,
+                        url = tabUrl?.takeIf { it.isNotEmpty() },
+                        filePath = tabFilePath?.takeIf { it.isNotEmpty() },
                         score = bestScore + 30, // Bonus for tabs (currently visible)
                         matchRanges = titleMatch?.matchRanges ?: emptyList(),
                     ),
