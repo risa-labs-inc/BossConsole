@@ -30,10 +30,7 @@ import kotlin.test.assertTrue
  */
 class ChromiumVersionMismatchTest {
     /**
-     * A fixed required version. Reading ChromiumAutoDownloader.effectiveVersion
-     * here would force BrowserEngineSettingsManager's init, which reads — and on a
-     * redundant pin rewrites — the developer's real ~/.boss config. Tests must not
-     * mutate real user state.
+     * Keep the expected version independent of the developer's engine override.
      */
     private val requiredVersion = "9.9.9-test"
 

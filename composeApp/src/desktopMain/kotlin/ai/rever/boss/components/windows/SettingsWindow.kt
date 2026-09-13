@@ -25,7 +25,6 @@ import ai.rever.boss.components.settings.shared.SettingsTheme.TextPrimary
 import ai.rever.boss.components.settings.shared.SettingsTheme.TextSecondary
 import ai.rever.boss.components.settings.sidebar.SettingsSection
 import ai.rever.boss.components.settings.sidebar.SettingsSidebar
-import ai.rever.boss.config.BrowserEngineSettingsManager
 import ai.rever.boss.focusmode.FocusModeSettingsManager
 import ai.rever.boss.performance.PerformanceSettingsManager
 import ai.rever.boss.plugin.ui.BossAlertDialog
@@ -406,7 +405,6 @@ private fun SettingsContent(
                     onClick = {
                         coroutineScope.launch {
                             // Reset all settings managers to defaults
-                            BrowserEngineSettingsManager.resetToDefault()
                             PerformanceSettingsManager.resetToDefault()
                             FocusModeSettingsManager.resetToDefault()
                             RunnerSettingsManager.resetToDefault()

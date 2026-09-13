@@ -47,7 +47,7 @@ object ChromiumAutoDownloader {
     /** The engine version matching this build's bundled JxBrowser library. */
     val defaultVersion: String get() = JXBROWSER_VERSION
 
-    /** The engine version to install/run: Settings pin, else [defaultVersion]. */
+    /** The engine version to install/run: developer system-property override, else [defaultVersion]. */
     val effectiveVersion: String get() = BrowserEngineSettingsManager.effectiveVersion
 
     /**
@@ -182,7 +182,7 @@ object ChromiumAutoDownloader {
 
     /**
      * Check if Chromium is already installed, valid, and matches the effective
-     * engine version (Settings pin, else the bundled JxBrowser version).
+     * engine version (developer system-property override, else the bundled JxBrowser version).
      */
     fun isChromiumInstalled(): Boolean {
         val dir = getChromiumDir()

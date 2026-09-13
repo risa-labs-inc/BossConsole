@@ -64,17 +64,13 @@ class EngineDownloadUxTest {
 
     @Test
     fun `a non-default version is staged but must not offer a restart`() {
-        // The blocker: updateSettings drops any pin that isn't the bundled version,
-        // so a non-default stage is promoted at next launch, found not to match
-        // effectiveVersion, and replaced by a full re-download. Offering "Restart
-        // BOSS" there costs the user their session and several hundred MB to end up
-        // exactly where they started.
+        // A developer target cannot change the native toolkit bundled with this build.
         val outcome = stagedInstallOutcome("9.3.0", "9.4.0", Result.success(Unit))
 
         assertFalse(outcome.offersRestart(), "restarting would not apply this engine")
         val message = outcome.message("9.4.0")
         assertTrue(message.contains("9.3.0") && message.contains("9.4.0"), "name both versions: $message")
-        assertTrue(message.contains("replaced"), "say what will actually happen: $message")
+        assertTrue(message.contains("cannot be used"), "explain the compatibility failure: $message")
     }
 
     @Test

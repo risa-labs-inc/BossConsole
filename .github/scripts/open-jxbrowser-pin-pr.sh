@@ -202,9 +202,9 @@ required asset. Two things it does not check, worth a glance:
   \`Versions/\` in the bundle. A mismatch is an \`UnsatisfiedLinkError\` on first
   native load, not a build failure, so CI passing is not evidence either way.
 
-Anyone carrying an explicit \`$current\` engine pin needs no migration:
-\`BrowserEngineSettingsManager.withoutUnusablePin()\` clears any pin that is not
-the bundled version on load.
+Persisted engine pins are no longer read, so existing pins need no migration.
+Developer/test overrides use the \`boss.browser.engine.version\` system property;
+the native engine must still be compatible with the bundled JxBrowser library.
 EOF
 )"
 
