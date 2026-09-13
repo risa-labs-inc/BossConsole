@@ -66,7 +66,10 @@ fun McpApprovalDialog(
 ) {
     val colors = BossTheme.colors
     val radii = BossTheme.radius
-    val isMutating = remember(request.toolName) { McpMutatingToolCatalog.isMutating(request.toolName) }
+    val isMutating =
+        remember(request.toolName, request.declaredReadOnly) {
+            McpMutatingToolCatalog.isMutating(request.toolName, request.declaredReadOnly)
+        }
     var rejectionReason by remember(request.id) { mutableStateOf("") }
     var showReasonInput by remember(request.id) { mutableStateOf(false) }
 

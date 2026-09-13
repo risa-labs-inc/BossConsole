@@ -745,7 +745,9 @@ internal class McpToolRegistryCore(
                 ?: return McpToolResult("Unknown or disabled MCP tool: $toolName", isError = true)
         val args = parseArgs(arguments)
         val revocation = policyEngine.revocationVersion(toolName)
-        val policy = policyEngine.policyFor(toolName)
+        // The definition, not just the name: a tool that declares side effects is governed as
+        // mutating even when its name matches nothing in McpMutatingToolCatalog.
+        val policy = policyEngine.policyFor(toolName, tool.definition.readOnly)
         val startTime = System.nanoTime()
         var disposition = McpApprovalDisposition.AUTO_ALLOWED
         var result: McpToolResult? = null
@@ -814,6 +816,7 @@ internal class McpToolRegistryCore(
                     tool.definition.name,
                     revocation,
                     grantSessionTrust = disposition == McpApprovalDisposition.SESSION_TRUSTED,
+                    declaredReadOnly = tool.definition.readOnly,
                 )
         }
 
@@ -829,7 +832,7 @@ internal class McpToolRegistryCore(
             val toolName = tool.definition.name
             if (!isAvailable(tool) ||
                 policyEngine.revocationVersion(toolName) != revocation ||
-                policyEngine.policyFor(toolName) == McpPolicyAction.DENY
+                policyEngine.policyFor(toolName, tool.definition.readOnly) == McpPolicyAction.DENY
             ) {
                 return@withContext McpApprovalDisposition.POLICY_DENIED to
                     "MCP tool access revoked while awaiting approval"
@@ -846,7 +849,7 @@ internal class McpToolRegistryCore(
             }
             val disposition =
                 if (policyEngine.revocationVersion(toolName) != revocation ||
-                    policyEngine.policyFor(toolName) == McpPolicyAction.DENY
+                    policyEngine.policyFor(toolName, tool.definition.readOnly) == McpPolicyAction.DENY
                 ) {
                     McpApprovalDisposition.POLICY_DENIED
                 } else {
@@ -909,6 +912,7 @@ internal class McpToolRegistryCore(
                             tool.providerId,
                             McpArgumentSanitizer.parseArguments(args.raw),
                             riskAssessment = DefaultMcpRiskEvaluator().evaluateRisk(tool.definition.name, args),
+                            declaredReadOnly = tool.definition.readOnly,
                         )
                 ) {
                     is McpApprovalDecision.Approved -> {
