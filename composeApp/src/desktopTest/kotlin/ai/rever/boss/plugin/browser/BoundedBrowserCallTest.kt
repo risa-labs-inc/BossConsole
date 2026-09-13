@@ -14,6 +14,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlin.system.measureTimeMillis
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -237,6 +238,7 @@ class BoundedBrowserCallTest {
             call.post { }
             call.post { }
             assertEquals(2, call.backlog, "backlog did not count the work waiting behind the wedge")
+            assertEquals(3, call.pending, "pending includes both queued and running work")
         } finally {
             release.countDown()
             call.shutdown()
@@ -305,10 +307,140 @@ class BoundedBrowserCallTest {
                     }
                 // Cancel only once the blocking body is genuinely in flight, so this tests the
                 // await being cancelled rather than the job never having started.
-                withContext(Dispatchers.IO) { entered.await() }
+                withContext(Dispatchers.IO) { assertTrue(entered.await(5, TimeUnit.SECONDS)) }
                 job.cancelAndJoin()
             }
             assertTrue(propagated, "the caller's cancellation was swallowed and answered as null")
+        } finally {
+            release.countDown()
+            call.shutdown()
+        }
+    }
+
+    // ==================== in-flight accounting (BossConsole#300) ====================
+
+    @Test
+    fun `a call in flight is counted by inFlight and invisible to backlog`() {
+        val call = BoundedBrowserCall("test-inflight-visible")
+        val release = CountDownLatch(1)
+        val entered = CountDownLatch(1)
+        try {
+            runBlocking {
+                val job =
+                    launch {
+                        call.call(generous) {
+                            entered.countDown()
+                            release.await()
+                            "done"
+                        }
+                    }
+                withContext(Dispatchers.IO) { assertTrue(entered.await(5, TimeUnit.SECONDS)) }
+                // The point of the whole change: the executor drops a task from its queue the
+                // moment the thread picks it up, so the one call actually sitting in the native
+                // layer is exactly the one backlog reports as zero.
+                assertEquals(0, call.backlog, "backlog should not see a started call")
+                assertEquals(1, call.inFlight, "a started call must be reported in flight")
+                assertEquals(1, call.pending, "pending is backlog plus inFlight")
+                release.countDown()
+                job.join()
+            }
+        } finally {
+            release.countDown()
+            call.shutdown()
+        }
+    }
+
+    @Test
+    fun `a call that timed out is still in flight after the caller gave up`() {
+        val call = BoundedBrowserCall("test-inflight-timeout")
+        val release = CountDownLatch(1)
+        val entered = CountDownLatch(1)
+        try {
+            runBlocking {
+                // The teardown hazard #300 describes: call() answers null on the deadline and
+                // returns, while the blocking work keeps the thread. A disposal decision made on
+                // that null alone would be racing a live native call.
+                val answer =
+                    call.call(timeout) {
+                        entered.countDown()
+                        release.await()
+                        "too late"
+                    }
+                assertNull(answer, "the deadline should have answered null")
+                withContext(Dispatchers.IO) { assertTrue(entered.await(5, TimeUnit.SECONDS)) }
+                assertEquals(1, call.inFlight, "the abandoned call is still running and must say so")
+                call.shutdown()
+                release.countDown()
+                call.executor.awaitDrained()
+                assertEquals(0, call.pending, "abandoned native work must eventually drain")
+            }
+        } finally {
+            release.countDown()
+            call.shutdown()
+        }
+    }
+
+    @Test
+    fun `inFlight returns to zero once calls complete or throw`() {
+        val call = BoundedBrowserCall("test-inflight-drains")
+        try {
+            runBlocking {
+                assertEquals(0, call.inFlight, "a fresh instance owes nothing")
+                call.call(generous) { "ok" }
+                call.call(generous) { error("boom") }
+                call.shutdown()
+                call.executor.awaitDrained()
+                assertEquals(0, call.inFlight, "completed calls must not leak a count")
+                assertEquals(0, call.pending)
+            }
+        } finally {
+            call.shutdown()
+        }
+    }
+
+    @Test
+    fun `fire-and-forget work is counted too`() {
+        val call = BoundedBrowserCall("test-inflight-post")
+        val release = CountDownLatch(1)
+        val entered = CountDownLatch(1)
+        try {
+            // post() is queued on the same one thread, so a teardown underneath it is the same
+            // hazard as underneath call(). Counting only call() would report zero for a tab whose
+            // injection or teardown is the thing still running.
+            call.post {
+                entered.countDown()
+                release.await()
+            }
+            entered.await()
+            assertEquals(1, call.inFlight, "a started post must be reported in flight")
+            release.countDown()
+        } finally {
+            release.countDown()
+            call.shutdown()
+        }
+    }
+
+    @Test
+    fun `direct dispatcher work remains pending after shutdown until it returns`() {
+        val call = BoundedBrowserCall("test-direct-dispatch")
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        try {
+            call.executor.execute {
+                entered.countDown()
+                release.await(10, TimeUnit.SECONDS)
+            }
+            assertTrue(entered.await(5, TimeUnit.SECONDS))
+            assertEquals(0, call.backlog)
+            assertEquals(1, call.inFlight)
+            assertEquals(1, call.pending)
+            call.shutdown()
+            assertEquals(1, call.pending)
+            release.countDown()
+            runBlocking { call.executor.awaitDrained() }
+            assertEquals(0, call.pending)
+            runBlocking { assertNull(call.call(generous) { "rejected" }) }
+            assertEquals(0, call.pending, "rejection must release admission accounting")
         } finally {
             release.countDown()
             call.shutdown()

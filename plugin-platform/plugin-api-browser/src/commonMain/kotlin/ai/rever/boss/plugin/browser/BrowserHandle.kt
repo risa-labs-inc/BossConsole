@@ -179,6 +179,17 @@ interface BrowserHandle {
     suspend fun executeJavaScript(script: String): Any? = null
 
     /**
+     * Diagnostic snapshot of queued or running work on this handle's owned browser workers.
+     * A timed-out caller can return while its native call continues running.
+     *
+     * This is not a disposal fence: admission and completion can race this read. Call [dispose]
+     * normally; the host independently stops admission and drains workers before native close.
+     * Default false for implementations without tracked workers. Synchronous operations outside
+     * those workers are not counted.
+     */
+    val hasPendingBrowserCall: Boolean get() = false
+
+    /**
      * Get the current URL.
      *
      * @return The current URL, or empty string if invalid

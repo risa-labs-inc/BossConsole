@@ -2609,6 +2609,9 @@ internal class BrowserHandleImpl(
         }
     }
 
+    /** Diagnostic snapshot of every worker native disposal drains; never a disposal fence. */
+    override val hasPendingBrowserCall: Boolean get() = ownedExecutors.any { it.pending > 0 }
+
     override fun getCurrentUrl(): String = syncCall("url", "") { browser.url() }
 
     override fun getTitle(): String = syncCall("title", "") { browser.title() }

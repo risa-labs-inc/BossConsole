@@ -214,6 +214,12 @@ internal class BoundedBrowserCall(
      */
     val backlog: Int get() = executor.queue.size
 
+    /** Running work, including launches made directly on [dispatcher]. Diagnostic only. */
+    val inFlight: Int get() = executor.inFlight
+
+    /** Admitted work that has not returned, including queue-to-worker handoff. */
+    val pending: Int get() = executor.pending
+
     /**
      * Stop accepting new calls.
      *
