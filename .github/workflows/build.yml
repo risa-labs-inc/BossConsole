@@ -380,12 +380,27 @@ jobs:
           
           echo "✅ Auto-update integration test passed"
 
+  boss-ai-tests:
+    name: BOSS AI contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: deno task check && deno task test
+        working-directory: supabase/functions/boss-ai
+
   database-tests:
     name: 🧪 Database (pgTAP)
     runs-on: ubuntu-latest
-    needs: version-check
+    needs: [version-check, boss-ai-tests]
+    if: ${{ !cancelled() && needs.version-check.result == 'success' }}
 
     steps:
+      - name: Require BOSS AI contract checks
+        run: test "${{ needs.boss-ai-tests.result }}" = "success"
+
       - name: 📥 Checkout Repository
         uses: actions/checkout@v7
 
@@ -413,13 +428,17 @@ jobs:
       - name: 🧪 Run pgTAP RBAC tests
         run: supabase test db
 
+      - name: Verify BOSS AI admission across PostgreSQL sessions
+        timeout-minutes: 2
+        run: python3 scripts/test/test-boss-ai-concurrency.py
+
       - name: 🧹 Stop Supabase
         if: always()
         run: supabase stop --no-backup || true
 
   build-summary:
-    if: always()
-    needs: [version-check, build-test, code-quality, compatibility-test, database-tests]
+    if: ${{ !cancelled() }}
+    needs: [version-check, build-test, code-quality, compatibility-test, database-tests, boss-ai-tests]
     runs-on: ubuntu-latest
 
     steps:
@@ -439,14 +458,16 @@ jobs:
           echo "- **Code Quality**: ${{ needs.code-quality.result }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Compatibility Test**: ${{ needs.compatibility-test.result }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Database (pgTAP)**: ${{ needs.database-tests.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **BOSS AI contracts**: ${{ needs.boss-ai-tests.result }}" >> $GITHUB_STEP_SUMMARY
 
           # Overall status
-          if [[ "${{ needs.build-test.result }}" == "success" && "${{ needs.code-quality.result }}" == "success" && "${{ needs.compatibility-test.result }}" == "success" && "${{ needs.database-tests.result }}" == "success" ]]; then
+          if [[ "${{ needs.build-test.result }}" == "success" && "${{ needs.code-quality.result }}" == "success" && "${{ needs.compatibility-test.result }}" == "success" && "${{ needs.database-tests.result }}" == "success" && "${{ needs.boss-ai-tests.result }}" == "success" ]]; then
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "🎉 **Overall Status**: ✅ SUCCESS" >> $GITHUB_STEP_SUMMARY
           else
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "❌ **Overall Status**: FAILED" >> $GITHUB_STEP_SUMMARY
+            exit 1
           fi
 
 # Temporarily disabled for debugging

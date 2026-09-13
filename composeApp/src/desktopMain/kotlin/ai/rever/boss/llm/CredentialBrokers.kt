@@ -50,6 +50,7 @@ internal data class CredentialBroker(
  * each carrying its own copy of the URL.
  */
 internal object CredentialBrokers {
+    const val BOSS_AI: String = "boss-ai"
     const val RISA_GLM: String = "risa-glm"
 
     private const val RISA_TOKEN_URL = "https://llm.risa.inc/auth/token"
@@ -60,6 +61,12 @@ internal object CredentialBrokers {
 
     fun all(): List<CredentialBroker> =
         listOf(
+            CredentialBroker(
+                id = BOSS_AI,
+                displayName = "BOSS AI",
+                tokenUrl = "https://api.risaboss.com/functions/v1/boss-ai/auth/token",
+                scopedTo = "https://api.risaboss.com/functions/v1/boss-ai/v1",
+            ),
             CredentialBroker(
                 id = RISA_GLM,
                 displayName = "RISA Codex GLM",

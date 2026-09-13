@@ -1,0 +1,13 @@
+{
+  "imports": {
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2.58.0",
+    "jose": "npm:jose@6.1.0",
+    "@std/assert": "jsr:@std/assert@1.0.14"
+  },
+  "tasks": {
+    "test": "deno test --frozen --allow-env --allow-read",
+    "check": "deno fmt --check && deno check --frozen index.ts tests/*.test.ts"
+  },
+  "compilerOptions": { "strict": true },
+  "fmt": { "semiColons": false, "lineWidth": 100 }
+}

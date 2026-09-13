@@ -404,6 +404,14 @@ enabled = true
 verify_jwt = false
 import_map = "./functions/organisation/deno.json"
 entrypoint = "./functions/organisation/index.ts"
+
+[functions.boss-ai]
+enabled = true
+# The handler validates BOSS sessions at /auth/token and its own audience-scoped
+# credentials everywhere else. Supabase's default JWT verifier cannot verify both.
+verify_jwt = false
+import_map = "./functions/boss-ai/deno.json"
+entrypoint = "./functions/boss-ai/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/redirect/*.html" ]

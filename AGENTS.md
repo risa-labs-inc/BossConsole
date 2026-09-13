@@ -436,6 +436,19 @@ taking `first().replacementDisplayName` told the user their panel moved somewher
 
 ## Configuration
 
+### Shared managed AI providers
+
+`supabase/functions/boss-ai` serves multiple configured models through one
+authenticated endpoint. Configuration and accounting tables are service-role-only;
+every inference rechecks live per-model permissions and atomically reserves usage.
+Secret Manager owns BOSS AI authentication and discovery. It requests a single-use ticket
+through the existing authenticated RPC API and exchanges it with the edge function.
+The database derives identity from auth.uid(); only the service role can redeem tickets.
+No BOSS AI-specific desktop host registration or shared vault definition is required.
+See `supabase/functions/boss-ai/README.md` for deployment and accounting semantics.
+Do not put upstream credentials in the shared definition or accept caller-selected
+broker URLs. Plugin bundling is intentionally separate.
+
 Create `local.properties`:
 ```properties
 jxbrowser.license.key=<your-license-key>
