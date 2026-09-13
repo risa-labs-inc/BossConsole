@@ -144,7 +144,7 @@ class QuickActionsFooterPlacementTest {
                 val expected = if (placement == owner) FOCUS_QUICK_ACTION_COUNT else 0
                 assertEquals(
                     expected,
-                    build(placement).size,
+                    build(placement).filterNotNull().size,
                     "the $owner layout for placement $placement",
                 )
             }
@@ -179,7 +179,11 @@ class QuickActionsFooterPlacementTest {
             )
 
         hosts.forEach { (placement, build) ->
-            assertEquals(FOCUS_QUICK_ACTION_COUNT + 1, build(placement).size, "with the launcher, $placement")
+            assertEquals(
+                FOCUS_QUICK_ACTION_COUNT + 1,
+                build(placement).filterNotNull().size,
+                "with the launcher, $placement",
+            )
         }
 
         val rail = focusQuickActionsRail(FocusQuickActionsPlacement.RIGHT_RAIL, {}, {}, {}, { _, _ -> })

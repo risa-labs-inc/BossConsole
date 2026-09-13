@@ -26,7 +26,7 @@ class RailHostActionsResizeTest {
 
     @Test
     fun `five actions leave a short rail and return when it grows`() {
-        var height by mutableStateOf(300.dp)
+        var height by mutableStateOf(360.dp)
         var fits by mutableStateOf(true)
         var actionCount by mutableStateOf(5)
         val reports = mutableListOf<Boolean>()
@@ -44,7 +44,7 @@ class RailHostActionsResizeTest {
         }
         rule.waitForIdle()
         assertFullActions()
-        rule.runOnIdle { height = 260.dp }
+        rule.runOnIdle { height = 320.dp }
         rule.waitForIdle()
         rule.runOnIdle { assertFalse(fits) }
         rule.onNodeWithTag("action-4").assertDoesNotExist()
@@ -56,7 +56,7 @@ class RailHostActionsResizeTest {
         rule.runOnIdle { actionCount = 5 }
         rule.waitForIdle()
         rule.runOnIdle { assertFalse(fits) }
-        rule.runOnIdle { height = 300.dp }
+        rule.runOnIdle { height = 360.dp }
         rule.waitForIdle()
         assertFullActions()
         rule.runOnIdle { assertEquals(listOf(true, false, true, false, true), reports) }
@@ -72,12 +72,10 @@ class RailHostActionsResizeTest {
     }
 
     @Test
-    fun `fit includes the optional fifth action and separator gap`() {
-        assertTrue(railFitsActions(153.dp, 4, 4.dp))
-        assertFalse(railFitsActions(152.dp, 4, 4.dp))
-        assertFalse(railFitsActions(188.dp, 5, 4.dp))
-        assertTrue(railFitsActions(189.dp, 5, 4.dp))
-        assertFalse(railFitsActions(216.dp, 5, 8.dp))
-        assertTrue(railFitsActions(217.dp, 5, 8.dp))
+    fun `fit includes the fixed offset for all five actions`() {
+        assertTrue(railFitsActions(212.dp, 4))
+        assertFalse(railFitsActions(211.dp, 4))
+        assertFalse(railFitsActions(243.dp, 5))
+        assertTrue(railFitsActions(244.dp, 5))
     }
 }

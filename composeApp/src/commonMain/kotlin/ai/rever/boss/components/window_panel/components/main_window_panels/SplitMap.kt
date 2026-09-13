@@ -16,9 +16,12 @@ import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -79,6 +82,7 @@ private val PANE_GAP = 1.dp
  * clicking it would go where the user already is - but leaving the space empty until the first
  * split meant it was blank at the one moment it could have done the most.
  */
+@Suppress("detekt.LongMethod")
 @Composable
 internal fun SplitMap(
     groups: List<TabBarGroup>,
@@ -86,7 +90,9 @@ internal fun SplitMap(
     onExitZoom: () -> Unit = {},
 ) {
     if (groups.size < 2) {
-        groups.firstOrNull()?.let { SplitCreatorMap(it) }
+        Box(Modifier.height(140.dp).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            groups.firstOrNull()?.let { SplitCreatorMap(it) }
+        }
         return
     }
 
@@ -105,51 +111,53 @@ internal fun SplitMap(
     val density = LocalDensity.current
     val colors = BossTheme.colors
 
-    Box(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .padding(MAP_INSET)
-                .aspectRatio(MAP_ASPECT)
-                .clip(RoundedCornerShape(4.dp))
-                // Zoomed, the WHOLE map is the way back - so it wears the signal border and takes
-                // the click itself. A floating button over the pane would have had to be a
-                // heavyweight overlay window to be visible over a browser at all; the map is
-                // sidebar chrome, which nothing is composited above.
-                .border(1.dp, if (zoomed) colors.signal else colors.line, RoundedCornerShape(4.dp))
-                .then(if (zoomed) Modifier.clickable(onClick = onExitZoom) else Modifier)
-                .onSizeChanged { sizePx = it },
-    ) {
-        if (sizePx == IntSize.Zero) return@Box
-        groups.forEach { group ->
-            val glyph = group.glyph ?: return@forEach
-            with(density) {
-                Box(
-                    modifier =
-                        Modifier
-                            .offset(
-                                x = (glyph.left * sizePx.width).toDp(),
-                                y = (glyph.top * sizePx.height).toDp(),
-                            ).size(
-                                width = ((glyph.right - glyph.left) * sizePx.width).toDp(),
-                                height = ((glyph.bottom - glyph.top) * sizePx.height).toDp(),
-                            ).padding(PANE_GAP),
-                ) {
-                    // Not interactive while zoomed: the map has one job then, and a pane that
-                    // swallowed the click would leave parts of its own frame meaning "back" and
-                    // parts meaning something else.
-                    MapPane(
-                        group = group,
-                        interactive = !zoomed,
-                        onRename = { renamingId = group.panelId },
-                    )
+    Box(Modifier.height(140.dp).fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Box(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(MAP_INSET)
+                    .aspectRatio(MAP_ASPECT)
+                    .clip(RoundedCornerShape(4.dp))
+                    // Zoomed, the WHOLE map is the way back - so it wears the signal border and takes
+                    // the click itself. A floating button over the pane would have had to be a
+                    // heavyweight overlay window to be visible over a browser at all; the map is
+                    // sidebar chrome, which nothing is composited above.
+                    .border(1.dp, if (zoomed) colors.signal else colors.line, RoundedCornerShape(4.dp))
+                    .then(if (zoomed) Modifier.clickable(onClick = onExitZoom) else Modifier)
+                    .onSizeChanged { sizePx = it },
+        ) {
+            if (sizePx == IntSize.Zero) return@Box
+            groups.forEach { group ->
+                val glyph = group.glyph ?: return@forEach
+                with(density) {
+                    Box(
+                        modifier =
+                            Modifier
+                                .offset(
+                                    x = (glyph.left * sizePx.width).toDp(),
+                                    y = (glyph.top * sizePx.height).toDp(),
+                                ).size(
+                                    width = ((glyph.right - glyph.left) * sizePx.width).toDp(),
+                                    height = ((glyph.bottom - glyph.top) * sizePx.height).toDp(),
+                                ).padding(PANE_GAP),
+                    ) {
+                        // Not interactive while zoomed: the map has one job then, and a pane that
+                        // swallowed the click would leave parts of its own frame meaning "back" and
+                        // parts meaning something else.
+                        MapPane(
+                            group = group,
+                            interactive = !zoomed,
+                            onRename = { renamingId = group.panelId },
+                        )
+                    }
                 }
             }
-        }
 
-        // Written across the map rather than floating over the pane. The map already shows the
-        // arrangement you are going back to, so the words only have to name the action.
-        if (zoomed) ExitZoomOverlay()
+            // Written across the map rather than floating over the pane. The map already shows the
+            // arrangement you are going back to, so the words only have to name the action.
+            if (zoomed) ExitZoomOverlay()
+        }
     }
 
     renaming?.let { group ->

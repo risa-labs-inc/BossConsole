@@ -101,9 +101,8 @@ class QuickActionsRailLayoutTest {
     fun `rail fits exactly at the required height`() {
         assertTrue(
             railFitsActions(
-                availableHeight = 153.dp,
+                availableHeight = 212.dp,
                 actionCount = 4,
-                gap = 4.dp,
             ),
         )
     }
@@ -112,9 +111,8 @@ class QuickActionsRailLayoutTest {
     fun `rail does not fit when one dp too short`() {
         assertTrue(
             !railFitsActions(
-                availableHeight = 152.dp,
+                availableHeight = 211.dp,
                 actionCount = 4,
-                gap = 4.dp,
             ),
         )
     }
@@ -125,7 +123,6 @@ class QuickActionsRailLayoutTest {
             railFitsActions(
                 availableHeight = 0.dp,
                 actionCount = 0,
-                gap = 4.dp,
             ),
         )
     }
@@ -159,8 +156,8 @@ class QuickActionsRailLayoutTest {
         val settings = iconBounds("Settings")
         val search = iconBounds("Search")
 
-        assertTrue(signOut.bottom <= settings.top, "Sign Out ($signOut) must sit above Settings ($settings)")
-        assertTrue(settings.bottom <= search.top, "Settings ($settings) must sit above Search ($search)")
+        assertTrue(search.bottom <= settings.top, "Search ($search) must sit above Settings ($settings)")
+        assertTrue(settings.bottom <= signOut.top, "Settings ($settings) must sit above Sign Out ($signOut)")
     }
 
     @Test
@@ -271,16 +268,16 @@ private val RAIL_FIXED_CHROME = 94.dp
  * The shortest rail this window can produce, near enough.
  *
  * The rail is as tall as the content area. `DisplayUtils.calculateMainWindowSize` floors a new
- * main window at 600dp of height, and 300 is half of that - well under anything the app opens
- * itself, and still 17dp clear of the 283dp that [RAIL_FIXED_CHROME] plus five actions costs.
+ * main window at 600dp of height. 355dp is still well under anything the app opens itself,
+ * and still 17dp clear of the 338dp that [RAIL_FIXED_CHROME] plus five actions costs.
  *
- * Deliberately NOT a height where the actions lose: below about 283dp they do, because they are
+ * Deliberately NOT a height where the actions lose: below about 338dp they do, because they are
  * measured last, and they vanish rather than clip. That is a real edge, reachable by dragging a
  * window short - the 600dp floor in `DisplayUtils.calculateMainWindowSize` is an initial size and
  * not a constraint. `RailHostActionsResizeTest` now covers that shorter case through the real
  * rail and its fit guard; this test covers the fully rendered action column.
  */
-private val SHORT_RAIL_HEIGHT = 300.dp
+private val SHORT_RAIL_HEIGHT = 355.dp
 
 /** The rail's scrolling tab list, the one thing in it that can yield. */
 private const val TAB_LIST_TAG = "quick-actions-rail-layout-test-tab-list"

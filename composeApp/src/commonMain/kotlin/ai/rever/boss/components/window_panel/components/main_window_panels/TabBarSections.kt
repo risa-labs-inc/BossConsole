@@ -2,6 +2,7 @@ package ai.rever.boss.components.window_panel.components.main_window_panels
 
 import ai.rever.boss.components.overlays.HoverTooltipBox
 import ai.rever.boss.components.overlays.TooltipPlacement
+import ai.rever.boss.layout.BossChrome
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -154,7 +155,9 @@ fun NewTabRow(onClick: () -> Unit) {
                 .hoverable(interactionSource)
                 .background(if (hovered) BossTheme.colors.raised else Color.Transparent)
                 .clickable(onClick = onClick)
-                .padding(horizontal = 10.dp),
+                // Dynamically align the 14.dp '+' icon with the center of the rail.
+                // The rail center is stripWidth / 2. The icon radius is 7.dp.
+                .padding(start = (BossChrome.dimens.stripWidth / 2) - 7.dp, end = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {

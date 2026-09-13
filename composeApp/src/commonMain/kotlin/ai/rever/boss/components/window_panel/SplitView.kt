@@ -2040,6 +2040,16 @@ fun SplitViewPanel(
      */
     verticalBarRailActions: @Composable () -> Unit = {},
     /**
+     * The icon column for the expanded drawer, rendered unconditionally.
+     *
+     * A SEPARATE slot from [verticalBarRailActions] because that slot is gated behind the
+     * focus-mode placement check (`focusQuickActionsTabRail` returns empty when
+     * `placement != TAB_BAR_RAIL`), and when the drawer opens `placement` switches to
+     * `TAB_BAR_FOOTER` — so the rail's actions return empty and the drawer's icon column
+     * was empty too. This slot bypasses that gate by calling `focusQuickActionButtons` directly.
+     */
+    drawerIconColumn: @Composable () -> Unit = {},
+    /**
      * Clearance above the vertical bar.
      *
      * macOS draws its traffic lights over the top-left of the content when the window sets
@@ -2132,6 +2142,7 @@ fun SplitViewPanel(
                 footer = verticalBarFooter,
                 belowMap = verticalBarBelowMap,
                 belowTabs = verticalBarRailActions,
+                drawerIconColumn = drawerIconColumn,
                 topInset = verticalBarTopInset,
                 splitTree = splitTree,
             )
@@ -2148,6 +2159,7 @@ fun SplitViewPanel(
                 topInset = verticalBarTopInset,
                 footer = verticalBarFooter,
                 belowMap = verticalBarBelowMap,
+                drawerIconColumn = drawerIconColumn,
             )
         }
     }
@@ -2206,6 +2218,7 @@ private fun WindowBarRow(
     belowMap: @Composable () -> Unit,
     /** The rail's own copy of that chrome. See `WindowVerticalTabBar.belowTabs`. */
     belowTabs: @Composable () -> Unit,
+    drawerIconColumn: @Composable () -> Unit,
     /** Clearance above the bar, for the macOS traffic lights. See [SplitViewPanel]. */
     topInset: Dp,
     splitTree: @Composable (Modifier) -> Unit,
@@ -2255,6 +2268,7 @@ private fun WindowBarRow(
                 footer = footer,
                 belowMap = belowMap,
                 belowTabs = belowTabs,
+                drawerIconColumn = drawerIconColumn,
                 zoomed = splitViewState.zoomedPanelId != null,
                 onExitZoom = splitViewState::exitZoom,
             )
@@ -2325,6 +2339,7 @@ private fun BoxScope.RevealedBar(
     topInset: Dp,
     footer: @Composable () -> Unit,
     belowMap: @Composable () -> Unit,
+    drawerIconColumn: @Composable () -> Unit,
 ) {
     WindowRevealedTabBarDrawer(
         splitViewState = splitViewState,
@@ -2336,6 +2351,7 @@ private fun BoxScope.RevealedBar(
         contentRegion = contentRegion.below(topInset),
         footer = footer,
         belowMap = belowMap,
+        drawerIconColumn = drawerIconColumn,
         onPin = rememberPinDrawerAction(reveal, bar),
     )
 }

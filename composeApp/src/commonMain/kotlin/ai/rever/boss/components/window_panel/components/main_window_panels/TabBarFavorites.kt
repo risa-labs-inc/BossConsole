@@ -159,6 +159,8 @@ private fun FavoritesHeader(
     }
 }
 
+internal val FAVORITES_SHELF_PADDING = 6.dp
+
 @Composable
 fun TabBarFavorites(
     bookmarks: List<Bookmark>,
@@ -201,7 +203,7 @@ fun TabBarFavorites(
                 .onGloballyPositioned { coordinates ->
                     tabDragComponent?.registerFavoritesBounds(coordinates.boundsInWindow())
                 }.border(1.dp, borderColor, RoundedCornerShape(4.dp))
-                .padding(horizontal = 6.dp, vertical = 6.dp),
+                .padding(horizontal = FAVORITES_SHELF_PADDING, vertical = FAVORITES_SHELF_PADDING),
     ) {
         FavoritesHeader(
             trailing = trailing,

@@ -44,7 +44,7 @@ import androidx.compose.ui.unit.dp
  */
 @Composable
 fun BossDraggableComponent.BossRightSideBar(
-    bottomActions: List<@Composable () -> Unit> = emptyList(),
+    bottomActions: List<(@Composable () -> Unit)?> = emptyList(),
     bottomActionRows: Int = bottomActions.size,
     /**
      * Opens the tools dialog, when this bar is the one carrying the launcher - i.e. when the
