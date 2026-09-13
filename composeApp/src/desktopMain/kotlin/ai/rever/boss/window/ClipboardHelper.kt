@@ -2,23 +2,15 @@ package ai.rever.boss.window
 
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import java.awt.GraphicsEnvironment
 import java.awt.Robot
+import java.awt.datatransfer.StringSelection
 import java.awt.event.KeyEvent
 
 /**
- * Helper for clipboard operations (copy, paste, cut, select all) triggered from MenuBar.
- *
- * Uses Java AWT Robot to send keyboard shortcuts programmatically, which works universally
- * with any focused text input including:
- * - JxBrowser text fields (in Fluck browser tabs)
- * - Terminal emulator text
- * - Compose TextField components
- *
- * Automatically detects platform and uses correct modifier key:
- * - macOS: Cmd (Meta)
- * - Windows/Linux: Ctrl
+ * Desktop implementation of [ClipboardHelper] using Java AWT Robot and Toolkit system clipboard.
  */
-object ClipboardHelper {
+actual object ClipboardHelper {
     private val logger = BossLogger.forComponent("ClipboardHelper")
 
     private val robot by lazy {
@@ -37,10 +29,7 @@ object ClipboardHelper {
     private val isMac = System.getProperty("os.name").lowercase().contains("mac")
     private val modifierKey = if (isMac) KeyEvent.VK_META else KeyEvent.VK_CONTROL
 
-    /**
-     * Trigger "Copy" operation (Cmd+C on macOS, Ctrl+C on Windows/Linux)
-     */
-    fun copy() {
+    actual fun copy() {
         robot?.let {
             try {
                 it.keyPress(modifierKey)
@@ -54,10 +43,7 @@ object ClipboardHelper {
         }
     }
 
-    /**
-     * Trigger "Paste" operation (Cmd+V on macOS, Ctrl+V on Windows/Linux)
-     */
-    fun paste() {
+    actual fun paste() {
         robot?.let {
             try {
                 it.keyPress(modifierKey)
@@ -71,10 +57,7 @@ object ClipboardHelper {
         }
     }
 
-    /**
-     * Trigger "Cut" operation (Cmd+X on macOS, Ctrl+X on Windows/Linux)
-     */
-    fun cut() {
+    actual fun cut() {
         robot?.let {
             try {
                 it.keyPress(modifierKey)
@@ -88,10 +71,7 @@ object ClipboardHelper {
         }
     }
 
-    /**
-     * Trigger "Select All" operation (Cmd+A on macOS, Ctrl+A on Windows/Linux)
-     */
-    fun selectAll() {
+    actual fun selectAll() {
         robot?.let {
             try {
                 it.keyPress(modifierKey)
@@ -104,4 +84,70 @@ object ClipboardHelper {
             }
         }
     }
+
+    /**
+     * Directly copies [text] to the system clipboard synchronously.
+     *
+     * Guards against headless testing environments and avoids blocking invokeAndWait calls.
+     */
+    actual fun copyText(text: String): Boolean {
+        if (GraphicsEnvironment.isHeadless()) return false
+        val selection = StringSelection(text)
+        return try {
+            val toolkit = java.awt.Toolkit.getDefaultToolkit()
+            toolkit.systemClipboard.setContents(selection, selection)
+            if (System.getProperty("os.name").contains("Linux", ignoreCase = true)) {
+                try {
+                    toolkit.systemSelection?.setContents(selection, selection)
+                } catch (_: Exception) {
+                }
+            }
+            true
+        } catch (e: Exception) {
+            logger.warn(LogCategory.UI, "Failed to copy text to system clipboard", error = e)
+            false
+        }
+    }
+
+    /**
+     * Safely copies [text] to the system clipboard with non-blocking retry logic,
+     * ensuring the UI / Event Dispatch Thread is never starved or frozen on lock contention.
+     */
+    actual suspend fun copyTextSafe(
+        text: String,
+        retries: Int,
+    ): Boolean =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            if (GraphicsEnvironment.isHeadless()) return@withContext false
+            val selection = StringSelection(text)
+            for (attempt in 0..retries) {
+                try {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        val toolkit = java.awt.Toolkit.getDefaultToolkit()
+                        toolkit.systemClipboard.setContents(selection, selection)
+                        if (System.getProperty("os.name").contains("Linux", ignoreCase = true)) {
+                            try {
+                                toolkit.systemSelection?.setContents(selection, selection)
+                            } catch (_: Exception) {
+                            }
+                        }
+                    }
+                    return@withContext true
+                } catch (e: IllegalStateException) {
+                    if (attempt == retries) {
+                        logger.warn(
+                            LogCategory.UI,
+                            "Clipboard locked by another process after $retries retries",
+                            error = e,
+                        )
+                        return@withContext false
+                    }
+                    kotlinx.coroutines.delay(35L * (attempt + 1))
+                } catch (e: Exception) {
+                    logger.warn(LogCategory.UI, "Failed to copy text to system clipboard", error = e)
+                    return@withContext false
+                }
+            }
+            false
+        }
 }

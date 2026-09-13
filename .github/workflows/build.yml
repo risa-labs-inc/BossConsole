@@ -30,6 +30,17 @@ jobs:
           # and the guard passes every PR. Reproduced in a depth-1 clone.
           fetch-depth: 0
 
+      - name: Set up Node for browser DOM regression tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Browser Markdown DOM regression tests
+        working-directory: scripts/test/fluck-markdown
+        run: |
+          npm ci --ignore-scripts
+          npm test
+
       - name: 🧪 Claude review authorization tests
         run: node --test .github/scripts/test-claude-review.cjs
 

@@ -1,0 +1,6 @@
+{
+  "name": "boss-fluck-markdown-regressions",
+  "private": true,
+  "scripts": { "test": "node --test extractor.test.cjs" },
+  "devDependencies": { "jsdom": "29.0.0" }
+}

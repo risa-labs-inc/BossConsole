@@ -59,6 +59,8 @@ object KeymapActions {
     const val BROWSER_BACK = "browser.back"
     const val BROWSER_FORWARD = "browser.forward"
     const val BROWSER_DEVTOOLS = "browser.devtools"
+    const val BROWSER_COPY_MARKDOWN = "browser.copy_markdown"
+    const val BROWSER_COPY_LINK = "browser.copy_link"
 
     // Navigation Actions
     const val PANEL_NAVIGATE_LEFT = "panel.navigate_left"
@@ -146,6 +148,8 @@ object KeymapActions {
             BROWSER_BACK to "Go back in browser history",
             BROWSER_FORWARD to "Go forward in browser history",
             BROWSER_DEVTOOLS to "Open browser developer tools",
+            BROWSER_COPY_MARKDOWN to "Copy page or selection as Markdown for agent",
+            BROWSER_COPY_LINK to "Copy page link",
             PANEL_NAVIGATE_LEFT to "Switch to the left/previous panel",
             PANEL_NAVIGATE_RIGHT to "Switch to the right/next panel",
             PANEL_NAVIGATE_UP to "Switch to the previous panel (upward)",
@@ -201,6 +205,8 @@ object KeymapActions {
             BROWSER_BACK to Categories.BROWSER_CONTROLS,
             BROWSER_FORWARD to Categories.BROWSER_CONTROLS,
             BROWSER_DEVTOOLS to Categories.BROWSER_CONTROLS,
+            BROWSER_COPY_MARKDOWN to Categories.BROWSER_CONTROLS,
+            BROWSER_COPY_LINK to Categories.BROWSER_CONTROLS,
             PANEL_NAVIGATE_LEFT to Categories.NAVIGATION,
             PANEL_NAVIGATE_RIGHT to Categories.NAVIGATION,
             PANEL_NAVIGATE_UP to Categories.NAVIGATION,
@@ -256,6 +262,8 @@ object KeymapActions {
             BROWSER_BACK to ShortcutContext.BROWSER,
             BROWSER_FORWARD to ShortcutContext.BROWSER,
             BROWSER_DEVTOOLS to ShortcutContext.BROWSER,
+            BROWSER_COPY_MARKDOWN to ShortcutContext.BROWSER,
+            BROWSER_COPY_LINK to ShortcutContext.BROWSER,
             PANEL_NAVIGATE_LEFT to ShortcutContext.GLOBAL,
             PANEL_NAVIGATE_RIGHT to ShortcutContext.GLOBAL,
             PANEL_NAVIGATE_UP to ShortcutContext.GLOBAL,
@@ -311,6 +319,8 @@ object KeymapActions {
             BROWSER_BACK,
             BROWSER_FORWARD,
             BROWSER_DEVTOOLS,
+            BROWSER_COPY_MARKDOWN,
+            BROWSER_COPY_LINK,
             PANEL_NAVIGATE_LEFT,
             PANEL_NAVIGATE_RIGHT,
             PANEL_NAVIGATE_UP,

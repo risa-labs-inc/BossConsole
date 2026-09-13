@@ -586,6 +586,27 @@ fun ApplicationScope.BossWindow(
                         ClipboardHelper.selectAll()
                     },
                 )
+
+                if (hasBrowser) {
+                    Separator()
+
+                    Item(
+                        "Copy as Markdown for Agent",
+                        shortcut = shortcutBridge.getKeyShortcut(KeymapActions.BROWSER_COPY_MARKDOWN),
+                        onClick = {
+                            MenuActionsHandler.triggerBrowserCopyMarkdown(windowState.id)
+                        },
+                        enabled = hasBrowser,
+                    )
+                    Item(
+                        "Copy Page Link",
+                        shortcut = shortcutBridge.getKeyShortcut(KeymapActions.BROWSER_COPY_LINK),
+                        onClick = {
+                            MenuActionsHandler.triggerBrowserCopyLink(windowState.id)
+                        },
+                        enabled = hasBrowser,
+                    )
+                }
             }
 
             // Refactor Menu
@@ -769,6 +790,14 @@ fun ApplicationScope.BossWindow(
                     shortcut = shortcutBridge.getKeyShortcut(KeymapActions.BROWSER_DEVTOOLS),
                     onClick = {
                         MenuActionsHandler.triggerBrowserDevTools(windowState.id)
+                    },
+                    enabled = hasBrowser,
+                )
+                Item(
+                    "Copy as Markdown for Agent",
+                    shortcut = shortcutBridge.getKeyShortcut(KeymapActions.BROWSER_COPY_MARKDOWN),
+                    onClick = {
+                        MenuActionsHandler.triggerBrowserCopyMarkdown(windowState.id)
                     },
                     enabled = hasBrowser,
                 )

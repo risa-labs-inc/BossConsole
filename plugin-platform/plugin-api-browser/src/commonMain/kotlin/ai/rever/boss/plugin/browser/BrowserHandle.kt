@@ -540,6 +540,12 @@ interface BrowserHandle {
      */
     fun selectAll()
 
+    /**
+     * Copy the current page URL to the clipboard and display confirmation feedback.
+     * Returns true if the URL was copied, false if empty or clipboard unavailable.
+     */
+    fun copyCurrentUrl(): Boolean = false
+
     // ============================================================
     // POPUP AND NEW TAB HANDLING
     // ============================================================

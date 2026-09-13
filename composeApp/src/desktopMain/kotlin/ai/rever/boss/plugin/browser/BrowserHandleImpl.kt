@@ -1,6 +1,7 @@
 package ai.rever.boss.plugin.browser
 
 import ai.rever.boss.cache.FaviconCache
+import ai.rever.boss.components.bars.horizontal.StatusMessageManager
 import ai.rever.boss.components.overlays.OverlayCorner
 import ai.rever.boss.components.overlays.overlayCornerIsHeavyweight
 import ai.rever.boss.components.plugin.TabAudioSource
@@ -20,6 +21,7 @@ import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.utils.logging.LogSanitizer
 import ai.rever.boss.window.BossWindowIcon
+import ai.rever.boss.window.ClipboardHelper
 import ai.rever.boss.window.MenuActionsHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -3597,6 +3599,18 @@ internal class BrowserHandleImpl(
 
     override fun selectAll() {
         editorCommand(EditorCommand.selectAll())
+    }
+
+    override fun copyCurrentUrl(): Boolean {
+        val url = getCurrentUrl()
+        if (url.isBlank()) return false
+        val copied = ClipboardHelper.copyText(url)
+        if (copied) {
+            StatusMessageManager.showMessage("Link copied", durationMs = 2500)
+        } else {
+            StatusMessageManager.showMessage("Failed to copy link", durationMs = 2500)
+        }
+        return copied
     }
 
     /**
