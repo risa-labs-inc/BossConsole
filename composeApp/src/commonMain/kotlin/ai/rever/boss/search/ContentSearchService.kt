@@ -11,9 +11,12 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.nio.file.Files
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Host implementation of the plugin-facing [ProjectSearchProvider] (boss-plugin-api 1.0.87):
@@ -587,17 +590,19 @@ class ContentSearchService(
             if (buffer != null) {
                 replaceInBuffer(file, buffer.content, buffer.version, regex, replacement, isRegex, dryRun, isCancelled)
             } else {
-                // UTF-8 in, UTF-8 out. A file in another single-byte encoding has no NUL
-                // bytes, so it passes the binary check, and round-tripping it through
-                // readText/writeText replaces its undecodable bytes with U+FFFD - a
-                // silent rewrite of bytes the user never asked to touch. Detect that the
-                // decode was lossy and refuse, rather than corrupting the file.
-                val text = file.readText()
-                if ('\u0000' in text) return FileReplaceResult(file.path, 0, "binary file")
-                if ('\uFFFD' in text) return FileReplaceResult(file.path, 0, "not valid UTF-8")
-                val outcome = computeReplaced(text, regex, replacement, isRegex, isCancelled)
-                if (!dryRun && outcome.count > 0) writeAtomically(file, outcome.text)
-                FileReplaceResult(file.path, outcome.count, null)
+                fileMutexFor(canonicalOrPath(file)).withLock {
+                    // UTF-8 in, UTF-8 out. A file in another single-byte encoding has no NUL
+                    // bytes, so it passes the binary check, and round-tripping it through
+                    // readText/writeText replaces its undecodable bytes with U+FFFD - a
+                    // silent rewrite of bytes the user never asked to touch. Detect that the
+                    // decode was lossy and refuse, rather than corrupting the file.
+                    val text = file.readText()
+                    if ('\u0000' in text) return FileReplaceResult(file.path, 0, "binary file")
+                    if ('\uFFFD' in text) return FileReplaceResult(file.path, 0, "not valid UTF-8")
+                    val outcome = computeReplaced(text, regex, replacement, isRegex, isCancelled)
+                    if (!dryRun && outcome.count > 0) writeAtomically(file, outcome.text)
+                    FileReplaceResult(file.path, outcome.count, null)
+                }
             }
         } catch (e: CancellationException) {
             throw e
@@ -892,6 +897,10 @@ class ContentSearchService(
                 "target",
                 "__pycache__",
             )
+
+        private val fileMutexMap = ConcurrentHashMap<String, Mutex>()
+
+        private fun fileMutexFor(canonicalPath: String): Mutex = fileMutexMap.computeIfAbsent(canonicalPath) { Mutex() }
     }
 }
 

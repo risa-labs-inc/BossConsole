@@ -2,6 +2,7 @@ package ai.rever.boss.search
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
@@ -589,5 +590,40 @@ class ContentSearchServiceTest {
                     "character stream has stopped working",
             )
         }
+    }
+
+    @Test
+    fun `concurrent replacements on a closed file do not overwrite each other`(
+        @TempDir dir: File,
+    ) = runBlocking {
+        val doc = File(dir, "document.txt")
+        doc.writeText("alpha beta")
+
+        val service1 = ContentSearchService(projectPathProvider = { dir.absolutePath })
+        val service2 = ContentSearchService(projectPathProvider = { dir.absolutePath })
+
+        val job1 =
+            async(Dispatchers.IO) {
+                service1.replaceInProject(
+                    query = "alpha",
+                    replacement = "ALPHA",
+                    files = listOf("document.txt"),
+                    dryRun = false,
+                )
+            }
+        val job2 =
+            async(Dispatchers.IO) {
+                service2.replaceInProject(
+                    query = "beta",
+                    replacement = "BETA",
+                    files = listOf("document.txt"),
+                    dryRun = false,
+                )
+            }
+
+        job1.await()
+        job2.await()
+
+        assertEquals("ALPHA BETA", doc.readText(), "Concurrent replacement caused lost update")
     }
 }
