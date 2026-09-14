@@ -249,11 +249,7 @@ fun BossTabButton(
     // any other row mounting - a scroll of the shared column, or a background pane opening a tab
     // - which retracted the drawer and took the open menu with it. Closing a menu reported
     // `false` twice for the same reason (once from onDispose, once from the re-run body).
-    val latestContextMenuVisibility by rememberUpdatedState(onContextMenuVisibilityChange)
-    DisposableEffect(showContextMenu) {
-        if (showContextMenu) latestContextMenuVisibility(true)
-        onDispose { if (showContextMenu) latestContextMenuVisibility(false) }
-    }
+    ReportContextMenuVisibility(showContextMenu, onContextMenuVisibilityChange)
 
     // Coroutine scope for middle-click close (Issue #328)
     // Using scope.launch because calling onClose directly from pointerInput's
