@@ -19,6 +19,9 @@ import kotlinx.coroutines.withTimeoutOrNull
  * The capture picker has one visible request slot, so its native callback storage must have the
  * same cardinality. [publish] returns the request it replaced so the caller can cancel it, while
  * [take] refuses stale UI actions without disturbing the request currently on screen.
+ * The picker keeps the newest request, matching its existing visible-state policy; the earlier
+ * permission rationale instead refuses newcomers before any capture picker is requested.
+ * Publication callbacks run under the monitor and must only update local, non-blocking state.
  */
 internal class SingleCaptureRequestSlot<T> {
     private var active: Pair<String, T>? = null
@@ -241,9 +244,14 @@ object ScreenCaptureNotifier {
             logger.warn(
                 LogCategory.BROWSER,
                 "A newer screen-capture request replaced the open picker",
-                mapOf("requestId" to requestId),
+                mapOf("replacementRequestId" to requestId),
             )
-            superseded.tell.cancel()
+            try {
+                superseded.tell.cancel()
+            } catch (e: Exception) {
+                // A closed native peer must not prevent the new caller from arming its timeout.
+                logger.warn(LogCategory.BROWSER, "Could not cancel superseded capture request", error = e)
+            }
         }
     }
 
