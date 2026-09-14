@@ -39,7 +39,10 @@ class AuthBrandSiteViewScopeTest {
     @Test
     fun `view failures are isolated and the child scope is disposed`() {
         assertTrue("SupervisorJob(" in source, "view failures must not cancel the load callback scope")
-        assertTrue("onDispose { viewScope.cancel() }" in source, "the supervised child must not outlive the composition")
+        assertTrue(
+            "onDispose { viewScope.cancel() }" in source,
+            "the supervised child must not outlive the composition",
+        )
     }
 
     @Test

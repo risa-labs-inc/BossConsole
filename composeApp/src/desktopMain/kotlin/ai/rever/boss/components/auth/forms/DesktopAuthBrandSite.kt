@@ -176,7 +176,10 @@ private fun BrandPageView(
     onFailed: () -> Unit,
 ) {
     // Retain MainScope's failure isolation while making the view a child of the composition.
-    val viewScope = remember(scope) { CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job])) }
+    val viewScope =
+        remember(scope) {
+            CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job]))
+        }
     DisposableEffect(viewScope) {
         onDispose { viewScope.cancel() }
     }
