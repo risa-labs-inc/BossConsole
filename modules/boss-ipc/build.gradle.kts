@@ -32,6 +32,8 @@ dependencies {
     api(libs.protobuf.java)
 
     // gRPC Netty transport (supports Unix domain sockets)
+    // Align codecs and handlers from gRPC with the native transport release.
+    implementation(platform(libs.netty.bom))
     implementation(libs.grpc.netty)
 
     // MutableHandlerRegistry, for adding a service to an already-running server

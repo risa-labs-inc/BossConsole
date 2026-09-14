@@ -17,6 +17,7 @@ application {
 }
 
 dependencies {
+    implementation(platform(libs.netty.bom))
     implementation(libs.logback)
     implementation(libs.ktor.server.core)
     implementation(libs.ktor.server.netty)
