@@ -23,6 +23,9 @@ import com.teamdev.jxbrowser.view.compose.BrowserViewState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -172,6 +175,11 @@ private fun BrandPageView(
     scope: CoroutineScope,
     onFailed: () -> Unit,
 ) {
+    // Retain MainScope's failure isolation while making the view a child of the composition.
+    val viewScope = remember(scope) { CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job])) }
+    DisposableEffect(viewScope) {
+        onDispose { viewScope.cancel() }
+    }
     val localWindow = LocalAwtWindow.current
     val window =
         remember(localWindow) {
@@ -183,13 +191,13 @@ private fun BrandPageView(
     // exception here escapes composition and takes the whole sign-in screen with it, which is the one
     // outcome this panel must never cause. Falling through leaves the art, like every other failure.
     //
-    // The view's scope is this composition's, not a fresh `MainScope()`: nothing ever cancelled that one,
+    // The view uses a supervised child of the composition, not a fresh `MainScope()`: nothing cancelled that one,
     // so every sign-in screen - and every re-attach when `browser` or `window` changed - left a live
     // scope and whatever the view had launched into it behind. JxBrowser's own `rememberBrowserViewState`
-    // does exactly this pairing: the composition's scope, and `close()` when the state is forgotten.
+    // pairs composition ownership with `close()` when the state is forgotten; our child also isolates failures.
     val state =
         remember(browser, window) {
-            runCatching { BrowserViewState(browser, scope, window) }
+            runCatching { BrowserViewState(browser, viewScope, window) }
                 .onFailure { e ->
                     logger.warn(
                         LogCategory.BROWSER,

@@ -31,9 +31,15 @@ class AuthBrandSiteViewScopeTest {
             "DesktopAuthBrandSite builds a MainScope() again; nothing cancels it when the panel leaves",
         )
         assertTrue(
-            "BrowserViewState(browser, scope, window)" in source,
+            "BrowserViewState(browser, viewScope, window)" in source,
             "the brand page view should run in the composition's scope (rememberCoroutineScope)",
         )
+    }
+
+    @Test
+    fun `view failures are isolated and the child scope is disposed`() {
+        assertTrue("SupervisorJob(" in source, "view failures must not cancel the load callback scope")
+        assertTrue("onDispose { viewScope.cancel() }" in source, "the supervised child must not outlive the composition")
     }
 
     @Test
