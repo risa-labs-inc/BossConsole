@@ -25,6 +25,7 @@ import ai.rever.boss.utils.SystemUtils
 import ai.rever.boss.window.LocalWindowId
 import ai.rever.boss.window.LocalWindowProjectState
 import ai.rever.boss.window.Project
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.Divider
@@ -34,6 +35,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -277,8 +279,22 @@ fun BossRightBottomBar() {
         )
     }
 
-    // Governed Autonomy telemetry: show last executed tool, duration, and status
+    // Governed Autonomy telemetry: show last executed tool, duration, and status.
+    // Clickable — opens McpHistoryOverlay with full recent-call history and per-tool stats.
     val recentOps by McpToolRegistryImpl.ledger.recentOperations.collectAsState()
+    var showMcpHistory by remember { mutableStateOf(false) }
+    var historicalRecords by remember { mutableStateOf<List<ai.rever.boss.mcp.McpOperationRecord>>(emptyList()) }
+    LaunchedEffect(showMcpHistory) {
+        if (showMcpHistory) {
+            historicalRecords =
+                withContext(Dispatchers.IO) {
+                    ai.rever.boss.mcp.readHistoricalMcpRecords(
+                        ai.rever.boss.plugin.pathutils.BossDirectories
+                            .resolve("mcp-calls.jsonl"),
+                    )
+                }
+        }
+    }
     recentOps.firstOrNull()?.let { lastOp ->
         val statusSymbol = if (lastOp.isError) "✕" else "✓"
         val statusColor = if (lastOp.isError) BossTheme.colors.alert else BossTheme.colors.textSecondary
@@ -288,8 +304,15 @@ fun BossRightBottomBar() {
             fontSize = 11.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = 6.dp),
+            modifier = Modifier.padding(horizontal = 6.dp).clickable { showMcpHistory = true },
         )
+        if (showMcpHistory) {
+            val allRecords =
+                (recentOps + historicalRecords)
+                    .distinctBy { it.id }
+                    .sortedByDescending { it.timestamp }
+            McpHistoryOverlay(records = allRecords, onDismiss = { showMcpHistory = false })
+        }
     }
 
     // Status message (temporary messages like "Workspace Saved")

@@ -28,4 +28,20 @@ surface in the bottom status bar (`McpKillSwitchFault`).
 4. Prefer kill-switches in Toolbox before relying on RBAC alone - for an admin desktop session,
    `permitted()` short-circuits on admin, so the kill-switch is the control that always applies.
 
+## Reviewing recent MCP tool-call history
+
+Click the `MCP: <tool> (<ms>) ✓/✕` status-bar item (bottom-right, next to the kill-switch
+faults) to open a history overlay: recent tool calls from this session, plus per-tool
+aggregate stats (call count, error rate, p50/p95 duration, sorted worst error rate first).
+
+- Live data comes from `McpOperationLedger.recentOperations`, an in-memory ring buffer of
+  the newest 100 calls.
+- Older calls are read on demand from the ledger's rotated files on disk
+  (`~/.boss/mcp-calls.jsonl` and its `.1`-`.5` backups; `~/.boss_debug/...` in dev mode).
+- Every argument and error snippet shown here is already sanitized before it ever reaches
+  the ledger (`McpArgumentSanitizer`) - nothing in this overlay is a raw secret.
+
+Not included yet: a way for an agent to query its own call history via an MCP tool - a
+natural follow-up, filed separately rather than bundled into this change.
+
 See also issue [#380](https://github.com/risa-labs-inc/BossConsole/issues/380).
