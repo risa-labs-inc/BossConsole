@@ -18,7 +18,11 @@ import com.teamdev.jxbrowser.navigation.event.LoadFinished
 import com.teamdev.jxbrowser.navigation.event.LoadStarted
 import com.teamdev.jxbrowser.view.compose.BrowserView
 import com.teamdev.jxbrowser.view.compose.BrowserViewState
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.awt.Frame
 import java.awt.Window
@@ -38,6 +42,15 @@ actual fun PasskeyBrowserView(
     var browser by remember { mutableStateOf<Browser?>(null) }
     var initError by remember { mutableStateOf<String?>(null) }
     val coroutineScope = rememberCoroutineScope()
+
+    // Isolate view failures from the load callback while retaining composition ownership.
+    val viewScope =
+        remember(coroutineScope) {
+            CoroutineScope(coroutineScope.coroutineContext + SupervisorJob(coroutineScope.coroutineContext[Job]))
+        }
+    DisposableEffect(viewScope) {
+        onDispose { viewScope.cancel() }
+    }
 
     // Initialize browser when composable enters composition
     DisposableEffect(url) {
@@ -113,12 +126,12 @@ actual fun PasskeyBrowserView(
             remember(localWindow) {
                 localWindow ?: Window.getWindows().firstOrNull() ?: Frame()
             }
-        // The composition's scope, not a fresh `MainScope()` that nothing cancels, and the state closed
+        // A supervised child of the composition, not a fresh `MainScope()` that nothing cancels, and the state closed
         // when it is replaced or dropped - the pairing JxBrowser's own `rememberBrowserViewState` uses.
         // Closing the browser on disposal does not cover a view re-attached to a different window.
         val browserViewState =
             remember(browser, window) {
-                BrowserViewState(browser!!, coroutineScope, window)
+                BrowserViewState(browser!!, viewScope, window)
             }
         DisposableEffect(browserViewState) {
             onDispose {
