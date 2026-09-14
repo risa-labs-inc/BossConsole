@@ -29,12 +29,12 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.rememberWindowState
-import kotlinx.coroutines.delay
 import java.awt.Dialog
 import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
 import javax.swing.RootPaneContainer
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 import java.awt.Window as AwtWindow
 
 /** How long to wait between attempts to measure a parent that is not showing yet. */
@@ -115,7 +115,10 @@ fun HeavyweightCorner(
     // `bounds` only changes identity on a real change (see [trackedContentPaneBounds]), and a fresh
     // array every recomposition would re-run the placement effect, and with it a native
     // setLocation, for nothing.
-    val region = remember(bounds, inset, regionInWindow) { resolveRegion(bounds, inset, regionInWindow) }
+    val region =
+        remember(bounds, inset, regionInWindow, layoutDirection) {
+            resolveRegion(bounds, inset, regionInWindow, layoutDirection)
+        }
     // The measurement ceiling is the REGION itself - the whole parent content pane - not the
     // first-frame [initialSize]. The ceiling is a hard clip, and toast text is arbitrary plugin
     // content: three wordy toasts can exceed a fixed height like 600dp, and because the window is
@@ -272,9 +275,9 @@ private fun OwnedCornerDialog(
             }
             dialog.setSize(
                 state.size.width.value
-                    .toInt(),
+                    .roundToInt(),
                 state.size.height.value
-                    .toInt(),
+                    .roundToInt(),
             )
         },
     ) {
