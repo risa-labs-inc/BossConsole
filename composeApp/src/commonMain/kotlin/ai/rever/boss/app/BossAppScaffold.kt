@@ -97,6 +97,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
@@ -699,7 +700,7 @@ internal fun BossAppScaffold(
                         modifier =
                             Modifier
                                 .weight(1f)
-                                .reportContentInset(density) { contentInset = it },
+                                .reportContentInset(density, LocalLayoutDirection.current) { contentInset = it },
                     ) {
                         BossWindow(
                             modifier = Modifier.fillMaxSize(),

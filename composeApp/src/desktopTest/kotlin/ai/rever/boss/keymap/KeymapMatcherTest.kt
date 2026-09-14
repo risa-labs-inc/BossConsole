@@ -6,6 +6,7 @@ import ai.rever.boss.keymap.model.KeyStroke
 import ai.rever.boss.keymap.model.KeymapSettings
 import ai.rever.boss.keymap.model.ShortcutContext
 import ai.rever.boss.keymap.model.canonicalModifiers
+import ai.rever.boss.utils.SystemUtils
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -259,11 +260,14 @@ class KeymapMatcherTest {
                 enabled = true,
             )
 
+        // A "Cmd" chord is Meta on macOS and Control off it, so the event that answers this
+        // binding differs by platform. Asserting Meta on both certified a chord that cannot fire
+        // on Windows or Linux.
         val result =
             binding.matches(
                 eventKey = "N",
-                isMetaPressed = true,
-                isCtrlPressed = false,
+                isMetaPressed = SystemUtils.isMacOS,
+                isCtrlPressed = !SystemUtils.isMacOS,
                 isShiftPressed = false,
                 isAltPressed = false,
             )
@@ -420,7 +424,17 @@ class KeymapMatcherTest {
 
         assertEquals(keystroke.signature(), KeyStroke("N", listOf("Cmd", "Shift")).signature())
         assertEquals(keystroke.signature(), KeyStroke("n", listOf("Meta", "shift")).signature())
-        assertNotEquals(keystroke.signature(), KeyStroke("N", listOf("Ctrl", "Shift")).signature())
+
+        // Cmd against Ctrl is the one comparison that is not platform-free. Off macOS they are one
+        // physical key, so they are one chord and conflict detection must say so; on macOS they are
+        // two. Both branches are asserted directly in PrimaryModifierRuleTest, which takes the
+        // platform as a parameter rather than reading it.
+        val ctrlSpelling = KeyStroke("N", listOf("Ctrl", "Shift")).signature()
+        if (SystemUtils.isMacOS) {
+            assertNotEquals(keystroke.signature(), ctrlSpelling)
+        } else {
+            assertEquals(keystroke.signature(), ctrlSpelling)
+        }
     }
 
     @Test
@@ -451,7 +465,31 @@ class KeymapMatcherTest {
     @Test
     fun `KeyStroke matches returns true for matching event`() {
         val keystroke = KeyStroke("N", listOf("Cmd"))
-        assertTrue(keystroke.matches("N", isMetaPressed = true, isCtrlPressed = false, isShiftPressed = false, isAltPressed = false))
+
+        // A "Cmd" chord is the Meta key on macOS and the Control key everywhere else. This used to
+        // assert Meta on both, which is the platform-unaware rule the live matchers abandoned in
+        // #553; off macOS it certified a chord that could not fire.
+        if (SystemUtils.isMacOS) {
+            assertTrue(
+                keystroke.matches(
+                    "N",
+                    isMetaPressed = true,
+                    isCtrlPressed = false,
+                    isShiftPressed = false,
+                    isAltPressed = false,
+                ),
+            )
+        } else {
+            assertTrue(
+                keystroke.matches(
+                    "N",
+                    isMetaPressed = false,
+                    isCtrlPressed = true,
+                    isShiftPressed = false,
+                    isAltPressed = false,
+                ),
+            )
+        }
     }
 
     @Test
@@ -493,7 +531,29 @@ class KeymapMatcherTest {
                 enabled = true,
             )
 
-        assertTrue(binding.matches("C", isMetaPressed = true, isCtrlPressed = false, isShiftPressed = false, isAltPressed = false))
+        if (SystemUtils.isMacOS) {
+            assertTrue(
+                binding.matches(
+                    "C",
+                    isMetaPressed = true,
+                    isCtrlPressed = false,
+                    isShiftPressed = false,
+                    isAltPressed = false,
+                ),
+            )
+        } else {
+            // Off macOS the Cmd primary is the Control key, and so is the Ctrl alternate: one
+            // chord written twice. Either keystroke answering it is correct.
+            assertTrue(
+                binding.matches(
+                    "C",
+                    isMetaPressed = false,
+                    isCtrlPressed = true,
+                    isShiftPressed = false,
+                    isAltPressed = false,
+                ),
+            )
+        }
     }
 
     @Test
@@ -636,7 +696,10 @@ class KeymapMatcherTest {
         // matcher and wrong in both directions once both walked allKeystrokes, so it is gone;
         // the note where it lived says why. What replaced it is the one canonicaliser the
         // matchers and the migration now share, and this is where its contract lives: Cmd and
-        // Ctrl are DIFFERENT modifiers, whatever a platform maps them onto at match time.
+        // Ctrl are DIFFERENT modifiers, whatever a platform maps them onto at match time. That is
+        // still exactly right for THIS function: AWTKeyboardInterceptor and MenuShortcutBridge need
+        // to know which spelling a chord used before the platform folds it. The fold lives in
+        // chordSignature, which is what conflict detection compares.
         assertEquals(setOf("cmd"), canonicalModifiers(listOf("Cmd")))
         assertEquals(setOf("cmd"), canonicalModifiers(listOf("Meta")))
         assertEquals(setOf("ctrl"), canonicalModifiers(listOf("Ctrl")))

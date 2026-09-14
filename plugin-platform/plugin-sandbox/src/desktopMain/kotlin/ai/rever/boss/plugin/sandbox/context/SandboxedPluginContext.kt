@@ -213,6 +213,8 @@ class SandboxedPluginContext(
         get() = delegate.applicationEventBus
 
     // Phase 4: Plugin storage factory - delegate to underlying context
+    // Unscoped here: every registration path wraps this in TrackingPluginContext,
+    // which binds storage to the registered plugin identity before plugin code receives it.
     override val pluginStorageFactory: PluginStorageFactory?
         get() = delegate.pluginStorageFactory
 

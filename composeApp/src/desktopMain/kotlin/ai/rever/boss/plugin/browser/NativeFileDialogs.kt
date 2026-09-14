@@ -12,7 +12,6 @@ import com.teamdev.jxbrowser.callback.Advisable
 import java.awt.Dialog
 import java.awt.FileDialog
 import java.awt.Frame
-import java.awt.KeyboardFocusManager
 import java.io.File
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicBoolean
@@ -243,11 +242,6 @@ object NativeFileDialogs {
 
 private const val PDF = "pdf"
 
-/**
- * Asks `NSOpenPanel` for a directory rather than a file. Process-wide; see [showModal].
- */
-private const val MAC_DIRECTORY_MODE = "apple.awt.fileDialogForDirectories"
-
 private fun showOpen(
     suggestedDirectory: String,
     extensions: List<String>,
@@ -305,58 +299,13 @@ private fun newDialog(
     title: String,
     mode: Int,
     suggestedDirectory: String,
-): FileDialog {
-    val dialog =
-        when (val active = KeyboardFocusManager.getCurrentKeyboardFocusManager().activeWindow) {
-            is Frame -> FileDialog(active, title, mode)
-            is Dialog -> FileDialog(active, title, mode)
-            else -> FileDialog(null as Frame?, title, mode)
-        }
-    return dialog.apply {
-        isAlwaysOnTop = true
+): FileDialog =
+    ownedFileDialog(title, mode).apply {
         val suggested = File(suggestedDirectory)
         if (suggestedDirectory.isNotBlank() && suggested.isDirectory) {
             directory = suggested.absolutePath
         }
     }
-}
-
-/**
- * Show the panel, then always give the native peer back.
- *
- * [MAC_DIRECTORY_MODE] is process-wide and read by the peer when the panel is created, and a
- * modal `FileDialog` runs a **nested event loop** on the EDT that keeps dispatching other
- * `invokeLater` blocks - so a second dialog really can be created inside this one's loop.
- * Every dialog here states its own mode immediately before showing and the restore unwinds in
- * reverse order; the property is cleared rather than written back as `"false"`, so an absent
- * property stays absent.
- *
- * **That invariant is one-directional.** It holds for these dialogs nested inside anything,
- * because they state their own mode. It does *not* hold in reverse: `DesktopFilePicker`,
- * `FilePickerProviderFactory` and `SettingsComponents` each create a `LOAD` dialog without
- * touching the flag, so one of those opened inside [showOpenFolder]'s nested loop would come
- * up as a directory chooser. Narrow in practice, since the panel is app-modal and it therefore
- * takes a non-UI-driven caller such as a plugin invoking `openFile` off a background thread.
- * The durable fix is to route every `FileDialog` in the tree through this helper, which is a
- * wider change than this one. `SAVE` dialogs are immune either way: the flag only affects
- * `NSOpenPanel`.
- */
-private fun FileDialog.showModal(directories: Boolean) {
-    val previous = System.getProperty(MAC_DIRECTORY_MODE)
-    System.setProperty(MAC_DIRECTORY_MODE, directories.toString())
-    try {
-        isVisible = true
-    } finally {
-        if (previous == null) {
-            System.clearProperty(MAC_DIRECTORY_MODE)
-        } else {
-            System.setProperty(MAC_DIRECTORY_MODE, previous)
-        }
-        // These are user-driven and repeatable, so the native peer is not left to
-        // finalization the way the one-shot pickers elsewhere leave theirs.
-        dispose()
-    }
-}
 
 /**
  * Narrow the panel to [extensions], unless the page said any file will do.
