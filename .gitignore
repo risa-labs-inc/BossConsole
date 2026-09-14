@@ -128,3 +128,5 @@ supabase/tests/.migration-fixtures/
 supabase/tests/master_key_rotation_test.sql
 supabase/tests/db_access_audit_test.sql
 supabase/tests/client_grant_audit_test.sql
+
+/supabase/tests/secret_iv_upgrade_test.sql
