@@ -7,6 +7,7 @@ import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -20,9 +21,12 @@ import com.teamdev.jxbrowser.navigation.event.LoadFinished
 import com.teamdev.jxbrowser.view.compose.BrowserView
 import com.teamdev.jxbrowser.view.compose.BrowserViewState
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.awt.Frame
@@ -161,6 +165,24 @@ internal actual fun AuthBrandSite(
     }
 
     if (current == null) return
+    BrandPageView(current, scope, onFailed)
+}
+
+/** The attached view for [browser]: it runs in a supervised child of [scope], cancelled when this view leaves. */
+@Composable
+private fun BrandPageView(
+    browser: Browser,
+    scope: CoroutineScope,
+    onFailed: () -> Unit,
+) {
+    // Retain MainScope's failure isolation while making the view a child of the composition.
+    val viewScope =
+        remember(scope) {
+            CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job]))
+        }
+    DisposableEffect(viewScope) {
+        onDispose { viewScope.cancel() }
+    }
     val localWindow = LocalAwtWindow.current
     val window =
         remember(localWindow) {
@@ -171,9 +193,14 @@ internal actual fun AuthBrandSite(
     // "Can't obtain the display ID of a closed window" when there is no usable window - and an
     // exception here escapes composition and takes the whole sign-in screen with it, which is the one
     // outcome this panel must never cause. Falling through leaves the art, like every other failure.
+    //
+    // The view uses a supervised child of the composition, not a fresh `MainScope()`: nothing cancelled that one,
+    // so every sign-in screen - and every re-attach when `browser` or `window` changed - left a live
+    // scope and whatever the view had launched into it behind. JxBrowser's own `rememberBrowserViewState`
+    // pairs composition ownership with `close()` when the state is forgotten; our child also isolates failures.
     val state =
-        remember(current, window) {
-            runCatching { BrowserViewState(current, MainScope(), window) }
+        remember(browser, window) {
+            runCatching { BrowserViewState(browser, viewScope, window) }
                 .onFailure { e ->
                     logger.warn(
                         LogCategory.BROWSER,
@@ -186,6 +213,15 @@ internal actual fun AuthBrandSite(
         // Reported outside the remember, so it survives the recomposition that reads it.
         LaunchedEffect(Unit) { onFailed() }
         return
+    }
+    // A state replaced by a new `browser`/`window`, or dropped with the panel, is closed here rather than
+    // left registered against the browser. Closing the browser in the effect above is not a substitute: it
+    // runs only when the whole panel leaves, not when this view is re-attached to a different window.
+    DisposableEffect(state) {
+        onDispose {
+            runCatching { state.close() }
+                .onFailure { logger.warn(LogCategory.BROWSER, "Error closing brand page view", error = it) }
+        }
     }
     BrowserView(state = state, modifier = Modifier.fillMaxSize())
 }
