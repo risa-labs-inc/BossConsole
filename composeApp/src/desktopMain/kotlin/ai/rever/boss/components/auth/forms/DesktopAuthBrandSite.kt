@@ -168,7 +168,7 @@ internal actual fun AuthBrandSite(
     BrandPageView(current, scope, onFailed)
 }
 
-/** The attached view for [browser], owned by the calling composition: [scope] is its scope, not a new one. */
+/** The attached view for [browser]: it runs in a supervised child of [scope], cancelled when this view leaves. */
 @Composable
 private fun BrandPageView(
     browser: Browser,

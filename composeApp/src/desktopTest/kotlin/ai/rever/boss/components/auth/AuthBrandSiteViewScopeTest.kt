@@ -13,6 +13,10 @@ import kotlin.test.assertTrue
  * never closed - so every sign-in screen, and every re-attach when the browser or window changed, left a
  * live scope and a registered view behind. Observing that at runtime needs a real Chromium, so this pins
  * the call site instead, the same way [ai.rever.boss.plugin.browser.BrowserMainThreadRoundTripTest] does.
+ *
+ * Scoped to this file on purpose. `BrowserHandleImpl` and the two factories in `BrowserFunctions` still
+ * build `MainScope()` for their views, but they are not composables: there is no composition to own the
+ * scope, so this fix does not apply to them and they are not an oversight.
  */
 class AuthBrandSiteViewScopeTest {
     private val source: String by lazy {
@@ -32,13 +36,18 @@ class AuthBrandSiteViewScopeTest {
         )
         assertTrue(
             "BrowserViewState(browser, viewScope, window)" in source,
-            "the brand page view should run in the composition's scope (rememberCoroutineScope)",
+            "the brand page view should run in its supervised child scope (viewScope)",
         )
     }
 
     @Test
     fun `view failures are isolated and the child scope is disposed`() {
-        assertTrue("SupervisorJob(" in source, "view failures must not cancel the load callback scope")
+        // The parenting, not just the supervisor: an unparented `SupervisorJob()` would isolate failures
+        // and still leak exactly like #629.
+        assertTrue(
+            "SupervisorJob(scope.coroutineContext[Job])" in source,
+            "the view's supervisor must be a child of the composition's job",
+        )
         assertTrue(
             "onDispose { viewScope.cancel() }" in source,
             "the supervised child must not outlive the composition",
