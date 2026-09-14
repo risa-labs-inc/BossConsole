@@ -144,7 +144,7 @@ internal fun resolveRegion(
     bounds: IntArray?,
     inset: DpSize,
     regionInWindow: IntRect?,
-    layoutDirection: LayoutDirection = LayoutDirection.Ltr,
+    layoutDirection: LayoutDirection,
 ): IntArray? {
     if (bounds == null || regionInWindow == null) return insetBounds(bounds, inset, layoutDirection)
     val left = regionInWindow.left.coerceIn(0, bounds[2])
@@ -168,7 +168,7 @@ internal fun cornerPosition(
     bounds: IntArray?,
     size: DpSize,
     alignment: Alignment,
-    layoutDirection: LayoutDirection = LayoutDirection.Ltr,
+    layoutDirection: LayoutDirection,
 ): Pair<Int, Int> {
     if (bounds == null) return 0 to 0
     val content = IntSize(size.width.value.roundToInt(), size.height.value.roundToInt())
@@ -196,7 +196,7 @@ internal fun cornerPosition(
 internal fun insetBounds(
     bounds: IntArray?,
     inset: DpSize,
-    layoutDirection: LayoutDirection = LayoutDirection.Ltr,
+    layoutDirection: LayoutDirection,
 ): IntArray? {
     // An unmeasurable parent stays unmeasurable, and a zero inset returns the SAME instance - see
     // the KDoc on identity above.
