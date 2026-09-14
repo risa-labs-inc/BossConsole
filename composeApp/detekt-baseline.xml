@@ -280,7 +280,7 @@
     <ID>LongMethod:CoBrowseScripts.kt$CoBrowseScripts$fun applyControl(payloadJsonLiteral: String): String</ID>
     <ID>LongMethod:CollectionSelectionDialog.kt$@Composable fun CollectionSelectionDialog( title: String, collections: List&lt;BookmarkCollection&gt;, excludeCollectionId: String? = null, mode: CollectionSelectionMode = CollectionSelectionMode.COPY, onDismiss: () -&gt; Unit, onConfirm: (selectedCollectionIds: Set&lt;String&gt;) -&gt; Unit, )</ID>
     <ID>LongMethod:CommitDialog.kt$@Composable fun CommitDialog( onDismiss: () -&gt; Unit, onCommitSuccess: (String) -&gt; Unit = {}, )</ID>
-    <ID>LongMethod:ConfirmationDialog.kt$@Composable fun ConfirmationDialog( title: String, message: String, icon: ImageVector? = null, iconTint: Color = BossTheme.colors.warn, confirmText: String = "Confirm", confirmColor: Color = BossTheme.colors.alert, // destructive onDismiss: () -&gt; Unit, onConfirm: () -&gt; Unit, )</ID>
+    <ID>LongMethod:ConfirmationDialog.kt$@Composable fun ConfirmationDialog( title: String, message: String, icon: ImageVector? = null, iconTint: Color = BossTheme.colors.warn, confirmText: String = "Confirm", confirmColor: Color = BossTheme.colors.alert, // destructive onDismiss: () -&gt; Unit, onConfirm: () -&gt; Unit, confirmEnabled: Boolean = true, )</ID>
     <ID>LongMethod:ContextMenu.kt$@Composable private fun ContextMenuContent( items: List&lt;ContextMenuItem&gt;, modifier: Modifier = Modifier, onDismissRequest: () -&gt; Unit, )</ID>
     <ID>LongMethod:ContextMenu.kt$@Composable private fun SubMenuContent( items: List&lt;ContextMenuItem&gt;, onDismissRequest: () -&gt; Unit, )</ID>
     <ID>LongMethod:CoreAuthService.kt$CoreAuthService$private fun initializeWithNetwork()</ID>

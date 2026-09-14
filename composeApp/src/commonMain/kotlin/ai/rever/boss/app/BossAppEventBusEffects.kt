@@ -145,12 +145,20 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                 if (event.requiresConfirmation && command != null) {
                     // Show the operator the command and let them decide; the
                     // prompt in BossAppDialogs opens the terminal on confirm.
-                    logger.info(
-                        LogCategory.TERMINAL,
-                        "Holding an externally requested terminal command for confirmation",
-                        mapOf("windowId" to windowId),
-                    )
-                    state.pendingTerminalCommand = PendingTerminalCommand(command, event.workingDirectory)
+                    val request = PendingTerminalCommand(command, event.workingDirectory)
+                    if (state.terminalCommandApprovals.enqueue(request)) {
+                        logger.info(
+                            LogCategory.TERMINAL,
+                            "Holding an externally requested terminal command for confirmation",
+                            mapOf("windowId" to windowId),
+                        )
+                    } else {
+                        logger.warn(
+                            LogCategory.TERMINAL,
+                            "External terminal command refused: approval queue full",
+                            mapOf("windowId" to windowId),
+                        )
+                    }
                 } else {
                     splitViewState.openTerminalInActivePanel(command, event.workingDirectory)
                     DashboardStatsManager.recordTerminalSession()

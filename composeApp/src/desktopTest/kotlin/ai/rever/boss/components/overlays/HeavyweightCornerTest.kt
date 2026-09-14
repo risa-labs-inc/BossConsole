@@ -1,7 +1,12 @@
 package ai.rever.boss.components.overlays
 
+import ai.rever.boss.components.window_panel.components.main_window_panels.besideLeadingRail
+import androidx.compose.ui.AbsoluteAlignment
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -34,6 +39,12 @@ class HeavyweightCornerTest {
     }
 
     @Test
+    fun `start and end follow right to left layout direction`() {
+        assertEquals(668 to 50, cornerPosition(parent, size, Alignment.TopStart, LayoutDirection.Rtl))
+        assertEquals(100 to 50, cornerPosition(parent, size, Alignment.TopEnd, LayoutDirection.Rtl))
+    }
+
+    @Test
     fun `bottom end offsets by both slacks`() {
         assertEquals(668 to 650, cornerPosition(parent, size, Alignment.BottomEnd))
     }
@@ -41,6 +52,13 @@ class HeavyweightCornerTest {
     @Test
     fun `center centres on both axes`() {
         assertEquals(384 to 350, cornerPosition(parent, size, Alignment.Center))
+    }
+
+    @Test
+    fun `fractional sizes round instead of clipping a pixel`() {
+        val fractional = DpSize(432.6.dp, 200.6.dp)
+
+        assertEquals(667 to 649, cornerPosition(parent, fractional, Alignment.BottomEnd))
     }
 
     @Test
@@ -153,5 +171,43 @@ class HeavyweightCornerTest {
         // A null region says nothing about how big the content may be, so the first-frame size is
         // the only available bound - the same choice the previous clamp made.
         assertEquals(DpSize(432.dp, 600.dp), regionCeiling(null, DpSize(432.dp, 600.dp)))
+    }
+
+    @Test
+    fun `RTL end inset moves the left edge and preserves the right edge`() {
+        val region = resolveRegion(parent, DpSize(48.dp, 24.dp), null, LayoutDirection.Rtl)
+        assertEquals(listOf(148, 50, 952, 776), region?.toList())
+        assertEquals(148 to 626, cornerPosition(region, size, Alignment.BottomEnd, LayoutDirection.Rtl))
+        assertEquals(668 to 50, cornerPosition(region, size, Alignment.TopStart, LayoutDirection.Rtl))
+    }
+
+    @Test
+    fun `RTL drawer stays beside the retained right rail within the explicit panel`() {
+        val panel = IntRect(40, 12, 520, 612).besideLeadingRail(36.dp, LayoutDirection.Rtl)
+        assertEquals(IntRect(40, 12, 484, 612), panel)
+        val region = resolveRegion(parent, DpSize.Zero, panel, LayoutDirection.Rtl)
+        assertEquals(384 to 62, cornerPosition(region, DpSize(200.dp, 100.dp), Alignment.TopStart, LayoutDirection.Rtl))
+        val narrow = IntRect(40, 12, 50, 612).besideLeadingRail(36.dp, LayoutDirection.Rtl)
+        assertEquals(narrow.left, narrow.right)
+    }
+
+    @Test
+    fun `RTL oversized content clamps inside the inset region`() {
+        val region = insetBounds(parent, DpSize(48.dp, 24.dp), LayoutDirection.Rtl)
+        val huge = DpSize(2000.dp, 2000.dp)
+        assertEquals(148 to 50, cornerPosition(region, huge, Alignment.TopStart, LayoutDirection.Rtl))
+        assertEquals(148 to 50, cornerPosition(region, huge, Alignment.BottomEnd, LayoutDirection.Rtl))
+    }
+
+    @Test
+    fun `absolute alignment does not mirror and custom bias is honored`() {
+        assertEquals(100 to 50, cornerPosition(parent, size, AbsoluteAlignment.TopLeft, LayoutDirection.Rtl))
+        assertEquals(526 to 350, cornerPosition(parent, size, BiasAlignment(0.5f, 0f)))
+    }
+
+    @Test
+    fun `odd center slack and fractional round down follow Compose`() {
+        assertEquals(385 to 350, cornerPosition(intArrayOf(100, 50, 1001, 800), size, Alignment.Center))
+        assertEquals(668 to 650, cornerPosition(parent, DpSize(432.4.dp, 200.4.dp), Alignment.BottomEnd))
     }
 }

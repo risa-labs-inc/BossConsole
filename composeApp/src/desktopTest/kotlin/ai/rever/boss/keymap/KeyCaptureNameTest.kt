@@ -64,6 +64,10 @@ class KeyCaptureNameTest {
             Key.Slash to "Slash",
             Key.Backslash to "Backslash",
             Key.Comma to "Comma",
+            // VS Code's Find Next off macOS. It is the only function key any preset uses; the
+            // preset cannot spell it "Cmd+G" there, because that chord is Control+G and this
+            // preset already gives Control+G to Go to Line.
+            Key.F3 to "F3",
             Key.Tab to "Tab",
             Key.Spacebar to "Spacebar",
             Key.DirectionLeft to "DirectionLeft",

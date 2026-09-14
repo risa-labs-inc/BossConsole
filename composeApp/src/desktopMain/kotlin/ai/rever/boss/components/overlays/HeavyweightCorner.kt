@@ -19,6 +19,7 @@ import androidx.compose.ui.awt.ComposeDialog
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntRect
@@ -105,6 +106,7 @@ fun HeavyweightCorner(
 ) {
     val parent = LocalAwtWindow.current
     val density = LocalDensity.current.density
+    val layoutDirection = LocalLayoutDirection.current
     var measured by remember { mutableStateOf<DpSize?>(null) }
     val size = measured ?: initialSize
     val bounds = trackedContentPaneBounds(parent) ?: return
@@ -113,7 +115,10 @@ fun HeavyweightCorner(
     // `bounds` only changes identity on a real change (see [trackedContentPaneBounds]), and a fresh
     // array every recomposition would re-run the placement effect, and with it a native
     // setLocation, for nothing.
-    val region = remember(bounds, inset, regionInWindow) { resolveRegion(bounds, inset, regionInWindow) }
+    val region =
+        remember(bounds, inset, regionInWindow, layoutDirection) {
+            resolveRegion(bounds, inset, regionInWindow, layoutDirection)
+        }
     // The measurement ceiling is the REGION itself - the whole parent content pane - not the
     // first-frame [initialSize]. The ceiling is a hard clip, and toast text is arbitrary plugin
     // content: three wordy toasts can exceed a fixed height like 600dp, and because the window is
@@ -127,14 +132,16 @@ fun HeavyweightCorner(
     val state =
         rememberWindowState(
             size = size,
-            position = cornerPosition(region, size, alignment).let { WindowPosition(it.first.dp, it.second.dp) },
+            position =
+                cornerPosition(region, size, alignment, layoutDirection)
+                    .let { WindowPosition(it.first.dp, it.second.dp) },
         )
 
     // Assign window state from an effect, never during composition - writing it inline during
     // composition is what made the cursor overlay jitter.
-    LaunchedEffect(size, region, alignment) {
+    LaunchedEffect(size, region, alignment, layoutDirection) {
         state.size = size
-        val at = cornerPosition(region, size, alignment)
+        val at = cornerPosition(region, size, alignment, layoutDirection)
         state.position = WindowPosition(at.first.dp, at.second.dp)
     }
 
@@ -268,9 +275,9 @@ private fun OwnedCornerDialog(
             }
             dialog.setSize(
                 state.size.width.value
-                    .toInt(),
+                    .roundToInt(),
                 state.size.height.value
-                    .toInt(),
+                    .roundToInt(),
             )
         },
     ) {
