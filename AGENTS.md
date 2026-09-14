@@ -771,6 +771,19 @@ restart. There is no Settings row and no per-site exclusion.
   paths outside it, canonical and symlink-checked. A plugin that needs project
   search should be vetted the same way one that subscribes to the bus is.
 
+## Editable iframe context menus
+
+The host reports Chromium's `EDITABLE` target flag for every frame. Editable iframe
+menus also enter the form-field lookup: the registered plugin callback can receive
+`FormFieldInfo.fieldValue` and `parentFormAction` from the clicked frame, including
+cross-origin frames. This is privileged installed-plugin access, not page-to-page
+access. The lookup uses the existing bounded wait and single dedicated thread; a
+stalled iframe can therefore delay subsequent editable menus until their timeout.
+
+Editor commands still use the focused frame, which may differ from the clicked
+frame if a page prevents focus changes. PR #588 tracks exact clicked-frame routing;
+removing the editability gate alone does not resolve that limitation.
+
 ## Two-finger swipe navigation (macOS)
 
 A two-finger horizontal trackpad swipe navigates back/forward. It is detected **inside the page**
