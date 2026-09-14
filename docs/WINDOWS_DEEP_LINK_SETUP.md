@@ -60,7 +60,8 @@ Exit codes: `0` nothing left to clean (removed, or nothing was registered, or no
 Windows host), `1` the registration was deliberately left in place (another live install,
 or a command that could not be parsed), `2` the `reg delete` itself failed. An MSI custom
 action waits for the process, so the contract is observable where it matters. There is no
-console output - the BossLogger log file is the only human-readable signal.
+console output - the BossLogger log file, if one is enabled with `BOSS_LOG_FILE` (see the Logging
+section of AGENTS.md), is the only human-readable signal.
 
 Run this **before** uninstalling, or wire it as an uninstall action when installer-owned
 registration lands (tracked as follow-up work to issue #38 - the Rust host is expected
