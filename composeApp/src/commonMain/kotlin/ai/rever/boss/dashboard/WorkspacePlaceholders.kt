@@ -22,7 +22,7 @@ import java.io.InputStreamReader
  *
  * Nothing in the app ever *wrote* `split-templates.json` (`addCustomTemplate` had no callers),
  * so the only thing lost with it is a hand-edited file. Saving a layout is the workspace
- * button's "Save Workspace...", and a workspace saved that way now shows on the home screen.
+ * button's "Save Space...", and a workspace saved that way now shows on the home screen.
  */
 object WorkspacePlaceholders {
     private val logger = BossLogger.forComponent("WorkspacePlaceholders")

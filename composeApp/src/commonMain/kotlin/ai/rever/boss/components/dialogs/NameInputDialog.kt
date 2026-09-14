@@ -132,7 +132,7 @@ fun NewWorkspaceDialog(
             ) {
                 // Title
                 Text(
-                    text = "New Workspace",
+                    text = "New Space",
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
                     color = BossTheme.colors.textPrimary,
@@ -144,7 +144,7 @@ fun NewWorkspaceDialog(
                 OutlinedTextField(
                     value = workspaceName,
                     onValueChange = { workspaceName = it },
-                    label = { Text("Workspace Name", color = BossTheme.colors.textSecondary) },
+                    label = { Text("Space Name", color = BossTheme.colors.textSecondary) },
                     modifier = Modifier.fillMaxWidth(),
                     colors =
                         TextFieldDefaults.outlinedTextFieldColors(

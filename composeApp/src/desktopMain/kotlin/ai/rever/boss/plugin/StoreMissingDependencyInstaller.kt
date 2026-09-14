@@ -62,6 +62,13 @@ class StoreMissingDependencyInstaller(
      * prompt, which falls back to the id, so a store that cannot answer must not stop the user being
      * offered the install. It is logged so the swallow is not invisible - the same silence one method
      * below is what made a decode failure look like a missing plugin.
+     *
+     * Cancellation is not a failure and is not swallowed: it propagates, thrown or returned, before
+     * the log line, so dismissing the dialog mid-lookup does not record a store problem that did not
+     * happen. Both arrival shapes are handled: the bundled `RemotePluginRepository` rethrows a
+     * caller's cancellation, but the [PluginRepository] interface permits either shape - a
+     * third-party implementation may still fold it into `Result.failure` - so the returned shape
+     * is checked as well.
      */
     override suspend fun displayNameFor(pluginId: String): String? {
         val lookup = runCatching { repository()?.getPlugin(pluginId) }.getOrElse { Result.failure(it) }

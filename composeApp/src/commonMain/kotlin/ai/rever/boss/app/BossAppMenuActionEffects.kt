@@ -12,6 +12,7 @@ import ai.rever.boss.components.plugin.PluginUpdateBridge
 import ai.rever.boss.components.plugin.StoreVersionLookup
 import ai.rever.boss.components.plugin.StoreVersionPrompt
 import ai.rever.boss.components.plugin.UpdateCheckOutcome
+import ai.rever.boss.components.plugin.openTopOfMindQuickSwitcher
 import ai.rever.boss.components.sidebar.SidebarVisibilitySettings
 import ai.rever.boss.components.sidebar.SidebarVisibilitySettingsManager
 import ai.rever.boss.components.window_panel.NavigationDirection
@@ -25,7 +26,6 @@ import ai.rever.boss.plugin.browser.ActiveBrowserRegistry
 import ai.rever.boss.plugin.tab.terminal.TerminalTabInfo
 import ai.rever.boss.plugin.tab.terminal.TerminalTabType
 import ai.rever.boss.project.DefaultWorkingDirectory
-import ai.rever.boss.topofmind.TabTreeState
 import ai.rever.boss.window.MenuActionsHandler
 import ai.rever.boss.window.WindowAppearanceSettings
 import ai.rever.boss.window.WindowAppearanceSettingsManager
@@ -288,7 +288,9 @@ internal fun BossAppMenuActionEffects(
         MenuActionsHandler.selectWorkspaceEvents
             .onEach { eventWindowId ->
                 if (eventWindowId == windowId) {
-                    state.showTopOfMindDialog = true
+                    // The switcher is the Top of Mind plugin's, not this window's: the host asks
+                    // for it and says why when nothing answers. See openTopOfMindQuickSwitcher.
+                    openTopOfMindQuickSwitcher(windowId, coroutineScope)
                 }
             }.launchIn(this)
     }
@@ -311,6 +313,15 @@ internal fun BossAppMenuActionEffects(
             .onEach { (eventWindowId, section) ->
                 if (eventWindowId == windowId) {
                     state.settingsWindow.open(section)
+                }
+            }.launchIn(this)
+    }
+
+    LaunchedEffect(windowId) {
+        MenuActionsHandler.confirmMicrokernelModeEvents
+            .onEach { eventWindowId ->
+                if (eventWindowId == windowId) {
+                    state.microkernelModeConfirmation.request()
                 }
             }.launchIn(this)
     }
@@ -515,8 +526,11 @@ internal fun BossAppMenuActionEffects(
                             )
                         workspaceManager.updateCurrentWorkspace(updatedConfig)
                         workspaceManager.saveCurrentWorkspace()
-                        TabTreeState.markWorkspaceAsSaved(currentConfig.id)
-                        StatusMessageManager.showMessage("Workspace Saved")
+                        // Nothing marks it saved here. The unsaved flag is DERIVED, from the live
+                        // layout against the copy in `workspaceManager.workspaces` - which this
+                        // write replaces - so the affordance turns itself off when the bytes land
+                        // rather than when the button was pressed. See BossAppStartupEffects.
+                        StatusMessageManager.showMessage("Space Saved")
                     } else {
                         val currentLayout = extractCurrentWorkspace(splitViewState, windowProjectState.selectedProject.value.path)
                         val newConfig =
@@ -526,7 +540,7 @@ internal fun BossAppMenuActionEffects(
                             )
                         workspaceManager.updateCurrentWorkspace(newConfig)
                         workspaceManager.saveCurrentWorkspace()
-                        StatusMessageManager.showMessage("Workspace Saved")
+                        StatusMessageManager.showMessage("Space Saved")
                     }
                 }
             }.launchIn(this)
@@ -614,6 +628,13 @@ internal fun BossAppMenuActionEffects(
                     val count = result.getOrElse { 0 }
                     StatusMessageManager.showMessage("Reloaded $count plugin(s)")
                 }
+            }.launchIn(this)
+    }
+
+    LaunchedEffect(windowId) {
+        MenuActionsHandler.showPluginHealthCenterEvents
+            .onEach { eventWindowId ->
+                if (eventWindowId == windowId) state.showPluginHealthCenter = true
             }.launchIn(this)
     }
 

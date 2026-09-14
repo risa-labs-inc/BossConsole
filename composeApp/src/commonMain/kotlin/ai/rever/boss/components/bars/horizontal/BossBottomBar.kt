@@ -5,6 +5,8 @@ import ai.rever.boss.components.bars.getBarScrollbarConfig
 import ai.rever.boss.components.bars.horizontalScrollWithScrollbar
 import ai.rever.boss.components.bars.rememberBarContextMenuItems
 import ai.rever.boss.components.buttons.BossActionButton
+import ai.rever.boss.components.dialogs.McpPolicyManagerDialog
+import ai.rever.boss.components.dialogs.McpProviderTrustDialog
 import ai.rever.boss.components.events.PanelEventBus
 import ai.rever.boss.components.overlays.contextMenu
 import ai.rever.boss.components.plugin.registries.StatusBarRegistryImpl
@@ -12,6 +14,8 @@ import ai.rever.boss.components.plugin.registries.owningPluginId
 import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
 import ai.rever.boss.components.window_panel.components.main_window_panels.BossTabsComponent
 import ai.rever.boss.layout.BossChrome
+import ai.rever.boss.mcp.McpPolicyAction
+import ai.rever.boss.mcp.McpToolPolicyConfig
 import ai.rever.boss.mcp.McpToolRegistryImpl
 import ai.rever.boss.performance.PerformanceState
 import ai.rever.boss.plugin.api.PanelId
@@ -46,7 +50,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.arkivanov.decompose.extensions.compose.subscribeAsState
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun BossBottomBar(tabsComponent: BossTabsComponent? = null) {
@@ -232,6 +238,41 @@ fun BossRightBottomBar() {
         }
     }
 
+    // Inspection/revocation for a rule saved via the approval dialog's "Always Allow"/"Always
+    // Deny" - the gap AGENTS.md's governance section names as reachable only by hand-editing
+    // ~/.boss/mcp-tool-policy.json and restarting.
+    val persistedPolicyConfig by McpToolRegistryImpl.policyEngine.config.collectAsState()
+    var showPolicyManager by remember { mutableStateOf(false) }
+    if (persistedPolicyConfig.rules.isNotEmpty()) {
+        androidx.compose.material.TextButton(onClick = { showPolicyManager = true }) {
+            Text(
+                "Persisted MCP policies (${persistedPolicyConfig.rules.size})",
+                color = BossTheme.colors.textSecondary,
+            )
+        }
+    }
+    if (showPolicyManager) {
+        McpPolicyManagerDialog(
+            rules = persistedPolicyConfig.rules,
+            // Dispatchers.IO: revokePersistedPolicy does a synchronized atomicWriteText disk
+            // write, and setToolPolicy already made the equivalent invocation-path write take
+            // this same dispatcher (McpToolRegistryImpl) - this call site was the one still
+            // running it on the UI thread, where a click could block behind another write
+            // holding the same lock from a slow, networked or AV-scanned home directory.
+            onRevoke = { toolName ->
+                withContext(Dispatchers.IO) {
+                    McpToolRegistryImpl.policyEngine.revokePersistedPolicy(toolName)
+                }
+            },
+            onDismiss = { showPolicyManager = false },
+        )
+    }
+
+    // "Trust This Plugin" grants from the approval dialog - a persisted, provider-wide ALLOW,
+    // listed and revoked individually (see the controls below) from the same config the
+    // persisted-policy manager above reads.
+    McpProviderTrustControls(persistedPolicyConfig)
+
     val policyFault by McpToolRegistryImpl.policyFault.collectAsState()
     policyFault?.let { fault ->
         Text(
@@ -259,14 +300,16 @@ fun BossRightBottomBar() {
         )
     }
 
-    // Status message (temporary messages like "Workspace Saved")
+    // Status message (temporary messages like "Space Saved")
     val statusMessage by StatusMessageManager.currentMessage.collectAsState()
     statusMessage?.let { message ->
         Text(
             text = message,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             color = BossTheme.colors.ok, // Green color for success
             fontSize = 12.sp,
-            modifier = Modifier.padding(horizontal = 8.dp),
+            modifier = Modifier.widthIn(max = 560.dp).padding(horizontal = 8.dp),
         )
     }
 
@@ -313,4 +356,37 @@ fun BossRightBottomBar() {
             }
         },
     )
+}
+
+/**
+ * The "Trusted plugins" control for the provider-wide ALLOWs ("Trust This Plugin") granted
+ * from the approval dialog.
+ *
+ * Behind a button that only appears once a rule exists, same as session trust in
+ * [BossRightBottomBar]; unlike session trust this is a list-and-revoke-individually dialog
+ * rather than a single clear-all, since these are durable grants an operator made
+ * deliberately, potentially several at once.
+ */
+@Composable
+private fun McpProviderTrustControls(config: McpToolPolicyConfig) {
+    var showTrustedPluginsDialog by remember { mutableStateOf(false) }
+    val trustedProviderCount = config.providerRules.count { it.value == McpPolicyAction.ALLOW }
+    if (trustedProviderCount > 0) {
+        androidx.compose.material.TextButton(onClick = { showTrustedPluginsDialog = true }) {
+            Text("Trusted plugins ($trustedProviderCount)", color = BossTheme.colors.textSecondary)
+        }
+    }
+    if (showTrustedPluginsDialog) {
+        McpProviderTrustDialog(
+            providerRules = config.providerRules,
+            // Dispatchers.IO: revokeProviderPolicy performs the same synchronized atomicWriteText
+            // disk write as revokePersistedPolicy, off the UI thread for the same reason.
+            onRevoke = { providerId ->
+                withContext(Dispatchers.IO) {
+                    McpToolRegistryImpl.policyEngine.revokeProviderPolicy(providerId)
+                }
+            },
+            onDismiss = { showTrustedPluginsDialog = false },
+        )
+    }
 }

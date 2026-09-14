@@ -1,6 +1,8 @@
 package ai.rever.boss.run
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.plugin.run.MAX_RERUN_DELAY_MS
+import ai.rever.boss.plugin.run.MIN_RERUN_DELAY_MS
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CoroutineScope
@@ -127,8 +129,7 @@ actual object RunnerSettingsManager {
      * Update only the re-run delay setting.
      */
     actual suspend fun setRerunDelayMs(delayMs: Long) {
-        // Clamp to valid range (0-2000ms)
-        val clampedDelay = delayMs.coerceIn(0, 2000)
+        val clampedDelay = delayMs.coerceIn(MIN_RERUN_DELAY_MS, MAX_RERUN_DELAY_MS)
         updateSettings(_currentSettings.value.copy(rerunDelayMs = clampedDelay))
     }
 }

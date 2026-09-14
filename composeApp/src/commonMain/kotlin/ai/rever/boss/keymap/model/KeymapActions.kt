@@ -106,7 +106,7 @@ object KeymapActions {
         const val TAB_MANAGEMENT = "Tab Management"
         const val BROWSER_CONTROLS = "Browser Controls"
         const val NAVIGATION = "Navigation"
-        const val WORKSPACE = "Workspace"
+        const val WORKSPACE = "Space"
         const val EDITOR = "Editor"
         const val TOOLS = "Tools"
         const val SEARCH = "Search"
@@ -153,7 +153,7 @@ object KeymapActions {
             PANEL_SPLIT_VERTICAL to "Split current tab vertically",
             PANEL_SPLIT_HORIZONTAL to "Split current tab horizontally",
             QUICK_SWITCHER_OPEN to "Open quick switcher (Top of Mind)",
-            WORKSPACE_SAVE to "Save the current workspace layout",
+            WORKSPACE_SAVE to "Save the current space layout",
             EDITOR_SAVE to "Save the current file",
             EDITOR_SAVE_ALL to "Save all open files",
             EDITOR_FIND to "Open find dialog",

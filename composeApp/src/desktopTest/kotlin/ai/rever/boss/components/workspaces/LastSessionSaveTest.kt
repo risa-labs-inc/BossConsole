@@ -77,6 +77,13 @@ class LastSessionSaveTest {
      * The default filename derivation is the load-bearing equivalence in this
      * refactor: the shutdown save must overwrite the same "Last Session" file the
      * debounced auto-save writes, not accumulate a second one.
+     *
+     * **The derivation is now the ID, not the name** - see
+     * `WorkspaceFileManagerCommon.fileNameForId`. What this test is about is unchanged and is the
+     * reason it still matters: two writes of one record land on ONE file. The record's id is a
+     * constant (`last-session`), so it derives one path just as its name did, and a machine with a
+     * legacy `Last_Session.json` keeps writing into that file because `WorkspaceManager` remembers
+     * the path each Space was loaded from.
      */
     @Test
     fun `saving Last Session twice overwrites one file rather than adding another`() {
@@ -96,8 +103,9 @@ class LastSessionSaveTest {
             "Expected exactly one Last Session file, found: ${files.map { it.name }}",
         )
         assertEquals(
-            WorkspaceFileManagerCommon.generateFileName(LAST_SESSION_NAME),
+            WorkspaceFileManagerCommon.fileNameForId(LAST_SESSION_ID),
             files.single().name,
+            "a fresh directory gets the id-derived path; a legacy file keeps its own",
         )
 
         val reloaded = WorkspaceSerializer.deserialize(files.single().readText())

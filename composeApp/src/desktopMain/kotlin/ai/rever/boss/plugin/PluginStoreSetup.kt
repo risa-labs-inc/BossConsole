@@ -157,7 +157,7 @@ object PluginStoreSetup {
      * Whether microkernel mode is active (OOP plugins need the runtime JAR).
      *
      * Reads from [KernelBootstrap] when it's initialised, but always consults
-     * the `BOSS_MODE` env var / `boss.mode` system property as a fallback so
+     * the canonical `BOSS_MODE` configuration as a fallback so
      * that if `systemPlugins` is evaluated before the kernel bootstraps we
      * don't cache `false` forever and silently skip the runtime install.
      */
@@ -166,7 +166,7 @@ object PluginStoreSetup {
         // a module excluded from the Windows-ARM64 build (no protoc binary
         // for that target, see settings.gradle.kts). A direct reference would
         // fail compilation there even though it'd run fine on every other
-        // platform. The `BOSS_MODE` env-var fallback also covers the case
+        // platform. The canonical mode fallback also covers the case
         // where the kernel hasn't bootstrapped yet at first read.
         val fromKernel =
             try {
@@ -180,7 +180,9 @@ object PluginStoreSetup {
             }
         if (fromKernel != null) return@lazy fromKernel
 
-        val mode = System.getenv("BOSS_MODE") ?: System.getProperty("boss.mode", "")
+        val mode =
+            ai.rever.boss.config.ConfigLoader
+                .getConfig("BOSS_MODE")
         mode.equals("KERNEL", ignoreCase = true)
     }
 

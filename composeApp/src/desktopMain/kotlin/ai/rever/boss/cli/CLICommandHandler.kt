@@ -16,7 +16,6 @@ import ai.rever.boss.window.Project
 import ai.rever.boss.window.WindowManager
 import kotlinx.coroutines.*
 import java.io.File
-import java.util.concurrent.ConcurrentLinkedQueue
 
 /**
  * Handles CLI commands with queueing for app lifecycle coordination.
@@ -29,26 +28,14 @@ import java.util.concurrent.ConcurrentLinkedQueue
 class CLICommandHandler private constructor() {
     private val logger = BossLogger.forComponent("CLICommandHandler")
 
-    private val commandQueue = ConcurrentLinkedQueue<CLICommand>()
+    private val initializationQueue = ReadinessQueue<CLICommand>()
 
     // Holds whole commands, not just the command text: the origin decides whether
     // the command may run unattended, and a queue that dropped it would turn a
     // cold-start request into an unattributed one.
-    private val terminalQueue = ConcurrentLinkedQueue<CLICommand.OpenTerminal>()
-    private val workspaceQueue = ConcurrentLinkedQueue<String>()
-    private val fileQueue = ConcurrentLinkedQueue<String>()
-
-    @Volatile
-    private var isInitialized = false
-
-    @Volatile
-    private var isTerminalHandlerReady = false
-
-    @Volatile
-    private var isFileHandlerReady = false
-
-    @Volatile
-    private var isWorkspaceHandlerReady = false
+    private val terminalReadinessQueue = ReadinessQueue<CLICommand.OpenTerminal>()
+    private val workspaceReadinessQueue = ReadinessQueue<String>()
+    private val fileReadinessQueue = ReadinessQueue<String>()
 
     // Service references - set during initialization
     private var windowManager: WindowManager? = null
@@ -76,12 +63,12 @@ class CLICommandHandler private constructor() {
     ) {
         this.windowManager = windowManager
         this.getSplitViewState = getSplitViewState
-        this.isInitialized = true
+        val queuedCommands = initializationQueue.markReadyAndClaimQueued()
 
         logger.info(LogCategory.SYSTEM, "CLI initialized with services")
 
         // Execute queued commands
-        executeQueuedCommands()
+        executeQueuedCommands(queuedCommands)
     }
 
     /**
@@ -90,12 +77,11 @@ class CLICommandHandler private constructor() {
      * Otherwise, queues for later execution.
      */
     fun queueCommand(command: CLICommand) {
-        if (isInitialized) {
+        if (initializationQueue.enqueueOrClaimForCaller(command)) {
             scope.launch {
                 executeCommand(command)
             }
         } else {
-            commandQueue.offer(command)
             logger.debug(LogCategory.SYSTEM, "Queued command", mapOf("command" to command.toString()))
         }
     }
@@ -105,14 +91,13 @@ class CLICommandHandler private constructor() {
      * Should be called from BossApp.kt after TerminalEventBus listener is set up.
      */
     fun markTerminalHandlerReady() {
-        isTerminalHandlerReady = true
+        val queuedCommands = terminalReadinessQueue.markReadyAndClaimQueued()
         logger.debug(LogCategory.SYSTEM, "Terminal handler marked as ready")
 
         // Process queued terminal events
         scope.launch {
-            while (terminalQueue.isNotEmpty()) {
-                val queued = terminalQueue.poll()
-                if (queued != null) {
+            queuedCommands.forEach { queued ->
+                try {
                     logger.debug(
                         LogCategory.SYSTEM,
                         "Processing queued terminal command",
@@ -121,11 +106,9 @@ class CLICommandHandler private constructor() {
                             "origin" to queued.origin.name,
                         ),
                     )
-                    try {
-                        handleOpenTerminal(queued.command, queued.origin)
-                    } catch (e: Exception) {
-                        logger.error(LogCategory.SYSTEM, "Failed to process queued terminal event", error = e)
-                    }
+                    handleOpenTerminal(queued.command, queued.origin)
+                } catch (e: Exception) {
+                    logger.error(LogCategory.SYSTEM, "Failed to process queued terminal event", error = e)
                 }
             }
         }
@@ -136,20 +119,17 @@ class CLICommandHandler private constructor() {
      * Should be called from BossApp.kt after FileEventBus listener is set up.
      */
     fun markFileHandlerReady() {
-        isFileHandlerReady = true
+        val queuedFiles = fileReadinessQueue.markReadyAndClaimQueued()
         logger.debug(LogCategory.SYSTEM, "File handler marked as ready")
 
         // Process queued file events
         scope.launch {
-            while (fileQueue.isNotEmpty()) {
-                val filePath = fileQueue.poll()
-                if (filePath != null) {
+            queuedFiles.forEach { filePath ->
+                try {
                     logger.debug(LogCategory.SYSTEM, "Processing queued file", mapOf("path" to filePath))
-                    try {
-                        handleOpenFile(filePath)
-                    } catch (e: Exception) {
-                        logger.error(LogCategory.SYSTEM, "Failed to process queued file event", error = e)
-                    }
+                    handleOpenFile(filePath)
+                } catch (e: Exception) {
+                    logger.error(LogCategory.SYSTEM, "Failed to process queued file event", error = e)
                 }
             }
         }
@@ -160,33 +140,26 @@ class CLICommandHandler private constructor() {
      * Should be called from BossApp.kt after Last Session workspace is loaded.
      */
     fun markWorkspaceHandlerReady() {
-        isWorkspaceHandlerReady = true
+        val queuedWorkspaces = workspaceReadinessQueue.markReadyAndClaimQueued()
         logger.debug(LogCategory.SYSTEM, "Workspace handler marked as ready")
 
         // Process queued workspace loads
         scope.launch {
-            while (workspaceQueue.isNotEmpty()) {
-                val configPath = workspaceQueue.poll()
-                if (configPath != null) {
+            queuedWorkspaces.forEach { configPath ->
+                try {
                     logger.debug(LogCategory.SYSTEM, "Processing queued workspace", mapOf("path" to configPath))
-                    try {
-                        handleLoadWorkspace(configPath)
-                    } catch (e: Exception) {
-                        logger.error(LogCategory.SYSTEM, "Failed to process queued workspace", error = e)
-                    }
+                    handleLoadWorkspace(configPath)
+                } catch (e: Exception) {
+                    logger.error(LogCategory.SYSTEM, "Failed to process queued workspace", error = e)
                 }
             }
         }
     }
 
-    private fun executeQueuedCommands() {
+    private fun executeQueuedCommands(queuedCommands: List<CLICommand>) {
         scope.launch {
-            // Process command queue
-            while (commandQueue.isNotEmpty()) {
-                val command = commandQueue.poll()
-                if (command != null) {
-                    executeCommand(command)
-                }
+            for (command in queuedCommands) {
+                executeCommand(command)
             }
 
             // Note: Workspace queue is now processed by markWorkspaceHandlerReady()
@@ -208,14 +181,13 @@ class CLICommandHandler private constructor() {
                 }
 
                 is CLICommand.OpenFile -> {
-                    if (isFileHandlerReady) {
+                    if (fileReadinessQueue.enqueueOrClaimForCaller(command.filePath)) {
                         // File handler ready - execute immediately
                         logger.debug(LogCategory.SYSTEM, "File handler ready, executing immediately", mapOf("path" to command.filePath))
                         handleOpenFile(command.filePath)
                     } else {
                         // File handler not ready - queue for later (cold start)
                         logger.debug(LogCategory.SYSTEM, "File handler not ready, queueing file", mapOf("path" to command.filePath))
-                        fileQueue.add(command.filePath)
                     }
                 }
 
@@ -224,7 +196,7 @@ class CLICommandHandler private constructor() {
                 }
 
                 is CLICommand.OpenTerminal -> {
-                    if (isTerminalHandlerReady) {
+                    if (terminalReadinessQueue.enqueueOrClaimForCaller(command)) {
                         // Terminal handler ready - execute immediately
                         logger.debug(
                             LogCategory.SYSTEM,
@@ -245,7 +217,6 @@ class CLICommandHandler private constructor() {
                                 "origin" to command.origin.name,
                             ),
                         )
-                        terminalQueue.add(command)
                     }
                 }
             }
@@ -297,9 +268,8 @@ class CLICommandHandler private constructor() {
 
         // Queue workspace if handler not ready (cold start)
         // This ensures workspace loads AFTER Last Session, preventing tab destruction
-        if (!isWorkspaceHandlerReady) {
+        if (!workspaceReadinessQueue.enqueueOrClaimForCaller(file.absolutePath)) {
             logger.debug(LogCategory.SYSTEM, "Workspace handler not ready, queueing", mapOf("path" to file.absolutePath))
-            workspaceQueue.add(file.absolutePath)
             return
         }
 
@@ -537,6 +507,41 @@ class CLICommandHandler private constructor() {
             }
         }
     }
+}
+
+/**
+ * Atomically transfers a value either to the caller once ready, or to the
+ * readiness transition that claims the deferred FIFO queue.
+ *
+ * Callers must execute claimed values after this object has released its monitor.
+ * FIFO applies within a deferred batch; a post-ready caller may run before that batch.
+ */
+internal class ReadinessQueue<T> {
+    private val lock = Any()
+    private val deferred = ArrayDeque<T>()
+    private var ready = false
+
+    /** Returns true only when this caller owns [value] for immediate execution. */
+    fun enqueueOrClaimForCaller(value: T): Boolean =
+        synchronized(lock) {
+            if (ready) {
+                true
+            } else {
+                deferred.addLast(value)
+                false
+            }
+        }
+
+    /** Marks this queue ready and transfers every deferred value to the caller in FIFO order. */
+    fun markReadyAndClaimQueued(): List<T> =
+        synchronized(lock) {
+            ready = true
+            buildList(deferred.size) {
+                while (deferred.isNotEmpty()) {
+                    add(deferred.removeFirst())
+                }
+            }
+        }
 }
 
 /**

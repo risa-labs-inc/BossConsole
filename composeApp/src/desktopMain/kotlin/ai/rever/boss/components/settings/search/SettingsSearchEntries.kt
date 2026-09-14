@@ -223,6 +223,19 @@ private fun EntryScope.fileAndLinkEntries() {
     setting("Reset Link Behavior", "Terminal Links")
 }
 
+private fun EntryScope.downloadsEntries() {
+    group("Downloads")
+    setting(
+        "Warn before downloading executable files",
+        "Downloads",
+        "executable",
+        "exe",
+        "download warning",
+        "malware",
+        "security",
+    )
+}
+
 private fun browserEntries() =
     section(SettingsSection.FLUCK) {
         group("Default Browser")
@@ -253,6 +266,7 @@ private fun browserEntries() =
         group("User Agent")
         setting("Browser Identity", "User Agent", "user agent", "ua", "spoof")
         setting("Custom User Agent String", "User Agent", "ua string")
+        downloadsEntries()
         fileAndLinkEntries()
         group("Secret Manager")
         setting(
@@ -370,9 +384,10 @@ private fun runnerEntries() =
 
 private fun workspaceEntries() =
     section(SettingsSection.WORKSPACE) {
-        group("Default Workspace")
-        group("When Switching Workspaces")
-        group("About Workspaces")
+        group("Default Space", "workspace", "workspaces")
+        group("When Switching Spaces", "workspace", "workspaces")
+        group("About Spaces", "workspace", "workspaces")
+        sectionLevel("workspace", "workspaces", "layout", "template")
     }
 
 private fun securityEntries() =
@@ -466,9 +481,9 @@ private fun performanceEntries() =
 
 private fun startupEntries() =
     section(SettingsSection.STARTUP) {
-        group("Workspace Loading")
-        setting("Workspace Load Timeout", "Workspace Loading", "startup", "boot")
-        setting("Reset Timeout", "Workspace Loading")
+        group("Space Loading", "workspace", "workspaces")
+        setting("Space Load Timeout", "Space Loading", "startup", "boot", "workspace")
+        setting("Reset Timeout", "Space Loading")
         group("About")
     }
 

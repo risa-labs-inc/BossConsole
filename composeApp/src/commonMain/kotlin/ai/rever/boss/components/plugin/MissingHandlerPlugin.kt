@@ -71,11 +71,15 @@ data class MissingHandlerPluginPrompt(
  * Carries a missing tab-type plugin from wherever an open was attempted to
  * whichever window can ask about it.
  *
- * Deliberately a near-copy of [PluginDependencyBus] rather than a reuse of it.
- * The two answer different questions - "a plugin you installed needs another
- * plugin" against "the thing you just double-clicked needs a plugin" - and the
- * text of the dependency dialog is specifically about a manifest declaration.
- * What is copied is the delivery, because the reasons behind it apply unchanged:
+ * Was written as a near-copy of [PluginDependencyBus], which then used a bounded `Channel` for
+ * the same three reasons this one still does, below. [PluginDependencyBus] was later redesigned
+ * (BossConsole#465) into a claim-based map registry precisely because that channel could
+ * silently drop an already-admitted prompt once enough other, genuinely distinct prompts filled
+ * its buffer - so the two are no longer the same shape, and this KDoc no longer describes its
+ * sibling, only itself. The two also answer different questions - "a plugin you installed needs
+ * another plugin" against "the thing you just double-clicked needs a plugin" - and the text of
+ * the dependency dialog is specifically about a manifest declaration, which is reason enough on
+ * its own not to reuse it directly. This bus's own reasons for a `Channel` here:
  *
  * - a **`Channel`, not a `SharedFlow`**: a broadcast would put an identical
  *   dialog in front of every open window and let each of them start the same

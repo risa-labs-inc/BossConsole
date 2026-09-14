@@ -361,8 +361,10 @@ private suspend fun publishedVersion(
     // Timing out reads as "could not be asked", which is already a state with sensible copy.
     val lookup =
         withTimeoutOrNull(STORE_LOOKUP_TIMEOUT_MS) {
-            // Both failure shapes: `getPlugin` returns `Result.failure` rather than throwing,
-            // so runCatching alone would report success with a null inside it.
+            // Both failure shapes, flattened: `getPlugin` returns `Result.failure` for store
+            // errors (and the bundled repository rethrows a caller's cancellation, which this
+            // runCatching catches) - and the `PluginRepository` interface permits either shape -
+            // so runCatching alone would report success with a null inside.
             runCatching { store.getPlugin(pluginId) }.getOrElse { Result.failure(it) }
         }
     // Null covers two different outcomes, and each gets its own line so the log distinguishes

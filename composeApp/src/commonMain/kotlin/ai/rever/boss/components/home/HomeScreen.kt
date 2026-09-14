@@ -201,7 +201,7 @@ private fun WorkspaceLayoutsSection(
     actions: HomeActions,
 ) {
     if (workspaces.isEmpty()) return
-    DashboardSection(title = "Workspace layouts", subtitle = "Open a whole arrangement at once") {
+    DashboardSection(title = "Space layouts", subtitle = "Open a whole arrangement at once") {
         CardStrip {
             workspaces.forEach { workspace ->
                 WorkspaceCard(

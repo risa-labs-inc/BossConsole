@@ -10,6 +10,7 @@ import ai.rever.boss.components.events.NavigationTargetBus
 import ai.rever.boss.components.events.PanelEventBus
 import ai.rever.boss.components.events.RunEventBus
 import ai.rever.boss.components.events.RunnerTerminalEventBus
+import ai.rever.boss.components.events.TabEventBus
 import ai.rever.boss.components.events.TerminalEventBus
 import ai.rever.boss.components.events.TerminalLinkEventBus
 import ai.rever.boss.components.events.URLEventBus
@@ -18,12 +19,12 @@ import ai.rever.boss.components.plugin.DependentRestartEventBus
 import ai.rever.boss.components.plugin.MissingHandlerPluginEventBus
 import ai.rever.boss.components.plugin.PanelIds
 import ai.rever.boss.components.plugin.PluginDependencyEventBus
+import ai.rever.boss.components.plugin.claimMissingDependencyForWindow
 import ai.rever.boss.components.plugin.resolveRegisteredPanelId
-import ai.rever.boss.components.plugin.shouldShowMissingDependency
 import ai.rever.boss.components.window_panel.SplitViewState
 import ai.rever.boss.components.workspaces.WorkspaceSerializer
 import ai.rever.boss.components.workspaces.applyWorkspace
-import ai.rever.boss.components.workspaces.requiresProject
+import ai.rever.boss.components.workspaces.spaceToOpen
 import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.dashboard.DashboardStatsManager
 import ai.rever.boss.git.GitTerminalService
@@ -51,6 +52,7 @@ import ai.rever.boss.services.TerminalHandlerService
 import ai.rever.boss.services.URLHandlerService
 import ai.rever.boss.terminal.TerminalLinkOpenMode
 import ai.rever.boss.terminal.TerminalLinkSettingsManager
+import ai.rever.boss.utils.WindowFocusManager
 import ai.rever.boss.utils.awaitRegistryCondition
 import ai.rever.boss.utils.logging.ComponentLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -59,6 +61,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
@@ -69,12 +72,26 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
+ * Pause before applying a tab selection received from another window. UX grace, not a
+ * correctness barrier - see the comment at the call site.
+ */
+private const val TAB_SELECT_FOCUS_GRACE_MS = 50L
+
+/**
  * Event-bus listeners for one BossApp window. Every bus is window-filtered by
  * sourceWindowId (Issues #498/#506) so events only affect the window they came
- * from. Handlers translate bus events into split-view / panel / dialog actions.
+ * from - except [TabEventBus], which is destination-addressed and filtered on
+ * the target window instead (see its listener below). Handlers translate bus
+ * events into split-view / panel / dialog actions.
  */
 @Composable
 internal fun BossAppEventBusEffects(state: BossAppState) {
+    LaunchedEffect(Unit) {
+        ai.rever.boss.startup.kernelStartupNotices.notices.collect { notice ->
+            StatusMessageManager.showMessage(notice, durationMs = ai.rever.boss.startup.KERNEL_NOTICE_DURATION_MS)
+        }
+    }
+
     val windowId = state.windowId
     val logger = state.logger
     val splitViewState = state.splitViewState
@@ -92,6 +109,20 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                 if (event.line > 0) {
                     NavigationTargetBus.navigateTo(event.filePath, event.line, event.column, sourceWindowId = windowId)
                 }
+            }.launchIn(this)
+    }
+
+    // Listen for tab selection events from other windows (destination-addressed, unlike the
+    // source-addressed buses above)
+    LaunchedEffect(splitViewState, windowId) {
+        TabEventBus.tabSelectEvents
+            .filter { event -> event.targetWindowId == windowId }
+            .onEach { event ->
+                // UX grace, not correctness: selectTabInPanel below is a pure state mutation
+                // and this window is already composed. The pause only lets the focused
+                // window's UI come to the front before the tab switches underneath it.
+                delay(TAB_SELECT_FOCUS_GRACE_MS)
+                splitViewState.selectTabInPanel(event.tabId, event.panelId)
             }.launchIn(this)
     }
 
@@ -114,12 +145,20 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                 if (event.requiresConfirmation && command != null) {
                     // Show the operator the command and let them decide; the
                     // prompt in BossAppDialogs opens the terminal on confirm.
-                    logger.info(
-                        LogCategory.TERMINAL,
-                        "Holding an externally requested terminal command for confirmation",
-                        mapOf("windowId" to windowId),
-                    )
-                    state.pendingTerminalCommand = PendingTerminalCommand(command, event.workingDirectory)
+                    val request = PendingTerminalCommand(command, event.workingDirectory)
+                    if (state.terminalCommandApprovals.enqueue(request)) {
+                        logger.info(
+                            LogCategory.TERMINAL,
+                            "Holding an externally requested terminal command for confirmation",
+                            mapOf("windowId" to windowId),
+                        )
+                    } else {
+                        logger.warn(
+                            LogCategory.TERMINAL,
+                            "External terminal command refused: approval queue full",
+                            mapOf("windowId" to windowId),
+                        )
+                    }
                 } else {
                     splitViewState.openTerminalInActivePanel(command, event.workingDirectory)
                     DashboardStatsManager.recordTerminalSession()
@@ -231,38 +270,30 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
     LaunchedEffect(windowId) {
         PluginDependencyEventBus.missingDependencies
             .collect { prompt ->
-                // Re-check rather than trusting the report: two dependents of one missing
-                // plugin each raise a prompt, so installing for the first satisfies the
-                // second, whose dialog would otherwise claim something untrue and reinstall
-                // what is already loaded. Off the UI thread because the check stats the jar.
-                val present =
-                    withContext(Dispatchers.IO) {
-                        prompt.installer.isInstalled(prompt.missing.missingPluginId)
-                    }
-                // The rule itself lives in `shouldShowMissingDependency`, so it can be tested
-                // against rather than restated here. Notably it exempts a prompt a person asked
-                // for by pressing something: without that, dismissing the offer once left the
-                // control silent for the rest of the session.
-                val show =
-                    shouldShowMissingDependency(
+                val claimed =
+                    PluginDependencyEventBus.claimMissingDependencyForWindow(
                         prompt = prompt,
-                        present = present,
-                        declined = PluginDependencyEventBus.wasDeclined(prompt.missing),
-                    )
-                if (!show) {
-                    return@collect
-                }
+                        collectorWindowId = windowId,
+                        targetWindowOpen = prompt.windowId?.let { WindowFocusManager.isWindowOpen(it) } == true,
+                        isPresent = {
+                            withContext(Dispatchers.IO) {
+                                prompt.installer.isInstalled(prompt.missing.missingPluginId)
+                            }
+                        },
+                    ) ?: return@collect
+                // Publish immediately after claiming, without another suspension.
                 // Reset here rather than relying on the previous dialog's exit path having
                 // cleared them: the three fields are reused for every prompt, and ordering
                 // between that clear and this assignment should not be load-bearing.
                 state.installingMissingDependency = false
                 state.missingDependencyError = null
-                state.pendingMissingPluginDependency = prompt
-                // Back-pressure instead of a queue: the next prompt stays in the channel until
-                // this one is answered, so a second missing dependency is asked about after the
-                // first rather than replacing it or being dropped. Cancelling this effect (the
-                // window closing) leaves whatever is still in the channel for another window -
-                // though a prompt already received here and not yet shown does go with it.
+                state.pendingMissingPluginDependency = claimed
+                // Back-pressure instead of a queue: this collect loop does not move on to the
+                // next broadcast emission until this one is answered, so a second missing
+                // dependency in this same window is asked about after the first rather than
+                // replacing it. The prompt is already claimed (removed from the bus) by this
+                // point, so cancelling this effect - the window closing mid-dialog - would strand
+                // it; that is an accepted, narrow gap, not a claim to loop back and reclaim it.
                 snapshotFlow { state.pendingMissingPluginDependency }.first { it == null }
             }
     }
@@ -825,21 +856,14 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                     return@onEach
                 }
 
-                // A project-shaped workspace with no project is the hazard
-                // `shouldApplyOnFreshStart` exists to avoid: `{projectPath}` falls back to
-                // ~/BossProjects, so Claude Code here would start an agent in a directory
-                // nobody chose. Not a new risk - the split-template card had it too - but
-                // the home screen is now what a fresh launch opens on, so it is the click
-                // most likely to be made first. Say so instead of doing it.
-                if (workspace.requiresProject() &&
-                    windowProjectState.selectedProject.value.path
-                        .isEmpty()
-                ) {
-                    StatusMessageManager.showMessage(
-                        "Open a project first - \"${workspace.name}\" builds its tabs from the project you are in",
-                    )
-                    return@onEach
-                }
+                // A card on the home screen is a TEMPLATE when it still carries a project
+                // placeholder, and picking one materialises it: substituted, named for the
+                // project and saved as a Space. The hazard `shouldApplyOnFreshStart` exists to
+                // avoid is the OTHER branch, no project selected - `{projectPath}` falls back to
+                // ~/BossProjects, so Claude Code here would start an agent in a directory nobody
+                // chose - and `spaceToOpen` is where that is refused with a message now, rather
+                // than in a copy of the rule here.
+                val opened = spaceToOpen(workspace, windowProjectState.selectedProject.value.path)
 
                 // Preserve, load, apply: the same three steps the top bar's switch takes,
                 // so switching away and back keeps the tabs that were open.
@@ -847,8 +871,8 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                 if (currentWorkspace != null && currentWorkspace.id.isNotEmpty()) {
                     splitViewState.preserveCurrentState(currentWorkspace.id, currentWorkspace.name)
                 }
-                workspaceManager.loadWorkspace(workspace)
-                applyWorkspace(workspace, splitViewState, windowProjectState)
+                workspaceManager.loadWorkspace(opened)
+                applyWorkspace(opened, splitViewState, windowProjectState)
             }.launchIn(this)
 
         // Handle settings window events from the home screen.

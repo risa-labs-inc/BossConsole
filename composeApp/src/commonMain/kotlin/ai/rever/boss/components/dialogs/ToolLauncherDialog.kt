@@ -5,11 +5,14 @@ import ai.rever.boss.components.home.homeToolColumns
 import ai.rever.boss.components.model.BossDraggableComponent
 import ai.rever.boss.components.sidebar.SidebarVisibilitySettings
 import ai.rever.boss.plugin.api.SidebarItem
+import ai.rever.boss.plugin.scrollbar.getPanelScrollbarConfig
+import ai.rever.boss.plugin.scrollbar.scrollbar
 import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
@@ -88,6 +91,15 @@ private const val LABEL_LINES = 2
  * as "there is more below".
  */
 private const val VISIBLE_ROWS = 4
+
+/**
+ * How visible the grid's scrollbar is while there is anywhere to scroll.
+ *
+ * A little under the 0.8 the panel default animates to on a gesture: this one is always there, and
+ * a permanent mark wants to be quieter than one that appears in answer to a scroll. The Space
+ * picker uses the same value, because the two dialogs are meant to read as one pattern.
+ */
+private const val SCROLLBAR_ALPHA = 0.7f
 
 /**
  * Every tool, searchable, for when the icon strips that normally hold them are not on screen.
@@ -241,8 +253,40 @@ private fun ToolGrid(
                 .heightIn(max = TILE_HEIGHT * VISIBLE_ROWS + TILE_GAP * (VISIBLE_ROWS - 1)),
     ) {
         val columns = homeToolColumns(maxWidth, minTileWidth = TILE_MIN_WIDTH, gap = TILE_GAP)
+        // Rounded UP: 13 tools in 4 columns is 4 rows, and plain integer division would answer 3
+        // and hide the last row behind a grid that looks complete.
+        val rowCount = if (columns > 0) (tools.size + columns - 1) / columns else 0
+        val scroll = rememberScrollState()
         Column(
-            modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    // Pinned visible while there is anywhere to scroll, and absent when there is
+                    // not. The grid is bounded at VISIBLE_ROWS, so a user with more tools than fit
+                    // sees the same complete-looking block either way; the bar is the only thing
+                    // that says there is more.
+                    //
+                    // Gated, and that gate is load-bearing. `Modifier.scrollbar` has no
+                    // fits-the-viewport guard - unlike `lazyListScrollbar`, which refuses to draw -
+                    // so with content that fits it computes `contentLength == viewport` and a
+                    // FULL-LENGTH thumb. Pinning alpha unconditionally paints a permanent bar down
+                    // a grid with nothing to scroll. Null restores the fade, which shows nothing.
+                    //
+                    // And the gate is ARITHMETIC, not a scroll-state read. `ScrollState.maxValue`
+                    // starts at Int.MAX_VALUE and holds it until the scrollable has measured, so
+                    // `maxValue > 0` is true on every first composition, and `canScrollForward` is
+                    // `value < maxValue`, so that is true then too. Both were tried in the Space
+                    // picker and both drew a bar under three tiles; a probe printed 2147483647.
+                    // The grid is capped at VISIBLE_ROWS, so "does it scroll" is just whether
+                    // there are more rows than that, and it is right on the first frame.
+                    .scrollbar(
+                        scrollState = scroll,
+                        direction = Orientation.Vertical,
+                        config =
+                            getPanelScrollbarConfig().copy(
+                                alpha = SCROLLBAR_ALPHA.takeIf { rowCount > VISIBLE_ROWS },
+                            ),
+                    ).verticalScroll(scroll),
             verticalArrangement = Arrangement.spacedBy(TILE_GAP),
         ) {
             tools.chunked(columns).forEach { row ->

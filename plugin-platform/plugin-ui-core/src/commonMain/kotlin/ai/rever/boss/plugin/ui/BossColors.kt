@@ -39,6 +39,16 @@ object BossColors {
     val contextMenuBackground: Color get() = c.raised
     val contextMenuBorder: Color get() = c.lineStrong
     val contextMenuHover: Color get() = c.signalWash
+
+    /**
+     * The accent drawn as TEXT, held to 4.5:1 where [darkAccent] is a fill and is not.
+     *
+     * Exposed because a plugin drawing an accent-coloured label or glyph had only `darkAccent`
+     * (= `signal`) to reach for, which is the fill token: under the default theme it lands under
+     * 4.5:1 as text. The tab bar tints an active pane's header with `signalText`, and a panel
+     * mirroring it could not.
+     */
+    val accentText: Color get() = c.signalText
 }
 
 // Convenience aliases for backward compatibility (also reactive — getters, so

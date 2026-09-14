@@ -1,6 +1,7 @@
 package ai.rever.boss.app
 
 import ai.rever.boss.components.buttons.BossActionButton
+import ai.rever.boss.components.plugin.openTopOfMindWorkspacePicker
 import ai.rever.boss.components.workspaces.LayoutWorkspace
 import ai.rever.boss.components.workspaces.WorkspaceButton
 import ai.rever.boss.components.workspaces.WorkspaceManager
@@ -18,6 +19,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.Divider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -54,14 +58,33 @@ internal fun VerticalBarWindowControls(
      * seconds a bar is revealed is the better of the two.
      */
     topBarHidden: Boolean,
+    /**
+     * Which window this bar belongs to, needed only to open a panel in it.
+     *
+     * `PanelEventBus` events are broadcast process-wide and filtered by the collector, so an event
+     * emitted without the right window id opens the panel in every window or in none.
+     */
+    windowId: String,
     project: Project,
     onOpenProject: () -> Unit,
     workspaceManager: WorkspaceManager,
     onApplyWorkspace: (LayoutWorkspace) -> Unit,
     getCurrentWorkspace: () -> LayoutWorkspace,
     onShowTopOfMind: () -> Unit,
+    /** Save the Space on screen. `MenuActionsHandler.triggerSaveWorkspace`, which the File menu uses. */
+    onSaveWorkspace: () -> Unit,
 ) {
     if (!topBarHidden) return
+
+    val scope = rememberCoroutineScope()
+
+    // Which Space is showing here, and whether this window holds changes to it that are not on
+    // disk. Both are collected rather than read, because the affordance below appears and
+    // disappears with the answer - see `WorkspaceManager.unsavedWorkspaces` for why the unsaved
+    // set is keyed by window.
+    val currentWorkspace by workspaceManager.currentWorkspace.collectAsState()
+    val unsavedWorkspaces by workspaceManager.unsavedWorkspaces.collectAsState()
+    val unsaved = spaceIsUnsaved(currentWorkspace?.id, unsavedWorkspaces[windowId].orEmpty())
 
     Divider(color = BossTheme.colors.line)
     Column(
@@ -74,6 +97,37 @@ internal fun VerticalBarWindowControls(
         // these two means opening the wrong thing entirely, a project dialog or a workspace menu.
         verticalArrangement = Arrangement.spacedBy(ROW_GAP),
     ) {
+        // Workspace above project, because that is the containment: a workspace REMEMBERS a
+        // project (LayoutWorkspace.projectPath) and switching workspace restores it, so the
+        // workspace is the outer choice and the project is a property of the one you are in.
+        // Listing the project first read as the reverse - as though a project held workspaces.
+        // The Space button and, while there is something to save, a save button beside it. The
+        // save affordance lives HERE rather than in the footer's action row because this is where
+        // the Space it saves is named: a button that says "save" next to a control that says
+        // which Space is on screen needs no label of its own.
+        SpaceRow(unsaved = unsaved, onSave = onSaveWorkspace) {
+            WorkspaceButton(
+                onOpenWorkspace = onApplyWorkspace,
+                workspaceManager = workspaceManager,
+                getCurrentWorkspace = getCurrentWorkspace,
+                onShowTopOfMind = onShowTopOfMind,
+                // The left click opens Top of Mind and asks it for its workspace picker, which is
+                // a searchable list of workspaces sitting above a tree of every tab in them - more
+                // than this button's own menu has ever been able to say in a 200dp column. The menu
+                // is not lost: it moves to the right click, which is the only place Open Workspace
+                // Folder and Reset to Default exist at all. Returns false when Top of Mind is not
+                // installed or is disabled, and the click then opens the menu as it used to.
+                onOpenWorkspacePicker = { openTopOfMindWorkspacePicker(windowId, scope) },
+                compact = true,
+                // The Space itself is marked, not only the button beside it: the save button says
+                // "there is something you can do", the mark says "this Space is the thing it is
+                // about". Both, because with two windows open only one of them may be lit.
+                unsaved = unsaved,
+                // And every row of the menu behind it, which can mark a Space that is running but
+                // not on screen - the button's own mark can only speak for the current one.
+                unsavedWorkspaceIds = unsavedWorkspaces[windowId].orEmpty(),
+            )
+        }
         BossActionButton(
             // A folder rather than the top bar's project LOGO tile. That tile is 28dp of solid
             // colour built to anchor a wide bar; down a 200dp column it is the loudest thing on
@@ -94,13 +148,6 @@ internal fun VerticalBarWindowControls(
             maxTextWidth = LABEL_MAX_WIDTH,
             compact = true,
             onClick = onOpenProject,
-        )
-        WorkspaceButton(
-            onOpenWorkspace = onApplyWorkspace,
-            workspaceManager = workspaceManager,
-            getCurrentWorkspace = getCurrentWorkspace,
-            onShowTopOfMind = onShowTopOfMind,
-            compact = true,
         )
     }
 }
@@ -332,21 +379,27 @@ internal enum class VerticalBarHost {
  * What the vertical tab bar can host right now.
  *
  * Three states, not two, and an enum rather than a pair of booleans because two of the three are
- * the same bar: an EXPANDED left bar has a foot under its split map, a COLLAPSED one is a rail
- * whose bottom is the only room it has, and a collapsed bar whose hover drawer is OPEN has a foot
- * again for as long as the drawer is up, because the drawer is a full bar. Carried as two flags
- * these would admit "a foot AND a rail", which is not a window that exists.
+ * the same bar: an EXPANDED left bar has a foot under its split map, while a COLLAPSED one keeps
+ * its host actions in the rail even when its hover drawer is open. The drawer sits beside that
+ * rail, so moving actions into its foot would relocate targets already under the pointer.
  *
  * Pure and named because it is the one input to [focusQuickActionsPlacement] that is not a
  * standing preference, and because the scaffold that reads it is at detekt's complexity ceiling.
+ *
+ * [drawerVisible] is deliberately NOT an input: the rail keeps its actions while the drawer is
+ * open, so the answer must not move with the drawer. The parameter is kept as a documented
+ * hedge for a future decision that does need the drawer's state, rather than deleted and
+ * re-plumbed later - and it is stated here because the reporting chain behind it (Scaffold
+ * state, SplitView's LaunchedEffect) is still live, and recomposes the scaffold on every
+ * drawer open/close.
  */
 internal fun verticalBarHost(
     tabBarOnLeft: Boolean,
     barCollapsed: Boolean,
-    drawerVisible: Boolean,
+    @Suppress("UnusedParameter") drawerVisible: Boolean,
 ): VerticalBarHost =
     when {
         !tabBarOnLeft -> VerticalBarHost.NONE
-        !barCollapsed || drawerVisible -> VerticalBarHost.FOOT
+        !barCollapsed -> VerticalBarHost.FOOT
         else -> VerticalBarHost.RAIL
     }

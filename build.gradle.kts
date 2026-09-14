@@ -1,3 +1,5 @@
+import io.gitlab.arturbosch.detekt.Detekt
+import io.gitlab.arturbosch.detekt.DetektCreateBaselineTask
 import io.gitlab.arturbosch.detekt.extensions.DetektExtension
 import org.jlleitschuh.gradle.ktlint.KtlintExtension
 
@@ -50,6 +52,13 @@ allprojects {
         // detekt at the whole src tree — it only picks up .kt/.kts files.
         source.setFrom(files("src"))
         parallel = true
+    }
+
+    tasks.withType<Detekt>().configureEach {
+        jvmTarget = "17"
+    }
+    tasks.withType<DetektCreateBaselineTask>().configureEach {
+        jvmTarget = "17"
     }
 
     extensions.configure<KtlintExtension> {

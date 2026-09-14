@@ -16,10 +16,12 @@ import ai.rever.boss.process.ProcessSpawner
 import ai.rever.boss.process.ProcessType
 import ai.rever.boss.process.RestartPolicy
 import io.grpc.ManagedChannel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.slf4j.LoggerFactory
 import java.io.File
 import java.security.MessageDigest
@@ -230,13 +232,22 @@ class OutOfProcessPluginSpawnerImpl(
         // Kill first, drop the registry entry second: while the child is alive the registry entry
         // is the only thing that would let a host exit reap it.
         val process = managedProcesses.remove(pluginId)
+        ai.rever.boss.kernel
+            .killProcessDescendants(
+                ai.rever.boss.kernel
+                    .processDescendants(process?.process),
+            )
         runCatching { process?.destroyForcibly() }
-        process?.let { kernelRegistry()?.unregisterIfSame(it.config.processId, it) }
+        awaitForcedExit(process)
+        process?.takeUnless { it.isAlive }?.let { kernelRegistry()?.unregisterIfSame(it.config.processId, it) }
     }
 
     override suspend fun terminate(pluginId: String): Result<Unit> =
         withContext(Dispatchers.IO) {
             val process = managedProcesses.remove(pluginId)
+            val descendants =
+                ai.rever.boss.kernel
+                    .processDescendants(process?.process)
             try {
                 // Dispose state bridge
                 stateBridges.remove(pluginId)?.dispose()
@@ -256,27 +267,40 @@ class OutOfProcessPluginSpawnerImpl(
                     process.destroy()
 
                     // Wait for graceful shutdown, then force kill
-                    withTimeout(5_000) {
-                        while (process.isAlive) {
-                            delay(100)
-                        }
+                    val exited =
+                        withTimeoutOrNull(5_000) {
+                            while (process.isAlive) delay(100)
+                            true
+                        } ?: false
+                    if (!exited) {
+                        process.destroyForcibly()
+                        logger.warn("Force-killed plugin process after shutdown timeout: id={}", pluginId)
                     }
                 } else {
                     logger.warn("No managed process found for plugin: {}", pluginId)
                 }
 
                 Result.success(Unit)
+            } catch (e: CancellationException) {
+                // Termination already owns cleanup: cancellation must not orphan this subtree.
+                runCatching { process?.destroyForcibly() }
+                throw e
             } catch (e: Exception) {
                 // Force kill if graceful shutdown failed
                 process?.destroyForcibly()
                 logger.warn("Force-killed plugin process: id={}", pluginId, e)
                 Result.success(Unit)
             } finally {
+                ai.rever.boss.kernel
+                    .killProcessDescendants(descendants)
                 // Registry entry goes last, and only if it is still this process. "Registered
                 // implies reapable" has to hold for as long as the child is alive, so a host exit
                 // part-way through an unload still reaps it; and removing by id alone could evict
                 // a replacement that a concurrent respawn had already registered.
-                process?.let { kernelRegistry()?.unregisterIfSame(it.config.processId, it) }
+                awaitForcedExit(process)
+                process?.takeUnless { it.isAlive }?.let {
+                    kernelRegistry()?.unregisterIfSame(it.config.processId, it)
+                }
             }
         }
 
@@ -407,3 +431,8 @@ internal fun pluginProcessId(
  * `KernelBootstrap.instance`, so the instance and its registry both exist before this class does.
  */
 private fun kernelRegistry(): ProcessRegistry? = KernelBootstrap.instance?.processRegistry
+
+private fun awaitForcedExit(process: ai.rever.boss.process.ManagedProcess?) {
+    // SIGKILL is asynchronous. Preserve a still-live handle after this bounded wait.
+    runCatching { process?.process?.waitFor(100, java.util.concurrent.TimeUnit.MILLISECONDS) }
+}

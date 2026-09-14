@@ -38,6 +38,9 @@ kotlin {
                 // Minimal plugin-api-core
                 api(projects.pluginPlatform.pluginApiCore)
 
+                // SemanticVersion: the sole version-comparison primitive for update checks.
+                implementation(projects.pluginPlatform.pluginDependency)
+
                 // Logging
                 implementation(projects.pluginPlatform.pluginLogging)
 

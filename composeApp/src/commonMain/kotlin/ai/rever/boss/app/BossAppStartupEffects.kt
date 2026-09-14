@@ -14,10 +14,15 @@ import ai.rever.boss.components.workspaces.LayoutWorkspace
 import ai.rever.boss.components.workspaces.ProjectSelectionWorkspace
 import ai.rever.boss.components.workspaces.WorkspaceSettingsManager
 import ai.rever.boss.components.workspaces.applyWorkspace
-import ai.rever.boss.components.workspaces.asLastSession
 import ai.rever.boss.components.workspaces.extractCurrentWorkspace
+import ai.rever.boss.components.workspaces.extractRunningWorkspaces
+import ai.rever.boss.components.workspaces.isRestorable
+import ai.rever.boss.components.workspaces.isUnsaved
+import ai.rever.boss.components.workspaces.layoutWatcherWrite
 import ai.rever.boss.components.workspaces.requiresProject
 import ai.rever.boss.components.workspaces.resolveOnProjectSelection
+import ai.rever.boss.components.workspaces.sessionSetOf
+import ai.rever.boss.components.workspaces.tabListChanges
 import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.consumePendingInitialProject
 import ai.rever.boss.consumePendingInitialTab
@@ -39,7 +44,6 @@ import ai.rever.boss.services.bookmarks.BookmarkAPIAccess
 import ai.rever.boss.services.terminal.TerminalAPIAccess
 import ai.rever.boss.setupDownloadTabCloseCallback
 import ai.rever.boss.startup.StartupSettingsManager
-import ai.rever.boss.topofmind.TabTreeState
 import ai.rever.boss.updater.UpdateCoordinator
 import ai.rever.boss.utils.CLIInstaller
 import ai.rever.boss.utils.CLIVersionManager
@@ -60,6 +64,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -151,6 +157,22 @@ internal fun BossAppStartupEffects(state: BossAppState) {
         LastSessionCoordinator.instance.register(
             windowId = windowId,
             isFirstWindow = isFirstWindow,
+            // Every Space this window is running, and which one is showing - so a restart brings
+            // the whole window back rather than the one Space that happened to be on screen.
+            // Null for a window running fewer than two, which the single-Space record below
+            // already describes on its own; see `sessionSetOf`.
+            extractSet = {
+                sessionSetOf(
+                    spaces =
+                        extractRunningWorkspaces(
+                            splitViewState,
+                            windowProjectState.selectedProject.value.path,
+                            defaultWorkingDirectory = defaultWorkingDirectory,
+                            identityFor = { id -> workspaceManager.savedCopyOf(id) },
+                        ),
+                    activeWorkspaceId = splitViewState.currentWorkspaceId,
+                )
+            },
         ) {
             // Invoked at teardown, possibly from the shutdown-hook thread, so read
             // live state here rather than closing over a recomposition snapshot.
@@ -614,10 +636,31 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                     // Only load "Last Session" for the first window (app startup)
                     // New windows should start fresh (Issue #129)
                     if (isFirstWindow) {
-                        // Check if there's a saved "last-session" workspace
-                        val lastSessionConfig = configs.find { it.name == LAST_SESSION_NAME }
+                        // The multi-Space record first, and the single-Space one only when there
+                        // is none. An installed build upgrading into this has only
+                        // `Last_Session.json`, and a session that ran one Space deliberately
+                        // writes no set - so the fallback is the normal path, not an error path.
+                        // Read here rather than up front because this branch is reached at most
+                        // once: `loadWorkspace` below sets currentWorkspace, which is the guard
+                        // on this whole block.
+                        val sessionSet = workspaceManager.loadLastSessionSet()?.takeIf { isRestorable(it) }
 
-                        if (lastSessionConfig != null) {
+                        // The record, BY ID. By name, a Space of the user's called "Last Session"
+                        // was restored instead of the record - and the record's own layout, which
+                        // is the crash-recovery copy, was never applied.
+                        val lastSessionConfig = configs.find { it.id == LAST_SESSION_ID }
+
+                        if (sessionSet != null) {
+                            // Before applyWorkspace, for the reason the single-Space path below
+                            // states: the effect watching selectedProject.path has to be able to
+                            // tell a restore apart from the user picking a project. Every entry
+                            // carries the window's project, so the active one's is all of them.
+                            state.restoredProjectPath =
+                                sessionSet.spaces
+                                    .firstOrNull { it.id == sessionSet.activeWorkspaceId }
+                                    ?.projectPath
+                            restoreLastSessionSet(sessionSet, splitViewState, windowProjectState)
+                        } else if (lastSessionConfig != null) {
                             // Ensure it has the correct ID
                             val configWithId =
                                 if (lastSessionConfig.id != LAST_SESSION_ID) {
@@ -734,90 +777,124 @@ internal fun BossAppStartupEffects(state: BossAppState) {
         // state, so a browser updating its title mid-navigation re-runs the whole walk.
         val defaultWorkingDirectory = DefaultWorkingDirectory.nominalPath()
 
-        // Monitor the entire layout structure for changes
-        snapshotFlow {
-            // Extract current layout workspace
+        // The last layout this window extracted, so the unsaved flag can be recomputed when the
+        // OTHER half of the comparison moves. Both halves change independently: the live layout
+        // when the user does something, and the saved copy when a write lands - and a write lands
+        // asynchronously (`saveCurrentWorkspace` returns before the file exists), so a flag set
+        // only from the layout side would stay lit after a save until the user touched something
+        // else. Recomputing from both is what makes the affordance self-healing rather than
+        // needing a "now clear it" call after every save path in the app.
+        var latestLayout: LayoutWorkspace? = null
+
+        fun reportUnsaved() {
+            val live = latestLayout
+            // An empty id is a Space that cannot be keyed - `LayoutWorkspace.id` defaults to ""
+            // and `applyWorkspace` mints one only for the copy it applies.
+            val workspaceId = workspaceManager.currentWorkspace.value?.id
+            if (live == null || workspaceId.isNullOrEmpty()) return
+            workspaceManager.setWorkspaceUnsaved(
+                windowId = windowId,
+                workspaceId = workspaceId,
+                unsaved = isUnsaved(live, workspaceManager.savedCopyOf(workspaceId)),
+            )
+        }
+
+        fun extract() =
             extractCurrentWorkspace(
                 splitViewState,
                 selectedProject.path,
                 defaultWorkingDirectory = defaultWorkingDirectory,
             )
-        }.onEach { currentLayout ->
-            // Check if we have a loaded workspace
+
+        // Monitor the entire layout structure for changes.
+        //
+        // TWO sources, because the layout is kept in two kinds of state and one of them is
+        // invisible to `snapshotFlow`:
+        //
+        // - The snapshot half sees everything that is Compose state - the split TREE, each pane's
+        //   `_pinnedCount`, and each tab's own title, url and working directory.
+        // - `tabListChanges()` sees what the snapshot half cannot: `tabsState` is a Decompose
+        //   `Value`, so reading it registers no snapshot read and a tab added, closed, reordered or
+        //   moved between panes changed NOTHING this flow was observing. Nothing re-extracted, so
+        //   nothing was marked unsaved and nothing reached the Last Session record.
+        //
+        // Merged rather than folded into one producer, so each half stays the plain observation of
+        // its own source. A change visible to both costs one extra extract and no more: the
+        // downstream is idempotent, and a duplicate only reschedules the settle delay.
+        merge(
+            snapshotFlow { extract() },
+            splitViewState.tabListChanges().map { extract() },
+        ).onEach { currentLayout ->
+            latestLayout = currentLayout
+            reportUnsaved()
+
             val loadedConfig = workspaceManager.currentWorkspace.value
 
-            if (loadedConfig != null) {
-                // Compare with the last known workspace state
-                if (lastWorkspaceSnapshot == null) {
-                    // First snapshot after loading
-                    lastWorkspaceSnapshot = currentLayout
-                } else if (currentLayout != lastWorkspaceSnapshot) {
-                    // Layout has changed (splits, tabs added/removed, etc.)
-                    lastWorkspaceSnapshot = currentLayout
-
-                    // Mark the current workspace as modified (if it's not "Last Session")
-                    if (loadedConfig.name != LAST_SESSION_NAME) {
-                        TabTreeState.markWorkspaceAsModified(loadedConfig.id)
-                    }
-
-                    // Cancel previous save job if any
-                    saveJob?.cancel()
-
-                    // Auto-save to current workspace or "Last Session" after a short delay
-                    saveJob =
-                        launch {
-                            delay(2000) // Wait 2 seconds before saving
-
-                            if (loadedConfig.name == LAST_SESSION_NAME) {
-                                // If we're already in "Last Session", update it
-                                workspaceManager.updateCurrentWorkspace(asLastSession(currentLayout))
-                                workspaceManager.saveCurrentWorkspace(LAST_SESSION_NAME)
-                            } else {
-                                // Update the current loaded workspace with changes
-                                val updatedConfig =
-                                    loadedConfig.copy(
-                                        layout = currentLayout.layout,
-                                        timestamp = Clock.System.now().toEpochMilliseconds(),
-                                    )
-                                workspaceManager.updateCurrentWorkspace(updatedConfig)
-                                workspaceManager.saveCurrentWorkspace()
-
-                                // Clear the modified state since we just auto-saved
-                                TabTreeState.markWorkspaceAsSaved(loadedConfig.id)
-                            }
-                        }
+            // Prime on the FIRST extract of a loaded Space rather than treating it as a change:
+            // the first walk of a Space that was just applied is not something the user did. A
+            // window with no Space has nothing to prime against, and its first extract IS the
+            // change that makes it "in" Last Session - both behaviours are as they were.
+            val changed =
+                when {
+                    loadedConfig != null && lastWorkspaceSnapshot == null -> false
+                    currentLayout != lastWorkspaceSnapshot -> true
+                    else -> false
                 }
-            } else {
-                // No workspace loaded, but still save as "Last Session"
-                if (currentLayout != lastWorkspaceSnapshot) {
-                    lastWorkspaceSnapshot = currentLayout
+            lastWorkspaceSnapshot = currentLayout
+            if (!changed) return@onEach
 
-                    // Cancel previous save job if any
-                    saveJob?.cancel()
+            // Cancel previous save job if any
+            saveJob?.cancel()
 
-                    // Auto-save as "Last Session" after a short delay
-                    saveJob =
-                        launch {
-                            delay(2000) // Wait 2 seconds before saving
-                            workspaceManager.updateCurrentWorkspace(asLastSession(currentLayout))
-                            workspaceManager.saveCurrentWorkspace(LAST_SESSION_NAME)
-                        }
+            saveJob =
+                launch {
+                    delay(LAYOUT_SETTLE_MS)
+
+                    // ONE write, and it is the Last Session record - never the named Space the
+                    // user is working in, whose file is written by an explicit save alone. See
+                    // `layoutWatcherWrite`, which owns that decision, and note that the manager's
+                    // current workspace IS still refreshed: it is the in-memory "Space I am in, as
+                    // it looks now", which a plugin's Save reads.
+                    val write =
+                        layoutWatcherWrite(
+                            current = loadedConfig,
+                            live = currentLayout,
+                            now = Clock.System.now().toEpochMilliseconds(),
+                        )
+                    workspaceManager.updateCurrentWorkspace(write.current)
+                    workspaceManager.saveLastSessionRecord(write.record)
                 }
-            }
         }.launchIn(this)
 
         // Reset snapshot when workspace changes
         workspaceManager.currentWorkspace
             .onEach { config ->
-                if (config != null && config.name != LAST_SESSION_NAME) {
+                if (config != null && config.id != LAST_SESSION_ID) {
                     // Workspace loaded (but not Last Session), reset tracking
                     lastWorkspaceSnapshot = null
-                    // Clear modified status when loading a workspace
-                    TabTreeState.markWorkspaceAsSaved(config.id)
                 }
+                // Whichever Space is showing now, the answer to "is it unsaved" is about that one.
+                reportUnsaved()
             }.launchIn(this)
+
+        // The saved side of the comparison. A successful write replaces the entry in this list -
+        // and only a successful one does, which is why `savedCopyOf` reads it rather than
+        // `currentWorkspace` - so this is where an auto-save or a press of the save button turns
+        // the affordance off.
+        workspaceManager.workspaces
+            .onEach { reportUnsaved() }
+            .launchIn(this)
     }
 }
+
+/**
+ * How long the layout has to sit still before the watcher writes the Last Session record.
+ *
+ * The literal 2000 this replaces, named because it is now the ONE cadence in the auto-save (the
+ * named-Space write it used to share the delay with is gone) and because a test asserting that a
+ * Space stays unsaved "across the watcher's interval" has to be able to say which interval.
+ */
+private const val LAYOUT_SETTLE_MS = 2000L
 
 /**
  * Ask the app-level [UpdateCoordinator] to start update checks.

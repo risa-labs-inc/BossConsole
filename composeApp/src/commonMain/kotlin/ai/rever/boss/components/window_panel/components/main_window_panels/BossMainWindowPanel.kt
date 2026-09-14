@@ -16,10 +16,12 @@ import ai.rever.boss.components.dialogs.RemoveBookmarkConfirmationDialog
 import ai.rever.boss.components.dialogs.TabType
 import ai.rever.boss.components.dividers.VDivider
 import ai.rever.boss.components.home.HomeScreen
+import ai.rever.boss.components.model.InsertionEdge
 import ai.rever.boss.components.model.ScrollDirection
 import ai.rever.boss.components.model.TabDraggableComponent
 import ai.rever.boss.components.model.TabDropResult
-import ai.rever.boss.components.model.TabDropTarget
+import ai.rever.boss.components.model.insertionEdgeFor
+import ai.rever.boss.components.model.paneInsertionIndexFor
 import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.components.overlays.contextMenu
 import ai.rever.boss.components.plugin.DynamicPluginManager
@@ -675,8 +677,17 @@ fun BossTabsComponent.rememberTabBarState(
         }
     }
 
-    // Track drop target for reorder indicator
-    val dropTarget = tabDragComponent?.dropTarget
+    // Which slot of THIS panel's list the drop in flight would land in, or null for none.
+    //
+    // Behind derivedStateOf, and deliberately NOT read here: `dropTarget` changes at pointer rate
+    // during a drag, and reading it in this body would recompose the whole bar - every group of
+    // every pane in the window - for a target that names a different pane, a split zone or the
+    // Favorites shelf. The rows read `insertionIndex.value` inside their own item content, so a
+    // drag repaints the two rows whose line moved and nothing else.
+    val insertionIndex =
+        remember(tabDragComponent, currentPanelId) {
+            derivedStateOf { paneInsertionIndexFor(tabDragComponent?.dropTarget, currentPanelId) }
+        }
 
     // The per-tab right-click menu and the dialogs behind it. See TabMenuState.kt for why this
     // is its own holder rather than built here: the pane strips need the same menu, and they have
@@ -771,17 +782,19 @@ fun BossTabsComponent.rememberTabBarState(
                 SectionBreak(onAdd = openNewTab)
             }
 
-            // Show reorder indicator before this tab if it's the drop target
-            val showIndicatorBefore =
-                dropTarget is TabDropTarget.Reorder &&
-                    dropTarget.panelId == currentPanelId &&
-                    dropTarget.targetIndex == index
+            // Where this row draws the insertion line, for a reorder within this panel and for a
+            // move in from another one alike - the same slot, so the same rule. See
+            // insertionEdgeFor: every slot is drawn by the row beneath it, and the last one on
+            // the trailing edge of the final row, so a boundary two rows touch is never doubled.
+            val edge = insertionEdgeFor(insertionIndex.value, index, tabsState.value.tabs.size)
 
             // Deliberately AFTER the section break: an indicator drawn below the separator is
             // exactly what dropping there does, which is land the tab unpinned (see
             // pinnedCountAfterMove). Dropping above the line renders its indicator in an earlier
-            // item, above the separator, and pins.
-            if (showIndicatorBefore) {
+            // item, above the separator, and pins. That stays true for a tab arriving from
+            // another pane: it is adopted at the end of this list and then moved to the slot the
+            // line marked, so pinnedCountAfterMove reads the same landing index either way.
+            if (edge == InsertionEdge.LEADING) {
                 ReorderIndicator(vertical = vertical)
             }
 
@@ -851,15 +864,10 @@ fun BossTabsComponent.rememberTabBarState(
                 }
             }
 
-            // Show reorder indicator after the last tab if dropping at the end
-            val isLastTab = index == tabsState.value.tabs.size - 1
-            val showIndicatorAfter =
-                isLastTab &&
-                    dropTarget is TabDropTarget.Reorder &&
-                    dropTarget.panelId == currentPanelId &&
-                    dropTarget.targetIndex == tabsState.value.tabs.size
-
-            if (showIndicatorAfter) {
+            // The one slot no row sits beneath: past the last tab, drawn on the final row's
+            // trailing edge. insertionEdgeFor owns that condition, so this cannot disagree with
+            // the leading one above about which row a boundary belongs to.
+            if (edge == InsertionEdge.TRAILING) {
                 ReorderIndicator(vertical = vertical)
             }
         }
@@ -1957,7 +1965,19 @@ class BossTabsComponent(
     }
 
     // Add a new tab
-    fun addTab(config: TabInfo): Int {
+
+    /**
+     * @param activate Whether the new tab becomes the panel's active tab. Defaults to true.
+     *   `false` is for a caller that wants the tab to exist and run without taking focus away
+     *   from whatever the user is already looking at - see [ai.rever.boss.app.TerminalLinkOpener]'s
+     *   `focusOnRun` setting, the reason this parameter exists at all: `selectTab` called right
+     *   after `addTab` used to be a no-op, because `TabsNavigation.addTab` already made the new
+     *   tab active unconditionally.
+     */
+    fun addTab(
+        config: TabInfo,
+        activate: Boolean = true,
+    ): Int {
         // Create component for this tab, with its own lifecycle so tab close can destroy it
         // (fires the component's lifecycle.onDestroy — see tabLifecycles).
         val tabLifecycle = LifecycleRegistry()
@@ -1977,11 +1997,15 @@ class BossTabsComponent(
             TabUpdateRegistry.registerTab(config.id, componentId)
 
             // Add to navigation
-            val index = tabsNavigation.addTab(config)
-            // A newly opened tab becomes active; record it as most-recently-used and end
-            // any in-progress MRU cycle.
-            recordTabUsage(config.id)
-            tabCycleOrder = null
+            val index = tabsNavigation.addTab(config, activate)
+            // A newly opened tab that becomes active is recorded as most-recently-used, ending
+            // any in-progress MRU cycle. A tab added without activating leaves both alone - it
+            // isn't what the user is looking at, so it shouldn't count as "used" or interrupt a
+            // cycle already in progress.
+            if (activate) {
+                recordTabUsage(config.id)
+                tabCycleOrder = null
+            }
             publishSystemEvent(TabEvent(tabId = config.id, tabType = TabEventType.OPENED, windowId = windowId))
             return index
         }

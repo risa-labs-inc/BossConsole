@@ -1,5 +1,6 @@
 package ai.rever.boss.components.plugin
 
+import ai.rever.boss.utils.WindowFocusManager
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 
@@ -71,6 +72,7 @@ object MissingPluginOffer {
                 installer = installer,
                 // A click, so it is asked again even after the offer was dismissed once.
                 userInitiated = true,
+                windowId = WindowFocusManager.resolveActionableWindowId(),
             ),
         )
         return true

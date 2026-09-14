@@ -19,6 +19,7 @@ import ai.rever.boss.components.overlays.TabDraggingOverlay
 import ai.rever.boss.components.plugin.LocalPanelPluginIdResolver
 import ai.rever.boss.components.plugin.LocalPluginUninstallable
 import ai.rever.boss.components.plugin.PanelIds
+import ai.rever.boss.components.plugin.openTopOfMindQuickSwitcher
 import ai.rever.boss.components.plugin.panels.left_bottom.TopOfMind.LocalSplitViewState
 import ai.rever.boss.components.plugin.panels.left_bottom.TopOfMind.LocalWorkspaceManager
 import ai.rever.boss.components.plugin.providers.TopOfMindDataProvider
@@ -67,6 +68,7 @@ import ai.rever.boss.window.LocalWindowGitState
 import ai.rever.boss.window.LocalWindowId
 import ai.rever.boss.window.LocalWindowProjectState
 import ai.rever.boss.window.LocalWindowRunnerState
+import ai.rever.boss.window.MenuActionsHandler
 import ai.rever.boss.window.TabBarPosition
 import ai.rever.boss.window.WindowAppearanceSettings
 import androidx.compose.animation.AnimatedVisibility
@@ -97,6 +99,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
@@ -281,8 +284,10 @@ internal fun BossAppScaffold(
     // clearing is not on screen however the preference reads. See asDrawn.
     val drawn = appearance.asDrawn(focusModeSettings)
 
-    // Whether the hover-revealed bar is up, reported by SplitViewPanel. It decides where the
-    // host's actions render while the bar is collapsed - see the placement below.
+    // Whether the hover-revealed bar is up, reported by SplitViewPanel. The placement decision
+    // deliberately ignores it (the rail keeps its actions while the drawer is open - see
+    // verticalBarHost), but the value and its reporting chain are kept as a documented hedge
+    // for a future decision that does need the drawer's state.
     var drawerVisible by remember { mutableStateOf(false) }
 
     // Whether the bar in the layout is the RAIL, reported by SplitViewPanel once it has measured.
@@ -316,8 +321,10 @@ internal fun BossAppScaffold(
         )
 
     // Whether the collapsed tab-bar rail has enough height for its quick actions.
-    // Keep the measured answer while a hover drawer temporarily owns the actions. The rail
-    // stays composed behind that drawer and will not report again unless its fit changes.
+    // Keep the measured answer while the drawer is open: the rail stays composed behind that
+    // drawer and will not report again unless its fit changes. Consequence of the rail no
+    // longer handing its actions to the drawer: with the fit false and the bar collapsed, the
+    // actions now fall through to PANEL_FOOTER/FLOATING instead of the drawer's roomy foot.
     var railActionsFit by remember { mutableStateOf(true) }
 
     // Gated, so the measurement costs nothing in the configuration that will never use it. With
@@ -625,7 +632,7 @@ internal fun BossAppScaffold(
                                 extractCurrentWorkspace(splitViewState, selectedProject.path)
                             },
                             onShowTopOfMind = {
-                                state.showTopOfMindDialog = true
+                                openTopOfMindQuickSwitcher(state.windowId, state.coroutineScope)
                             },
                             onShowSettings = {
                                 state.settingsWindow.open()
@@ -695,7 +702,7 @@ internal fun BossAppScaffold(
                         modifier =
                             Modifier
                                 .weight(1f)
-                                .reportContentInset(density) { contentInset = it },
+                                .reportContentInset(density, LocalLayoutDirection.current) { contentInset = it },
                     ) {
                         BossWindow(
                             modifier = Modifier.fillMaxSize(),
@@ -789,6 +796,9 @@ internal fun BossAppScaffold(
                                     // cleared is not on screen, and the project and workspace
                                     // pickers live nowhere else.
                                     topBarHidden = !drawn.showTopBar,
+                                    // Only so the workspace button can open Top of Mind HERE: a
+                                    // panel open event is broadcast and filtered by window.
+                                    windowId = state.windowId,
                                     project = selectedProject,
                                     onOpenProject = { state.showProjectDialog = true },
                                     workspaceManager = workspaceManager,
@@ -796,7 +806,12 @@ internal fun BossAppScaffold(
                                     getCurrentWorkspace = {
                                         extractCurrentWorkspace(splitViewState, selectedProject.path)
                                     },
-                                    onShowTopOfMind = { state.showTopOfMindDialog = true },
+                                    onShowTopOfMind = {
+                                        openTopOfMindQuickSwitcher(state.windowId, state.coroutineScope)
+                                    },
+                                    // The File menu's own Save Space, not a second copy of it:
+                                    // one path extracts the live layout, writes it and reports.
+                                    onSaveWorkspace = { MenuActionsHandler.triggerSaveWorkspace(state.windowId) },
                                 )
                             },
                         )

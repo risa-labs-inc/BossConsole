@@ -216,7 +216,7 @@ class RemotePluginRepository(
                 )
 
                 plugins
-            }.onFailure { e ->
+            }.onStoreFailure { e ->
                 logger.error(LogCategory.NETWORK, "Failed to list remote plugins", error = e)
             }
         }
@@ -252,7 +252,7 @@ class RemotePluginRepository(
                     page = response.page,
                     pageSize = response.pageSize,
                 )
-            }.onFailure { e ->
+            }.onStoreFailure { e ->
                 logger.error(LogCategory.NETWORK, "Failed to search remote plugins", error = e)
             }
         }
@@ -266,7 +266,7 @@ class RemotePluginRepository(
 
                 val response = PluginStoreClient.getPlugin(pluginId)
                 response?.toPluginInfo()
-            }.onFailure { e ->
+            }.onStoreFailure { e ->
                 logger.error(LogCategory.NETWORK, "Failed to get remote plugin", mapOf("pluginId" to pluginId), e)
             }
         }
@@ -302,7 +302,7 @@ class RemotePluginRepository(
                         verified = response.verified,
                     )
                 }
-            }.onFailure { e ->
+            }.onStoreFailure { e ->
                 logger.error(LogCategory.NETWORK, "Failed to get plugin versions", mapOf("pluginId" to pluginId), e)
             }
         }
@@ -457,12 +457,7 @@ class RemotePluginRepository(
                     // pluginId alone — pre-existing), don't yank its flow out.
                     downloadProgress.remove(pluginId, progressFlow)
                 }
-            }.onFailure { e ->
-                // A cancellation is not a download failure, and it must not arrive as
-                // one: `runCatching` catches Throwable, so a cancelled download used to
-                // come back as Result.failure and every caller above reported it as a
-                // fault - and stopped propagating, so nobody's cancellation handler ran.
-                if (e is CancellationException) throw e
+            }.onStoreFailure { e ->
                 logger.error(LogCategory.NETWORK, "Failed to download plugin", mapOf("pluginId" to pluginId), e)
             }
         }
@@ -500,7 +495,7 @@ class RemotePluginRepository(
                         "rating" to rating,
                     ),
                 )
-            }.onFailure { e ->
+            }.onStoreFailure { e ->
                 logger.error(LogCategory.NETWORK, "Failed to rate plugin", mapOf("pluginId" to pluginId), e)
             }
         }
@@ -523,5 +518,23 @@ class RemotePluginRepository(
             "tab" -> ai.rever.boss.plugin.api.PluginType.TAB
             "hybrid", "mixed" -> ai.rever.boss.plugin.api.PluginType.MIXED
             else -> ai.rever.boss.plugin.api.PluginType.PANEL
+        }
+
+    /**
+     * `onFailure` for a store call, with one rule the file used to state only on [downloadPlugin]:
+     * a caller's cancellation is not a network failure and must not arrive as one.
+     *
+     * `runCatching` catches Throwable, so a cancelled request used to come back as `Result.failure`
+     * with a `CancellationException` inside, [handler] logged it at ERROR as a fault that never
+     * happened, and the caller saw a failed lookup rather than its own cancellation. Dismissing the
+     * dependency dialog while the store was slow produced one such ERROR per in-flight lookup; with
+     * a host log file those lines now survive the process, so a reader would go hunting a store
+     * outage that did not occur. Rethrowing here lets the cancellation reach the caller's own
+     * handler, which is what `withContext` would have done had nothing caught it.
+     */
+    private inline fun <T> Result<T>.onStoreFailure(handler: (Throwable) -> Unit): Result<T> =
+        onFailure { e ->
+            if (e is CancellationException) throw e
+            handler(e)
         }
 }

@@ -10,7 +10,7 @@ compose-multiplatform = "1.12.0"
 compose-icons = "1.1.1"
 decompose = "3.5.0"
 detekt = "1.23.8"
-essenty = "2.5.0"
+essenty = "2.6.0"
 junit-jupiter = "6.1.3"
 clikt = "5.1.0"
 kotlin = "2.4.10"
@@ -62,7 +62,7 @@ grpc = "1.84.0"
 grpc-kotlin = "1.5.0"
 protobuf = "4.36.1"
 protobuf-gradle-plugin = "0.10.0"
-graalvm-native-plugin = "1.1.11"
+graalvm-native-plugin = "1.1.12"
 # IntelliJ PSI for code navigation
 intellij-platform = "243.21565.199"
 # The plugin API contract (risa-labs-inc/boss-plugin-api releases). This pin
@@ -154,7 +154,25 @@ intellij-platform = "243.21565.199"
 # implementor. Every addition also carries a default body, so no existing implementor
 # gains an abstract member. The host needs the bump only so a plugin calling these
 # resolves them against the api the host loads, rather than finding them absent.
-boss-plugin-api = "1.0.89"
+#
+# 1.0.90 adds the tab-transfer surface (boss-plugin-api#44): eight defaulted members on
+# ActiveTabsProvider - supportsTabTransfer, liveWorkspaceIds, moveTabToWorkspace, moveTabToPane,
+# activePanelId, selectedTabId, allWindowTabs, refreshAllWindowTabs - plus BossColors.accentText.
+# This branch implements them in SplitViewState. A window RUNS several workspaces at once and shows
+# one, so activeTabs has always reported tabs from workspaces that are not on screen - but every
+# write path (findPanel, getAllPanels, selectTabInPanel) read the current tree only, so nothing
+# could act on them.
+#
+# Superset of 1.0.89: defaulted members on an existing interface and one new colour, nothing
+# withdrawn. Same forced order as above: api first, then this.
+#
+# **This number has now been wrong TWICE.** It said 1.0.88 while #44 sat unmerged and #50 took
+# 1.0.88; it then said 1.0.89 and an unrelated release took that on 2026-09-10. Verified against
+# the published jar rather than assumed: v1.0.89 carries none of the eight members. api release CI
+# bump-pushes before building, so api main's version IS the version already released and the next
+# merge cuts version + 1 - re-read it when #44 actually merges, because anything landing first
+# moves this and the topofmind pin again.
+boss-plugin-api = "1.0.90"
 
 [libraries]
 kotlin-test-junit = { module = "org.jetbrains.kotlin:kotlin-test-junit", version.ref = "kotlin" }
@@ -183,6 +201,8 @@ ktor-serialization-kotlinx-json = { module = "io.ktor:ktor-serialization-kotlinx
 decompose = { module = "com.arkivanov.decompose:decompose", version.ref = "decompose" }
 decompose-extensions-compose = { module = "com.arkivanov.decompose:extensions-compose", version.ref = "decompose" }
 decompose-extensions-compose-experimental = { module = "com.arkivanov.decompose:extensions-compose-experimental", version.ref = "decompose" }
+essenty-back-handler = { module = "com.arkivanov.essenty:back-handler", version.ref = "essenty" }
+essenty-instance-keeper = { module = "com.arkivanov.essenty:instance-keeper", version.ref = "essenty" }
 essenty-lifecycle = { module = "com.arkivanov.essenty:lifecycle", version.ref = "essenty" }
 essenty-state-keeper = { module = "com.arkivanov.essenty:state-keeper", version.ref = "essenty" }
 precompose = { module = "moe.tlaster:precompose", version.ref = "precompose" }

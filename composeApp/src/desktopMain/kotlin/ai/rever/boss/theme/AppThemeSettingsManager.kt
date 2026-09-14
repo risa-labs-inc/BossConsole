@@ -1,5 +1,6 @@
 package ai.rever.boss.theme
 
+import ai.rever.boss.components.workspaces.SettingsThemeBaseline
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.plugin.ui.BossThemeController
 import ai.rever.boss.plugin.ui.BossThemes
@@ -51,15 +52,37 @@ object AppThemeSettingsManager {
      * app.
      */
     fun ensureInitialized() {
-        BossThemeController.select(_settings.value.appThemeId)
+        publish(_settings.value.appThemeId)
     }
 
     /** Select a theme: applies it live via [BossThemeController] and persists it. */
     fun select(themeId: String) {
         if (BossThemes.all.none { it.id == themeId }) return
-        BossThemeController.select(themeId)
+        publish(themeId)
         _settings.value = _settings.value.copy(appThemeId = themeId)
         scope.launch { save() }
+    }
+
+    /**
+     * Show [themeId] and record it as the Space-theme BASELINE.
+     *
+     * A theme belongs to a Space now: entering one drives [BossThemeController] on its own, and a
+     * Space that names no theme falls back to whatever was chosen here. So the two writes have to
+     * happen together - a settings load that skipped [SettingsThemeBaseline] would leave every
+     * unthemed Space resolving to the compiled-in default the moment the first switch happened.
+     *
+     * It runs in this direction, a push from Settings into `commonMain`, because
+     * [SettingsThemeBaseline] lives beside the Spaces and this object cannot: it resolves a home
+     * directory, so it is desktop-only.
+     *
+     * Picking a theme here while sitting in a Space that HAS one shows the pick immediately, and
+     * leaving that Space and coming back shows the Space's own again. That is the model rather
+     * than an oversight: a Space theme is an override layered over this choice, and refusing to
+     * show what someone just picked would be worse.
+     */
+    private fun publish(themeId: String) {
+        SettingsThemeBaseline.set(themeId)
+        BossThemeController.select(themeId)
     }
 
     private fun loadSync() {

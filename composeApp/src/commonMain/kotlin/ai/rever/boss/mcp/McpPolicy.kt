@@ -23,6 +23,13 @@ enum class McpApprovalDisposition {
     AUTO_ALLOWED,
     APPROVED_ONCE,
     SESSION_TRUSTED,
+
+    // A persisted decision, in the same [McpApprovalDecision] shape as SESSION_TRUSTED /
+    // DENIED_BY_OPERATOR - distinct dispositions so the ledger records which of the three
+    // scopes (once, session, persistent) the operator actually chose.
+    PERSISTENTLY_ALLOWED,
+    PERSISTENTLY_DENIED,
+    POLICY_PERSIST_FAILED,
     DENIED_BY_OPERATOR,
     TIMEOUT,
     POLICY_DENIED,
@@ -30,6 +37,20 @@ enum class McpApprovalDisposition {
     CANCELLED_AWAITING_APPROVAL,
     CANCELLED_IN_FLIGHT,
     QUEUE_FULL,
+
+    /**
+     * The operator chose "Trust this plugin" and the persisted, provider-wide grant actually
+     * saved - every other tool from [ai.rever.boss.mcp.McpApprovalRequest.providerId] is now
+     * ALLOW too, across restarts, with no further prompts for this provider.
+     */
+    PROVIDER_TRUSTED,
+
+    /**
+     * The operator chose "Trust this plugin" but the write failed - this call still executes
+     * (downgraded to session trust, matching how a call in hand is never blocked by a disk
+     * fault) but the durable grant does not exist. See [McpPolicyFault.ProviderPolicyPersistFailed].
+     */
+    PROVIDER_TRUST_PERSIST_FAILED,
 }
 
 /**
@@ -43,6 +64,13 @@ data class McpToolPolicyConfig(
     val defaultMutatingAction: McpPolicyAction = McpPolicyAction.ASK,
     val defaultReadOnlyAction: McpPolicyAction = McpPolicyAction.ALLOW,
     val rules: Map<String, McpPolicyAction> = emptyMap(),
+    /**
+     * Rules keyed by [ai.rever.boss.mcp.McpApprovalRequest.providerId] rather than tool name -
+     * "trust every tool this plugin contributes" instead of approving each one individually.
+     * Weaker than [rules]: an exact tool-name entry always overrides its provider's rule, in
+     * either direction. See [ai.rever.boss.mcp.McpPolicyEngine.policyFor] for the full precedence.
+     */
+    val providerRules: Map<String, McpPolicyAction> = emptyMap(),
 )
 
 /**

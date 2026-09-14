@@ -51,7 +51,7 @@ enum class ShortcutContext {
                 BROWSER -> "Browser"
                 TERMINAL -> "Terminal"
                 EDITOR -> "Editor"
-                WORKSPACE -> "Workspace"
+                WORKSPACE -> "Space"
             }
 
     /**
@@ -64,7 +64,7 @@ enum class ShortcutContext {
                 BROWSER -> "Active only in browser tabs"
                 TERMINAL -> "Active only in terminal panels"
                 EDITOR -> "Active only in code editor (future)"
-                WORKSPACE -> "Active in workspace/project panels"
+                WORKSPACE -> "Active in space/project panels"
             }
 
     companion object {

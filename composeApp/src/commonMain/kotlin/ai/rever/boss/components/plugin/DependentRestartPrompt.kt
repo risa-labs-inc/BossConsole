@@ -42,10 +42,14 @@ data class DependentRestartPrompt(
 /**
  * Carries a dependent-restart question from an unload to whichever window can ask it.
  *
- * The same delivery reasoning as [PluginDependencyBus]: a `Channel`, not a `SharedFlow`, so
- * exactly one window asks. Here it matters more than there, because a broadcast would let two
- * windows answer the same question and the second answer would arrive after the unload had
- * already run.
+ * A `Channel`, not a `SharedFlow`, so exactly one window asks: a broadcast would let two windows
+ * answer the same question, and the second answer - carried on [DependentRestartPrompt.answer],
+ * a single-use `CompletableDeferred` - would arrive after the unload had already run on the
+ * first. [PluginDependencyBus] used to justify its own delivery the same way, but was later
+ * redesigned (BossConsole#465) into a claim-based map broadcast instead, once its own
+ * one-collector-per-prompt guarantee turned out to be satisfiable by [PluginDependencyBus.claim]
+ * rather than by a channel - a redesign this bus has no matching reason to make, since here the
+ * answer really is a single value only one asker may resolve, not a broadcast-then-claim question.
  *
  * A class with a singleton subclass so a test can hold its own bus; the shared buffer otherwise
  * carries prompts between tests.

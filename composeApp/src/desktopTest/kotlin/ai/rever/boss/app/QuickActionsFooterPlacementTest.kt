@@ -98,10 +98,10 @@ class QuickActionsFooterPlacementTest {
             placement(rightStripHidden = true, verticalBar = collapsedOnLeft),
         )
 
-        // The drawer is the third state: a collapsed bar with it open HAS a foot again.
+        // A collapsed rail remains the action host while its sibling drawer is open.
         val drawerOpen = verticalBarHost(tabBarOnLeft = true, barCollapsed = true, drawerVisible = true)
         assertEquals(
-            FocusQuickActionsPlacement.TAB_BAR_FOOTER,
+            FocusQuickActionsPlacement.TAB_BAR_RAIL,
             placement(rightStripHidden = true, verticalBar = drawerOpen),
         )
     }
@@ -227,9 +227,8 @@ class QuickActionsFooterPlacementTest {
 /**
  * Pins the three states of "what can the vertical bar host".
  *
- * Two of them look the same from the settings alone - a collapsed bar with the drawer open and one
- * with it shut differ only in a transient flag - and getting it wrong is silent either way: the
- * actions render twice, or nowhere.
+ * A collapsed rail remains the host whether or not its sibling drawer is visible. Getting that
+ * wrong is silent: actions render twice, nowhere, or at a moved target.
  */
 class VerticalBarHostTest {
     @Test
@@ -250,10 +249,9 @@ class VerticalBarHostTest {
     }
 
     @Test
-    fun `a collapsed bar with the drawer open has a foot again`() {
-        // The drawer is a full bar, split map and all, for as long as it is up.
+    fun `a collapsed bar remains a rail while its drawer is open`() {
         assertEquals(
-            VerticalBarHost.FOOT,
+            VerticalBarHost.RAIL,
             verticalBarHost(tabBarOnLeft = true, barCollapsed = true, drawerVisible = true),
         )
     }

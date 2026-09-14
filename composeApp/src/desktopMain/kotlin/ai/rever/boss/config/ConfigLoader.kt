@@ -13,6 +13,8 @@ object ConfigLoader {
     private val logger = BossLogger.forComponent("ConfigLoader")
     private val properties = Properties()
 
+    private val envVarsProperties = Properties()
+
     /**
      * Config baked into the app at build time by the generateEmbeddedConfig
      * Gradle task (from CI secrets or the developer's local.properties). This
@@ -23,8 +25,40 @@ object ConfigLoader {
     private val embeddedProperties = Properties()
 
     init {
+        loadEnvVars()
         loadLocalProperties()
         loadEmbeddedProperties()
+    }
+
+    /**
+     * Loads properties from the same BossDirectories env_vars file used by the settings writers if it exists.
+     * This is where user settings like BOSS_MODE=KERNEL are saved.
+     */
+    private fun loadEnvVars() {
+        try {
+            val envVarsFile =
+                ai.rever.boss.plugin.pathutils.BossDirectories
+                    .resolve("env_vars")
+            if (envVarsFile.exists()) {
+                logger.debug(LogCategory.SYSTEM, "Loading env_vars", mapOf("path" to envVarsFile.absolutePath))
+                envVarsProperties.putAll(parseEnvVars(envVarsFile.readLines(Charsets.UTF_8)))
+                logger.debug(
+                    LogCategory.SYSTEM,
+                    "Loaded properties from env_vars",
+                    mapOf("count" to envVarsProperties.size.toString()),
+                )
+            }
+        } catch (
+            @Suppress("TooGenericExceptionCaught") e: Throwable,
+        ) {
+            // Widen past Exception: BossDirectories is another class, and an
+            // ExceptionInInitializerError or NoClassDefFoundError from its own static init
+            // would escape this catch, escape ConfigLoader's <clinit>, and make every later
+            // getConfig call - including the ones before any window exists - throw
+            // NoClassDefFoundError permanently. A missing saved preference must never take
+            // the whole config loader down (BossConsole#450's review).
+            logger.warn(LogCategory.SYSTEM, "Could not load env_vars", error = e)
+        }
     }
 
     /**
@@ -90,9 +124,10 @@ object ConfigLoader {
      * Gets a configuration value from the following sources in order:
      * 1. System environment variable
      * 2. System property
-     * 3. local.properties file
-     * 4. Embedded build config (baked in at build time from CI secrets)
-     * 5. Default value
+     * 3. env_vars file (BOSS_MODE only; plain unquoted KEY=value, no export syntax)
+     * 4. local.properties file
+     * 5. Embedded build config (baked in at build time from CI secrets)
+     * 6. Default value
      */
     fun getConfig(
         key: String,
@@ -103,6 +138,7 @@ object ConfigLoader {
             defaultValue = defaultValue,
             envValue = System.getenv(key),
             sysPropValue = System.getProperty(key),
+            envVarsProps = envVarsProperties,
             localProps = properties,
             embeddedProps = embeddedProperties,
         )
@@ -111,21 +147,27 @@ object ConfigLoader {
      * The precedence contract as a pure function, separated from the process
      * environment so tests can pin every tier (see ConfigLoaderTest).
      */
+    @Suppress("LongParameterList")
     internal fun resolve(
         key: String,
         defaultValue: String?,
         envValue: String?,
         sysPropValue: String?,
+        envVarsProps: Properties,
         localProps: Properties,
         embeddedProps: Properties,
-    ): String? =
-        envValue.orNullIfBlank()
-            ?: sysPropValue.orNullIfBlank()
-            ?: localProps.getProperty(key).orNullIfBlank()
-            ?: embeddedProps.getProperty(key).orNullIfBlank()
-            // NOT blank-filtered: a caller that passes "" as its default has said so explicitly,
-            // unlike an exported variable that merely happens to be empty.
-            ?: defaultValue
+    ): String? {
+        val resolved =
+            envValue.orNullIfBlank()
+                ?: sysPropValue.orNullIfBlank()
+                ?: envVarsProps.getProperty(key).takeIf { key == "BOSS_MODE" }.orNullIfBlank()
+                ?: localProps.getProperty(key).orNullIfBlank()
+                ?: embeddedProps.getProperty(key).orNullIfBlank()
+                // NOT blank-filtered: a caller that passes "" as its default has said so explicitly,
+                // unlike an exported variable that merely happens to be empty.
+                ?: defaultValue
+        return if (key == "BOSS_MODE") resolved?.trim()?.uppercase() else resolved
+    }
 
     /**
      * A blank value at any tier is not a value, so the next tier gets its turn.

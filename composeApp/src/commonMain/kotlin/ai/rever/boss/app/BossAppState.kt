@@ -28,6 +28,7 @@ import ai.rever.boss.services.FileHandlerService
 import ai.rever.boss.services.TerminalHandlerService
 import ai.rever.boss.services.URLHandlerService
 import ai.rever.boss.services.WorkspaceHandlerService
+import ai.rever.boss.settings.MicrokernelModeConfirmation
 import ai.rever.boss.updater.UpdateCoordinator
 import ai.rever.boss.updater.UpdateHandle
 import ai.rever.boss.utils.logging.BossLogger
@@ -83,7 +84,6 @@ internal class BossAppState(
     // --- Dialog visibility --------------------------------------------------
     var showNewTabDialog by mutableStateOf(false)
     var newTabDialogInitialType by mutableStateOf<TabType?>(null)
-    var showTopOfMindDialog by mutableStateOf(false)
     var showGlobalSearchDialog by mutableStateOf(false)
 
     /**
@@ -95,6 +95,9 @@ internal class BossAppState(
      * `ToolLauncherButton`.
      */
     var showToolLauncherDialog by mutableStateOf(false)
+
+    /** Window-local operational view of plugin lifecycle problems and their safe remedies. */
+    var showPluginHealthCenter by mutableStateOf(false)
     var showProjectDialog by mutableStateOf(false)
 
     /**
@@ -178,13 +181,18 @@ internal class BossAppState(
     var pendingDependentRestart by
         mutableStateOf<DependentRestartPrompt?>(null)
 
-    // A terminal command that arrived from outside this BOSS invocation and is
-    // waiting for the operator to confirm it. Null whenever nothing is pending.
-    var pendingTerminalCommand by mutableStateOf<PendingTerminalCommand?>(null)
+    // Keep every external request until the operator answers its own prompt.
+    val terminalCommandApprovals = TerminalCommandApprovalQueue()
 
     // An MCP tool execution requested by an AI agent that is suspended waiting
     // for operator approval under an ASK policy.
     var pendingMcpApproval by mutableStateOf<McpApprovalRequest?>(null)
+
+    // The application-menu "Microkernel Mode" checkbox requested turning the experimental mode
+    // on and is waiting for the operator to confirm it (BossConsole#472). The Settings entry
+    // point shows its own copy of this dialog locally instead, since it already has a
+    // composable scope to hold the state in.
+    val microkernelModeConfirmation = MicrokernelModeConfirmation()
 
     // Snapshot of the in-progress MRU tab cycle, drives the Ctrl+Tab switcher overlay
     // (null in positional mode and whenever no cycle is active).
@@ -260,7 +268,7 @@ internal class BossAppState(
  * invocation (see `DeepLinkOrigin`). The command is carried verbatim so the
  * prompt shows exactly what would run.
  */
-internal data class PendingTerminalCommand(
+internal class PendingTerminalCommand(
     val command: String,
     val workingDirectory: String?,
 )

@@ -13,6 +13,7 @@ import ai.rever.boss.plugin.workspace.LayoutWorkspace
 import ai.rever.boss.utils.DeepLinkHandler
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.window.WindowProjectStateRegistry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -91,11 +92,46 @@ class SplitViewOperationsImpl(
     }
 
     override fun applyWorkspace(workspace: LayoutWorkspace) {
-        // Launch the suspend function in a coroutine
-        // The workspace is already the correct type (plugin LayoutWorkspace == composeApp LayoutWorkspace via typealias)
+        // The workspace is already the correct type (plugin LayoutWorkspace == composeApp
+        // LayoutWorkspace via typealias).
         scope.launch {
+            // A TEMPLATE arriving here - the Space picker's Templates section, or a template
+            // opened from a file - is materialised into a Space first: substituted, named for the
+            // project and saved. Returns `workspace` unchanged for anything that is not a
+            // template. It also re-loads the manager's current workspace, which the plugin has by
+            // then set to the template it picked; the host has to correct that, because a plugin
+            // cannot substitute placeholders (`WorkspacePlaceholders` is host-internal and forks
+            // `git`) and so cannot know the Space it is really asking for.
+            val projectPath =
+                WindowProjectStateRegistry
+                    .get(windowId)
+                    ?.selectedProject
+                    ?.value
+                    ?.path
+                    .orEmpty()
+            val opened =
+                ai.rever.boss.components.workspaces.spaceToOpen(
+                    picked = workspace,
+                    projectPath = projectPath,
+                )
             ai.rever.boss.components.workspaces
-                .applyWorkspace(workspace, splitViewState)
+                .applyWorkspace(
+                    workspace = opened,
+                    splitViewState = splitViewState,
+                    // A workspace REMEMBERS its project (LayoutWorkspace.projectPath), and
+                    // applyWorkspace restores it - but only when handed a windowProjectState, and
+                    // this call passed none. So the host's own switch carried the project across
+                    // and a plugin's did not: switching workspace from a panel left the previous
+                    // workspace's project selected, which is what everything project-scoped then
+                    // kept answering from.
+                    //
+                    // Resolved from the registry rather than taken as a constructor parameter:
+                    // BossAppState builds this provider BEFORE it builds its own
+                    // windowProjectState, so a parameter would mean reordering that. `get`, not
+                    // `getOrCreate` - a window with no project state has no project to restore,
+                    // and creating one here would be inventing state from a workspace switch.
+                    windowProjectState = WindowProjectStateRegistry.get(windowId),
+                )
         }
     }
 

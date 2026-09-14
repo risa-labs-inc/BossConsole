@@ -1,6 +1,7 @@
 package ai.rever.boss.components.plugin
 
 import ai.rever.boss.cache.loadFaviconFromCache
+import ai.rever.boss.components.dialogs.TabCollector
 import ai.rever.boss.components.events.TerminalEventBus
 import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.components.overlays.contextMenu
@@ -42,6 +43,7 @@ import ai.rever.boss.plugin.api.ApplicationEventBus
 import ai.rever.boss.plugin.api.AuthDataProvider
 import ai.rever.boss.plugin.api.BackgroundTaskHandle
 import ai.rever.boss.plugin.api.BackgroundTaskProvider
+import ai.rever.boss.plugin.api.BossThemeOption
 import ai.rever.boss.plugin.api.CacheProvider
 import ai.rever.boss.plugin.api.ClipboardProvider
 import ai.rever.boss.plugin.api.ContextMenuProvider
@@ -94,6 +96,7 @@ import ai.rever.boss.plugin.sandbox.health.PluginHealthSummary
 import ai.rever.boss.plugin.sandbox.notification.BossPluginNotificationService
 import ai.rever.boss.plugin.sandbox.notification.PluginSandboxNotificationListener
 import ai.rever.boss.plugin.sandbox.notification.PluginToastState
+import ai.rever.boss.plugin.ui.BossThemes
 import ai.rever.boss.plugin.ui.ContextMenuItemData
 import ai.rever.boss.search.ContentSearchService
 import ai.rever.boss.search.SearchRegistryImpl
@@ -104,6 +107,7 @@ import ai.rever.boss.services.supabase.RoleManagementProviderImpl
 import ai.rever.boss.services.supabase.SecretDataProviderImpl
 import ai.rever.boss.services.supabase.SupabaseDataProviderImpl
 import ai.rever.boss.services.supabase.UserManagementProviderImpl
+import ai.rever.boss.topofmind.TopOfMindStateHolder
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.utils.logging.LogSanitizer
@@ -122,13 +126,16 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import java.io.File
 import ai.rever.boss.components.plugin.panels.right_top.BrowserIntegration as InternalBrowserIntegration
 import ai.rever.boss.plugin.api.BrowserIntegration as ApiBrowserIntegration
@@ -261,20 +268,19 @@ class DefaultPlugin(
 
                 // Only wire if BOSS_MODE=KERNEL
                 val bossMode =
-                    System.getenv("BOSS_MODE")
-                        ?: try {
-                            val cfgCls = Class.forName("ai.rever.boss.config.ConfigLoader")
-                            val cfgInstance = cfgCls.getDeclaredField("INSTANCE").get(null)
-                            cfgCls
-                                .getMethod(
-                                    "getConfig",
-                                    String::class.java,
-                                    String::class.java,
-                                ).invoke(cfgInstance, "BOSS_MODE", null) as? String
-                        } catch (e: Exception) {
-                            logger.warn(LogCategory.SYSTEM, "OOP spawner: ConfigLoader failed", mapOf("error" to e.toString()))
-                            null
-                        }
+                    try {
+                        val cfgCls = Class.forName("ai.rever.boss.config.ConfigLoader")
+                        val cfgInstance = cfgCls.getDeclaredField("INSTANCE").get(null)
+                        cfgCls
+                            .getMethod(
+                                "getConfig",
+                                String::class.java,
+                                String::class.java,
+                            ).invoke(cfgInstance, "BOSS_MODE", null) as? String
+                    } catch (e: Exception) {
+                        logger.warn(LogCategory.SYSTEM, "OOP spawner: ConfigLoader failed", mapOf("error" to e.toString()))
+                        null
+                    }
                 logger.info(LogCategory.SYSTEM, "OOP spawner: BOSS_MODE resolved", mapOf("bossMode" to (bossMode ?: "null")))
                 if (bossMode == "KERNEL") {
                     // Reuse the kernel's own ProcessSpawner rather than building a second one.
@@ -894,10 +900,14 @@ class DefaultPlugin(
         DirectoryPickerProviderImpl()
     }
 
-    // Project data provider for managing recent projects
-    override val projectDataProvider: ai.rever.boss.plugin.api.ProjectDataProvider by lazy {
-        ProjectDataProviderImpl(windowProjectState)
-    }
+    // Project data provider for managing recent projects.
+    // Named delegate so dispose() can cancel its collector without forcing the lazy
+    // (see logDataProviderDelegate for the same pattern) - its recentProjects mirrors a
+    // process-wide singleton, not this window's own state, so it outlives the window
+    // unless something says otherwise (BossConsole#520).
+    private val projectDataProviderDelegate =
+        lazy { ProjectDataProviderImpl(windowProjectState) }
+    override val projectDataProvider: ai.rever.boss.plugin.api.ProjectDataProvider by projectDataProviderDelegate
 
     /**
      * Create a sandboxed plugin context for a specific plugin.
@@ -1106,6 +1116,9 @@ class DefaultPlugin(
         if (gitDataProviderDelegate.isInitialized()) {
             (gitDataProvider as? DisposableProvider)?.dispose()
         }
+        if (projectDataProviderDelegate.isInitialized()) {
+            (projectDataProvider as? DisposableProvider)?.dispose()
+        }
         pluginScope.cancel()
     }
 
@@ -1282,19 +1295,18 @@ class DefaultPlugin(
     private fun registerKernelPluginServices() {
         try {
             val bossMode =
-                System.getenv("BOSS_MODE")
-                    ?: try {
-                        val configCls = Class.forName("ai.rever.boss.config.ConfigLoader")
-                        val cfgInst = configCls.getDeclaredField("INSTANCE").get(null)
-                        configCls
-                            .getMethod(
-                                "getConfig",
-                                String::class.java,
-                                String::class.java,
-                            ).invoke(cfgInst, "BOSS_MODE", null) as? String
-                    } catch (_: Exception) {
-                        null
-                    }
+                try {
+                    val configCls = Class.forName("ai.rever.boss.config.ConfigLoader")
+                    val cfgInst = configCls.getDeclaredField("INSTANCE").get(null)
+                    configCls
+                        .getMethod(
+                            "getConfig",
+                            String::class.java,
+                            String::class.java,
+                        ).invoke(cfgInst, "BOSS_MODE", null) as? String
+                } catch (_: Exception) {
+                    null
+                }
             if (bossMode != "KERNEL") return
 
             val bootstrapCls = Class.forName("ai.rever.boss.kernel.KernelBootstrap")
@@ -1417,12 +1429,238 @@ private class ApiActiveTabsProviderAdapter(
         _activeTabs.value = tabs.map { convertToActiveTabData(it) }
     }
 
+    /**
+     * Every open window's tabs, where [activeTabs] is this window's alone.
+     *
+     * Derived from `TopOfMindStateHolder` rather than collected here, because that holder is
+     * already where the cross-window walk lands: `TabCollector.refreshGlobalState` writes it, and
+     * `GlobalSearchService` reads it. A second collector in this adapter would be a second answer
+     * to one question, and one adapter exists per window - so N windows would each be walking
+     * every other window's split trees on their own schedule.
+     *
+     * The holder is process-wide and so is this flow, which is the point: a switcher asking for
+     * every window must not be scoped to the one it was opened from.
+     */
+    override val allWindowTabs: StateFlow<List<ActiveTabData>> =
+        TopOfMindStateHolder.activeTabs
+            .map { tabs -> tabs.map { convertToActiveTabData(it) } }
+            .stateIn(scope, SharingStarted.Eagerly, emptyList())
+
+    /**
+     * Collect every window's tabs into the holder [allWindowTabs] is derived from.
+     *
+     * On demand rather than polled: this walks `SplitViewStateRegistry.getAllStates()` for every
+     * open window, where [refreshTabs]' 2s loop walks one. A caller opening a switcher asks first;
+     * nothing else pays for it.
+     */
+    override suspend fun refreshAllWindowTabs() {
+        TabCollector.refreshGlobalState(workspaceManager)
+    }
+
+    @Suppress("ReturnCount")
     override fun selectTab(
         tabId: String,
         panelId: String,
     ) {
-        splitViewState.selectTabInPanel(tabId, panelId)
+        // panelId is honoured first for the on-screen case, which is what every existing caller
+        // means. selectTabInPanel resolves it against the CURRENT tree only, so it silently did
+        // nothing for a tab in a workspace running behind this one - which is most of what
+        // activeTabs reports. Fall through to the cross-workspace path rather than give up.
+        if (splitViewState.getPanel(panelId) != null) {
+            splitViewState.selectTabInPanel(tabId, panelId)
+            return
+        }
+        val location = splitViewState.findTabLocation(tabId) ?: return
+        if (location.workspaceId == splitViewState.currentWorkspaceId) {
+            splitViewState.selectTabAnywhere(tabId)
+            return
+        }
+        // FOCUS means "show me this tab", so a tab in another running workspace brings that
+        // workspace forward. Selecting it in a pane nobody can see is not focusing it - that was
+        // the first version of this, and from Top of Mind it read as the click doing nothing.
+        scope.launch(Dispatchers.Main) {
+            switchWorkspaceForFocus(location.workspaceId, tabId)
+        }
     }
+
+    /**
+     * Bring [workspaceId] on screen and land on [tabId].
+     *
+     * Order is load-bearing. The tab is selected FIRST, while its workspace is still preserved:
+     * `selectTabAnywhere` records it as that pane's active tab and repoints the preserved state's
+     * `activePanelId`, and `restorePreservedState` reads both straight into the live state. Doing
+     * it the other way round would mean selecting into a tree mid-swap and racing the restore.
+     *
+     * Both halves of "which workspace is showing" are updated: the split view (which holds the
+     * trees) and `WorkspaceManager.currentWorkspace` (which the workspace menu and every
+     * `WorkspaceDataProvider` consumer read). Moving one without the other leaves the UI naming a
+     * workspace that is not the one on screen.
+     */
+    private fun switchWorkspaceForFocus(
+        workspaceId: String,
+        tabId: String,
+    ) {
+        val leaving = workspaceManager.currentWorkspace.value
+        splitViewState.selectTabAnywhere(tabId)
+        if (!splitViewState.switchToLiveWorkspace(workspaceId, leaving?.name.orEmpty())) return
+
+        // The saved LayoutWorkspace when there is one, so the menu shows its real name and
+        // project. A workspace can be running under an id the saved list has never seen, and a
+        // live switch needs no layout from it - the tree came from the preserved state, not from
+        // this object - so a minimal stand-in is enough to keep the two notions in step.
+        val target =
+            workspaceManager.workspaces.value.firstOrNull { it.id == workspaceId }
+                ?: splitViewState
+                    .collectAllActiveTabs(workspaceManager, windowId)
+                    .firstOrNull { it.workspaceId == workspaceId }
+                    ?.let { tab ->
+                        ai.rever.boss.plugin.workspace.LayoutWorkspace(
+                            id = workspaceId,
+                            name = tab.workspaceName,
+                            description = "",
+                            layout =
+                                ai.rever.boss.plugin.workspace.SplitConfig.SinglePanel(
+                                    ai.rever.boss.plugin.workspace
+                                        .PanelConfig(id = "main", tabs = emptyList()),
+                                ),
+                        )
+                    }
+        target?.let { workspaceManager.loadWorkspace(it) }
+    }
+
+    override val activePanelId: String? get() = splitViewState.activePanelId
+
+    /**
+     * The tab a pane is showing, in any workspace this window is running.
+     *
+     * Scoped to ONE workspace's tree, which is what the workspaceId parameter is for: panel ids
+     * repeat across trees (every workspace's first pane is `main`), so searching every running
+     * workspace and taking the first hit answered from the wrong one as soon as two were running.
+     * `panelsInWorkspace` covers a preserved workspace as well as the current one, so a pane
+     * behind this workspace still answers - it just is not visible.
+     */
+    override fun selectedTabId(
+        workspaceId: String,
+        panelId: String,
+    ): String? =
+        splitViewState
+            .panelsInWorkspace(workspaceId)
+            .firstOrNull { it.id == panelId }
+            ?.tabsComponent
+            ?.tabsState
+            ?.value
+            ?.activeTab
+            ?.id
+
+    override val supportsTabTransfer: Boolean get() = true
+
+    override val liveWorkspaceIds: Set<String> get() = splitViewState.liveWorkspaceIds
+
+    /**
+     * What colour each Space is wearing, straight off the manager that decides it.
+     *
+     * Process-wide rather than per-window, like `allWindowTabs` and for the same reason: a Space
+     * has one theme wherever it is running, and one adapter per window each deriving its own would
+     * be N answers to one question. `WorkspaceManager` is a single instance the whole app shares,
+     * so this is a pass-through with nothing to recompute.
+     */
+    override val workspaceAccents: StateFlow<Map<String, androidx.compose.ui.graphics.Color>>
+        get() = workspaceManager.spaceAccents
+
+    /**
+     * The themes this build ships, in the picker's own display order.
+     *
+     * `BossThemes.all` is host-internal, so this is the only way a plugin can learn that Blueprint
+     * exists, let alone what it looks like. Mapped rather than held, because it is six items read
+     * when a picker opens.
+     */
+    override val availableThemes: List<BossThemeOption>
+        get() =
+            BossThemes.all.map { theme ->
+                BossThemeOption(
+                    id = theme.id,
+                    name = theme.name,
+                    isLight = theme.isLight,
+                    accent = theme.colors.signal,
+                    surface = theme.colors.panel,
+                )
+            }
+
+    /**
+     * Give a Space a theme, through the SAME writer the host's own Space menu uses.
+     *
+     * `WorkspaceManager.setSpaceTheme` is the one path that writes `Space_Themes.json`: it goes
+     * through `withSpaceTheme` (so a choice that merely restates the default still collapses to no
+     * entry), applies live when the Space is the one on screen, and publishes into
+     * `spaceThemes`/`spaceAccents`, which is what makes the plugin's own tint follow its own
+     * write. A second writer here would be a second answer about one file.
+     *
+     * Validated before it is passed on, and the refusal is the return value rather than a silent
+     * no-op: `setSpaceTheme` ignores an unknown id by design, so without this a plugin could not
+     * tell a theme this build has retired from one it applied.
+     */
+    override fun setWorkspaceTheme(
+        workspaceId: String,
+        themeId: String,
+    ): Boolean {
+        if (workspaceId.isEmpty() || BossThemes.all.none { it.id == themeId }) return false
+        workspaceManager.setSpaceTheme(workspaceId, themeId)
+        return true
+    }
+
+    /**
+     * Which theme a Space RESOLVES to - its own, then its template's, then the Settings baseline -
+     * which is `WorkspaceManager.themeIdFor`, the same function the switch itself calls.
+     *
+     * Resolved rather than "does it have one of its own": a picker is asking what to tick, and the
+     * answer is what the Space is showing, not whether someone chose it.
+     */
+    override fun workspaceThemeId(workspaceId: String): String? =
+        workspaceId.takeIf { it.isNotEmpty() }?.let { workspaceManager.themeIdFor(it) }
+
+    override suspend fun moveTabToWorkspace(
+        tabId: String,
+        targetWorkspaceId: String,
+    ): Boolean = moveTab(tabId, targetWorkspaceId, targetPanelId = null, targetIndex = null)
+
+    override suspend fun moveTabToPane(
+        tabId: String,
+        targetWorkspaceId: String,
+        targetPanelId: String,
+        targetIndex: Int?,
+    ): Boolean = moveTab(tabId, targetWorkspaceId, targetPanelId, targetIndex)
+
+    /**
+     * The one implementation behind both move verbs; a null [targetPanelId] lets the workspace's
+     * active pane take the tab, which is the whole difference between them.
+     */
+    private suspend fun moveTab(
+        tabId: String,
+        targetWorkspaceId: String,
+        targetPanelId: String?,
+        targetIndex: Int?,
+    ): Boolean =
+        try {
+            // Marshalled here rather than at the call site: detach/adopt move Essenty
+            // LifecycleRegistries between panels, and the api is suspend precisely so a plugin
+            // does not have to know that.
+            withContext(Dispatchers.Main) {
+                splitViewState.moveTabToWorkspace(tabId, targetWorkspaceId, targetPanelId, targetIndex)
+            }
+        } catch (e: Exception) {
+            tabsLogger.warn(
+                LogCategory.UI,
+                "moveTabToWorkspace failed",
+                mapOf(
+                    "tabId" to tabId,
+                    "targetWorkspaceId" to targetWorkspaceId,
+                    "targetPanelId" to (targetPanelId ?: "active"),
+                    "targetIndex" to (targetIndex?.toString() ?: "append"),
+                ),
+                error = e,
+            )
+            false
+        }
 
     override fun getTabUrl(tabId: String): String? {
         val tabs = splitViewState.collectAllActiveTabs(workspaceManager, windowId)
@@ -1547,24 +1785,31 @@ private class ApiActiveTabsProviderAdapter(
         }
     }
 
-    override fun closeTab(tabId: String): Boolean {
-        return try {
-            val allPanels = splitViewState.getAllPanels()
-            for (panel in allPanels) {
-                val tabsComponent = panel.tabsComponent
-                // Check if the tab exists by trying to get its component
-                val component = tabsComponent.getComponentById(tabId)
-                if (component != null) {
-                    tabsComponent.removeTabById(tabId)
-                    return true
-                }
-            }
+    override fun closeWorkspace(workspaceId: String): Boolean =
+        try {
+            // Any Space this window runs, not only the one showing - see SplitViewState.closeWorkspace
+            // for why the current-only form could not serve a list that names every running Space.
+            splitViewState.closeWorkspace(workspaceId)
+        } catch (e: Exception) {
+            tabsLogger.warn(
+                LogCategory.UI,
+                "closeWorkspace failed",
+                mapOf("workspaceId" to workspaceId),
+                error = e,
+            )
             false
+        }
+
+    override fun closeTab(tabId: String): Boolean =
+        try {
+            // Every workspace this window is running, not only the one on screen. getAllPanels
+            // walks the current tree alone, so this returned false for any tab activeTabs reported
+            // from a preserved workspace - which the caller could not tell from "no such tab".
+            splitViewState.closeTabAnywhere(tabId)
         } catch (e: Exception) {
             tabsLogger.warn(LogCategory.UI, "closeTab failed", mapOf("tabId" to tabId), error = e)
             false
         }
-    }
 
     private fun convertToActiveTabData(tab: ai.rever.boss.topofmind.ActiveTab): ActiveTabData {
         val tabInfo = tab.tabInfo

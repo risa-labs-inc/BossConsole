@@ -8,6 +8,7 @@ import ai.rever.boss.components.workspaces.WorkspaceSwitchAction
 import ai.rever.boss.components.workspaces.WorkspaceSwitchDialog
 import ai.rever.boss.components.workspaces.applyWorkspace
 import ai.rever.boss.components.workspaces.resolveOnWorkspaceSwitch
+import ai.rever.boss.components.workspaces.spaceToOpen
 import ai.rever.boss.components.workspaces.workspaceManager
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
@@ -48,13 +49,24 @@ internal fun rememberWorkspaceSwitch(
                     splitViewState.preserveCurrentState(leaving.id, leaving.name)
                 } else {
                     splitViewState.closeCurrentWorkspace()
+                    // The unsaved mark goes with the layout it was about. Closing destroys this
+                    // window's copy of the Space - preserved state dropped, panels cleared - so
+                    // after this there is nothing here that differs from the file, and a mark left
+                    // behind would point at work that no longer exists and could never be saved.
+                    workspaceManager.setWorkspaceUnsaved(state.windowId, leaving.id, false)
                 }
             }
 
+            // A TEMPLATE picked here becomes a Space first: substituted, named for the project and
+            // saved, so what gets loaded and applied is an ordinary Space. Returns `workspace`
+            // unchanged for anything that is not a template, and for a template picked with no
+            // project selected (which says so and applies as before). See `spaceToOpen`.
+            val opened = spaceToOpen(workspace, state.windowProjectState.selectedProject.value.path)
+
             // Load first to reset dirty state, then apply - which may restore state preserved
             // for the workspace being entered.
-            workspaceManager.loadWorkspace(workspace)
-            applyWorkspace(workspace, splitViewState, state.windowProjectState)
+            workspaceManager.loadWorkspace(opened)
+            applyWorkspace(opened, splitViewState, state.windowProjectState)
         }
     }
 
@@ -82,13 +94,18 @@ internal fun WorkspaceSwitchPrompt(
 ) {
     val pending = state.pendingWorkspaceSwitch ?: return
     val scope = rememberCoroutineScope()
+    val leaving = workspaceManager.currentWorkspace.value
+    // Collected, not read once: the watcher can settle while the question is on screen, and the
+    // dialog must not still be saying "no unsaved changes" by the time it is answered.
+    val unsavedWorkspaces by workspaceManager.unsavedWorkspaces.collectAsState()
 
     WorkspaceSwitchDialog(
-        leavingName =
-            workspaceManager.currentWorkspace.value
-                ?.name
-                .orEmpty(),
+        leavingName = leaving?.name.orEmpty(),
         enteringName = pending.name,
+        // The same rule as the vertical bar and the Space menu, so all three agree about the same
+        // Space - including on Last Session, which is a slot rather than a document and so always
+        // holds work that has never been saved anywhere.
+        leavingUnsaved = spaceIsUnsaved(leaving?.id, unsavedWorkspaces[state.windowId].orEmpty()),
         onChoose = { keep, dontAskAgain ->
             state.pendingWorkspaceSwitch = null
             if (dontAskAgain) {

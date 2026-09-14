@@ -22,10 +22,24 @@ import java.util.concurrent.ConcurrentHashMap
 sealed interface McpApprovalDecision {
     data class Approved(
         val trustForSession: Boolean = false,
+        /**
+         * Write this tool's policy to `~/.boss/mcp-tool-policy.json` as ALLOW, so it never
+         * suspends for approval again - across restarts, not just this session. Independent
+         * of [trustForSession]: a persisted ALLOW makes session trust redundant, so the registry does not also call
+         * `trustForSession` when this is true.
+         */
+        val persistPolicy: Boolean = false,
+        /**
+         * "Trust this plugin": persist ALLOW for every tool [McpApprovalRequest.providerId]
+         * contributes, not just this one tool or this one call.
+         */
+        val trustProvider: Boolean = false,
     ) : McpApprovalDecision
 
     data class Denied(
         val reason: String = "Operator rejected tool execution",
+        /** Write this tool's policy to disk as DENY, so it is refused automatically from now on. */
+        val persistPolicy: Boolean = false,
     ) : McpApprovalDecision
 
     data object Timeout : McpApprovalDecision
@@ -147,14 +161,24 @@ open class McpApprovalBus(
     fun approve(
         requestId: String,
         trustForSession: Boolean = false,
+        persistPolicy: Boolean = false,
+        trustProvider: Boolean = false,
     ): Boolean {
         val req = activeRequests[requestId] ?: return false
-        val completed = req.deferred.complete(McpApprovalDecision.Approved(trustForSession))
+        val completed =
+            req.deferred.complete(
+                McpApprovalDecision.Approved(trustForSession, persistPolicy, trustProvider),
+            )
         if (completed) {
             logger.info(
                 LogCategory.SYSTEM,
                 "Operator approved tool execution",
-                mapOf("tool" to req.toolName, "trustForSession" to trustForSession),
+                mapOf(
+                    "tool" to req.toolName,
+                    "trustForSession" to trustForSession,
+                    "persistPolicy" to persistPolicy,
+                    "trustProvider" to trustProvider,
+                ),
             )
         }
         return completed
@@ -166,14 +190,15 @@ open class McpApprovalBus(
     fun deny(
         requestId: String,
         reason: String = "Operator rejected tool execution",
+        persistPolicy: Boolean = false,
     ): Boolean {
         val req = activeRequests[requestId] ?: return false
-        val completed = req.deferred.complete(McpApprovalDecision.Denied(reason))
+        val completed = req.deferred.complete(McpApprovalDecision.Denied(reason, persistPolicy))
         if (completed) {
             logger.info(
                 LogCategory.SYSTEM,
                 "Operator denied tool execution",
-                mapOf("tool" to req.toolName),
+                mapOf("tool" to req.toolName, "persistPolicy" to persistPolicy),
             )
         }
         return completed

@@ -24,7 +24,7 @@ val ShortcutCategory.displayName: String
             ShortcutCategory.TAB_MANAGEMENT -> "Tab Management"
             ShortcutCategory.BROWSER_CONTROLS -> "Browser Controls"
             ShortcutCategory.NAVIGATION -> "Navigation"
-            ShortcutCategory.WORKSPACE -> "Workspace"
+            ShortcutCategory.WORKSPACE -> "Space"
             ShortcutCategory.OTHER -> "Other"
         }
 
@@ -113,11 +113,11 @@ fun getKeyboardShortcuts(): List<KeyboardShortcut> =
         ),
         // Workspace
         KeyboardShortcut(
-            action = "Save Workspace",
+            action = "Save Space",
             key = "S",
             modifiers = listOf("Cmd", "Shift"),
             category = ShortcutCategory.WORKSPACE,
-            description = "Saves the current workspace layout",
+            description = "Saves the current space layout",
         ),
         // Other
         KeyboardShortcut(

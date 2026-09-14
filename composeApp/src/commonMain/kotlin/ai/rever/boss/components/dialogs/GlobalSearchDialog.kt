@@ -1461,7 +1461,8 @@ private fun TabResultItem(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = "${result.tabType} • ${result.workspaceName}",
+                // Keep the workspace visible even when a long location is truncated.
+                text = "${result.workspaceName} • ${result.url ?: result.filePath ?: result.tabType}",
                 fontSize = 11.sp,
                 color = BossTheme.colors.textSecondary,
                 maxLines = 1,

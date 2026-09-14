@@ -550,11 +550,31 @@ object LanguageIcons {
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * Get icon and color for a file extension.
-     * @param extension File extension without the dot (e.g., "kt", "py", "js")
-     * @return Pair of ImageVector icon and Color
+     * Icon and colour for a file extension, or the generic unknown pair.
+     *
+     * Kept for callers that want a total function. Anything that needs to know
+     * whether the extension was actually recognised should use
+     * [forExtensionOrNull] rather than comparing against [unknown], which a real
+     * mapping could legitimately return.
      */
-    fun forExtension(extension: String): Pair<ImageVector, Color> =
+    fun forExtension(extension: String): Pair<ImageVector, Color> {
+        // Block body deliberately: as an expression body ktlintFormat joins this
+        // onto one line, which then trips detekt's 120-character limit.
+        return forExtensionOrNull(extension) ?: (unknown to Colors.unknown)
+    }
+
+    /**
+     * Icon and colour for a file extension, or null when this is not an
+     * extension we have an icon for.
+     *
+     * The nullable form exists so callers stop keeping their own copy of the
+     * extension list. [FileIcons] used to gate this call behind a `when` that
+     * re-listed the same extensions purely to decide whether to call it, which
+     * is one of the duplicated language tables BossConsole#75 is about, and it
+     * had already drifted: eleven extensions this function has icons for were
+     * missing from that gate and fell through to the generic file icon.
+     */
+    fun forExtensionOrNull(extension: String): Pair<ImageVector, Color>? =
         when (extension.lowercase()) {
             // Kotlin
             "kt", "kts" -> kotlin to Colors.kotlin
@@ -736,7 +756,7 @@ object LanguageIcons {
 
             "prettierrc", "prettierignore" -> prettier to Colors.prettier
 
-            else -> unknown to Colors.unknown
+            else -> null
         }
 
     /**

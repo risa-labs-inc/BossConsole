@@ -11,12 +11,20 @@ class TabsNavigation<C : Any>(
     private val _tabs = MutableValue(TabsState(tabs = initial, activeIndex = initialActive))
     val state: Value<TabsState<C>> = _tabs
 
-    fun addTab(config: C): Int {
+    /**
+     * @param activate Whether the new tab becomes the active one. Defaults to true (existing
+     *   behavior). `false` adds the tab without disturbing whichever tab is already active -
+     *   for a caller that wants the tab to exist and run without stealing focus from it.
+     */
+    fun addTab(
+        config: C,
+        activate: Boolean = true,
+    ): Int {
         val newIndex = _tabs.value.tabs.size
         _tabs.update {
             it.copy(
                 tabs = it.tabs + config,
-                activeIndex = newIndex,
+                activeIndex = if (activate) newIndex else it.activeIndex,
             )
         }
         return newIndex

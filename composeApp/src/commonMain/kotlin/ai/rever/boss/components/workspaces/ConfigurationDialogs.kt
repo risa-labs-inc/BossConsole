@@ -32,12 +32,12 @@ fun SaveWorkspaceDialog(
 
     BossAlertDialog(
         onDismissRequest = onDismiss,
-        title = { androidx.compose.material.Text("Save Workspace") },
+        title = { androidx.compose.material.Text("Save Space") },
         text = {
             androidx.compose.material.OutlinedTextField(
                 value = name,
                 onValueChange = { name = it },
-                label = { androidx.compose.material.Text("Workspace Name") },
+                label = { androidx.compose.material.Text("Space Name") },
                 singleLine = true,
             )
         },
@@ -83,23 +83,28 @@ fun OpenWorkspaceDialog(
 }
 
 /**
- * Delete workspace dialog
+ * Delete workspace dialog.
+ *
+ * **Selection is by ID, and [onDelete] reports an id.** It selected by NAME, so two Spaces sharing
+ * a name ticked together and the delete resolved to whichever the list found first - a way to
+ * destroy the wrong Space by pointing at the right one. Names are identity to a reader and are not
+ * unique; ids are.
  */
 @Composable
 fun DeleteWorkspaceDialog(
     workspaces: List<LayoutWorkspace>,
     onDismiss: () -> Unit,
-    onDelete: (String) -> Unit,
+    onDelete: (workspaceId: String) -> Unit,
 ) {
     var selectedWorkspace by remember { mutableStateOf<String?>(null) }
 
     BossAlertDialog(
         onDismissRequest = onDismiss,
-        title = { androidx.compose.material.Text("Delete Workspace") },
+        title = { androidx.compose.material.Text("Delete Space") },
         text = {
             Column {
                 androidx.compose.material.Text(
-                    "Select a workspace to delete:",
+                    "Select a space to delete:",
                     modifier = Modifier.padding(bottom = 16.dp),
                 )
 
@@ -108,13 +113,13 @@ fun DeleteWorkspaceDialog(
                         modifier =
                             Modifier
                                 .fillMaxWidth()
-                                .clickable { selectedWorkspace = workspace.name }
+                                .clickable { selectedWorkspace = workspace.id }
                                 .padding(vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         RadioButton(
-                            selected = selectedWorkspace == workspace.name,
-                            onClick = { selectedWorkspace = workspace.name },
+                            selected = selectedWorkspace == workspace.id,
+                            onClick = { selectedWorkspace = workspace.id },
                         )
                         androidx.compose.material.Text(
                             text = workspace.name,
@@ -125,7 +130,7 @@ fun DeleteWorkspaceDialog(
 
                 if (workspaces.isEmpty()) {
                     androidx.compose.material.Text(
-                        "No custom workspaces to delete.",
+                        "No custom spaces to delete.",
                         color = BossTheme.colors.textSecondary,
                     )
                 }

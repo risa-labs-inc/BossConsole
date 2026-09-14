@@ -1,5 +1,6 @@
 package ai.rever.boss.app
 
+import ai.rever.boss.components.workspaces.LastSessionSet
 import ai.rever.boss.components.workspaces.LayoutWorkspace
 import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.utils.logging.BossLogger
@@ -37,12 +38,22 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 class LastSessionCoordinator internal constructor(
     private val save: (LayoutWorkspace) -> Boolean,
+    /**
+     * Write the multi-Space record, or DELETE it when handed null.
+     *
+     * A second write under the SAME claim rather than a second writer: the whole point of this
+     * class is that one window produces the app-level session record, and two records describing
+     * one session must be produced together or they can disagree about it. Defaulted so a test
+     * that only cares about who writes does not have to say anything about the set.
+     */
+    private val saveSet: (LastSessionSet?) -> Boolean = { true },
 ) {
     private val logger = BossLogger.forComponent("LastSessionCoordinator")
 
     private class LiveWindow(
         val isPrimary: Boolean,
         val extractLayout: () -> LayoutWorkspace,
+        val extractSet: () -> LastSessionSet?,
     )
 
     private val liveWindows = ConcurrentHashMap<String, LiveWindow>()
@@ -61,9 +72,15 @@ class LastSessionCoordinator internal constructor(
     fun register(
         windowId: String,
         isFirstWindow: Boolean,
+        /**
+         * Every Space this window is running, and which was showing, or null for a session that
+         * needs no set - fewer than two Spaces, which `Last_Session.json` already records on its
+         * own. Invoked at teardown alongside [extractLayout], so it must read live state too.
+         */
+        extractSet: () -> LastSessionSet? = { null },
         extractLayout: () -> LayoutWorkspace,
     ) {
-        liveWindows[windowId] = LiveWindow(isFirstWindow, extractLayout)
+        liveWindows[windowId] = LiveWindow(isFirstWindow, extractLayout, extractSet)
         // A new window means a new session to persist later.
         writtenThisSession.set(false)
     }
@@ -125,10 +142,21 @@ class LastSessionCoordinator internal constructor(
         if (!writtenThisSession.compareAndSet(false, true)) return false
         return try {
             val saved = save(window.extractLayout())
+            // Both files, one claim. The set is written (or deleted) even when the single-Space
+            // write failed: they describe the same session, and leaving a stale set beside a
+            // half-written single record is the one state that restores something nobody had.
+            val set = window.extractSet()
+            val setSaved = saveSet(set)
             logger.debug(
                 LogCategory.WORKSPACE,
                 "Last Session save",
-                mapOf("windowId" to windowId, "trigger" to trigger, "saved" to saved.toString()),
+                mapOf(
+                    "windowId" to windowId,
+                    "trigger" to trigger,
+                    "saved" to saved.toString(),
+                    "spaces" to (set?.spaces?.size ?: 0).toString(),
+                    "setSaved" to setSaved.toString(),
+                ),
             )
             saved
         } catch (e: Exception) {
@@ -147,6 +175,10 @@ class LastSessionCoordinator internal constructor(
     }
 
     companion object {
-        val instance = LastSessionCoordinator({ layout -> workspaceManager.saveLastSessionBlocking(layout) })
+        val instance =
+            LastSessionCoordinator(
+                save = { layout -> workspaceManager.saveLastSessionBlocking(layout) },
+                saveSet = { set -> workspaceManager.saveLastSessionSetBlocking(set) },
+            )
     }
 }

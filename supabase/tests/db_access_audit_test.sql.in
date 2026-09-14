@@ -1,0 +1,76 @@
+-- Exercise the actual standing audit, including missing-signature degradation.
+begin;
+select plan(16);
+create temporary table audit_snapshot as
+\ir ../audit/identity_disclosure_audit.sql
+select is(finding, 'HEALTHY', "check") from audit_snapshot
+where "check" in ('CHECK 1: callable without an account',
+    'CHECK 1b: expected anonymous signature missing or revoked',
+    'CHECK 4: explicit-anon-grant event trigger',
+    'CHECK 5: client access to internal-only routines');
+drop function public.safe_decrypt_recovery_codes(text);
+create temporary table audit_missing as
+\ir ../audit/identity_disclosure_audit.sql
+select ok(finding like '%MISSING SIGNATURE%', 'missing crypto signature is reported without aborting audit')
+from audit_missing where "check" = 'CHECK 5: client access to internal-only routines';
+-- Advisory checks still need behavior tests, without mistaking a textual
+-- heuristic for a complete authorization proof across existing app functions.
+create table public.pgtap_identity_no_rls(email text);
+grant select on public.pgtap_identity_no_rls to authenticated;
+create table public.pgtap_identity_open_rls(email text);
+alter table public.pgtap_identity_open_rls enable row level security;
+grant select on public.pgtap_identity_open_rls to authenticated;
+create policy open_read on public.pgtap_identity_open_rls for select to authenticated using (true);
+create function public.pgtap_identity_reader() returns text language sql security definer
+as 'select email::text from auth.users limit 1';
+grant execute on function public.pgtap_identity_reader() to authenticated;
+create view public.pgtap_identity_definer as select email from public.pgtap_identity_no_rls;
+create view public.pgtap_identity_invoker with (security_invoker = true) as
+select email from public.pgtap_identity_no_rls;
+create view public.pgtap_identity_on with (security_invoker = 'on') as
+select email from public.pgtap_identity_no_rls;
+grant select on public.pgtap_identity_definer, public.pgtap_identity_invoker,
+    public.pgtap_identity_on to authenticated;
+create temporary table audit_advisory as
+\ir ../audit/identity_disclosure_audit.sql
+select ok(finding like '%pgtap_identity_reader%', 'advisory detects ungated identity reader')
+from audit_advisory where "check" = 'CHECK 2: identity reachable with no gate';
+select ok(finding like '%pgtap_identity_open_rls%', 'advisory detects unrestricted identity policy')
+from audit_advisory where "check" = 'CHECK 3: identity-bearing relation readable by all';
+select ok(finding like '%pgtap_identity_no_rls%', 'advisory detects identity table without RLS')
+from audit_advisory where "check" = 'CHECK 3b: identity-bearing table without RLS';
+select ok(finding like '%pgtap_identity_definer%', 'advisory detects identity definer view')
+from audit_advisory where "check" = 'CHECK 3c: identity-bearing view without security_invoker';
+select ok(finding not like '%pgtap_identity_invoker%', 'advisory excludes invoker view')
+from audit_advisory where "check" = 'CHECK 3c: identity-bearing view without security_invoker';
+select ok(finding not like '%pgtap_identity_on%', 'advisory accepts on spelling for invoker view')
+from audit_advisory where "check" = 'CHECK 3c: identity-bearing view without security_invoker';
+select ok(finding like '%pgtap_identity_reader%', 'advisory inventories authenticated SECURITY DEFINER routines')
+from audit_advisory where "check" = 'CHECK 5x (advisory): authenticated-callable SECURITY DEFINER routines';
+-- The four CI-GATED checks only ever asserted HEALTHY above. A query-level
+-- regression in any of them - an inverted `not exists`, a wrong role literal, a
+-- typo in the evtenabled test - would leave the gate permanently green while
+-- proving nothing. Break each one deliberately and assert it is reported.
+--
+-- CHECK 1: the grant is issued AFTER the DDL, which is precisely how a routine
+-- gets anonymous access past the event trigger.
+create function public.pgtap_gate_anon_callable() returns int language sql as 'select 1';
+grant execute on function public.pgtap_gate_anon_callable() to anon;
+revoke execute on function public.get_popular_tags(integer) from anon;
+alter event trigger enforce_explicit_anon_grants disable;
+grant execute on function public.get_encryption_key() to authenticated;
+
+create temporary table audit_broken as
+\ir ../audit/identity_disclosure_audit.sql
+
+select ok(finding like '%pgtap_gate_anon_callable%', 'CHECK 1 names a routine granted to anon after creation')
+from audit_broken where "check" = 'CHECK 1: callable without an account';
+select ok(finding like '%EXPECTED ANONYMOUS ACCESS MISSING%', 'CHECK 1b reports a revoked deliberate anonymous grant')
+from audit_broken where "check" = 'CHECK 1b: expected anonymous signature missing or revoked';
+select ok(finding like '%DISABLED OR WRONG FIRING MODE/TAGS%', 'CHECK 4 reports a disabled event trigger')
+from audit_broken where "check" = 'CHECK 4: explicit-anon-grant event trigger';
+select ok(finding like '%get_encryption_key%', 'CHECK 5 names a crypto routine exposed to authenticated')
+from audit_broken where "check" = 'CHECK 5: client access to internal-only routines';
+
+select * from finish();
+rollback;

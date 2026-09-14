@@ -56,14 +56,30 @@ class BrowserDisposalWiringTest {
         assertTrue(completion.contains("finishLocalBrowserDisposal("))
         assertTrue(completion.contains("currentViewState?.close()"))
         assertTrue(completion.contains("requestNativeClose = { nativeDisposal.start() }"))
+        // Anchor on the member that follows setupEventListeners(), not on the first "}" after the
+        // handler: the handler body contains lambdas (the EDT post), so a brace-anchored window
+        // truncates before dispose() and fails spuriously.
         val closed =
-            handle.substringAfter("browser.on(BrowserClosed::class.java)").substringBefore("coBrowseCapturing = false")
-        assertTrue(closed.contains("disposed.set(true)"))
-        assertTrue(closed.contains("pageInjection.onGone()"))
-        assertTrue(closed.indexOf("pageInjection.onGone()") < closed.indexOf("nativeDisposal.start()"))
+            handle
+                .substringAfter("browser.on(BrowserClosed::class.java)")
+                .substringBefore("private fun recordNavigationOutcome")
         assertTrue(
-            closed.contains("nativeDisposal.start()"),
-            "External close must settle disposal despite the disposed guard",
+            closed.contains("this@BrowserHandleImpl.dispose()"),
+            "External close must route through the unified dispose path",
+        )
+        // The leak's mechanism: an inline disposed.set(true) here made the later
+        // dispose() return on its first line, so its unregister and scope cancellations
+        // never ran for a browser that closed on its own.
+        assertFalse(
+            closed.contains("disposed.set(true)"),
+            "External close must not pre-set the disposed flag inline; that would make the unified dispose() a no-op",
+        )
+        // The unification must not reorder the native teardown: onGone still precedes the native
+        // close request inside dispose().
+        val disposeBody = handle.substringAfter("override fun dispose()")
+        assertTrue(
+            disposeBody.indexOf("pageInjection.onGone()") in 1 until disposeBody.indexOf("nativeDisposal.start()"),
+            "pageInjection.onGone() must still precede the native disposal in dispose()",
         )
     }
 

@@ -239,7 +239,7 @@ data class ResourceModeThresholds(
  * with nothing in the UI to clear it - see [ResourceModeReason.ENVIRONMENT_OVERRIDE]. A key that
  * granted capability would still have to bypass ConfigLoader entirely.
  *
- * Not to be confused with `BOSS_MODE` / `boss.mode`, which is the orthogonal
+ * Not to be confused with `BOSS_MODE`, which is the orthogonal
  * kernel-versus-normal axis read by `PluginStoreSetup.isKernelMode`.
  */
 object ResourceModeConfig {

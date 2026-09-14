@@ -200,6 +200,13 @@ data class RunnerSettings(
     /**
      * Whether to automatically focus the terminal when a runner starts.
      * Default: true
+     *
+     * Not wired on the host today (BossConsole#486): [RunnerTerminalTarget.MAIN_PANEL] would need
+     * to start the run without composing its tab, but the terminal-tab plugin creates its session
+     * lazily, in `Content()`, so a tab left inactive never runs its command at all - turning this
+     * off would silently mean "never run" rather than "run without stealing focus". Left as a
+     * persisted, user-visible setting for when terminal-tab can start a session independent of
+     * composition; the host ignores its value until then.
      */
     val focusOnRun: Boolean = true,
     /**
@@ -211,15 +218,31 @@ data class RunnerSettings(
     /**
      * Whether to show a notification when a runner process exits.
      * Default: false
+     *
+     * Not wired on the host today (BossConsole#486): the only tab-removal signal available
+     * (`RunnerTerminalService.removeTerminal`) fires for a manual tab close and for the host's own
+     * teardown during Stop/re-run just as readily as for a real process exit, with no way to tell
+     * them apart - and on the default [RunnerTerminalTarget.SIDEBAR_PANEL] target it never fires
+     * at all. A real exit signal needs the terminal-tab plugin's own completion contract (its
+     * `onExit` is currently empty); a wrong "finished" was judged worse than a missing one.
      */
     val notifyOnExit: Boolean = false,
     /**
      * Delay in milliseconds between sending Ctrl+C and the new command during re-run.
      * This gives the shell time to handle the interrupt and show its prompt.
-     * Default: 1000ms. Range: 0-2000ms
+     * Default: 1000ms. Range: [MIN_RERUN_DELAY_MS]-[MAX_RERUN_DELAY_MS]
      */
     val rerunDelayMs: Long = 1000,
 )
+
+/**
+ * The valid range for [RunnerSettings.rerunDelayMs] - shared by the write-side clamp
+ * (`DesktopRunnerSettingsManager.setRerunDelayMs`) and the read-side clamp in `rerunRunner`
+ * (a hand-edited settings file is read straight through to `delay()` otherwise), so the two
+ * cannot state a different range from one another.
+ */
+const val MIN_RERUN_DELAY_MS = 0L
+const val MAX_RERUN_DELAY_MS = 2000L
 
 // ============================================
 // Run Event Types

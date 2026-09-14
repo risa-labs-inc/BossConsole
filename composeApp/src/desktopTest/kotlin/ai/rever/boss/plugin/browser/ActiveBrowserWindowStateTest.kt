@@ -92,10 +92,11 @@ class ActiveBrowserWindowStateTest {
 
     @Test
     fun `the gate is stricter than the dispatch target, deliberately`() {
-        // selectActiveHandleId ranks and always answers when a candidate exists, so a sidebar
-        // browser still gets Zoom and Reload. This gate filters, because its menu items would
-        // otherwise steal their chords from the editor the user is actually in. Pinned so the
-        // asymmetry is a decision rather than a later "bug fix" that reopens the swallowing.
+        // selectActiveHandleId ranks and always answers when a candidate exists; this gate
+        // filters. The gate is deliberately stricter than the dispatch target: a sidebar browser
+        // answers false here, so its Zoom/Reload menu items grey out even though the dispatch
+        // target would still find it. Pinned so the asymmetry is a decision rather than a later
+        // "bug fix" that reopens the chord swallowing.
         val sidebarOnly = listOf(entry("sidebar", inMainPanel = false))
 
         assertTrue(activeBrowserWindows(sidebarOnly, allLive).isEmpty())

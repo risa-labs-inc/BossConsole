@@ -6,6 +6,7 @@ import ai.rever.boss.utils.SystemUtils
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.teamdev.jxbrowser.browser.Browser
 import com.teamdev.jxbrowser.search.FindResult
@@ -80,8 +81,8 @@ class BrowserFindTest {
         val pane = intArrayOf(1000, 500, 800, 600)
         val inset = DpSize(40.dp, 20.dp)
         assertEquals(
-            insetBounds(pane, inset)!!.toList(),
-            resolveRegion(pane, inset, regionInWindow = null)!!.toList(),
+            insetBounds(pane, inset, LayoutDirection.Ltr)!!.toList(),
+            resolveRegion(pane, inset, regionInWindow = null, LayoutDirection.Ltr)!!.toList(),
         )
     }
 
@@ -89,7 +90,7 @@ class BrowserFindTest {
     fun `a region is offset into screen coordinates`() {
         // The caller measures against the window; HeavyweightCorner places against the screen.
         val pane = intArrayOf(1000, 500, 800, 600)
-        val resolved = resolveRegion(pane, DpSize.Zero, IntRect(400, 8, 792, 592))
+        val resolved = resolveRegion(pane, DpSize.Zero, IntRect(400, 8, 792, 592), LayoutDirection.Ltr)
         assertEquals(listOf(1400, 508, 392, 584), resolved!!.toList())
     }
 
@@ -99,7 +100,7 @@ class BrowserFindTest {
         // a resize. An unclamped region wider than the pane would place an always-on-top overlay
         // outside the window it belongs to.
         val pane = intArrayOf(0, 0, 800, 600)
-        val resolved = resolveRegion(pane, DpSize.Zero, IntRect(0, 0, 5000, 5000))
+        val resolved = resolveRegion(pane, DpSize.Zero, IntRect(0, 0, 5000, 5000), LayoutDirection.Ltr)
         assertEquals(listOf(0, 0, 800, 600), resolved!!.toList())
     }
 
@@ -107,8 +108,8 @@ class BrowserFindTest {
     fun `a degenerate region falls back to the inset path`() {
         val pane = intArrayOf(0, 0, 800, 600)
         val inset = DpSize(30.dp, 10.dp)
-        val resolved = resolveRegion(pane, inset, IntRect(900, 900, 950, 950))
-        assertEquals(insetBounds(pane, inset)!!.toList(), resolved!!.toList())
+        val resolved = resolveRegion(pane, inset, IntRect(900, 900, 950, 950), LayoutDirection.Ltr)
+        assertEquals(insetBounds(pane, inset, LayoutDirection.Ltr)!!.toList(), resolved!!.toList())
     }
 
     // ========================================================================

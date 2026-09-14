@@ -418,6 +418,13 @@ jobs:
       - name: Prepare real migration fixtures for upgrade regression
         run: python3 scripts/test/prepare-totp-migration-fixtures.py
 
+      - name: 🧱 Prepare DB access tests
+        run: |
+          python3 scripts/test/prepare-db-access-tests.py
+          # Fails if a generated suite is stale or orphaned. Both of those
+          # otherwise produce a green run over the wrong content.
+          python3 scripts/test/prepare-db-access-tests.py --check
+
       - name: 🧪 Run pgTAP RBAC tests
         run: supabase test db
 

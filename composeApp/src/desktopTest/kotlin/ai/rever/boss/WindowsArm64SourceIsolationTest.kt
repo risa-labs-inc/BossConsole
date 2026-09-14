@@ -54,6 +54,7 @@ class WindowsArm64SourceIsolationTest {
             "/plugin/PluginStoreSetupIpcGateTest.kt",
             "/plugin/PluginStateDeltaTest.kt",
             "/plugin/PluginProcessIdTest.kt",
+            "/run/DesktopRunnerTerminalServiceTest.kt",
         )
 
     /** Excluded for reasons unrelated to the platform, so not part of the mirror. */

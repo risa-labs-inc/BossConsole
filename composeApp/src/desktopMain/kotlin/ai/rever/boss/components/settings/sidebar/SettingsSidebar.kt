@@ -74,8 +74,8 @@ enum class SettingsSection(
         icon = Icons.Outlined.PlayArrow,
     ),
     WORKSPACE(
-        displayName = "Workspace",
-        description = "Default layout and workspace templates",
+        displayName = "Space",
+        description = "Default layout and space templates",
         icon = Icons.Outlined.GridView,
     ),
     UPDATES(

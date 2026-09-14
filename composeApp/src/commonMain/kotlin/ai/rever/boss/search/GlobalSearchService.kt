@@ -1,10 +1,12 @@
 package ai.rever.boss.search
 
+import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
 import ai.rever.boss.keymap.KeymapSettingsManager
 import ai.rever.boss.keymap.model.KeymapActions
 import ai.rever.boss.keymap.model.formatShortcutLabel
 import ai.rever.boss.plugin.api.PluginSearchResult
 import ai.rever.boss.plugin.api.SearchResultAction
+import ai.rever.boss.plugin.tab.codeeditor.EditorTabInfo
 import ai.rever.boss.run.RunConfigurationManager
 import ai.rever.boss.topofmind.TopOfMindStateHolder
 import ai.rever.boss.utils.logging.BossLogger
@@ -361,7 +363,13 @@ object GlobalSearchService {
     }
 
     /**
-     * Search open tabs.
+     * Search open tabs: by title (fuzzy), and by a browser tab's URL or an editor tab's file path
+     * (substring, via [proseScore] - the same reasoning [searchRecentPages] gives for a page's URL
+     * applies here, since both are long enough for a short query to match by accident as a fuzzy
+     * subsequence).
+     *
+     * Only [FluckTabInfo.currentUrl] and [EditorTabInfo.filePath] are populated on the result - a
+     * tab of neither type (terminal, diff, …) still matches on title alone, with both left null.
      */
     private fun searchTabs(query: String): List<SearchResult.TabResult> {
         val tabs = TopOfMindStateHolder.activeTabs.value
@@ -369,13 +377,21 @@ object GlobalSearchService {
             return emptyList()
         }
 
+        val queryLower = query.lowercase()
         val results = mutableListOf<SearchResult.TabResult>()
 
         for (tab in tabs) {
             val title = tab.tabInfo.title
-            val titleMatch = FuzzyMatcher.match(query, title, title.lowercase())
+            val url = (tab.tabInfo as? FluckTabInfo)?.currentUrl?.takeIf { it.isNotBlank() }
+            val filePath = (tab.tabInfo as? EditorTabInfo)?.filePath?.takeIf { it.isNotBlank() }
 
-            if (titleMatch != null && titleMatch.score >= MIN_SCORE) {
+            val titleMatch = FuzzyMatcher.match(query, title, title.lowercase())
+            val titleScore = titleMatch?.score?.takeIf { it >= MIN_SCORE }
+            val urlScore = url?.let { proseScore(query, queryLower, it) }
+            val filePathScore = filePath?.let { proseScore(query, queryLower, it) }
+
+            val bestScore = listOfNotNull(titleScore, urlScore, filePathScore).maxOrNull()
+            if (bestScore != null) {
                 results.add(
                     SearchResult.TabResult(
                         title = title,
@@ -384,10 +400,13 @@ object GlobalSearchService {
                         windowId = tab.windowId,
                         panelId = tab.panelId,
                         tabType = tab.tabInfo.typeId.typeId,
-                        url = null, // Would need FluckTabInfo check
-                        filePath = null, // Would need EditorTabInfo check
-                        score = titleMatch.score + 30, // Bonus for tabs (currently visible)
-                        matchRanges = titleMatch.matchRanges,
+                        url = url,
+                        filePath = filePath,
+                        score = bestScore + 30, // Bonus for tabs (currently visible)
+                        // Only ever highlights the title: a URL/file-path-only hit has nothing in
+                        // the title to underline, and TabResultItem never renders these fields' own
+                        // ranges - matching searchRecentPages, which carries no ranges for a URL hit.
+                        matchRanges = titleMatch?.matchRanges ?: emptyList(),
                     ),
                 )
             }
