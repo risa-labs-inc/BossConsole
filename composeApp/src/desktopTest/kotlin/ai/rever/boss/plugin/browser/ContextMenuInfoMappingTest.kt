@@ -86,7 +86,10 @@ class ContextMenuInfoMappingTest {
     @Test
     fun `frame identity does not change any mapped target information`() {
         for (types in listOf(emptyList(), listOf(ContextMenuContentType.EDITABLE))) {
-            assertEquals(info(contentTypes = types, isMainFrame = true), info(contentTypes = types, isMainFrame = false))
+            assertEquals(
+                info(contentTypes = types, isMainFrame = true),
+                info(contentTypes = types, isMainFrame = false),
+            )
         }
     }
 
