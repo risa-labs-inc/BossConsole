@@ -84,6 +84,13 @@ class ContextMenuInfoMappingTest {
     }
 
     @Test
+    fun `frame identity does not change any mapped target information`() {
+        for (types in listOf(emptyList(), listOf(ContextMenuContentType.EDITABLE))) {
+            assertEquals(info(contentTypes = types, isMainFrame = true), info(contentTypes = types, isMainFrame = false))
+        }
+    }
+
+    @Test
     fun `an editable field inside an iframe is offered edit actions`() {
         // Editor commands target the focused frame, and credential filling is owned by the
         // caller that identified the clicked element, so the old main-frame gate is obsolete.

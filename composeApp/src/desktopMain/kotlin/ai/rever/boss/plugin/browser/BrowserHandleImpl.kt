@@ -192,6 +192,7 @@ internal data class ContextMenuTarget(
     val srcUrl: String = "",
     val linkUrl: String = "",
     val selectedText: String = "",
+    // Retain frame metadata to pin frame-independent mapping in regression tests.
     val isMainFrame: Boolean = true,
 )
 
@@ -203,7 +204,7 @@ internal data class ContextMenuTarget(
  * `ShowContextMenuCallback.Params`. Scoped to the target only — the caller fills in the
  * page identity, which is carried through untouched.
  *
- * Two deliberate narrowings:
+ * Target mapping rules:
  * - [BrowserContextMenuInfo.hasImage] is only reported together with a resolvable
  *   [BrowserContextMenuInfo.imageUrl]. Chromium reports MEDIA_IMAGE for targets that have
  *   no source URL (`<canvas>`, CSS backgrounds, some inline SVG), and every image action a
@@ -211,14 +212,9 @@ internal data class ContextMenuTarget(
  *   An inline image's source is a `data:` URL of the whole encoded image, which this is
  *   the first path to hand to plugins; past [MAX_INLINE_IMAGE_URL_LENGTH] it counts as no
  *   address rather than shipping megabytes of base64 into every menu.
- * - Editable is reported for the main frame only. The reason used to be the credential fill,
- *   which ran against `browser.mainFrame()` and `document.activeElement`, so offering it for a
- *   field inside an iframe could write a password into whatever main-frame input happened to be
- *   focused. That method is gone and filling now belongs to the caller, which targets an element
- *   it already identified - so this gate is no longer holding a fill path back.
- *   `cut`/`copySelection`/`paste`/`selectAll` go through [BrowserHandleImpl.editorCommand], which
- *   targets `focusedFrame()` and would work inside an iframe already; this gate is what stops the
- *   menu offering them there, and widening it is now a self-contained change.
+ * - Editability follows Chromium's clicked target in any frame. Credential filling belongs
+ *   to the caller that identified the element. Editor commands use the focused frame, which
+ *   normally follows the click, but can differ if the page prevents focus changes.
  */
 internal fun ContextMenuTarget.toContextMenuInfo(
     pageUrl: String,
@@ -1701,7 +1697,7 @@ internal class BrowserHandleImpl(
 
                 // Secret auto-fill needs details Chromium does not report (field name, id,
                 // autocomplete). That means a JS round-trip, so it happens off this thread —
-                // against the main frame, which isEditable is gated to.
+                // against the clicked frame supplied by params.frame(). This also covers editable iframes.
                 contextMenuScope.launch {
                     // Raced rather than wrapped: executeJavaScript blocks, so a cancelled
                     // withTimeoutOrNull would have no suspension point to land on and could
@@ -3628,19 +3624,11 @@ internal class BrowserHandleImpl(
      * in conflict so much as differently supplied — that callback has the accurate frame in hand
      * and this method does not.
      *
-     * What that costs, stated plainly: for a caller reaching `copySelection()` on a non-editable
-     * selection while an iframe holds keyboard focus, `focusedFrame()` is the iframe and the
-     * command acts on its empty selection. `mainFrame()` would have been right there. That case
-     * is not reachable through the browser plugin's menu today — its non-editable branch copies
-     * the reported selection through AWT and never calls this, and the editable branch is gated
-     * on `isEditable`, which `toContextMenuInfo` computes for the main frame only, so a
-     * right-click that reaches here has focused a main-frame editable element. It is reachable by
-     * any other plugin holding a [BrowserHandle].
-     *
-     * The durable answer is to prefer the frame the context-menu callback already resolved
-     * (`BrowserHandleImpl` line ~1232 keeps `params.frame()`), held weakly and only while its
-     * menu is live, with `focusedFrame()` then `mainFrame()` behind it. Not done here: it changes
-     * the shape of the handle for a case nothing currently hits.
+     * The clicked frame can differ from the focused frame when a page prevents focus changes.
+     * This is reachable from editable iframe menus too: an enabled Paste can act in the
+     * previously focused frame. Non-editable plugin menus copy their reported selection
+     * through AWT instead. Exact clicked-frame routing is tracked separately in PR #588;
+     * enabling iframe edit actions does not solve that routing limitation.
      *
      * Never throws: this runs from context-menu handlers on a JxBrowser callback thread, where
      * an escaping exception has no owner. A refusal is logged rather than returned, because
