@@ -1,6 +1,7 @@
 package ai.rever.boss.plugin.browser
 
 import com.teamdev.jxbrowser.browser.callback.StartCaptureSessionCallback
+import com.teamdev.jxbrowser.capture.CaptureSource
 import com.teamdev.jxbrowser.capture.CaptureSources
 import org.junit.After
 import org.junit.Test
@@ -9,7 +10,16 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class ScreenCaptureNotifierTest {
-    private val sources = object : CaptureSources {}
+    // Every member overridden: CaptureSources' default bodies cast `this` to JxBrowser's internal
+    // implementation, so an empty `object : CaptureSources {}` throws ClassCastException on first use.
+    private val sources =
+        object : CaptureSources {
+            override fun browsers(): List<CaptureSource> = emptyList()
+
+            override fun screens(): List<CaptureSource> = emptyList()
+
+            override fun applicationWindows(): List<CaptureSource> = emptyList()
+        }
 
     @After
     fun clearPendingRequest() {
@@ -40,7 +50,11 @@ class ScreenCaptureNotifierTest {
             StartCaptureSessionCallback.Action { error("native peer closed") },
         )
         var replacementAnswers = 0
-        ScreenCaptureNotifier.requestCapture("replacement", sources, StartCaptureSessionCallback.Action { replacementAnswers++ })
+        ScreenCaptureNotifier.requestCapture(
+            "replacement",
+            sources,
+            StartCaptureSessionCallback.Action { replacementAnswers++ },
+        )
 
         assertFalse(ScreenCaptureNotifier.hasPendingRequest("closed-peer"))
         assertTrue(ScreenCaptureNotifier.hasPendingRequest("replacement"))

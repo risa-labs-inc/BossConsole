@@ -397,7 +397,7 @@
     <ID>LongMethod:RenameDialog.kt$@Composable fun RenameDialog( title: String, currentName: String, label: String, onDismiss: () -&gt; Unit, onRename: (newName: String) -&gt; Unit, )</ID>
     <ID>LongMethod:RunnerSettings.kt$@Composable fun RunnerSettings()</ID>
     <ID>LongMethod:ScreenCaptureNotifier.kt$ScreenCaptureNotifier$fun requestCapture( requestId: String, sources: CaptureSources, tell: StartCaptureSessionCallback.Action, )</ID>
-    <ID>LongMethod:ScreenCapturePickerDialog.kt$@Composable fun ScreenCapturePickerDialog( screens: List&lt;ScreenCaptureNotifier.CaptureSourceItem&gt;, windows: List&lt;ScreenCaptureNotifier.CaptureSourceItem&gt;, browsers: List&lt;ScreenCaptureNotifier.CaptureSourceItem&gt;, onDismiss: () -&gt; Unit, onSelect: (ScreenCaptureNotifier.CaptureSourceItem, AudioCaptureMode) -&gt; Unit, )</ID>
+    <ID>LongMethod:ScreenCapturePickerDialog.kt$@Composable fun ScreenCapturePickerDialog( requestId: String, screens: List&lt;ScreenCaptureNotifier.CaptureSourceItem&gt;, windows: List&lt;ScreenCaptureNotifier.CaptureSourceItem&gt;, browsers: List&lt;ScreenCaptureNotifier.CaptureSourceItem&gt;, onDismiss: () -&gt; Unit, onSelect: (ScreenCaptureNotifier.CaptureSourceItem, AudioCaptureMode) -&gt; Unit, )</ID>
     <ID>LongMethod:ScreenCapturePickerDialog.kt$@Composable private fun SourceListItem( source: ScreenCaptureNotifier.CaptureSourceItem, isSelected: Boolean, onClick: () -&gt; Unit, )</ID>
     <ID>LongMethod:ScrollbarSettings.kt$@Composable fun ScrollbarSettings()</ID>
     <ID>LongMethod:SecuritySettings.kt$@Composable fun SecuritySettings()</ID>
