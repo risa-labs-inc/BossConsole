@@ -113,7 +113,7 @@ class BrowserInteractionBridgeTest {
         var clock = 0L
         val bridge =
             BrowserInteractionBridge(
-                authorityProvider = { "availity.com" },
+                authorityProvider = { "acmecorp.com" },
                 windowId = { null },
                 nowMs = { clock },
             )
@@ -134,7 +134,7 @@ class BrowserInteractionBridgeTest {
         var clock = 0L
         val bridge =
             BrowserInteractionBridge(
-                authorityProvider = { "availity.com" },
+                authorityProvider = { "acmecorp.com" },
                 windowId = { null },
                 nowMs = { clock },
             )
@@ -153,7 +153,7 @@ class BrowserInteractionBridgeTest {
         val tabs =
             (1..20).map {
                 BrowserInteractionBridge(
-                    authorityProvider = { "availity.com" },
+                    authorityProvider = { "acmecorp.com" },
                     windowId = { null },
                     nowMs = { clock },
                 )
@@ -262,7 +262,7 @@ class BrowserInteractionBridgeTest {
         var clock = 0L
         val bridge =
             BrowserInteractionBridge(
-                authorityProvider = { "availity.com" },
+                authorityProvider = { "acmecorp.com" },
                 windowId = { null },
                 nowMs = { clock },
             )
@@ -291,7 +291,7 @@ class BrowserInteractionBridgeTest {
         var clock = 0L
         val bridge =
             BrowserInteractionBridge(
-                authorityProvider = { "availity.com" },
+                authorityProvider = { "acmecorp.com" },
                 windowId = { null },
                 nowMs = { clock },
             )
@@ -311,10 +311,10 @@ class BrowserInteractionBridgeTest {
             parse(
                 """
                 [{"type":"CLICK",
-                  "tag":"Patient: John Smith",
-                  "role":"MRN 4417882",
+                  "tag":"Account: John Smith",
+                  "role":"REF 4417882",
                   "path":"form>input[value='John Smith']",
-                  "fieldName":"patient_mrn_4417882"}]
+                  "fieldName":"account_ref_4417882"}]
                 """.trimIndent(),
             ).single()
 
@@ -322,7 +322,7 @@ class BrowserInteractionBridgeTest {
         assertNull(BrowserAnalytics.sanitizeToken(parsed.role, 32), "free text refused as a role")
         assertNull(BrowserAnalytics.sanitizePath(parsed.path), "a value selector refused as a path")
         // A field name is cleaned rather than refused — but the identifier inside it goes.
-        assertEquals("patient_mrn_#", BrowserAnalytics.sanitizeFieldName(parsed.fieldName))
+        assertEquals("account_ref_#", BrowserAnalytics.sanitizeFieldName(parsed.fieldName))
     }
 
     @Test
@@ -355,7 +355,13 @@ class BrowserInteractionBridgeTest {
                 "dataset",
                 "clipboardData",
                 "getData",
-                "getSelection",
+                // `getSelection` was on this list until TEXT_SELECTED existed, and taking it
+                // off is the one relaxation here - so it is replaced by a stricter rule
+                // rather than dropped. A blanket ban could not express the actual invariant,
+                // which is not "never look at the selection" but "measure it and carry
+                // nothing": see `the selection is measured and never carried` below, which
+                // pins that the string is reduced to three numbers and nulled before
+                // anything is queued. Every other entry here remains an absolute.
                 ".value",
                 ".href",
                 ".src",
@@ -372,9 +378,41 @@ class BrowserInteractionBridgeTest {
     }
 
     @Test
+    fun `the selection is measured and never carried`() {
+        // The selection is the most sensitive thing on any page: whatever a user highlights
+        // is, by definition, the value that mattered to them. Unlike every other field the
+        // collector reports, nothing downstream is load-bearing for it - the string is
+        // reduced to three numbers inside the page and never crosses the bridge. That is
+        // only true while these four things hold.
+        val code = collectorCode()
+
+        // 1. Exactly one read, and it is the one function that measures.
+        assertEquals(
+            1,
+            Regex("""getSelection\(""").findAll(code).count(),
+            "the selection may be read in exactly one place",
+        )
+
+        // 2. Only these three facts are derived from it.
+        for (metric in listOf("selectionChars", "selectionWords", "selectionHasDigits")) {
+            assertTrue(code.contains(metric), "missing selection metric $metric")
+        }
+
+        // 3. The string is dropped before anything is queued. Explicit, so that a later edit
+        //    adding a line below it cannot reach the value.
+        assertTrue(code.contains("text = null"), "the selection string must be cleared")
+
+        // 4. And it is never assigned onto an outbound field. This is the assertion that
+        //    actually stops the leak: `d.selectionText = text` would satisfy all of the
+        //    above and ship the page's content.
+        val carried = Regex("""\b\w+\.\w+\s*=\s*text\b""").findAll(code).map { it.value }.toList()
+        assertTrue(carried.isEmpty(), "selection text assigned to an outbound field: $carried")
+    }
+
+    @Test
     fun `the collector reads exactly one attribute, by a literal name`() {
         // The forbidden-substring test above is a denylist, and a denylist cannot catch
-        // getAttribute('data-patient-id') or el[someVariable]. The KDoc's actual claim is
+        // getAttribute('data-account-id') or el[someVariable]. The KDoc's actual claim is
         // narrower and checkable: describe() is the only DOM inspection, and the only
         // attribute it reads is role. Pin that shape rather than a list of known-bad names.
         val code = collectorCode()

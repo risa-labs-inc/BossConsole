@@ -26,7 +26,7 @@ internal class BrowserVisitTracker(
      */
     private val windowId: () -> String?,
     private val nowMs: () -> Long = System::currentTimeMillis,
-    private val emitPageViewed: (String, BrowserNavigationType?, Int, String?) -> Unit =
+    private val emitPageViewed: (String, BrowserNavigationType?, Int, String?, String?) -> Unit =
         BrowserAnalytics::pageViewed,
     private val emitPageLeft: (String, Long, Long, String?) -> Unit = BrowserAnalytics::pageLeft,
     private val emitTabEvent: (BrowserEventType, String?, String?) -> Unit = BrowserAnalytics::tabEvent,
@@ -110,7 +110,10 @@ internal class BrowserVisitTracker(
      * error pages get counted as visits.
      */
     @Synchronized
-    fun pageViewed(authority: String) {
+    fun pageViewed(
+        authority: String,
+        url: String? = null,
+    ) {
         if (finished) return
         closeCurrentVisit()
         lastAuthority = authority
@@ -135,7 +138,7 @@ internal class BrowserVisitTracker(
         if (activeSinceMs != null) activeSinceMs = visitStartMs
 
         val type = consumeNavigationHint(visitStartMs) ?: BrowserNavigationType.LINK
-        emitPageViewed(authority, type, pageIndexInVisit, windowId())
+        emitPageViewed(authority, type, pageIndexInVisit, windowId(), url)
     }
 
     /**

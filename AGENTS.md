@@ -742,11 +742,27 @@ callers or engine-level forced closure.
 
 The integrated browser reports which sites BOSS is used with and how - page views,
 dwell vs active time, navigation depth, and in-page interactions (clicks, scroll
-depth, field focus, form submits, copy/paste). `BrowserAnalytics` is the privacy
-boundary: a full URL goes in and only an **eTLD+1 registrable domain** comes out,
-and the injected collector is written never to *read* page text, input values,
-labels, ids or URLs in the first place. See its KDoc for what is deliberately not
-covered.
+depth, field focus, form submits, copy/paste, text selection). `BrowserAnalytics`
+is the privacy boundary: a full URL goes in and only an **eTLD+1 registrable
+domain** plus a **templated route** come out, and the injected collector is written
+never to *read* page text, input values, labels or ids in the first place. See its
+KDoc for what is deliberately not covered.
+
+Three of those are narrower than a first read suggests, and each is an allow-list
+rather than a filter:
+
+- **The route carries a path's shape, never its content.** `/claims/8837261/detail`
+  leaves as `claims>:num>detail`. A segment survives literally only if it is in a
+  closed vocabulary of route words; anything else becomes a placeholder, so
+  `/accounts/john-smith` leaves as `accounts>:word`. The deny-list direction cannot
+  work here - no pattern distinguishes a person's name from a section name.
+- **A link contributes a domain, not a URL.** The collector reads the parsed
+  `hostname`/`protocol` of an anchor, never the `href` string, and the host reduces
+  that hostname the same way it reduces the page's own.
+- **A text selection is measured, not captured.** How much, how many words, and
+  whether it contained a digit. The string is reduced to those three numbers inside
+  the page and cleared before anything is queued, so no later sanitizing step is
+  load-bearing for it.
 
 **Kill switch**: `BOSS_BROWSER_TELEMETRY_DISABLED=true` (also `1` / `yes` / `on`),
 or the `boss.browser.telemetry.disabled` system property. It is enforced at the
@@ -789,6 +805,32 @@ restart. There is no Settings row and no per-site exclusion.
   ungated). Confinement is to the open project only - `resolveFile` refuses
   paths outside it, canonical and symlink-checked. A plugin that needs project
   search should be vetted the same way one that subscribes to the bus is.
+
+### Where the events actually go
+
+Collection (above) and egress are separate: the host only publishes onto the event bus,
+and the analytics plugin decides whether anything leaves the machine. By default it
+posts to the **`analytics-ingest` Edge Function** in this repo rather than to a vendor
+directly, because the vendor credential cannot be protected on a client - anything
+stored or injected on a user's machine is readable by that user, whatever its file mode.
+The function holds `AMPLITUDE_API_KEY` and does the vendor mapping.
+
+Two consequences worth knowing before relying on this data:
+
+- **The vendor sees the function's address, not the user's.** A request IP is itself
+  identifying, and Amplitude derives geolocation from it by default, so routing through
+  the function removes client IPs from what a third party receives.
+- **Vendor mapping is server-side**, so changing analytics backend is a function deploy
+  rather than a plugin release for every install.
+
+Function secrets: `AMPLITUDE_API_KEY` (required), `AMPLITUDE_ENDPOINT` (optional,
+defaults to the US region), `ANALYTICS_INGEST_KEY` (optional shared secret; when set,
+clients must send the same value as `BOSS_ANALYTICS_INGEST_KEY`). Deploy with
+`supabase functions deploy analytics-ingest` - no workflow deploys Edge Functions, and
+`edge-functions.yml` only checks and tests them.
+
+Treat `identity.distinctId` in that payload as a client-asserted label rather than an
+authenticated principal, and do not build anything downstream that assumes otherwise.
 
 ## Two-finger swipe navigation (macOS)
 

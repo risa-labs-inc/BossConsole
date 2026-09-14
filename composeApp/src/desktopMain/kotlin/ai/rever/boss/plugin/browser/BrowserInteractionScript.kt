@@ -16,9 +16,9 @@ package ai.rever.boss.plugin.browser
  * filtering one. The script never touches `textContent`, `innerText`, `value`,
  * `placeholder`, `title`, `alt`, `aria-label`, `id`, `className`, `href`, `src`, `action`,
  * `dataset`, or the clipboard — so page content cannot leak through a bug in a later
- * sanitizing step, because it is never in a variable in the first place. In a healthcare
- * deployment the page body is PHI: the label says "Patient MRN", the input value *is* the
- * MRN, and the id is routinely `patient-4417`.
+ * sanitizing step, because it is never in a variable in the first place. On a line-of-business
+ * page the body is the sensitive part: the label says "Account Ref", the input value *is* the
+ * reference, and the id is routinely `account-4417`.
  *
  * The host re-validates everything this sends anyway ([BrowserAnalytics.sanitizeToken],
  * [BrowserAnalytics.sanitizeFieldName], [BrowserAnalytics.sanitizePath]) — a page controls
@@ -58,7 +58,7 @@ internal object BrowserInteractionScript {
      * Deliberately ABOVE [BrowserAnalytics]'s own 32-char token cap, for the same reason
      * [MAX_FIELD_NAME_CHARS] is above its counterpart. `sanitizeToken` *refuses* a value over
      * its cap, so cutting to exactly 32 here made that refusal unreachable: a 40-character
-     * `<app-patient-encounter-summary-card>` - not exotic in the frameworks this targets -
+     * `<app-account-activity-summary-card>` - not exotic in the frameworks this targets -
      * arrived as a valid-looking 32-character prefix, so the host reported a tag that does
      * not exist and two long elements sharing a prefix collapsed into one. Cutting higher
      * keeps the host the one that decides.
@@ -88,6 +88,23 @@ internal object BrowserInteractionScript {
      * shortens, and it vanishes exactly on the component-framework apps this targets.
      */
     private const val MAX_PATH_CHARS = 110
+
+    /**
+     * Cap on a reported link hostname. Generous on purpose: the host reduces this to an
+     * eTLD+1 and refuses anything it cannot parse, so the only job here is to bound the
+     * payload against a page that sets a pathological hostname.
+     */
+    private const val MAX_HOST_CHARS = 255
+
+    /**
+     * How long the selection must be still before it is measured.
+     *
+     * `selectionchange` fires per character while dragging or shift-arrowing, so this is
+     * the difference between one event per selection and one per keystroke. Long enough to
+     * coalesce a drag, short enough that a selection followed immediately by a copy is
+     * still reported before the page navigates away.
+     */
+    private const val SELECTION_DEBOUNCE_MS = 400
 
     /**
      * The collector source.
@@ -161,10 +178,46 @@ internal object BrowserInteractionScript {
                 if (FORM_CONTROLS.indexOf(out.tag) !== -1 && el.name) {
                   out.fieldName = String(el.name).slice(0, $MAX_FIELD_NAME_CHARS);
                 }
+                // A click usually lands on something INSIDE the link - a span, an icon - so
+                // the anchor has to be found by walking up rather than tested for directly.
+                var anchor = el.closest ? el.closest('a') : null;
+                if (anchor) describeLink(anchor, out);
                 out.path = pathOf(el);
                 out.truncated = pathTruncated;
               } catch (_) {}
               return out;
+            }
+
+            // Where a link points, WITHOUT reading its href.
+            //
+            // `protocol`, `hostname` and `hash` are IDL attributes on HTMLAnchorElement: the
+            // browser has already parsed the href and these expose the parsed components, so
+            // the path, query string and fragment content are never touched - not read into a
+            // variable, not sliced, not passed on. Reading `getAttribute('href')` and parsing
+            // it here would put the whole URL in a local, one refactor away from being sent.
+            //
+            // The hostname still goes to the host for eTLD+1 reduction rather than being
+            // compared and discarded here, because `internal` vs `external` does not answer
+            // "which sites do people leave for", and a subdomain is not a domain.
+            function describeLink(a, out) {
+              try {
+                var protocol = String(a.protocol || '').toLowerCase();
+                if (protocol === 'mailto:') { out.linkKind = 'mailto'; return; }
+                if (protocol === 'tel:') { out.linkKind = 'tel'; return; }
+                if (protocol !== 'http:' && protocol !== 'https:') return;
+                // A same-document jump. Checked before the host comparison because the
+                // hostname of `#section` is the current page's, which would read as an
+                // ordinary internal link and inflate navigation counts.
+                if (a.hash && a.pathname === location.pathname && a.hostname === location.hostname) {
+                  out.linkKind = 'anchor';
+                  return;
+                }
+                if (a.hasAttribute && a.hasAttribute('download')) { out.linkKind = 'download'; return; }
+                var host = String(a.hostname || '').toLowerCase().slice(0, $MAX_HOST_CHARS);
+                if (!host) return;
+                out.linkHost = host;
+                out.linkKind = host === String(location.hostname || '').toLowerCase() ? 'internal' : 'external';
+              } catch (_) {}
             }
 
             // Tag names and sibling positions only. No ids or classes, by construction:
@@ -182,7 +235,7 @@ internal object BrowserInteractionScript {
             // - Total length stops at MAX_PATH_CHARS, dropping OUTER levels first (the
             //   nearest ancestors are the informative ones). The host refuses a path over
             //   its own limit outright rather than truncating, so without this a component
-            //   framework with long custom tag names - five levels of `app-patient-card`
+            //   framework with long custom tag names - five levels of `app-account-card`
             //   clears it easily - loses elementPath entirely instead of losing depth.
             function pathOf(el) {
               var parts = [];
@@ -274,12 +327,59 @@ internal object BrowserInteractionScript {
               report(ev.target, 'FORM_SUBMITTED');
             }, true);
 
+            // Text selection, measured and thrown away.
+            //
+            // The selected string is read into ONE local, reduced to three numbers, and the
+            // local is cleared before anything is queued. It is never sliced, never stored on
+            // the event, and never crosses the bridge - so unlike every other field here,
+            // nothing downstream is load-bearing for it. On the pages this runs on a
+            // selection is the single most sensitive thing available: whatever a user
+            // highlights is, by definition, the value that mattered to them.
+            //
+            // What survives is the shape: how much, how many words, and whether it contained
+            // a digit - the difference between copying a paragraph and copying an identifier.
+            var selectionTimer = null;
+            function reportSelection() {
+              selectionTimer = null;
+              try {
+                var sel = window.getSelection ? window.getSelection() : null;
+                if (!sel || sel.isCollapsed) return;
+                var text = String(sel);
+                var chars = text.length;
+                if (!chars) return;
+                var words = text.split(/\s+/);
+                var wordCount = 0;
+                for (var i = 0; i < words.length; i++) if (words[i]) wordCount++;
+                var hasDigits = /[0-9]/.test(text);
+                // Cleared explicitly rather than left to fall out of scope, so that a later
+                // edit adding a line below this one cannot reach the string.
+                text = null;
+                words = null;
+                var node = sel.anchorNode;
+                var el = !node ? null : (node.nodeType === 1 ? node : node.parentElement);
+                var d = describe(el);
+                delete d.truncated;
+                d.type = 'TEXT_SELECTED';
+                d.selectionChars = chars;
+                d.selectionWords = wordCount;
+                d.selectionHasDigits = hasDigits;
+                send(d);
+              } catch (_) {}
+            }
+            // Debounced because selectionchange fires per character while dragging or
+            // shift-arrowing: undebounced, selecting one sentence fills the 50-event batch
+            // by itself and starves every other interaction on the page.
+            document.addEventListener('selectionchange', function () {
+              if (selectionTimer) clearTimeout(selectionTimer);
+              selectionTimer = setTimeout(reportSelection, $SELECTION_DEBOUNCE_MS);
+            }, true);
+
             // Occurrence only. The clipboard is never read: no getData, no selection.
             document.addEventListener('copy', function () {
               send({ type: 'COPY' });
             }, true);
             document.addEventListener('paste', function (ev) {
-              // A paste target's field name is useful ("they paste into the MRN box"); the
+              // A paste target's field name is useful ("they paste into the reference box"); the
               // pasted data is not read.
               report(ev.target, 'PASTE');
             }, true);

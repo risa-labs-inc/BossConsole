@@ -382,6 +382,24 @@ verify_jwt = false
 import_map = "./functions/latest-release/deno.json"
 entrypoint = "./functions/latest-release/index.ts"
 
+[functions.analytics-ingest]
+enabled = true
+# MUST be false: the analytics plugin posts telemetry with no user session (it is a
+# headless system plugin that starts before auth) and has no access token to present -
+# no PluginContext surface exposes one. The function gates itself: strict shape
+# validation, a per-IP rate limit, and an OPTIONAL shared secret in the apikey header,
+# enforced only when ANALYTICS_INGEST_KEY is set. Optional rather than required (as in
+# crash-report) because a plugin cannot read the app's Supabase configuration, so a
+# mandatory header would reject every honest client.
+#
+# Secrets: AMPLITUDE_API_KEY (required), AMPLITUDE_ENDPOINT (optional, defaults to the
+# US region), ANALYTICS_INGEST_KEY (optional). The vendor key stays server-side, which
+# is the reason the function exists - a credential on a user's machine is readable by
+# that user, whatever its file mode.
+verify_jwt = false
+import_map = "./functions/analytics-ingest/deno.json"
+entrypoint = "./functions/analytics-ingest/index.ts"
+
 [functions.crash-report]
 enabled = true
 # MUST be false: the crash dialog posts without a user session (crashes can happen

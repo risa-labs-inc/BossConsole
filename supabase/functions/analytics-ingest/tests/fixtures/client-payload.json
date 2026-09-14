@@ -1,0 +1,119 @@
+{
+  "identity": {
+    "distinctId": "anon-9f2c1d7e-4b3a-4c8e-9f10-2a6b8c4d0e11",
+    "isAnonymous": true
+  },
+  "events": [
+    {
+      "name": "auth.signed_in",
+      "timestampMs": 1700000000000,
+      "source": "HOST_EVENT",
+      "insertId": "f86f3257ce6ba8515299a4e9fa978e85",
+      "properties": {}
+    },
+    {
+      "name": "browser.page_viewed",
+      "timestampMs": 1700000000100,
+      "source": "HOST_EVENT",
+      "insertId": "c2ae469f07b67d083c20950e87d6b921",
+      "properties": {
+        "domain": "acmecorp.com",
+        "navigationType": "TYPED",
+        "pageIndexInVisit": 3,
+        "route": "claims>:num>detail",
+        "routeKnown": false
+      }
+    },
+    {
+      "name": "browser.page_left",
+      "timestampMs": 1700000000200,
+      "source": "HOST_EVENT",
+      "insertId": "89b7f9c31686d81e1f1a889f7aa9fcfa",
+      "properties": {
+        "domain": "acmecorp.com",
+        "dwellMs": 42000,
+        "activeMs": 31500
+      }
+    },
+    {
+      "name": "browser.interaction.form_submitted",
+      "timestampMs": 1700000000300,
+      "source": "HOST_EVENT",
+      "insertId": "93c33251bbe0c57706605753b4513ea3",
+      "properties": {
+        "domain": "acmecorp.com",
+        "elementTag": "form",
+        "inputType": "text",
+        "elementPosition": "form>div:2>button:1"
+      }
+    },
+    {
+      "name": "browser.interaction.scroll_depth",
+      "timestampMs": 1700000000400,
+      "source": "HOST_EVENT",
+      "insertId": "d6295c26ed38e3f56a3cdab0f42dbd60",
+      "properties": {
+        "domain": "acmecorp.com",
+        "scrollDepthPercent": 75
+      }
+    },
+    {
+      "name": "workflow.completed",
+      "timestampMs": 1700000000500,
+      "source": "PRODUCT_EVENT",
+      "insertId": "7f3d94ab46265d747fc73a8e85bd3783",
+      "properties": {
+        "workflowType": "order-review",
+        "durationMs": 9000,
+        "ok": true
+      }
+    },
+    {
+      "name": "tab.opened",
+      "timestampMs": 1700000000600,
+      "source": "HOST_EVENT",
+      "insertId": "bb6afaf2f9a1c85bf3fbf2e60d6a13ed",
+      "properties": {
+        "tabType": "editor"
+      }
+    },
+    {
+      "name": "plugin.loaded",
+      "timestampMs": 1700000000700,
+      "source": "HOST_EVENT",
+      "insertId": "b698d99aaac012e62975370c651e4b85",
+      "properties": {
+        "pluginId": "ai.rever.boss.plugin.dynamic.bookmarks"
+      }
+    },
+    {
+      "name": "browser.interaction.click",
+      "timestampMs": 1700000000800,
+      "source": "HOST_EVENT",
+      "insertId": "ea004f9a1b474e9895c19af9ccdcb6e7",
+      "properties": {
+        "domain": "acmecorp.com",
+        "elementTag": "a",
+        "elementPosition": "nav>ul:2>a:1",
+        "linkTargetDomain": "partner.example",
+        "linkKind": "external",
+        "linkIsExternal": true
+      }
+    },
+    {
+      "name": "browser.interaction.text_selected",
+      "timestampMs": 1700000000900,
+      "source": "HOST_EVENT",
+      "insertId": "dec93f614fffb64e5a1e01a2e70fa830",
+      "properties": {
+        "domain": "acmecorp.com",
+        "elementTag": "td",
+        "elementRole": "cell",
+        "elementPosition": "table>tr:4>td:2",
+        "selectionCharBucket": 25,
+        "selectionWordCount": 7,
+        "selectionHasDigits": true
+      }
+    }
+  ]
+}

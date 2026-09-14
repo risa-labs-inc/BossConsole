@@ -129,6 +129,11 @@ internal class BrowserInteractionBridge(
                 scrollDepthPercent = entry.scrollDepthPercent,
                 repeatCount = entry.repeatCount,
                 windowId = window,
+                linkHost = entry.linkHost,
+                linkKind = entry.linkKind,
+                selectionChars = entry.selectionChars,
+                selectionWords = entry.selectionWords,
+                selectionHasDigits = entry.selectionHasDigits,
             )
         }
     }
@@ -299,6 +304,11 @@ internal class BrowserInteractionBridge(
         val path: String? = null,
         val scrollDepthPercent: Int? = null,
         val repeatCount: Int? = null,
+        val linkHost: String? = null,
+        val linkKind: String? = null,
+        val selectionChars: Int? = null,
+        val selectionWords: Int? = null,
+        val selectionHasDigits: Boolean? = null,
     )
 
     internal companion object {
@@ -325,6 +335,11 @@ internal class BrowserInteractionBridge(
                     path = entry.text("path"),
                     scrollDepthPercent = entry.int("scrollDepthPercent"),
                     repeatCount = entry.int("repeatCount"),
+                    linkHost = entry.text("linkHost"),
+                    linkKind = entry.text("linkKind"),
+                    selectionChars = entry.int("selectionChars"),
+                    selectionWords = entry.int("selectionWords"),
+                    selectionHasDigits = entry.bool("selectionHasDigits"),
                 )
             }
         }
@@ -354,6 +369,20 @@ internal class BrowserInteractionBridge(
         }
 
         /**
+         * A flag off the wire.
+         *
+         * Only the two literals mean anything; a page sending `1`, `"yes"` or an object gets
+         * an absent value rather than a guess. Absent and false are different answers here -
+         * "the selection had no digits" is a finding, "we do not know" is not.
+         */
+        private fun JsonObject.bool(key: String): Boolean? =
+            when (text(key)?.lowercase()) {
+                "true" -> true
+                "false" -> false
+                else -> null
+            }
+
+        /**
          * Resolve a wire name to a known interaction type, or null.
          *
          * An explicit `when` rather than `enumValueOf`: this is a boundary a page can reach,
@@ -370,6 +399,7 @@ internal class BrowserInteractionBridge(
                 "FORM_SUBMITTED" -> BrowserInteractionType.FORM_SUBMITTED
                 "COPY" -> BrowserInteractionType.COPY
                 "PASTE" -> BrowserInteractionType.PASTE
+                "TEXT_SELECTED" -> BrowserInteractionType.TEXT_SELECTED
                 else -> null
             }
 

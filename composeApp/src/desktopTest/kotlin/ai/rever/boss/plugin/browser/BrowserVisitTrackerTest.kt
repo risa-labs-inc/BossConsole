@@ -24,6 +24,9 @@ class BrowserVisitTrackerTest {
          * events to a window and so a move can be checked as a change rather than a set.
          */
         val windowIds = mutableListOf<String?>()
+
+        /** URLs handed to the page-view emitter, so route plumbing is covered here too. */
+        val urls = mutableListOf<String?>()
     }
 
     private var clock = 0L
@@ -36,9 +39,10 @@ class BrowserVisitTrackerTest {
         BrowserVisitTracker(
             windowId = { currentWindowId },
             nowMs = { clock },
-            emitPageViewed = { authority, type, index, windowId ->
+            emitPageViewed = { authority, type, index, windowId, url ->
                 recorder.pageViews += Triple(authority, type, index)
                 recorder.windowIds += windowId
+                recorder.urls += url
             },
             emitPageLeft = { authority, dwell, active, windowId ->
                 recorder.pageLefts += Triple(authority, dwell, active)
@@ -54,7 +58,7 @@ class BrowserVisitTrackerTest {
     fun `dwell is wall clock and active time excludes the unfocused stretch`() {
         val t = tracker()
         t.setVisible(true)
-        t.pageViewed("availity.com")
+        t.pageViewed("acmecorp.com")
 
         clock = 5_000
         t.setVisible(false) // user switches to another tab for a minute
@@ -64,7 +68,7 @@ class BrowserVisitTrackerTest {
         t.closed()
 
         val (authority, dwell, active) = recorder.pageLefts.single()
-        assertEquals("availity.com", authority)
+        assertEquals("acmecorp.com", authority)
         assertEquals(70_000, dwell, "dwell is wall-clock from page load to close")
         assertEquals(10_000, active, "active excludes the 60s the tab was in the background")
     }
@@ -74,7 +78,7 @@ class BrowserVisitTrackerTest {
         // The case that makes averaging dwell alone misleading: cmd-click opens a tab that
         // is never looked at. It must not report a minute of engagement.
         val t = tracker()
-        t.pageViewed("availity.com")
+        t.pageViewed("acmecorp.com")
         clock = 60_000
         t.closed()
 
@@ -86,9 +90,9 @@ class BrowserVisitTrackerTest {
     @Test
     fun `navigation depth counts a run on one site and resets on leaving it`() {
         val t = tracker()
-        t.pageViewed("availity.com")
-        t.pageViewed("portal.availity.com") // same registrable domain — deeper
-        t.pageViewed("apps.availity.com")
+        t.pageViewed("acmecorp.com")
+        t.pageViewed("portal.acmecorp.com") // same registrable domain — deeper
+        t.pageViewed("apps.acmecorp.com")
         t.pageViewed("bbc.co.uk") // different site — new run
         t.pageViewed("news.bbc.co.uk")
 
@@ -97,11 +101,11 @@ class BrowserVisitTrackerTest {
 
     @Test
     fun `an unreportable host breaks the run instead of extending it`() {
-        // A detour through a dev server is not "one page deeper into availity".
+        // A detour through a dev server is not "one page deeper into acmecorp".
         val t = tracker()
-        t.pageViewed("availity.com")
+        t.pageViewed("acmecorp.com")
         t.pageViewed("localhost:3000")
-        t.pageViewed("availity.com")
+        t.pageViewed("acmecorp.com")
 
         assertEquals(listOf(1, 1), recorder.pageViews.map { it.third })
         assertTrue(recorder.pageViews.none { it.first == "localhost:3000" })
@@ -114,24 +118,24 @@ class BrowserVisitTrackerTest {
         // the user sat on the error page and were then billed to the previous domain.
         val t = tracker()
         t.setVisible(true)
-        t.pageViewed("availity.com")
+        t.pageViewed("acmecorp.com")
         clock = 5_000
         t.leftTrackablePage("youtube.como") // navigation landed on an error page
         clock = 605_000 // ten minutes staring at it
 
         val (authority, dwell, active) = recorder.pageLefts.single()
-        assertEquals("availity.com", authority)
-        assertEquals(5_000, dwell, "the ten minutes on the error page are not availity's")
+        assertEquals("acmecorp.com", authority)
+        assertEquals(5_000, dwell, "the ten minutes on the error page are not acmecorp's")
         assertEquals(5_000, active)
     }
 
     @Test
     fun `an error page breaks the run and consumes the hint that produced it`() {
         val t = tracker()
-        t.pageViewed("availity.com")
+        t.pageViewed("acmecorp.com")
         t.expect(BrowserNavigationType.TYPED)
         t.leftTrackablePage("youtube.como")
-        t.pageViewed("availity.com") // clicked back through from somewhere
+        t.pageViewed("acmecorp.com") // clicked back through from somewhere
 
         // Depth restarts rather than counting the error page as one hop deeper...
         assertEquals(listOf(1, 1), recorder.pageViews.map { it.third })
@@ -146,12 +150,12 @@ class BrowserVisitTrackerTest {
     @Test
     fun `a tab closed on an error page still says where it was`() {
         val t = tracker()
-        t.pageViewed("availity.com")
-        t.leftTrackablePage("portal.availity.com")
+        t.pageViewed("acmecorp.com")
+        t.leftTrackablePage("portal.acmecorp.com")
         t.closed()
 
         assertEquals(
-            "portal.availity.com",
+            "portal.acmecorp.com",
             recorder.tabEvents.single { it.first == BrowserEventType.TAB_CLOSED }.second,
         )
     }
@@ -160,14 +164,14 @@ class BrowserVisitTrackerTest {
     fun `each navigation closes out the previous page exactly once`() {
         val t = tracker()
         t.setVisible(true)
-        t.pageViewed("availity.com")
+        t.pageViewed("acmecorp.com")
         clock = 3_000
         t.pageViewed("bbc.co.uk")
         clock = 8_000
         t.closed()
 
         assertEquals(2, recorder.pageLefts.size)
-        assertEquals(Triple("availity.com", 3_000L, 3_000L), recorder.pageLefts[0])
+        assertEquals(Triple("acmecorp.com", 3_000L, 3_000L), recorder.pageLefts[0])
         assertEquals(Triple("bbc.co.uk", 5_000L, 5_000L), recorder.pageLefts[1])
     }
 
@@ -175,11 +179,11 @@ class BrowserVisitTrackerTest {
     fun `an explicit host navigation is attributed to how it was triggered`() {
         val t = tracker()
         t.expect(BrowserNavigationType.TYPED)
-        t.pageViewed("availity.com")
+        t.pageViewed("acmecorp.com")
         t.expect(BrowserNavigationType.RELOAD)
-        t.pageViewed("availity.com")
+        t.pageViewed("acmecorp.com")
         t.expect(BrowserNavigationType.BACK_FORWARD)
-        t.pageViewed("availity.com")
+        t.pageViewed("acmecorp.com")
 
         assertEquals(
             listOf(
@@ -195,8 +199,8 @@ class BrowserVisitTrackerTest {
     fun `a navigation nobody asked for is a link, and the hint is single use`() {
         val t = tracker()
         t.expect(BrowserNavigationType.TYPED)
-        t.pageViewed("availity.com")
-        t.pageViewed("availity.com") // clicked through from the page
+        t.pageViewed("acmecorp.com")
+        t.pageViewed("acmecorp.com") // clicked through from the page
 
         assertEquals(
             listOf(BrowserNavigationType.TYPED, BrowserNavigationType.LINK),
@@ -209,7 +213,7 @@ class BrowserVisitTrackerTest {
         // dispose() can be reached more than once; double-counting a visit would inflate
         // both the page-view count and the total time on site.
         val t = tracker()
-        t.pageViewed("availity.com")
+        t.pageViewed("acmecorp.com")
         clock = 1_000
         t.closed()
         t.closed()
@@ -223,8 +227,8 @@ class BrowserVisitTrackerTest {
     @Test
     fun `tab lifecycle reports open, each activation, and close`() {
         val t = tracker()
-        t.opened("availity.com")
-        t.pageViewed("availity.com")
+        t.opened("acmecorp.com")
+        t.pageViewed("acmecorp.com")
         t.setVisible(true)
         t.setVisible(false) // fully hidden
         clock = 30_000 // away long enough to be a real switch, not a tab move
@@ -256,7 +260,7 @@ class BrowserVisitTrackerTest {
             recorder.pageLefts.clear()
             val t = tracker()
             t.setVisible(true) // window A shows the tab
-            t.pageViewed("availity.com")
+            t.pageViewed("acmecorp.com")
 
             clock = 10_000
             if (composeFirst) {
@@ -290,7 +294,7 @@ class BrowserVisitTrackerTest {
         // The grace window that absorbs a move must not swallow the user actually leaving
         // the tab and returning, which is the signal TAB_ACTIVATED exists for.
         val t = tracker()
-        t.pageViewed("availity.com")
+        t.pageViewed("acmecorp.com")
         t.setVisible(true)
         t.setVisible(false)
         clock = 30_000
@@ -306,11 +310,11 @@ class BrowserVisitTrackerTest {
         // page's authority therefore reported nearly every tab's first TAB_ACTIVATED as a
         // blank tab, which is not joinable with anything.
         val t = tracker()
-        t.opened("portal.availity.com")
+        t.opened("portal.acmecorp.com")
         t.setVisible(true)
 
         assertEquals(
-            listOf<String?>("portal.availity.com", "portal.availity.com"),
+            listOf<String?>("portal.acmecorp.com", "portal.acmecorp.com"),
             recorder.tabEvents.map { it.second },
         )
     }
@@ -320,9 +324,9 @@ class BrowserVisitTrackerTest {
         // Dwell, depth and tab counts are all per-window in a multi-window setup; an event
         // that arrives without one cannot be attributed at all, and nothing else notices.
         val t = tracker()
-        t.opened("availity.com")
+        t.opened("acmecorp.com")
         t.setVisible(true)
-        t.pageViewed("availity.com")
+        t.pageViewed("acmecorp.com")
         clock = 1_000
         t.closed()
 
@@ -335,8 +339,8 @@ class BrowserVisitTrackerTest {
         // The id used to be captured at construction, so a moved tab reported its dwell,
         // depth and close against the window it left - and nothing downstream could tell.
         val t = tracker()
-        t.opened("availity.com")
-        t.pageViewed("availity.com")
+        t.opened("acmecorp.com")
+        t.pageViewed("acmecorp.com")
         val beforeMove = recorder.windowIds.toList()
 
         currentWindowId = "w2"
@@ -374,7 +378,7 @@ class BrowserVisitTrackerTest {
         val t = tracker()
         t.expect(BrowserNavigationType.TYPED)
         clock = 61_000
-        t.pageViewed("availity.com")
+        t.pageViewed("acmecorp.com")
 
         assertEquals(BrowserNavigationType.LINK, recorder.pageViews.single().second)
     }
@@ -384,7 +388,7 @@ class BrowserVisitTrackerTest {
         val t = tracker()
         t.expect(BrowserNavigationType.TYPED)
         clock = 30_000
-        t.pageViewed("availity.com")
+        t.pageViewed("acmecorp.com")
 
         assertEquals(BrowserNavigationType.TYPED, recorder.pageViews.single().second)
     }
@@ -396,7 +400,7 @@ class BrowserVisitTrackerTest {
         // the running total for the rest of the visit.
         val t = tracker()
         t.setVisible(true)
-        t.pageViewed("availity.com")
+        t.pageViewed("acmecorp.com")
         clock = -60_000
         t.closed()
 

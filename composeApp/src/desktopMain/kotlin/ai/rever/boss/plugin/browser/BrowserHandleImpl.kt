@@ -1290,7 +1290,7 @@ internal class BrowserHandleImpl(
                     val authority = host?.takeIf { landed }
                     currentPageAuthority = authority
                     if (authority != null) {
-                        visitTracker.pageViewed(authority)
+                        visitTracker.pageViewed(authority, url)
                     } else {
                         // The tracker still has to be told, even though there is nothing to
                         // report. Skipping it left the previous visit open, so its dwell and

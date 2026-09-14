@@ -61,11 +61,11 @@ class BrowserAnalyticsEmissionTest {
     fun `nothing at all reaches the bus when telemetry is disabled`() {
         BrowserAnalytics.telemetryEnabled = false
 
-        BrowserAnalytics.pageViewed("availity.com", BrowserNavigationType.TYPED, 1)
-        BrowserAnalytics.pageLeft("availity.com", dwellMs = 5_000, activeMs = 5_000)
-        BrowserAnalytics.tabEvent(BrowserEventType.TAB_OPENED, "availity.com")
+        BrowserAnalytics.pageViewed("acmecorp.com", BrowserNavigationType.TYPED, 1)
+        BrowserAnalytics.pageLeft("acmecorp.com", dwellMs = 5_000, activeMs = 5_000)
+        BrowserAnalytics.tabEvent(BrowserEventType.TAB_OPENED, "acmecorp.com")
         BrowserAnalytics.tabEvent(BrowserEventType.TAB_CLOSED, null)
-        BrowserAnalytics.interaction(BrowserInteractionType.CLICK, "availity.com", elementTag = "button")
+        BrowserAnalytics.interaction(BrowserInteractionType.CLICK, "acmecorp.com", elementTag = "button")
 
         assertTrue(captured.isEmpty(), "kill switch let through: $captured")
     }
@@ -76,10 +76,10 @@ class BrowserAnalyticsEmissionTest {
         // pass that test.
         BrowserAnalytics.telemetryEnabled = true
 
-        BrowserAnalytics.pageViewed("availity.com", BrowserNavigationType.TYPED, 1)
-        BrowserAnalytics.pageLeft("availity.com", dwellMs = 5_000, activeMs = 5_000)
-        BrowserAnalytics.tabEvent(BrowserEventType.TAB_OPENED, "availity.com")
-        BrowserAnalytics.interaction(BrowserInteractionType.CLICK, "availity.com", elementTag = "button")
+        BrowserAnalytics.pageViewed("acmecorp.com", BrowserNavigationType.TYPED, 1)
+        BrowserAnalytics.pageLeft("acmecorp.com", dwellMs = 5_000, activeMs = 5_000)
+        BrowserAnalytics.tabEvent(BrowserEventType.TAB_OPENED, "acmecorp.com")
+        BrowserAnalytics.interaction(BrowserInteractionType.CLICK, "acmecorp.com", elementTag = "button")
 
         assertEquals(3, browserEvents().size)
         assertEquals(1, interactions().size)
@@ -92,7 +92,7 @@ class BrowserAnalyticsEmissionTest {
     @Test
     fun `a page view carries the reduced domain and the navigation context`() {
         BrowserAnalytics.pageViewed(
-            authority = "portal.availity.com:443",
+            authority = "portal.acmecorp.com:443",
             navigationType = BrowserNavigationType.TYPED,
             pageIndexInVisit = 3,
             windowId = "w1",
@@ -100,7 +100,7 @@ class BrowserAnalyticsEmissionTest {
 
         val event = browserEvents().single()
         assertEquals(BrowserEventType.PAGE_VIEWED, event.browserEventType)
-        assertEquals("availity.com", event.domain, "the subdomain and port must not survive")
+        assertEquals("acmecorp.com", event.domain, "the subdomain and port must not survive")
         assertEquals(BrowserNavigationType.TYPED, event.navigationType)
         assertEquals(3, event.pageIndexInVisit)
         assertEquals("w1", event.windowId, "per-window attribution has to reach the event")
@@ -119,7 +119,7 @@ class BrowserAnalyticsEmissionTest {
     fun `active time is clamped to wall clock rather than reported above it`() {
         // Drift between two counters is expected; a page reported as more-than-fully-read
         // is not, and would put engagement over 100% in every downstream average.
-        BrowserAnalytics.pageLeft("availity.com", dwellMs = 5_000, activeMs = 9_999)
+        BrowserAnalytics.pageLeft("acmecorp.com", dwellMs = 5_000, activeMs = 9_999)
 
         val event = browserEvents().single()
         assertEquals(5_000L, event.dwellMs)
@@ -128,10 +128,10 @@ class BrowserAnalyticsEmissionTest {
 
     @Test
     fun `an impossible visit length is dropped instead of reported`() {
-        BrowserAnalytics.pageLeft("availity.com", dwellMs = -1, activeMs = 0)
-        BrowserAnalytics.pageLeft("availity.com", dwellMs = 0, activeMs = -1)
+        BrowserAnalytics.pageLeft("acmecorp.com", dwellMs = -1, activeMs = 0)
+        BrowserAnalytics.pageLeft("acmecorp.com", dwellMs = 0, activeMs = -1)
         // Beyond twelve hours the clock is suspect, not the user diligent.
-        BrowserAnalytics.pageLeft("availity.com", dwellMs = 13L * 60 * 60 * 1000, activeMs = 0)
+        BrowserAnalytics.pageLeft("acmecorp.com", dwellMs = 13L * 60 * 60 * 1000, activeMs = 0)
 
         assertTrue(browserEvents().isEmpty(), "reported: ${browserEvents().map { it.dwellMs }}")
     }
@@ -140,13 +140,13 @@ class BrowserAnalyticsEmissionTest {
     fun `a tab with nothing loaded is distinguishable from one on an unreportable host`() {
         BrowserAnalytics.tabEvent(BrowserEventType.TAB_OPENED, null)
         BrowserAnalytics.tabEvent(BrowserEventType.TAB_OPENED, "localhost:3000")
-        BrowserAnalytics.tabEvent(BrowserEventType.TAB_OPENED, "portal.availity.com")
+        BrowserAnalytics.tabEvent(BrowserEventType.TAB_OPENED, "portal.acmecorp.com")
 
         assertEquals(
             listOf(
                 BrowserAnalytics.BLANK_TAB_DOMAIN,
                 BrowserAnalytics.UNREPORTABLE_TAB_DOMAIN,
-                "availity.com",
+                "acmecorp.com",
             ),
             browserEvents().map { it.domain },
         )
@@ -163,22 +163,22 @@ class BrowserAnalyticsEmissionTest {
         // direct-call test, and only fails here.
         BrowserAnalytics.interaction(
             type = BrowserInteractionType.FIELD_FOCUSED,
-            authority = "portal.availity.com",
-            elementTag = "Patient: John Smith",
-            elementRole = "MRN 4417882",
+            authority = "portal.acmecorp.com",
+            elementTag = "Account: John Smith",
+            elementRole = "REF 4417882",
             inputType = "TEXT",
-            fieldName = "patient_mrn_4417882",
+            fieldName = "account_ref_4417882",
             elementPath = "form>div:2>input:1",
             windowId = "w1",
         )
 
         val event = interactions().single()
         assertEquals(BrowserInteractionType.FIELD_FOCUSED, event.interactionType)
-        assertEquals("availity.com", event.domain)
+        assertEquals("acmecorp.com", event.domain)
         assertNull(event.elementTag, "free text refused as a tag")
         assertNull(event.elementRole, "free text refused as a role")
         assertEquals("text", event.inputType, "a real control kind survives, lowercased")
-        assertEquals("patient_mrn_#", event.fieldName, "the schema stays, the identifier goes")
+        assertEquals("account_ref_#", event.fieldName, "the schema stays, the identifier goes")
         assertEquals("form>div:2>input:1", event.elementPath)
         assertEquals("w1", event.windowId)
     }
@@ -187,7 +187,7 @@ class BrowserAnalyticsEmissionTest {
     fun `a field name that looks like a person is refused before it becomes an event`() {
         BrowserAnalytics.interaction(
             type = BrowserInteractionType.FIELD_FOCUSED,
-            authority = "availity.com",
+            authority = "acmecorp.com",
             fieldName = "John Smith",
         )
 
@@ -198,7 +198,7 @@ class BrowserAnalyticsEmissionTest {
     fun `an element path carrying a selector never reaches the event`() {
         BrowserAnalytics.interaction(
             type = BrowserInteractionType.CLICK,
-            authority = "availity.com",
+            authority = "acmecorp.com",
             elementPath = "form>input[value='John Smith']",
         )
 
@@ -209,13 +209,13 @@ class BrowserAnalyticsEmissionTest {
     fun `out of range counts are dropped by the emitter, not merely by the test`() {
         BrowserAnalytics.interaction(
             type = BrowserInteractionType.SCROLL_DEPTH,
-            authority = "availity.com",
+            authority = "acmecorp.com",
             scrollDepthPercent = 9_999,
             repeatCount = 0,
         )
         BrowserAnalytics.interaction(
             type = BrowserInteractionType.RAGE_CLICK,
-            authority = "availity.com",
+            authority = "acmecorp.com",
             scrollDepthPercent = 75,
             repeatCount = 3,
         )
@@ -238,7 +238,7 @@ class BrowserAnalyticsEmissionTest {
     // All the way through: a JSON batch off the page becomes an event.
     // ============================================================
 
-    private fun bridge(authority: String? = "portal.availity.com") =
+    private fun bridge(authority: String? = "portal.acmecorp.com") =
         BrowserInteractionBridge(
             authorityProvider = { authority },
             windowId = { "w1" },
@@ -254,17 +254,17 @@ class BrowserAnalyticsEmissionTest {
         bridge().emit(
             """
             [{"type":"FIELD_FOCUSED","tag":"input","role":"searchbox","inputType":"TEXT",
-              "fieldName":"patient_mrn_4417882","path":"form>div:2>input:1"}]
+              "fieldName":"account_ref_4417882","path":"form>div:2>input:1"}]
             """.trimIndent(),
         )
 
         val event = interactions().single()
         assertEquals(BrowserInteractionType.FIELD_FOCUSED, event.interactionType)
-        assertEquals("availity.com", event.domain, "reduced, not the authority the bridge holds")
+        assertEquals("acmecorp.com", event.domain, "reduced, not the authority the bridge holds")
         assertEquals("input", event.elementTag)
         assertEquals("searchbox", event.elementRole)
         assertEquals("text", event.inputType)
-        assertEquals("patient_mrn_#", event.fieldName)
+        assertEquals("account_ref_#", event.fieldName)
         assertEquals("form>div:2>input:1", event.elementPath)
         assertEquals("w1", event.windowId)
     }
@@ -273,7 +273,7 @@ class BrowserAnalyticsEmissionTest {
     fun `a hostile batch reaches the bus with its content stripped, not with an error`() {
         bridge().emit(
             """
-            [{"type":"CLICK","tag":"Patient: John Smith","role":"MRN 4417882",
+            [{"type":"CLICK","tag":"Account: John Smith","role":"REF 4417882",
               "fieldName":"John Smith","path":"form>input[value='John Smith']"},
              {"type":"KEYSTROKE","tag":"input"},
              {"type":"SCROLL_DEPTH","scrollDepthPercent":9999}]
@@ -282,7 +282,7 @@ class BrowserAnalyticsEmissionTest {
 
         assertEquals(2, interactions().size, "the unknown type is dropped, the rest survive")
         val click = interactions().first()
-        assertEquals("availity.com", click.domain)
+        assertEquals("acmecorp.com", click.domain)
         assertNull(click.elementTag)
         assertNull(click.elementRole)
         assertNull(click.fieldName)

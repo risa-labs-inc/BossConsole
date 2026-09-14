@@ -172,7 +172,21 @@ intellij-platform = "243.21565.199"
 # bump-pushes before building, so api main's version IS the version already released and the next
 # merge cuts version + 1 - re-read it when #44 actually merges, because anything landing first
 # moves this and the topofmind pin again.
-boss-plugin-api = "1.0.90"
+#
+# NEXT (1.0.92, UNCONFIRMED) adds browser telemetry detail (boss-plugin-api#61): route/routeKnown
+# on BrowserEvent, link and text-selection fields on BrowserInteractionEvent, and the
+# TEXT_SELECTED interaction type.
+#
+# These are MEMBERS on types the host constructs, so the host's copy shadows the runtime jar
+# parent-first and this pin is what makes them exist at all - the analytics plugin reading them
+# needs a minBossVersion floor at the release carrying this bump, not a minApiVersion one.
+#
+# **The number above is a prediction, not a fact, and this pin 404s CI until it is real.** api
+# release CI bump-pushes before building, so api main's version IS the version already released
+# (1.0.91 today) and the next merge cuts +1 - but anything landing before #61 moves it. Re-read it
+# with `gh release list --repo risa-labs-inc/boss-plugin-api` when #61 merges and amend the commit
+# that set it. This file has had this number wrong twice already, both times by assuming.
+boss-plugin-api = "1.0.92"
 
 [libraries]
 kotlin-test-junit = { module = "org.jetbrains.kotlin:kotlin-test-junit", version.ref = "kotlin" }

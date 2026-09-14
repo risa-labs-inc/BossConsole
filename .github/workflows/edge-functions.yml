@@ -126,3 +126,37 @@ jobs:
         # Gating, unlike the two jobs above: this function is new, so it starts
         # with no findings to grandfather. Keep it that way.
         run: deno lint
+
+  analytics-ingest:
+    name: 📊 Analytics Ingest function — check & test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: supabase/functions/analytics-ingest
+    # This function is the only place the analytics vendor credential exists, and it
+    # deploys with verify_jwt=false, so its own validation and rate limiting *are* the
+    # access control. Both are the kind of guard that stays green when deleted unless
+    # something exercises the route rather than the exported helper - which is why the
+    # suite drives app.request() and not just the pure functions.
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: 🦕 Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: 🔎 Type check
+        run: find . -name '*.ts' -print0 | sort -z | xargs -0 -r deno check
+
+      - name: 🧪 Tests
+        # --allow-read: tests/client-contract.test.ts reads the committed payload the
+        # real client produces, so a validator that drifts away from what the plugin
+        # sends fails here rather than as telemetry quietly stopping in production.
+        run: deno test --allow-env --allow-read
+
+      - name: 🧹 Lint
+        # Gating, like the organisation job and for the same reason: this function is
+        # new, so it starts with no findings to grandfather. Keep it that way.
+        run: deno lint

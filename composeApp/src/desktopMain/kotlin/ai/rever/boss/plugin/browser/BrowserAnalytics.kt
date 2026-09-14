@@ -13,10 +13,16 @@ import ai.rever.boss.plugin.api.BrowserNavigationType
  * see which sites BOSS is used with and how they are used.
  *
  * **This is the privacy boundary for browser telemetry.** A full URL is passed *in* and
- * only a registrable domain goes *out* — the path, query string, fragment, and page title
- * are discarded here and never reach [BrowserEvent], the event bus, or any plugin.
- * Reducing at the source is deliberate: it means no downstream consumer can leak page-level
- * detail even by accident, because the detail was never handed to it.
+ * only a registrable domain plus a templated route go *out* — the query string, fragment,
+ * and page title are discarded here and never reach [BrowserEvent], the event bus, or any
+ * plugin, and no raw path segment does either. Reducing at the source is deliberate: it
+ * means no downstream consumer can leak page-level detail even by accident, because the
+ * detail was never handed to it.
+ *
+ * The route is the one place page-level structure survives, and it survives only in
+ * templated form: every segment is either a placeholder describing its shape or a literal
+ * drawn from a closed vocabulary — see [templateRoute], which explains why the vocabulary is
+ * an allow-list rather than the more obvious identifier deny-list.
  *
  * In-page interactions ([interaction]) get the same treatment one layer further in. The
  * injected collector is written to read only structural attributes, and everything it
@@ -24,9 +30,9 @@ import ai.rever.boss.plugin.api.BrowserNavigationType
  * before an event exists. Two independent passes, because the page is hostile territory:
  * a site controls its own DOM and can name an input whatever it likes.
  *
- * BOSS is used in healthcare contexts. Widening this to emit a URL, path, title, element
- * text, or input value is a privacy decision, not a refactor — see the analytics plugin's
- * `CLAUDE.md`.
+ * BOSS is used with sensitive business data. Widening this to emit a URL, path, title,
+ * element text, or input value is a privacy decision, not a refactor — see the analytics
+ * plugin's `CLAUDE.md`.
  */
 internal object BrowserAnalytics {
     /**
@@ -111,8 +117,10 @@ internal object BrowserAnalytics {
         navigationType: BrowserNavigationType? = null,
         pageIndexInVisit: Int? = null,
         windowId: String? = null,
+        path: String? = null,
     ) {
         val domain = registrableDomain(authority) ?: return
+        val route = BrowserRouteTemplate.template(path)
         publish(
             BrowserEvent(
                 browserEventType = BrowserEventType.PAGE_VIEWED,
@@ -120,6 +128,8 @@ internal object BrowserAnalytics {
                 windowId = windowId,
                 navigationType = navigationType,
                 pageIndexInVisit = pageIndexInVisit,
+                route = route?.value,
+                routeKnown = route?.known,
             ),
         )
     }
@@ -190,8 +200,17 @@ internal object BrowserAnalytics {
         scrollDepthPercent: Int? = null,
         repeatCount: Int? = null,
         windowId: String? = null,
+        linkHost: String? = null,
+        linkKind: String? = null,
+        selectionChars: Int? = null,
+        selectionWords: Int? = null,
+        selectionHasDigits: Boolean? = null,
     ) {
         val domain = registrableDomain(authority) ?: return
+        // Reduced with the same collapse applied to the page's own authority, and reduced
+        // HERE rather than trusted from the page: the collector sends a hostname, but a
+        // hostname is a page-controlled string like any other.
+        val targetDomain = linkHost?.let { registrableDomain(it) }
         publish(
             BrowserInteractionEvent(
                 interactionType = type,
@@ -204,6 +223,15 @@ internal object BrowserAnalytics {
                 scrollDepthPercent = scrollDepthPercent?.takeIf { it in 0..100 },
                 repeatCount = repeatCount?.takeIf { it in 1..MAX_REPEAT_COUNT },
                 windowId = windowId,
+                linkTargetDomain = targetDomain,
+                linkKind = linkKind?.trim()?.lowercase()?.takeIf { it in LINK_KINDS },
+                // Derived, never accepted. Both sides of the comparison are already reduced
+                // and in hand, so taking the page's word for it would add a way to be lied
+                // to in exchange for nothing.
+                linkIsExternal = targetDomain?.let { it != domain },
+                selectionCharBucket = selectionCharBucket(selectionChars),
+                selectionWordCount = selectionWords?.takeIf { it >= 0 }?.coerceAtMost(MAX_SELECTION_WORDS),
+                selectionHasDigits = selectionHasDigits,
             ),
         )
     }
@@ -239,18 +267,18 @@ internal object BrowserAnalytics {
     /**
      * A form field's `name` attribute. Unlike a tag this is developer-chosen free text, so
      * it is cleaned rather than refused: unexpected characters are dropped and short digit
-     * runs redacted, on the theory that a name is `patientMrn` (a schema label, safe) but
-     * could be `mrn-4417882` (an identifier baked into a generated form, not safe).
+     * runs redacted, on the theory that a name is `customerRef` (a schema label, safe) but
+     * could be `ref-4417882` (an identifier baked into a generated form, not safe).
      *
      * ASCII-only for the same reason as [sanitizeToken], and here the mismatch was worse:
      * filtering with the Unicode-aware `isLetterOrDigit()` while redacting with `\d`, which
-     * is ASCII-only in Java unless `UNICODE_CHARACTER_CLASS` is set, let `mrn٤٤١٧٨٨٢` pass
+     * is ASCII-only in Java unless `UNICODE_CHARACTER_CLASS` is set, let `ref٤٤١٧٨٨٢` pass
      * the filter *and* the redactor untouched. Both halves must agree on an alphabet.
      *
      * **Anything outside the alphabet is a SEPARATOR, and more than one token refuses the
      * whole value.** Deleting stray characters is what made `"John Smith"` come out as the
      * plausible-looking field name `JohnSmith`, and the digit redaction does nothing for
-     * alphabetic PHI — so the shape most likely to be a person's name was the one that
+     * alphabetic PII — so the shape most likely to be a person's name was the one that
      * survived. Refusing only on whitespace was too narrow to fix that: deletion welds
      * `Smith,John`, `John+Smith`, `John/Smith` and a zero-width space (which is not
      * `Char.isWhitespace`) together exactly the same way, and they are the same disclosure.
@@ -258,13 +286,13 @@ internal object BrowserAnalytics {
      * of it, and a real `name=` attribute is a single form-encoding key.
      *
      * `$` is in the alphabet because ASP.NET WebForms builds names with it
-     * (`ctl00${'$'}ContentPlaceHolder1${'$'}txtPatient`); a flat refusal would drop a whole
+     * (`ctl00${'$'}ContentPlaceHolder1${'$'}txtCustomer`); a flat refusal would drop a whole
      * platform's field names. Leading and trailing whitespace is still just trimmed - markup
      * formatting, not content. The collector also only reads `name` off actual form controls,
      * so this is never asked about a `div`'s author-defined `name` property.
      *
      * **What remains, stated rather than implied.** A single token of alphabetic content
-     * still survives, and `.` and `-` are inside the alphabet, so all of `patient_johnsmith`,
+     * still survives, and `.` and `-` are inside the alphabet, so all of `account_johnsmith`,
      * `John.Smith` and `Smith-Jones` come through intact - the dotted and hyphenated shapes
      * being rather more plausible as a literal person's name than the concatenated one. The
      * digit redaction does nothing for any of them. Narrowing the alphabet is not the answer,
@@ -318,6 +346,22 @@ internal object BrowserAnalytics {
     private const val MAX_PATH_LENGTH = 120
     private const val MAX_REPEAT_COUNT = 100
 
+    /** Word count beyond which a selection is simply "very large". */
+    private const val MAX_SELECTION_WORDS = 500
+
+    /**
+     * Selection length buckets, ascending. `0` means "shorter than 25 characters" — a field
+     * value or a phrase — rather than "nothing selected", which is reported as null.
+     */
+    internal val SELECTION_BUCKETS = listOf(0, 25, 100, 500)
+
+    /**
+     * The kinds of link the collector may report. A closed set for the same reason
+     * [sanitizeToken] refuses unfamiliar tokens: this is a classification produced by our
+     * own script, so anything else is a page interfering, not a new kind of link.
+     */
+    private val LINK_KINDS = setOf("internal", "external", "anchor", "download", "mailto", "tel")
+
     /** Stand-in domain for a tab with no site loaded, so tab counts still balance. */
     internal const val BLANK_TAB_DOMAIN = "about:blank"
 
@@ -341,13 +385,13 @@ internal object BrowserAnalytics {
     private val NOT_FIELD_NAME_CHARS = Regex("""[^A-Za-z0-9_.\[\]$-]+""")
 
     /** A URL scheme, only where a scheme can actually be: at the very start. */
-    private val LEADING_SCHEME = Regex("""^[a-z][a-z0-9+.-]*://""")
+    internal val LEADING_SCHEME = Regex("""^[a-z][a-z0-9+.-]*://""")
 
     /**
      * Three digits, not five.
      *
      * Five only catches long generated ids. A record number in a form field is routinely
-     * four (`select_patient_4417`), and `BrowserInteractionScript`'s own KDoc names exactly
+     * four (`select_account_4417`), and `BrowserInteractionScript`'s own KDoc names exactly
      * that shape as what must not escape — so the threshold and the stated intent disagreed.
      * Three costs almost nothing: `address_line[2]`, `line1`, and `col2` are one or two
      * digits and survive intact.
@@ -359,10 +403,10 @@ internal object BrowserAnalytics {
      * Reduce an authority to its registrable domain (eTLD+1), or null when there is
      * nothing worth reporting.
      *
-     * `portal.availity.com:443` → `availity.com`, `bbc.co.uk` → `bbc.co.uk`.
+     * `portal.acmecorp.com:443` → `acmecorp.com`, `bbc.co.uk` → `bbc.co.uk`.
      *
      * Collapsing subdomains is the point: a subdomain is often more identifying than the
-     * site itself (`patient-portal.smallclinic.com` names a workflow, not just a vendor).
+     * site itself (`billing-portal.acmecorp.com` names a workflow, not just a vendor).
      *
      * This uses a small table of common multi-label suffixes rather than the full Public
      * Suffix List — pulling in a PSL dependency for telemetry isn't worth it. The failure
@@ -381,7 +425,7 @@ internal object BrowserAnalytics {
         // path or query string out through the last label.
         // Anchored at the start, not `substringAfter("://")`. That took everything after the
         // FIRST occurrence wherever it appeared, so a schemeless authority carrying a URL in
-        // its query - `availity.com/r?u=https://evil.com` - resolved to `evil.com`: the exact
+        // its query - `acmecorp.com/r?u=https://evil.com` - resolved to `evil.com`: the exact
         // smuggling this function's KDoc says cannot happen, and the case a test already
         // asserts for the well-formed form. A scheme is only a scheme at position zero.
         trimmed = trimmed.replaceFirst(LEADING_SCHEME, "")
@@ -481,4 +525,19 @@ internal object BrowserAnalytics {
             "azurewebsites.net",
             "cloudfront.net",
         )
+}
+
+/**
+ * Floor a selection length into a bucket, or null if there was no selection.
+ *
+ * Bucketed at the boundary rather than in the page, for the same reason the caps are:
+ * the page decides what it reports, the host decides what is emitted. An exact
+ * character count is a surprisingly good fingerprint — "the user selected exactly 47
+ * characters from this table cell" narrows the underlying value far more than
+ * "somewhere between 25 and 100" — and the question anyone actually asks of this data
+ * is whether a field or a paragraph was grabbed.
+ */
+internal fun selectionCharBucket(chars: Int?): Int? {
+    if (chars == null || chars <= 0) return null
+    return BrowserAnalytics.SELECTION_BUCKETS.last { chars >= it }
 }

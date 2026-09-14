@@ -13,9 +13,9 @@ class BrowserAnalyticsTest {
     @Test
     fun `reduces a subdomain to the registrable domain`() {
         // The whole point: a subdomain often names a workflow, not just a vendor.
-        assertEquals("availity.com", BrowserAnalytics.registrableDomain("portal.availity.com"))
-        assertEquals("availity.com", BrowserAnalytics.registrableDomain("a.b.c.availity.com"))
-        assertEquals("availity.com", BrowserAnalytics.registrableDomain("availity.com"))
+        assertEquals("acmecorp.com", BrowserAnalytics.registrableDomain("portal.acmecorp.com"))
+        assertEquals("acmecorp.com", BrowserAnalytics.registrableDomain("a.b.c.acmecorp.com"))
+        assertEquals("acmecorp.com", BrowserAnalytics.registrableDomain("acmecorp.com"))
     }
 
     @Test
@@ -107,21 +107,21 @@ class BrowserAnalyticsTest {
 
     @Test
     fun `normalizes case and a trailing root dot`() {
-        assertEquals("availity.com", BrowserAnalytics.registrableDomain("PORTAL.Availity.COM"))
-        assertEquals("availity.com", BrowserAnalytics.registrableDomain("availity.com."))
+        assertEquals("acmecorp.com", BrowserAnalytics.registrableDomain("PORTAL.Acmecorp.COM"))
+        assertEquals("acmecorp.com", BrowserAnalytics.registrableDomain("acmecorp.com."))
     }
 
     @Test
     fun `a whole url handed in is still reduced to just the domain`() {
         // Callers pass an authority, but this is the privacy boundary — it must hold even
-        // when misused. Before hardening, "com/auth?patient=12345678" became the last label
+        // when misused. Before hardening, "com/auth?account=12345678" became the last label
         // and the query string was returned verbatim.
         assertEquals(
-            "availity.com",
-            BrowserAnalytics.registrableDomain("https://portal.availity.com/auth?patient=12345678"),
+            "acmecorp.com",
+            BrowserAnalytics.registrableDomain("https://portal.acmecorp.com/auth?account=12345678"),
         )
-        assertEquals("availity.com", BrowserAnalytics.registrableDomain("portal.availity.com/auth"))
-        assertEquals("availity.com", BrowserAnalytics.registrableDomain("availity.com#frag"))
+        assertEquals("acmecorp.com", BrowserAnalytics.registrableDomain("portal.acmecorp.com/auth"))
+        assertEquals("acmecorp.com", BrowserAnalytics.registrableDomain("acmecorp.com#frag"))
     }
 
     @Test
@@ -130,10 +130,10 @@ class BrowserAnalyticsTest {
         // schemeless authority carrying a URL in its query resolved to that URL's host - the
         // exact smuggling this function's KDoc says cannot happen. A scheme is only a scheme
         // at position zero.
-        assertEquals("availity.com", BrowserAnalytics.registrableDomain("availity.com/r?u=https://evil.com"))
-        assertEquals("availity.com", BrowserAnalytics.registrableDomain("availity.com?next=http://evil.com"))
+        assertEquals("acmecorp.com", BrowserAnalytics.registrableDomain("acmecorp.com/r?u=https://evil.com"))
+        assertEquals("acmecorp.com", BrowserAnalytics.registrableDomain("acmecorp.com?next=http://evil.com"))
         // The well-formed form still works, which is what made the bug invisible.
-        assertEquals("availity.com", BrowserAnalytics.registrableDomain("https://portal.availity.com/auth"))
+        assertEquals("acmecorp.com", BrowserAnalytics.registrableDomain("https://portal.acmecorp.com/auth"))
     }
 
     @Test
@@ -141,20 +141,20 @@ class BrowserAnalyticsTest {
         // The table is deliberately not the full Public Suffix List, and the KDoc calls the
         // failure direction conservative. Pinning one case stops a later "let me add more
         // suffixes" edit from quietly inverting that.
-        assertEquals("nhs.uk", BrowserAnalytics.registrableDomain("portal.smallclinic.nhs.uk"))
+        assertEquals("sch.uk", BrowserAnalytics.registrableDomain("portal.branchsite.sch.uk"))
     }
 
     @Test
     fun `strips credentials embedded in an authority`() {
-        assertEquals("availity.com", BrowserAnalytics.registrableDomain("user:pw@portal.availity.com"))
+        assertEquals("acmecorp.com", BrowserAnalytics.registrableDomain("user:pw@portal.acmecorp.com"))
     }
 
     @Test
     fun `no reduction ever carries a path query or fragment`() {
         val inputs =
             listOf(
-                "https://portal.availity.com/auth?patient=12345678",
-                "portal.availity.com/a/b/c",
+                "https://portal.acmecorp.com/auth?account=12345678",
+                "portal.acmecorp.com/a/b/c",
                 "bbc.co.uk/news?id=99",
                 "example.com:8443/x#y",
             )
@@ -187,9 +187,9 @@ class BrowserAnalyticsTest {
     fun `a structural token carrying anything but a tag is refused whole`() {
         // Refused, not cleaned: a "tag" needing repair was never a tag, and salvaging a
         // prefix out of it is how page content would arrive wearing a tag's name.
-        assertNull(BrowserAnalytics.sanitizeToken("Patient Smith, John", 32))
-        assertNull(BrowserAnalytics.sanitizeToken("button#patient-4417", 32))
-        assertNull(BrowserAnalytics.sanitizeToken("mrn: 88421", 32))
+        assertNull(BrowserAnalytics.sanitizeToken("Account Smith, John", 32))
+        assertNull(BrowserAnalytics.sanitizeToken("button#account-4417", 32))
+        assertNull(BrowserAnalytics.sanitizeToken("ref: 88421", 32))
         assertNull(BrowserAnalytics.sanitizeToken("", 32))
         assertNull(BrowserAnalytics.sanitizeToken("   ", 32))
         assertNull(BrowserAnalytics.sanitizeToken(null, 32))
@@ -203,8 +203,8 @@ class BrowserAnalyticsTest {
         // lowercase, matches the token charset and is short, so it was emitted verbatim. A
         // tag and an ARIA role are as author-chosen as a name= attribute.
         assertEquals("row-#", BrowserAnalytics.sanitizeToken("row-4417882", 32))
-        assertEquals("mrn-#", BrowserAnalytics.sanitizeToken("MRN-4417882", 32))
-        assertEquals("patient_mrn_#", BrowserAnalytics.sanitizeFieldName("patient_mrn_4417882"))
+        assertEquals("ref-#", BrowserAnalytics.sanitizeToken("REF-4417882", 32))
+        assertEquals("account_ref_#", BrowserAnalytics.sanitizeFieldName("account_ref_4417882"))
         // Real structural vocabulary is untouched, including short numeric suffixes.
         assertEquals("button", BrowserAnalytics.sanitizeToken("button", 32))
         assertEquals("h2", BrowserAnalytics.sanitizeToken("h2", 32))
@@ -230,7 +230,7 @@ class BrowserAnalyticsTest {
         assertNull(BrowserAnalytics.sanitizeToken("пациентиванов", 32))
         assertNull(BrowserAnalytics.sanitizeToken("患者情報", 32))
         assertNull(BrowserAnalytics.sanitizeToken("٤٤١٧٨٨٢", 32))
-        assertNull(BrowserAnalytics.sanitizeToken("mrn٤٤١٧", 32))
+        assertNull(BrowserAnalytics.sanitizeToken("ref٤٤١٧", 32))
         // The real vocabulary still passes.
         assertEquals("button", BrowserAnalytics.sanitizeToken("button", 32))
     }
@@ -240,7 +240,7 @@ class BrowserAnalyticsTest {
         // The filter used Unicode isLetterOrDigit() while the redactor used \d, which is
         // ASCII-only in Java. Arabic-Indic digits therefore passed the filter AND the
         // redactor untouched. Both halves have to agree on an alphabet.
-        assertEquals("mrn-", BrowserAnalytics.sanitizeFieldName("mrn-٤٤١٧٨٨٢"))
+        assertEquals("ref-", BrowserAnalytics.sanitizeFieldName("ref-٤٤١٧٨٨٢"))
         assertNull(BrowserAnalytics.sanitizeFieldName("пациент"))
         assertEquals("dob", BrowserAnalytics.sanitizeFieldName("dobыф"))
     }
@@ -257,8 +257,8 @@ class BrowserAnalyticsTest {
     fun `a short record id in a field name is redacted`() {
         // Four digits is the common shape for a record baked into a generated form, and is
         // exactly what BrowserInteractionScript's KDoc names as what must not escape.
-        assertEquals("select_patient_#", BrowserAnalytics.sanitizeFieldName("select_patient_4417"))
-        assertEquals("mrn-#", BrowserAnalytics.sanitizeFieldName("mrn-4417882"))
+        assertEquals("select_account_#", BrowserAnalytics.sanitizeFieldName("select_account_4417"))
+        assertEquals("ref-#", BrowserAnalytics.sanitizeFieldName("ref-4417882"))
         // Ordinary short numeric suffixes are schema, not data, and survive.
         assertEquals("address_line[2]", BrowserAnalytics.sanitizeFieldName("address_line[2]"))
         assertEquals("line1", BrowserAnalytics.sanitizeFieldName("line1"))
@@ -267,11 +267,11 @@ class BrowserAnalyticsTest {
 
     @Test
     fun `field names keep the schema and lose the identifier`() {
-        assertEquals("patientMrn", BrowserAnalytics.sanitizeFieldName("patientMrn"))
+        assertEquals("accountRef", BrowserAnalytics.sanitizeFieldName("accountRef"))
         assertEquals("address_line[2]", BrowserAnalytics.sanitizeFieldName("address_line[2]"))
         // A generated form can bake a record id into the field name; the name survives so
         // the field is still identifiable, the number does not.
-        assertEquals("mrn-#", BrowserAnalytics.sanitizeFieldName("mrn-4417882"))
+        assertEquals("ref-#", BrowserAnalytics.sanitizeFieldName("ref-4417882"))
         assertEquals("dob", BrowserAnalytics.sanitizeFieldName("  dob  "))
     }
 
@@ -303,8 +303,8 @@ class BrowserAnalyticsTest {
         // `$` is in the alphabet on purpose: WebForms builds every name with it, so a flat
         // refusal would drop a whole platform's field names rather than a leak.
         assertEquals(
-            "ctl00${'$'}ContentPlaceHolder1${'$'}txtPatient",
-            BrowserAnalytics.sanitizeFieldName("ctl00${'$'}ContentPlaceHolder1${'$'}txtPatient"),
+            "ctl00${'$'}ContentPlaceHolder1${'$'}txtAccount",
+            BrowserAnalytics.sanitizeFieldName("ctl00${'$'}ContentPlaceHolder1${'$'}txtAccount"),
         )
     }
 
@@ -313,10 +313,10 @@ class BrowserAnalyticsTest {
         // This was the one shape most likely to be a person's name, and the only sanitizer
         // that let it through: filtering a space out of "John Smith" yields "JohnSmith",
         // which is indistinguishable from a real camelCase field name, and the digit
-        // redaction does nothing for alphabetic PHI. A `name=` attribute is a form-encoding
+        // redaction does nothing for alphabetic PII. A `name=` attribute is a form-encoding
         // key and essentially never contains whitespace, so refusing costs nothing real.
         assertNull(BrowserAnalytics.sanitizeFieldName("John Smith"))
-        assertNull(BrowserAnalytics.sanitizeFieldName("Patient: John Smith"))
+        assertNull(BrowserAnalytics.sanitizeFieldName("Account: John Smith"))
         assertNull(BrowserAnalytics.sanitizeFieldName("date\tof\tbirth"))
         assertNull(BrowserAnalytics.sanitizeFieldName("first\nlast"))
         // Surrounding whitespace is markup formatting, not content, and is still trimmed.
@@ -334,8 +334,8 @@ class BrowserAnalyticsTest {
     fun `an element path containing a selector is refused`() {
         // The only way to get a '#', '.', or quote into a path is to have included an id,
         // class, or attribute selector — precisely the identifying detail excluded by design.
-        assertNull(BrowserAnalytics.sanitizePath("form>div#patient-4417>button"))
-        assertNull(BrowserAnalytics.sanitizePath("form>div.patient-name>button"))
+        assertNull(BrowserAnalytics.sanitizePath("form>div#account-4417>button"))
+        assertNull(BrowserAnalytics.sanitizePath("form>div.account-name>button"))
         assertNull(BrowserAnalytics.sanitizePath("input[value='John Smith']"))
         assertNull(BrowserAnalytics.sanitizePath("form>div:2>"))
         assertNull(BrowserAnalytics.sanitizePath(""))
