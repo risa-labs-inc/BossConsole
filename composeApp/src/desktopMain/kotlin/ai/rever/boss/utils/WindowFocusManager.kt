@@ -5,6 +5,7 @@ import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.awt.Frame
 import java.awt.Window
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
@@ -535,7 +536,12 @@ actual object WindowFocusManager {
         val window = windows[windowId]
         return if (window != null) {
             SwingUtilities.invokeLater {
-                // Make window visible if minimized
+                // Restore window if minimized
+                if (window is Frame && (window.extendedState and Frame.ICONIFIED) != 0) {
+                    window.extendedState = window.extendedState and Frame.ICONIFIED.inv()
+                }
+
+                // Make window visible if hidden
                 if (!window.isVisible) {
                     window.isVisible = true
                 }
@@ -558,7 +564,12 @@ actual object WindowFocusManager {
     actual fun bringToFront() {
         mainWindow?.let { window ->
             SwingUtilities.invokeLater {
-                // Make window visible if minimized
+                // Restore window if minimized
+                if (window is Frame && (window.extendedState and Frame.ICONIFIED) != 0) {
+                    window.extendedState = window.extendedState and Frame.ICONIFIED.inv()
+                }
+
+                // Make window visible if hidden
                 if (!window.isVisible) {
                     window.isVisible = true
                 }
