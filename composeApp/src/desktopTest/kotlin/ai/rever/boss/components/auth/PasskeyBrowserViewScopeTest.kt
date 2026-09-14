@@ -32,13 +32,24 @@ class PasskeyBrowserViewScopeTest {
         )
         assertTrue(
             "BrowserViewState(browser!!, viewScope, window)" in source,
-            "the passkey view should run in the composition's scope (rememberCoroutineScope)",
+            "the passkey view should run in its supervised child scope (viewScope)",
         )
     }
 
     @Test
     fun `view failures are isolated and the child scope is disposed`() {
-        assertTrue("SupervisorJob(" in source, "view failures must not cancel the load callback scope")
+        // The parenting, not just the supervisor: an unparented `SupervisorJob()` would isolate failures
+        // and still leak like #629.
+        assertTrue(
+            "SupervisorJob(coroutineScope.coroutineContext[Job])" in source,
+            "the view's supervisor must be a child of the composition's job",
+        )
+        // The other direction: the load callback is a plain child of the composition's job, so a throw
+        // there would cancel the view's scope unless it is caught.
+        assertTrue(
+            Regex("""try\s*\{\s*onLoadComplete\(\)""").containsMatchIn(source),
+            "a failing onLoadComplete must not cancel the composition job and the view scope with it",
+        )
         assertTrue(
             "onDispose { viewScope.cancel() }" in source,
             "the supervised child must not outlive the composition",

@@ -77,7 +77,13 @@ actual fun PasskeyBrowserView(
             newBrowser.navigation().on(LoadFinished::class.java) {
                 logger.debug(LogCategory.BROWSER, "Page loaded successfully", mapOf("url" to newBrowser.url()))
                 coroutineScope.launch(Dispatchers.Main) {
-                    onLoadComplete()
+                    // Caught here because the supervisor only isolates one direction: a throw from this
+                    // plain child would cancel the composition's job and the view's scope with it.
+                    try {
+                        onLoadComplete()
+                    } catch (e: Exception) {
+                        logger.warn(LogCategory.BROWSER, "Passkey load callback failed", error = e)
+                    }
                 }
             }
 
