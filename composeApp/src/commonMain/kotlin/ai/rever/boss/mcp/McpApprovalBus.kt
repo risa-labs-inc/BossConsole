@@ -29,6 +29,11 @@ sealed interface McpApprovalDecision {
          * `trustForSession` when this is true.
          */
         val persistPolicy: Boolean = false,
+        /**
+         * "Trust this plugin": persist ALLOW for every tool [McpApprovalRequest.providerId]
+         * contributes, not just this one tool or this one call.
+         */
+        val trustProvider: Boolean = false,
     ) : McpApprovalDecision
 
     data class Denied(
@@ -157,14 +162,23 @@ open class McpApprovalBus(
         requestId: String,
         trustForSession: Boolean = false,
         persistPolicy: Boolean = false,
+        trustProvider: Boolean = false,
     ): Boolean {
         val req = activeRequests[requestId] ?: return false
-        val completed = req.deferred.complete(McpApprovalDecision.Approved(trustForSession, persistPolicy))
+        val completed =
+            req.deferred.complete(
+                McpApprovalDecision.Approved(trustForSession, persistPolicy, trustProvider),
+            )
         if (completed) {
             logger.info(
                 LogCategory.SYSTEM,
                 "Operator approved tool execution",
-                mapOf("tool" to req.toolName, "trustForSession" to trustForSession, "persistPolicy" to persistPolicy),
+                mapOf(
+                    "tool" to req.toolName,
+                    "trustForSession" to trustForSession,
+                    "persistPolicy" to persistPolicy,
+                    "trustProvider" to trustProvider,
+                ),
             )
         }
         return completed
