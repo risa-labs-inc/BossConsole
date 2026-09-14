@@ -15,9 +15,8 @@ import io.grpc.ServerInterceptor
  * a real, currently-issued credential — publishes the owning process id under [AUTHENTICATED_PROCESS_ID]
  * for the rest of the call to read via [Context]. A missing or unrecognised token leaves that key unset
  * rather than failing the call outright. Each service decides whether identity is required;
- * the interceptor itself does not authenticate the whole IPC surface. Plugin UI, Secret,
- * Role Management, Download, Git and Log bridges enforce caller identity. Do not treat this
- * list as an authorization policy: inspect each service's guards when adding an RPC.
+ * the interceptor itself does not authenticate the whole IPC surface. Inspect each service's
+ * guards when adding an RPC rather than inferring authorization from this interceptor.
  * BossConsole#53 tracks closing the remaining unguarded services.
  */
 class ProcessIdentityInterceptor(
