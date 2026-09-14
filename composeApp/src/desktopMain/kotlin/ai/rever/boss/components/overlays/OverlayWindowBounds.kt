@@ -201,7 +201,10 @@ internal fun insetBounds(
     // An unmeasurable parent stays unmeasurable, and a zero inset returns the SAME instance - see
     // the KDoc on identity above.
     if (bounds == null || inset == DpSize.Zero) return bounds
-    val endInset = inset.width.value.roundToInt().coerceIn(0, bounds[2])
+    val endInset =
+        inset.width.value
+            .roundToInt()
+            .coerceIn(0, bounds[2])
     return intArrayOf(
         bounds[0] + if (layoutDirection == LayoutDirection.Rtl) endInset else 0,
         bounds[1],

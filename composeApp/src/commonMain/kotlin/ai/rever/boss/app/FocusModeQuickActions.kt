@@ -618,8 +618,10 @@ internal fun Modifier.reportContentInset(
                 // overlay outside the content pane - the failure `cornerPosition`'s floor prevents,
                 // reintroduced a layer up. `boundsInRoot` clips to the root so it cannot go
                 // negative today; this costs nothing and stops that being load-bearing.
-                ((if (layoutDirection == LayoutDirection.Rtl) bounds.left else root.width - bounds.right)
-                    .coerceAtLeast(0f) / density).dp,
+                (
+                    (if (layoutDirection == LayoutDirection.Rtl) bounds.left else root.width - bounds.right)
+                        .coerceAtLeast(0f) / density
+                ).dp,
                 ((root.height - bounds.bottom).coerceAtLeast(0f) / density).dp,
             ),
         )

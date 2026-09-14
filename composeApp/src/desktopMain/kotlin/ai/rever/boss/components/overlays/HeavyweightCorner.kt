@@ -29,12 +29,12 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.rememberWindowState
+import kotlinx.coroutines.delay
 import java.awt.Dialog
 import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
 import javax.swing.RootPaneContainer
 import kotlin.math.roundToInt
-import kotlinx.coroutines.delay
 import java.awt.Window as AwtWindow
 
 /** How long to wait between attempts to measure a parent that is not showing yet. */

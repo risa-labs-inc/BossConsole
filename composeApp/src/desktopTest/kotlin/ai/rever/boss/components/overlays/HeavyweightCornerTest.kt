@@ -172,6 +172,7 @@ class HeavyweightCornerTest {
         // the only available bound - the same choice the previous clamp made.
         assertEquals(DpSize(432.dp, 600.dp), regionCeiling(null, DpSize(432.dp, 600.dp)))
     }
+
     @Test
     fun `RTL end inset moves the left edge and preserves the right edge`() {
         val region = resolveRegion(parent, DpSize(48.dp, 24.dp), null, LayoutDirection.Rtl)
@@ -209,5 +210,4 @@ class HeavyweightCornerTest {
         assertEquals(385 to 350, cornerPosition(intArrayOf(100, 50, 1001, 800), size, Alignment.Center))
         assertEquals(668 to 650, cornerPosition(parent, DpSize(432.4.dp, 200.4.dp), Alignment.BottomEnd))
     }
-
 }
