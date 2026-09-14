@@ -49,8 +49,9 @@ actual object WindowOperations {
     /**
      * Create a new empty window
      */
-    actual fun createNewWindow() {
-        WindowManager.createNewWindow()
+    actual fun createNewWindow(browserProfileId: String?) {
+        val defaultProfile = ai.rever.boss.plugin.browser.BrowserSettings.currentProfile
+        WindowManager.createNewWindow(browserProfileId = browserProfileId ?: defaultProfile)
     }
 
     /**

@@ -3457,11 +3457,33 @@ object FluckEngine {
      *
      * @return ResetResult with detailed status of each step
      */
-    suspend fun resetBrowserProfile(): ResetResult =
+    @Suppress("LongMethod", "CyclomaticComplexMethod", "MaxLineLength")
+    suspend fun resetBrowserProfile(profileId: String = BrowserSettings.currentProfile): ResetResult =
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             var engineClosed = false
             var profileDeleted = false
             var tempProfilesCleaned = false
+
+            if (profileId != BrowserSettings.currentProfile) {
+                // Delete specific JxBrowser profile inside the shared engine
+                try {
+                    _engine?.let { engine ->
+                        val profile = engine.profiles().list().firstOrNull { it.name() == profileId }
+                        if (profile != null) {
+                            // Bumping generation first causes all UI tabs to dispose their browsers
+                            _engineGeneration++
+                            _engineGenerationFlow.value = _engineGeneration
+                            // Small delay to let Compose dispose the browsers on the EDT
+                            kotlinx.coroutines.delay(500)
+                            engine.profiles().delete(profile)
+                        }
+                    }
+                    return@withContext ResetResult(success = true, engineClosed = false, profileDeleted = true, tempProfilesCleaned = false)
+                } catch (e: Exception) {
+                    logger.warn(LogCategory.BROWSER, "Failed to delete specific profile $profileId", error = e)
+                    return@withContext ResetResult(success = false, errorMessage = e.message)
+                }
+            }
 
             try {
                 // Step 1: Close current engine if it exists
@@ -3503,8 +3525,7 @@ object FluckEngine {
                 }
 
                 // Step 4: Delete browser profile directory
-                val selectedProfile = BrowserSettings.currentProfile
-                val profileDir = BossDirectories.resolve(selectedProfile)
+                val profileDir = BossDirectories.resolve(profileId)
 
                 if (profileDir.exists()) {
                     profileDeleted = profileDir.deleteRecursively()

@@ -72,6 +72,7 @@ object WindowManager {
     fun createNewWindow(
         position: WindowPosition? = null,
         windowType: WindowType = WindowType.MAIN,
+        browserProfileId: String = ai.rever.boss.plugin.browser.BrowserSettings.currentProfile,
     ): BossWindowState {
         val windowId = UUID.randomUUID().toString()
 
@@ -84,6 +85,7 @@ object WindowManager {
                 title = "BOSS - Business Operating System + Simulation",
                 position = windowPosition,
                 windowType = windowType,
+                browserProfileId = browserProfileId,
             )
 
         _windows.add(windowState)
@@ -112,8 +114,9 @@ object WindowManager {
         initialTab: TabInfo,
         position: WindowPosition? = null,
         windowType: WindowType = WindowType.MAIN,
+        browserProfileId: String = ai.rever.boss.plugin.browser.BrowserSettings.currentProfile,
     ): BossWindowState {
-        val windowState = createNewWindow(position, windowType)
+        val windowState = createNewWindow(position, windowType, browserProfileId)
         // Store the pending tab for this window
         pendingInitialTabs[windowState.id] = initialTab
         logger.debug(LogCategory.UI, "Stored pending tab for new window", mapOf("tab" to initialTab.title, "windowId" to windowState.id))
@@ -132,19 +135,21 @@ object WindowManager {
         }
 
     /**
-     * Create a new window with an initial project
+     * Create a new window containing a specific project.
+     * Used by the "Open in new window" action in the Project UI.
      *
-     * @param project The project to open in the new window
-     * @param position Window position (null for default cascade)
-     * @param windowType Type of window (determines adaptive sizing)
-     * @return The newly created window state
+     * @param project The project to load in the new window
+     * @param position Optional position for the new window
+     * @param windowType Type of window to create
+     * @return The newly created BossWindowState
      */
     fun createNewWindowWithProject(
         project: Project,
         position: WindowPosition? = null,
         windowType: WindowType = WindowType.MAIN,
+        browserProfileId: String = ai.rever.boss.plugin.browser.BrowserSettings.currentProfile,
     ): BossWindowState {
-        val windowState = createNewWindow(position, windowType)
+        val windowState = createNewWindow(position, windowType, browserProfileId)
         // Store the pending project for this window
         pendingInitialProjects[windowState.id] = project
         logger.debug(
@@ -322,6 +327,7 @@ data class BossWindowState(
     var title: String,
     val position: WindowPosition?,
     val windowType: WindowType = WindowType.MAIN,
+    val browserProfileId: String = ai.rever.boss.plugin.browser.BrowserSettings.currentProfile,
 ) {
     /**
      * Stream of programmatic resize requests (BossTerm "Fit host to my screen").

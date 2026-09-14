@@ -1080,6 +1080,7 @@ fun ApplicationScope.BossWindow(
         CompositionLocalProvider(
             LocalAwtWindow provides window,
             LocalHeavyweightOverlays provides true,
+            LocalBrowserProfileId provides windowState.browserProfileId,
         ) {
             // Create independent component context for this window
             // Each window gets its own Decompose context tree
@@ -1218,7 +1219,7 @@ fun ApplicationScope.BossWindow(
                                     onClick = {
                                         isResetting = true
                                         menuScope.launch {
-                                            val result = FluckEngine.resetBrowserProfile()
+                                            val result = FluckEngine.resetBrowserProfile(windowState.browserProfileId)
                                             resetBrowserResult = result.success
                                             isResetting = false
                                         }
