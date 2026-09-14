@@ -8,6 +8,7 @@ import {
 import { getPlugin } from "../services/plugins.ts"
 import { ratePlugin, getUserRating, deleteRating, getPluginRatings } from "../services/ratings.ts"
 import { getUserFromToken } from "../utils/auth.ts"
+import { getOptionalViewer } from "../utils/viewer.ts"
 
 const rating = new OpenAPIHono<{ Variables: PluginStoreContext }>()
 
@@ -84,7 +85,7 @@ rating.openapi(rateRoute, async (ctx) => {
     }
 
     // Get plugin
-    const plugin = await getPlugin(supabase, pluginId)
+    const plugin = await getPlugin(supabase, pluginId, user.userId)
     if (!plugin) {
       return ctx.json({ error: 'Plugin not found' }, 404)
     }
@@ -174,7 +175,7 @@ rating.openapi(getUserRatingRoute, async (ctx) => {
     }
 
     // Get plugin
-    const plugin = await getPlugin(supabase, pluginId)
+    const plugin = await getPlugin(supabase, pluginId, user.userId)
     if (!plugin) {
       return ctx.json({ error: 'Plugin not found' }, 404)
     }
@@ -259,7 +260,7 @@ rating.openapi(deleteRatingRoute, async (ctx) => {
     }
 
     // Get plugin
-    const plugin = await getPlugin(supabase, pluginId)
+    const plugin = await getPlugin(supabase, pluginId, user.userId)
     if (!plugin) {
       return ctx.json({ error: 'Plugin not found' }, 404)
     }
@@ -337,8 +338,14 @@ rating.openapi(getPluginRatingsRoute, async (ctx) => {
     const { pluginId } = ctx.req.valid('param')
     const { page, pageSize } = ctx.req.valid('query')
 
-    // Get plugin
-    const plugin = await getPlugin(supabase, pluginId)
+    // A service-role client has no auth.uid(), so resolve the optional session
+    // before applying the same storefront visibility rule as browse/detail.
+    const viewer = await getOptionalViewer(supabase, ctx.req.header('Authorization'))
+    // Missing responses depend on the viewer too; partition cached 404s.
+    ctx.header("Vary", "Authorization", { append: true })
+    ctx.header("Cache-Control", viewer ? "private, no-store" : "public, max-age=60")
+
+    const plugin = await getPlugin(supabase, pluginId, viewer)
     if (!plugin) {
       return ctx.json({ error: 'Plugin not found' }, 404)
     }

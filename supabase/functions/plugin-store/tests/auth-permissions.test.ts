@@ -437,18 +437,18 @@ Deno.test("permissionGateError gates API-key management on api_key.create", () =
   )
 })
 
-Deno.test("both download handlers gate on organisation visibility before anything else", () => {
+Deno.test("both download handlers gate on installability before anything else", () => {
   const src = routeSource("download.ts")
 
   // Two handlers: latest, and a specific version.
   const handlers = src.match(/download\.openapi\(/g)?.length ?? 0
   assertEquals(handlers, 2, "the two download handlers")
 
-  const gated = src.match(/await canInstall\(supabase,/g)?.length ?? 0
+  const gated = src.match(/await getPluginForDownload\(supabase,/g)?.length ?? 0
   assertEquals(
     gated,
     handlers,
-    "an ungated download handler serves another organisation's private plugin to anyone " +
+    "an ungated download handler can serve another organisation's private plugin to anyone " +
       "who can guess a plugin id",
   )
 
@@ -457,11 +457,11 @@ Deno.test("both download handlers gate on organisation visibility before anythin
   // caller may not see must not reach a 403 that confirms it exists, and must
   // not appear in its download counts.
   for (const [index, chunk] of src.split(/download\.openapi\(/).slice(1).entries()) {
-    const gate = chunk.indexOf("canInstall(")
+    const gate = chunk.indexOf("getPluginForDownload(")
     const permission = chunk.indexOf("installGateError(")
     const record = chunk.indexOf("recordDownload(")
-    assertEquals(gate >= 0, true, `handler ${index} has no visibility gate`)
-    assertEquals(gate < permission, true, `handler ${index} gates permissions before visibility`)
+    assertEquals(gate >= 0, true, `handler ${index} has no installability gate`)
+    assertEquals(gate < permission, true, `handler ${index} gates permissions before installability`)
     assertEquals(gate < record, true, `handler ${index} records a download before gating it`)
   }
 })
@@ -471,6 +471,6 @@ Deno.test("a plugin the caller cannot see is 404, never 403", () => {
 
   // 403 would confirm the plugin exists, which is how an endpoint becomes an
   // enumeration surface for other organisations' private plugin ids.
-  const gateBlocks = src.match(/if \(!await canInstall\([^)]*\)\) \{\s*return ctx\.json\(\{ error: 'Plugin not found' \}, 404\)/g)
+  const gateBlocks = src.match(/const plugin = await getPluginForDownload\(supabase,[\s\S]*?if \(!plugin\) \{\s*return ctx\.json\(\{ error: 'Plugin not found' \}, 404\)/g)
   assertEquals(gateBlocks?.length ?? 0, 2, "both gates must deny with the same 404 a missing plugin gets")
 })

@@ -7,10 +7,16 @@ import { signVersionAnchor } from "../utils/signing.ts"
  */
 export async function getPluginVersions(
   supabase: SupabaseClient,
-  pluginId: string
+  pluginId: string,
+  /** Null means anonymous browsing and keeps the public-only behavior. */
+  viewerId: string | null = null
 ): Promise<PluginVersion[]> {
-  const { data, error } = await supabase
-    .rpc('get_plugin_versions', {
+  const { data, error } = viewerId
+    ? await supabase.rpc('get_plugin_versions_for_viewer', {
+      p_plugin_id: pluginId,
+      p_viewer_id: viewerId
+    })
+    : await supabase.rpc('get_plugin_versions', {
       p_plugin_id: pluginId
     })
 

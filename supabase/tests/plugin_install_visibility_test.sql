@@ -7,7 +7,7 @@
 -- collapses the two will fail exactly two tests here.
 
 begin;
-select plan(16);
+select plan(25);
 
 -- ---------------------------------------------------------------------------
 -- Fixtures: two organisations, an author, a member of each, and an outsider.
@@ -154,6 +154,54 @@ select ok(
 );
 
 -- ===========================================================================
+-- Store download lookup: installability, not listing visibility
+-- ===========================================================================
+select is(
+    (select count(*)::int from public.get_plugin_install_info_for_viewer(
+        'pgtap.piv.org', '30000000-0000-0000-0000-000000000002')),
+    1,
+    'the viewer-scoped install lookup returns an org plugin to its member'
+);
+select is(
+    (select count(*)::int from public.get_plugin_install_info_for_viewer(
+        'pgtap.piv.org', '30000000-0000-0000-0000-000000000003')),
+    0,
+    'the viewer-scoped install lookup hides an org plugin from an outsider'
+);
+select is(
+    (select count(*)::int from public.get_plugin_install_info_for_viewer(
+        'pgtap.piv.unlisted', '30000000-0000-0000-0000-000000000002')),
+    1,
+    'the viewer-scoped install lookup preserves direct-link installs for unlisted members'
+);
+select is(
+    (select count(*)::int from public.get_plugin_install_info_for_viewer(
+        'pgtap.piv.unlisted', null)),
+    0,
+    'the viewer-scoped install lookup does not make an unlisted link public'
+);
+
+select is(
+    (select count(*)::int from public.get_plugin_install_info_for_viewer('pgtap.piv.public', null)),
+    1, 'anonymous readers can download a public published plugin through the lookup'
+);
+select is(
+    (select required_permissions from public.get_plugin_install_info_for_viewer('pgtap.piv.public', null)),
+    '{}'::text[], 'the lookup returns an empty permission array for a baseline plugin'
+);
+update public.plugins set required_permissions = ARRAY['plugin.read'] where plugin_id = 'pgtap.piv.org';
+select is(
+    (select required_permissions from public.get_plugin_install_info_for_viewer(
+        'pgtap.piv.org', '30000000-0000-0000-0000-000000000002')),
+    ARRAY['plugin.read']::text[], 'the lookup preserves required permissions for the route gate'
+);
+select is(
+    (select count(*)::int from public.get_plugin_install_info_for_viewer(
+        'pgtap.piv.public.draft', '30000000-0000-0000-0000-000000000001')),
+    1, 'the lookup preserves the install predicate author access to drafts'
+);
+
+-- ===========================================================================
 -- Grants: the edge function calls this with the service-role client
 -- ===========================================================================
 select ok(
@@ -164,6 +212,15 @@ select ok(
     AND NOT has_function_privilege('anon',
         'public.user_can_install_plugin(uuid,uuid)', 'execute'),
     'service_role only -- an authenticated client asking about arbitrary users would be an enumeration surface'
+);
+select ok(
+    has_function_privilege('service_role',
+        'public.get_plugin_install_info_for_viewer(text,uuid)', 'execute')
+    AND NOT has_function_privilege('authenticated',
+        'public.get_plugin_install_info_for_viewer(text,uuid)', 'execute')
+    AND NOT has_function_privilege('anon',
+        'public.get_plugin_install_info_for_viewer(text,uuid)', 'execute'),
+    'the install metadata lookup is service_role only'
 );
 
 select * from finish();

@@ -72,10 +72,27 @@ export async function searchPlugins(
   verifiedOnly: boolean,
   page: number,
   pageSize: number,
-  sortBy: string
+  sortBy: string,
+  /**
+   * The edge function uses a service-role client, so auth.uid() is NULL even
+   * when the HTTP caller has a valid session. Pass the verified caller here so
+   * organisation-visible plugins are searched for the right person.
+   */
+  viewerId: string | null = null
 ): Promise<{ plugins: PluginListItem[], totalCount: number }> {
-  const { data, error } = await supabase
-    .rpc('search_plugins', {
+  const { data, error } = viewerId
+    ? await supabase.rpc('search_plugins_for_viewer', {
+      p_viewer_id: viewerId,
+      p_query: query,
+      p_type: type,
+      p_tags: tags,
+      p_min_rating: minRating,
+      p_verified_only: verifiedOnly,
+      p_page: page,
+      p_page_size: pageSize,
+      p_sort_by: sortBy
+    })
+    : await supabase.rpc('search_plugins', {
       p_query: query,
       p_type: type,
       p_tags: tags,
@@ -140,10 +157,16 @@ export async function getPluginForPublish(
  */
 export async function getPlugin(
   supabase: SupabaseClient,
-  pluginId: string
+  pluginId: string,
+  /** Null means anonymous browsing and keeps the public-only behavior. */
+  viewerId: string | null = null
 ): Promise<PluginWithStats | null> {
-  const { data, error } = await supabase
-    .rpc('get_plugin_with_stats', {
+  const { data, error } = viewerId
+    ? await supabase.rpc('get_plugin_with_stats_for_viewer', {
+      p_plugin_id: pluginId,
+      p_viewer_id: viewerId
+    })
+    : await supabase.rpc('get_plugin_with_stats', {
       p_plugin_id: pluginId
     })
 
@@ -181,6 +204,43 @@ export async function getPlugin(
     tags: row.tags || [],
     screenshots: row.screenshots || [],
     requiredPermissions: row.required_permissions || []
+  }
+}
+
+/**
+ * The small metadata lookup used by the download route.
+ *
+ * Downloadability is wider than catalogue visibility: an ordinary member may
+ * install an `unlisted` plugin when they have its direct link, even though the
+ * listing/detail RPC intentionally hides it. The database function performs
+ * that install check atomically and returns only the metadata the route needs;
+ * no private plugin details are sent back before authorization succeeds.
+ */
+export async function getPluginForDownload(
+  supabase: SupabaseClient,
+  pluginId: string,
+  viewerId: string | null
+): Promise<{ id: string; requiredPermissions: string[] } | null> {
+  const { data, error } = await supabase.rpc('get_plugin_install_info_for_viewer', {
+    p_plugin_id: pluginId,
+    p_viewer_id: viewerId
+  })
+
+  if (error) {
+    console.error('Error getting plugin install info:', error)
+    // Deny without returning any metadata, but keep transport failures retryable.
+    // The same error applies to every plugin id and reveals no existence signal.
+    throw new Error('Plugin install lookup unavailable')
+  }
+
+  const row = data?.[0]
+  if (!row || typeof row.id !== 'string') return null
+
+  return {
+    id: row.id,
+    requiredPermissions: Array.isArray(row.required_permissions)
+      ? row.required_permissions.filter((p: unknown): p is string => typeof p === 'string')
+      : []
   }
 }
 

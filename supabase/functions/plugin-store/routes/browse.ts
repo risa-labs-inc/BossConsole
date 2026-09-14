@@ -10,6 +10,7 @@ import {
 } from "../types/schemas.ts"
 import { listPlugins, searchPlugins, getPlugin, getPopularTags } from "../services/plugins.ts"
 import { getPluginVersions } from "../services/versions.ts"
+import { getOptionalViewer } from "../utils/viewer.ts"
 
 const browse = new OpenAPIHono<{ Variables: PluginStoreContext }>()
 
@@ -55,13 +56,14 @@ browse.openapi(listRoute, async (ctx) => {
     // token is not an error here - it simply yields the public catalogue, which is what every
     // caller got before this. A valid one additionally unlocks the organisation plugins that
     // user_can_view_plugin_row says this reader may see.
-    const viewer = await optionalViewer(ctx)
+    const viewer = await getOptionalViewer(supabase, ctx.req.header("Authorization"))
 
     const result = await listPlugins(supabase, page, pageSize, sortBy, viewer)
 
     // PRIVATE when the answer depends on who asked. The same URL now returns different rows per
     // reader, so a shared cache holding one reader's copy would serve somebody else's
     // organisation plugins to the next caller. The other follow-up 20260803000000 asked for.
+    ctx.header("Vary", "Authorization", { append: true })
     ctx.header("Cache-Control", viewer ? "private, no-store" : "public, max-age=60")
 
     return ctx.json({
@@ -127,6 +129,10 @@ browse.openapi(searchRoute, async (ctx) => {
   try {
     const supabase = ctx.get("supabase")
     const body = ctx.req.valid('json')
+    // The function uses a service-role client, so pass the verified session
+    // subject explicitly or search_plugins would see auth.uid() as NULL and
+    // silently omit organisation-visible plugins.
+    const viewer = await getOptionalViewer(supabase, ctx.req.header("Authorization"))
 
     const result = await searchPlugins(
       supabase,
@@ -137,8 +143,11 @@ browse.openapi(searchRoute, async (ctx) => {
       body.verifiedOnly,
       body.page,
       body.pageSize,
-      body.sortBy
+      body.sortBy,
+      viewer
     )
+
+    ctx.header("Cache-Control", "private, no-store")
 
     return ctx.json({
       plugins: result.plugins,
@@ -199,15 +208,20 @@ browse.openapi(getPluginRoute, async (ctx) => {
   try {
     const supabase = ctx.get("supabase")
     const { pluginId } = ctx.req.valid('param')
+    const viewer = await getOptionalViewer(supabase, ctx.req.header("Authorization"))
 
-    const plugin = await getPlugin(supabase, pluginId)
+    // Missing responses depend on the viewer too; partition cached 404s.
+    ctx.header("Vary", "Authorization", { append: true })
+    ctx.header("Cache-Control", viewer ? "private, no-store" : "public, max-age=60")
+
+    const plugin = await getPlugin(supabase, pluginId, viewer)
     
     if (!plugin) {
       return ctx.json({ error: 'Plugin not found' }, 404)
     }
 
     // Get all versions
-    const versions = await getPluginVersions(supabase, pluginId)
+    const versions = await getPluginVersions(supabase, pluginId, viewer)
 
     return ctx.json({
       id: plugin.id,
@@ -300,31 +314,3 @@ browse.openapi(popularTagsRoute, async (ctx) => {
 })
 
 export default browse
-
-/**
- * The signed-in reader, or null.
- *
- * Deliberately quiet: every failure - no header, an expired token, a malformed one - answers null
- * and the caller gets the public catalogue. Browsing a store is not a privileged act, and turning a
- * stale session into an error would break the anonymous case this endpoint has always served.
- *
- * An API key is NOT accepted. A CI key exists to publish, and letting one read a catalogue scoped
- * to its owner's memberships would widen what a key in a build server can see for no reason anyone
- * asked for.
- */
-async function optionalViewer(ctx: { get: (k: string) => unknown; req: { header: (n: string) => string | undefined } }): Promise<string | null> {
-  const header = ctx.req.header("Authorization")
-  if (!header || !header.toLowerCase().startsWith("bearer ")) return null
-  const token = header.slice(7).trim()
-  if (token.length === 0) return null
-
-  // The anon key arrives in this header from some clients. It is a valid JWT and resolves to no
-  // user, so getUser refuses it - but checking first saves a network round trip on the common path.
-  try {
-    const supabase = ctx.get("supabase") as { auth: { getUser: (t: string) => Promise<{ data: { user: { id: string } | null } }> } }
-    const { data } = await supabase.auth.getUser(token)
-    return data?.user?.id ?? null
-  } catch {
-    return null
-  }
-}
