@@ -5,6 +5,7 @@ import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.awt.Frame
 import java.awt.Window
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
@@ -285,6 +286,42 @@ private data class WindowFullscreenSignals(
     val composeFullscreen: Boolean = false,
 )
 
+/** Whether [extendedState] has the ICONIFIED bit, i.e. the window sits in the taskbar. */
+internal fun isIconified(extendedState: Int): Boolean = (extendedState and Frame.ICONIFIED) != 0
+
+/**
+ * [extendedState] with only the ICONIFIED bit cleared.
+ *
+ * Deliberately not `Frame.NORMAL`, which is zero and therefore drops MAXIMIZED_BOTH as well:
+ * restoring a window the user had maximized would hand it back to them as a small one. Pure and
+ * top level so both branches are pinned by a test without needing a display.
+ */
+internal fun deiconified(extendedState: Int): Int = extendedState and Frame.ICONIFIED.inv()
+
+/**
+ * Undo whatever is keeping [this] off the screen, before something tries to focus it.
+ * Call before toFront(): an iconified frame must first be restored.
+ *
+ * Two different states hide a window and only one of them was handled. The comment this
+ * replaced said "make window visible if minimized" and then tested `isVisible`, but a
+ * minimized window is already visible: it is ICONIFIED. So `toFront()` and `requestFocus()`
+ * ran against a window still in the taskbar, and the caller was told the focus succeeded.
+ * Cross-window tab selection made that observable, by selecting a tab in a window the user
+ * never saw come forward.
+ *
+ * Clears only the ICONIFIED bit rather than assigning `Frame.NORMAL`, which would also drop
+ * MAXIMIZED_BOTH and restore a maximized window to a small one. Same form as
+ * `SettingsWindow`, which already got this right.
+ */
+private fun Window.restoreForFocus() {
+    if (!isVisible) {
+        isVisible = true
+    }
+    if (this is Frame && isIconified(extendedState)) {
+        extendedState = deiconified(extendedState)
+    }
+}
+
 /**
  * Handles multi-window focus tracking with two intentionally different views:
  * [isWindowFocused] is the live AWT focus used to gate browser input, while
@@ -532,6 +569,19 @@ actual object WindowFocusManager {
         )
 
     /**
+     * Every registered window, ordered the same way [resolveActionableWindowId] prioritizes ids -
+     * the resolved id's window first (when it still resolves to one), then every other registered
+     * window. For a caller that needs an actual usable owner rather than just an id: a window this
+     * function names can be disposed-but-not-yet-unregistered (the EDT unregister hasn't run yet),
+     * so a caller like [ai.rever.boss.platform.pickDialogOwner] still has to check `isDisplayable`
+     * itself - this only fixes "which windows are worth checking", not "is the first one usable".
+     */
+    fun candidateWindowsForDialogOwner(): List<Window> {
+        val primary = resolveActionableWindowId()?.let(::getWindow)
+        return listOfNotNull(primary) + windows.values.filter { it !== primary }
+    }
+
+    /**
      * Bring a specific window to front by its ID
      *
      * @param windowId The ID of the window to focus
@@ -541,15 +591,8 @@ actual object WindowFocusManager {
         val window = windows[windowId]
         return if (window != null) {
             SwingUtilities.invokeLater {
-                // Make window visible if minimized
-                if (!window.isVisible) {
-                    window.isVisible = true
-                }
-
-                // Bring to front
+                window.restoreForFocus()
                 window.toFront()
-
-                // Request focus
                 window.requestFocus()
             }
             true
@@ -564,10 +607,7 @@ actual object WindowFocusManager {
     actual fun bringToFront() {
         mainWindow?.let { window ->
             SwingUtilities.invokeLater {
-                // Make window visible if minimized
-                if (!window.isVisible) {
-                    window.isVisible = true
-                }
+                window.restoreForFocus()
 
                 // Bring to front
                 window.toFront()
