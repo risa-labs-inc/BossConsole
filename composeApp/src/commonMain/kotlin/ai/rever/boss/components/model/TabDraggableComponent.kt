@@ -560,7 +560,13 @@ class TabDraggableComponent {
     /**
      * End the drag and return the result, or null if cancelled.
      */
-    fun endDrag(): TabDropResult? {
+    fun endDrag(sourceIndex: Int? = null): TabDropResult? {
+        // The source can be reindexed while the gesture survives. Refresh before computing the
+        // insertion adjustment, and resolve the target from the latest registered bounds.
+        if (sourceIndex != null && draggingTab != null) {
+            draggingTab = draggingTab?.copy(sourceIndex = sourceIndex)
+            updateDropTarget()
+        }
         val dragging = draggingTab
         val target = dropTarget
 
