@@ -14,11 +14,12 @@ class ProcessWideDialogOwnershipTest {
         assertTrue(captureSection.contains(gate))
         val body = captureSection.substringAfter(gate)
         var depth = 1
-        val end = body.indexOfFirst { character ->
-            if (character == '{') depth++
-            if (character == '}') depth--
-            depth == 0
-        }
+        val end =
+            body.indexOfFirst { character ->
+                if (character == '{') depth++
+                if (character == '}') depth--
+                depth == 0
+            }
         assertTrue(end >= 0)
         val ownedBody = body.substring(0, end)
         for (flow in listOf("captureRequest", "permissionRationale")) {
