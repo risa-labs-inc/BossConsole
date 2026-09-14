@@ -62,6 +62,8 @@ data class BrowserContextMenuInfo(
     val pageTitle: String = "",
     /** Form field info if right-clicked on a form field (for secret auto-fill) */
     val formFieldInfo: FormFieldInfo? = null,
+    /** Menu context token, used to route editor commands to the exact clicked frame */
+    val menuContext: BrowserMenuContext? = null,
 )
 
 /**
@@ -139,6 +141,24 @@ const val PAGE_EVENT_BRIDGE = "__bossPageEvent"
  * would post into a method that no longer exists with nothing in any log.
  */
 const val PAGE_EVENT_EMIT = "emit"
+
+/**
+ * Opaque token representing the context of a single browser right-click menu invocation.
+ *
+ * Created by the host when a context menu is opened and delivered to plugins via
+ * [BrowserContextMenuInfo.menuContext]. A plugin's menu action should capture this token and
+ * pass it to the corresponding [BrowserHandle] editor command (e.g. [BrowserHandle.copySelection])
+ * to route the operation to the exact frame the user clicked on.
+ *
+ * **Not global state.** Each right-click creates a distinct token. Dismissing a menu or opening
+ * a second menu does not affect tokens from earlier invocations. An ordinary editor command
+ * (one without a menu context) uses normal focused-frame / main-frame resolution and is never
+ * influenced by any previously created menu context.
+ *
+ * Plugins may hold and pass this token but must not attempt to construct or inspect its internals.
+ * The underlying frame association is managed by the host implementation.
+ */
+interface BrowserMenuContext
 
 interface BrowserHandle {
     /**
@@ -522,23 +542,34 @@ interface BrowserHandle {
 
     /**
      * Copy the currently selected text to the clipboard.
+     *
+     * @param menuContext When supplied (from [BrowserContextMenuInfo.menuContext]), the command
+     *   targets the exact frame the user right-clicked on. When `null`, the command uses ordinary
+     *   focused-frame / main-frame resolution. A menu context is NOT global state and does not
+     *   affect later ordinary commands.
      */
-    fun copySelection()
+    fun copySelection(menuContext: BrowserMenuContext? = null)
 
     /**
      * Paste text from the clipboard at the current cursor position.
+     *
+     * @param menuContext See [copySelection].
      */
-    fun paste()
+    fun paste(menuContext: BrowserMenuContext? = null)
 
     /**
      * Cut the currently selected text to the clipboard.
+     *
+     * @param menuContext See [copySelection].
      */
-    fun cut()
+    fun cut(menuContext: BrowserMenuContext? = null)
 
     /**
      * Select all text on the page.
+     *
+     * @param menuContext See [copySelection].
      */
-    fun selectAll()
+    fun selectAll(menuContext: BrowserMenuContext? = null)
 
     // ============================================================
     // POPUP AND NEW TAB HANDLING
