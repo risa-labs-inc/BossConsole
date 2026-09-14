@@ -1124,12 +1124,13 @@ fun ApplicationScope.BossWindow(
             // two windows open it is false in BOTH, so nobody mounts the dialog and the notice is
             // never seen at all. Reading `windows` also registers a snapshot read, so this re-evaluates
             // when the first window closes and the role passes to the next one.
-            val ownsProcessWideDialogs =
+            // Shared ownership for memory pressure and the capture dialogs below.
+            val isDialogOwner =
                 ownsProcessWideDialogs(
                     windowId = windowState.id,
                     orderedWindowIds = WindowManager.windows.map { it.id },
                 )
-            if (ownsProcessWideDialogs) {
+            if (isDialogOwner) {
                 ai.rever.boss.performance.MemoryPressureNoticeDialog(
                     onRestartRequested = {
                         ai.rever.boss.config.ResourceModeConfig
@@ -1404,9 +1405,18 @@ fun ApplicationScope.BossWindow(
 
             // Capture state is process-global. Rendering it in every window creates several
             // pickers that race to resolve the same one-shot request.
-            if (ownsProcessWideDialogs) {
+            // The oldest surviving window owns these dialogs, even when another window requested
+            // capture. Raise it when a request arrives or ownership transfers so consent is visible.
+            if (isDialogOwner) {
                 // Screen Capture Picker Dialog
                 val captureRequest by ScreenCaptureNotifier.captureRequest.collectAsState()
+                val permissionRationale by ScreenCaptureNotifier.permissionRationale.collectAsState()
+                LaunchedEffect(captureRequest?.requestId, permissionRationale) {
+                    if (captureRequest != null || permissionRationale != null) {
+                        composeWindowState.isMinimized = false
+                        WindowFocusManager.focusWindow(windowState.id)
+                    }
+                }
                 captureRequest?.let { request ->
                     ScreenCapturePickerDialog(
                         screens = request.screens,
@@ -1419,8 +1429,7 @@ fun ApplicationScope.BossWindow(
                     )
                 }
 
-                // Screen Recording permission rationale — explains why, before the macOS prompt.
-                val permissionRationale by ScreenCaptureNotifier.permissionRationale.collectAsState()
+                // Screen Recording permission rationale - explains why, before the macOS prompt.
                 if (permissionRationale != null) {
                     BossAlertDialog(
                         onDismissRequest = { ScreenCaptureNotifier.resolvePermissionRationale(false) },
