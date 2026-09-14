@@ -172,7 +172,12 @@ intellij-platform = "243.21565.199"
 # bump-pushes before building, so api main's version IS the version already released and the next
 # merge cuts version + 1 - re-read it when #44 actually merges, because anything landing first
 # moves this and the topofmind pin again.
-boss-plugin-api = "1.0.90"
+#
+# 1.0.91 adds fail-closed organisation-secret access envelopes and default-bodied
+# SecretDataProvider methods. The host overrides them in this branch so can_manage,
+# org ownership and organisation share targets survive both the in-process and KERNEL
+# paths. The contract was published in boss-plugin-api#60 before this pin moved.
+boss-plugin-api = "1.0.91"
 
 [libraries]
 kotlin-test-junit = { module = "org.jetbrains.kotlin:kotlin-test-junit", version.ref = "kotlin" }
