@@ -2556,8 +2556,18 @@ internal class BrowserHandleImpl(
         // Someone asked for this destination by name (URL bar, bookmark, deep link) rather
         // than clicking through to it. Only these four entry points can say how a navigation
         // started; anything reaching the handler without a hint came from the page.
-        visitTracker.expect(BrowserNavigationType.TYPED)
-        browser.navigation().loadUrl(url)
+        try {
+            visitTracker.expect(BrowserNavigationType.TYPED)
+            browser.navigation().loadUrl(url)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (isTransportFailure(e)) {
+                connectionDead.set(true)
+                ActiveBrowserRegistry.republish()
+            }
+            throw e
+        }
     }
 
     override suspend fun loadUrlAndWait(url: String) {
@@ -2568,16 +2578,26 @@ internal class BrowserHandleImpl(
         // Same user action as loadUrl, so the same hint. Missing it here filed every
         // wait-for-load navigation under LINK.
         visitTracker.expect(BrowserNavigationType.TYPED)
-        withContext(Dispatchers.Main) {
-            val done = CompletableDeferred<Boolean>()
-            val sub = browser.navigation().on(LoadFinished::class.java) { done.complete(true) }
-            try {
-                browser.navigation().loadUrl(url)
-                // Best-effort: returns null on timeout (no throw); real cancellation still propagates.
-                withTimeoutOrNull(LOAD_TIMEOUT_MS) { done.await() }
-            } finally {
-                sub.unsubscribe()
+        try {
+            withContext(Dispatchers.Main) {
+                val done = CompletableDeferred<Boolean>()
+                val sub = browser.navigation().on(LoadFinished::class.java) { done.complete(true) }
+                try {
+                    browser.navigation().loadUrl(url)
+                    // Best-effort timeout; caller cancellation still propagates.
+                    withTimeoutOrNull(LOAD_TIMEOUT_MS) { done.await() }
+                } finally {
+                    sub.unsubscribe()
+                }
             }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (isTransportFailure(e)) {
+                connectionDead.set(true)
+                ActiveBrowserRegistry.republish()
+            }
+            throw e
         }
     }
 
@@ -2605,7 +2625,18 @@ internal class BrowserHandleImpl(
                 )
             },
         ) {
-            browser.mainFrame().map { it.executeJavaScript<Any?>(script) }.orElse(null)
+            // Observe native failure even if the awaiting caller has timed out or cancelled.
+            try {
+                browser.mainFrame().map { it.executeJavaScript<Any?>(script) }.orElse(null)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (isTransportFailure(e)) {
+                    connectionDead.set(true)
+                    ActiveBrowserRegistry.republish()
+                }
+                throw e
+            }
         }
     }
 
