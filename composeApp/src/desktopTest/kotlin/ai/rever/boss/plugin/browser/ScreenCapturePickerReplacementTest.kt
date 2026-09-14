@@ -1,5 +1,6 @@
 package ai.rever.boss.plugin.browser
 
+import ai.rever.boss.components.overlays.resetOverlayFieldForTest
 import ai.rever.boss.plugin.ui.BossOverlayHost
 import ai.rever.boss.plugin.ui.LocalHeavyweightOverlays
 import androidx.compose.runtime.CompositionLocalProvider
@@ -10,8 +11,11 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import org.junit.After
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertSame
 
 class ScreenCapturePickerReplacementTest {
     @get:Rule
@@ -20,10 +24,20 @@ class ScreenCapturePickerReplacementTest {
     private val previousRenderer = BossOverlayHost.modalRenderer
     private val previousHeavyweight = BossOverlayHost.useHeavyweightOverlays
 
+    @Before
+    fun prepareRenderer() {
+        resetOverlayFieldForTest("modalRenderer")
+        resetOverlayFieldForTest("useHeavyweightOverlays")
+    }
+
     @After
     fun restoreRenderer() {
+        resetOverlayFieldForTest("modalRenderer")
+        resetOverlayFieldForTest("useHeavyweightOverlays")
         BossOverlayHost.modalRenderer = previousRenderer
         BossOverlayHost.useHeavyweightOverlays = previousHeavyweight
+        assertSame(previousRenderer, BossOverlayHost.modalRenderer)
+        assertEquals(previousHeavyweight, BossOverlayHost.useHeavyweightOverlays)
     }
 
     @Test
