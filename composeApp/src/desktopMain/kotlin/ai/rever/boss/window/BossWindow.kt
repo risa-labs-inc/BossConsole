@@ -1419,6 +1419,7 @@ fun ApplicationScope.BossWindow(
                 }
                 captureRequest?.let { request ->
                     ScreenCapturePickerDialog(
+                        requestId = request.requestId,
                         screens = request.screens,
                         windows = request.windows,
                         browsers = request.browsers,
