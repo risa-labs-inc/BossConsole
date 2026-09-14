@@ -1,29 +1,31 @@
 # Managed BOSS AI
 
-The function owns inference routing, authorization, provider metadata and per-user/model allowances.
-Secret Manager automatically discovers BOSS AI using the existing generic authenticated Supabase RPC
-API. No host-specific broker registration, shared vault definition, or upstream API key on the
-desktop is needed.
+The function owns inference routing, authorization and per-user/model allowances. Secret Manager
+discovers the provider from a shared vault definition. It does not ship a BOSS AI provider entry or
+an upstream API key. The host registers only the trusted `boss-ai` credential broker, whose endpoint
+cannot be changed by a share.
 
 ## Deployment
 
 1. Apply `20260912000000_boss_ai.sql`, `20260912001000_boss_ai_hardening.sql`,
-   `20260912002000_boss_ai_validation.sql`, `20260912003000_boss_ai_allowance_preflight.sql`, and
-   `20260912004000_boss_ai_exchange_tickets.sql` in order. Earlier files have already been applied
-   to the preview branch; fixes are forward migrations, not edits to applied history.
+   `20260912002000_boss_ai_validation.sql`, and `20260912003000_boss_ai_allowance_preflight.sql` in
+   order. Earlier files have already been applied to the preview branch; fixes are forward
+   migrations, not edits to applied history.
 2. Set `BOSS_AI_SIGNING_SECRET` to at least 32 random bytes (encoded as a string). Set upstream API
    keys as secrets named `BOSS_AI_<NAME>`. The signing-secret name is explicitly prohibited as an
    upstream key in both SQL and the handler. Never put these keys in a shared vault entry. Supabase
    supplies its URL and service-role key.
 3. Deploy `boss-ai` using this repository's `supabase/config.toml`. `verify_jwt=false` is required
-   because `/auth/exchange` redeems a single-use ticket, `/auth/token` supports legacy BOSS
-   sessions, and catalog/inference routes verify AI-scoped tokens.
+   because the handler verifies two distinct credentials: BOSS sessions on `/auth/token`, AI-scoped
+   tokens elsewhere.
 4. Configure one or more connections, models, and permission allowances using the SQL editor or
    service-role administration. No client role can read/write these tables or impersonate a user
    through the accounting RPCs.
-5. Install the updated Secret Manager plugin (1.2.25 or later). Existing AI Gateway Chat Completions
-   transport and the existing desktop generic Supabase RPC API are sufficient. BOSS AI is created in
-   memory automatically; new users do not create or receive a secret.
+5. Create the shared definition below in Secret Manager and share it read-only with the baseline
+   `user` role. Only an administrator with role-sharing permission can do this. The owner retains
+   editing control.
+6. Install a host build with the broker registration and the updated Secret Manager plugin. Existing
+   AI Gateway Chat Completions transport is sufficient.
 
 The integration audit checked AI Gateway's `OpenAiChatFormat.buildPayload` in `WireFormat.kt`:
 `model`, `max_tokens`, optional temperature, streaming with usage, tools, and complete message/tool
@@ -38,32 +40,11 @@ usage or adding vendor fields.
 No migration publishes a made-up model, invents an API key, or picks an allowance. Those are
 required deployment inputs. Plugin bundling is outside this change.
 
-## Plugin-owned authentication and discovery
+## Shared vault definition
 
-1. Secret Manager calls `boss_ai_create_exchange_ticket()` through the existing authenticated RPC
-   API. The database derives the user from `auth.uid()` and checks `ai.use`, bans and anonymous
-   status. No caller-supplied user id is accepted.
-2. The plugin POSTs the returned ticket to `/auth/exchange`. The edge function redeems it through
-   the service-only `boss_ai_consume_exchange_ticket` RPC, then mints a five-minute AI token.
-3. The plugin GETs `/v1/provider` with that AI token. The versioned metadata supplies the provider
-   name, API base and new-user default recommendation. The plugin confines all endpoints to its
-   trusted BOSS AI scope and refuses redirects.
-4. `/v1/models` supplies permission-filtered models, capabilities, limits, defaults and allowances.
-   Inference independently enforces live authorization and usage policy.
-
-Tickets expire after 60 seconds, are stored only as SHA-256 hashes, and are consumed atomically.
-Each user may hold at most eight pending tickets; issuance removes their expired tickets. The edge
-function alone can redeem them. Ban and permission checks run again at redemption. No BOSS login
-token reaches the plugin, and no extra signing secret is required by the database. Credentials and
-account-specific catalogs stay in memory. Explicit provider/model preferences remain local and are
-never overwritten by a provider default. The stable provider id is `managed:boss-ai`; optional
-legacy shared definitions for this same provider are deduplicated.
-
-`/auth/token` remains for compatibility with already shipped host brokers. The plugin does not use
-it or require a host broker registration. The function source lives in this repository for backend
-deployment; it is not desktop runtime code.
-
-The `/v1/provider` response is:
+Create a normal secret with website/name `BOSS AI`, username `BOSS sign-in`, password
+`Managed by BOSS` (an inert placeholder, never used as a credential), tag `ai-provider-definition`,
+and these notes:
 
 ```json
 {
@@ -74,6 +55,17 @@ The `/v1/provider` response is:
   "defaultForNewUsers": true
 }
 ```
+
+The provider identity is derived from the secret's UUID, so renaming the shared entry does not lose
+selections. Users' model choices are local preferences and never modify the shared definition. A
+shared note can reference only a broker known to the host and endpoints within that broker's
+declared scope. A forged share cannot send a login token or a broker credential to an arbitrary URL.
+
+Share with `user` to distribute to everyone, or use existing user/role/organisation sharing for
+narrower distribution. Availability of a definition and permission to spend on a model are separate:
+inference always rechecks the model's live policy. The `ai.use` permission is granted to the
+baseline user role by the migration. Additional allowance permissions use the existing RBAC
+administration.
 
 ## Server configuration example
 
