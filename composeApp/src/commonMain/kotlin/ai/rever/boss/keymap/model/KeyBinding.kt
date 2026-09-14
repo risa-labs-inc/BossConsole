@@ -1,5 +1,6 @@
 package ai.rever.boss.keymap.model
 
+import ai.rever.boss.utils.SystemUtils
 import androidx.compose.ui.input.key.Key
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
@@ -24,6 +25,176 @@ internal fun canonicalModifiers(modifiers: List<String>): Set<String> =
                 else -> lower
             }
         }
+
+/**
+ * Whether the primary modifier a chord asks for is the one actually held.
+ *
+ * The ONE definition of the Cmd/Ctrl rule, taking [isMacOS] as a parameter rather than reading it,
+ * so both platform branches are reachable from a test on either machine. They were not: every
+ * matcher read `SystemUtils.isMacOS` inline, so on a Mac only the Mac branch ever ran, which is how
+ * the non-mac branch below stayed wrong.
+ *
+ * **On macOS the two spellings are different keys.** Cmd is Meta, Ctrl is Control, and a chord
+ * naming one must not fire on the other.
+ *
+ * **Off macOS they are the same key, and that key is Control.** `KeyStroke.displayString` already
+ * renders both "cmd" and "ctrl" as "Ctrl" there, and `KeyBinding.fromKeyEvent` already records
+ * "Ctrl" for a Control press. The previous rule sent an explicit "Ctrl" to the Meta key instead, so
+ * a chord the recorder produced was one the matcher refused, and the Settings page displayed a
+ * shortcut that could not fire. That was the whole of BossConsole#553, and the default preset's
+ * Ctrl+Tab was its most visible instance rather than its cause.
+ *
+ * Super bindings recorded by the old dialog as "Ctrl" now fire on Control off macOS.
+ * That is a compatibility change: the old UI could record Super, though it displayed "Ctrl".
+ * Unsupported new Super captures are rejected rather than silently saving a different chord.
+ */
+internal fun primaryModifierPressed(
+    hasCmd: Boolean,
+    hasCtrl: Boolean,
+    metaDown: Boolean,
+    controlDown: Boolean,
+    isMacOS: Boolean,
+): Boolean =
+    when {
+        !hasCmd && !hasCtrl -> !metaDown && !controlDown
+        isMacOS -> (hasCmd && metaDown) || (hasCtrl && controlDown)
+        else -> controlDown
+    }
+
+/**
+ * The token both primary spellings collapse to off macOS, where they are one physical key.
+ *
+ * It is deliberately not "cmd" or "ctrl": either would read as though one spelling had won, and
+ * the point is that off macOS the question "which of the two?" has no answer.
+ */
+internal const val PRIMARY_MODIFIER = "primary"
+
+/**
+ * What "the same chord" means, as the mirror of [primaryModifierPressed].
+ *
+ * Everything that asks whether two chords collide compares these strings: `KeymapValidator`'s
+ * conflict grouping, `KeymapPresets.claimsChord` and `withoutChordsTakenBy`, and the migration's
+ * chord check. They must agree with the matcher about identity, or the app dispatches two actions
+ * from one keypress while the Settings page shows no conflict badge.
+ *
+ * Off macOS `Cmd` and `Ctrl` are the same physical key, so `Ctrl+W` and `Cmd+W` are ONE chord and
+ * must share a signature. They did not: a captured `Ctrl+W` and the preset's `Cmd+W` both fired on
+ * Control, `checkBinding` and `findConflicts` reported nothing, and because the same signature
+ * backs `claimsChord`, migration could add a second action onto a chord that was already taken.
+ *
+ * On macOS they are different keys and the signatures stay distinct.
+ *
+ * [canonicalModifiers] deliberately keeps the two apart, because its other callers
+ * ([KeymapMatcher], `MenuShortcutBridge`, `AWTKeyboardInterceptor`) need to know which spelling a
+ * chord used before [primaryModifierPressed] folds it. The fold belongs here, not there.
+ */
+internal fun chordSignature(
+    key: String,
+    modifiers: List<String>,
+    isMacOS: Boolean,
+): String {
+    val canonical = canonicalModifiers(modifiers)
+    val folded =
+        if (isMacOS) {
+            canonical
+        } else {
+            canonical.mapTo(mutableSetOf()) { modifier ->
+                if (modifier == "cmd" || modifier == "ctrl") PRIMARY_MODIFIER else modifier
+            }
+        }
+    val modifierStr = folded.sorted().joinToString("+")
+    val keyStr = canonicalKeyName(key)
+    return if (modifierStr.isNotEmpty()) "$modifierStr+$keyStr" else keyStr
+}
+
+/**
+ * The event side of a match: which key went down and which modifiers were held.
+ *
+ * A holder rather than five more parameters because detekt caps a parameter list at six, and
+ * because the five travel together everywhere they are used.
+ */
+internal data class EventChord(
+    val key: String,
+    val metaDown: Boolean = false,
+    val controlDown: Boolean = false,
+    val shiftDown: Boolean = false,
+    val altDown: Boolean = false,
+)
+
+/**
+ * Whether a keystroke answers a key event, as a pure function of the platform.
+ *
+ * This is the body of [KeyStroke.matches]. It exists so both platform branches are reachable from a
+ * test, which is the same reason [primaryModifierPressed] takes [isMacOS] rather than reading it.
+ *
+ * It defers the primary-modifier decision to [primaryModifierPressed] instead of comparing
+ * `hasCmd == metaDown` itself. That comparison was platform-unaware, so off macOS it sent a `Cmd`
+ * chord to the Meta key and refused an explicit `Ctrl` chord on Control, which is the rule the live
+ * matcher stopped using in #553.
+ *
+ * One difference from [KeymapMatcher] remains and is intentional here: the key name is compared
+ * literally rather than through `canonicalKeyName`, which is the behaviour this function's callers
+ * already have. Folding key aliases too would change more than the modifier rule this reconciles.
+ */
+internal fun keystrokeMatches(
+    keystrokeKey: String,
+    modifiers: List<String>,
+    event: EventChord,
+    isMacOS: Boolean,
+): Boolean {
+    if (!keystrokeKey.equals(event.key, ignoreCase = true)) return false
+    val canonical = canonicalModifiers(modifiers)
+    return primaryModifierPressed(
+        hasCmd = "cmd" in canonical,
+        hasCtrl = "ctrl" in canonical,
+        metaDown = event.metaDown,
+        controlDown = event.controlDown,
+        isMacOS = isMacOS,
+    ) &&
+        ("shift" in canonical) == event.shiftDown &&
+        ("alt" in canonical) == event.altDown
+}
+
+/**
+ * The modifier names to RECORD for the physical keys held, as the mirror of
+ * [primaryModifierPressed].
+ *
+ * The two have to be one decision. Before #553 the capture dialog had its own inline swap and the
+ * matchers had theirs, and they happened to agree; the default preset, written by hand, did not
+ * agree with either, and nothing could have told anyone because no test ran the non-mac branch.
+ *
+ * On macOS both primary modifiers are recorded, because they are different keys.
+ *
+ * Off macOS only Control is, and it is recorded as "Ctrl". That is the spelling
+ * [KeyStroke.displayString] renders on that platform and the spelling the default preset already
+ * uses, so what is written down, what is shown and what fires are the same thing. A Super press
+ * returns null: callers must reject it rather than silently dropping a held modifier.
+ *
+ * "Cmd" remains accepted on read, so keymaps written by the previous capture dialog, which recorded
+ * a Control press as "Cmd" off macOS, keep working untouched. Legacy "Ctrl" bindings
+ * previously fired on Super and now fire on Control; their intended modifier cannot be inferred.
+ */
+internal fun recordedModifiers(
+    metaDown: Boolean,
+    controlDown: Boolean,
+    shiftDown: Boolean,
+    altDown: Boolean,
+    isMacOS: Boolean,
+): List<String>? =
+    if (!isMacOS && metaDown) {
+        null
+    } else {
+        buildList {
+            if (isMacOS) {
+                if (metaDown) add("Cmd")
+                if (controlDown) add("Ctrl")
+            } else {
+                if (controlDown) add("Ctrl")
+            }
+            if (shiftDown) add("Shift")
+            if (altDown) add("Alt")
+        }
+    }
 
 /**
  * The prefix `Key.toString()` renders in front of a key's name.
@@ -293,20 +464,13 @@ data class KeyStroke(
         }
 
     /**
-     * Returns a signature for conflict detection.
-     * Format: "modifiers+key"
+     * Returns a signature for conflict detection. Format: "modifiers+key".
+     *
+     * Platform-dependent by design: off macOS `Cmd+W` and `Ctrl+W` are one chord and share a
+     * signature, because they are one physical key. See [chordSignature], which is the testable
+     * form and which this reads the platform for.
      */
-    fun signature(): String {
-        // Canonicalised on both halves, not merely sorted and uppercased. Everything that asks
-        // "is this the same chord" compares signatures - KeymapValidator's conflict grouping,
-        // KeymapPresets.claimsChord, the migration's chord check - while findMatchingBinding
-        // folds aliases when it matches. A file spelling a chord ["Meta","Option"]+"Right" is
-        // the same chord to the matcher and used to be a different one here, which let migration
-        // add a second action onto it: a chord that then neither works nor shows a badge.
-        val modifierStr = canonicalModifiers(modifiers).sorted().joinToString("+")
-        val keyStr = canonicalKeyName(key)
-        return if (modifierStr.isNotEmpty()) "$modifierStr+$keyStr" else keyStr
-    }
+    fun signature(): String = chordSignature(key, modifiers, SystemUtils.isMacOS)
 
     /**
      * Checks if this keystroke matches the given key event properties.
@@ -317,21 +481,20 @@ data class KeyStroke(
         isCtrlPressed: Boolean,
         isShiftPressed: Boolean,
         isAltPressed: Boolean,
-    ): Boolean {
-        // Check if key matches
-        if (!key.equals(eventKey, ignoreCase = true)) return false
-
-        // Check modifiers
-        val hasCmd = modifiers.any { it.equals("Cmd", true) || it.equals("Meta", true) }
-        val hasCtrl = modifiers.any { it.equals("Ctrl", true) || it.equals("Control", true) }
-        val hasShift = modifiers.any { it.equals("Shift", true) }
-        val hasAlt = modifiers.any { it.equals("Alt", true) || it.equals("Option", true) }
-
-        return (hasCmd == isMetaPressed) &&
-            (hasCtrl == isCtrlPressed) &&
-            (hasShift == isShiftPressed) &&
-            (hasAlt == isAltPressed)
-    }
+    ): Boolean =
+        keystrokeMatches(
+            keystrokeKey = key,
+            modifiers = modifiers,
+            event =
+                EventChord(
+                    key = eventKey,
+                    metaDown = isMetaPressed,
+                    controlDown = isCtrlPressed,
+                    shiftDown = isShiftPressed,
+                    altDown = isAltPressed,
+                ),
+            isMacOS = SystemUtils.isMacOS,
+        )
 
     companion object {
         /**
@@ -421,8 +584,10 @@ data class KeyBinding(
 
     /**
      * Returns a unique signature for this key binding's primary keystroke (for conflict detection).
-     * Format: "context:modifiers+key"
-     * Example: "GLOBAL:Cmd+Shift+N"
+     * Format: "context:modifiers+key". Example on macOS: "GLOBAL:cmd+shift+N".
+     *
+     * Off macOS the primary modifier folds, so the same binding signs as "GLOBAL:primary+shift+N"
+     * and collides with the Ctrl spelling as it should. See [chordSignature].
      */
     fun signature(): String = "${context.name}:${primaryKeystroke.signature()}"
 
@@ -477,11 +642,18 @@ data class KeyBinding(
             category: String = "Other",
             description: String = "",
         ): KeyBinding {
-            val modifiers = mutableListOf<String>()
-            if (isMetaPressed) modifiers.add("Cmd")
-            if (isCtrlPressed) modifiers.add("Ctrl")
-            if (isShiftPressed) modifiers.add("Shift")
-            if (isAltPressed) modifiers.add("Alt")
+            // Was a third spelling of the Cmd/Ctrl rule, disagreeing with both the matcher and
+            // the capture dialog while having no caller. A third copy waiting for its first caller
+            // is the shape of every keymap bug this codebase has had, so it now shares the one
+            // definition rather than being deleted and re-added by the next person who needs it.
+            val modifiers =
+                recordedModifiers(
+                    metaDown = isMetaPressed,
+                    controlDown = isCtrlPressed,
+                    shiftDown = isShiftPressed,
+                    altDown = isAltPressed,
+                    isMacOS = SystemUtils.isMacOS,
+                )
 
             return KeyBinding(
                 actionId = actionId,
@@ -489,7 +661,7 @@ data class KeyBinding(
                 // dialog's (#329); this copy has no caller today, which is exactly why it would
                 // have been the one to survive.
                 key = storedKeyName(key),
-                modifiers = modifiers,
+                modifiers = requireNotNull(modifiers) { "Super shortcuts are unsupported on this platform" },
                 context = context,
                 enabled = true,
                 category = category,
@@ -502,9 +674,8 @@ data class KeyBinding(
         // consulted by neither matcher; now that both walk allKeystrokes it would be wrong in
         // both directions, so it is gone rather than left as a trap. On macOS the alternate
         // really fires, so Ctrl+N would open a window as well as Cmd+N. On Windows and Linux
-        // "Ctrl" maps to isMetaDown, so the alternate demands the Super key and is unreachable
-        // - while the Cmd primary already matches the Control key, which is the whole thing the
-        // helper was reaching for. No preset ever used it.
+        // both spellings now match Control, so the alternate merely duplicates the primary.
+        // No preset ever used it.
 
         /**
          * Creates a KeyBinding with multiple keystrokes.

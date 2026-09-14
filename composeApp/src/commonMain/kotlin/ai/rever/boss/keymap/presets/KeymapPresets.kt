@@ -5,6 +5,7 @@ import ai.rever.boss.keymap.model.KeyStroke
 import ai.rever.boss.keymap.model.KeymapActions
 import ai.rever.boss.keymap.model.KeymapSettings
 import ai.rever.boss.keymap.model.ShortcutContext
+import ai.rever.boss.utils.SystemUtils
 
 /**
  * Preset keyboard shortcut configurations.
@@ -487,11 +488,19 @@ object KeymapPresets {
                     category = KeymapActions.Categories.EDITOR,
                     description = KeymapActions.getDescription(KeymapActions.EDITOR_REPLACE),
                 ),
-                // VS Code uses F3/Cmd+G for Find Next
+                // VS Code uses F3/Cmd+G for Find Next, and the split is not cosmetic: off macOS
+                // this preset also binds Ctrl+G to Go to Line eleven lines below, and since #553
+                // both spellings ARE the Control key there. Shipping both put two EDITOR actions
+                // on Control+G on Windows and Linux, which is what real VS Code avoids by using
+                // F3 on those platforms and reserving Ctrl+G for Go to Line.
+                //
+                // The conflict was invisible because signatures did not fold the primary modifier
+                // while the matcher did, so KeymapValidator saw two chords where the user had one
+                // key. chordSignature now folds, which is what surfaced this.
                 KeyBinding(
                     actionId = KeymapActions.EDITOR_FIND_NEXT,
-                    key = "G",
-                    modifiers = listOf("Cmd"),
+                    key = if (SystemUtils.isMacOS) "G" else "F3",
+                    modifiers = if (SystemUtils.isMacOS) listOf("Cmd") else emptyList(),
                     context = ShortcutContext.EDITOR,
                     category = KeymapActions.Categories.EDITOR,
                     description = KeymapActions.getDescription(KeymapActions.EDITOR_FIND_NEXT),

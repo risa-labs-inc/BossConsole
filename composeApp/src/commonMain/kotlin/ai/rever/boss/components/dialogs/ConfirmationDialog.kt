@@ -39,6 +39,7 @@ fun ConfirmationDialog(
     confirmColor: Color = BossTheme.colors.alert, // destructive
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
+    confirmEnabled: Boolean = true,
 ) {
     val colors = BossTheme.colors
     val radii = BossTheme.radius
@@ -120,6 +121,7 @@ fun ConfirmationDialog(
                     Spacer(modifier = Modifier.width(8.dp))
 
                     Button(
+                        enabled = confirmEnabled,
                         onClick = {
                             onConfirm()
                             onDismiss()

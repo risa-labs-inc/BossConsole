@@ -19,12 +19,23 @@ fun repoRoot(): File {
     error("could not locate the repository root from ${File(".").absolutePath}")
 }
 
-/** Every `.kt` file under the given repo-relative roots that exist. */
+/**
+ * Every source `.kt` file under the given repo-relative roots that exist.
+ *
+ * Generated sources are deliberately excluded. Convention tests use this helper to police the
+ * checked-in source tree; scanning `build/` makes their result depend on which Gradle tasks happened
+ * to run first and lets generated copies create false positives.
+ */
 fun kotlinSourcesUnder(
     root: File,
     vararg relativeRoots: String,
 ): List<File> {
     val roots = relativeRoots.map { File(root, it) }.filter { it.isDirectory }
     check(roots.isNotEmpty()) { "none of ${relativeRoots.toList()} found under $root" }
-    return roots.flatMap { it.walkTopDown().filter { f -> f.isFile && f.extension == "kt" } }
+    return roots.flatMap { sourceRoot ->
+        sourceRoot
+            .walkTopDown()
+            .onEnter { directory -> directory.name != "build" }
+            .filter { file -> file.isFile && file.extension == "kt" }
+    }
 }
