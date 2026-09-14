@@ -5,6 +5,7 @@ import ai.rever.boss.components.window_panel.components.main_window_panels.SIDEB
 import ai.rever.boss.components.window_panel.components.main_window_panels.besideLeadingRail
 import ai.rever.boss.components.window_panel.components.main_window_panels.hoverRevealTarget
 import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -79,7 +80,7 @@ class TabBarSidebarRevealTest {
 
         assertEquals(
             IntRect(left = 76, top = 12, right = 520, bottom = 612),
-            panel.besideLeadingRail(36.dp),
+            panel.besideLeadingRail(36.dp, LayoutDirection.Ltr),
         )
     }
 
@@ -89,7 +90,7 @@ class TabBarSidebarRevealTest {
         // zero-width answer is what resolveRegion's documented inset fallback then acts on.
         // Pin the coercion direction so that inheritance stays a deliberate choice.
         val panel = IntRect(left = 40, top = 12, right = 50, bottom = 612)
-        val region = panel.besideLeadingRail(36.dp)
+        val region = panel.besideLeadingRail(36.dp, LayoutDirection.Ltr)
 
         assertEquals(50, region.left)
         assertEquals(region.left, region.right, "the drawer region is zero-width, not negative")

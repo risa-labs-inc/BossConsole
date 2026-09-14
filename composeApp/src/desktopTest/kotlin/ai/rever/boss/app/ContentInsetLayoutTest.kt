@@ -1,5 +1,6 @@
 package ai.rever.boss.app
 
+import ai.rever.boss.components.window_panel.components.main_window_panels.drawerSlideOffset
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -92,6 +93,12 @@ class ContentInsetLayoutTest {
 
     @Composable
     private fun Bar(modifier: Modifier) = Box(modifier = modifier)
+
+    @Test
+    fun `drawer animation starts at its anchored edge`() {
+        assertEquals(-240, drawerSlideOffset(240, LayoutDirection.Ltr))
+        assertEquals(240, drawerSlideOffset(240, LayoutDirection.Rtl))
+    }
 
     @Test
     fun `the inset is the right sidebar's width and the bottom bar's height`() {

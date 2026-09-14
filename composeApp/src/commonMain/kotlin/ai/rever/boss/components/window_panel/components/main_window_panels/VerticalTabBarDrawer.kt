@@ -86,7 +86,8 @@ fun BoxScope.VerticalTabBarDrawer(
 
     val region = panelRegion ?: return
     val heavyweight = overlayCornerIsHeavyweight()
-    val drawerRegion = region.besideLeadingRail(railWidth, LocalLayoutDirection.current)
+    val layoutDirection = LocalLayoutDirection.current
+    val drawerRegion = region.besideLeadingRail(railWidth, layoutDirection)
 
     if (heavyweight) {
         OverlayCorner(
@@ -109,8 +110,8 @@ fun BoxScope.VerticalTabBarDrawer(
                     .align(Alignment.CenterStart)
                     .padding(start = railWidth)
                     .fillMaxHeight(),
-            enter = slideInHorizontally(initialOffsetX = { -it }),
-            exit = slideOutHorizontally(targetOffsetX = { -it }),
+            enter = slideInHorizontally(initialOffsetX = { drawerSlideOffset(it, layoutDirection) }),
+            exit = slideOutHorizontally(targetOffsetX = { drawerSlideOffset(it, layoutDirection) }),
         ) {
             Box(modifier = Modifier.hoverable(hoverSource, enabled = hoverEnabled)) { content() }
         }
@@ -131,7 +132,7 @@ fun BoxScope.VerticalTabBarDrawer(
  */
 internal fun IntRect.besideLeadingRail(
     railWidth: Dp,
-    layoutDirection: LayoutDirection = LayoutDirection.Ltr,
+    layoutDirection: LayoutDirection,
 ): IntRect =
     if (layoutDirection == LayoutDirection.Rtl) {
         copy(right = (right - railWidth.value.roundToInt()).coerceAtLeast(left))
@@ -171,3 +172,9 @@ private fun Rect.hasArea(): Boolean {
     val h = height
     return w.isFinite() && h.isFinite() && w > 0f && h > 0f
 }
+
+/** The lightweight drawer slides from its logical start edge, including RTL. */
+internal fun drawerSlideOffset(
+    width: Int,
+    layoutDirection: LayoutDirection,
+): Int = if (layoutDirection == LayoutDirection.Rtl) width else -width

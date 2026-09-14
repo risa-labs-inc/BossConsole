@@ -13,9 +13,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 
 /**
- * Revocation is checked before each emission; idle streams are not proactively disconnected.
- *
  * Kernel-side bridge for `LogService`.
+ *
+ * Revocation is checked before each emission; idle streams are not proactively disconnected.
  *
  * **Every call requires a verified caller identity (BossConsole#53)**, the same requirement and
  * helper shape introduced for the Secret Service in PR #505. [watchLogs] and [exportLogs] are why

@@ -24,6 +24,14 @@
 -- below converts it, and nothing but encrypt_text/decrypt_text's own behavior
 -- changes for any caller.
 --
+-- Plaintext encoding also changes from plaintext::bytea (which interprets
+-- backslash/octal escapes) to convert_to(plaintext, 'utf8'), preserving literal
+-- backslashes. Legacy bytes must decode as UTF-8: an old octal-escaped value
+-- containing invalid UTF-8 refuses this upgrade and must be recovered first.
+-- The backfill locks both core tables, blocking secret reads and writes for its
+-- duration. Per-row HMACs verify raw plaintext and application-reader results
+-- before commit; diagnostics contain only column names and counts.
+--
 -- Deliberately NOT touched here, so nobody assumes more was fixed than was:
 --   - Defect 2 (encryption_key::bytea truncates the key to its first 32
 --     *bytes of the string's own characters* - 32 hex characters is 128 bits,
@@ -136,39 +144,60 @@ DECLARE
     field record;
     stored record;
     unreadable bigint;
+    failures text := '';
+    fingerprint_key bytea := extensions.gen_random_bytes(32);
+    plain text;
+    app_plain text;
+    expected bigint;
+    actual bigint;
+    mismatched bigint;
 BEGIN
-    -- A missing/disabled input trigger is an unsafe schema state, not an optional
-    -- deployment. Refuse before touching data; the operator must restore it first.
+    -- Match rotation's lock order and serialize with its key-management operation.
+    PERFORM pg_catalog.pg_advisory_xact_lock(423, 1200);
+    LOCK TABLE public.secret_metadata, public.secrets IN ACCESS EXCLUSIVE MODE;
     IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_trigger
         WHERE tgrelid = 'public.secret_metadata'::regclass
           AND tgname = 'encrypt_twofa_secret_trigger' AND tgenabled = 'O') THEN
         RAISE EXCEPTION 'IV upgrade requires enabled encrypt_twofa_secret_trigger; restore the TOTP input trigger first';
     END IF;
 
-    -- Report counts and column names only, never plaintext, ciphertext or keys.
-    -- Do not skip unreadable rows or turn them into NULL during an upgrade.
+    -- An ephemeral HMAC key prevents stored fingerprints being password hashes.
+    CREATE TEMP TABLE iv_upgrade_fp (
+        tbl text, col text, pk text, fp bytea, app_fp bytea,
+        PRIMARY KEY (tbl, col, pk)
+    ) ON COMMIT DROP;
     FOR field IN SELECT * FROM (VALUES
-        ('secrets', 'password_encrypted', 1, ''),
-        ('secret_metadata', 'recovery_codes_encrypted', 1, ''),
-        ('secret_metadata', 'twofa_secret', 4, 'v1:')
-    ) AS fields(tbl, col, start_at, prefix) LOOP
+        ('secrets', 'password_encrypted', 'id', 1, 'public.decrypt_text'),
+        ('secret_metadata', 'recovery_codes_encrypted', 'secret_id', 1, 'public.safe_decrypt_recovery_codes'),
+        ('secret_metadata', 'twofa_secret', 'secret_id', 4, 'public.safe_decrypt_twofa_secret')
+    ) AS fields(tbl, col, pk, start_at, reader) LOOP
         unreadable := 0;
         FOR stored IN EXECUTE pg_catalog.format(
-            'SELECT pg_catalog.substr(%1$I, %2$s) AS value FROM public.%3$I '
-            'WHERE %1$I IS NOT NULL AND %1$I LIKE %4$L '
-            'AND pg_catalog.substr(%1$I, %2$s) NOT LIKE ''v2:%%''',
-            field.col, field.start_at, field.tbl, field.prefix || '%') LOOP
+            'SELECT %1$I::text AS pk, %2$I AS value FROM public.%3$I WHERE %2$I IS NOT NULL',
+            field.pk, field.col, field.tbl) LOOP
             BEGIN
-                PERFORM public.decrypt_text(stored.value);
+                plain := public.decrypt_text(pg_catalog.substr(stored.value, field.start_at));
+                EXECUTE pg_catalog.format('SELECT %s($1)::text', field.reader)
+                    INTO app_plain USING stored.value;
+                IF plain IS NULL OR app_plain IS NULL THEN
+                    RAISE EXCEPTION 'Unreadable value';
+                END IF;
+                INSERT INTO pg_temp.iv_upgrade_fp VALUES (
+                    field.tbl, field.col, stored.pk,
+                    extensions.hmac(pg_catalog.convert_to(plain, 'utf8'), fingerprint_key, 'sha256'),
+                    extensions.hmac(pg_catalog.convert_to(app_plain, 'utf8'), fingerprint_key, 'sha256'));
             EXCEPTION WHEN OTHERS THEN
                 unreadable := unreadable + 1;
             END;
         END LOOP;
         IF unreadable > 0 THEN
-            RAISE EXCEPTION 'IV upgrade refused: % unreadable rows in public.%; recover these rows with the correct key before retrying',
-                unreadable, field.tbl || '.' || field.col;
+            failures := failures || pg_catalog.format('%s unreadable rows in public.%s; ',
+                unreadable, field.tbl || '.' || field.col);
         END IF;
     END LOOP;
+    IF failures <> '' THEN
+        RAISE EXCEPTION 'IV upgrade refused: %recover these rows with the correct key and valid UTF-8 before retrying', failures;
+    END IF;
 
 UPDATE public.secrets
 SET password_encrypted = public.encrypt_text(public.decrypt_text(password_encrypted))
@@ -196,5 +225,40 @@ WHERE twofa_secret LIKE 'v1:%'
   AND substring(twofa_secret from 4) NOT LIKE 'v2:%';
 
 ALTER TABLE public.secret_metadata ENABLE TRIGGER encrypt_twofa_secret_trigger;
+-- Verify every non-null cell, including already-v2 values and application
+-- adapters which can return NULL or [] instead of throwing on bad framing.
+FOR field IN SELECT * FROM (VALUES
+    ('secrets', 'password_encrypted', 'id', 1, 'public.decrypt_text'),
+    ('secret_metadata', 'recovery_codes_encrypted', 'secret_id', 1, 'public.safe_decrypt_recovery_codes'),
+    ('secret_metadata', 'twofa_secret', 'secret_id', 4, 'public.safe_decrypt_twofa_secret')
+) AS fields(tbl, col, pk, start_at, reader) LOOP
+    SELECT count(*) INTO expected FROM pg_temp.iv_upgrade_fp f
+        WHERE f.tbl = field.tbl AND f.col = field.col;
+    actual := 0;
+    mismatched := 0;
+    FOR stored IN EXECUTE pg_catalog.format(
+        'SELECT %1$I::text AS pk, %2$I AS value FROM public.%3$I WHERE %2$I IS NOT NULL',
+        field.pk, field.col, field.tbl) LOOP
+        actual := actual + 1;
+        BEGIN
+            plain := public.decrypt_text(pg_catalog.substr(stored.value, field.start_at));
+            EXECUTE pg_catalog.format('SELECT %s($1)::text', field.reader)
+                INTO app_plain USING stored.value;
+            IF pg_catalog.substr(stored.value, field.start_at) NOT LIKE 'v2:%' OR NOT EXISTS (SELECT 1 FROM pg_temp.iv_upgrade_fp f
+                WHERE f.tbl = field.tbl AND f.col = field.col AND f.pk = stored.pk
+                  AND f.fp = extensions.hmac(pg_catalog.convert_to(plain, 'utf8'), fingerprint_key, 'sha256')
+                  AND f.app_fp = extensions.hmac(pg_catalog.convert_to(app_plain, 'utf8'), fingerprint_key, 'sha256')) THEN
+                mismatched := mismatched + 1;
+            END IF;
+        EXCEPTION WHEN OTHERS THEN
+            mismatched := mismatched + 1;
+        END;
+    END LOOP;
+    IF actual <> expected OR mismatched > 0 THEN
+        RAISE EXCEPTION 'IV upgrade verification failed for public.%: expected % rows, found %, mismatched %; rolling back',
+            field.tbl || '.' || field.col, expected, actual, mismatched;
+    END IF;
+END LOOP;
+DROP TABLE pg_temp.iv_upgrade_fp;
 END;
 $backfill$;
