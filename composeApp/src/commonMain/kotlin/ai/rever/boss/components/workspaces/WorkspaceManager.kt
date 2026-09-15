@@ -132,7 +132,7 @@ class WorkspaceManager {
      * comparing against it would read clean the instant an auto-save was queued rather than when
      * the bytes landed. This list is only replaced once `fileManager` has returned a path.
      */
-    fun savedCopyOf(workspaceId: String): LayoutWorkspace? = _workspaces.value.firstOrNull { it.id == workspaceId }
+    fun savedCopyOf(workspaceId: String): LayoutWorkspace? = savedCopyOfIn(workspaceId, _workspaces.value)
 
     private val fileManager = WorkspaceFileManager()
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -348,6 +348,23 @@ class WorkspaceManager {
      */
     fun saveCurrentWorkspace(name: String? = null): LayoutWorkspace? {
         val current = _currentWorkspace.value ?: return null
+        return saveWorkspace(current, name)
+    }
+
+    /**
+     * Save [current] to disk under [name] (or its own name when null).
+     *
+     * [saveCurrentWorkspace] used to inline this logic directly against [currentWorkspace] - this
+     * is that same body with the Space to save taken as a parameter instead. A caller that has
+     * already resolved the right Space some OTHER way than reading [currentWorkspace] (see
+     * [savedCopyOf]'s own KDoc on why that flow is process-global and not always the right
+     * answer, BossConsole#722) can hand it here directly, rather than routing through the shared
+     * pointer where a second window's concurrent switch could replace it first.
+     */
+    fun saveWorkspace(
+        current: LayoutWorkspace,
+        name: String? = null,
+    ): LayoutWorkspace? {
         val now = Clock.System.now().toEpochMilliseconds()
         val savedWorkspace =
             if (isSpaceSlot(current.id)) {

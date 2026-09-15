@@ -85,6 +85,21 @@ internal fun deletableWorkspaces(workspaces: List<LayoutWorkspace>): List<Layout
 }
 
 /**
+ * The Space with [workspaceId] in [workspaces], or null. The rule behind [WorkspaceManager.savedCopyOf],
+ * pulled out so it can be pinned without driving the manager's own `Dispatchers.Main` scope.
+ *
+ * **Takes the list, not a manager, on purpose (BossConsole#722).** A save has to resolve the Space
+ * it updates from THIS window's own identity - `SplitViewState.currentWorkspaceId` - and this
+ * function has no `WorkspaceManager.currentWorkspace` to fall back on even by accident: that flow
+ * is process-global, so with two windows on different Spaces it names whichever loaded last, and a
+ * save that consulted it could silently attach one window's layout to another window's Space file.
+ */
+internal fun savedCopyOfIn(
+    workspaceId: String,
+    workspaces: List<LayoutWorkspace>,
+): LayoutWorkspace? = workspaces.firstOrNull { it.id == workspaceId }
+
+/**
  * Whether [id] names a SLOT rather than a document, so an explicit save has to write a new Space.
  *
  * Two kinds, and the second is the one that is easy to get wrong:

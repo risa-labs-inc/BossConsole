@@ -516,30 +516,34 @@ internal fun BossAppMenuActionEffects(
         MenuActionsHandler.saveWorkspaceEvents
             .onEach { eventWindowId ->
                 if (eventWindowId == windowId) {
-                    val currentConfig = workspaceManager.currentWorkspace.value
+                    // BossConsole#722: the Space this save updates has to be THIS window's Space,
+                    // identified by SplitViewState.currentWorkspaceId - never
+                    // workspaceManager.currentWorkspace, which is process-global and names
+                    // whichever window loaded a Space most recently. Reading that here could
+                    // attach this window's live layout to a different window's Space identity and
+                    // overwrite the wrong file. savedCopyOf resolves the window-local id against
+                    // the on-disk list rather than the shared pointer.
+                    val currentLayout = extractCurrentWorkspace(splitViewState, windowProjectState.selectedProject.value.path)
+                    val currentConfig = splitViewState.currentWorkspaceId?.let { workspaceManager.savedCopyOf(it) }
                     if (currentConfig != null) {
-                        val currentLayout = extractCurrentWorkspace(splitViewState, windowProjectState.selectedProject.value.path)
                         val updatedConfig =
                             currentConfig.copy(
                                 layout = currentLayout.layout,
                                 timestamp = Clock.System.now().toEpochMilliseconds(),
                             )
-                        workspaceManager.updateCurrentWorkspace(updatedConfig)
-                        workspaceManager.saveCurrentWorkspace()
+                        workspaceManager.saveWorkspace(updatedConfig)
                         // Nothing marks it saved here. The unsaved flag is DERIVED, from the live
                         // layout against the copy in `workspaceManager.workspaces` - which this
                         // write replaces - so the affordance turns itself off when the bytes land
                         // rather than when the button was pressed. See BossAppStartupEffects.
                         StatusMessageManager.showMessage("Space Saved")
                     } else {
-                        val currentLayout = extractCurrentWorkspace(splitViewState, windowProjectState.selectedProject.value.path)
                         val newConfig =
                             currentLayout.copy(
                                 name = "Workspace ${Clock.System.now().toEpochMilliseconds() / 1000}",
                                 description = "Saved workspace",
                             )
-                        workspaceManager.updateCurrentWorkspace(newConfig)
-                        workspaceManager.saveCurrentWorkspace()
+                        workspaceManager.saveWorkspace(newConfig)
                         StatusMessageManager.showMessage("Space Saved")
                     }
                 }
