@@ -2,6 +2,7 @@ package ai.rever.boss.utils
 
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.window.WindowManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -314,6 +315,9 @@ internal fun deiconified(extendedState: Int): Int = extendedState and Frame.ICON
  * `SettingsWindow`, which already got this right.
  */
 private fun Window.restoreForFocus() {
+    // Both focus paths run on the EDT. Restore Compose's visibility even if AWT is already
+    // visible, so the next final-window close changes true -> false and hides it again.
+    WindowManager.windows.firstOrNull { WindowFocusManager.getWindow(it.id) === this }?.isVisible = true
     if (!isVisible) {
         isVisible = true
     }
