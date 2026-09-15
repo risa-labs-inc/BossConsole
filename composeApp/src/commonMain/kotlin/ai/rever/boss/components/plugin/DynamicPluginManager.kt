@@ -97,6 +97,11 @@ interface OutOfProcessPluginSpawner {
      * Terminate the child process for the given plugin.
      */
     suspend fun terminate(pluginId: String): Result<Unit>
+
+    /**
+     * Stop background supervision owned by this spawner.
+     */
+    fun dispose() = Unit
 }
 
 /**
@@ -1527,9 +1532,18 @@ class DynamicPluginManager(
                     // Complete teardown before reload can create a replacement sandbox for this ID.
                     sandboxManager.removeSandbox(pluginId)
 
-                    // Terminate out-of-process child if applicable
+                    // Terminate the out-of-process child before unloading its plugin.
                     if (manifest.isolationMode == "out-of-process") {
-                        outOfProcessSpawner?.terminate(pluginId)
+                        outOfProcessSpawner
+                            ?.terminate(pluginId)
+                            ?.onFailure { error ->
+                                logger.warn(
+                                    LogCategory.SYSTEM,
+                                    "Failed to terminate out-of-process plugin",
+                                    mapOf("pluginId" to pluginId),
+                                    error = error,
+                                )
+                            }
                     }
 
                     // Unload the plugin
@@ -2367,6 +2381,9 @@ class DynamicPluginManager(
                 "scope" to if (closeTabsAcrossWindows) "global" else "window",
             ),
         )
+
+        // Stop OOP supervision before teardown starts so a crash cannot race shutdown.
+        outOfProcessSpawner?.dispose()
 
         // Uninstall all plugins
         for (pluginId in _pluginStates.value.keys.toList()) {
