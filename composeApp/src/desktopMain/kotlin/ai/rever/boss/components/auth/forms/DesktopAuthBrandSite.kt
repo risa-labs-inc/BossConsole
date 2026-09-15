@@ -177,19 +177,7 @@ internal actual fun AuthBrandSite(
     val state =
         remember(current, window, scope) {
             runCatching {
-                val viewStateScope =
-                    CoroutineScope(
-                        SupervisorJob(scope.coroutineContext[Job]) +
-                            Dispatchers.Main +
-                            CoroutineExceptionHandler { _, throwable ->
-                                logger.warn(
-                                    LogCategory.BROWSER,
-                                    "Unhandled exception in BrowserViewState scope",
-                                    error = throwable,
-                                )
-                            },
-                    )
-                BrowserViewState(current, viewStateScope, window)
+                BrowserViewState(current, authBrandViewScope(scope), window)
             }.onFailure { e ->
                 logger.warn(
                     LogCategory.BROWSER,
@@ -205,3 +193,17 @@ internal actual fun AuthBrandSite(
     }
     BrowserView(state = state, modifier = Modifier.fillMaxSize())
 }
+
+/** Own view work under the composition while isolating native view failures from its other jobs. */
+internal fun authBrandViewScope(parent: CoroutineScope): CoroutineScope =
+    CoroutineScope(
+        SupervisorJob(parent.coroutineContext[Job]) +
+            Dispatchers.Main +
+            CoroutineExceptionHandler { _, throwable ->
+                logger.warn(
+                    LogCategory.BROWSER,
+                    "Unhandled exception in BrowserViewState scope",
+                    error = throwable,
+                )
+            },
+    )
