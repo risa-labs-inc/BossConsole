@@ -20,7 +20,11 @@ import com.teamdev.jxbrowser.navigation.event.LoadFinished
 import com.teamdev.jxbrowser.view.compose.BrowserView
 import com.teamdev.jxbrowser.view.compose.BrowserViewState
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -172,14 +176,27 @@ internal actual fun AuthBrandSite(
     // outcome this panel must never cause. Falling through leaves the art, like every other failure.
     val state =
         remember(current, window, scope) {
-            runCatching { BrowserViewState(current, scope, window) }
-                .onFailure { e ->
-                    logger.warn(
-                        LogCategory.BROWSER,
-                        "Brand page view could not attach; keeping the drawn panel",
-                        error = e,
+            runCatching {
+                val viewStateScope =
+                    CoroutineScope(
+                        SupervisorJob(scope.coroutineContext[Job]) +
+                            Dispatchers.Main +
+                            CoroutineExceptionHandler { _, throwable ->
+                                logger.warn(
+                                    LogCategory.BROWSER,
+                                    "Unhandled exception in BrowserViewState scope",
+                                    error = throwable,
+                                )
+                            },
                     )
-                }.getOrNull()
+                BrowserViewState(current, viewStateScope, window)
+            }.onFailure { e ->
+                logger.warn(
+                    LogCategory.BROWSER,
+                    "Brand page view could not attach; keeping the drawn panel",
+                    error = e,
+                )
+            }.getOrNull()
         }
     if (state == null) {
         // Reported outside the remember, so it survives the recomposition that reads it.
