@@ -47,6 +47,9 @@ kotlin {
                 // Minimal plugin-api-core
                 api(projects.pluginPlatform.pluginApiCore)
 
+                // Host-owned overlay routing for plugin content boundaries.
+                implementation(projects.pluginPlatform.pluginUiCore)
+
                 // Logging
                 implementation(projects.pluginPlatform.pluginLogging)
             }

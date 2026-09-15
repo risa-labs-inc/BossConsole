@@ -39,6 +39,7 @@ import ai.rever.boss.startup.CliDispatchResult
 import ai.rever.boss.startup.OverlaySetup
 import ai.rever.boss.startup.PlatformSetup
 import ai.rever.boss.startup.ShutdownSequence
+import ai.rever.boss.startup.configureMaterialPopupLayering
 import ai.rever.boss.theme.AppThemeSettingsManager
 import ai.rever.boss.updater.AppUpdateRealtimeService
 import ai.rever.boss.updater.UpdateCoordinator
@@ -201,6 +202,10 @@ fun main(args: Array<String>) {
     // -------------------------------------------------------------------------
     // Phase 3: Platform setup, pre-AWT properties & settings warm-up
     // -------------------------------------------------------------------------
+    // Material DropdownMenu calls Compose Popup directly, including from dynamic plugins. On
+    // macOS, put that real path in an owned native window before the first Compose container is
+    // created so it can cross sibling browser surfaces without losing Material positioning/input.
+    configureMaterialPopupLayering()
     PlatformSetup.applyMacAppearanceFromTheme()
 
     // Serve credential brokers to plugins

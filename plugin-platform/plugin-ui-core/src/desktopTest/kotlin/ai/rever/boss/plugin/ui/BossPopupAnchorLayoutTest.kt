@@ -14,12 +14,14 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.dp
 import org.junit.After
 import org.junit.Rule
 import org.junit.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -137,6 +139,144 @@ class BossPopupLayoutNeutralityTest {
         rule.onNodeWithTag("sibling").assertIsDisplayed()
         val left = rule.onNodeWithTag("sibling").getUnclippedBoundsInRoot().left
         assertTrue(left.value < 50f, "sibling should start at the row's left edge, was at $left")
+    }
+}
+
+/** Plugin surfaces need a real window when their popup crosses into a sibling browser pane. */
+class BossPopupPluginLayeringTest {
+    @get:Rule
+    val rule = createComposeRule()
+
+    @After
+    fun resetRegistry() {
+        resetOverlayFieldForTest("useHeavyweightOverlays")
+        BossOverlayHost.useHeavyweightOverlays = false
+        resetOverlayFieldForTest("popupRenderer")
+        BossOverlayHost.popupRenderer = null
+    }
+
+    @Test
+    fun `an off-screen plugin popup escapes through the host renderer`() {
+        var invoked = false
+        resetOverlayFieldForTest("useHeavyweightOverlays")
+        BossOverlayHost.useHeavyweightOverlays = false
+        resetOverlayFieldForTest("popupRenderer")
+        BossOverlayHost.popupRenderer = { _, _, _, _, _, _ -> invoked = true }
+
+        rule.setContent {
+            CompositionLocalProvider(
+                LocalHeavyweightOverlays provides true,
+                LocalPopupLayeringRequired provides true,
+            ) {
+                BossPopup(onDismissRequest = {}) { Text("plugin menu") }
+            }
+        }
+        rule.waitForIdle()
+
+        assertTrue(invoked, "plugin popup stayed in the Compose scene under OFF_SCREEN")
+    }
+
+    @Test
+    fun `an off-screen host popup keeps the lightweight path`() {
+        var invoked = false
+        resetOverlayFieldForTest("useHeavyweightOverlays")
+        BossOverlayHost.useHeavyweightOverlays = false
+        resetOverlayFieldForTest("popupRenderer")
+        BossOverlayHost.popupRenderer = { _, _, _, _, _, _ -> invoked = true }
+
+        rule.setContent {
+            CompositionLocalProvider(LocalHeavyweightOverlays provides true) {
+                BossPopup(onDismissRequest = {}) { Text("host menu") }
+            }
+        }
+        rule.waitForIdle()
+
+        assertFalse(invoked, "ordinary OFF_SCREEN host popups must not pay for a native window")
+    }
+
+    @Test
+    fun `a plugin popup in a secondary window stays with that window`() {
+        var invoked = false
+        resetOverlayFieldForTest("useHeavyweightOverlays")
+        BossOverlayHost.useHeavyweightOverlays = false
+        resetOverlayFieldForTest("popupRenderer")
+        BossOverlayHost.popupRenderer = { _, _, _, _, _, _ -> invoked = true }
+
+        rule.setContent {
+            CompositionLocalProvider(
+                LocalHeavyweightOverlays provides false,
+                LocalPopupLayeringRequired provides true,
+            ) {
+                BossPopup(onDismissRequest = {}) { Text("secondary menu") }
+            }
+        }
+        rule.waitForIdle()
+
+        assertFalse(invoked, "a main-window renderer must not capture a secondary-window popup")
+    }
+
+    @Test
+    fun `the plugin override preserves popup behavior parameters`() {
+        var captured: Triple<BossPopupAnchoring, IntOffset, Boolean>? = null
+        resetOverlayFieldForTest("useHeavyweightOverlays")
+        BossOverlayHost.useHeavyweightOverlays = false
+        resetOverlayFieldForTest("popupRenderer")
+        BossOverlayHost.popupRenderer = { _, _, anchoring, offset, focusable, _ ->
+            captured = Triple(anchoring, offset, focusable)
+        }
+
+        rule.setContent {
+            CompositionLocalProvider(
+                LocalHeavyweightOverlays provides true,
+                LocalPopupLayeringRequired provides true,
+            ) {
+                BossPopup(
+                    onDismissRequest = {},
+                    offset = IntOffset(13, -7),
+                    focusable = true,
+                    anchoring = BossPopupAnchoring.Cursor,
+                ) { Text("menu") }
+            }
+        }
+        rule.waitForIdle()
+
+        assertEquals(
+            Triple(BossPopupAnchoring.Cursor, IntOffset(13, -7), true),
+            captured,
+        )
+    }
+
+    @Test
+    fun `an anchored plugin popup keeps intrinsic control-relative placement`() {
+        var captured: IntRect? = null
+        resetOverlayFieldForTest("useHeavyweightOverlays")
+        BossOverlayHost.useHeavyweightOverlays = false
+        resetOverlayFieldForTest("popupRenderer")
+        BossOverlayHost.popupRenderer = { _, anchor, _, _, _, _ -> captured = anchor }
+
+        rule.setContent {
+            CompositionLocalProvider(
+                LocalHeavyweightOverlays provides true,
+                LocalPopupLayeringRequired provides true,
+            ) {
+                Box(Modifier.size(width = 600.dp, height = 400.dp)) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth(0.5f)
+                            .align(Alignment.TopCenter)
+                            .offset(y = 20.dp),
+                    ) {
+                        BossPopup(
+                            onDismissRequest = {},
+                            anchoring = BossPopupAnchoring.AnchorBounds,
+                        ) { Text("anchored menu") }
+                    }
+                }
+            }
+        }
+        rule.waitForIdle()
+
+        assertEquals(IntRect(150, 20, 450, 20), captured)
     }
 }
 

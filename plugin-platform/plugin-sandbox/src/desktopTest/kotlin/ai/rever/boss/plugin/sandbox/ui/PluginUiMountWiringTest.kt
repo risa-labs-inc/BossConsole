@@ -3,6 +3,7 @@ package ai.rever.boss.plugin.sandbox.ui
 import ai.rever.boss.plugin.sandbox.PluginSandbox
 import ai.rever.boss.plugin.sandbox.SandboxState
 import ai.rever.boss.plugin.sandbox.health.PluginHealthMetrics
+import ai.rever.boss.plugin.ui.LocalPopupLayeringRequired
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -156,6 +157,44 @@ class PluginUiMountWiringTest {
             shown = false
             waitForIdle()
             assertFalse(PluginUiMountRegistry.isMounted(PLUGIN_ID), "and unregister when it goes")
+        }
+
+    @Test
+    fun `the real boundary marks plugin popups for cross-scene layering`() =
+        runComposeUiTest {
+            var layeringRequired: Boolean? = null
+            setContent {
+                PluginErrorBoundary(
+                    pluginId = PLUGIN_ID,
+                    sandbox = FakeSandbox(SandboxState.RUNNING),
+                    onRestart = {},
+                ) {
+                    layeringRequired = LocalPopupLayeringRequired.current
+                    Box(Modifier)
+                }
+            }
+            waitForIdle()
+
+            assertEquals(true, layeringRequired)
+        }
+
+    @Test
+    fun `safe plugin content marks popups for cross-scene layering`() =
+        runComposeUiTest {
+            var layeringRequired: Boolean? = null
+            setContent {
+                SafePluginContent(
+                    pluginId = PLUGIN_ID,
+                    sandbox = FakeSandbox(SandboxState.RUNNING),
+                    fallback = {},
+                ) {
+                    layeringRequired = LocalPopupLayeringRequired.current
+                    Box(Modifier)
+                }
+            }
+            waitForIdle()
+
+            assertEquals(true, layeringRequired)
         }
 
     @Test

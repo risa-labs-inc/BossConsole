@@ -5,6 +5,7 @@ import ai.rever.boss.plugin.logging.LogCategory
 import ai.rever.boss.plugin.sandbox.PluginErrorClassifier
 import ai.rever.boss.plugin.sandbox.PluginSandbox
 import ai.rever.boss.plugin.sandbox.SandboxState
+import ai.rever.boss.plugin.ui.LocalPopupLayeringRequired
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -504,6 +505,9 @@ fun PluginErrorBoundary(
                 error = e
             },
             LocalPluginSandbox provides sandbox,
+            // Plugin menus can cross their panel into a sibling browser scene. Route only this
+            // content through the host popup window; fallback UI remains ordinary host content.
+            LocalPopupLayeringRequired provides true,
         ) {
             // Tells PluginRenderRecovery this plugin is on screen. When a render
             // exception arrives that nobody can attribute from the stack — a
@@ -625,6 +629,7 @@ fun SafePluginContent(
                 error = e
             },
             LocalPluginSandbox provides sandbox,
+            LocalPopupLayeringRequired provides true,
         ) {
             content()
         }

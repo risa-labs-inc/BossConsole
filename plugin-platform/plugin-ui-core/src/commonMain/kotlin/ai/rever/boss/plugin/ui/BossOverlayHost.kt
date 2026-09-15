@@ -215,8 +215,8 @@ object BossOverlayHost {
         if (reportedMissingPopupRenderer) return
         reportedMissingPopupRenderer = true
         diagnostics?.invoke(
-            "Heavyweight overlays are enabled but no popup renderer is registered - menus and " +
-                "dropdowns will render behind the browser surface.",
+            "A popup requires heavyweight layering but no popup renderer is registered - menus " +
+                "and dropdowns may render behind the browser surface.",
         )
     }
 

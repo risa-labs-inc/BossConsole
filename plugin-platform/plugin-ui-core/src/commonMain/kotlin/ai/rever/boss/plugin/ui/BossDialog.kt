@@ -63,6 +63,17 @@ import kotlin.math.roundToInt
 val LocalHeavyweightOverlays = staticCompositionLocalOf { false }
 
 /**
+ * Whether a popup in this subtree must escape the Compose scene even when browser rendering is
+ * off-screen. The host provides this only around dynamic plugin content: a plugin popup can cross
+ * its panel boundary into a sibling browser scene, where a regular Compose [Popup] is clipped or
+ * painted underneath. Host UI keeps the default and therefore retains its lightweight path.
+ *
+ * This is a popup-only requirement. Dialog routing continues to follow [LocalHeavyweightOverlays]
+ * and the process rendering mode.
+ */
+val LocalPopupLayeringRequired = staticCompositionLocalOf { false }
+
+/**
  * The routing decision for any overlay that can escape into its own window, as a pure function so
  * it can be pinned by a test.
  *
@@ -453,12 +464,14 @@ fun BossPopup(
     content: @Composable () -> Unit,
 ) {
     val renderer = BossOverlayHost.popupRenderer
-    if (BossOverlayHost.useHeavyweightOverlays && renderer == null) {
+    val requiresLayerEscape =
+        BossOverlayHost.useHeavyweightOverlays || LocalPopupLayeringRequired.current
+    if (requiresLayerEscape && renderer == null) {
         SideEffect { BossOverlayHost.reportMissingPopupRenderer() }
     }
     val heavyweight =
         shouldRouteHeavyweight(
-            useHeavyweightOverlays = BossOverlayHost.useHeavyweightOverlays,
+            useHeavyweightOverlays = requiresLayerEscape,
             hasRenderer = renderer != null,
             hostNeedsHeavyweight = LocalHeavyweightOverlays.current,
         )
