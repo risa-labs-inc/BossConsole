@@ -41,6 +41,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /**
+ * Whether the "Clear all" control belongs on screen for [toastCount] visible toasts.
+ *
+ * Only past a single toast: with one toast its own dismiss button already clears everything, so a
+ * second control saying the same thing would be noise.
+ */
+internal fun shouldShowClearAllControl(toastCount: Int): Boolean = toastCount >= 2
+
+/**
  * Host composable for displaying plugin toast notifications.
  *
  * Place this at the root of your composition (e.g., in a Box with alignment)
@@ -69,6 +77,31 @@ fun PluginToastHost(
         verticalArrangement = Arrangement.spacedBy(8.dp),
         horizontalAlignment = Alignment.End,
     ) {
+        // A single control to clear the whole stack. Every toast already has its own dismiss button,
+        // but INDEFINITE toasts clear only by hand and PluginToastState stacks up to maxToasts (3) of
+        // them - so once there is more than one, dismissing them one at a time is the only option a
+        // user has. dismissAll() has existed on the controller all along with no surface that calls
+        // it; this is that surface. Shown only past a single toast, where "all" means more than the
+        // lone dismiss button beside it already does.
+        if (shouldShowClearAllControl(toasts.size)) {
+            AnimatedVisibility(
+                visible = true,
+                enter = fadeIn(),
+                exit = fadeOut(),
+            ) {
+                TextButton(
+                    onClick = { toastState.dismissAll() },
+                    modifier = Modifier.padding(bottom = 2.dp),
+                ) {
+                    Text(
+                        text = "Clear all",
+                        color = BossThemeColors.TextSecondary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+            }
+        }
         toasts.forEach { toast ->
             AnimatedVisibility(
                 visible = true,
