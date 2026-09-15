@@ -3,6 +3,7 @@ package ai.rever.boss.components.window_panel.components.main_window_panels
 import ai.rever.boss.components.common.rememberFaviconLoader
 import ai.rever.boss.components.model.TabDraggableComponent
 import ai.rever.boss.components.model.TabDropResult
+import ai.rever.boss.components.model.withDragSession
 import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.components.overlays.HoverTooltipBox
 import ai.rever.boss.components.overlays.TooltipPlacement
@@ -244,24 +245,26 @@ private fun Modifier.tabChipDrag(
     onDragEnd: (TabDropResult?) -> Unit,
 ): Modifier =
     pointerInput(tab, panelId, tabIndex) {
-        detectDragGestures(
-            onDragStart = { offset ->
-                tabDragComponent.startDragging(
-                    tabInfo = tab,
-                    panelId = panelId,
-                    index = tabIndex,
-                    startPosition = windowPosition() + offset,
-                )
-            },
-            onDrag = { change, dragAmount ->
-                change.consume()
-                tabDragComponent.updateDrag(dragAmount)
-            },
-            // Cleaned up first either way: a result that throws must not leave a ghost stuck to
-            // the pointer.
-            onDragEnd = { onDragEnd(tabDragComponent.endDrag()) },
-            onDragCancel = { tabDragComponent.cancelDrag() },
-        )
+        tabDragComponent.withDragSession { session ->
+            detectDragGestures(
+                onDragStart = { offset ->
+                    session.start(
+                        tab = tab,
+                        panelId = panelId,
+                        index = tabIndex,
+                        position = windowPosition() + offset,
+                    )
+                },
+                onDrag = { change, dragAmount ->
+                    change.consume()
+                    session.update(dragAmount)
+                },
+                // Cleaned up first either way: a result that throws must not leave a ghost stuck to
+                // the pointer.
+                onDragEnd = { onDragEnd(session.end()) },
+                onDragCancel = { session.cancel() },
+            )
+        }
     }
 
 /**
