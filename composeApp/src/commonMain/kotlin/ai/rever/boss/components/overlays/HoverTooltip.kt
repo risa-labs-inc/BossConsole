@@ -7,6 +7,7 @@ import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Surface
 import androidx.compose.material.Text
@@ -21,6 +22,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -48,6 +51,8 @@ private const val TOOLTIP_DELAY_MS = 500L
  *
  * @param text tooltip content. Blank shows nothing.
  * @param placement where the card sits relative to the anchor.
+ * @param focused show immediately for keyboard focus, without introducing another focus target.
+ * @param maxWidth bound long descriptions in the Compose tooltip. Native tooltips wrap separately.
  */
 @Composable
 fun HoverTooltipBox(
@@ -55,6 +60,8 @@ fun HoverTooltipBox(
     modifier: Modifier = Modifier,
     placement: TooltipPlacement = TooltipPlacement.END,
     contentAlignment: Alignment = Alignment.Center,
+    focused: Boolean = false,
+    maxWidth: Dp = Dp.Infinity,
     content: @Composable BoxScope.() -> Unit,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -69,16 +76,19 @@ fun HoverTooltipBox(
     val anchorSize = remember { intArrayOf(0, 0) }
     val tooltipSize = remember { intArrayOf(0, 0) }
 
-    LaunchedEffect(isHovered, text) {
-        if (!isHovered || text.isBlank()) {
+    LaunchedEffect(isHovered, focused, text) {
+        if ((!isHovered && !focused) || text.isBlank()) {
             showTooltip = false
             return@LaunchedEffect
         }
-        delay(TOOLTIP_DELAY_MS)
-        showTooltip = isHovered
+        if (!focused) delay(TOOLTIP_DELAY_MS)
+        showTooltip = isHovered || focused
     }
 
-    if (showTooltip) {
+    // Keyboard focus may remain on this node after its window loses application focus.
+    // Never leave its always-on-top native tooltip floating above another application.
+    val windowFocused = LocalWindowInfo.current.isWindowFocused
+    if (showTooltip && (!focused || windowFocused)) {
         val heavyweightTooltip = OverlayConfig.heavyweightTooltip
         if (OverlayConfig.useHeavyweightPopups && heavyweightTooltip != null) {
             DisposableEffect(text) {
@@ -91,7 +101,7 @@ fun HoverTooltipBox(
                 offset = tooltipOffset(placement, anchorPosition, anchorSize, tooltipSize),
                 properties = PopupProperties(focusable = false, dismissOnClickOutside = false),
             ) {
-                TooltipCard(text = text, onMeasured = { w, h ->
+                TooltipCard(text = text, maxWidth = maxWidth, onMeasured = { w, h ->
                     tooltipSize[0] = w
                     tooltipSize[1] = h
                 })
@@ -125,11 +135,12 @@ fun HoverTooltipBox(
 @Composable
 private fun TooltipCard(
     text: String,
+    maxWidth: Dp,
     onMeasured: (Int, Int) -> Unit,
 ) {
     Surface(
         modifier =
-            Modifier.onGloballyPositioned { coordinates ->
+            Modifier.widthIn(max = maxWidth).onGloballyPositioned { coordinates ->
                 onMeasured(coordinates.size.width, coordinates.size.height)
             },
         color = BossTheme.colors.raised,

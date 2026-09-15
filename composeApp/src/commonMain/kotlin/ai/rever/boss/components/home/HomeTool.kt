@@ -27,6 +27,8 @@ data class HomeTool(
     val launch: HomeToolLaunch,
     /** The plugin that owns this tool, or null for a host action that needs no plugin. */
     val pluginId: String? = null,
+    /** Purpose supplied by the store, shown without fetching another catalog. */
+    val description: String = "",
 ) {
     /** Whether this tile does something now, as opposed to offering an install. */
     val isReady: Boolean get() = launch !is HomeToolLaunch.Install
@@ -84,9 +86,7 @@ sealed interface HomeToolLaunch {
      * Install this plugin from the store, after which it becomes one of the above.
      *
      * Carries no version: `HomeCatalogProvider.install` takes only an id and resolves the latest
-     * itself, and a version nothing reads is the dead-field pattern the rest of this screen
-     * removes. Same reason there is no `description` on [HomeTool] - if either is ever shown, a
-     * tooltip is where they belong.
+     * itself. Purpose text is carried separately by [HomeTool.description].
      */
     data class Install(
         val pluginId: String,
