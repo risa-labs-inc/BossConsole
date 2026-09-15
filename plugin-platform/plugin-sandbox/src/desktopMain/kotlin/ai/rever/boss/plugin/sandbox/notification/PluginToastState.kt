@@ -31,25 +31,51 @@ class PluginToastState(
     // Track dismissal jobs to cancel them if toast is manually dismissed
     private val dismissJobs = mutableMapOf<String, Job>()
 
+    // While paused, auto-dismiss timers do not run. Set by [pauseAutoDismiss] when the pointer is
+    // over the toast area so a toast does not disappear out from under a user who is reading it or
+    // reaching for its action/dismiss button.
+    private var paused = false
+
     override fun show(message: ToastMessage) {
         // Add to queue, respecting max limit
         _toasts.value = (_toasts.value + message).takeLast(maxToasts)
 
-        // Schedule auto-dismiss based on duration
-        if (message.duration != ToastDuration.INDEFINITE) {
-            val delayMs =
-                when (message.duration) {
-                    ToastDuration.SHORT -> 3000L
-                    ToastDuration.LONG -> 6000L
-                    ToastDuration.INDEFINITE -> Long.MAX_VALUE
-                }
-
-            dismissJobs[message.id] =
-                scope.launch {
-                    delay(delayMs)
-                    dismiss(message.id)
-                }
+        // Schedule auto-dismiss based on duration - unless paused, in which case [resumeAutoDismiss]
+        // will schedule it when the pointer leaves.
+        if (!paused) {
+            scheduleAutoDismiss(message)
         }
+    }
+
+    private fun scheduleAutoDismiss(message: ToastMessage) {
+        val delayMs = autoDismissDelayMs(message.duration) ?: return
+        dismissJobs[message.id] =
+            scope.launch {
+                delay(delayMs)
+                dismiss(message.id)
+            }
+    }
+
+    /**
+     * Freeze every auto-dismiss timer. Call while the pointer is over the toast area. Manual
+     * dismissal and [dismissAll] still work; INDEFINITE toasts are unaffected as they never had a
+     * timer. Idempotent.
+     */
+    fun pauseAutoDismiss() {
+        if (paused) return
+        paused = true
+        dismissJobs.values.forEach { it.cancel() }
+        dismissJobs.clear()
+    }
+
+    /**
+     * Resume auto-dismissal after a [pauseAutoDismiss]. Each still-visible timed toast is given its
+     * full duration afresh, so a toast the pointer just left does not vanish immediately. Idempotent.
+     */
+    fun resumeAutoDismiss() {
+        if (!paused) return
+        paused = false
+        _toasts.value.forEach { scheduleAutoDismiss(it) }
     }
 
     override fun dismiss(id: String) {
@@ -80,3 +106,14 @@ class PluginToastState(
      */
     fun toastCount(): Int = _toasts.value.size
 }
+
+/**
+ * The auto-dismiss delay for a toast [duration], or null when it never auto-dismisses
+ * (INDEFINITE). Pulled out of the scheduler so the timings are pinned by a test.
+ */
+internal fun autoDismissDelayMs(duration: ToastDuration): Long? =
+    when (duration) {
+        ToastDuration.SHORT -> 3000L
+        ToastDuration.LONG -> 6000L
+        ToastDuration.INDEFINITE -> null
+    }
