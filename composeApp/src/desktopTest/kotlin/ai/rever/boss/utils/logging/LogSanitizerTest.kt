@@ -62,19 +62,19 @@ class LogSanitizerTest {
     // =========================================================================
 
     @Test
-    fun `maskToken preserves first and last 3 chars`() {
-        assertEquals("abc...xyz", LogSanitizer.maskToken("abc123456789xyz"))
+    fun `maskToken redacts the entire token`() {
+        assertEquals("[REDACTED]", LogSanitizer.maskToken("abc123456789xyz"))
     }
 
     @Test
     fun `maskToken handles short tokens`() {
-        assertEquals("***", LogSanitizer.maskToken("short"))
-        assertEquals("***", LogSanitizer.maskToken("123456"))
+        assertEquals("[REDACTED]", LogSanitizer.maskToken("short"))
+        assertEquals("[REDACTED]", LogSanitizer.maskToken("123456"))
     }
 
     @Test
     fun `maskToken handles exactly 7 chars`() {
-        assertEquals("abc...ghi", LogSanitizer.maskToken("abcdefghi"))
+        assertEquals("[REDACTED]", LogSanitizer.maskToken("abcdefghi"))
     }
 
     @Test
@@ -253,7 +253,7 @@ class LogSanitizerTest {
         val result = LogSanitizer.sanitizeMap(input)
 
         // Should be masked because it looks like a JWT
-        assertTrue((result["data"] as String).contains("..."))
+        assertEquals("[REDACTED]", result["data"])
     }
 
     @Test
@@ -262,7 +262,7 @@ class LogSanitizerTest {
         // short enough that the length rule does not either.
         val result = LogSanitizer.sanitizeMap(mapOf("detail" to "ghs_0123456789ab"))
 
-        assertEquals("ghs...9ab", result["detail"])
+        assertEquals("[REDACTED]", result["detail"])
     }
 
     @Test
@@ -332,14 +332,14 @@ class LogSanitizerTest {
     // =========================================================================
 
     @Test
-    fun `maskSessionId shows first 8 chars`() {
+    fun `maskSessionId redacts the entire capability`() {
         val result = LogSanitizer.maskSessionId("session-1234567890-abcdef")
-        assertEquals("session-...", result)
+        assertEquals("[REDACTED]", result)
     }
 
     @Test
     fun `maskSessionId handles short ids`() {
-        assertEquals("****", LogSanitizer.maskSessionId("short"))
+        assertEquals("[REDACTED]", LogSanitizer.maskSessionId("short"))
     }
 
     // =========================================================================
@@ -382,7 +382,7 @@ class LogSanitizerTest {
     fun `sanitizeExceptionMessage masks a bare GitHub token`() {
         val result = LogSanitizer.sanitizeExceptionMessage("token=ghp_AbCdEfGhIjKlMnOpQrStUvWxYz012345 rejected")
 
-        assertEquals("token=ghp...345 rejected", result)
+        assertEquals("token=[REDACTED] rejected", result)
     }
 
     @Test
@@ -392,7 +392,7 @@ class LogSanitizerTest {
                 "SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.body.sig invalid",
             )
 
-        assertEquals("SUPABASE_ANON_KEY=eyJ...sig invalid", result)
+        assertEquals("SUPABASE_ANON_KEY=[REDACTED] invalid", result)
     }
 
     @Test
@@ -403,17 +403,17 @@ class LogSanitizerTest {
 
         val result = LogSanitizer.sanitizeExceptionMessage("Bearer $jwt was refused")
 
-        assertEquals("Bearer eyJ...R8U was refused", result)
+        assertEquals("Bearer [REDACTED] was refused", result)
     }
 
     @Test
     fun `sanitizeExceptionMessage masks fine-grained and server GitHub tokens`() {
         assertEquals(
-            "GITHUB_TOKEN=git...NOP rejected",
+            "GITHUB_TOKEN=[REDACTED] rejected",
             LogSanitizer.sanitizeExceptionMessage("GITHUB_TOKEN=github_pat_11ABCDEFG0abcdefghijKLMNOP rejected"),
         )
         assertEquals(
-            "credential ghs...hij was refused",
+            "credential [REDACTED] was refused",
             LogSanitizer.sanitizeExceptionMessage("credential ghs_0123456789abcdefghij was refused"),
         )
     }
@@ -423,14 +423,14 @@ class LogSanitizerTest {
         val result =
             LogSanitizer.sanitizeExceptionMessage("OPENAI_API_KEY=sk-proj-AbCdEfGhIjKlMnOpQrStUvWx not accepted")
 
-        assertEquals("OPENAI_API_KEY=sk-...vWx not accepted", result)
+        assertEquals("OPENAI_API_KEY=[REDACTED] not accepted", result)
     }
 
     @Test
     fun `sanitizeExceptionMessage masks a camelCase assignment`() {
         val result = LogSanitizer.sanitizeExceptionMessage("accessToken=abcdefghijklmnopqrst expired")
 
-        assertEquals("accessToken=abc...rst expired", result)
+        assertEquals("accessToken=[REDACTED] expired", result)
     }
 
     @Test
@@ -650,7 +650,7 @@ class LogSanitizerTest {
 
         val result = LogSanitizer.sanitizeStackTrace(trace)
 
-        assertTrue(result.contains("SUPABASE_ANON_KEY=eyJ...sig invalid"))
+        assertTrue(result.contains("SUPABASE_ANON_KEY=[REDACTED] invalid"))
         // The frame either side of it is untouched.
         assertTrue(result.contains("ai.rever.boss.services.auth.SessionManager.refreshSession(SessionManager.kt:142)"))
         assertFalse(result.contains("IkpXVCJ9"))

@@ -1,3 +1,4 @@
+import { authFailureDetails } from "../utils/logging.ts"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { PasskeyContext } from "../types/context.ts"
 import { getMobileRegistrationHTML, getMobileAuthenticationHTML, getMobileErrorHTML } from "../utils/html.ts"
@@ -108,7 +109,7 @@ mobile.openapi(registerMobileRoute, async (ctx) => {
     return ctx.html(html, 200)
 
   } catch (error) {
-    console.error('❌ Mobile registration error:', error)
+    console.error('❌ Mobile registration error:', authFailureDetails(error))
     return ctx.html(getMobileErrorHTML('Internal server error'), 500)
   }
 })
@@ -201,7 +202,7 @@ mobile.openapi(authMobileRoute, async (ctx) => {
     ), 200)
 
   } catch (error) {
-    console.error('❌ Mobile authentication error:', error)
+    console.error('❌ Mobile authentication error:', authFailureDetails(error))
     return ctx.html(getMobileErrorHTML('Internal server error'), 500)
   }
 })

@@ -4,6 +4,7 @@ import ai.rever.boss.plugin.browser.FluckEngine
 import ai.rever.boss.plugin.browser.installBrowserChromeOrClose
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.LogSanitizer
 import com.teamdev.jxbrowser.browser.Browser
 import com.teamdev.jxbrowser.engine.Engine
 import kotlinx.coroutines.Dispatchers
@@ -14,6 +15,7 @@ import kotlinx.coroutines.withContext
  * Handles JxBrowser WebAuthn operations and fallback browser launching
  */
 class CrossDeviceBrowserManager {
+    // Keep raw throwables out of auth logs: their messages can contain the credential URL.
     private val logger = BossLogger.forComponent("CrossDeviceBrowserManager")
 
     // Volatile because initialization moved out of the constructor. These are now
@@ -76,7 +78,11 @@ class CrossDeviceBrowserManager {
                 }
 
                 else -> {
-                    logger.warn(LogCategory.BROWSER, "Failed to initialize WebAuthn - using system browser fallback", error = e)
+                    logger.warn(
+                        LogCategory.BROWSER,
+                        "Failed to initialize WebAuthn - using system browser fallback",
+                        mapOf("errorType" to e.javaClass.simpleName),
+                    )
                 }
             }
         }
@@ -88,7 +94,12 @@ class CrossDeviceBrowserManager {
     suspend fun openInSystemBrowser(url: String): Result<Unit> =
         withContext(Dispatchers.IO) {
             return@withContext try {
-                logger.debug(LogCategory.BROWSER, "Opening URL in system browser", mapOf("url" to url))
+                logger.debug(
+                    category = LogCategory.BROWSER,
+                    message = "Opening URL in system browser",
+                    data =
+                        mapOf("url" to LogSanitizer.maskUriParams(url)),
+                )
 
                 // Try Desktop API first (works well on most platforms)
                 if (java.awt.Desktop.isDesktopSupported()) {
@@ -108,11 +119,19 @@ class CrossDeviceBrowserManager {
                     openBrowserWithProcessBuilder(url)
                 }
             } catch (e: Exception) {
-                logger.warn(LogCategory.BROWSER, "Failed to open browser with Desktop API, trying fallback", error = e)
+                logger.warn(
+                    LogCategory.BROWSER,
+                    "Failed to open browser with Desktop API, trying fallback",
+                    mapOf("errorType" to e.javaClass.simpleName),
+                )
                 try {
                     openBrowserWithProcessBuilder(url)
                 } catch (fallbackException: Exception) {
-                    logger.error(LogCategory.BROWSER, "All browser opening methods failed", error = fallbackException)
+                    logger.error(
+                        LogCategory.BROWSER,
+                        "All browser opening methods failed",
+                        mapOf("errorType" to fallbackException.javaClass.simpleName),
+                    )
                     Result.failure(fallbackException)
                 }
             }
@@ -128,7 +147,11 @@ class CrossDeviceBrowserManager {
     ): Result<String> =
         withContext(Dispatchers.IO) {
             return@withContext try {
-                logger.debug(LogCategory.BROWSER, "Preparing URL for embedded Fluck browser", mapOf("url" to url))
+                logger.debug(
+                    LogCategory.BROWSER,
+                    "Preparing URL for embedded Fluck browser",
+                    mapOf("url" to LogSanitizer.maskUriParams(url)),
+                )
 
                 // The one caller that actually needs a live engine. Safe to boot
                 // here: suspend, on Dispatchers.IO, and only once a passkey flow
@@ -141,10 +164,19 @@ class CrossDeviceBrowserManager {
                     return@withContext Result.failure(Exception("JxBrowser not available for embedded display"))
                 }
 
-                logger.debug(LogCategory.BROWSER, "Ready to display WebAuthn in embedded browser", mapOf("sessionId" to sessionId))
+                logger.debug(
+                    LogCategory.BROWSER,
+                    "Ready to display WebAuthn in embedded browser",
+                    mapOf("sessionId" to LogSanitizer.maskSessionId(sessionId)),
+                )
                 Result.success(url)
             } catch (e: Exception) {
-                logger.error(LogCategory.BROWSER, "Failed to prepare Fluck browser", error = e)
+                logger.error(
+                    category = LogCategory.BROWSER,
+                    message = "Failed to prepare Fluck browser",
+                    data =
+                        mapOf("errorType" to e.javaClass.simpleName),
+                )
                 Result.failure(e)
             }
         }
@@ -166,7 +198,12 @@ class CrossDeviceBrowserManager {
             logger.debug(LogCategory.BROWSER, "Successfully opened browser using ProcessBuilder")
             Result.success(Unit)
         } catch (e: Exception) {
-            logger.error(LogCategory.BROWSER, "Failed to open browser with ProcessBuilder", error = e)
+            logger.error(
+                category = LogCategory.BROWSER,
+                message = "Failed to open browser with ProcessBuilder",
+                data =
+                    mapOf("errorType" to e.javaClass.simpleName),
+            )
             Result.failure(e)
         }
 
@@ -198,7 +235,12 @@ class CrossDeviceBrowserManager {
                 else -> false
             }
         } catch (e: Exception) {
-            logger.warn(LogCategory.BROWSER, "Error in enhanced detection", error = e)
+            logger.warn(
+                category = LogCategory.BROWSER,
+                message = "Error in enhanced detection",
+                data =
+                    mapOf("errorType" to e.javaClass.simpleName),
+            )
             fallbackExternalAuthenticatorCheck()
         }
     }
@@ -254,7 +296,12 @@ class CrossDeviceBrowserManager {
                     ),
                 )
             } catch (e: Exception) {
-                logger.error(LogCategory.BROWSER, "Error showing enhanced capabilities", error = e)
+                logger.error(
+                    category = LogCategory.BROWSER,
+                    message = "Error showing enhanced capabilities",
+                    data =
+                        mapOf("errorType" to e.javaClass.simpleName),
+                )
             }
         }
 }

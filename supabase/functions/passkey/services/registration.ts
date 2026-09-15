@@ -52,7 +52,7 @@ export interface RegistrationCredential {
  */
 export const generateRegistrationChallenge = withErrorHandler(
   async (supabase: SupabaseClient, userId: string, sessionId?: string) => {
-    console.log('🔑 Generating registration challenge for user:', userId, 'sessionId:', sessionId)
+    console.log('🔑 Generating registration challenge for user:', userId)
 
     // Generate and store challenge
     const challenge = generateChallenge()

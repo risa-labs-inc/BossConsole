@@ -1,3 +1,4 @@
+import { authFailureDetails } from "../utils/logging.ts"
 import { createRoute, OpenAPIHono } from "@hono/zod-openapi"
 import type { PasskeyContext } from "../types/context.ts"
 import {
@@ -187,7 +188,7 @@ register.openapi(registerCompleteRoute, async (ctx) => {
     try {
       clientData = parseClientDataJSON(credential.response.clientDataJSON).data
     } catch (error) {
-      console.error('❌ Malformed clientDataJSON on register/complete:', (error as Error).message)
+      console.error('❌ Malformed clientDataJSON on register/complete:', authFailureDetails(error))
       return ctx.json({ error: 'Invalid clientDataJSON' }, 400)
     }
 

@@ -1,3 +1,4 @@
+import { authFailureDetails } from "../utils/logging.ts"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { generateChallenge, storeChallenge } from "../utils/challenge.ts"
 import {
@@ -67,7 +68,7 @@ export const generateAuthChallenge = withErrorHandler(
     const passkeyResult = await getUserPasskeys(supabase, userId)
 
     if (!passkeyResult.success) {
-      console.error('Error fetching user passkeys:', passkeyResult.error)
+      console.error('Error fetching user passkeys:', authFailureDetails(passkeyResult.error))
       return {
         success: false,
         error: 'Failed to fetch user credentials'
@@ -323,7 +324,7 @@ export const completeAuthentication = withErrorHandler(
     const userResult = await getUserWithEmail(supabase, passkey.user_id)
 
     if (!userResult.success || !userResult.user) {
-      console.error('❌ Failed to fetch user email for session:', userResult.error)
+      console.error('❌ Failed to fetch user email for session:', authFailureDetails(userResult.error))
     }
 
     const userEmail = userResult.user?.email
@@ -336,7 +337,7 @@ export const completeAuthentication = withErrorHandler(
     // /auth/status mint path available as the recovery it was before.
     const tokens = userEmail
       ? await generateSupabaseAccessToken(supabase, userEmail).catch((error) => {
-          console.error('❌ Failed to mint a session; recording the completion without one:', error)
+          console.error('❌ Failed to mint a session; recording the completion without one:', authFailureDetails(error))
           return null
         })
       : null
@@ -348,12 +349,11 @@ export const completeAuthentication = withErrorHandler(
     // Store completed authentication if there's a session_id
     console.log('🔍 Challenge data:', {
       has_session_id: !!challengeData.session_id,
-      session_id: challengeData.session_id,
       user_id: passkey.user_id
     })
 
     if (challengeData.session_id) {
-      console.log('💾 Storing completed authentication for session:', challengeData.session_id)
+      console.log('💾 Storing completed authentication')
       const storeResult = await storeCompletedAuthentication(supabase, {
         challenge: signedChallenge,
         sessionId: challengeData.session_id,
@@ -369,7 +369,7 @@ export const completeAuthentication = withErrorHandler(
         // The challenge is already consumed at this point, so the client has to
         // start a new ceremony rather than retry this one. That is the safe
         // direction: never leave a used challenge live to keep a retry cheap.
-        console.error('❌ Failed to store completed authentication:', storeResult.error)
+        console.error('❌ Failed to store completed authentication:', authFailureDetails(storeResult.error))
         return {
           success: false,
           error: `Failed to store authentication result: ${storeResult.error || 'Unknown error'}`
@@ -442,7 +442,7 @@ function parseStoredExpiryMillis(value: unknown): number | null {
  */
 export const checkAuthStatus = withStatusErrorHandler(
   async (supabase: SupabaseClient, sessionId: string) => {
-    console.log('🔍 Checking auth status for session:', sessionId)
+    console.log('🔍 Checking authentication status')
 
     // maybeSingle + newest-first: a client-supplied sessionId can legitimately be
     // reused, and .single() on two rows returns PGRST116, which would wedge the
@@ -458,7 +458,7 @@ export const checkAuthStatus = withStatusErrorHandler(
 
     if (error || !data) {
       console.log('🔍 Challenge not found or consumed, checking completed_authentications')
-      console.log('🔍 Challenge query error:', error)
+      console.log('🔍 Challenge query error:', authFailureDetails(error))
 
       // Session might be consumed (authentication complete)
       // Check if there's a completed authentication record.
@@ -479,11 +479,11 @@ export const checkAuthStatus = withStatusErrorHandler(
 
       console.log('🔍 Completed auth query result:', {
         found: !!completedAuth,
-        error: completedError?.message || completedError?.code
+        error: authFailureDetails(completedError)
       })
 
       if (completedError || !completedAuth) {
-        console.log('❌ No completed authentication found for session:', sessionId)
+        console.log('❌ No completed authentication found')
         return {
           status: 'expired' as const,
           message: 'Session not found or expired'
@@ -516,7 +516,7 @@ export const checkAuthStatus = withStatusErrorHandler(
         if (!claim.claimed) {
           // Another poll already took this pair, or the clear failed. Either way
           // mint a fresh session rather than serve credentials we cannot retire.
-          console.log('ℹ️ Stored session not claimable, minting a fresh one:', claim.error)
+          console.log('ℹ️ Stored session not claimable, minting a fresh one:', authFailureDetails(claim.error))
         } else {
           console.log('♻️ Returning the session minted when the ceremony completed (now cleared)')
           return {
@@ -535,7 +535,7 @@ export const checkAuthStatus = withStatusErrorHandler(
       const userResult = await getUserWithEmail(supabase, completedAuth.user_id)
 
       if (!userResult.success || !userResult.user) {
-        console.error('❌ Failed to fetch user email:', userResult.error)
+        console.error('❌ Failed to fetch user email:', authFailureDetails(userResult.error))
         return {
           status: 'completed' as const,
           userId: completedAuth.user_id,
@@ -568,7 +568,7 @@ export const checkAuthStatus = withStatusErrorHandler(
         .eq('id', completedAuth.id)
 
       if (tokenStoreError) {
-        console.error('⚠️ Failed to persist session for session id:', sessionId, tokenStoreError)
+        console.error('⚠️ Failed to persist session:', authFailureDetails(tokenStoreError))
       }
 
       return {

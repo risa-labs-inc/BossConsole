@@ -11,6 +11,7 @@ import ai.rever.boss.utils.DeepLinkHandler
 import ai.rever.boss.utils.WindowFocusManager
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.LogSanitizer
 import androidx.compose.runtime.*
 import androidx.compose.runtime.key
 import com.arkivanov.decompose.ComponentContext
@@ -47,7 +48,7 @@ fun ComponentContext.BossAppWithAuth(
         // Todo: Why this can not be in DeepLinkHandler itself, may be we can just have
         //  LaunchedEffect here and rest of the code inside DeepLinkHandler
         deepLink?.let { uri ->
-            logger.debug(LogCategory.AUTH, "Received deep link in app", mapOf("uri" to uri))
+            logger.debug(LogCategory.AUTH, "Received deep link in app", mapOf("uri" to LogSanitizer.maskUriParams(uri)))
 
             // Bring window to front
             WindowFocusManager.bringToFront()
@@ -57,14 +58,22 @@ fun ComponentContext.BossAppWithAuth(
                     val regex = Regex("sessionId=([^&]+)")
                     regex.find(uri)?.groupValues?.get(1)
                 } catch (_: Exception) {
-                    logger.warn(LogCategory.AUTH, "Failed to extract sessionId from deep link", mapOf("uri" to uri))
+                    logger.warn(
+                        LogCategory.AUTH,
+                        "Failed to extract sessionId from deep link",
+                        mapOf("uri" to LogSanitizer.maskUriParams(uri)),
+                    )
                     null
                 }
 
             when {
                 uri.contains("passkey/registered") -> {
                     sessionId?.let { id ->
-                        logger.info(LogCategory.AUTH, "Passkey registration completed", mapOf("sessionId" to id))
+                        logger.info(
+                            LogCategory.AUTH,
+                            "Passkey registration completed",
+                            mapOf("sessionId" to LogSanitizer.maskSessionId(id)),
+                        )
                         PasskeySessionEventHandler.handleRegistrationCompleted(id)
                     }
                     DeepLinkHandler.clearDeepLink()
@@ -72,7 +81,11 @@ fun ComponentContext.BossAppWithAuth(
 
                 uri.contains("passkey/authenticated") -> {
                     sessionId?.let { id ->
-                        logger.info(LogCategory.AUTH, "Passkey authentication completed", mapOf("sessionId" to id))
+                        logger.info(
+                            LogCategory.AUTH,
+                            "Passkey authentication completed",
+                            mapOf("sessionId" to LogSanitizer.maskSessionId(id)),
+                        )
 
                         // Trigger the polling check to complete authentication
                         coroutineScope.launch {
@@ -80,12 +93,20 @@ fun ComponentContext.BossAppWithAuth(
                             // an immediate check when we receive the deep link
                             val metadata = PasskeySessionEventHandler.getSessionMetadata(id)
                             metadata?.let { session ->
-                                logger.debug(LogCategory.AUTH, "Checking authentication status", mapOf("sessionId" to id))
+                                logger.debug(
+                                    LogCategory.AUTH,
+                                    "Checking authentication status",
+                                    mapOf("sessionId" to LogSanitizer.maskSessionId(id)),
+                                )
 
                                 // Notify that authentication completed
                                 PasskeySessionEventHandler.handleAuthenticationCompleted(id)
                             } ?: run {
-                                logger.warn(LogCategory.AUTH, "No metadata found for session", mapOf("sessionId" to id))
+                                logger.warn(
+                                    LogCategory.AUTH,
+                                    "No metadata found for session",
+                                    mapOf("sessionId" to LogSanitizer.maskSessionId(id)),
+                                )
                             }
                         }
                     }
