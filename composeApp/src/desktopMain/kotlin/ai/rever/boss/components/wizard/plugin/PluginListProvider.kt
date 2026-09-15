@@ -250,7 +250,7 @@ object PluginListProvider {
             WizardPluginInfo(
                 id = "ai.rever.boss.plugin.dynamic.fluckbrowser",
                 name = "Browser Tab",
-                description = "Full-featured embedded web browser with tabs support",
+                description = "Browse the web inside BOSS — your agent can see and interact with pages you open",
                 version = "1.0.7",
                 icon = Icons.Default.Web,
                 isDefault = true,
@@ -261,7 +261,7 @@ object PluginListProvider {
             WizardPluginInfo(
                 id = "ai.rever.boss.plugin.dynamic.editortab",
                 name = "Code Editor Tab",
-                description = "Code editor with syntax highlighting and code folding",
+                description = "Write and edit code with your agent — it can read, suggest, and modify files directly",
                 version = "1.0.2",
                 icon = Icons.Default.Code,
                 isDefault = true,
@@ -272,7 +272,7 @@ object PluginListProvider {
             WizardPluginInfo(
                 id = "ai.rever.boss.plugin.dynamic.terminaltab",
                 name = "Terminal Tab",
-                description = "Terminal emulation tab with full PTY support",
+                description = "Run shell commands inside BOSS — your agent can execute scripts and read terminal output",
                 version = "1.0.4",
                 icon = Icons.Default.Terminal,
                 isDefault = true,
@@ -294,7 +294,7 @@ object PluginListProvider {
                 WizardPluginInfo(
                     id = "ai.rever.boss.plugin.dynamic.terminal",
                     name = "Terminal",
-                    description = "Integrated terminal for command-line access",
+                    description = "A persistent terminal panel your agent uses to run commands on your behalf",
                     version = "1.0.0",
                     icon = Icons.Default.Terminal,
                     isDefault = true,
@@ -303,7 +303,7 @@ object PluginListProvider {
                 WizardPluginInfo(
                     id = "ai.rever.boss.plugin.dynamic.console",
                     name = "Console",
-                    description = "Application logs and debugging output",
+                    description = "See everything BOSS and your agent are doing behind the scenes — useful when things go wrong",
                     version = "1.0.0",
                     icon = Icons.Default.Code,
                     isDefault = true,
@@ -312,7 +312,7 @@ object PluginListProvider {
                 WizardPluginInfo(
                     id = "ai.rever.boss.plugin.dynamic.fluck",
                     name = "ChatGPT",
-                    description = "AI-powered chat assistant",
+                    description = "Chat with ChatGPT directly inside BOSS without switching apps",
                     version = "1.0.0",
                     icon = Icons.Default.Psychology,
                     isDefault = true,
@@ -321,7 +321,7 @@ object PluginListProvider {
                 WizardPluginInfo(
                     id = "ai.rever.boss.plugin.dynamic.secretmanager",
                     name = "Secret Manager",
-                    description = "Your credentials, what others share with you, and AI provider keys",
+                    description = "Store API keys and credentials securely — your agent uses these to act on your behalf without exposing them",
                     version = "1.0.0",
                     icon = Icons.Default.Key,
                     isDefault = true,
@@ -330,7 +330,7 @@ object PluginListProvider {
                 WizardPluginInfo(
                     id = "ai.rever.boss.plugin.dynamic.downloads",
                     name = "Downloads",
-                    description = "Manage downloaded files",
+                    description = "Track and access files your agent or browser has downloaded",
                     version = "1.0.0",
                     icon = Icons.Default.Download,
                     isDefault = true,
@@ -340,7 +340,7 @@ object PluginListProvider {
                 WizardPluginInfo(
                     id = "ai.rever.boss.plugin.dynamic.codebase",
                     name = "Codebase",
-                    description = "File browser and code navigation",
+                    description = "Browse your project files and let your agent navigate your codebase to understand context",
                     version = "1.0.0",
                     icon = Icons.Default.Folder,
                     isDefault = true,
@@ -349,7 +349,7 @@ object PluginListProvider {
                 WizardPluginInfo(
                     id = "ai.rever.boss.plugin.dynamic.gitstatus",
                     name = "Git Status",
-                    description = "View git repository status",
+                    description = "See uncommitted changes at a glance — your agent can read this to understand what's in progress",
                     version = "1.0.0",
                     icon = Icons.Default.Engineering,
                     isDefault = false,
@@ -358,7 +358,7 @@ object PluginListProvider {
                 WizardPluginInfo(
                     id = "ai.rever.boss.plugin.dynamic.gitlog",
                     name = "Git Log",
-                    description = "Browse git commit history",
+                    description = "Explore your project's commit history — useful for your agent to understand recent changes",
                     version = "1.0.0",
                     icon = Icons.Default.History,
                     isDefault = false,
@@ -368,7 +368,7 @@ object PluginListProvider {
                 WizardPluginInfo(
                     id = "ai.rever.boss.plugin.dynamic.bookmarks",
                     name = "Bookmarks",
-                    description = "Save and organize your favorite tabs",
+                    description = "Save important pages so you and your agent can return to them quickly",
                     version = "1.0.0",
                     icon = Icons.Default.Bookmark,
                     isDefault = true,
@@ -377,7 +377,7 @@ object PluginListProvider {
                 WizardPluginInfo(
                     id = "ai.rever.boss.plugin.dynamic.topofmind",
                     name = "Top of Mind",
-                    description = "Quick access to recent and important tabs",
+                    description = "Keeps your most-used tabs one click away — helps your agent know what you're focused on",
                     version = "1.0.0",
                     icon = Icons.Default.Lightbulb,
                     isDefault = true,
@@ -387,7 +387,7 @@ object PluginListProvider {
                 WizardPluginInfo(
                     id = "ai.rever.boss.plugin.dynamic.llmrpa",
                     name = "LLM RPA",
-                    description = "AI-powered robotic process automation",
+                    description = "Let your agent automate repetitive UI tasks across websites and desktop apps",
                     version = "1.0.0",
                     icon = Icons.Default.Psychology,
                     isDefault = false,
@@ -396,7 +396,7 @@ object PluginListProvider {
                 WizardPluginInfo(
                     id = "ai.rever.boss.plugin.dynamic.rparecorder",
                     name = "RPA Recorder",
-                    description = "Record automation scripts",
+                    description = "Record your actions once and turn them into automation scripts your agent can replay",
                     version = "1.0.0",
                     icon = Icons.Default.Videocam,
                     isDefault = false,
@@ -405,7 +405,7 @@ object PluginListProvider {
                 WizardPluginInfo(
                     id = "ai.rever.boss.plugin.dynamic.rpaengine",
                     name = "RPA Engine",
-                    description = "Execute automation scripts",
+                    description = "Runs recorded automation scripts — required if you want your agent to execute workflows",
                     version = "1.0.0",
                     icon = Icons.Default.PlayArrow,
                     isDefault = false,
@@ -415,7 +415,7 @@ object PluginListProvider {
                 WizardPluginInfo(
                     id = "ai.rever.boss.plugin.dynamic.adminrolemanagement",
                     name = "Role Management",
-                    description = "Manage user roles and permissions",
+                    description = "Control what each team member and agent is allowed to do inside BOSS",
                     version = "1.0.0",
                     icon = Icons.Default.ManageAccounts,
                     isDefault = false,
@@ -424,7 +424,7 @@ object PluginListProvider {
                 WizardPluginInfo(
                     id = "ai.rever.boss.plugin.dynamic.rolecreation",
                     name = "Role Creation",
-                    description = "Create and configure new roles",
+                    description = "Define custom permission sets for your team members and agents",
                     version = "1.0.0",
                     icon = Icons.Default.AdminPanelSettings,
                     isDefault = false,

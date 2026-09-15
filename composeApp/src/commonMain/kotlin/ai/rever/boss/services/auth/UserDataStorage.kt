@@ -79,6 +79,7 @@ import java.io.File
 object UserDataStorage {
     private val storageFile = BossDirectories.resolve("user_data.json")
     private val pendingWizardCompletedFile = BossDirectories.resolve("pending_wizard_completed")
+    private val pendingFirstSessionBannerDismissedFile = BossDirectories.resolve("pending_first_session_banner_dismissed")
     private val json =
         Json {
             ignoreUnknownKeys = true
@@ -93,6 +94,7 @@ object UserDataStorage {
         val createdAt: String,
         val authenticatedVia: String? = null, // "passkey", "magic_link", "password", etc.
         val pluginWizardCompleted: Boolean = false, // Whether the plugin install wizard has been completed
+        val firstSessionBannerDismissed: Boolean = false, // Whether the first session banner has been dismissed
     )
 
     init {
@@ -129,17 +131,15 @@ object UserDataStorage {
                         false
                     }
 
-                // Preserve existing pluginWizardCompleted status if file exists
-                val existingWizardCompleted =
-                    if (storageFile.exists()) {
+                // Check for pending first session banner dismissed status
+                val pendingBannerDismissed =
+                    if (pendingFirstSessionBannerDismissedFile.exists()) {
                         try {
-                            val existingContent = storageFile.readText()
-                            val existingData = json.decodeFromString<StoredUserData>(existingContent)
-                            existingData.pluginWizardCompleted
+                            pendingFirstSessionBannerDismissedFile.readText().trim().toBoolean()
                         } catch (e: Exception) {
                             logger.debug(
                                 LogCategory.AUTH,
-                                "Could not read stored wizard status - assuming false",
+                                "Could not read pending first-session-banner marker - assuming false",
                                 mapOf("error" to e.toString()),
                             )
                             false
@@ -148,8 +148,21 @@ object UserDataStorage {
                         false
                     }
 
+                // Preserve existing status if file exists
+                val existingData = if (storageFile.exists()) {
+                    try {
+                        json.decodeFromString<StoredUserData>(storageFile.readText())
+                    } catch (e: Exception) {
+                        null
+                    }
+                } else null
+
+                val existingWizardCompleted = existingData?.pluginWizardCompleted ?: false
+                val existingBannerDismissed = existingData?.firstSessionBannerDismissed ?: false
+
                 // Use pending status OR existing status (either one being true means completed)
                 val wizardCompleted = pendingWizardCompleted || existingWizardCompleted
+                val bannerDismissed = pendingBannerDismissed || existingBannerDismissed
 
                 val data =
                     StoredUserData(
@@ -158,6 +171,7 @@ object UserDataStorage {
                         createdAt = user.createdAt,
                         authenticatedVia = authenticatedVia,
                         pluginWizardCompleted = wizardCompleted,
+                        firstSessionBannerDismissed = bannerDismissed,
                     )
                 val content = json.encodeToString(data)
                 storageFile.writeText(content)
@@ -166,6 +180,9 @@ object UserDataStorage {
                 // Clean up pending file if it exists
                 if (pendingWizardCompletedFile.exists()) {
                     pendingWizardCompletedFile.delete()
+                }
+                if (pendingFirstSessionBannerDismissedFile.exists()) {
+                    pendingFirstSessionBannerDismissedFile.delete()
                 }
             } catch (e: Exception) {
                 logger.error(LogCategory.AUTH, "Error saving user data", error = e)
@@ -217,6 +234,53 @@ object UserDataStorage {
                 }
             } catch (e: Exception) {
                 logger.error(LogCategory.AUTH, "Error clearing user data", error = e)
+            }
+        }
+    }
+
+    /**
+     * Check if the first session banner has been dismissed.
+     */
+    suspend fun isFirstSessionBannerDismissed(): Boolean {
+        return withContext(Dispatchers.IO) {
+            try {
+                // First check the main user data file
+                if (storageFile.exists()) {
+                    try {
+                        val content = storageFile.readText()
+                        val data = json.decodeFromString<StoredUserData>(content)
+                        if (data.firstSessionBannerDismissed) {
+                            return@withContext true
+                        }
+                    } catch (e: Exception) {
+                        logger.error(
+                            LogCategory.SYSTEM,
+                            "Error reading user data file",
+                            error = e,
+                        )
+                    }
+                }
+
+                // Also check the pending file
+                if (pendingFirstSessionBannerDismissedFile.exists()) {
+                    try {
+                        val pendingValue = pendingFirstSessionBannerDismissedFile.readText().trim().toBoolean()
+                        if (pendingValue) {
+                            return@withContext true
+                        }
+                    } catch (e: Exception) {
+                        logger.error(
+                            LogCategory.SYSTEM,
+                            "Error reading pending first session banner file",
+                            error = e,
+                        )
+                    }
+                }
+
+                false
+            } catch (e: Exception) {
+                logger.error(LogCategory.AUTH, "Error checking first session banner status", error = e)
+                false
             }
         }
     }
@@ -276,6 +340,32 @@ object UserDataStorage {
             } catch (e: Exception) {
                 logger.error(LogCategory.AUTH, "Error checking plugin wizard status", error = e)
                 false
+            }
+        }
+    }
+
+    /**
+     * Mark the first session banner as dismissed.
+     */
+    suspend fun setFirstSessionBannerDismissed(dismissed: Boolean) {
+        withContext(Dispatchers.IO) {
+            try {
+                if (storageFile.exists()) {
+                    val content = storageFile.readText()
+                    val data = json.decodeFromString<StoredUserData>(content)
+                    val updatedData = data.copy(firstSessionBannerDismissed = dismissed)
+                    storageFile.writeText(json.encodeToString(updatedData))
+                    logger.debug(
+                        LogCategory.AUTH,
+                        "Updated first session banner dismissed status",
+                        mapOf("dismissed" to dismissed),
+                    )
+                } else {
+                    pendingFirstSessionBannerDismissedFile.parentFile?.mkdirs()
+                    pendingFirstSessionBannerDismissedFile.writeText(dismissed.toString())
+                }
+            } catch (e: Exception) {
+                logger.error(LogCategory.AUTH, "Error updating first session banner status", error = e)
             }
         }
     }
