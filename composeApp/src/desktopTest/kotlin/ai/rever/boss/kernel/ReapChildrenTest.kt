@@ -431,6 +431,7 @@ class ReapChildrenTest {
             } finally {
                 job.cancel()
                 job.join()
+                spawner.dispose()
             }
         }
 }
