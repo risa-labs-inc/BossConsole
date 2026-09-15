@@ -23,8 +23,8 @@ private val logger = BossLogger.forComponent("TopOfMindActions")
  * `defaultOrder` is not part of panel matching - the event handler compares `panelId` and
  * `pluginId` only - so this carries the plugin's real 5 for honesty rather than for matching.
  *
- * **Not [PanelIds.TOP_OF_MIND].** That constant is `PanelId("topofmind", 2)`, a different id
- * string from the one the plugin actually registers, so opening by it matches nothing at all.
+ * **Not the removed TOP_OF_MIND constant (see #719).** It was `PanelId("topofmind", 2)`, a different id
+ * string from the one the plugin actually registers, so opening by it matched nothing at all.
  */
 private val TOP_OF_MIND_PANEL = PanelId(panelId = "top-of-mind", defaultOrder = 5)
 
