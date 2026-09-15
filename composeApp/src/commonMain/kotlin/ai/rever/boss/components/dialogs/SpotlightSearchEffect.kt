@@ -23,13 +23,21 @@ internal fun SpotlightSearchEffect(
             return@LaunchedEffect
         }
         delay(50)
+        
+        val currentGen = ++dialogState.searchGeneration
+        
         // This window, so the Tools rows come from the sidebar this dialog can actually open, and
         // so a signpost is offered only when its panel is present here - see SearchSources.
         dialogState.isSearching = true
         try {
-            dialogState.results = GlobalSearchService.search(dialogState.query, windowId, indexedFiles)
+            val results = GlobalSearchService.search(dialogState.query, windowId, indexedFiles)
+            if (currentGen == dialogState.searchGeneration) {
+                dialogState.results = results
+            }
         } finally {
-            dialogState.isSearching = false
+            if (currentGen == dialogState.searchGeneration) {
+                dialogState.isSearching = false
+            }
         }
     }
 }
