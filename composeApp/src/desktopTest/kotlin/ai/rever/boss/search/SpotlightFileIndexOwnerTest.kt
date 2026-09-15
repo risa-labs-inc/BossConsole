@@ -4,9 +4,13 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.job
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -120,6 +124,49 @@ class SpotlightFileIndexOwnerTest {
             runCurrent()
             assertFalse(indexer.isIndexing.value)
             assertEquals(emptyList(), indexer.indexedFiles.value)
+        }
+
+    @Test
+    fun `refresh after completed scans sees file creation rename and deletion`() =
+        runBlocking {
+            val root = Files.createTempDirectory("spotlight-refresh").toFile()
+            try {
+                val original = root.resolve("original.txt").apply { writeText("original") }
+                val owner = SpotlightFileIndexOwner(this)
+                val indexer = owner.indexerFor(root.path)
+
+                suspend fun refresh() {
+                    owner.ensureIndexed(root.path, refresh = true)
+                    coroutineContext.job.children
+                        .toList()
+                        .joinAll()
+                }
+                refresh()
+                assertEquals(listOf("original.txt"), indexer.indexedFiles.value.map { it.name })
+                root.resolve("created.txt").writeText("created")
+                refresh()
+                assertEquals(
+                    setOf("original.txt", "created.txt"),
+                    indexer.indexedFiles.value
+                        .map { it.name }
+                        .toSet(),
+                )
+                assertTrue(original.renameTo(root.resolve("renamed.txt")))
+                refresh()
+                assertEquals(
+                    setOf("renamed.txt", "created.txt"),
+                    indexer.indexedFiles.value
+                        .map { it.name }
+                        .toSet(),
+                )
+                assertTrue(root.resolve("created.txt").delete())
+                assertTrue(root.resolve("renamed.txt").delete())
+                refresh()
+                assertEquals(emptyList(), indexer.indexedFiles.value)
+                assertSame(indexer, owner.indexerFor(root.path))
+            } finally {
+                root.deleteRecursively()
+            }
         }
 
     private fun file(path: String) = IndexedFile("file.kt", "$path/file.kt", "file.kt")

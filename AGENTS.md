@@ -2190,3 +2190,12 @@ are intentional. Global access filters still apply independently of registration
 - **Test Veracity Rules**:
   - In deduplication tests, ALWAYS test with dev JAR `lastModified` strictly greater than standard JAR `lastModified` to mirror real-world compiler outputs.
   - Test the public reload pipeline (`DevPluginReloader.reload`) end-to-end rather than calling internal rollback helpers in isolation.
+
+## Spotlight file freshness
+
+Each dialog opening requests a refresh of its window-owned file index; Refresh files repeats
+that request while the dialog stays open. The previous snapshot stays usable until replacement.
+An active scan is reused across close/reopen, never duplicated; project replacement and window
+closure still cancel it. This deliberately trades a new scan on completed-index reopen for
+freshness. There is no filesystem watcher or live refresh interval. Preserve the index walk's
+confinement, cancellation and window ownership when extending freshness triggers.
