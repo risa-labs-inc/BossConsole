@@ -37,8 +37,27 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+
+/**
+ * The line caps on a single toast's title and message text.
+ *
+ * A toast's `title` and `message` are plugin-controlled strings of unbounded length. Without a cap
+ * the [Text]s grow without limit, so a single verbose toast - or, worse, a stack of [PluginToastState]'s
+ * `maxToasts` (3) INDEFINITE ones, which are dismissed only by hand - grows the content-sized toast
+ * overlay past the parent content pane it is allowed to fill. The overflow is not cosmetic: the
+ * dismiss button of a toast pushed below that ceiling lands off-window and cannot be clicked, and on
+ * the INDEFINITE path clicking dismiss is the only way to clear it (BossConsole#154).
+ *
+ * Capping each toast to a bounded height keeps even a full stack within the overlay's own ceiling, so
+ * every toast's dismiss button stays on-window. The message is allowed more lines than the title
+ * because it carries the detail; both end in an ellipsis rather than truncating mid-glyph. A plugin
+ * that needs to say more should raise an action toast, not a taller one.
+ */
+internal const val TOAST_TITLE_MAX_LINES = 2
+internal const val TOAST_MESSAGE_MAX_LINES = 6
 
 /**
  * Host composable for displaying plugin toast notifications.
@@ -131,12 +150,16 @@ fun PluginToast(
                     color = BossThemeColors.TextPrimary,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
+                    maxLines = TOAST_TITLE_MAX_LINES,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(Modifier.height(2.dp))
                 Text(
                     text = message.message,
                     color = BossThemeColors.TextSecondary,
                     fontSize = 12.sp,
+                    maxLines = TOAST_MESSAGE_MAX_LINES,
+                    overflow = TextOverflow.Ellipsis,
                 )
 
                 // Action button
