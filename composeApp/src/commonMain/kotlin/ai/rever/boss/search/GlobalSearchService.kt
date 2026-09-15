@@ -17,6 +17,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
+import java.io.File
 
 private val logger = BossLogger.forComponent("GlobalSearchService")
 
@@ -240,6 +241,31 @@ object GlobalSearchService {
         }
 
     /**
+     * Index in [relativePath] where the file name starts, for either platform's separator.
+     *
+     * [IndexedFile.relativePath] is produced by relativizing two absolute paths, so on Windows it
+     * arrives joined with `\` and a bare `lastIndexOf('/')` returns -1. The match ranges below are
+     * then rebased against 0 instead of the file name's first character, which underlines the wrong
+     * characters - or, once a range lands past the name's length, underlines nothing at all.
+     *
+     * `/` is checked ALONGSIDE [File.separatorChar] rather than instead of it. On a POSIX host the
+     * two are the same character, so that host's behaviour is unchanged; on Windows `/` is not a
+     * legal file-name character, so it cannot split a name by accident. Deliberately not a bare
+     * `lastIndexOf('\\')` on every platform: a backslash IS a legal POSIX file-name character, and
+     * that would split `dir/we\ird.kt` inside its own name. [ContentSearchService] reaches for
+     * [File.separatorChar] in this package for the same reason.
+     *
+     * [separator] defaults to the host's and is only passed explicitly by tests. Because the rule
+     * is deliberately platform-dependent, a Windows-shaped path proves nothing when fed to a POSIX
+     * host - the shift there is correctly zero - so the parameter is what lets the Windows case be
+     * asserted on every runner rather than only on a Windows one.
+     */
+    internal fun fileNameStartIn(
+        relativePath: String,
+        separator: Char = File.separatorChar,
+    ): Int = maxOf(relativePath.lastIndexOf(separator), relativePath.lastIndexOf('/')) + 1
+
+    /**
      * Search files using fuzzy matching.
      */
     private fun searchFiles(
@@ -270,7 +296,7 @@ object GlobalSearchService {
 
             val pathMatch = FuzzyMatcher.match(query, file.relativePath, file.relativePath.lowercase())
             if (pathMatch != null && pathMatch.score >= MIN_SCORE) {
-                val fileNameStart = file.relativePath.lastIndexOf('/') + 1
+                val fileNameStart = fileNameStartIn(file.relativePath)
                 val adjustedRanges =
                     pathMatch.matchRanges
                         .filter { it.start >= fileNameStart || it.end > fileNameStart }
