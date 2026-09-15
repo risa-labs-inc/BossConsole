@@ -5,7 +5,9 @@ import ai.rever.boss.plugin.ui.BossThemes
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.ui.graphics.Color
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,8 +23,26 @@ import kotlin.time.Clock
 /**
  * Manages layout workspaces with file-based storage
  */
-class WorkspaceManager {
+class WorkspaceManager internal constructor(
+    private val fileManager: WorkspaceFileManager,
+    private val scope: CoroutineScope,
+    private val writeWorkspace: suspend (LayoutWorkspace, String) -> String? = { workspace, fileName ->
+        withContext(Dispatchers.IO) { fileManager.saveWorkspace(workspace, fileName) }
+    },
+    private val removeWorkspace: suspend (String) -> Boolean = { fileName ->
+        withContext(Dispatchers.IO) { fileManager.deleteWorkspace(fileName) }
+    },
+) {
+    constructor() : this(WorkspaceFileManager(), CoroutineScope(Dispatchers.Main + SupervisorJob()))
+
+    private val loaded = CompletableDeferred<Unit>()
+    private val mutations = OrderedWorkspaceMutations(scope)
+
+    /** Wait for the disk seed before making decisions about saved identities or legacy paths. */
+    internal suspend fun awaitLoaded() = loaded.await()
+
     private val logger = BossLogger.forComponent("WorkspaceManager")
+    private var currentRevision = 0L
     private val _currentWorkspace = MutableStateFlow<LayoutWorkspace?>(null)
     val currentWorkspace: StateFlow<LayoutWorkspace?> = _currentWorkspace.asStateFlow()
 
@@ -133,9 +153,6 @@ class WorkspaceManager {
      * the bytes landed. This list is only replaced once `fileManager` has returned a path.
      */
     fun savedCopyOf(workspaceId: String): LayoutWorkspace? = _workspaces.value.firstOrNull { it.id == workspaceId }
-
-    private val fileManager = WorkspaceFileManager()
-    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     /**
      * The file each Space was LOADED from, by id, for the ones whose path predates
@@ -322,6 +339,7 @@ class WorkspaceManager {
             // `mergeSavedWorkspaces`, which also says what becomes of a legacy file whose id IS a
             // built-in's.
             _workspaces.value = mergeSavedWorkspaces(PredefinedWorkspaces.allWorkspaces, saved)
+            loaded.complete(Unit)
         }
     }
 
@@ -339,6 +357,7 @@ class WorkspaceManager {
      * same thing [currentWorkspace] itself has always done.
      */
     fun loadWorkspace(workspace: LayoutWorkspace) {
+        currentRevision++
         _currentWorkspace.value = workspace
         applySpaceTheme(workspace.id)
     }
@@ -348,68 +367,110 @@ class WorkspaceManager {
      */
     fun saveCurrentWorkspace(name: String? = null): LayoutWorkspace? {
         val current = _currentWorkspace.value ?: return null
+        val saved = prepareSavedWorkspace(current, name)
+        enqueueSave(current, saved, name)
+        // Compatibility: this is the proposed snapshot, not a persistence acknowledgement.
+        // Call saveWorkspaceAwait when a later action depends on the write succeeding.
+        return saved
+    }
+
+    /** Complete only after the ordered disk write and saved-list publication succeed. */
+    suspend fun saveWorkspaceAwait(
+        current: LayoutWorkspace,
+        name: String? = null,
+    ): Result<LayoutWorkspace> = enqueueSave(current, prepareSavedWorkspace(current, name), name).await()
+
+    private fun prepareSavedWorkspace(
+        current: LayoutWorkspace,
+        name: String?,
+    ): LayoutWorkspace {
         val now = Clock.System.now().toEpochMilliseconds()
-        val savedWorkspace =
-            if (isSpaceSlot(current.id)) {
-                // Saving while the current Space is a SLOT - a shipped layout, or the `last-session`
-                // autosave record - creates the user's own copy rather than writing over the slot:
-                // a new id, and a name that collides with nothing and is never "Last Session".
-                // Writing the slot's own id and name is what the old behaviour did, and the file it
-                // produced was silently dropped on the next launch. See `savedCopyOfSlot`.
-                savedCopyOfSlot(
-                    current = current,
-                    id = LayoutWorkspace.generateId(),
-                    now = now,
-                    // Only other SPACES, so saving out of the shipped Claude Code gives a Space
-                    // called "Claude Code" rather than "Claude Code 2". See `savedSpaceNames`.
-                    takenNames = savedSpaceNames(_workspaces.value),
-                    requestedName = name,
-                )
-            } else {
-                current.copy(
-                    id = current.id.ifEmpty { LayoutWorkspace.generateId() },
-                    // A typed name goes through `uniqueWorkspaceName` too, which it used to
-                    // bypass entirely - the one path that could still put two identical rows in
-                    // the list. Its own name is never "taken" by itself, so re-saving a Space
-                    // under the name it already has is not numbered.
-                    name =
-                        name?.let {
-                            uniqueWorkspaceName(it, savedSpaceNames(_workspaces.value) - current.name)
-                        } ?: current.name,
-                    timestamp = now,
-                )
-            }
+        return if (isSpaceSlot(current.id)) {
+            // Saving while the current Space is a SLOT - a shipped layout, or the `last-session`
+            // autosave record - creates the user's own copy rather than writing over the slot:
+            // a new id, and a name that collides with nothing and is never "Last Session".
+            // Writing the slot's own id and name is what the old behaviour did, and the file it
+            // produced was silently dropped on the next launch. See `savedCopyOfSlot`.
+            savedCopyOfSlot(
+                current = current,
+                id = LayoutWorkspace.generateId(),
+                now = now,
+                // Only other SPACES, so saving out of the shipped Claude Code gives a Space
+                // called "Claude Code" rather than "Claude Code 2". See `savedSpaceNames`.
+                takenNames = savedSpaceNames(_workspaces.value),
+                requestedName = name,
+            )
+        } else {
+            current.copy(
+                id = current.id.ifEmpty { LayoutWorkspace.generateId() },
+                // A typed name goes through `uniqueWorkspaceName` too, which it used to
+                // bypass entirely - the one path that could still put two identical rows in
+                // the list. Its own name is never "taken" by itself, so re-saving a Space
+                // under the name it already has is not numbered.
+                name =
+                    name?.let {
+                        uniqueWorkspaceName(it, savedSpaceNames(_workspaces.value) - current.name)
+                    } ?: current.name,
+                timestamp = now,
+            )
+        }
+    }
 
-        scope.launch {
-            // Save to disk (on IO thread)
-            val fileName = fileNameFor(savedWorkspace)
-            val filePath =
-                withContext(Dispatchers.IO) {
-                    fileManager.saveWorkspace(savedWorkspace, fileName)
+    private fun enqueueSave(
+        current: LayoutWorkspace,
+        proposed: LayoutWorkspace,
+        requestedName: String?,
+        expectedRevision: Long = currentRevision,
+    ): Deferred<Result<LayoutWorkspace>> =
+        mutations.submit {
+            loaded.await()
+            val latest = savedCopyOf(proposed.id)
+            // A rename queued ahead of this save owns the display name. The caller's live layout
+            // can be older metadata while still containing newer tabs that need saving.
+            val takenNames = savedSpaceNames(_workspaces.value.filter { it.id != proposed.id })
+            val committedName =
+                when {
+                    requestedName == null && latest != null -> {
+                        latest.name
+                    }
+
+                    isSpaceSlot(current.id) -> {
+                        savedCopyOfSlot(
+                            current = current,
+                            id = proposed.id,
+                            now = proposed.timestamp,
+                            takenNames = takenNames,
+                            requestedName = requestedName,
+                        ).name
+                    }
+
+                    requestedName != null -> {
+                        uniqueWorkspaceName(requestedName, takenNames)
+                    }
+
+                    else -> {
+                        proposed.name
+                    }
                 }
-            if (filePath != null) {
-                loadedFileNames[savedWorkspace.id] = fileName
-                // Update workspaces list (on Main thread), keyed by ID for the reason
-                // `mergeSavedWorkspaces` is: by NAME, saving a Space of the user's that happens to
-                // be called "Codex" replaced the SHIPPED Codex in this list, so the Templates
-                // section lost a tile for the rest of the session. By name a RENAME also appended a
-                // second entry rather than updating the one it renamed, since the new name matched
-                // nothing.
-                val workspaces = _workspaces.value.toMutableList()
-                val existingIndex = workspaces.indexOfFirst { it.id == savedWorkspace.id }
-
-                if (existingIndex >= 0) {
-                    workspaces[existingIndex] = savedWorkspace
-                } else {
-                    workspaces.add(savedWorkspace)
-                }
-
-                _workspaces.value = workspaces
-                _currentWorkspace.value = savedWorkspace
+            val saved = proposed.copy(name = committedName)
+            persistWorkspace(saved)
+            // Saving is not switching. Neither another Space nor edits made during I/O may be
+            // replaced by the captured snapshot. Equality is insufficient after an A -> B -> A switch.
+            if (currentRevision == expectedRevision && _currentWorkspace.value?.id == current.id) {
+                _currentWorkspace.value = saved
             }
+            saved
         }
 
-        return savedWorkspace
+    private suspend fun persistWorkspace(workspace: LayoutWorkspace) {
+        val fileName = fileNameFor(workspace)
+        check(writeWorkspace(workspace, fileName) != null) { "Could not save Space '${workspace.name}'" }
+        loadedFileNames[workspace.id] = fileName
+        val existing = _workspaces.value.indexOfFirst { it.id == workspace.id }
+        _workspaces.value =
+            _workspaces.value.toMutableList().also {
+                if (existing >= 0) it[existing] = workspace else it.add(workspace)
+            }
     }
 
     /**
@@ -469,6 +530,7 @@ class WorkspaceManager {
             return false
         }
         loadedFileNames[lastSession.id] = fileName
+        currentRevision++
         _currentWorkspace.value = lastSession
         _workspaces.value =
             _workspaces.value.toMutableList().also { workspaces ->
@@ -530,6 +592,7 @@ class WorkspaceManager {
      * Reset to default workspace
      */
     fun resetToDefault() {
+        currentRevision++
         _currentWorkspace.value = null
     }
 
@@ -545,21 +608,11 @@ class WorkspaceManager {
         try {
             val workspace = WorkspaceSerializer.deserialize(jsonString)
 
-            // Save the imported workspace to disk
-            scope.launch {
-                val fileName = fileNameFor(workspace)
-                withContext(Dispatchers.IO) {
-                    fileManager.saveWorkspace(workspace, fileName)
-                }
-                loadedFileNames[workspace.id] = fileName
-
-                // Update workspaces list (on Main thread), by ID. By NAME an import whose name
-                // matched anything already listed wrote the file and then declined to add the row,
-                // so the user pressed Open from File and saw nothing happen at all.
-                val workspaces = _workspaces.value.toMutableList()
-                val existingIndex = workspaces.indexOfFirst { it.id == workspace.id }
-                if (existingIndex >= 0) workspaces[existingIndex] = workspace else workspaces.add(workspace)
-                _workspaces.value = workspaces
+            // Import shares the named-Space writer; an old import cannot resurrect a deleted
+            // entry after a later delete, and failed writes never publish a saved-list entry.
+            mutations.submit {
+                loaded.await()
+                persistWorkspace(workspace)
             }
 
             workspace
@@ -592,31 +645,27 @@ class WorkspaceManager {
 
     /** Delete the Space with [workspaceId]. Refuses a shipped layout, which has no file to delete. */
     fun deleteWorkspaceById(workspaceId: String) {
-        scope.launch {
-            val workspace = _workspaces.value.find { it.id == workspaceId } ?: return@launch
-            // By ID, not by name: a Space merely CALLED "Codex" is the user's and is deletable,
-            // where the shipped Codex is not. By name the veto refused both.
-            if (!isUserOwnedSpace(workspaceId)) return@launch
+        enqueueDelete(workspaceId)
+    }
 
-            val deleted =
-                withContext(Dispatchers.IO) {
-                    fileManager.deleteWorkspace(fileNameFor(workspace))
-                }
-            if (deleted) {
-                // Update state on Main thread
-                _workspaces.value = _workspaces.value.filter { it.id != workspaceId }
-                loadedFileNames.remove(workspaceId)
+    suspend fun deleteWorkspaceByIdAwait(workspaceId: String): Result<Unit> = enqueueDelete(workspaceId).await()
 
-                // Notify that workspace was deleted (this will cleanup tabs)
+    private fun enqueueDelete(workspaceId: String): Deferred<Result<Unit>> =
+        mutations.submit {
+            loaded.await()
+            val workspace = savedCopyOf(workspaceId) ?: error("Space no longer exists")
+            check(isUserOwnedSpace(workspaceId)) { "A shipped Space cannot be deleted" }
+            check(removeWorkspace(fileNameFor(workspace))) { "Could not delete Space '${workspace.name}'" }
+            _workspaces.value = _workspaces.value.filter { it.id != workspaceId }
+            loadedFileNames.remove(workspaceId)
+            // Commit state before notifying external callbacks; their failure cannot undo the disk.
+            if (_currentWorkspace.value?.id == workspaceId) resetToDefault()
+            try {
                 onWorkspaceDeleted?.invoke(workspaceId)
-
-                // If current workspace was deleted, reset
-                if (_currentWorkspace.value?.id == workspaceId) {
-                    resetToDefault()
-                }
+            } catch (e: Exception) {
+                logger.warn(LogCategory.WORKSPACE, "Space deleted but cleanup callback failed", error = e)
             }
         }
-    }
 
     /**
      * Rename a workspace
@@ -641,52 +690,42 @@ class WorkspaceManager {
         workspaceId: String,
         newName: String,
     ) {
-        val existing = _workspaces.value.find { it.id == workspaceId }
-        val taken = _workspaces.value.any { it.id != workspaceId && it.name == newName }
-        if (taken) {
-            logger.debug(LogCategory.WORKSPACE, "Workspace with name already exists", mapOf("name" to newName))
-        }
-        // Nothing to do for an unknown Space, a name another Space holds, an empty name, or the
-        // name it already has.
-        val nameIsNew = newName.isNotEmpty() && newName != existing?.name
-        if (existing == null || taken || !nameIsNew) return
-
-        scope.launch {
-            // By ID: a Space merely CALLED "Codex" is renameable where the shipped Codex is not.
-            if (!isUserOwnedSpace(workspaceId)) return@launch
-
-            val renamedWorkspace =
-                existing.copy(
-                    name = newName,
-                    timestamp = Clock.System.now().toEpochMilliseconds(),
-                )
-
-            val fileName = fileNameFor(renamedWorkspace)
-            val success =
-                withContext(Dispatchers.IO) {
-                    fileManager.saveWorkspace(renamedWorkspace, fileName) != null
-                }
-
-            if (success) {
-                loadedFileNames[workspaceId] = fileName
-                // Update state on Main thread
-                _workspaces.value =
-                    _workspaces.value.map {
-                        if (it.id == workspaceId) renamedWorkspace else it
-                    }
-
-                // If current workspace was renamed, update it
-                if (_currentWorkspace.value?.id == workspaceId) {
-                    _currentWorkspace.value = renamedWorkspace
-                }
-            }
-        }
+        enqueueRename(workspaceId, newName)
     }
+
+    suspend fun renameWorkspaceByIdAwait(
+        workspaceId: String,
+        newName: String,
+    ): Result<LayoutWorkspace> = enqueueRename(workspaceId, newName).await()
+
+    private fun enqueueRename(
+        workspaceId: String,
+        newName: String,
+    ): Deferred<Result<LayoutWorkspace>> =
+        mutations.submit {
+            loaded.await()
+            // Read after every earlier write has committed, so renaming retains newly saved tabs.
+            val existing = savedCopyOf(workspaceId) ?: error("Space no longer exists")
+            check(isUserOwnedSpace(workspaceId)) { "A shipped Space cannot be renamed" }
+            require(newName.isNotEmpty()) { "Space name cannot be empty" }
+            check(_workspaces.value.none { it.id != workspaceId && it.name == newName }) {
+                "Space name is already in use"
+            }
+            if (existing.name == newName) return@submit existing
+            val renamed = existing.copy(name = newName, timestamp = Clock.System.now().toEpochMilliseconds())
+            persistWorkspace(renamed)
+            // Rename only the identity metadata of the live layout, never its unsaved contents.
+            _currentWorkspace.value?.takeIf { it.id == workspaceId }?.let {
+                _currentWorkspace.value = it.copy(name = newName)
+            }
+            renamed
+        }
 
     /**
      * Update current workspace with new layout
      */
     fun updateCurrentWorkspace(newWorkspace: LayoutWorkspace) {
+        currentRevision++
         _currentWorkspace.value = newWorkspace
     }
 
