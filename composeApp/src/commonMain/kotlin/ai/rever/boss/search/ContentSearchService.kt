@@ -587,22 +587,86 @@ class ContentSearchService(
             if (buffer != null) {
                 replaceInBuffer(file, buffer.content, buffer.version, regex, replacement, isRegex, dryRun, isCancelled)
             } else {
-                // UTF-8 in, UTF-8 out. A file in another single-byte encoding has no NUL
-                // bytes, so it passes the binary check, and round-tripping it through
-                // readText/writeText replaces its undecodable bytes with U+FFFD - a
-                // silent rewrite of bytes the user never asked to touch. Detect that the
-                // decode was lossy and refuse, rather than corrupting the file.
-                val text = file.readText()
-                if ('\u0000' in text) return FileReplaceResult(file.path, 0, "binary file")
-                if ('\uFFFD' in text) return FileReplaceResult(file.path, 0, "not valid UTF-8")
-                val outcome = computeReplaced(text, regex, replacement, isRegex, isCancelled)
-                if (!dryRun && outcome.count > 0) writeAtomically(file, outcome.text)
-                FileReplaceResult(file.path, outcome.count, null)
+                replaceInClosedFile(
+                    file = file,
+                    regex = regex,
+                    replacement = replacement,
+                    isRegex = isRegex,
+                    dryRun = dryRun,
+                    isCancelled = isCancelled,
+                )
             }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             FileReplaceResult(file.path, 0, e.message ?: "replace failed")
+        }
+    }
+
+    internal suspend fun replaceInClosedFile(
+        file: File,
+        regex: Regex,
+        replacement: String,
+        isRegex: Boolean,
+        dryRun: Boolean,
+        isCancelled: () -> Boolean,
+    ): FileReplaceResult =
+        if (dryRun) {
+            replaceClosedFileContents(
+                file = file,
+                regex = regex,
+                replacement = replacement,
+                isRegex = isRegex,
+                dryRun = true,
+                isCancelled = isCancelled,
+            )
+        } else {
+            // Atomic promotion prevents torn files, but it cannot protect a complete
+            // result computed from a stale snapshot. Coordinate the read, computation
+            // and promotion under one process-wide per-file admission point.
+            processClosedFileReplacements.withFile(file) {
+                replaceClosedFileContents(
+                    file = file,
+                    regex = regex,
+                    replacement = replacement,
+                    isRegex = isRegex,
+                    dryRun = false,
+                    isCancelled = isCancelled,
+                )
+            }
+        }
+
+    private fun replaceClosedFileContents(
+        file: File,
+        regex: Regex,
+        replacement: String,
+        isRegex: Boolean,
+        dryRun: Boolean,
+        isCancelled: () -> Boolean,
+    ): FileReplaceResult {
+        // UTF-8 in, UTF-8 out. A file in another single-byte encoding has no NUL
+        // bytes, so it passes the binary check, and round-tripping it through
+        // readText/writeText replaces its undecodable bytes with U+FFFD - a
+        // silent rewrite of bytes the user never asked to touch. Detect that the
+        // decode was lossy and refuse, rather than corrupting the file.
+        val text = file.readText()
+
+        return when {
+            '\u0000' in text -> {
+                FileReplaceResult(file.path, 0, "binary file")
+            }
+
+            '\uFFFD' in text -> {
+                FileReplaceResult(file.path, 0, "not valid UTF-8")
+            }
+
+            else -> {
+                val outcome = computeReplaced(text, regex, replacement, isRegex, isCancelled)
+                if (!dryRun && outcome.count > 0) {
+                    writeAtomically(file, outcome.text)
+                }
+                FileReplaceResult(file.path, outcome.count, null)
+            }
         }
     }
 

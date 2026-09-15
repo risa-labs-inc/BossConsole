@@ -1,7 +1,11 @@
 package ai.rever.boss.search
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
@@ -9,6 +13,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -385,6 +390,78 @@ class ContentSearchServiceTest {
         assertEquals("needle needle\n", file.readText())
     }
 
+    @Test
+    fun `overlapping closed-file replacements from one service preserve both edits`(
+        @TempDir dir: File,
+    ) = runBlocking {
+        val service = ContentSearchService(projectPathProvider = { dir.absolutePath })
+
+        assertClosedFileReplacementsAreCoordinated(
+            file = File(dir, "same-service.txt"),
+            firstService = service,
+            secondService = service,
+        )
+    }
+
+    @Test
+    fun `overlapping closed-file replacements across service instances preserve both edits`(
+        @TempDir dir: File,
+    ) = runBlocking {
+        val firstService = ContentSearchService(projectPathProvider = { dir.absolutePath })
+        val secondService = ContentSearchService(projectPathProvider = { dir.absolutePath })
+
+        assertClosedFileReplacementsAreCoordinated(
+            file = File(dir, "separate-services.txt"),
+            firstService = firstService,
+            secondService = secondService,
+        )
+    }
+
+    @Test
+    fun `dry run remains available while a write transaction is active`(
+        @TempDir dir: File,
+    ) = runBlocking {
+        val file = File(dir, "dry-run.txt").apply { writeText("alpha") }
+        val service = ContentSearchService(projectPathProvider = { dir.absolutePath })
+        val blockerEntered = CompletableDeferred<Unit>()
+        val releaseBlocker = CompletableDeferred<Unit>()
+
+        val blocker =
+            async(start = CoroutineStart.UNDISPATCHED) {
+                processClosedFileReplacements.withFile(file) {
+                    blockerEntered.complete(Unit)
+                    releaseBlocker.await()
+                }
+            }
+
+        blockerEntered.await()
+
+        val dryRun =
+            async(start = CoroutineStart.UNDISPATCHED) {
+                service.replaceInClosedFile(
+                    file = file,
+                    regex = Regex("alpha"),
+                    replacement = "ALPHA",
+                    isRegex = false,
+                    dryRun = true,
+                    isCancelled = { false },
+                )
+            }
+
+        try {
+            assertTrue(
+                dryRun.isCompleted,
+                "a non-writing dry run was blocked behind a write transaction",
+            )
+            val result = dryRun.await()
+            assertEquals(1, result.replacements)
+            assertEquals("alpha", file.readText())
+        } finally {
+            releaseBlocker.complete(Unit)
+            blocker.await()
+        }
+    }
+
     // ---- round-2 regressions ----
 
     @Test
@@ -589,5 +666,72 @@ class ContentSearchServiceTest {
                     "character stream has stopped working",
             )
         }
+    }
+
+    private suspend fun CoroutineScope.assertClosedFileReplacementsAreCoordinated(
+        file: File,
+        firstService: ContentSearchService,
+        secondService: ContentSearchService,
+    ) {
+        file.writeText("alpha beta")
+
+        val blockerEntered = CompletableDeferred<Unit>()
+        val releaseBlocker = CompletableDeferred<Unit>()
+
+        val blocker =
+            async(start = CoroutineStart.UNDISPATCHED) {
+                processClosedFileReplacements.withFile(file) {
+                    blockerEntered.complete(Unit)
+                    releaseBlocker.await()
+                }
+            }
+
+        blockerEntered.await()
+
+        val first =
+            async(start = CoroutineStart.UNDISPATCHED) {
+                firstService.replaceInClosedFile(
+                    file = file,
+                    regex = Regex("alpha"),
+                    replacement = "ALPHA",
+                    isRegex = false,
+                    dryRun = false,
+                    isCancelled = { false },
+                )
+            }
+
+        val second =
+            async(start = CoroutineStart.UNDISPATCHED) {
+                secondService.replaceInClosedFile(
+                    file = file,
+                    regex = Regex("beta"),
+                    replacement = "BETA",
+                    isRegex = false,
+                    dryRun = false,
+                    isCancelled = { false },
+                )
+            }
+
+        try {
+            assertFalse(
+                first.isCompleted,
+                "the first replacement bypassed the shared coordinator",
+            )
+            assertFalse(
+                second.isCompleted,
+                "the second replacement bypassed the shared coordinator",
+            )
+        } finally {
+            releaseBlocker.complete(Unit)
+        }
+
+        blocker.await()
+        val firstResult = first.await()
+        val secondResult = second.await()
+
+        assertTrue(firstResult.error == null, "first replacement failed: $firstResult")
+        assertTrue(secondResult.error == null, "second replacement failed: $secondResult")
+        assertEquals(2, firstResult.replacements + secondResult.replacements)
+        assertEquals("ALPHA BETA", file.readText())
     }
 }
