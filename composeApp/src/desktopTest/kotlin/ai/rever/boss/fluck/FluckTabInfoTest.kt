@@ -152,11 +152,13 @@ class FluckTabInfoTest {
         val executor = Executors.newFixedThreadPool(10)
         val latch = CountDownLatch(100)
         val errors = mutableListOf<Throwable>()
+        val results = java.util.Collections.synchronizedList(mutableListOf<FluckTabInfo>())
 
         repeat(100) { i ->
             executor.submit {
                 try {
-                    tabInfo.updateNavigation("Page $i", "https://page$i.com")
+                    val updated = tabInfo.updateNavigation("Page $i", "https://page$i.com")
+                    results.add(updated)
                 } catch (e: Throwable) {
                     synchronized(errors) { errors.add(e) }
                 } finally {
@@ -169,6 +171,37 @@ class FluckTabInfoTest {
         executor.shutdown()
 
         assertTrue(errors.isEmpty(), "Concurrent navigation caused errors: $errors")
+        assertEquals(100, results.size)
+        results.forEach { result ->
+            assertTrue(result.currentUrl.startsWith("https://page"))
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    @Test
+    fun `deprecated mutable navigation is thread-safe for backwards compatibility`() {
+        val tabInfo = createTabInfo(url = "https://initial.com")
+        val executor = Executors.newFixedThreadPool(10)
+        val latch = CountDownLatch(100)
+        val errors = mutableListOf<Throwable>()
+
+        repeat(100) { i ->
+            executor.submit {
+                try {
+                    tabInfo.navigateToPage("Page $i", "https://page$i.com")
+                } catch (e: Throwable) {
+                    synchronized(errors) { errors.add(e) }
+                } finally {
+                    latch.countDown()
+                }
+            }
+        }
+
+        assertTrue(latch.await(5, TimeUnit.SECONDS), "Timed out waiting for threads")
+        executor.shutdown()
+
+        assertTrue(errors.isEmpty(), "Concurrent mutable navigation caused errors: $errors")
+        assertTrue(tabInfo.currentUrl.startsWith("https://page"))
     }
 
     @Test
@@ -244,6 +277,9 @@ class FluckTabInfoTest {
         // Create a copy using updateTitle (which calls copy internally)
         val copied = original.updateTitle("New Title")
 
+        // Assert distinct list identity to verify copy is not sharing list reference (Issue #406)
+        assertTrue(copied.navigationHistory !== original.navigationHistory, "Copy must not share navigationHistory reference")
+
         // Verify initial state is the same
         assertEquals(2, original.navigationHistory.size)
         assertEquals(2, copied.navigationHistory.size)
@@ -252,6 +288,7 @@ class FluckTabInfoTest {
 
         // Modify navigation on the copy
         val copiedNavigated = copied.updateNavigation("Page C", "https://c.com")
+        assertTrue(copiedNavigated.navigationHistory !== original.navigationHistory, "Navigated copy must not share reference with original")
 
         // Original should not be affected (this would fail with shallow copy)
         assertEquals(2, original.navigationHistory.size)
@@ -274,9 +311,11 @@ class FluckTabInfoTest {
 
         // Create a copy using updateTitle
         val copied = original.updateTitle("Copied Tab")
+        assertTrue(copied.navigationHistory !== original.navigationHistory, "Copied tab must have distinct list identity")
 
         // Navigate back on the copy
         val copiedBack = copied.updateBack()
+        assertTrue(copiedBack.navigationHistory !== original.navigationHistory, "Back-navigated copy must have distinct list identity")
 
         // Original should not be affected
         assertEquals("https://c.com", original.currentUrl)
@@ -288,6 +327,7 @@ class FluckTabInfoTest {
 
         // Navigate forward on original
         val originalForward = original.updateNavigation("Page D", "https://d.com")
+        assertEquals("https://d.com", originalForward.currentUrl)
 
         // Copy should not be affected
         assertEquals("https://b.com", copiedBack.currentUrl)

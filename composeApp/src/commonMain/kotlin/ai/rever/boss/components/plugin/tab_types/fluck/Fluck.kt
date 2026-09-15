@@ -818,12 +818,9 @@ open class FluckTabComponent(
                             onNavigationUpdate = onNavigationUpdate,
                             onNavigationStateChange = { isBack ->
                                 // Handle back/forward navigation
-                                if (config is FluckTabInfo) {
-                                    if (isBack) {
-                                        (config as? FluckTabInfo)?.navigateBack()
-                                    } else {
-                                        (config as? FluckTabInfo)?.navigateForward()
-                                    }
+                                (config as? FluckTabInfo)?.let { tabInfo ->
+                                    val updated = if (isBack) tabInfo.updateBack() else tabInfo.updateForward()
+                                    onNavigationUpdate?.invoke(updated.title, updated.currentUrl)
                                 }
                             },
                             onFaviconCached = { cacheKey ->

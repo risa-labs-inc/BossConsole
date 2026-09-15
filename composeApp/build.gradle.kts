@@ -2455,10 +2455,7 @@ tasks.withType<Test> {
     useJUnitPlatform()
     // Disable failure when test sources exist but no tests are discovered
     // This handles misconfigured test sources or test classes without test methods
-    runCatching {
-        javaClass.getMethod("setFailOnNoDiscoveredTests", Boolean::class.javaPrimitiveType)
-            .invoke(this, false)
-    }
+    failOnNoDiscoveredTests = false
 
     // Point the test JVM's home at a build directory, so BossDirectories.rootDir resolves to
     // <build>/test-home/.boss instead of the developer's real ~/.boss.

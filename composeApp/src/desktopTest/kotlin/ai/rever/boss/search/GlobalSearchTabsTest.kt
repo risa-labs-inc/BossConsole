@@ -184,8 +184,14 @@ class GlobalSearchTabsTest {
 
     @Test
     fun `URL search uses current navigation and ignores case while preserving destination`() {
-        val tab = fluckTab(id = "t1", title = "Welcome", url = "https://old.example")
-        (tab.tabInfo as FluckTabInfo).navigateToPage("Welcome", "https://github.com/org/issues/606")
+        val initialInfo = FluckTabInfo(id = "t1", typeId = TabTypeId("fluck"), _title = "Welcome", url = "https://old.example")
+        val updatedInfo = initialInfo.updateNavigation("Welcome", "https://github.com/org/issues/606")
+        val tab = ActiveTab(
+            windowId = WINDOW,
+            workspaceName = "Workspace",
+            panelId = "p1",
+            tabInfo = updatedInfo,
+        )
         TopOfMindStateHolder.updateActiveTabs(listOf(tab))
 
         val hit = searchFor(" GITHUB.COM ").single()
