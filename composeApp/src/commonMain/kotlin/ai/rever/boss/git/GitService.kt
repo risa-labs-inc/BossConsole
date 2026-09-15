@@ -332,20 +332,29 @@ expect object GitService {
      *
      * @param message Optional stash message
      * @param includeUntracked Whether to include untracked files
+     * @param projectPathOverride Repository to act on; null falls back to the global
+     *   current project path. Window-scoped callers pass their own (see the write-verbs
+     *   note above) - the global belongs to whichever window aligned it last.
      * @return Result indicating success or failure
      */
     suspend fun stash(
         message: String? = null,
         includeUntracked: Boolean = false,
+        projectPathOverride: String? = null,
     ): GitOperationResult
 
     /**
      * Pop the latest stash (apply and delete).
      *
      * @param index Stash index to pop (default 0 = latest)
+     * @param projectPathOverride Repository to act on; null falls back to the global
+     *   current project path.
      * @return Result indicating success or failure
      */
-    suspend fun stashPop(index: Int = 0): GitOperationResult
+    suspend fun stashPop(
+        index: Int = 0,
+        projectPathOverride: String? = null,
+    ): GitOperationResult
 
     /**
      * Apply a stash without deleting it.
@@ -366,9 +375,11 @@ expect object GitService {
     /**
      * Refresh stash list.
      *
+     * @param projectPathOverride Repository to read; null falls back to the global
+     *   current project path.
      * @return List of stash entries
      */
-    suspend fun refreshStashList(): List<GitStashInfo>
+    suspend fun refreshStashList(projectPathOverride: String? = null): List<GitStashInfo>
 
     // ===== Terminal Integration =====
 

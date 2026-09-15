@@ -639,21 +639,58 @@ fun BossDraggableComponent.BossTopLeftBar(
                                 }
                             }
                         },
+                    // Stash/pop run in THIS window's project, captured before the launch so a
+                    // project switch mid-operation cannot retarget them - the same reasoning
+                    // as onMerge/onRebase/onPull/onPush above. (onCheckout above does NOT yet
+                    // pass an override and is a pre-existing instance of the same #699 class -
+                    // out of scope here, not claimed as fixed by this comment.) A window with
+                    // no project never falls back to the global (another window's repository):
+                    // the git branch button this menu lives under only renders while isGitRepo
+                    // is true for THIS window, but a null windowProjectPath still refuses
+                    // explicitly rather than silently reaching for whichever project the global
+                    // last aligned to.
                     onStash = {
-                        scope.launch {
-                            val result = GitService.stash()
-                            when (result) {
-                                is GitSuccess -> gitSuccessMessage = result.message
-                                is GitError -> gitErrorMessage = result.message
+                        val stashProjectPath = windowProjectPath
+                        if (stashProjectPath == null) {
+                            gitErrorMessage = "No project selected in this window"
+                        } else {
+                            scope.launch {
+                                val result = GitService.stash(projectPathOverride = stashProjectPath)
+                                when (result) {
+                                    is GitSuccess -> {
+                                        gitSuccessMessage = result.message
+                                        // Stash rewrites the whole working tree, so both the
+                                        // window's stash list AND its file status are stale
+                                        // until refreshed - not just the list.
+                                        GitService.refreshStashListForWindow(windowGitState)
+                                        GitService.getStatusForWindow(windowGitState)
+                                    }
+
+                                    is GitError -> {
+                                        gitErrorMessage = result.message
+                                    }
+                                }
                             }
                         }
                     },
                     onStashPop = { index ->
-                        scope.launch {
-                            val result = GitService.stashPop(index)
-                            when (result) {
-                                is GitSuccess -> gitSuccessMessage = result.message
-                                is GitError -> gitErrorMessage = result.message
+                        val stashProjectPath = windowProjectPath
+                        if (stashProjectPath == null) {
+                            gitErrorMessage = "No project selected in this window"
+                        } else {
+                            scope.launch {
+                                val result = GitService.stashPop(index, projectPathOverride = stashProjectPath)
+                                when (result) {
+                                    is GitSuccess -> {
+                                        gitSuccessMessage = result.message
+                                        GitService.refreshStashListForWindow(windowGitState)
+                                        GitService.getStatusForWindow(windowGitState)
+                                    }
+
+                                    is GitError -> {
+                                        gitErrorMessage = result.message
+                                    }
+                                }
                             }
                         }
                     },
