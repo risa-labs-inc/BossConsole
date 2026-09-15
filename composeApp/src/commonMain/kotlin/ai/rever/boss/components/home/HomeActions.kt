@@ -4,6 +4,7 @@ import ai.rever.boss.components.bars.horizontal.StatusMessageManager
 import ai.rever.boss.components.events.DashboardEventBus
 import ai.rever.boss.components.events.PanelEventBus
 import ai.rever.boss.plugin.api.PanelId
+import ai.rever.boss.plugin.api.TabTypeId
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.window.LocalWindowId
@@ -121,7 +122,7 @@ internal class HomeActions(
                 if (launch.needsInput) {
                     // The plugin wants input this tile has nowhere to collect, so hand off to the
                     // dialog that does rather than send an empty string it will reject.
-                    newTab()
+                    emit { DashboardEventBus.newTab(it, TabTypeId(launch.typeId, launch.typePluginId)) }
                 } else {
                     openTabType(launch.typeId, launch.typePluginId)
                 }

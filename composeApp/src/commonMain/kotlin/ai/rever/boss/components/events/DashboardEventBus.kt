@@ -1,6 +1,7 @@
 package ai.rever.boss.components.events
 
 import ai.rever.boss.ipc.IpcEventBridge
+import ai.rever.boss.plugin.api.TabTypeId
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -18,6 +19,7 @@ data class DashboardOpenUrlEvent(
 
 data class DashboardNewTabEvent(
     val sourceWindowId: String,
+    val requestedType: TabTypeId? = null,
 )
 
 data class DashboardNewTerminalEvent(
@@ -174,8 +176,11 @@ object DashboardEventBus {
         ipcBridge?.forward("DashboardOpenUrlEvent", event, sourceWindowId)
     }
 
-    suspend fun newTab(sourceWindowId: String) {
-        val event = DashboardNewTabEvent(sourceWindowId)
+    suspend fun newTab(
+        sourceWindowId: String,
+        requestedType: TabTypeId? = null,
+    ) {
+        val event = DashboardNewTabEvent(sourceWindowId, requestedType)
         _newTabEvents.emit(event)
         ipcBridge?.forward("DashboardNewTabEvent", event, sourceWindowId)
     }

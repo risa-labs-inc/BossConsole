@@ -923,7 +923,8 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
         // Handle new tab events
         DashboardEventBus.newTabEvents
             .filter { event -> event.sourceWindowId == windowId }
-            .onEach {
+            .onEach { event ->
+                state.newTabDialogRequest.receive(event, splitViewState.activePanelId)
                 state.showNewTabDialog = true
             }.launchIn(this)
 

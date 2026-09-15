@@ -84,7 +84,17 @@ internal class BossAppState(
 
     // --- Dialog visibility --------------------------------------------------
     var showNewTabDialog by mutableStateOf(false)
-    var newTabDialogInitialType by mutableStateOf<TabType?>(null)
+    val newTabDialogRequest = NewTabDialogRequestState(windowId)
+    var newTabDialogInitialType: TabType?
+        get() = newTabDialogRequest.initialType
+        set(value) {
+            newTabDialogRequest.initialType = value
+        }
+    var newTabDialogRequestedType: ai.rever.boss.plugin.api.TabTypeId?
+        get() = newTabDialogRequest.requestedType
+        set(value) {
+            newTabDialogRequest.requestedType = value
+        }
     var showGlobalSearchDialog by mutableStateOf(false)
 
     /**
