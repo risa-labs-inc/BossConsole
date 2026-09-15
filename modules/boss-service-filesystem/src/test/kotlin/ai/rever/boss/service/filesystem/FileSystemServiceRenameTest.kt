@@ -137,7 +137,7 @@ class FileSystemServiceRenameTest {
     @Test
     fun `path traversal is still rejected`() {
         // validatePath runs before any I/O; pinned so the rewrite cannot have moved it.
-        assertFailsWith<IllegalArgumentException> {
+        assertFailsWith<io.grpc.StatusRuntimeException> {
             runBlocking {
                 service.renameFile(
                     RenameFileRequest

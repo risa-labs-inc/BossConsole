@@ -100,20 +100,22 @@ class FileSystemServiceMutationTest {
     }
 
     @Test
-    fun `create with a missing parent preserves the I O exception`() {
+    fun `create with a missing parent reports NOT_FOUND`() {
         val file = testDirectory.resolve("missing-parent/file.txt")
 
-        assertFailsWith<IOException> { createFile(file) }
+        val error = assertFailsWith<StatusException> { createFile(file) }
+        assertEquals(Status.Code.NOT_FOUND, error.status.code)
 
         assertFalse(file.exists())
     }
 
     @Test
-    fun `create with a regular-file parent preserves the I O exception`() {
+    fun `create with a regular-file parent reports a structured error`() {
         val parent = testDirectory.resolve("regular-file-parent").apply { createNewFile() }
         val file = parent.resolve("child.txt")
 
-        assertFailsWith<IOException> { createFile(file) }
+        val error = assertFailsWith<StatusException> { createFile(file) }
+        assertEquals(Status.Code.INTERNAL, error.status.code)
 
         assertFalse(file.exists())
     }
@@ -190,18 +192,22 @@ class FileSystemServiceMutationTest {
     }
 
     @Test
-    fun `gRPC create with a missing parent retains the deferred UNKNOWN status`() {
+    fun `gRPC create with a missing parent reports NOT_FOUND`() {
         val file = testDirectory.resolve("missing-grpc-parent/file.txt")
         withGrpcService { stub ->
-            // Create IOException mapping is deferred; this pins the actual wire behavior, not the direct exception.
+            // Held-handle creation now maps missing parents explicitly at the wire boundary.
             val error =
                 assertFailsWith<StatusException> {
                     runBlocking {
                         stub.createFile(CreateFileRequest.newBuilder().setPath(file.absolutePath).build())
                     }
                 }
-            assertEquals(Status.Code.UNKNOWN, error.status.code)
-            assertEquals(null, error.status.description)
+            assertEquals(Status.Code.NOT_FOUND, error.status.code)
+            assertTrue(
+                error.status.description
+                    .orEmpty()
+                    .contains("Create failed"),
+            )
             assertFalse(file.exists())
         }
     }
