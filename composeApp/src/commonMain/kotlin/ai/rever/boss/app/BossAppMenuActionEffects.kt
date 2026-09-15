@@ -20,6 +20,7 @@ import ai.rever.boss.components.window_panel.SplitOrientation
 import ai.rever.boss.components.wizard.plugin.PluginWizardIntegration
 import ai.rever.boss.components.workspaces.applyWorkspace
 import ai.rever.boss.components.workspaces.extractCurrentWorkspace
+import ai.rever.boss.components.workspaces.spaceSnapshotForSave
 import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.focusmode.FocusModeSettingsManager
 import ai.rever.boss.plugin.browser.ActiveBrowserRegistry
@@ -42,7 +43,6 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.random.Random
-import kotlin.time.Clock
 
 /**
  * [settings] with the strip holding the customize button switched back on, [onLeft] saying which.
@@ -516,32 +516,27 @@ internal fun BossAppMenuActionEffects(
         MenuActionsHandler.saveWorkspaceEvents
             .onEach { eventWindowId ->
                 if (eventWindowId == windowId) {
-                    val currentConfig = workspaceManager.currentWorkspace.value
-                    if (currentConfig != null) {
-                        val currentLayout = extractCurrentWorkspace(splitViewState, windowProjectState.selectedProject.value.path)
-                        val updatedConfig =
-                            currentConfig.copy(
-                                layout = currentLayout.layout,
-                                timestamp = Clock.System.now().toEpochMilliseconds(),
-                            )
-                        workspaceManager.updateCurrentWorkspace(updatedConfig)
-                        workspaceManager.saveCurrentWorkspace()
-                        // Nothing marks it saved here. The unsaved flag is DERIVED, from the live
-                        // layout against the copy in `workspaceManager.workspaces` - which this
-                        // write replaces - so the affordance turns itself off when the bytes land
-                        // rather than when the button was pressed. See BossAppStartupEffects.
-                        StatusMessageManager.showMessage("Space Saved")
-                    } else {
-                        val currentLayout = extractCurrentWorkspace(splitViewState, windowProjectState.selectedProject.value.path)
-                        val newConfig =
-                            currentLayout.copy(
-                                name = "Workspace ${Clock.System.now().toEpochMilliseconds() / 1000}",
-                                description = "Saved workspace",
-                            )
-                        workspaceManager.updateCurrentWorkspace(newConfig)
-                        workspaceManager.saveCurrentWorkspace()
-                        StatusMessageManager.showMessage("Space Saved")
+                    val liveLayout =
+                        extractCurrentWorkspace(
+                            splitViewState,
+                            windowProjectState.selectedProject.value.path,
+                        )
+                    val snapshot =
+                        spaceSnapshotForSave(
+                            activeWorkspaceId = splitViewState.currentWorkspaceId,
+                            liveLayout = liveLayout,
+                            knownSpaces = workspaceManager.workspaces.value,
+                            processGlobalCurrent = workspaceManager.currentWorkspace.value,
+                        )
+                    workspaceManager.updateCurrentWorkspace(snapshot)
+                    workspaceManager.saveCurrentWorkspace()?.let { savedWorkspace ->
+                        splitViewState.rebindCurrentWorkspace(savedWorkspace.id)
                     }
+                    // Nothing marks it saved here. The unsaved flag is DERIVED, from the live
+                    // layout against the copy in `workspaceManager.workspaces` - which this
+                    // write replaces - so the affordance turns itself off when the bytes land
+                    // rather than when the button was pressed. See BossAppStartupEffects.
+                    StatusMessageManager.showMessage("Space Saved")
                 }
             }.launchIn(this)
     }

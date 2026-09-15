@@ -409,6 +409,16 @@ class SplitViewState(
     val currentWorkspaceId: String? get() = _currentWorkspaceId
 
     /**
+     * Rebind the displayed tree after it is saved under [workspaceId].
+     *
+     * This changes only the window-local Space identity. It deliberately does not preserve,
+     * restore, or replace any layout tree.
+     */
+    fun rebindCurrentWorkspace(workspaceId: String) {
+        _currentWorkspaceId = workspaceId
+    }
+
+    /**
      * Every workspace this window is actually running, displayed or not.
      *
      * Switching workspaces does not tear the old one down: `preserveCurrentState` keeps its whole
