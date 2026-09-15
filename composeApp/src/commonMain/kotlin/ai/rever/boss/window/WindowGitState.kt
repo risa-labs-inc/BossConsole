@@ -21,6 +21,9 @@ import kotlinx.coroutines.flow.asStateFlow
 class WindowGitState(
     val windowId: String,
 ) {
+    private val publicationLock = Any()
+    private var projectRevision = 0L
+
     private val _projectPath = MutableStateFlow<String?>(null)
     val projectPath: StateFlow<String?> = _projectPath.asStateFlow()
 
@@ -75,8 +78,30 @@ class WindowGitState(
      * Set the project path for this window.
      */
     fun setProjectPath(path: String?) {
-        _projectPath.value = path
+        synchronized(publicationLock) {
+            if (_projectPath.value != path) {
+                _projectPath.value = path
+                projectRevision++
+            }
+        }
     }
+
+    internal fun revisionForProject(path: String): Long? =
+        synchronized(publicationLock) {
+            projectRevision.takeIf { _projectPath.value == path }
+        }
+
+    internal fun publishStashRefreshIfCurrent(
+        expectedRevision: Long,
+        statuses: List<GitFileStatus>?,
+        stashes: List<GitStashInfo>?,
+    ): Boolean =
+        synchronized(publicationLock) {
+            if (projectRevision != expectedRevision) return@synchronized false
+            statuses?.let { _fileStatus.value = it }
+            stashes?.let { _stashList.value = it }
+            true
+        }
 
     /**
      * Update stash list for this window.
@@ -104,14 +129,17 @@ class WindowGitState(
      * Called when no project is selected or project is not a git repository.
      */
     fun clear() {
-        _projectPath.value = null
-        _isGitRepository.value = false
-        _currentBranch.value = null
-        _localBranches.value = emptyList()
-        _remoteBranches.value = emptyList()
-        _stashList.value = emptyList()
-        _isLoading.value = false
-        _fileStatus.value = emptyList()
-        _commitLog.value = emptyList()
+        synchronized(publicationLock) {
+            if (_projectPath.value != null) projectRevision++
+            _projectPath.value = null
+            _isGitRepository.value = false
+            _currentBranch.value = null
+            _localBranches.value = emptyList()
+            _remoteBranches.value = emptyList()
+            _stashList.value = emptyList()
+            _isLoading.value = false
+            _fileStatus.value = emptyList()
+            _commitLog.value = emptyList()
+        }
     }
 }

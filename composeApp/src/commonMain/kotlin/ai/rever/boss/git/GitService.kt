@@ -337,6 +337,8 @@ expect object GitService {
     suspend fun stash(
         message: String? = null,
         includeUntracked: Boolean = false,
+        projectPath: String?,
+        windowGitState: ai.rever.boss.window.WindowGitState?,
     ): GitOperationResult
 
     /**
@@ -345,7 +347,11 @@ expect object GitService {
      * @param index Stash index to pop (default 0 = latest)
      * @return Result indicating success or failure
      */
-    suspend fun stashPop(index: Int = 0): GitOperationResult
+    suspend fun stashPop(
+        index: Int = 0,
+        projectPath: String?,
+        windowGitState: ai.rever.boss.window.WindowGitState?,
+    ): GitOperationResult
 
     /**
      * Apply a stash without deleting it.

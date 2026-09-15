@@ -86,6 +86,8 @@ actual object GitService {
     private var currentProjectPath: String? = null
     private var refreshJob: Job? = null
 
+    internal var stashRefreshBeforePublishForTests: (() -> Unit)? = null
+
     // How many git commands are in flight OR waiting on [gitCommandLock], and
     // the boolean view of it. The lock is process-wide, so a slow index-write
     // (a commit waiting on gpg pinentry now holds it for up to ten minutes)
@@ -901,27 +903,37 @@ actual object GitService {
     actual suspend fun stash(
         message: String?,
         includeUntracked: Boolean,
+        projectPath: String?,
+        windowGitState: WindowGitState?,
     ): GitOperationResult =
         withContext(Dispatchers.IO) {
-            val projectPath =
-                currentProjectPath
+            val capturedProjectPath =
+                projectPath?.takeIf { it.isNotBlank() }
                     ?: return@withContext GitError("No project selected")
+            if (windowGitState == null) return@withContext GitError("No invoking window context")
 
             _isLoading.value = true
             try {
-                val args = mutableListOf("stash", "push")
-                if (includeUntracked) {
-                    args.add("-u")
-                }
-                if (message != null) {
-                    args.add("-m")
-                    args.add(message)
-                }
+                val result =
+                    when {
+                        includeUntracked && message != null -> {
+                            runGitCommand(capturedProjectPath, "stash", "push", "--include-untracked", "-m", message)
+                        }
 
-                val result = runGitCommand(projectPath, *args.toTypedArray())
+                        includeUntracked -> {
+                            runGitCommand(capturedProjectPath, "stash", "push", "--include-untracked")
+                        }
+
+                        message != null -> {
+                            runGitCommand(capturedProjectPath, "stash", "push", "-m", message)
+                        }
+
+                        else -> {
+                            runGitCommand(capturedProjectPath, "stash", "push")
+                        }
+                    }
+                refreshStashOperationWindowBestEffort(capturedProjectPath, windowGitState)
                 if (result.exitCode == 0) {
-                    getStatus()
-                    refreshStashList()
                     GitSuccess(result.output.trim().ifEmpty { "Stashed changes" })
                 } else {
                     val errorMsg = result.error.ifEmpty { result.output }.trim()
@@ -933,18 +945,24 @@ actual object GitService {
             }
         }
 
-    actual suspend fun stashPop(index: Int): GitOperationResult =
+    actual suspend fun stashPop(
+        index: Int,
+        projectPath: String?,
+        windowGitState: WindowGitState?,
+    ): GitOperationResult =
         withContext(Dispatchers.IO) {
-            val projectPath =
-                currentProjectPath
+            val capturedProjectPath =
+                projectPath?.takeIf { it.isNotBlank() }
                     ?: return@withContext GitError("No project selected")
+            if (windowGitState == null) return@withContext GitError("No invoking window context")
 
             _isLoading.value = true
             try {
-                val result = runGitCommand(projectPath, "stash", "pop", "stash@{$index}")
+                val result = runGitCommand(capturedProjectPath, "stash", "pop", "stash@{$index}")
+                // Pop conflicts are nonzero but may still alter the index/worktree;
+                // refresh before returning the truthful git error.
+                refreshStashOperationWindowBestEffort(capturedProjectPath, windowGitState)
                 if (result.exitCode == 0) {
-                    getStatus()
-                    refreshStashList()
                     GitSuccess("Popped stash@{$index}")
                 } else {
                     val errorMsg = result.error.ifEmpty { result.output }.trim()
@@ -955,6 +973,45 @@ actual object GitService {
                 _isLoading.value = false
             }
         }
+
+    /**
+     * Read every post-operation view from the immutable command target and only
+     * publish if the invoking window still owns that project.
+     */
+    private suspend fun refreshStashOperationWindow(
+        projectPath: String,
+        windowGitState: WindowGitState,
+    ) {
+        val publicationToken =
+            WindowGitStateRegistry.publicationToken(windowGitState, projectPath)
+                ?: return
+        val statusResult = runGitCommand(projectPath, "status", "--porcelain=v1", "--untracked-files=all")
+        val stashResult = runGitCommand(projectPath, "stash", "list")
+        stashRefreshBeforePublishForTests?.invoke()
+
+        val statuses = statusResult.takeIf { it.exitCode == 0 }?.let { parseStatusOutput(it.output) }
+        val stashes =
+            stashResult.takeIf { it.exitCode == 0 }?.let { result ->
+                result.output
+                    .lines()
+                    .filter { it.isNotBlank() }
+                    .mapIndexedNotNull { stashIndex, line -> parseStashLine(stashIndex, line) }
+            }
+        WindowGitStateRegistry.publishStashRefresh(publicationToken, statuses, stashes)
+    }
+
+    private suspend fun refreshStashOperationWindowBestEffort(
+        projectPath: String,
+        windowGitState: WindowGitState,
+    ) {
+        try {
+            refreshStashOperationWindow(projectPath, windowGitState)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logger.warn(LogCategory.SYSTEM, "Error refreshing window after stash operation", error = e)
+        }
+    }
 
     actual suspend fun stashApply(index: Int): GitOperationResult =
         withContext(Dispatchers.IO) {
@@ -1543,7 +1600,14 @@ actual object GitService {
                     // which discards the entire worktree. Every pathspec this
                     // file passes is already a literal path, so nothing
                     // regresses.
-                    environment()["GIT_LITERAL_PATHSPECS"] = "1"
+                    // Stash invokes internal pathspec-based commands; forcing literal
+                    // pathspecs makes `stash push --include-untracked` save tracked
+                    // changes but silently leave untracked files behind.
+                    if (args.firstOrNull() == "stash") {
+                        environment().remove("GIT_LITERAL_PATHSPECS")
+                    } else {
+                        environment()["GIT_LITERAL_PATHSPECS"] = "1"
+                    }
                 }.start()
         // The child gets no input at all: with a live stdin pipe, a hook or
         // credential helper that READS it (rather than prompting on a tty)

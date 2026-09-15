@@ -22,35 +22,62 @@ val LocalWindowGitState = compositionLocalOf<WindowGitState?> { null }
  */
 object WindowGitStateRegistry {
     private val _states = mutableStateMapOf<String, WindowGitState>()
+    private val lock = Any()
+
+    internal data class PublicationToken(
+        val state: WindowGitState,
+        val projectRevision: Long,
+    )
 
     /**
      * Register a new window git state.
      */
     fun register(windowId: String): WindowGitState {
         val state = WindowGitState(windowId)
-        _states[windowId] = state
+        synchronized(lock) { _states[windowId] = state }
         return state
     }
 
     /**
      * Get the git state for a window.
      */
-    fun get(windowId: String): WindowGitState? = _states[windowId]
+    fun get(windowId: String): WindowGitState? = synchronized(lock) { _states[windowId] }
 
     /**
      * Get or create the git state for a window.
      */
-    fun getOrCreate(windowId: String): WindowGitState = _states.getOrPut(windowId) { WindowGitState(windowId) }
+    fun getOrCreate(windowId: String): WindowGitState = synchronized(lock) { stateFor(windowId) }
+
+    private fun stateFor(windowId: String): WindowGitState = _states.getOrPut(windowId) { WindowGitState(windowId) }
 
     /**
      * Unregister a window git state when the window is closed.
      */
     fun unregister(windowId: String) {
-        _states.remove(windowId)
+        synchronized(lock) { _states.remove(windowId) }
     }
 
     /**
      * Get all registered window IDs.
      */
-    fun getAllWindowIds(): Set<String> = _states.keys.toSet()
+    fun getAllWindowIds(): Set<String> = synchronized(lock) { _states.keys.toSet() }
+
+    internal fun publicationToken(
+        state: WindowGitState,
+        projectPath: String,
+    ): PublicationToken? =
+        synchronized(lock) {
+            if (_states[state.windowId] !== state) return@synchronized null
+            state.revisionForProject(projectPath)?.let { PublicationToken(state, it) }
+        }
+
+    internal fun publishStashRefresh(
+        token: PublicationToken,
+        statuses: List<ai.rever.boss.git.GitFileStatus>?,
+        stashes: List<ai.rever.boss.git.GitStashInfo>?,
+    ): Boolean =
+        synchronized(lock) {
+            if (_states[token.state.windowId] !== token.state) return@synchronized false
+            token.state.publishStashRefreshIfCurrent(token.projectRevision, statuses, stashes)
+        }
 }
