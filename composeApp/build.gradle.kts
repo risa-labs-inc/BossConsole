@@ -2432,21 +2432,36 @@ tasks.register<Zip>("packageJarWithNatives") {
         into("")
     }
 
-    // Include native libraries
-    from(layout.buildDirectory.dir("jcef-natives")) {
-        into("jcef-natives")
-    }
+dependsOn("createExecutableJar", "extractJcefNatives")
+group = "build"
+description = "Creates a distributable package with JAR and native libraries"
 
-    // Include launch scripts
-    from(projectDir) {
-        include("launch.sh", "launch.bat")
-        into("")
-    }
+archiveBaseName.set("BOSS-package")
+archiveVersion.set(appVersion as String)
+archiveExtension.set("zip")
+destinationDirectory.set(layout.buildDirectory.dir("distributions"))
+
+// Include the executable JAR
+from(layout.buildDirectory.dir("libs")) {
+include("BOSS-$appVersion-all.jar")
+into("")
+}
+
+// Include native libraries
+from(layout.buildDirectory.dir("jcef-natives")) {
+into("jcef-natives")
+}
+
+// Include launch scripts
+from(projectDir) {
+include("launch.sh", "launch.bat")
+into("")
+}
 }
 
 // Ensure version constants are generated before Kotlin compilation
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
-    dependsOn(generateVersionConstants)
+dependsOn(generateVersionConstants)
 }
 
 // Configure Test tasks to not fail when no tests are discovered (Gradle 9+ compatibility)
@@ -2454,8 +2469,10 @@ tasks.withType<Test> {
     // Use JUnit Platform for test discovery
     useJUnitPlatform()
     // Disable failure when test sources exist but no tests are discovered
-    // This handles misconfigured test sources or test classes without test methods
-    failOnNoDiscoveredTests = false
+    // Safe reflection call for Gradle 8/9 cross-compatibility
+    runCatching {
+        javaClass.getMethod("setFailOnNoDiscoveredTests", Boolean::class.javaPrimitiveType).invoke(this, false)
+    }
 
     // Point the test JVM's home at a build directory, so BossDirectories.rootDir resolves to
     // <build>/test-home/.boss instead of the developer's real ~/.boss.

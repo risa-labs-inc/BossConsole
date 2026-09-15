@@ -654,11 +654,81 @@ internal fun BossAppDialogs(state: BossAppState) {
                         MenuActionsHandler.triggerOpenSettings(windowId)
                     }
 
+                    KeymapActions.TAB_NEXT -> {
+                        MenuActionsHandler.triggerNextTab(windowId)
+                        MenuActionsHandler.triggerCommitTabCycle(windowId)
+                    }
+
+                    KeymapActions.TAB_PREVIOUS -> {
+                        MenuActionsHandler.triggerPreviousTab(windowId)
+                        MenuActionsHandler.triggerCommitTabCycle(windowId)
+                    }
+
+                    KeymapActions.TAB_NEXT_POSITIONAL -> {
+                        MenuActionsHandler.triggerNextTabPositional(windowId)
+                    }
+
+                    KeymapActions.TAB_PREVIOUS_POSITIONAL -> {
+                        MenuActionsHandler.triggerPreviousTabPositional(windowId)
+                    }
+
+                    KeymapActions.TAB_REOPEN_CLOSED -> {
+                        MenuActionsHandler.triggerReopenClosedTab(windowId)
+                    }
+
+                    KeymapActions.TAB_SELECT_1 -> {
+                        MenuActionsHandler.triggerSelectTabByIndex(windowId, 0)
+                    }
+
+                    KeymapActions.TAB_SELECT_2 -> {
+                        MenuActionsHandler.triggerSelectTabByIndex(windowId, 1)
+                    }
+
+                    KeymapActions.TAB_SELECT_3 -> {
+                        MenuActionsHandler.triggerSelectTabByIndex(windowId, 2)
+                    }
+
+                    KeymapActions.TAB_SELECT_4 -> {
+                        MenuActionsHandler.triggerSelectTabByIndex(windowId, 3)
+                    }
+
+                    KeymapActions.TAB_SELECT_5 -> {
+                        MenuActionsHandler.triggerSelectTabByIndex(windowId, 4)
+                    }
+
+                    KeymapActions.TAB_SELECT_6 -> {
+                        MenuActionsHandler.triggerSelectTabByIndex(windowId, 5)
+                    }
+
+                    KeymapActions.TAB_SELECT_7 -> {
+                        MenuActionsHandler.triggerSelectTabByIndex(windowId, 6)
+                    }
+
+                    KeymapActions.TAB_SELECT_8 -> {
+                        MenuActionsHandler.triggerSelectTabByIndex(windowId, 7)
+                    }
+
+                    KeymapActions.TAB_SELECT_LAST -> {
+                        MenuActionsHandler.triggerSelectLastTab(windowId)
+                    }
+
+                    KeymapActions.BROWSER_BACK -> {
+                        MenuActionsHandler.triggerBrowserBack(windowId)
+                    }
+
+                    KeymapActions.BROWSER_FORWARD -> {
+                        MenuActionsHandler.triggerBrowserForward(windowId)
+                    }
+
+                    KeymapActions.BROWSER_DEVTOOLS -> {
+                        MenuActionsHandler.triggerBrowserDevTools(windowId)
+                    }
+
                     KeymapActions.HELP_SHORTCUTS -> {
                         MenuActionsHandler.triggerShowShortcutHelp(windowId)
                     }
 
-                    else -> {} // Unknown command
+                    else -> {} // Unsupported or plugin-only command
                 }
                 state.focusRequester.requestFocus()
             },
