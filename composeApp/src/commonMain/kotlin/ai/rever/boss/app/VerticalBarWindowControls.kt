@@ -2,6 +2,7 @@ package ai.rever.boss.app
 
 import ai.rever.boss.components.buttons.BossActionButton
 import ai.rever.boss.components.plugin.openTopOfMindWorkspacePicker
+import ai.rever.boss.components.plugin.panels.left_bottom.TopOfMind.LocalSplitViewState
 import ai.rever.boss.components.workspaces.LayoutWorkspace
 import ai.rever.boss.components.workspaces.WorkspaceButton
 import ai.rever.boss.components.workspaces.WorkspaceManager
@@ -84,7 +85,9 @@ internal fun VerticalBarWindowControls(
     // set is keyed by window.
     val currentWorkspace by workspaceManager.currentWorkspace.collectAsState()
     val unsavedWorkspaces by workspaceManager.unsavedWorkspaces.collectAsState()
-    val unsaved = spaceIsUnsaved(currentWorkspace?.id, unsavedWorkspaces[windowId].orEmpty())
+    val windowState = LocalSplitViewState.current
+    val workspaceId = if (windowState != null) windowState.currentWorkspaceId else currentWorkspace?.id
+    val unsaved = spaceIsUnsaved(workspaceId, unsavedWorkspaces[windowId].orEmpty())
 
     Divider(color = BossTheme.colors.line)
     Column(

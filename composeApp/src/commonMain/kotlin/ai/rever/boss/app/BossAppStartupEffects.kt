@@ -795,13 +795,14 @@ internal fun BossAppStartupEffects(state: BossAppState) {
         // else. Recomputing from both is what makes the affordance self-healing rather than
         // needing a "now clear it" call after every save path in the app.
         var latestLayout: LayoutWorkspace? = null
+        var latestWorkspaceId: String? = null
 
         fun reportUnsaved() {
             val live = latestLayout
             // An empty id is a Space that cannot be keyed - `LayoutWorkspace.id` defaults to ""
             // and `applyWorkspace` mints one only for the copy it applies.
-            val workspaceId = workspaceManager.currentWorkspace.value?.id
-            if (live == null || workspaceId.isNullOrEmpty()) return
+            val workspaceId = latestWorkspaceId
+            if (live == null || workspaceId.isNullOrEmpty() || workspaceId != splitViewState.currentWorkspaceId) return
             workspaceManager.setWorkspaceUnsaved(
                 windowId = windowId,
                 workspaceId = workspaceId,
@@ -832,13 +833,23 @@ internal fun BossAppStartupEffects(state: BossAppState) {
         // its own source. A change visible to both costs one extra extract and no more: the
         // downstream is idempotent, and a duplicate only reschedules the settle delay.
         merge(
-            snapshotFlow { extract() },
-            splitViewState.tabListChanges().map { extract() },
-        ).onEach { currentLayout ->
+            snapshotFlow { splitViewState.currentWorkspaceId to extract() },
+            splitViewState.tabListChanges().map { splitViewState.currentWorkspaceId to extract() },
+        ).onEach { (workspaceId, currentLayout) ->
+            if (workspaceId != latestWorkspaceId) {
+                lastWorkspaceSnapshot = null
+                saveJob?.cancel()
+            }
+            latestWorkspaceId = workspaceId
             latestLayout = currentLayout
             reportUnsaved()
 
-            val loadedConfig = workspaceManager.currentWorkspace.value
+            val loadedConfig =
+                windowSpaceIdentity(
+                    workspaceId,
+                    workspaceManager.currentWorkspace.value,
+                    workspaceManager.workspaces.value,
+                )
 
             // Prime on the FIRST extract of a loaded Space rather than treating it as a change:
             // the first walk of a Space that was just applied is not something the user did. A
@@ -859,6 +870,7 @@ internal fun BossAppStartupEffects(state: BossAppState) {
             saveJob =
                 launch {
                     delay(LAYOUT_SETTLE_MS)
+                    if (splitViewState.currentWorkspaceId != workspaceId) return@launch
 
                     // ONE write, and it is the Last Session record - never the named Space the
                     // user is working in, whose file is written by an explicit save alone. See
@@ -871,21 +883,18 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                             live = currentLayout,
                             now = Clock.System.now().toEpochMilliseconds(),
                         )
-                    workspaceManager.updateCurrentWorkspace(write.current)
+                    // A background window may refresh its own record, never another window's selection.
+                    if (workspaceManager.currentWorkspace.value?.id == workspaceId) {
+                        workspaceManager.updateCurrentWorkspace(write.current)
+                    }
+                    if (workspaceId == null) {
+                        // A previously unnamed window adopts its own recovery identity without
+                        // borrowing another window's process-wide selection.
+                        splitViewState.preserveCurrentState(write.current.id, write.current.name)
+                    }
                     workspaceManager.saveLastSessionRecord(write.record)
                 }
         }.launchIn(this)
-
-        // Reset snapshot when workspace changes
-        workspaceManager.currentWorkspace
-            .onEach { config ->
-                if (config != null && config.id != LAST_SESSION_ID) {
-                    // Workspace loaded (but not Last Session), reset tracking
-                    lastWorkspaceSnapshot = null
-                }
-                // Whichever Space is showing now, the answer to "is it unsaved" is about that one.
-                reportUnsaved()
-            }.launchIn(this)
 
         // The saved side of the comparison. A successful write replaces the entry in this list -
         // and only a successful one does, which is why `savedCopyOf` reads it rather than
