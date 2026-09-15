@@ -8,6 +8,15 @@ import io.grpc.ServerCallHandler
 import io.grpc.ServerInterceptor
 
 /**
+ * The kernel-issued identity of one credential generation. The token itself remains private to the
+ * transport; the generation is used to bind a registration to the credential that established it.
+ */
+data class ProcessCredential(
+    val processId: String,
+    val generation: Long,
+)
+
+/**
  * Establishes a verified caller identity for every call on a kernel IPC server, independently of
  * anything the call's own request body claims (BossConsole#53).
  *
@@ -28,17 +37,24 @@ class ProcessIdentityInterceptor(
         next: ServerCallHandler<ReqT, RespT>,
     ): ServerCall.Listener<ReqT> {
         val token = headers.get(PROCESS_TOKEN_METADATA_KEY)
+        val credential = registry.credentialFor(token)
         val context =
             Context
                 .current()
-                .withValue(AUTHENTICATED_PROCESS_ID, registry.identityFor(token))
+                .withValue(AUTHENTICATED_PROCESS_ID, credential?.processId)
+                .withValue(AUTHENTICATED_CREDENTIAL, credential)
                 .withValue(CURRENT_IDENTITY, { registry.identityFor(token) })
+                .withValue(CURRENT_CREDENTIAL, { registry.credentialFor(token) })
         return Contexts.interceptCall(context, call, headers, next)
     }
 
     companion object {
         /** Revalidate at stream binding, since a call may wait across token revocation. */
         val CURRENT_IDENTITY: Context.Key<() -> String?> = Context.key("boss-current-process-identity")
+
+        /** Revalidate both process identity and credential generation for long-lived calls. */
+        val CURRENT_CREDENTIAL: Context.Key<() -> ProcessCredential?> =
+            Context.key("boss-current-process-credential")
 
         /**
          * Wire name of the credential header. ASCII marshaller: the value is an opaque hex token, not
@@ -54,5 +70,9 @@ class ProcessIdentityInterceptor(
          * scoped; unset reads back as null.
          */
         val AUTHENTICATED_PROCESS_ID: Context.Key<String> = Context.key("boss-authenticated-process-id")
+
+        /** Credential snapshot for unary calls and for services that need generation binding. */
+        val AUTHENTICATED_CREDENTIAL: Context.Key<ProcessCredential> =
+            Context.key("boss-authenticated-process-credential")
     }
 }

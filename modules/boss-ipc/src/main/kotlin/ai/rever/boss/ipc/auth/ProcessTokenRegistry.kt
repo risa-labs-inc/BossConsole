@@ -22,8 +22,9 @@ private fun newProcessToken(): String {
  * A caller's identity must be established by the kernel independently of any `process_id` an IPC
  * request happens to carry (BossConsole#53): a request field is whatever the caller chose to write,
  * while a token here is minted by the kernel itself and handed to exactly one process at spawn time.
- * [identityFor] is therefore the only path from "a caller presented X" to "X is who they are" —
- * nothing in this class derives an identity from a request body, and nothing outside it can mint one.
+ * [identityFor] and [credentialFor] are therefore the only paths from "a caller presented X" to
+ * "X is who they are" — nothing in this class derives an identity from a request body, and nothing
+ * outside it can mint one.
  *
  * One instance is shared by whatever mints credentials (a [ai.rever.boss.process.ProcessSpawner]) and
  * whatever verifies them (a [ProcessIdentityInterceptor] on the kernel's IPC server), so both sides of
@@ -35,8 +36,9 @@ private fun newProcessToken(): String {
  * BOSS_PROCESS_TOKEN before launching unrelated subprocesses and must never print their environment.
  */
 class ProcessTokenRegistry {
-    private val processIdByToken = ConcurrentHashMap<String, String>()
+    private val credentialByToken = ConcurrentHashMap<String, ProcessCredential>()
     private val tokenByProcessId = ConcurrentHashMap<String, String>()
+    private var nextCredentialGeneration = 0L
 
     /**
      * Mint a fresh credential for [processId], replacing and invalidating whatever it held before.
@@ -49,8 +51,9 @@ class ProcessTokenRegistry {
     @Synchronized
     fun issue(processId: String): String {
         val token = newProcessToken()
-        tokenByProcessId.put(processId, token)?.let { previous -> processIdByToken.remove(previous, processId) }
-        processIdByToken[token] = processId
+        val credential = ProcessCredential(processId, ++nextCredentialGeneration)
+        tokenByProcessId.put(processId, token)?.let { previous -> credentialByToken.remove(previous) }
+        credentialByToken[token] = credential
         return token
     }
 
@@ -60,9 +63,19 @@ class ProcessTokenRegistry {
      * invalidated.
      */
     @Synchronized
-    fun identityFor(token: String?): String? {
+    fun identityFor(token: String?): String? = credentialForLocked(token)?.processId
+
+    /**
+     * Resolve the currently-issued credential represented by [token]. The generation is intentionally
+     * opaque to callers: it lets the kernel distinguish a legitimate respawn from a second registration
+     * on the same credential without retaining the secret token in process state or logs.
+     */
+    @Synchronized
+    fun credentialFor(token: String?): ProcessCredential? = credentialForLocked(token)
+
+    private fun credentialForLocked(token: String?): ProcessCredential? {
         if (token.isNullOrBlank()) return null
-        return processIdByToken[token]
+        return credentialByToken[token]
     }
 
     /** A late exit callback must not revoke a replacement process's credential. */
@@ -77,6 +90,6 @@ class ProcessTokenRegistry {
     /** Invalidate [processId]'s current credential, if it has one. Idempotent. */
     @Synchronized
     fun revoke(processId: String) {
-        tokenByProcessId.remove(processId)?.let { processIdByToken.remove(it, processId) }
+        tokenByProcessId.remove(processId)?.let { credentialByToken.remove(it) }
     }
 }

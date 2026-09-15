@@ -1,5 +1,8 @@
 package ai.rever.boss.ipc
 
+import ai.rever.boss.ipc.auth.ProcessIdentityInterceptor
+import ai.rever.boss.ipc.auth.ProcessTokenClientInterceptor
+import ai.rever.boss.ipc.auth.ProcessTokenRegistry
 import ai.rever.boss.ipc.proto.*
 import ai.rever.boss.ipc.services.KernelServiceImpl
 import io.grpc.ManagedChannelBuilder
@@ -14,7 +17,6 @@ import org.junit.Before
 import org.junit.Test
 import java.net.ServerSocket
 import kotlin.test.assertEquals
-import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
@@ -24,8 +26,9 @@ import kotlin.test.assertTrue
  */
 class IpcRoundTripTest {
     private var server: io.grpc.Server? = null
-    private var channel: io.grpc.ManagedChannel? = null
     private var port: Int = 0
+    private val authenticatedChannels = mutableListOf<io.grpc.ManagedChannel>()
+    private lateinit var tokenRegistry: ProcessTokenRegistry
 
     private lateinit var kernelService: KernelServiceImpl
 
@@ -34,32 +37,39 @@ class IpcRoundTripTest {
         // Find available port
         port = ServerSocket(0).use { it.localPort }
 
+        tokenRegistry = ProcessTokenRegistry()
         kernelService = KernelServiceImpl()
 
         server =
             ServerBuilder
                 .forPort(port)
+                .intercept(ProcessIdentityInterceptor(tokenRegistry))
                 .addService(kernelService)
                 .build()
                 .start()
-
-        channel =
-            ManagedChannelBuilder
-                .forAddress("localhost", port)
-                .usePlaintext()
-                .build()
     }
 
     @After
     fun tearDown() {
-        channel?.shutdownNow()
+        authenticatedChannels.forEach { it.shutdownNow() }
         server?.shutdownNow()
+    }
+
+    private fun authenticatedStub(processId: String): KernelServiceGrpcKt.KernelServiceCoroutineStub {
+        val authenticatedChannel =
+            ManagedChannelBuilder
+                .forAddress("localhost", port)
+                .usePlaintext()
+                .intercept(ProcessTokenClientInterceptor(tokenRegistry.issue(processId)))
+                .build()
+        authenticatedChannels += authenticatedChannel
+        return KernelServiceGrpcKt.KernelServiceCoroutineStub(authenticatedChannel)
     }
 
     @Test
     fun `registerProcess returns success with assigned process ID`() =
         runBlocking {
-            val stub = KernelServiceGrpcKt.KernelServiceCoroutineStub(channel!!)
+            val stub = authenticatedStub("test-process-001")
 
             val manifest =
                 ProcessManifest
@@ -101,9 +111,11 @@ class IpcRoundTripTest {
                     onProcessRegistered = { id, _, _ -> callbackProcessId = id },
                 )
             val testPort = ServerSocket(0).use { it.localPort }
+            val callbackRegistry = ProcessTokenRegistry()
             val testServer =
                 ServerBuilder
                     .forPort(testPort)
+                    .intercept(ProcessIdentityInterceptor(callbackRegistry))
                     .addService(kernelWithCallback)
                     .build()
                     .start()
@@ -111,6 +123,7 @@ class IpcRoundTripTest {
                 ManagedChannelBuilder
                     .forAddress("localhost", testPort)
                     .usePlaintext()
+                    .intercept(ProcessTokenClientInterceptor(callbackRegistry.issue("callback-test-process")))
                     .build()
 
             try {
@@ -141,7 +154,7 @@ class IpcRoundTripTest {
     fun `heartbeat stream sends pongs for each ping`() =
         runBlocking {
             withTimeout(10_000) {
-                val stub = KernelServiceGrpcKt.KernelServiceCoroutineStub(channel!!)
+                val stub = authenticatedStub("heartbeat-test-process")
 
                 // Register first
                 val manifest =
@@ -161,7 +174,7 @@ class IpcRoundTripTest {
                 // Send 3 heartbeat pings
                 val pingFlow =
                     flow {
-                        repeat(3) { i ->
+                        repeat(3) {
                             emit(
                                 HeartbeatPing
                                     .newBuilder()
@@ -185,7 +198,7 @@ class IpcRoundTripTest {
     @Test
     fun `getProcessStatus returns STOPPED for unknown process`() =
         runBlocking {
-            val stub = KernelServiceGrpcKt.KernelServiceCoroutineStub(channel!!)
+            val stub = authenticatedStub("status-reader")
 
             val status =
                 stub.getProcessStatus(
@@ -201,7 +214,7 @@ class IpcRoundTripTest {
     @Test
     fun `getProcessStatus returns RUNNING for registered process`() =
         runBlocking {
-            val stub = KernelServiceGrpcKt.KernelServiceCoroutineStub(channel!!)
+            val stub = authenticatedStub("status-test-process")
 
             val manifest =
                 ProcessManifest
@@ -231,9 +244,8 @@ class IpcRoundTripTest {
     @Test
     fun `listProcesses returns all registered processes`() =
         runBlocking {
-            val stub = KernelServiceGrpcKt.KernelServiceCoroutineStub(channel!!)
-
             repeat(3) { i ->
+                val stub = authenticatedStub("list-test-process-$i")
                 val manifest =
                     ProcessManifest
                         .newBuilder()
@@ -249,6 +261,7 @@ class IpcRoundTripTest {
                 )
             }
 
+            val stub = authenticatedStub("list-reader")
             val list = stub.listProcesses(Empty.getDefaultInstance())
 
             assertEquals(3, list.processesCount, "Should list all 3 registered processes")
@@ -257,7 +270,7 @@ class IpcRoundTripTest {
     @Test
     fun `requestShutdown removes process from registry`() =
         runBlocking {
-            val stub = KernelServiceGrpcKt.KernelServiceCoroutineStub(channel!!)
+            val stub = authenticatedStub("shutdown-test-process")
 
             val manifest =
                 ProcessManifest

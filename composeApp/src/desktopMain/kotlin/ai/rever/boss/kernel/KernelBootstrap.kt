@@ -464,6 +464,9 @@ class KernelBootstrap(
                         false
                     }
                 },
+                shutdownAuthorizer = { callerId, targetId ->
+                    callerId == targetId || callerId == ORCHESTRATOR_PROCESS_ID
+                },
             )
         eventBusService = EventBusServiceImpl()
         stateService = StateServiceImpl()
