@@ -92,8 +92,8 @@ class DesktopRunnerTerminalServiceTest {
 
             rerunJob =
                 launch(start = CoroutineStart.LAZY) {
-                    RunnerTerminalService.openRunnerTerminal(config, windowId) {}
-                    RunnerTerminalService.rerunRunner(config, windowId) {}
+                    RunnerTerminalService.openRunnerTerminal(config, windowId, onTerminalCreated = {})
+                    RunnerTerminalService.rerunRunner(config, windowId, onTerminalCreated = {})
                 }
             rerunJob.start()
             rerunJob.join()
@@ -143,9 +143,16 @@ class DesktopRunnerTerminalServiceTest {
                         }
                     }
                 }
-            val originalId = RunnerTerminalService.openRunnerTerminal(config, windowA) {}
-            RunnerTerminalService.openRunnerTerminal(config, windowB) {}
-            val job = launch(start = CoroutineStart.LAZY) { RunnerTerminalService.rerunRunner(config, windowB) {} }
+            val originalId = RunnerTerminalService.openRunnerTerminal(config, windowA, onTerminalCreated = {})
+            RunnerTerminalService.openRunnerTerminal(config, windowB, onTerminalCreated = {})
+            val job =
+                launch(start = CoroutineStart.LAZY) {
+                    RunnerTerminalService.rerunRunner(
+                        config,
+                        windowB,
+                        onTerminalCreated = {},
+                    )
+                }
             rerunJob = job
             job.start()
             job.join()
@@ -207,10 +214,17 @@ class DesktopRunnerTerminalServiceTest {
                     }
                 }
 
-            val originalId = RunnerTerminalService.openRunnerTerminal(config, windowA) {}
-            RunnerTerminalService.openRunnerTerminal(config, windowB) {}
+            val originalId = RunnerTerminalService.openRunnerTerminal(config, windowA, onTerminalCreated = {})
+            RunnerTerminalService.openRunnerTerminal(config, windowB, onTerminalCreated = {})
 
-            val job = launch(start = CoroutineStart.ATOMIC) { RunnerTerminalService.rerunRunner(config, windowB) {} }
+            val job =
+                launch(start = CoroutineStart.ATOMIC) {
+                    RunnerTerminalService.rerunRunner(
+                        config,
+                        windowB,
+                        onTerminalCreated = {},
+                    )
+                }
             job.cancel()
             job.join()
 
@@ -261,7 +275,7 @@ class DesktopRunnerTerminalServiceTest {
             RunnerSettingsManager.setTerminalTarget(RunnerTerminalTarget.SIDEBAR_PANEL)
             // No ipcBridge needed: this test asserts on service state, not on the emitted events.
 
-            val originalId = RunnerTerminalService.openRunnerTerminal(config, windowA) {}
+            val originalId = RunnerTerminalService.openRunnerTerminal(config, windowA, onTerminalCreated = {})
             // Both IDs are minted from System.currentTimeMillis() for the same config.id, so back
             // to back mints can collide and produce the identical string - which would make the
             // "stale" removeTerminal call below legitimately current. On Windows the clock tick
@@ -273,7 +287,7 @@ class DesktopRunnerTerminalServiceTest {
             var replacementId = ""
             var mints = 0
             do {
-                replacementId = RunnerTerminalService.rerunRunner(config, windowA) {}
+                replacementId = RunnerTerminalService.rerunRunner(config, windowA, onTerminalCreated = {})
                 mints++
                 if (replacementId == originalId) delay(20)
             } while (replacementId == originalId && mints < 100)

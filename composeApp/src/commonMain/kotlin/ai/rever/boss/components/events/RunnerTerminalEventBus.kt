@@ -43,31 +43,34 @@ object RunnerTerminalEventBus {
         )
     val closeEvents: SharedFlow<RunnerTerminalCloseEvent> = _closeEvents.asSharedFlow()
 
+    data class OpenRequest(
+        val terminalId: String,
+        val command: String,
+        val configId: String,
+        val configName: String,
+        val workingDirectory: String?,
+        val isRerun: Boolean,
+        val sourceWindowId: String,
+        val processId: String? = null,
+    )
+
     /**
      * Emit event to open a runner terminal.
-     * @param sourceWindowId Window that initiated the run (Issue #498)
      */
-    suspend fun openRunnerTerminal(
-        terminalId: String,
-        command: String,
-        configId: String,
-        configName: String,
-        workingDirectory: String?,
-        isRerun: Boolean,
-        sourceWindowId: String,
-    ) {
+    suspend fun openRunnerTerminal(request: OpenRequest) {
         val event =
             RunnerTerminalOpenEvent(
-                terminalId = terminalId,
-                command = command,
-                configId = configId,
-                configName = configName,
-                workingDirectory = workingDirectory,
-                isRerun = isRerun,
-                sourceWindowId = sourceWindowId,
+                terminalId = request.terminalId,
+                command = request.command,
+                configId = request.configId,
+                configName = request.configName,
+                workingDirectory = request.workingDirectory,
+                isRerun = request.isRerun,
+                sourceWindowId = request.sourceWindowId,
+                processId = request.processId,
             )
         _openEvents.emit(event)
-        ipcBridge?.forward("RunnerTerminalOpenEvent", event, sourceWindowId)
+        ipcBridge?.forward("RunnerTerminalOpenEvent", event, request.sourceWindowId)
     }
 
     /**

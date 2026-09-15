@@ -159,6 +159,8 @@ data class RunningProcess(
     val command: String,
     val startTime: Long,
     val status: ProcessStatus,
+    val windowId: String,
+    val terminalId: String? = null,
 )
 
 // ============================================
@@ -298,6 +300,7 @@ data class RunnerTerminalOpenEvent(
     val workingDirectory: String?,
     val isRerun: Boolean,
     val sourceWindowId: String, // Window that initiated the run (Issue #498)
+    val processId: String? = null,
 )
 
 /**

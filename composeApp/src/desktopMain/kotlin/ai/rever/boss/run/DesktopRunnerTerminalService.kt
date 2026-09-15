@@ -1,6 +1,8 @@
 package ai.rever.boss.run
 
 import ai.rever.boss.components.events.RunnerTerminalEventBus
+import ai.rever.boss.components.plugin.providers.publishSystemEvent
+import ai.rever.boss.plugin.api.CustomPluginEvent
 import ai.rever.boss.plugin.api.SIDEBAR_TERMINAL_ID
 import ai.rever.boss.plugin.run.Language
 import ai.rever.boss.plugin.run.MAX_RERUN_DELAY_MS
@@ -162,6 +164,7 @@ actual object RunnerTerminalService {
         config: RunConfiguration,
         windowId: String,
         onTerminalCreated: (String) -> Unit,
+        processId: String?,
     ): String {
         // Build the command outside lock (no state access needed)
         val command = buildFullCommand(config)
@@ -184,14 +187,33 @@ actual object RunnerTerminalService {
         // Emit event outside lock (avoid holding lock during I/O)
         logger.debug(LogCategory.TERMINAL, "Opening terminal for config", mapOf("configName" to config.name, "command" to command))
         RunnerTerminalEventBus.openRunnerTerminal(
-            terminalId = terminalId,
-            command = command,
-            configId = config.id,
-            configName = config.name,
-            workingDirectory = resolveWorkingDirectory(config).ifBlank { null },
-            isRerun = isRerun,
-            sourceWindowId = windowId,
+            RunnerTerminalEventBus.OpenRequest(
+                terminalId = terminalId,
+                command = command,
+                configId = config.id,
+                configName = config.name,
+                workingDirectory = resolveWorkingDirectory(config).ifBlank { null },
+                isRerun = isRerun,
+                sourceWindowId = windowId,
+                processId = processId,
+            ),
         )
+
+        if (processId != null) {
+            publishSystemEvent(
+                CustomPluginEvent(
+                    sourcePluginId = "boss-console",
+                    eventName = "terminal.execution.binding",
+                    payload =
+                        mapOf(
+                            "processId" to processId,
+                            "windowId" to windowId,
+                            "terminalId" to terminalId,
+                            "command" to command,
+                        ),
+                ),
+            )
+        }
 
         onTerminalCreated(terminalId)
         return terminalId
@@ -293,6 +315,7 @@ actual object RunnerTerminalService {
         config: RunConfiguration,
         windowId: String,
         onTerminalCreated: (String) -> Unit,
+        processId: String?,
     ): String {
         logger.debug(LogCategory.TERMINAL, "Re-running config", mapOf("configName" to config.name))
 
@@ -345,37 +368,11 @@ actual object RunnerTerminalService {
         val tornDownWindowId = existingWindowId?.takeIf { existingTerminalId != null && !usesSidebar }
 
         if (tornDownWindowId != null) {
-            // tornDownWindowId is existingWindowId narrowed to non-null, and its takeIf predicate
-            // guarantees existingTerminalId is non-null too - the single checkNotNull below never
-            // fires, it only gives the window-scoped I/O a non-null terminal id (the `!= null`
-            // guard alone does not smart-cast a *different* local).
-            val targetWindowId = tornDownWindowId
-            val targetTerminalId = checkNotNull(existingTerminalId)
-            withContext(NonCancellable) {
-                try {
-                    // Send Ctrl+C to stop the running process (window-scoped)
-                    val sent = TerminalAPIAccess.sendInterrupt(targetWindowId, targetTerminalId)
-                    if (sent) {
-                        logger.debug(
-                            LogCategory.TERMINAL,
-                            "Sent Ctrl+C to stop existing process",
-                            mapOf("windowId" to targetWindowId),
-                        )
-                        // Give the shell time to handle the interrupt and show its prompt
-                        // before the tab it belongs to is torn down underneath it. Clamped here
-                        // too - setRerunDelayMs clamps on write, but a hand-edited settings file
-                        // is read straight through to delay() otherwise.
-                        delay(settings.rerunDelayMs.coerceIn(MIN_RERUN_DELAY_MS, MAX_RERUN_DELAY_MS))
-                    }
-                    // Close the terminal tab (in the window where it exists)
-                    RunnerTerminalEventBus.closeRunnerTerminal(targetTerminalId, sourceWindowId = targetWindowId)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    // Log error but continue - we've already updated state for new terminal
-                    logger.warn(LogCategory.TERMINAL, "Error stopping existing terminal", mapOf("error" to (e.message ?: "unknown")))
-                }
-            }
+            teardownExistingRunnerTerminal(
+                windowId = tornDownWindowId,
+                terminalId = checkNotNull(existingTerminalId),
+                settings = settings,
+            )
         }
 
         if (!rerunStillValid(config, windowId, terminalId, existingTerminalId, tornDownWindowId)) {
@@ -384,17 +381,86 @@ actual object RunnerTerminalService {
 
         // Emit event to create terminal
         RunnerTerminalEventBus.openRunnerTerminal(
-            terminalId = terminalId,
-            command = command,
-            configId = config.id,
-            configName = config.name,
-            workingDirectory = resolveWorkingDirectory(config).ifBlank { null },
-            isRerun = true,
-            sourceWindowId = windowId,
+            RunnerTerminalEventBus.OpenRequest(
+                terminalId = terminalId,
+                command = command,
+                configId = config.id,
+                configName = config.name,
+                workingDirectory = resolveWorkingDirectory(config).ifBlank { null },
+                isRerun = true,
+                sourceWindowId = windowId,
+                processId = processId,
+            ),
         )
 
         onTerminalCreated(terminalId)
+
+        publishExecutionBinding(
+            processId = processId,
+            windowId = windowId,
+            terminalId = terminalId,
+            command = command,
+        )
+
         return terminalId
+    }
+
+    private fun publishExecutionBinding(
+        processId: String?,
+        windowId: String,
+        terminalId: String,
+        command: String,
+    ) {
+        if (processId == null) return
+
+        publishSystemEvent(
+            CustomPluginEvent(
+                sourcePluginId = "boss-console",
+                eventName = "terminal.execution.binding",
+                payload =
+                    mapOf(
+                        "processId" to processId,
+                        "windowId" to windowId,
+                        "terminalId" to terminalId,
+                        "command" to command,
+                    ),
+            ),
+        )
+    }
+
+    /**
+     * Stops and closes the existing runner terminal before a re-run replaces it.
+     */
+    private suspend fun teardownExistingRunnerTerminal(
+        windowId: String,
+        terminalId: String,
+        settings: RunnerSettings,
+    ) {
+        withContext(NonCancellable) {
+            try {
+                val sent = TerminalAPIAccess.sendInterrupt(windowId, terminalId)
+                if (sent) {
+                    logger.debug(
+                        LogCategory.TERMINAL,
+                        "Sent Ctrl+C to stop existing process",
+                        mapOf("windowId" to windowId),
+                    )
+                    delay(settings.rerunDelayMs.coerceIn(MIN_RERUN_DELAY_MS, MAX_RERUN_DELAY_MS))
+                }
+                RunnerTerminalEventBus.closeRunnerTerminal(
+                    terminalId,
+                    sourceWindowId = windowId,
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                logger.warn(
+                    LogCategory.TERMINAL,
+                    "Error stopping existing terminal",
+                    mapOf("error" to (e.message ?: "unknown")),
+                )
+            }
+        }
     }
 
     /**

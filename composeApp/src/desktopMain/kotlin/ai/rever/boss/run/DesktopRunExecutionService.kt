@@ -1,5 +1,8 @@
 package ai.rever.boss.run
 
+import ai.rever.boss.components.events.RunProcessEvent
+import ai.rever.boss.components.events.RunProcessEventBus
+import ai.rever.boss.components.events.RunProcessStatus
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CoroutineScope
@@ -18,6 +21,8 @@ import java.util.UUID
 actual object RunExecutionService {
     private val logger = BossLogger.forComponent("RunExecutionService")
     private val scope = CoroutineScope(Dispatchers.Default)
+
+    private const val MAX_RETAINED_FINISHED_PROCESSES = 64
 
     private val _runningProcesses = MutableStateFlow<List<RunningProcess>>(emptyList())
     actual val runningProcesses: StateFlow<List<RunningProcess>> = _runningProcesses.asStateFlow()
@@ -63,21 +68,117 @@ actual object RunExecutionService {
                     command = command,
                     startTime = System.currentTimeMillis(),
                     status = ProcessStatus.STARTING,
+                    windowId = windowId,
                 )
 
-            // Add to running processes
-            _runningProcesses.value = _runningProcesses.value + process
+            // Add the process while keeping finished history bounded.
+            addProcess(process)
 
             // Use RunnerTerminalService which respects sidebar/main panel setting
             logger.debug(LogCategory.TERMINAL, "Executing via RunnerTerminalService", mapOf("command" to command))
-            RunnerTerminalService.openRunnerTerminal(config, windowId)
+            val terminalId =
+                RunnerTerminalService.openRunnerTerminal(
+                    config = config,
+                    windowId = windowId,
+                    processId = processId,
+                )
+
+            _runningProcesses.value =
+                _runningProcesses.value.map {
+                    if (it.id == processId) {
+                        it.copy(terminalId = terminalId)
+                    } else {
+                        it
+                    }
+                }
 
             // Update status to running
             updateProcessStatus(processId, ProcessStatus.RUNNING)
 
+            RunProcessEventBus.emit(
+                RunProcessEvent(
+                    processId = processId,
+                    configId = config.id,
+                    configName = config.name,
+                    windowId = windowId,
+                    terminalId = terminalId,
+                    status = RunProcessStatus.STARTED,
+                ),
+            )
+
             return process
         } catch (e: Exception) {
             logger.warn(LogCategory.TERMINAL, "Failed to execute", error = e)
+            return null
+        }
+    }
+
+    /**
+     * Re-run a configuration with a fresh execution identity.
+     */
+    actual suspend fun rerun(
+        config: RunConfiguration,
+        windowId: String,
+    ): RunningProcess? {
+        try {
+            val processId = UUID.randomUUID().toString()
+            val command = buildFullCommand(config, debug = false)
+
+            val process =
+                RunningProcess(
+                    id = processId,
+                    configId = config.id,
+                    configName = config.name,
+                    command = command,
+                    startTime = System.currentTimeMillis(),
+                    status = ProcessStatus.STARTING,
+                    windowId = windowId,
+                )
+
+            _runningProcesses.value = _runningProcesses.value + process
+
+            logger.debug(
+                LogCategory.TERMINAL,
+                "Re-running via RunnerTerminalService",
+                mapOf("command" to command),
+            )
+
+            val terminalId =
+                RunnerTerminalService.rerunRunner(
+                    config = config,
+                    windowId = windowId,
+                    processId = processId,
+                )
+
+            _runningProcesses.value =
+                _runningProcesses.value.map {
+                    if (it.id == processId) {
+                        it.copy(terminalId = terminalId)
+                    } else {
+                        it
+                    }
+                }
+
+            updateProcessStatus(processId, ProcessStatus.RUNNING)
+
+            RunProcessEventBus.emit(
+                RunProcessEvent(
+                    processId = processId,
+                    configId = config.id,
+                    configName = config.name,
+                    windowId = windowId,
+                    terminalId = terminalId,
+                    status = RunProcessStatus.STARTED,
+                ),
+            )
+
+            return _runningProcesses.value.firstOrNull { it.id == processId }
+        } catch (e: Exception) {
+            logger.warn(
+                LogCategory.TERMINAL,
+                "Failed to rerun",
+                error = e,
+            )
             return null
         }
     }
@@ -107,14 +208,37 @@ actual object RunExecutionService {
      * The actual stop happens when the terminal process exits.
      */
     actual suspend fun stop(processId: String) {
-        val process = _runningProcesses.value.find { it.id == processId }
-        if (process != null) {
-            updateProcessStatus(processId, ProcessStatus.STOPPING)
-            // Note: We can't directly stop terminal processes from here
-            // The user needs to use Ctrl+C in the terminal
-            // This is mainly for tracking state
-            logger.debug(LogCategory.TERMINAL, "Stop requested for process", mapOf("configName" to process.configName))
+        val process = _runningProcesses.value.find { it.id == processId } ?: return
+
+        val terminalId = process.terminalId
+        if (terminalId == null) {
+            logger.debug(
+                LogCategory.TERMINAL,
+                "Stop requested but process has no terminal identity",
+                mapOf("processId" to processId, "configName" to process.configName),
+            )
+            return
         }
+
+        updateProcessStatus(processId, ProcessStatus.STOPPING)
+
+        val interrupted =
+            ai.rever.boss.services.terminal.TerminalAPIAccess.sendInterrupt(
+                windowId = process.windowId,
+                terminalId = terminalId,
+            )
+
+        logger.debug(
+            LogCategory.TERMINAL,
+            "Stop requested for exact process terminal",
+            mapOf(
+                "processId" to processId,
+                "configName" to process.configName,
+                "windowId" to process.windowId,
+                "terminalId" to terminalId,
+                "interruptSent" to interrupted,
+            ),
+        )
     }
 
     /**
@@ -137,15 +261,30 @@ actual object RunExecutionService {
     ) {
         val status = if (failed) ProcessStatus.FAILED else ProcessStatus.STOPPED
         updateProcessStatus(processId, status)
+    }
 
-        // Clean up old completed processes after a delay
-        scope.launch {
-            kotlinx.coroutines.delay(5000)
-            _runningProcesses.value =
-                _runningProcesses.value.filter {
-                    it.id != processId || it.status == ProcessStatus.RUNNING || it.status == ProcessStatus.STARTING
-                }
+    private fun addProcess(process: RunningProcess) {
+        _runningProcesses.value = _runningProcesses.value + process
+        trimFinishedProcesses()
+    }
+
+    private fun trimFinishedProcesses() {
+        val processes = _runningProcesses.value
+        val finished =
+            processes.filter {
+                it.status == ProcessStatus.FAILED ||
+                    it.status == ProcessStatus.STOPPED
+            }
+
+        if (finished.size <= MAX_RETAINED_FINISHED_PROCESSES) {
+            return
         }
+
+        val removeCount = finished.size - MAX_RETAINED_FINISHED_PROCESSES
+        val idsToRemove = finished.take(removeCount).map { it.id }.toSet()
+
+        _runningProcesses.value =
+            processes.filterNot { it.id in idsToRemove }
     }
 
     private fun updateProcessStatus(
@@ -160,5 +299,6 @@ actual object RunExecutionService {
                     process
                 }
             }
+        trimFinishedProcesses()
     }
 }
