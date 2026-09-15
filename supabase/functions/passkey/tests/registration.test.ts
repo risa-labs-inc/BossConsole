@@ -16,6 +16,8 @@ Deno.test("generateRegistrationChallenge - should generate challenge for user", 
     error: null
   }, 'insert')
 
+  mockClient.mockResponse('rpc.admit_passkey_challenge', { data: [{ allowed: true, retry_after_seconds: 0 }], error: null }, 'call')
+
   const result = await generateRegistrationChallenge(mockClient as unknown as SupabaseClient, 'user-456')
 
   assertEquals(result.success, true)
@@ -36,6 +38,8 @@ Deno.test("generateRegistrationChallenge - should advertise only verifiable algo
     data: [{ id: 'challenge-789' }],
     error: null
   }, 'insert')
+
+  mockClient.mockResponse('rpc.admit_passkey_challenge', { data: [{ allowed: true, retry_after_seconds: 0 }], error: null }, 'call')
 
   const result = await generateRegistrationChallenge(mockClient as unknown as SupabaseClient, 'user-456')
 
@@ -61,6 +65,8 @@ Deno.test("generateRegistrationChallenge - should accept and return sessionId fo
   }, 'insert')
 
   const sessionId = 'session-cross-device-123'
+  mockClient.mockResponse('rpc.admit_passkey_challenge', { data: [{ allowed: true, retry_after_seconds: 0 }], error: null }, 'call')
+
   const result = await generateRegistrationChallenge(
     mockClient as unknown as SupabaseClient,
     'user-456',
@@ -83,6 +89,8 @@ Deno.test("generateRegistrationChallenge - should work without sessionId for sam
     data: [{ id: 'challenge-789' }],
     error: null
   }, 'insert')
+
+  mockClient.mockResponse('rpc.admit_passkey_challenge', { data: [{ allowed: true, retry_after_seconds: 0 }], error: null }, 'call')
 
   const result = await generateRegistrationChallenge(
     mockClient as unknown as SupabaseClient,
@@ -109,6 +117,8 @@ Deno.test("generateRegistrationChallenge - should handle storage failure", async
   }, 'insert')
 
   // No need to mock select since insert fails first
+
+  mockClient.mockResponse('rpc.admit_passkey_challenge', { data: [{ allowed: true, retry_after_seconds: 0 }], error: null }, 'call')
 
   const result = await generateRegistrationChallenge(mockClient as unknown as SupabaseClient, 'user-456')
 

@@ -32,6 +32,8 @@ Deno.test("generateAuthChallenge - should generate challenge for existing user",
     error: null
   }, 'insert')
 
+  mockClient.mockResponse('rpc.admit_passkey_challenge', { data: [{ allowed: true, retry_after_seconds: 0 }], error: null }, 'call')
+
   const result = await generateAuthChallenge(mockClient as unknown as SupabaseClient, 'test@example.com', 'session-xyz')
 
   assertEquals(result.success, true)
@@ -51,11 +53,13 @@ Deno.test("generateAuthChallenge - should return error for non-existent user", a
     error: null
   }, 'call')
 
+  mockClient.mockResponse('rpc.admit_passkey_challenge', { data: [{ allowed: true, retry_after_seconds: 0 }], error: null }, 'call')
+
   const result = await generateAuthChallenge(mockClient as unknown as SupabaseClient, 'nonexistent@example.com')
 
   assertEquals(result.success, false)
   if (!result.success) {
-    assertEquals(result.error, 'User not found')
+    assertEquals(result.error, 'No usable passkey is available for this sign-in')
   }
 })
 
@@ -74,11 +78,13 @@ Deno.test("generateAuthChallenge - should return error when user has no passkeys
     error: null
   }, 'select')
 
+  mockClient.mockResponse('rpc.admit_passkey_challenge', { data: [{ allowed: true, retry_after_seconds: 0 }], error: null }, 'call')
+
   const result = await generateAuthChallenge(mockClient as unknown as SupabaseClient, 'test@example.com')
 
   assertEquals(result.success, false)
   if (!result.success) {
-    assertEquals(result.error, 'No passkeys found for user')
+    assertEquals(result.error, 'No usable passkey is available for this sign-in')
   }
 })
 

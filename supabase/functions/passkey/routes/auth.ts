@@ -1,3 +1,4 @@
+import { limitPasskeyRequest } from "../utils/request-limits.ts"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { PasskeyContext } from "../types/context.ts"
 import {
@@ -8,6 +9,7 @@ import {
 import { getAllowedOrigins } from "../utils/config.ts"
 import { parseClientDataJSON } from "../utils/webauthn.ts"
 import {
+  SessionIdentifierSchema,
   AuthChallengeRequestSchema,
   AuthChallengeResponseSchema,
   AuthCompleteRequestSchema,
@@ -17,6 +19,7 @@ import {
 } from "../types/schemas.ts"
 
 const auth = new OpenAPIHono<{ Variables: PasskeyContext }>()
+auth.use("*", limitPasskeyRequest)
 
 // ============================================================================
 // POST /auth/challenge - Generate authentication challenge
@@ -54,6 +57,14 @@ const authChallengeRoute = createRoute({
         }
       }
     },
+    429: {
+      description: 'Challenge capacity reached; retry after the Retry-After interval',
+      content: { 'application/json': { schema: ErrorResponseSchema } }
+    },
+    503: {
+      description: 'Shared admission storage unavailable; retry after the Retry-After interval',
+      content: { 'application/json': { schema: ErrorResponseSchema } }
+    },
     500: {
       description: 'Internal server error',
       content: {
@@ -73,6 +84,10 @@ auth.openapi(authChallengeRoute, async (ctx) => {
     const result = await generateAuthChallenge(supabase, email, sessionId)
 
     if (!result.success) {
+      if ('status' in result && (result.status === 429 || result.status === 503)) {
+        ctx.header('Retry-After', String(result.retryAfterSeconds))
+        return ctx.json({ error: result.error }, result.status)
+      }
       return ctx.json({ error: result.error || 'Failed to generate challenge' }, 400)
     }
 
@@ -180,7 +195,7 @@ const authStatusRoute = createRoute({
   description: 'Checks whether an authentication session is pending, completed, or expired',
   request: {
     params: z.object({
-      sessionId: z.string()
+      sessionId: SessionIdentifierSchema
     })
   },
   responses: {

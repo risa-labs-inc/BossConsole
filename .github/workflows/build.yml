@@ -431,6 +431,9 @@ jobs:
       - name: Verify BOSS AI admission across PostgreSQL sessions
         timeout-minutes: 2
         run: python3 scripts/test/test-boss-ai-concurrency.py
+      - name: Verify concurrent passkey admission and bounded cleanup
+        timeout-minutes: 2
+        run: python3 scripts/test/test-passkey-admission-concurrency.py
 
       - name: 🧹 Stop Supabase
         if: always()

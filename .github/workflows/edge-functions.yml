@@ -10,7 +10,7 @@ name: ⚡ Edge Functions
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main, dev, develop ]
     paths:
       - 'supabase/functions/**'
       # The function's behaviour is coupled to the passkey migrations (columns,
@@ -18,7 +18,7 @@ on:
       - 'supabase/migrations/**'
       - '.github/workflows/edge-functions.yml'
   pull_request:
-    branches: [ main ]
+    branches: [ main, dev ]
     paths:
       - 'supabase/functions/**'
       - 'supabase/migrations/**'

@@ -1,32 +1,37 @@
 import { z } from "zod"
 
+export const SessionIdentifierSchema = z.string().min(1).max(128)
+export const ChallengeSchema = z.string().min(1).max(512).regex(/^[A-Za-z0-9+/_-]+={0,2}$/)
+export const CredentialIdentifierSchema = z.string().min(1).max(4096)
+const EncodedResponseSchema = z.string()
+
 // ============================================================================
 // WebAuthn Credential Schemas
 // ============================================================================
 
 export const AuthenticatorResponseSchema = z.object({
-  clientDataJSON: z.string(),
-  authenticatorData: z.string(),
-  signature: z.string(),
-  userHandle: z.string().optional()
+  clientDataJSON: EncodedResponseSchema.max(16 * 1024),
+  authenticatorData: EncodedResponseSchema.max(16 * 1024),
+  signature: EncodedResponseSchema.max(8192),
+  userHandle: z.string().max(128).optional()
 })
 
 export const RegistrationResponseSchema = z.object({
-  clientDataJSON: z.string(),
-  attestationObject: z.string()
+  clientDataJSON: EncodedResponseSchema.max(16 * 1024),
+  attestationObject: EncodedResponseSchema.max(192 * 1024)
 })
 
 export const AuthenticationCredentialSchema = z.object({
-  id: z.string(),
-  rawId: z.string(),
-  type: z.string(),
+  id: CredentialIdentifierSchema,
+  rawId: CredentialIdentifierSchema,
+  type: z.string().max(64),
   response: AuthenticatorResponseSchema
 })
 
 export const RegistrationCredentialSchema = z.object({
-  id: z.string(),
-  rawId: z.string(),
-  type: z.string(),
+  id: CredentialIdentifierSchema,
+  rawId: CredentialIdentifierSchema,
+  type: z.string().max(64),
   response: RegistrationResponseSchema
 })
 
@@ -35,8 +40,8 @@ export const RegistrationCredentialSchema = z.object({
 // ============================================================================
 
 export const AuthChallengeRequestSchema = z.object({
-  email: z.string().email("Invalid email format"),
-  sessionId: z.string().optional()
+  email: z.string().max(320).email("Invalid email format"),
+  sessionId: SessionIdentifierSchema.optional()
 })
 
 export const AuthChallengeResponseSchema = z.object({
@@ -50,18 +55,18 @@ export const AuthChallengeResponseSchema = z.object({
     type: z.string(),
     transports: z.array(z.string())
   })).optional(),
-  sessionId: z.string().optional(),
+  sessionId: SessionIdentifierSchema.optional(),
   error: z.string().optional()
 })
 
 export const AuthCompleteRequestSchema = z.object({
   credential: AuthenticationCredentialSchema,
-  challenge: z.string()
+  challenge: ChallengeSchema
 })
 
 export const AuthCompleteResponseSchema = z.object({
   success: z.boolean(),
-  userId: z.string().optional(),
+  userId: z.string().min(1).max(128).optional(),
   email: z.string().optional(),
   passkeyId: z.string().optional(),
   error: z.string().optional(),
@@ -73,7 +78,7 @@ export const AuthCompleteResponseSchema = z.object({
 
 export const AuthStatusResponseSchema = z.object({
   status: z.enum(['pending', 'completed', 'expired', 'error']),
-  userId: z.string().optional(),
+  userId: z.string().min(1).max(128).optional(),
   email: z.string().optional(),
   completedAt: z.string().optional(),
   expiresAt: z.number().optional(), // Unix timestamp
@@ -91,8 +96,8 @@ export const RegisterChallengeRequestSchema = z.object({
   // Optional, and never authoritative: the challenge is bound to the
   // authenticated caller. Sending it asks the server to confirm the caller is
   // who the client thinks they are — a mismatch is rejected with 403.
-  userId: z.string().optional(),
-  sessionId: z.string().optional() // For cross-device registration polling
+  userId: z.string().min(1).max(128).optional(),
+  sessionId: SessionIdentifierSchema.optional() // For cross-device registration polling
 })
 
 export const RegisterChallengeResponseSchema = z.object({
@@ -109,7 +114,7 @@ export const RegisterChallengeResponseSchema = z.object({
   user: z.object({
     id: z.string(),
     name: z.string(),
-    displayName: z.string()
+    displayName: z.string().max(256)
   }).optional(),
   pubKeyCredParams: z.array(z.object({
     type: z.string(),
@@ -122,7 +127,7 @@ export const RegisterChallengeResponseSchema = z.object({
     userVerification: z.string(),
     requireResidentKey: z.boolean()
   }).optional(),
-  sessionId: z.string().optional(), // Return sessionId for cross-device polling
+  sessionId: SessionIdentifierSchema.optional(), // Return sessionId for cross-device polling
   error: z.string().optional()
 })
 
@@ -130,10 +135,10 @@ export const RegisterCompleteRequestSchema = z.object({
   // Optional, and never authoritative: the enrolling user comes from the
   // challenge issued at /register/challenge. A value that disagrees with it is
   // rejected rather than used.
-  userId: z.string().optional(),
+  userId: z.string().min(1).max(128).optional(),
   credential: RegistrationCredentialSchema,
-  challenge: z.string(),
-  displayName: z.string().optional()
+  challenge: ChallengeSchema,
+  displayName: z.string().max(256).optional()
 })
 
 export const RegisterCompleteResponseSchema = z.object({
@@ -149,7 +154,7 @@ export const RegisterCompleteResponseSchema = z.object({
 // userId is optional throughout /manage: the account is the authenticated
 // caller, and a value that disagrees with the session is rejected with 403.
 export const ManagementListRequestSchema = z.object({
-  userId: z.string().optional()
+  userId: z.string().min(1).max(128).optional()
 })
 
 export const PasskeySchema = z.object({
@@ -168,8 +173,8 @@ export const ManagementListResponseSchema = z.object({
 })
 
 export const ManagementDeleteRequestSchema = z.object({
-  userId: z.string().optional(),
-  passkeyId: z.string()
+  userId: z.string().min(1).max(128).optional(),
+  passkeyId: z.string().min(1).max(128)
 })
 
 export const ManagementDeleteResponseSchema = z.object({
@@ -178,9 +183,9 @@ export const ManagementDeleteResponseSchema = z.object({
 })
 
 export const ManagementUpdateRequestSchema = z.object({
-  userId: z.string().optional(),
-  passkeyId: z.string(),
-  displayName: z.string()
+  userId: z.string().min(1).max(128).optional(),
+  passkeyId: z.string().min(1).max(128),
+  displayName: z.string().max(256)
 })
 
 export const ManagementUpdateResponseSchema = z.object({

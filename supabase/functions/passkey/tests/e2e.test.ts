@@ -59,6 +59,8 @@ Deno.test("E2E - Complete registration and authentication flow with real crypto"
     error: null
   }, 'insert')
 
+  mockClient.mockResponse('rpc.admit_passkey_challenge', { data: [{ allowed: true, retry_after_seconds: 0 }], error: null }, 'call')
+
   const regChallengeResult = await generateRegistrationChallenge(
     mockClient as unknown as SupabaseClient,
     testUserId,
@@ -149,6 +151,8 @@ Deno.test("E2E - Complete registration and authentication flow with real crypto"
     data: [{ id: 'challenge-auth-1' }],
     error: null
   }, 'insert')
+
+  mockClient.mockResponse('rpc.admit_passkey_challenge', { data: [{ allowed: true, retry_after_seconds: 0 }], error: null }, 'call')
 
   const authChallengeResult = await generateAuthChallenge(
     mockClient as unknown as SupabaseClient,
@@ -321,6 +325,8 @@ Deno.test("E2E - Should prevent replay attacks by rejecting reused challenges", 
     data: [{ id: 'challenge-replay' }],
     error: null
   }, 'insert')
+
+  mockClient.mockResponse('rpc.admit_passkey_challenge', { data: [{ allowed: true, retry_after_seconds: 0 }], error: null }, 'call')
 
   const challengeResult = await generateAuthChallenge(
     mockClient as unknown as SupabaseClient,

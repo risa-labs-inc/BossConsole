@@ -2244,6 +2244,8 @@ Deno.test("generateRegistrationChallenge - returns the server's rpId", async () 
   const mockClient = createMockSupabaseClient()
   mockClient.mockResponse('passkey_challenges', { data: [{ id: 'challenge-1' }], error: null }, 'insert')
 
+  mockClient.mockResponse('rpc.admit_passkey_challenge', { data: [{ allowed: true, retry_after_seconds: 0 }], error: null }, 'call')
+
   const result = await generateRegistrationChallenge(
     mockClient as unknown as SupabaseClient,
     TEST_USER_ID
