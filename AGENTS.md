@@ -2190,3 +2190,14 @@ are intentional. Global access filters still apply independently of registration
 - **Test Veracity Rules**:
   - In deduplication tests, ALWAYS test with dev JAR `lastModified` strictly greater than standard JAR `lastModified` to mirror real-world compiler outputs.
   - Test the public reload pipeline (`DevPluginReloader.reload`) end-to-end rather than calling internal rollback helpers in isolation.
+
+## Operator project-opening routes
+
+Top-bar recents, the recent-project picker, and native browse route through
+`ProjectOpenCoordinator`. The picker only returns the selection; it cannot mutate window state.
+Validate the directory both when selected and when a destination is confirmed, and keep missing
+recent entries with visible feedback because an unavailable volume need not mean deletion.
+Same-project selections do nothing; a different project asks Current/New Window when a project
+is already open. Keep mode-dialog dismissal separate from error dismissal: the existing mode
+dialog calls onDismiss after its action, which must not clear a confirmation-time failure.
+CLI, deep links, startup restore, clone and new-project flows retain their separate contracts.
