@@ -488,7 +488,9 @@ object GlobalSearchService {
      * Search commands/actions from KeymapActions.
      */
     private fun searchCommands(query: String): List<SearchResult.CommandResult> {
-        val allActionIds = KeymapActions.getAllActionIds()
+        // Only advertise commands that the production selection dispatcher can execute. Keymap
+        // registration alone is not an execution capability (notably for editor plugin actions).
+        val allActionIds = SearchCommandCatalog.supportedActionIds
         val settings = KeymapSettingsManager.currentSettings.value
         val results = mutableListOf<SearchResult.CommandResult>()
 

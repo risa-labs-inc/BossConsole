@@ -10,6 +10,7 @@ import ai.rever.boss.search.FileIndexer
 import ai.rever.boss.search.GlobalSearchService
 import ai.rever.boss.search.MatchRange
 import ai.rever.boss.search.SearchCategory
+import ai.rever.boss.search.SearchCommandDispatchOutcome
 import ai.rever.boss.search.SearchResult
 import ai.rever.boss.utils.extractParentName
 import ai.rever.boss.utils.logging.BossLogger
@@ -48,6 +49,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.*
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -75,6 +79,23 @@ internal class SpotlightDialogState {
     var selectedIndex by mutableStateOf(0)
     var isSearching by mutableStateOf(false)
     var scrollToSelected by mutableStateOf(false)
+    var commandRejection by mutableStateOf<String?>(null)
+
+    fun updateQuery(value: String) {
+        query = value
+        commandRejection = null
+        selectedIndex = 0
+    }
+
+    fun selectCommand(
+        actionId: String,
+        handler: ((String) -> SearchCommandDispatchOutcome)?,
+    ) {
+        val outcome =
+            handler?.invoke(actionId)
+                ?: SearchCommandDispatchOutcome.Rejected("Commands are not available in this window.")
+        commandRejection = (outcome as? SearchCommandDispatchOutcome.Rejected)?.reason
+    }
 }
 
 // Theme colors — reactive getters into the BOSS design system tokens
@@ -158,7 +179,7 @@ fun GlobalSearchDialog(
     onTabSelect: ((windowId: String, panelId: String, tabId: String) -> Unit)? = null,
     onBookmarkSelect: ((bookmarkId: String, collectionId: String) -> Unit)? = null,
     onRunConfigSelect: ((configId: String) -> Unit)? = null,
-    onCommandSelect: ((actionId: String) -> Unit)? = null,
+    onCommandSelect: ((actionId: String) -> SearchCommandDispatchOutcome)? = null,
     onToolSelect: ((panelId: String) -> Unit)? = null,
     onSettingSelect: ((result: SearchResult.SettingResult) -> Unit)? = null,
     onPageSelect: ((url: String) -> Unit)? = null,
@@ -244,8 +265,8 @@ fun GlobalSearchDialog(
     }
 
     // Handle result selection
-    // Note: If a callback is null, the dialog closes without action. This is intentional
-    // fallback behavior - the integrating code may not support all result types.
+    // Command rejection stays in this dialog so it is visible in Focus Mode and only this window.
+    // Other result types retain their existing missing-callback dismissal behavior.
     fun selectResult(result: SearchResult) {
         // One shape for every branch, in `dispatchResult`: name the pick, hand it to the host, and
         // close when the host supplied no handler.
@@ -256,6 +277,7 @@ fun GlobalSearchDialog(
             handler: ((T) -> Unit)?,
         ) = dispatchResult(result, detailKey, detailValue, arg, handler, onDismiss)
 
+        dialogState.commandRejection = null
         when (result) {
             is SearchResult.FileResult -> {
                 dispatch("file", result.path, result.path, onFileSelect)
@@ -288,7 +310,7 @@ fun GlobalSearchDialog(
             }
 
             is SearchResult.CommandResult -> {
-                dispatch("actionId", result.actionId, result.actionId, onCommandSelect)
+                dialogState.selectCommand(result.actionId, onCommandSelect)
             }
 
             is SearchResult.ToolResult -> {
@@ -425,8 +447,7 @@ fun GlobalSearchDialog(
                     SearchInputField(
                         query = dialogState.query,
                         onQueryChange = { newQuery ->
-                            dialogState.query = newQuery
-                            dialogState.selectedIndex = 0
+                            dialogState.updateQuery(newQuery)
                         },
                         focusRequester = searchFieldFocusRequester,
                         isSearching = dialogState.isSearching,
@@ -434,6 +455,19 @@ fun GlobalSearchDialog(
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
+
+                dialogState.commandRejection?.let { reason ->
+                    Text(
+                        text = reason,
+                        color = BossTheme.colors.alert,
+                        style = MaterialTheme.typography.body2,
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 12.dp)
+                                .semantics { liveRegion = LiveRegionMode.Polite },
+                    )
+                }
 
                 // Category filter tabs (only show when there are results)
                 AnimatedVisibility(
@@ -1864,7 +1898,7 @@ private fun SearchCategory.accent(): Color =
 /**
  * Hand a picked result to its host, or close the dialog when there is no host handler.
  *
- * Nine branches of [GlobalSearchDialog]'s `selectResult` are this same shape, and nine copies is
+ * Eight branches of [GlobalSearchDialog]'s `selectResult` are this same shape, and eight copies is
  * how one of them ends up logging a different key, or forgetting to dismiss and leaving the dialog
  * up over a result that did nothing.
  *
