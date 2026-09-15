@@ -2039,6 +2039,20 @@ class DynamicPluginManager(
     fun isInstalled(pluginId: String): Boolean = _pluginStates.value.containsKey(pluginId)
 
     /**
+     * Whether the loader still holds this plugin's classes, which is NOT what [isInstalled] asks.
+     *
+     * [isInstalled] reports whether a manager entry exists. This reports whether the id is resident
+     * in [pluginLoader], and the two diverge in the case that matters: `disablePlugin` unregisters
+     * panels and flips the state to DISABLED but never unloads, so a user-disabled plugin keeps its
+     * id in the loader. Any later `loadPlugin` for that id is refused with
+     * `PluginLoadException.ALREADY_LOADED_PREFIX`, however the manager state reads.
+     *
+     * The wizard asks this before it touches an installed artifact, because a refusal that arrives
+     * afterwards cannot undo what the install already overwrote.
+     */
+    fun isPluginResident(pluginId: String): Boolean = pluginLoader.isLoaded(pluginId)
+
+    /**
      * Get installed plugins visible to the current user.
      * Filters out plugins the user lacks access to (admin and/or permissions).
      */
