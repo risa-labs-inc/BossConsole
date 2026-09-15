@@ -186,6 +186,28 @@ class FluckTabInfo(
         )
     }
 
+    fun updateBack(): FluckTabInfo {
+        if (historyIndex > 0) {
+            val newIndex = historyIndex - 1
+            return copy(
+                _currentUrl = navigationHistory[newIndex].second,
+                historyIndex = newIndex,
+            )
+        }
+        return this
+    }
+
+    fun updateForward(): FluckTabInfo {
+        if (historyIndex < navigationHistory.size - 1) {
+            val newIndex = historyIndex + 1
+            return copy(
+                _currentUrl = navigationHistory[newIndex].second,
+                historyIndex = newIndex,
+            )
+        }
+        return this
+    }
+
     /**
      * @deprecated Use updateNavigation() instead for immutable updates.
      * This mutable method is kept for backward compatibility but creates inconsistent state update patterns.
@@ -225,6 +247,11 @@ class FluckTabInfo(
         }
     }
 
+    @Deprecated(
+        message = "Use updateBack() for immutable state updates",
+        replaceWith = ReplaceWith("updateBack()"),
+        level = DeprecationLevel.WARNING,
+    )
     @Synchronized
     fun navigateBack() {
         if (historyIndex > 0) {
@@ -233,6 +260,11 @@ class FluckTabInfo(
         }
     }
 
+    @Deprecated(
+        message = "Use updateForward() for immutable state updates",
+        replaceWith = ReplaceWith("updateForward()"),
+        level = DeprecationLevel.WARNING,
+    )
     @Synchronized
     fun navigateForward() {
         if (historyIndex < navigationHistory.size - 1) {
