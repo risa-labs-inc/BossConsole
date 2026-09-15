@@ -2450,8 +2450,10 @@ tasks.withType<Test> {
     // Use JUnit Platform for test discovery
     useJUnitPlatform()
     // Disable failure when test sources exist but no tests are discovered
-    // This handles misconfigured test sources or test classes without test methods
-    failOnNoDiscoveredTests = false
+    // Safe reflection call for Gradle 8/9 cross-compatibility
+    runCatching {
+        javaClass.getMethod("setFailOnNoDiscoveredTests", Boolean::class.javaPrimitiveType).invoke(this, false)
+    }
 }
 
 // Wrapper tasks that auto-increment build number before packaging

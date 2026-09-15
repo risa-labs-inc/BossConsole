@@ -1,9 +1,14 @@
 package ai.rever.boss.search
 
+import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
 import ai.rever.boss.components.settings.search.SettingsSearchEntry
 import ai.rever.boss.components.settings.search.SettingsSearchMatcher
 import ai.rever.boss.components.settings.sidebar.SettingsSection
 import ai.rever.boss.plugin.api.PanelId
+import ai.rever.boss.plugin.tab.codeeditor.EditorTabInfo
+import ai.rever.boss.plugin.tab.fluck.FluckTabType
+import ai.rever.boss.topofmind.ActiveTab
+import ai.rever.boss.topofmind.TopOfMindStateHolder
 import kotlinx.coroutines.runBlocking
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -35,6 +40,7 @@ class GlobalSearchNewSourcesTest {
         // tests read whole result lists in places.
         GlobalSearchService.clearIndex()
         GlobalSearchService.setActiveCategory(SearchCategory.ALL)
+        TopOfMindStateHolder.updateActiveTabs(emptyList())
     }
 
     @AfterTest
@@ -42,6 +48,7 @@ class GlobalSearchNewSourcesTest {
         SearchSources.clearForTests()
         GlobalSearchService.clearResults()
         GlobalSearchService.setActiveCategory(SearchCategory.ALL)
+        TopOfMindStateHolder.updateActiveTabs(emptyList())
     }
 
     private fun searchFor(query: String): List<SearchResult> = runBlocking { GlobalSearchService.search(query, WINDOW) }
@@ -465,5 +472,54 @@ class GlobalSearchNewSourcesTest {
 
         assertTrue(resultsOf<SearchResult.ToolResult>("bookmark").isEmpty())
         assertTrue(resultsOf<SearchResult.SettingResult>("bookmark").isNotEmpty(), "settings must survive")
+    }
+
+    // --- tab search (URL & FilePath indexing) --------------------------------------------------
+
+    @Test
+    fun `an open browser tab is found by its URL and populates url metadata`() {
+        val fluckTabInfo =
+            FluckTabInfo(
+                id = "browser-1",
+                typeId = FluckTabType.typeId,
+                _title = "Documentation",
+                url = "https://github.com/risa-labs-inc/BossConsole",
+            )
+        val activeTab =
+            ActiveTab(
+                tabInfo = fluckTabInfo,
+                workspaceName = "Main Workspace",
+                windowId = WINDOW,
+                panelId = "panel-1",
+            )
+        TopOfMindStateHolder.updateActiveTabs(listOf(activeTab))
+
+        val hits = resultsOf<SearchResult.TabResult>("github")
+        assertEquals(1, hits.size)
+        assertEquals("Documentation", hits.first().title)
+        assertEquals("https://github.com/risa-labs-inc/BossConsole", hits.first().url)
+    }
+
+    @Test
+    fun `an open editor tab is found by its file path and populates filePath metadata`() {
+        val editorTabInfo =
+            EditorTabInfo(
+                id = "editor-1",
+                title = "GlobalSearchService.kt",
+                filePath = "composeApp/src/commonMain/kotlin/ai/rever/boss/search/GlobalSearchService.kt",
+            )
+        val activeTab =
+            ActiveTab(
+                tabInfo = editorTabInfo,
+                workspaceName = "Main Workspace",
+                windowId = WINDOW,
+                panelId = "panel-1",
+            )
+        TopOfMindStateHolder.updateActiveTabs(listOf(activeTab))
+
+        val hits = resultsOf<SearchResult.TabResult>("GlobalSearchService")
+        assertEquals(1, hits.size)
+        assertEquals("GlobalSearchService.kt", hits.first().title)
+        assertEquals("composeApp/src/commonMain/kotlin/ai/rever/boss/search/GlobalSearchService.kt", hits.first().filePath)
     }
 }

@@ -1,10 +1,12 @@
 package ai.rever.boss.search
 
+import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
 import ai.rever.boss.keymap.KeymapSettingsManager
 import ai.rever.boss.keymap.model.KeymapActions
 import ai.rever.boss.keymap.model.formatShortcutLabel
 import ai.rever.boss.plugin.api.PluginSearchResult
 import ai.rever.boss.plugin.api.SearchResultAction
+import ai.rever.boss.plugin.tab.codeeditor.EditorTabInfo
 import ai.rever.boss.run.RunConfigurationManager
 import ai.rever.boss.topofmind.TopOfMindStateHolder
 import ai.rever.boss.utils.logging.BossLogger
@@ -362,6 +364,9 @@ object GlobalSearchService {
 
     /**
      * Search open tabs.
+     *
+     * Matches against the tab title, browser URL (for FluckTabInfo), or file path (for EditorTabInfo).
+     * Populates `url` and `filePath` metadata on the resulting [SearchResult.TabResult].
      */
     private fun searchTabs(query: String): List<SearchResult.TabResult> {
         val tabs = TopOfMindStateHolder.activeTabs.value
@@ -369,13 +374,33 @@ object GlobalSearchService {
             return emptyList()
         }
 
+        val queryLower = query.lowercase()
         val results = mutableListOf<SearchResult.TabResult>()
 
         for (tab in tabs) {
             val title = tab.tabInfo.title
-            val titleMatch = FuzzyMatcher.match(query, title, title.lowercase())
+            val tabInfo = tab.tabInfo
 
-            if (titleMatch != null && titleMatch.score >= MIN_SCORE) {
+            val url = (tabInfo as? FluckTabInfo)?.currentUrl?.ifBlank { null }
+            val filePath = (tabInfo as? EditorTabInfo)?.filePath?.ifBlank { null }
+
+            val titleMatch = FuzzyMatcher.match(query, title, title.lowercase())
+            val titleScore = titleMatch?.score?.let { it + 30 } // Bonus for tabs (currently visible)
+
+            val urlScore = url?.let { proseScore(query, queryLower, it) }
+            val pathMatch = filePath?.let { FuzzyMatcher.match(query, it, it.lowercase()) }
+            val pathScore = pathMatch?.score
+
+            val bestScore = listOfNotNull(titleScore, urlScore, pathScore).maxOrNull()
+
+            if (bestScore != null && bestScore >= MIN_SCORE) {
+                val matchRanges =
+                    if (titleScore != null && bestScore == titleScore) {
+                        titleMatch?.matchRanges ?: emptyList()
+                    } else {
+                        emptyList()
+                    }
+
                 results.add(
                     SearchResult.TabResult(
                         title = title,
@@ -384,10 +409,10 @@ object GlobalSearchService {
                         windowId = tab.windowId,
                         panelId = tab.panelId,
                         tabType = tab.tabInfo.typeId.typeId,
-                        url = null, // Would need FluckTabInfo check
-                        filePath = null, // Would need EditorTabInfo check
-                        score = titleMatch.score + 30, // Bonus for tabs (currently visible)
-                        matchRanges = titleMatch.matchRanges,
+                        url = url,
+                        filePath = filePath,
+                        score = bestScore,
+                        matchRanges = matchRanges,
                     ),
                 )
             }
