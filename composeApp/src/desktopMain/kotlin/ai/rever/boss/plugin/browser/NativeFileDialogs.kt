@@ -13,6 +13,7 @@ import java.awt.Dialog
 import java.awt.FileDialog
 import java.awt.Frame
 import java.io.File
+import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.SwingUtilities
@@ -177,8 +178,11 @@ object NativeFileDialogs {
                 extensions = listOf(PDF),
                 acceptAll = false,
                 // The panel's name field is editable, so the user can clear the extension
-                // off a file Chromium is about to write PDF bytes into.
-            )?.let { pathWithExtension(it, PDF) }
+                // off a file Chromium is about to write PDF bytes into. Supplying the required
+                // extension here also makes showSave re-present an existing appended target,
+                // so the native panel confirms the file Chromium will actually replace.
+                requiredExtension = PDF,
+            )
         },
         open = action::save,
         cancel = action::cancel,
@@ -277,6 +281,27 @@ private fun showSave(
     suggestedDirectory: String,
     extensions: List<String>,
     acceptAll: Boolean,
+    requiredExtension: String? = null,
+): Path? =
+    chooseSaveTarget(
+        suggestedFileName = suggestedFileName,
+        suggestedDirectory = suggestedDirectory,
+        requiredExtension = requiredExtension,
+        targetExists = Files::exists,
+    ) { nextFileName, nextDirectory ->
+        showNativeSaveDialog(
+            suggestedFileName = nextFileName,
+            suggestedDirectory = nextDirectory,
+            extensions = extensions,
+            acceptAll = acceptAll,
+        )
+    }
+
+private fun showNativeSaveDialog(
+    suggestedFileName: String,
+    suggestedDirectory: String,
+    extensions: List<String>,
+    acceptAll: Boolean,
 ): Path? {
     val dialog = newDialog("Save", FileDialog.SAVE, suggestedDirectory)
     if (suggestedFileName.isNotBlank()) dialog.file = safePrefill(suggestedFileName)
@@ -348,10 +373,9 @@ private const val DEL = 0x7F
  * Not an extension function on `Path`: `withExtension` is generic enough that putting it in
  * module scope invites a surprising resolution somewhere else.
  *
- * **Known limitation**: the append happens after the panel has closed, so the overwrite prompt
- * the user answered was for the name they typed. Saving as `report` where `report.pdf` already
- * exists overwrites it unprompted. `FileDialog` exposes no allowed-file-types API to let
- * `NSSavePanel` append the extension itself, which is what would fix this properly.
+ * [chooseSaveTarget] is responsible for re-presenting an extension-appended path when it already
+ * exists. Keeping that policy outside this string operation makes it impossible for a caller that
+ * only wants path manipulation to unexpectedly open a dialog.
  */
 internal fun pathWithExtension(
     path: Path,
