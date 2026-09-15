@@ -49,10 +49,11 @@ class AuthBrandScopeLifetimeTest {
                 val view = authBrandViewScope(CoroutineScope(parent + Dispatchers.Main))
                 try {
                     val started = CompletableDeferred<Unit>()
-                    val observer = view.launch {
-                        started.complete(Unit)
-                        awaitCancellation()
-                    }
+                    val observer =
+                        view.launch {
+                            started.complete(Unit)
+                            awaitCancellation()
+                        }
                     started.await()
                     parent.cancelAndJoin()
                     assertFalse(view.isActive)

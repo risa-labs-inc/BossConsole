@@ -176,15 +176,14 @@ internal actual fun AuthBrandSite(
     // outcome this panel must never cause. Falling through leaves the art, like every other failure.
     val state =
         remember(current, window, scope) {
-            runCatching {
-                BrowserViewState(current, authBrandViewScope(scope), window)
-            }.onFailure { e ->
-                logger.warn(
-                    LogCategory.BROWSER,
-                    "Brand page view could not attach; keeping the drawn panel",
-                    error = e,
-                )
-            }.getOrNull()
+            runCatching { BrowserViewState(current, authBrandViewScope(scope), window) }
+                .onFailure { e ->
+                    logger.warn(
+                        LogCategory.BROWSER,
+                        "Brand page view could not attach; keeping the drawn panel",
+                        error = e,
+                    )
+                }.getOrNull()
         }
     if (state == null) {
         // Reported outside the remember, so it survives the recomposition that reads it.
