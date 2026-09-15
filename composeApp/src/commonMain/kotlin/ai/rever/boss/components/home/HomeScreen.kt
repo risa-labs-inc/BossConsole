@@ -175,7 +175,9 @@ private fun ToolsSection(actions: HomeActions) {
     // The retired-plugin floor reads installed.json, which only desktopMain can
     // reach: the lookup is an expect/actual so commonMain stays platform-agnostic
     // (the same seam `warmBrowserEngineForTabs` uses).
-    val tools = rememberHomeTools(installedVersionOf = ::installedPluginVersionOf)
+    val catalogProvider by HomeCatalogAccess.provider.collectAsState()
+    val catalog = rememberHomeCatalog(catalogProvider)
+    val tools = rememberHomeTools(catalog.rows, installedVersionOf = ::installedPluginVersionOf)
     val keymap by KeymapSettingsManager.currentSettings.collectAsState()
     var filter by remember { mutableStateOf(HomeToolFilter.ALL) }
     // Ids currently installing, so a tile shows progress rather than looking unresponsive for the
@@ -184,6 +186,7 @@ private fun ToolsSection(actions: HomeActions) {
     val installing = remember { SnapshotStateMap<String, Unit>() }
 
     DashboardSection(title = "Tools", subtitle = toolsSubtitle(tools)) {
+        HomeCatalogNotice(catalog)
         HomeToolGrid(
             tools = tools,
             installing = installing.keys,
