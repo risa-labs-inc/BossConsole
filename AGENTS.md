@@ -531,6 +531,11 @@ null for every plugin, silently - that has happened before with `mcpToolRegistry
 implementation lives in `desktopMain` (it speaks HTTP), so `DefaultPlugin` reads it through
 `BrokeredCredentialAccess`, a commonMain holder that `main.kt` populates at startup.
 
+It happened a second time with `registerSearchProvider`: neither wrapper forwarded it, so no
+plugin's search provider ever reached global search. `PluginContextWrapperForwardingTest` now
+fails when either wrapper does not declare a `PluginContext` member. It matches by name, so it
+cannot tell a wrong forward from a right one, and a third wrapper has to be added to it.
+
 ### AI credentials are not configured here
 
 `OPENAI_API_KEY` used to be listed above as a `local.properties` key that enabled AI
