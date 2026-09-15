@@ -67,7 +67,7 @@ internal fun HomeToolGrid(
     // Only offer the filter once there is something in both buckets; with nothing installable
     // (an offline store, or everything already installed) "All / Installed / Available" is three
     // chips for one answer.
-    val showFilter = tools.any { it.isReady } && tools.any { !it.isReady }
+    val showFilter = tools.any { it.isInstalled } && tools.any { !it.isInstalled }
     // With the chips hidden there is no control to change the filter, so anything but ALL would
     // strand the grid: install the last available plugin while AVAILABLE is selected and the chips
     // disappear over an empty grid with no way back.
@@ -112,6 +112,7 @@ private fun HomeTool.stateIn(installing: Set<String>): HomeToolState =
     when {
         pluginId != null && pluginId in installing -> HomeToolState.INSTALLING
         launch is HomeToolLaunch.Install -> HomeToolState.INSTALLABLE
+        launch is HomeToolLaunch.Recover -> HomeToolState.DISABLED
         else -> HomeToolState.READY
     }
 

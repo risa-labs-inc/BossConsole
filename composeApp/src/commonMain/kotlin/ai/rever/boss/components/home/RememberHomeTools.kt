@@ -9,12 +9,10 @@ import ai.rever.boss.plugin.sandbox.ui.PluginCrashRegistry
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import java.io.File
 
 private val logger = BossLogger.forComponent("HomeTools")
@@ -27,25 +25,15 @@ private val logger = BossLogger.forComponent("HomeTools")
  * makes the grid current: install a plugin and its tile appears without a relaunch.
  */
 @Composable
-internal fun rememberHomeTools(installedVersionOf: (String) -> String? = { null }): List<HomeTool> {
+internal fun rememberHomeTools(
+    discoverable: List<HomeStorePluginInput>,
+    installedVersionOf: (String) -> String? = { null },
+): List<HomeTool> {
     val tabRegistry = LocalTabRegistry.current
     val panelRegistry = LocalPanelRegistry.current
     val pluginStates by LocalPluginStates.current?.collectAsState()
         ?: remember { mutableStateOf(emptyMap()) }
     val access = LocalRegistryAccess.current
-
-    // Observed, not read once: this screen is what an empty panel renders, so on a cold start it
-    // composes before the store provider exists. Keying the fetch on the provider means the
-    // discovery half fills in when the store comes up instead of staying empty until something
-    // happens to remount the screen.
-    val catalogProvider by HomeCatalogAccess.provider.collectAsState()
-    var discoverable by remember { mutableStateOf<List<HomeStorePluginInput>>(emptyList()) }
-    LaunchedEffect(catalogProvider) {
-        // The provider caches its result for the session, so a remount does not re-fetch. A
-        // failure yields an empty list rather than an error - the grid is still everything that is
-        // installed, which is already more than the screen this replaces could show.
-        discoverable = catalogProvider?.discoverable().orEmpty()
-    }
 
     val tabTypes =
         tabRegistry
@@ -105,7 +93,8 @@ internal fun rememberHomeTools(installedVersionOf: (String) -> String? = { null 
             isIncompatible = { PluginCrashRegistry.isIncompatible(it) },
         )
 
-    return remember(tabTypes, panels, discoverable, installedPluginIds, access) {
+    val disabledPluginIds = disabledHomePluginIds(pluginStates, installedPluginIds, access)
+    return remember(tabTypes, panels, discoverable, installedPluginIds, disabledPluginIds, access) {
         HomeToolCatalog.build(
             tabTypes = tabTypes,
             panels = panels,
@@ -113,6 +102,7 @@ internal fun rememberHomeTools(installedVersionOf: (String) -> String? = { null 
             installedPluginIds = installedPluginIds,
             access = access,
             installedVersionOf = installedVersionOf,
+            disabledPluginIds = disabledPluginIds,
         )
     }
 }

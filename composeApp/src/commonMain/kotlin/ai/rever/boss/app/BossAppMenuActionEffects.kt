@@ -644,8 +644,11 @@ internal fun BossAppMenuActionEffects(
 
     LaunchedEffect(windowId) {
         MenuActionsHandler.showPluginHealthCenterEvents
-            .onEach { eventWindowId ->
-                if (eventWindowId == windowId) state.showPluginHealthCenter = true
+            .onEach { request ->
+                if (request.windowId == windowId) {
+                    state.pluginRecoveryTarget = request.target
+                    state.showPluginHealthCenter = true
+                }
             }.launchIn(this)
     }
 

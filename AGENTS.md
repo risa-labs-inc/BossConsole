@@ -2190,3 +2190,19 @@ are intentional. Global access filters still apply independently of registration
 - **Test Veracity Rules**:
   - In deduplication tests, ALWAYS test with dev JAR `lastModified` strictly greater than standard JAR `lastModified` to mirror real-world compiler outputs.
   - Test the public reload pipeline (`DevPluginReloader.reload`) end-to-end rather than calling internal rollback helpers in isolation.
+
+## Contextual plugin recovery
+
+Home disabled-tool tiles and unavailable Settings/quick-switcher states navigate to the existing
+Plugin Health & Recovery center, carrying the initiating window and plugin identity. A target
+that disappears must be reported, never replaced by another plugin. Keep NO_ACCESS and STARTING
+separate; an unanswered quick-switcher handler implies missing capability only after LOADED.
+Recovery context (manager/delegate) is provided only around host dialogs, so Settings uses its
+own dialog layer rather than raising a main-window modal. All lifecycle changes still use the
+existing Health Center action revalidation and delegate. Toolbox navigation resolves the live
+panel before dispatch and reports an unavailable route. Home disabled candidates still require
+an intact installed plugin, explicit disable, full manifest access and an eligible compatible
+non-service catalog row; they are Installed, not ready or installable.
+`SettingsRecoveryHost` owns the recovery dialog as a stable sibling of SettingsContent. Do not
+move it into an unavailable notice: provider registration can replace that notice before the
+existing delegate has finished persisting Enable.

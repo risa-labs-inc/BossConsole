@@ -2,6 +2,7 @@ package ai.rever.boss.components.windows
 
 import BossTheme
 import ai.rever.boss.components.home.LocalPanelRegistry
+import ai.rever.boss.components.plugin.SettingsRecoveryHost
 import ai.rever.boss.components.plugin.registries.SettingsPageRegistryImpl
 import ai.rever.boss.components.settings.keymap.EditableKeymapSettings
 import ai.rever.boss.components.settings.search.LocalSettingsHighlight
@@ -130,13 +131,15 @@ actual fun SettingsWindow(
         // not dismissed by focus moving within the same application - keep floating above it.
         CompositionLocalProvider(LocalHeavyweightOverlays provides false) {
             BossTheme {
-                SettingsContent(
-                    initialSection = initialSection,
-                    sectionRequest = sectionRequest,
-                    requestedHighlight = requestedHighlight,
-                    highlightRequest = highlightRequest,
-                    searchState = searchState,
-                )
+                SettingsRecoveryHost {
+                    SettingsContent(
+                        initialSection = initialSection,
+                        sectionRequest = sectionRequest,
+                        requestedHighlight = requestedHighlight,
+                        highlightRequest = highlightRequest,
+                        searchState = searchState,
+                    )
+                }
             }
         }
     }

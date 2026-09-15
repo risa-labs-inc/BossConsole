@@ -1,11 +1,15 @@
 package ai.rever.boss.components.settings.sections
 
 import ai.rever.boss.components.plugin.DynamicPluginManager
+import ai.rever.boss.components.plugin.LocalPluginRecoveryContext
+import ai.rever.boss.components.plugin.LocalSettingsRecoveryRequest
 import ai.rever.boss.components.plugin.MissingPluginOffer
+import ai.rever.boss.components.plugin.PluginRecoveryTarget
 import ai.rever.boss.components.plugin.PluginSectionAbsence
 import ai.rever.boss.components.plugin.pluginSectionAbsence
 import ai.rever.boss.components.plugin.pluginSectionMessage
 import ai.rever.boss.components.plugin.pluginSectionOffersInstall
+import ai.rever.boss.components.plugin.pluginSectionOffersRecovery
 import ai.rever.boss.plugin.sandbox.ui.PluginCrashRegistry
 import ai.rever.boss.plugin.ui.BossPrimaryButton
 import ai.rever.boss.plugin.ui.BossTheme
@@ -65,6 +69,7 @@ internal fun PluginSettingsUnavailableNotice(
     servesNoPanel: Boolean = false,
 ) {
     val facts = rememberPluginSectionFacts(pluginId, servesNoPanel)
+    val requestRecovery = LocalSettingsRecoveryRequest.current
     // Keyed on the absence as well as the plugin, so the line cannot outlive the state that
     // produced it. Keyed on the plugin alone, pressing Install just as the plugin arrived left
     // "could not start the install" sitting under "isn't loaded yet", with no press left to clear
@@ -102,6 +107,13 @@ internal fun PluginSettingsUnavailableNotice(
             )
         }
 
+        if (pluginSectionOffersRecovery(facts.absence) && requestRecovery != null) {
+            BossPrimaryButton(
+                text = "Open recovery for $pluginName",
+                onClick = { requestRecovery(PluginRecoveryTarget(pluginId)) },
+            )
+        }
+
         if (offerNotRaised) {
             Text(
                 text = "Could not start the install here. Install $pluginName from the Toolbox.",
@@ -134,9 +146,9 @@ private fun rememberPluginSectionFacts(
     // Same shape as the tab bar's bookmarks shelf, deliberately: a `?: return` before a
     // `collectAsState` would make the observation itself conditional on a global that can change
     // between compositions.
-    val manager = DynamicPluginManager.anyActiveManager()
+    val manager = LocalPluginRecoveryContext.current?.manager ?: DynamicPluginManager.anyActiveManager()
     val states = manager?.pluginStates?.collectAsState()?.value
-    return remember(states, pluginId, servesNoPanel) {
+    return remember(manager, states, pluginId, servesNoPanel) {
         val missingPermissions =
             manager
                 ?.getInaccessiblePlugins()

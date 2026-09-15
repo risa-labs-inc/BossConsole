@@ -22,6 +22,7 @@ import ai.rever.boss.components.events.TabEventBus
 import ai.rever.boss.components.plugin.DependentRestartDeclinedException
 import ai.rever.boss.components.plugin.DependentRestartDialog
 import ai.rever.boss.components.plugin.DynamicPluginManager
+import ai.rever.boss.components.plugin.LocalPluginRecoveryContext
 import ai.rever.boss.components.plugin.MissingDependencyDialog
 import ai.rever.boss.components.plugin.MissingHandlerPluginDialog
 import ai.rever.boss.components.plugin.MissingHandlerPluginEventBus
@@ -87,6 +88,7 @@ import ai.rever.boss.window.selectProjectInWindow
 import androidx.compose.material.Text
 import androidx.compose.material.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -437,11 +439,14 @@ internal fun BossAppDialogs(state: BossAppState) {
     }
 
     if (state.showPluginHealthCenter) {
-        PluginHealthCenterDialog(
-            manager = state.currentDefaultPlugin?.dynamicPluginManager,
-            delegate = state.currentDefaultPlugin?.getPluginAPI(PluginLoaderDelegate::class.java),
-            onDismiss = { state.showPluginHealthCenter = false },
-        )
+        CompositionLocalProvider(LocalPluginRecoveryContext provides pluginRecoveryContextFor(state)) {
+            PluginHealthCenterDialog(
+                manager = state.currentDefaultPlugin?.dynamicPluginManager,
+                delegate = state.currentDefaultPlugin?.getPluginAPI(PluginLoaderDelegate::class.java),
+                onDismiss = { state.showPluginHealthCenter = false },
+                target = state.pluginRecoveryTarget,
+            )
+        }
     }
 
     if (state.showGlobalSearchDialog && spotlightFileIndexer != null) {
@@ -734,21 +739,23 @@ internal fun BossAppDialogs(state: BossAppState) {
 
     // Settings Window - always available, even in focus mode
     if (state.settingsWindow.visible) {
-        SettingsWindow(
-            onClose = {
-                state.settingsWindow.close()
-            },
-            initialSection = state.settingsWindow.section,
-            // Every Settings affordance routes through SettingsWindowState.open, which bumps these
-            // instead of re-setting values that are already set. Without focusRequest the second
-            // click is silent: the window stays wherever it was, usually behind the main one.
-            // Without sectionRequest it raises itself but stays on the page the user last picked,
-            // which reads as a different bug rather than as none.
-            focusRequest = state.settingsWindow.focusRequest,
-            sectionRequest = state.settingsWindow.sectionRequest,
-            requestedHighlight = state.settingsWindow.highlight,
-            highlightRequest = state.settingsWindow.highlightRequest,
-        )
+        CompositionLocalProvider(LocalPluginRecoveryContext provides pluginRecoveryContextFor(state)) {
+            SettingsWindow(
+                onClose = {
+                    state.settingsWindow.close()
+                },
+                initialSection = state.settingsWindow.section,
+                // Every Settings affordance routes through SettingsWindowState.open, which bumps these
+                // instead of re-setting values that are already set. Without focusRequest the second
+                // click is silent: the window stays wherever it was, usually behind the main one.
+                // Without sectionRequest it raises itself but stays on the page the user last picked,
+                // which reads as a different bug rather than as none.
+                focusRequest = state.settingsWindow.focusRequest,
+                sectionRequest = state.settingsWindow.sectionRequest,
+                requestedHighlight = state.settingsWindow.highlight,
+                highlightRequest = state.settingsWindow.highlightRequest,
+            )
+        }
     }
 
     // Keyboard Shortcut Help Dialog

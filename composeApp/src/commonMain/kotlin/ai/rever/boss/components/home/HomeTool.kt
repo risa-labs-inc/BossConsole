@@ -29,7 +29,9 @@ data class HomeTool(
     val pluginId: String? = null,
 ) {
     /** Whether this tile does something now, as opposed to offering an install. */
-    val isReady: Boolean get() = launch !is HomeToolLaunch.Install
+    val isReady: Boolean get() = launch !is HomeToolLaunch.Install && launch !is HomeToolLaunch.Recover
+
+    val isInstalled: Boolean get() = launch !is HomeToolLaunch.Install
 }
 
 /**
@@ -49,13 +51,18 @@ enum class HomeToolFilter(
     fun accepts(tool: HomeTool): Boolean =
         when (this) {
             ALL -> true
-            READY -> tool.isReady
-            AVAILABLE -> !tool.isReady
+            READY -> tool.isInstalled
+            AVAILABLE -> !tool.isInstalled
         }
 }
 
 /** What clicking a tile does. */
 sealed interface HomeToolLaunch {
+    /** Installed but off: opens the host's existing, revalidated recovery controls. */
+    data class Recover(
+        val pluginId: String,
+    ) : HomeToolLaunch
+
     /**
      * Open a plugin-registered tab type.
      *

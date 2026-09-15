@@ -131,22 +131,36 @@ internal class HomeActions(
                 togglePanel(launch.panelId)
             }
 
+            is HomeToolLaunch.Recover -> {
+                emit { id ->
+                    ai.rever.boss.window.MenuActionsHandler.triggerPluginRecovery(
+                        id,
+                        ai.rever.boss.components.plugin
+                            .PluginRecoveryTarget(launch.pluginId),
+                    )
+                }
+            }
+
             is HomeToolLaunch.Install -> {
                 install(tool, launch.pluginId, installing)
             }
 
             is HomeToolLaunch.HostAction -> {
-                when (launch.action) {
-                    HomeHostAction.NEW_TAB -> newTab()
-                    HomeHostAction.NEW_TERMINAL -> newTerminal()
-                    HomeHostAction.NEW_WINDOW -> newWindow()
-                    HomeHostAction.OPEN_FILE -> openFileDialog()
-                    HomeHostAction.OPEN_PROJECT -> openProjectDialog()
-                    HomeHostAction.NEW_PROJECT -> newProject()
-                    HomeHostAction.SETTINGS -> showSettings()
-                    HomeHostAction.SEARCH -> openSearch()
-                }
+                launchHostAction(launch.action)
             }
+        }
+    }
+
+    private fun launchHostAction(action: HomeHostAction) {
+        when (action) {
+            HomeHostAction.NEW_TAB -> newTab()
+            HomeHostAction.NEW_TERMINAL -> newTerminal()
+            HomeHostAction.NEW_WINDOW -> newWindow()
+            HomeHostAction.OPEN_FILE -> openFileDialog()
+            HomeHostAction.OPEN_PROJECT -> openProjectDialog()
+            HomeHostAction.NEW_PROJECT -> newProject()
+            HomeHostAction.SETTINGS -> showSettings()
+            HomeHostAction.SEARCH -> openSearch()
         }
     }
 
