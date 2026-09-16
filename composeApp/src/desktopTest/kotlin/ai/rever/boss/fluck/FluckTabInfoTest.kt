@@ -443,4 +443,79 @@ class FluckTabInfoTest {
         assertEquals("https://initial.com", original.url)
         assertEquals("https://current.com", original.currentUrl)
     }
+
+    // ==================== ZOOM LEVEL AND FAVICON PERSISTENCE TESTS ====================
+
+    @Test
+    fun `default zoom level is 1_0`() {
+        val tabInfo = createTabInfo(url = "https://example.com")
+        assertEquals(1.0, tabInfo.currentZoomLevel)
+    }
+
+    @Test
+    fun `updateZoomLevel updates currentZoomLevel and preserves state`() {
+        val tabInfo = createTabInfo(url = "https://example.com").updateFaviconCacheKey("fav-123")
+        val zoomed = tabInfo.updateZoomLevel(1.5)
+
+        assertEquals(1.5, zoomed.currentZoomLevel)
+        assertEquals("fav-123", zoomed.faviconCacheKey)
+        assertEquals("https://example.com", zoomed.currentUrl)
+    }
+
+    @Test
+    fun `copy preserves custom zoom level and favicon cache key`() {
+        val original =
+            createTabInfo(url = "https://example.com")
+                .updateZoomLevel(1.25)
+                .updateFaviconCacheKey("fav-456")
+
+        val copied = original.updateTitle("New Title")
+
+        assertEquals(1.25, copied.currentZoomLevel)
+        assertEquals("fav-456", copied.faviconCacheKey)
+        assertEquals("New Title", copied.title)
+    }
+
+    @Test
+    fun `updateNavigation preserves custom zoom level and favicon cache key`() {
+        val tabInfo =
+            createTabInfo(url = "https://example.com")
+                .updateZoomLevel(1.75)
+                .updateFaviconCacheKey("fav-789")
+
+        val navigated = tabInfo.updateNavigation("New Page", "https://example.com/next")
+
+        assertEquals(1.75, navigated.currentZoomLevel)
+        assertEquals("fav-789", navigated.faviconCacheKey)
+        assertEquals("https://example.com/next", navigated.currentUrl)
+    }
+
+    @Test
+    fun `split view copy retains original zoom level and favicon cache key`() {
+        val original =
+            createTabInfo(url = "https://example.com")
+                .updateZoomLevel(2.0)
+                .updateFaviconCacheKey("fav-split")
+
+        val splitCopy =
+            original.copy(
+                id = "split-456",
+                url = original.currentUrl,
+                _currentUrl = original.currentUrl,
+                navigationHistory = original.navigationHistory.toMutableList(),
+            )
+
+        assertEquals(2.0, splitCopy.currentZoomLevel)
+        assertEquals("fav-split", splitCopy.faviconCacheKey)
+        assertEquals("split-456", splitCopy.id)
+    }
+
+    @Test
+    fun `equals differentiates tabs with different zoom levels`() {
+        val tab1 = createTabInfo(url = "https://example.com").updateZoomLevel(1.0)
+        val tab2 = createTabInfo(url = "https://example.com").updateZoomLevel(1.5)
+
+        assertTrue(tab1 != tab2)
+    }
 }
+
