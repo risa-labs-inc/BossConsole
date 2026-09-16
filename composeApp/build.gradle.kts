@@ -1064,6 +1064,7 @@ kotlin {
         }
 
         desktopTest.dependencies {
+            implementation(libs.grpc.netty) // Real pinned-TLS bridge integration fixtures.
             implementation(kotlin("test-junit5"))
             implementation(libs.junit.jupiter)
             // Test-only: supabase-kt's auth exceptions carry the HttpResponse that produced

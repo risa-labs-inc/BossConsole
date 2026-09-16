@@ -29,21 +29,21 @@
 .PARAMETER Tags
     Comma-separated tags (optional)
     
-.PARAMETER Token
-    Authentication token (or set BOSS_PLUGIN_STORE_TOKEN env var)
-    
 .PARAMETER StoreUrl
     Store URL (or set BOSS_PLUGIN_STORE_URL env var)
+
+.PARAMETER HomepageUrl
+    Public project homepage, required when creating a new plugin entry
     
 .EXAMPLE
-    .\publish-plugin.ps1 -JarPath "my-plugin.jar" -PluginId "my.plugin" -Version "1.0.0" -Token $token
+    .\publish-plugin.ps1 -JarPath "my-plugin.jar" -PluginId "my.plugin" -Version "1.0.0"
     
 .EXAMPLE
     $env:BOSS_PLUGIN_STORE_TOKEN = "eyJ..."
     .\publish-plugin.ps1 -JarPath "my-plugin.jar"
 #>
 
-[CmdletBinding()]
+[CmdletBinding(PositionalBinding=$false)]
 param(
     [Parameter(Mandatory=$true, Position=0)]
     [string]$JarPath,
@@ -70,13 +70,13 @@ param(
     [string]$Tags = "",
     
     [Parameter(Mandatory=$false)]
-    [string]$Token,
-    
-    [Parameter(Mandatory=$false)]
     [string]$StoreUrl,
     
     [Parameter(Mandatory=$false)]
-    [string]$AnonKey
+    [string]$AnonKey,
+
+    [Parameter(Mandatory=$false)]
+    [string]$HomepageUrl
 )
 
 # =============================================================================
@@ -128,8 +128,18 @@ function Write-Step {
 
 function Get-Sha256Hash {
     param([string]$FilePath)
-    $hash = Get-FileHash -Path $FilePath -Algorithm SHA256
-    return $hash.Hash.ToLower()
+    # Do not rely on module auto-loading: PowerShell 5.1 launched from pwsh can
+    # inherit a PSModulePath that does not expose Get-FileHash.
+    $algorithm = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $stream = [System.IO.File]::OpenRead($FilePath)
+        try {
+            $bytes = $algorithm.ComputeHash($stream)
+            return ([System.BitConverter]::ToString($bytes)).Replace("-", "").ToLowerInvariant()
+        }
+        finally { $stream.Dispose() }
+    }
+    finally { $algorithm.Dispose() }
 }
 
 function Get-ManifestValue {
@@ -152,7 +162,7 @@ function Get-ManifestValue {
             
             $lines = $content -split "`r?`n"
             foreach ($line in $lines) {
-                if ($line -match "^$Key:\s*(.+)$") {
+                if ($line -match "^${Key}:\s*(.+)$") {
                     $zip.Dispose()
                     return $matches[1].Trim()
                 }
@@ -190,11 +200,13 @@ function Invoke-PluginStoreRequest {
         Uri = $Url
         Headers = $headers
         ContentType = $ContentType
+        MaximumRedirection = 0
+        ErrorAction = "Stop"
     }
     
     if ($Body -and $Method -ne "GET") {
         if ($ContentType -eq "application/json") {
-            $params["Body"] = ($Body | ConvertTo-Json -Depth 10)
+            $params["Body"] = [System.Text.Encoding]::UTF8.GetBytes(($Body | ConvertTo-Json -Depth 10))
         }
         else {
             $params["Body"] = $Body
@@ -202,30 +214,52 @@ function Invoke-PluginStoreRequest {
     }
     
     try {
-        $response = Invoke-RestMethod @params
+        Assert-PublishingUrl $Url
+    }
+    catch {
+        return @{
+            Success = $false
+            Error = "Publishing URL must use HTTPS (except loopback), without user information or a fragment"
+            StatusCode = $null
+            Data = $null
+        }
+    }
+    try {
+        # Windows PowerShell 5.1 can return a 3xx body without throwing when redirects
+        # are disabled. Inspect the real HTTP status instead of assuming success.
+        $response = Invoke-WebRequest -UseBasicParsing @params
+        $statusCode = [int]$response.StatusCode
+        if ($statusCode -lt 200 -or $statusCode -ge 300) {
+            return @{ Success = $false; Error = "HTTP $statusCode"; StatusCode = $statusCode; Data = $null }
+        }
+        $content = $response.Content
+        if ($content -is [byte[]]) {
+            $content = [System.Text.Encoding]::UTF8.GetString($content)
+        }
+        $data = if ($content) { $content | ConvertFrom-Json } else { $null }
         return @{
             Success = $true
-            Data = $response
-            StatusCode = 200
+            Data = $data
+            StatusCode = $statusCode
         }
     }
     catch {
         $statusCode = $_.Exception.Response.StatusCode.value__
-        $errorBody = $null
-        
-        try {
-            $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
-            $errorBody = $reader.ReadToEnd() | ConvertFrom-Json
-            $reader.Close()
-        }
-        catch { }
-        
         return @{
             Success = $false
-            Error = if ($errorBody.error) { $errorBody.error } else { $_.Exception.Message }
+            Error = if ($statusCode) { "HTTP $statusCode" } else { "Request failed" }
             StatusCode = $statusCode
-            Data = $errorBody
+            Data = $null
         }
+    }
+}
+
+function Assert-PublishingUrl([string]$Value) {
+    $uri = [Uri]$Value
+    $local = $uri.Host -in @("localhost", "127.0.0.1", "[::1]")
+    if (-not ($uri.Scheme -eq "https" -or ($uri.Scheme -eq "http" -and $local)) -or
+        $uri.UserInfo -or $uri.Fragment) {
+        throw "Invalid publishing URL"
     }
 }
 
@@ -234,7 +268,7 @@ function Invoke-PluginStoreRequest {
 # =============================================================================
 
 # Resolve token and URL
-$script:AuthToken = if ($Token) { $Token } else { $env:BOSS_PLUGIN_STORE_TOKEN }
+$script:AuthToken = $env:BOSS_PLUGIN_STORE_TOKEN
 $script:StoreUrl = if ($StoreUrl) { $StoreUrl } else { 
     if ($env:BOSS_PLUGIN_STORE_URL) { $env:BOSS_PLUGIN_STORE_URL } else { $DefaultStoreUrl }
 }
@@ -253,7 +287,7 @@ if (-not (Test-Path $JarPath)) {
 
 if (-not $script:AuthToken) {
     Write-Error-Message "Authentication token is required"
-    Write-Host "Set BOSS_PLUGIN_STORE_TOKEN environment variable or use -Token parameter."
+    Write-Host "Set BOSS_PLUGIN_STORE_TOKEN in the environment."
     exit 1
 }
 
@@ -267,7 +301,11 @@ Write-Step 1 "Reading JAR metadata..."
 
 $JarFile = Get-Item $JarPath
 $JarSize = $JarFile.Length
-$JarSha256 = Get-Sha256Hash -FilePath $JarPath
+[string]$JarSha256 = Get-Sha256Hash -FilePath $JarPath
+if ($JarSha256 -notmatch '^[0-9a-f]{64}$') {
+    Write-Error-Message "Could not compute the JAR checksum"
+    exit 1
+}
 
 if (-not $PluginId) {
     $PluginId = Get-ManifestValue -JarPath $JarPath -Key "Plugin-Id"
@@ -315,7 +353,14 @@ Write-Host ""
 # Step 2: Check if plugin exists
 Write-Step 2 "Checking plugin existence..."
 
-$checkResult = Invoke-PluginStoreRequest -Method "GET" -Url "$($script:StoreUrl)/$PluginId"
+$encodedId = [Uri]::EscapeDataString($PluginId)
+if ($encodedId -eq "." -or $encodedId -eq "..") { $encodedId = $encodedId.Replace(".", "%2E") }
+$checkResult = Invoke-PluginStoreRequest -Method "GET" -Url "$($script:StoreUrl)/$encodedId"
+
+if (-not $checkResult.Success -and $checkResult.StatusCode -ne 404) {
+    Write-Error-Message "Plugin existence check failed: $($checkResult.Error)"
+    exit 1
+}
 
 $PluginExists = $checkResult.Success -and $checkResult.StatusCode -eq 200
 
@@ -328,19 +373,58 @@ else {
 
 Write-Host ""
 
+# minBossVersion drives the host-side update gate (PluginUpdateManager) and the
+# loader check — hardcoding it would let old hosts pull updates they can't load.
+$minBossVersion = "1.0.0"
+$pluginJson = $null
+$zip = $null
+$reader = $null
+try {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($JarPath)
+    $pluginJsonEntry = $zip.Entries | Where-Object { $_.FullName -eq "META-INF/boss-plugin/plugin.json" }
+    if ($pluginJsonEntry) {
+        $stream = $pluginJsonEntry.Open()
+        $reader = New-Object System.IO.StreamReader($stream)
+        $pluginJson = $reader.ReadToEnd() | ConvertFrom-Json
+        $reader.Close()
+        $stream.Close()
+        if ($pluginJson.minBossVersion) {
+            $minBossVersion = $pluginJson.minBossVersion
+        }
+    }
+}
+catch {
+    Write-Warning "Could not read minBossVersion from plugin.json, defaulting to 1.0.0"
+}
+
+finally {
+    if ($reader) { $reader.Dispose() }
+    if ($zip) { $zip.Dispose() }
+}
+
+if (-not $HomepageUrl -and $pluginJson.url) { $HomepageUrl = $pluginJson.url }
+if (-not $HomepageUrl -and $pluginJson.homepageUrl) { $HomepageUrl = $pluginJson.homepageUrl }
+if (-not $HomepageUrl) { $HomepageUrl = Get-ManifestValue -JarPath $JarPath -Key "Plugin-Url" }
+
 # Step 3: Create plugin entry if needed
 if (-not $PluginExists) {
     Write-Step 3 "Creating plugin entry..."
+    if (-not $HomepageUrl) {
+        Write-Error-Message "Provide -HomepageUrl when creating a new plugin"
+        exit 1
+    }
     
     $tagsArray = @()
     if ($Tags) {
-        $tagsArray = $Tags -split "," | ForEach-Object { $_.Trim() }
+        $tagsArray = @($Tags -split "," | ForEach-Object { $_.Trim() })
     }
     
     $publishBody = @{
         pluginId = $PluginId
         displayName = $DisplayName
         description = $Description
+        homepageUrl = $HomepageUrl
         tags = $tagsArray
     }
     
@@ -366,36 +450,13 @@ Write-Host ""
 # Step 4: Create version and get upload URL
 Write-Step 4 "Creating version entry..."
 
-# minBossVersion drives the host-side update gate (PluginUpdateManager) and the
-# loader check — hardcoding it would let old hosts pull updates they can't load.
-$minBossVersion = "1.0.0"
-try {
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $zip = [System.IO.Compression.ZipFile]::OpenRead($JarPath)
-    $pluginJsonEntry = $zip.Entries | Where-Object { $_.FullName -eq "META-INF/boss-plugin/plugin.json" }
-    if ($pluginJsonEntry) {
-        $stream = $pluginJsonEntry.Open()
-        $reader = New-Object System.IO.StreamReader($stream)
-        $pluginJson = $reader.ReadToEnd() | ConvertFrom-Json
-        $reader.Close()
-        $stream.Close()
-        if ($pluginJson.minBossVersion) {
-            $minBossVersion = $pluginJson.minBossVersion
-        }
-    }
-    $zip.Dispose()
-}
-catch {
-    Write-Warning "Could not read minBossVersion from plugin.json, defaulting to 1.0.0"
-}
-
 $versionBody = @{
     version = $Version
     changelog = $Changelog
     minBossVersion = $minBossVersion
 }
 
-$versionResult = Invoke-PluginStoreRequest -Method "POST" -Url "$($script:StoreUrl)/$PluginId/version" -Body $versionBody
+$versionResult = Invoke-PluginStoreRequest -Method "POST" -Url "$($script:StoreUrl)/$encodedId/version" -Body $versionBody
 
 if (-not $versionResult.Success) {
     Write-Error-Message "Failed to create version: $($versionResult.Error)"
@@ -410,21 +471,23 @@ if (-not $VersionId -or -not $UploadUrl) {
     exit 1
 }
 
-Write-Success "  Version created: $VersionId"
+Write-Success "  Version created"
 
 Write-Host ""
 
 # Step 5: Upload JAR file
 Write-Step 5 "Uploading JAR file..."
 
-$jarBytes = [System.IO.File]::ReadAllBytes($JarPath)
-
 try {
-    $uploadResponse = Invoke-RestMethod -Method Put -Uri $UploadUrl -Body $jarBytes -ContentType "application/octet-stream"
+    Assert-PublishingUrl $UploadUrl
+    $uploadResponse = Invoke-WebRequest -UseBasicParsing -Method Put -Uri $UploadUrl -InFile $JarPath -ContentType "application/octet-stream" -MaximumRedirection 0 -ErrorAction Stop
+    if ([int]$uploadResponse.StatusCode -lt 200 -or [int]$uploadResponse.StatusCode -ge 300) {
+        throw "Upload returned an unsuccessful HTTP status"
+    }
     Write-Success "  JAR uploaded successfully"
 }
 catch {
-    Write-Error-Message "Failed to upload JAR file: $($_.Exception.Message)"
+    Write-Error-Message "Failed to upload JAR file"
     exit 1
 }
 
@@ -435,7 +498,7 @@ Write-Step 5 "Finalizing version..."
 
 $finalizeBody = @{
     versionId = $VersionId
-    sha256 = $JarSha256
+    sha256 = [string]$JarSha256
     jarSize = $JarSize
 }
 

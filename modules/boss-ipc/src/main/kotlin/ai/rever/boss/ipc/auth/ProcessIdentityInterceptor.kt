@@ -2,23 +2,21 @@ package ai.rever.boss.ipc.auth
 
 import io.grpc.Context
 import io.grpc.Contexts
+import io.grpc.ForwardingServerCall
+import io.grpc.ForwardingServerCallListener
 import io.grpc.Metadata
 import io.grpc.ServerCall
 import io.grpc.ServerCallHandler
 import io.grpc.ServerInterceptor
+import io.grpc.Status
+import io.grpc.kotlin.CoroutineContextServerInterceptor
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.coroutines.CoroutineContext
 
-/**
- * Establishes a verified caller identity for every call on a kernel IPC server, independently of
- * anything the call's own request body claims (BossConsole#53).
- *
- * Reads the [PROCESS_TOKEN_METADATA_KEY] header, resolves it through [registry], and — when it names
- * a real, currently-issued credential — publishes the owning process id under [AUTHENTICATED_PROCESS_ID]
- * for the rest of the call to read via [Context]. A missing or unrecognised token leaves that key unset
- * rather than failing the call outright. Each service decides whether identity is required;
- * the interceptor itself does not authenticate the whole IPC surface. Inspect each service's
- * guards when adding an RPC rather than inferring authorization from this interceptor.
- * BossConsole#53 tracks closing the remaining unguarded services.
- */
+/** Authenticates every RPC, including services registered after the server starts. */
 class ProcessIdentityInterceptor(
     private val registry: ProcessTokenRegistry,
 ) : ServerInterceptor {
@@ -28,31 +26,110 @@ class ProcessIdentityInterceptor(
         next: ServerCallHandler<ReqT, RespT>,
     ): ServerCall.Listener<ReqT> {
         val token = headers.get(PROCESS_TOKEN_METADATA_KEY)
+        val principal = registry.principalFor(token)
+        if (token == null || principal == null) {
+            call.close(UNAUTHENTICATED, Metadata())
+            return object : ServerCall.Listener<ReqT>() { }
+        }
         val context =
             Context
                 .current()
-                .withValue(AUTHENTICATED_PROCESS_ID, registry.identityFor(token))
+                .withValue(AUTHENTICATED_PROCESS_ID, principal.processId)
                 .withValue(CURRENT_IDENTITY, { registry.identityFor(token) })
-        return Contexts.interceptCall(context, call, headers, next)
+                .withValue(CURRENT_PRINCIPAL, { registry.principalFor(token) })
+                .withCancellation()
+        val finished = AtomicBoolean()
+        val callJob = SupervisorJob()
+        val subscription = AtomicReference<AutoCloseable?>()
+        val guardedCall =
+            object : ForwardingServerCall.SimpleForwardingServerCall<ReqT, RespT>(call) {
+                override fun close(
+                    status: Status,
+                    trailers: Metadata,
+                ) {
+                    if (finished.compareAndSet(false, true)) {
+                        subscription.getAndSet(null)?.close()
+                        super.close(status, trailers)
+                    }
+                }
+
+                override fun sendMessage(message: RespT) {
+                    if (registry.principalFor(token) == null) {
+                        close(UNAUTHENTICATED, Metadata())
+                    } else if (!finished.get()) {
+                        super.sendMessage(message)
+                    }
+                }
+            }
+        val registration =
+            registry.onRevoked(token) {
+                guardedCall.close(UNAUTHENTICATED, Metadata())
+                callJob.cancel()
+                context.cancel(UNAUTHENTICATED.asRuntimeException())
+            }
+        subscription.set(registration)
+        if (finished.get()) subscription.getAndSet(null)?.close()
+        var bound = false
+        try {
+            // Cancelling a gRPC Context alone does not cancel grpc-kotlin's RPC coroutine.
+            val cancellableHandler =
+                ServerCallHandler<ReqT, RespT> { incoming, metadata ->
+                    CallCoroutineContext(callJob).interceptCall(incoming, metadata, next)
+                }
+            // Revocation can close admission synchronously while the listener is being registered.
+            // Never dispatch even a non-coroutine handler after that refusal.
+            val listener =
+                if (finished.get()) {
+                    object : ServerCall.Listener<ReqT>() { }
+                } else {
+                    Contexts.interceptCall(context, guardedCall, headers, cancellableHandler)
+                }
+            bound = true
+            return object : ForwardingServerCallListener.SimpleForwardingServerCallListener<ReqT>(listener) {
+                override fun onCancel() {
+                    try {
+                        super.onCancel()
+                    } finally {
+                        subscription.getAndSet(null)?.close()
+                        callJob.cancel()
+                        context.cancel(null)
+                    }
+                }
+
+                override fun onComplete() {
+                    try {
+                        super.onComplete()
+                    } finally {
+                        subscription.getAndSet(null)?.close()
+                        callJob.complete()
+                        context.cancel(null)
+                    }
+                }
+            }
+        } finally {
+            if (!bound) {
+                subscription.getAndSet(null)?.close()
+                callJob.cancel()
+                context.cancel(null)
+            }
+        }
     }
 
     companion object {
-        /** Revalidate at stream binding, since a call may wait across token revocation. */
+        private val UNAUTHENTICATED = Status.UNAUTHENTICATED.withDescription("A current IPC credential is required")
         val CURRENT_IDENTITY: Context.Key<() -> String?> = Context.key("boss-current-process-identity")
-
-        /**
-         * Wire name of the credential header. ASCII marshaller: the value is an opaque hex token, not
-         * binary data that needs one.
-         */
+        val CURRENT_PRINCIPAL: Context.Key<() -> ProcessIdentity?> = Context.key("boss-current-process-principal")
         val PROCESS_TOKEN_METADATA_KEY: Metadata.Key<String> =
             Metadata.Key.of("boss-process-token", Metadata.ASCII_STRING_MARSHALLER)
-
-        /**
-         * The process id this call's credential was issued to, or unset when the call presented none —
-         * missing, unknown, or from a process the registry no longer recognises (a stale token after a
-         * respawn). Read with `AUTHENTICATED_PROCESS_ID.get()` from inside a call this interceptor
-         * scoped; unset reads back as null.
-         */
         val AUTHENTICATED_PROCESS_ID: Context.Key<String> = Context.key("boss-authenticated-process-id")
     }
+}
+
+private class CallCoroutineContext(
+    private val job: Job,
+) : CoroutineContextServerInterceptor() {
+    override fun coroutineContext(
+        call: ServerCall<*, *>,
+        headers: Metadata,
+    ): CoroutineContext = job
 }

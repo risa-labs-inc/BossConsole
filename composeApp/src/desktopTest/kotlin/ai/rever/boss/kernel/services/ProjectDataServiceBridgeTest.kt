@@ -1,6 +1,7 @@
 package ai.rever.boss.kernel.services
 
 import ai.rever.boss.components.plugin.panels.left_top.ProjectState
+import ai.rever.boss.ipc.auth.IpcTlsIdentity
 import ai.rever.boss.ipc.auth.ProcessIdentityInterceptor
 import ai.rever.boss.ipc.auth.ProcessTokenClientInterceptor
 import ai.rever.boss.ipc.auth.ProcessTokenRegistry
@@ -12,11 +13,11 @@ import ai.rever.boss.plugin.api.ProjectData
 import ai.rever.boss.plugin.api.ProjectDataProvider
 import ai.rever.boss.window.Project
 import io.grpc.ManagedChannel
-import io.grpc.ManagedChannelBuilder
 import io.grpc.Server
-import io.grpc.ServerBuilder
 import io.grpc.Status
 import io.grpc.StatusException
+import io.grpc.netty.NettyChannelBuilder
+import io.grpc.netty.NettyServerBuilder
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asCoroutineDispatcher
@@ -65,6 +66,7 @@ import kotlin.test.assertTrue
  *    whatever the window last saw.
  */
 class ProjectDataServiceBridgeTest {
+    private val tls = IpcTlsIdentity.create()
     private lateinit var tokenRegistry: ProcessTokenRegistry
     private lateinit var server: Server
     private lateinit var authenticatedChannel: ManagedChannel
@@ -78,19 +80,28 @@ class ProjectDataServiceBridgeTest {
     ) {
         tokenRegistry = ProcessTokenRegistry()
         server =
-            ServerBuilder
+            NettyServerBuilder
                 .forPort(0)
+                .sslContext(tls.serverContext())
                 .intercept(ProcessIdentityInterceptor(tokenRegistry))
                 .addService(ProjectDataServiceBridge(provider, uiDispatcher))
                 .build()
                 .start()
         authenticatedChannel =
-            ManagedChannelBuilder
+            NettyChannelBuilder
                 .forAddress("localhost", server.port)
-                .usePlaintext()
+                .sslContext(IpcTlsIdentity.clientContext(tls.certificateBase64))
+                .overrideAuthority(IpcTlsIdentity.AUTHORITY)
                 .intercept(ProcessTokenClientInterceptor(tokenRegistry.issue(CALLER)))
                 .build()
-        anonymousChannel = ManagedChannelBuilder.forAddress("localhost", server.port).usePlaintext().build()
+        anonymousChannel =
+            NettyChannelBuilder
+                .forAddress(
+                    "localhost",
+                    server.port,
+                ).sslContext(IpcTlsIdentity.clientContext(tls.certificateBase64))
+                .overrideAuthority(IpcTlsIdentity.AUTHORITY)
+                .build()
         authenticated = ProjectDataServiceGrpcKt.ProjectDataServiceCoroutineStub(authenticatedChannel)
         anonymous = ProjectDataServiceGrpcKt.ProjectDataServiceCoroutineStub(anonymousChannel)
     }
@@ -321,7 +332,7 @@ class ProjectDataServiceBridgeTest {
                             ProjectState.updateRecentProjects(second)
 
                             val failure = assertFailsWith<StatusException> { watching.await() }
-                            assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+                            assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
                             assertTrue(
                                 emissions.none { second.path in it },
                                 "revocation must prevent a later snapshot from reaching the caller",
@@ -341,7 +352,7 @@ class ProjectDataServiceBridgeTest {
 
     private suspend fun assertRefused(call: suspend () -> Unit) {
         val failure = assertFailsWith<StatusException> { call() }
-        assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+        assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
     }
 
     /**

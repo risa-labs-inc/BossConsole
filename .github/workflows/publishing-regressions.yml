@@ -1,0 +1,35 @@
+name: Publishing regressions
+
+on:
+  push:
+    branches: ['fix/security-publishing-inputs']
+  pull_request:
+    paths:
+      - 'scripts/publish-plugin*'
+      - 'scripts/test/test-publish-plugin.py'
+      - '.github/workflows/publishing-regressions.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [powershell.exe, pwsh.exe]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Exercise the real publisher against disposable HTTP fixtures
+        shell: pwsh
+        env:
+          BOSS_TEST_PWSH: ${{ matrix.engine }}
+          PYTHONUTF8: '1'
+        run: |
+          & $env:BOSS_TEST_PWSH -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
+          python scripts/test/test-publish-plugin.py PowerShellPublisherTest -v

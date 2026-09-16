@@ -11,9 +11,13 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.nio.file.Files
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Host implementation of the plugin-facing [ProjectSearchProvider] (boss-plugin-api 1.0.87):
@@ -322,9 +326,6 @@ class ContentSearchService(
         return if (inside) candidate else null
     }
 
-    /** Canonical path when resolvable, else the absolute one - identity for cycle detection. */
-    private fun canonicalOrPath(f: File): String = runCatching { f.canonicalPath }.getOrDefault(f.absolutePath)
-
     /**
      * The open-tab paths expanded into every spelling the walk might produce, or null
      * when the open set is unknown.
@@ -587,17 +588,34 @@ class ContentSearchService(
             if (buffer != null) {
                 replaceInBuffer(file, buffer.content, buffer.version, regex, replacement, isRegex, dryRun, isCancelled)
             } else {
-                // UTF-8 in, UTF-8 out. A file in another single-byte encoding has no NUL
-                // bytes, so it passes the binary check, and round-tripping it through
-                // readText/writeText replaces its undecodable bytes with U+FFFD - a
-                // silent rewrite of bytes the user never asked to touch. Detect that the
-                // decode was lossy and refuse, rather than corrupting the file.
-                val text = file.readText()
-                if ('\u0000' in text) return FileReplaceResult(file.path, 0, "binary file")
-                if ('\uFFFD' in text) return FileReplaceResult(file.path, 0, "not valid UTF-8")
-                val outcome = computeReplaced(text, regex, replacement, isRegex, isCancelled)
-                if (!dryRun && outcome.count > 0) writeAtomically(file, outcome.text)
-                FileReplaceResult(file.path, outcome.count, null)
+                // The whole read/compute/persist transaction is serialized per file,
+                // across every ContentSearchService instance in the process
+                // (BossConsole#622) - not just this call, or this instance's own calls.
+                // Without it, two overlapping replacements each read their own snapshot
+                // and raced to write it back; whichever finished last silently reversed
+                // the other's already-reported-successful edit. Locking on the real path
+                // (not the raw one) means the same file reached under two ANCESTOR-
+                // DIRECTORY spellings - a symlinked checkout, /tmp vs /private/tmp, a
+                // Windows junction - still serializes: the exact directory-alias case
+                // resolveFile's own real-path pass exists for. A FILE-level symlink is
+                // NOT covered the same way: writeAtomically replaces the link itself with
+                // a regular file (see its own KDoc), so a caller naming the link and a
+                // caller naming its target still serialize on one key but write two
+                // distinct inodes - this lock cannot make that pre-existing behavior
+                // coherent, only prevent the two callers from racing each other's writes.
+                FileReplaceCoordination.withFileLock(canonicalOrPath(file)) {
+                    // UTF-8 in, UTF-8 out. A file in another single-byte encoding has no NUL
+                    // bytes, so it passes the binary check, and round-tripping it through
+                    // readText/writeText replaces its undecodable bytes with U+FFFD - a
+                    // silent rewrite of bytes the user never asked to touch. Detect that the
+                    // decode was lossy and refuse, rather than corrupting the file.
+                    val text = file.readText()
+                    if ('\u0000' in text) return@withFileLock FileReplaceResult(file.path, 0, "binary file")
+                    if ('\uFFFD' in text) return@withFileLock FileReplaceResult(file.path, 0, "not valid UTF-8")
+                    val outcome = computeReplaced(text, regex, replacement, isRegex, isCancelled)
+                    if (!dryRun && outcome.count > 0) writeAtomically(file, outcome.text)
+                    FileReplaceResult(file.path, outcome.count, null)
+                }
             }
         } catch (e: CancellationException) {
             throw e
@@ -892,6 +910,108 @@ class ContentSearchService(
                 "target",
                 "__pycache__",
             )
+    }
+}
+
+/**
+ * A file's real path when resolvable, else its canonical path, else its absolute path
+ * normalized (never just returned raw) - identity for cycle detection
+ * ([ContentSearchService.walkProjectFiles]) and for cross-instance file-lock keys
+ * ([FileReplaceCoordination]). File-scoped rather than a member of [ContentSearchService]
+ * so [FileReplaceCoordination] - a process-wide singleton that must not be reset per
+ * instance - can compute the same identity without needing one.
+ *
+ * [java.nio.file.Path.toRealPath] rather than [File.getCanonicalPath] as the first choice:
+ * `canonicalPath` does not resolve a Windows directory junction to the directory it points
+ * at (the same reason [ContentSearchService.resolveFile] does its own second, real-path
+ * pass), so two [ContentSearchService] instances rooted at a junction and its target would
+ * otherwise compute two different keys for what is one file on disk. Both require the path
+ * to already exist, which every call site here has just confirmed; the normalized-absolute
+ * fallback exists only for a path that stops existing between that check and this call, and
+ * is normalized (not returned raw) so `a/../a/file` and `a/file` still collapse to one key.
+ */
+private fun canonicalOrPath(f: File): String =
+    runCatching { f.toPath().toRealPath().toString() }
+        .recoverCatching { f.canonicalPath }
+        .getOrDefault(
+            f.absoluteFile
+                .toPath()
+                .normalize()
+                .toString(),
+        )
+
+/**
+ * Serializes the whole read/compute/persist transaction for a given file across every
+ * [ContentSearchService] instance in the process, not just one instance's own calls
+ * (BossConsole#622).
+ *
+ * Before this, two overlapping closed-file replacements - through one service instance,
+ * or two window-scoped instances sharing the same project (see
+ * [ai.rever.boss.components.plugin.DefaultPlugin.projectSearchProvider]) - each read
+ * their own snapshot, computed independently, and raced to write back: whichever
+ * finished last silently reversed the other's already-reported-successful edit, with
+ * both calls returning success. Locking around the WHOLE transaction, not just the
+ * write, means the second caller through the lock re-reads the file fresh (now carrying
+ * the first caller's change) and computes its own replacement on top of it - so the
+ * result is correct regardless of which caller's transaction the scheduler happens to
+ * run first.
+ *
+ * `internal` for direct testing of the locking primitive itself; [ContentSearchService]
+ * is the only real caller.
+ *
+ * **Deliberately out of scope, so nobody assumes more than exists:**
+ * - **Other write surfaces.** `FileSystemDataProviderImpl.writeFile` and
+ *   `EditorContentProviderImpl.writeFileContent` are separate ungated plugin-facing writes
+ *   over project files and take no lock here - this coordinates `replaceInProject` against
+ *   itself, not against every way a file in the project can be written.
+ * - **The buffer-vs-disk branch choice, in [ContentSearchService.replaceInOneFile].** Only
+ *   the closed-file branch takes this lock; the decision of which branch to take (a live
+ *   editor buffer probe) happens before it. A tab opening for the file between one caller's
+ *   probe and another caller's disk write is not covered - narrower than the lost-update
+ *   race this exists for, since it needs a tab to open mid-replace, but real.
+ */
+internal object FileReplaceCoordination {
+    /** A per-key mutex plus how many in-flight transactions currently hold a reference to it. */
+    private class Slot {
+        val mutex = Mutex()
+        val refCount = AtomicInteger(0)
+    }
+
+    // Keyed by canonical file path (see [canonicalOrPath]) - not by [ContentSearchService]
+    // instance - which is what makes this coordinate across instances at all.
+    private val slots = ConcurrentHashMap<String, Slot>()
+
+    /**
+     * Runs [block] under the lock for [key], serialized against every other call for the
+     * same [key] from anywhere in the process, concurrent with calls for a different key.
+     *
+     * The slot is refcounted and removed from [slots] once nothing references it, so a
+     * project with many distinct files touched once each does not accumulate one [Mutex]
+     * per file forever. `ConcurrentHashMap.compute` makes both the acquire (create-or-reuse
+     * plus increment) and the release (decrement plus remove-if-zero) atomic against a
+     * concurrent acquire for the same key - without it, a release could remove a slot the
+     * instant after a new acquire decided to reuse it, handing that new caller a mutex no
+     * longer reachable by [slots] for the NEXT caller to arrive.
+     *
+     * Cancellation and a thrown [block] both release normally: acquisition happens before
+     * the `try`, and release is in `finally`, so a cancelled or failed transaction never
+     * leaves a later caller for the same file waiting forever.
+     */
+    suspend fun <T> withFileLock(
+        key: String,
+        block: suspend () -> T,
+    ): T {
+        val slot =
+            slots.compute(key) { _, existing ->
+                (existing ?: Slot()).also { it.refCount.incrementAndGet() }
+            }!!
+        try {
+            return slot.mutex.withLock { block() }
+        } finally {
+            slots.compute(key) { _, existing ->
+                if (existing === slot && slot.refCount.decrementAndGet() <= 0) null else existing
+            }
+        }
     }
 }
 

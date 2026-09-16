@@ -157,7 +157,7 @@ object PluginScaffolder {
         filesCreated += wrapperPropsFile
 
         val wrapperJarFile = File(wrapperDir, "gradle-wrapper.jar")
-        copyOrGenerateWrapperJar(wrapperJarFile)
+        copyWrapperJar(wrapperJarFile)
         filesCreated += wrapperJarFile
 
         // 5. gradlew (POSIX executable script)
@@ -220,7 +220,7 @@ object PluginScaffolder {
         }
     }
 
-    private fun copyOrGenerateWrapperJar(targetJar: File) {
+    private fun copyWrapperJar(targetJar: File) {
         val resourceStream =
             PluginScaffolder::class.java.getResourceAsStream("/launcher/gradle-wrapper.jar")
                 ?: error("Resource /launcher/gradle-wrapper.jar not found in host resources")
@@ -235,6 +235,7 @@ object PluginScaffolder {
         """
         distributionBase=GRADLE_USER_HOME
         distributionPath=wrapper/dists
+        distributionSha256Sum=544c35d6bd849ae8a5ed0bcea39ba677dc40f49df7d1835561582da2009b961d
         distributionUrl=https\://services.gradle.org/distributions/gradle-8.7-bin.zip
         zipStoreBase=GRADLE_USER_HOME
         zipStorePath=wrapper/dists

@@ -68,6 +68,7 @@ import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.project.DefaultWorkingDirectory
 import ai.rever.boss.run.RunConfigurationManager
 import ai.rever.boss.run.RunExecutionService
+import ai.rever.boss.search.SPOTLIGHT_UNSUPPORTED_COMMAND_IDS
 import ai.rever.boss.search.SearchSources
 import ai.rever.boss.search.ToolSearchRecord
 import ai.rever.boss.search.rememberSpotlightFileIndexer
@@ -660,7 +661,46 @@ internal fun BossAppDialogs(state: BossAppState) {
                         MenuActionsHandler.triggerShowShortcutHelp(windowId)
                     }
 
-                    else -> {} // Unknown command
+                    else -> {
+                        // Every tab-navigation and browser-history command Spotlight advertises
+                        // (BossConsole#700) - previously silently discarded here.
+                        when (val outcome = dispatchSpotlightTabBrowserCommand(actionId, windowId)) {
+                            is SpotlightDispatchOutcome.Dispatched -> {}
+
+                            // Recognized, but the state it needs (another tab, a closed-tab
+                            // history entry, a tab at that position) is not there right now.
+                            is SpotlightDispatchOutcome.Unavailable -> {
+                                StatusMessageManager.showMessage(
+                                    "\"${KeymapActions.getDescription(actionId)}\": ${outcome.reason}",
+                                    durationMs = 4_000L,
+                                )
+                            }
+
+                            SpotlightDispatchOutcome.NotRecognized -> {
+                                // A catalog id neither handled above, dispatched, nor named
+                                // unsupported - SpotlightCommandCoverageTest exists to catch this
+                                // before it ships. Reaching it here anyway (GlobalSearchService
+                                // already excludes SPOTLIGHT_UNSUPPORTED_COMMAND_IDS from
+                                // Spotlight's results, so this would mean a stale result list
+                                // from before a dismiss/reopen) is a wiring bug for an
+                                // unclassified id, not a user-facing limitation - log it there,
+                                // but show the same message either way rather than discarding
+                                // the selection with no signal.
+                                if (actionId !in SPOTLIGHT_UNSUPPORTED_COMMAND_IDS) {
+                                    logger.warn(
+                                        LogCategory.UI,
+                                        "Spotlight command has no dispatch route",
+                                        mapOf("actionId" to actionId),
+                                    )
+                                }
+                                val description = KeymapActions.getDescription(actionId)
+                                StatusMessageManager.showMessage(
+                                    "\"$description\" isn't available from Spotlight yet",
+                                    durationMs = 4_000L,
+                                )
+                            }
+                        }
+                    }
                 }
                 state.focusRequester.requestFocus()
             },

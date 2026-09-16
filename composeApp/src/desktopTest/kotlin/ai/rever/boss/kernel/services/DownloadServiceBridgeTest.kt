@@ -98,7 +98,7 @@ class DownloadServiceBridgeTest {
                 assertFailsWith<StatusException> {
                     anonymous().pauseDownload(DownloadIdRequest.newBuilder().setId("d1").build())
                 }
-            assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+            assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
             assertTrue(provider.calls.isEmpty())
         }
 
@@ -144,7 +144,7 @@ class DownloadServiceBridgeTest {
                 assertFailsWith<StatusException> {
                     anonymous().watchDownloads(Empty.getDefaultInstance()).first()
                 }
-            assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+            assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
         }
 
     @Test
@@ -176,7 +176,7 @@ class DownloadServiceBridgeTest {
                         tokenRegistry.revoke(CALLER)
                         provider.setDownloads(listOf(trackedItem("private", "/private/new-download.txt")))
                         val failure = assertFailsWith<StatusException> { watching.await() }
-                        assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+                        assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
                         assertTrue(received.tryReceive().isFailure, "revocation must prevent the next snapshot")
                     } finally {
                         watching.cancel()
@@ -271,7 +271,7 @@ class DownloadServiceBridgeTest {
                     anonymous().openFile(PathRequest.newBuilder().setPath(tracked.absolutePath).build())
                 }
 
-            assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+            assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
             assertTrue(provider.calls.isEmpty())
         }
 

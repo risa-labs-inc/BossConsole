@@ -384,32 +384,35 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
 
     /**
      * Platform-explicit form of [generateCommand], for the same reason as
-     * [ShellUtils.escapeForDoubleQuotes]'s overload: [ShellUtils.isWindows] is fixed at
-     * class-load from the real OS, so the interface method can only ever reach one branch
-     * on a given host. Taking the platform as a parameter exercises both the PowerShell
-     * and the POSIX form from any host, rather than relying on the CI matrix.
-     *
-     * @param forWindows Build for Windows PowerShell when true, POSIX shells otherwise
-     * @param tempDirPath Where a compile-then-run fallback puts its build output
+     * [ShellUtils.escapeForDoubleQuotes]'s two-argument overload: [ShellUtils.isWindows]
+     * is fixed at class-load from the real host, so the single-argument override can only
+     * ever exercise one of the two shells a given test run happens to be on. Every command
+     * this builds is quoted for and chained for [forWindows] specifically, all the way down
+     * through [shellEscape] and the command separator (BossConsole#594).
      */
     internal fun generateCommand(
         detected: DetectedMainFunction,
         projectPath: String,
         forWindows: Boolean,
-        tempDirPath: String = System.getProperty("java.io.tmpdir"),
+        // Defaulted, not read again inside tempFilePath: a test that also controls forWindows
+        // wants a host-independent fixed value here too, so the two standalone-fallback tests
+        // (Kotlin, Rust) discriminate on the platform argument rather than incidentally on
+        // whichever OS the CI runner happens to be - see resolveUpdaterTempDir for the same
+        // reasoning applied to the updater's own temp-dir resolution.
+        tempDir: String = System.getProperty("java.io.tmpdir"),
     ): String {
         // Find the actual project root by walking up from the file's directory
         val fileDir = File(detected.filePath).parentFile
         val projectDir = findProjectRootInternal(fileDir) ?: File(projectPath)
 
         return when (detected.language) {
-            Language.KOTLIN -> generateKotlinCommand(detected, projectDir, forWindows, tempDirPath)
+            Language.KOTLIN -> generateKotlinCommand(detected, projectDir, forWindows, tempDir)
             Language.JAVA -> generateJavaCommand(detected, projectDir, forWindows)
             Language.PYTHON -> generatePythonCommand(detected, forWindows)
             Language.JAVASCRIPT -> generateJavaScriptCommand(detected, forWindows)
             Language.TYPESCRIPT -> generateTypeScriptCommand(detected, forWindows)
             Language.GO -> generateGoCommand(detected, forWindows)
-            Language.RUST -> generateRustCommand(detected, projectDir, forWindows, tempDirPath)
+            Language.RUST -> generateRustCommand(detected, projectDir, forWindows, tempDir)
             Language.UNKNOWN -> "echo 'Unknown language'"
         }
     }
@@ -461,17 +464,18 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
         return null
     }
 
+    @Suppress("ReturnCount")
     private fun generateKotlinCommand(
         detected: DetectedMainFunction,
         projectDir: File,
         forWindows: Boolean,
-        tempDirPath: String,
+        tempDir: String,
     ): String {
         val filePath = detected.filePath
 
         // For .kts scripts, use kotlinc -script
         if (filePath.endsWith(".kts")) {
-            return "kotlinc -script ${quoteArg(filePath, forWindows)}"
+            return "kotlinc -script ${shellEscape(filePath, forWindows)}"
         }
 
         // For Gradle projects, use ./gradlew :moduleName:run
@@ -486,12 +490,14 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
 
         // Fallback: compile and run with kotlinc (for simple standalone files)
         val jarName = outputStem(filePath, forWindows)
-        val jarPath = quoteArg(tempFilePath(tempDirPath, "$jarName.jar", forWindows), forWindows)
-        val compileCmd = "kotlinc ${quoteArg(filePath, forWindows)} -include-runtime -d $jarPath"
-        val runCmd = "java -jar $jarPath"
-        return chain(forWindows, compileCmd, runCmd)
+        val jarPath = tempFilePath(tempDir, "$jarName.jar", forWindows)
+        val compileCmd =
+            "kotlinc ${shellEscape(filePath, forWindows)} -include-runtime -d ${shellEscape(jarPath, forWindows)}"
+        val runCmd = "java -jar ${shellEscape(jarPath, forWindows)}"
+        return listOf(compileCmd, runCmd).joinToString(ShellUtils.separatorFor(forWindows))
     }
 
+    @Suppress("ReturnCount")
     private fun generateJavaCommand(
         detected: DetectedMainFunction,
         projectDir: File,
@@ -513,11 +519,11 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
         if (File(projectDir, "pom.xml").exists()) {
             val className = buildClassName(detected)
             // Class names are validated by compiler, so they should be safe
-            return "mvn exec:java -Dexec.mainClass=${quoteArg(className, forWindows)}"
+            return "mvn exec:java -Dexec.mainClass=${shellEscape(className, forWindows)}"
         }
 
         // Fallback: Java 11+ single-file source-code execution
-        return "java ${quoteArg(filePath, forWindows)}"
+        return "java ${shellEscape(filePath, forWindows)}"
     }
 
     /**
@@ -578,50 +584,25 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
             File(projectDir, "gradlew.bat").exists()
 
     /**
-     * Quote a single argument so it survives as one word and stays inert - the shell's
-     * own expansions never see it. Delegates to [ShellPathQuoting], the repo's one
-     * definition of shell literal quoting (see `CommandProcessor.quotePath`, which picks
-     * the same two strategies by the host OS): a POSIX shell takes `'…'` with an embedded
-     * `'` written `'\''`, PowerShell takes `'…'` with an embedded `'` doubled. The two
-     * forms are not interchangeable - the POSIX escape is a *parse error* in PowerShell,
-     * which is what this used to emit on Windows.
+     * Escape a string for safe use in shell commands, routed through
+     * [ShellPathQuoting] - the repo's one definition of shell quoting, already shared by
+     * [ai.rever.boss.components.workspaces.CommandProcessor.quotePath] - rather than a
+     * private, POSIX-only copy of half of it (BossConsole#594).
      *
-     * Not limited to paths despite that name: `DesktopGitService` quotes branch names
-     * with it, and the class and crate names here are the same kind of literal argument.
+     * The POSIX `'\''` idiom this used to emit unconditionally is a PowerShell parse
+     * error (`The string is missing the terminator`), and every run-gutter command on
+     * Windows is handed to PowerShell BY DEFAULT (`TerminalSettings.windowsShell`) - the
+     * same assumption [ai.rever.boss.components.workspaces.CommandProcessor.quotePath]
+     * documents making, with the same gap: under the opt-in cmd.exe shell both are wrong
+     * together, a pre-existing, shared gap, not introduced here. [forWindows] defaults to the
+     * real host so every call site is unaffected; it takes a parameter, mirroring
+     * [ShellUtils.escapeForDoubleQuotes]'s two-argument overload, so tests can exercise
+     * both branches regardless of which OS happens to run them.
      */
-    private fun quoteArg(
-        value: String,
-        forWindows: Boolean,
-    ): String = if (forWindows) ShellPathQuoting.powershell(value) else ShellPathQuoting.posix(value)
-
-    private fun generatePythonCommand(
-        detected: DetectedMainFunction,
-        forWindows: Boolean,
-    ): String = "python3 ${quoteArg(detected.filePath, forWindows)}"
-
-    private fun generateJavaScriptCommand(
-        detected: DetectedMainFunction,
-        forWindows: Boolean,
-    ): String = "node ${quoteArg(detected.filePath, forWindows)}"
-
-    private fun generateTypeScriptCommand(
-        detected: DetectedMainFunction,
-        forWindows: Boolean,
-    ): String = "npx ts-node ${quoteArg(detected.filePath, forWindows)}"
-
-    private fun generateGoCommand(
-        detected: DetectedMainFunction,
-        forWindows: Boolean,
-    ): String = "go run ${quoteArg(detected.filePath, forWindows)}"
-
-    /**
-     * Join a compile step to its run step. The platform-explicit twin of
-     * [ShellUtils.chainCommands], which can only reach the host's own separator.
-     */
-    private fun chain(
-        forWindows: Boolean,
-        vararg commands: String,
-    ): String = commands.joinToString(ShellUtils.separatorFor(forWindows))
+    private fun shellEscape(
+        str: String,
+        forWindows: Boolean = ShellUtils.isWindows,
+    ): String = if (forWindows) ShellPathQuoting.powershell(str) else ShellPathQuoting.posix(str)
 
     private fun outputStem(
         filePath: String,
@@ -644,13 +625,37 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
         tempDirPath: String,
         fileName: String,
         forWindows: Boolean,
-    ): String = tempDirPath.trimEnd('/', '\\') + (if (forWindows) "\\" else "/") + fileName
+    ): String {
+        val directory = if (forWindows) tempDirPath.trimEnd('/', '\\') else tempDirPath.trimEnd('/')
+        return directory + (if (forWindows) "\\" else "/") + fileName
+    }
 
+    private fun generatePythonCommand(
+        detected: DetectedMainFunction,
+        forWindows: Boolean,
+    ): String = "python3 ${shellEscape(detected.filePath, forWindows)}"
+
+    private fun generateJavaScriptCommand(
+        detected: DetectedMainFunction,
+        forWindows: Boolean,
+    ): String = "node ${shellEscape(detected.filePath, forWindows)}"
+
+    private fun generateTypeScriptCommand(
+        detected: DetectedMainFunction,
+        forWindows: Boolean,
+    ): String = "npx ts-node ${shellEscape(detected.filePath, forWindows)}"
+
+    private fun generateGoCommand(
+        detected: DetectedMainFunction,
+        forWindows: Boolean,
+    ): String = "go run ${shellEscape(detected.filePath, forWindows)}"
+
+    @Suppress("ReturnCount")
     private fun generateRustCommand(
         detected: DetectedMainFunction,
         projectDir: File,
         forWindows: Boolean,
-        tempDirPath: String,
+        tempDir: String,
     ): String {
         val filePath = detected.filePath
 
@@ -660,18 +665,21 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
             val moduleName = detectCargoModule(filePath, projectDir)
             if (moduleName != null) {
                 // Module names are validated by Cargo, but escape for safety
-                return "cargo run -p ${quoteArg(moduleName, forWindows)}"
+                return "cargo run -p ${shellEscape(moduleName, forWindows)}"
             }
             return "cargo run"
         }
 
-        // Fallback: Compile and run the specific Rust file directly
+        // Fallback: Compile and run the specific Rust file directly. `-o` names the compiled
+        // binary; Windows needs a .exe suffix for it to be directly launchable.
         val outputName = outputStem(filePath, forWindows)
-        val binaryName = outputName + if (forWindows) ".exe" else ""
-        val binaryPath = quoteArg(tempFilePath(tempDirPath, binaryName, forWindows), forWindows)
-        val compileCmd = "rustc ${quoteArg(filePath, forWindows)} -o $binaryPath"
-        val runCmd = if (forWindows) "& $binaryPath" else binaryPath
-        return chain(forWindows, compileCmd, runCmd)
+        val outputPath = tempFilePath(tempDir, if (forWindows) "$outputName.exe" else outputName, forWindows)
+        val compileCmd = "rustc ${shellEscape(filePath, forWindows)} -o ${shellEscape(outputPath, forWindows)}"
+        // A bare quoted path is a COMMAND on POSIX but a STRING EXPRESSION in PowerShell - it
+        // would be printed, not run. The call operator (&) is what tells PowerShell to invoke
+        // the value as a command; POSIX has no such distinction and needs none.
+        val runCmd = if (forWindows) "& ${shellEscape(outputPath, forWindows)}" else shellEscape(outputPath, forWindows)
+        return listOf(compileCmd, runCmd).joinToString(ShellUtils.separatorFor(forWindows))
     }
 
     /**

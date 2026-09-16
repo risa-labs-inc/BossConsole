@@ -198,6 +198,18 @@ class DevPluginRollbackTest {
     }
 
     @Test
+    fun `reload rejects a staged jar declaring another plugin identity`() =
+        runBlocking {
+            createManager()
+            val root = DevPluginArtifacts.stagingRoot()
+            val jar = createDevTestJar(root, "com.example.other", "v1000", "1.0.0")
+            val target = File(root, "com.example.expected/v1000/tool.jar")
+            target.parentFile.mkdirs()
+            jar.copyTo(target)
+            assertTrue(DevPluginReloader.reload("com.example.expected", root).isFailure)
+        }
+
+    @Test
     fun `first link failure uninstalls partially installed plugin across managers to restore clean initial state`() =
         runBlocking {
             val pluginId = "first-link-tool"

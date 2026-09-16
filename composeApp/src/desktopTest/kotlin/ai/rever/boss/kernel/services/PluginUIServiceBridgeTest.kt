@@ -542,7 +542,7 @@ class PluginUIServiceBridgeTest {
         runBlocking {
             val failure = assertFailsWith<StatusException> { anonymousPlugin().registerUI(registration(PANEL)) }
 
-            assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+            assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
             assertNull(registry.surfaceOf(PANEL), "a refused registration must not reach the registry")
         }
 

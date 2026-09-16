@@ -71,7 +71,7 @@ object DevPluginReloader {
         }
 
         val stagedJar =
-            DevPluginArtifacts.findActiveDevJar(pluginId, devRoot)
+            DevPluginArtifacts.findActiveDevJar(pluginId, devRoot, deepValidate = true)
                 ?: error("No staged dev JAR found for plugin $pluginId in ${devRoot.absolutePath}")
 
         recordSessionPreservedPaths(pluginId, listOf(stagedJar.absolutePath))

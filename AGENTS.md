@@ -2027,6 +2027,8 @@ workspace by selecting the tools you need." Tools install app-wide, not into a S
 
 ## Documentation
 
+- [Authenticated IPC rollout](docs/authenticated-ipc-rollout.md): paired runtime release, ownership, and credential lifetime.
+
 - [MCP for agent-less operators](docs/mcp-agentless-operators.md) - Toolbox kill-switches and attach path
 
 - [Core Subsystems](docs/SUBSYSTEMS.md) - Auth, UI, keyboard shortcuts, threading, default applications, runner, BossTerm
@@ -2081,6 +2083,23 @@ no second sandbox prompt. Explicit policies and session trust retain precedence.
 HIGH/CRITICAL names use the mutating default, while unknown names remain allowed
 by default. Risk reasons and sanitized arguments appear together in the existing
 approval dialog. #362 is closed pending extraction into a management plugin.
+
+## Process log authority and lifetime
+
+Process logs are host-owned infrastructure, not an OS sandbox. Log setup fails closed
+before spawning when the log root crosses an unapproved symlink, the filesystem cannot
+provide persistent Windows ACLs, or the native platform is unsupported. No child is
+started with unprotected fallback logs. Operators must use a supported private local
+log directory; setup failures must not expose credential-bearing environment values.
+
+Each process id shares one rotating writer across overlapping generations. Drain
+lifetimes follow the owned parent, not descendant EOF. After parent exit, each pipe
+drains only its observed remaining snapshot (at most 1 MiB); later descendant output
+is outside this log contract. Closing the read end can give a later descendant write
+EPIPE/SIGPIPE and terminate a native descendant that has not disabled SIGPIPE. Recording failure does not stop draining a live parent's
+output. Idle polling backs off to 100 ms and resets to 1 ms after output, so a busy
+small pipe does not pay a fixed 10 ms delay between batches. Retention is bounded
+per process id, not across all distinct process ids.
 
 **The bottom bar's "MCP: `<tool>`" status line is clickable into an activity log of the last 100
 calls this session.** Before this it was the only visibility into MCP activity at all - every
@@ -2190,3 +2209,21 @@ are intentional. Global access filters still apply independently of registration
 - **Test Veracity Rules**:
   - In deduplication tests, ALWAYS test with dev JAR `lastModified` strictly greater than standard JAR `lastModified` to mirror real-world compiler outputs.
   - Test the public reload pipeline (`DevPluginReloader.reload`) end-to-end rather than calling internal rollback helpers in isolation.
+
+### Health snapshots and intentional disables
+
+Sandbox disabled state alone is not evidence of watchdog failure: operator disable
+and failed registration also set it. `pluginHealthSnapshot` derives watchdog stops
+only from otherwise healthy rows and shares that set with row decoration and CLI
+findings. Manager errors take precedence over disabled state, so a failed
+registration stays visible while an ordinary disabled plugin is not degraded.
+
+Password import and secret request validation reject empty passwords, not
+whitespace-only passwords: whitespace can be the original credential. Never trim
+password values. Bitwarden JSON null encryption flags are treated like an absent
+flag; true or malformed non-null values remain rejected. KeePass format sniffing
+inspects at most 4096 characters; full XML parsing still enforces its own limits.
+
+Dev reload resolves staged JARs with manifest identity validation, matching startup.
+The scaffold wrapper source/hash is recorded in `resources/launcher/README.md`;
+update it with the pinned distribution checksum and scaffold validation together.

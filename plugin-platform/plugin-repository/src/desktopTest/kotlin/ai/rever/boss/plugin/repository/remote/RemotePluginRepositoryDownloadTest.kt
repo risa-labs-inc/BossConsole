@@ -8,6 +8,7 @@ import com.sun.net.httpserver.HttpServer
 import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.net.InetSocketAddress
+import java.nio.file.Files
 import java.security.KeyPair
 import java.security.KeyPairGenerator
 import java.security.MessageDigest
@@ -119,6 +120,30 @@ class RemotePluginRepositoryDownloadTest {
     private fun target(name: String) = File(tempDir, name).absolutePath
 
     @Test
+    fun `cache removed after lookup falls back to a verified download`() =
+        runBlocking<Unit> {
+            val source = File(tempDir, "source.jar").apply { writeBytes(jarBytes) }
+            cache.cacheJar(pluginId, "1.0.0", source)
+            val signature = signAnchor("1.0.0")
+            var copies = 0
+            val repository =
+                RemotePluginRepository(
+                    downloadCache = cache,
+                    storeVerifier = verifier,
+                    downloadInfoProvider = { _, _ -> downloadInfo("1.0.0", signature) },
+                    copyCachedJar = { cached, destination ->
+                        copies++
+                        Files.delete(cached.toPath())
+                        cached.copyTo(destination, overwrite = true)
+                    },
+                )
+            val installed = repository.downloadPlugin(pluginId, "1.0.0", target("lost-cache.jar")).getOrThrow()
+            assertEquals(1, copies)
+            assertTrue(File(installed).readBytes().contentEquals(jarBytes))
+            assertEquals(signature, PluginSignatureSidecar.read(installed))
+        }
+
+    @Test
     fun `fresh download with valid signature succeeds, caches, and writes the sidecar`() =
         runBlocking<Unit> {
             val sig = signAnchor("1.0.0")
@@ -131,6 +156,71 @@ class RemotePluginRepositoryDownloadTest {
             assertNotNull(cache.getCachedJar(pluginId, "1.0.0", jarSha256))
             // Sidecar written beside the installed JAR for load-time verification.
             assertEquals(sig, PluginSignatureSidecar.read(path))
+        }
+
+    @Test
+    fun `linked cache entry does not block a verified download or touch its target`() =
+        runBlocking<Unit> {
+            val outside = File(tempDir, "sentinel.jar").apply { writeText("sentinel") }
+            val cached = cache.cacheJar(pluginId, "1.0.0", outside)
+            Files.delete(cached.toPath())
+            Files.createSymbolicLink(cached.toPath(), outside.toPath())
+            val sig = signAnchor("1.0.0")
+            val path =
+                repositoryReturning(downloadInfo("1.0.0", sig))
+                    .downloadPlugin(pluginId, "1.0.0", target("linked-ok.jar"))
+                    .getOrThrow()
+            assertTrue(File(path).readBytes().contentEquals(jarBytes))
+            assertEquals(sig, PluginSignatureSidecar.read(path))
+            assertEquals("sentinel", outside.readText())
+        }
+
+    @Test
+    fun `cache promotion failure preserves a successful verified download`() =
+        runBlocking<Unit> {
+            val seed = File(tempDir, "seed.jar").apply { writeBytes(jarBytes) }
+            val cached = cache.cacheJar(pluginId, "1.0.0", seed)
+            Files.delete(cached.toPath())
+            cached.mkdir()
+            val sentinel = File(cached, "sentinel").apply { writeText("sentinel") }
+            val sig = signAnchor("1.0.0")
+            val path =
+                repositoryReturning(downloadInfo("1.0.0", sig))
+                    .downloadPlugin(pluginId, "1.0.0", target("promotion-ok.jar"))
+                    .getOrThrow()
+            assertTrue(File(path).readBytes().contentEquals(jarBytes))
+            assertEquals(sig, PluginSignatureSidecar.read(path))
+            assertEquals("sentinel", sentinel.readText())
+        }
+
+    @Test
+    fun `unsupported cache version syntax still downloads and verifies`() =
+        runBlocking<Unit> {
+            val version = "1.0.0 (beta)"
+            val sig = signAnchor(version)
+            val path =
+                repositoryReturning(downloadInfo(version, sig))
+                    .downloadPlugin(pluginId, version, target("syntax-ok.jar"))
+                    .getOrThrow()
+            assertTrue(File(path).readBytes().contentEquals(jarBytes))
+            assertEquals(sig, PluginSignatureSidecar.read(path))
+        }
+
+    @Test
+    fun `unavailable cache does not prevent repository construction or verified download`() =
+        runBlocking<Unit> {
+            val blocked = File(tempDir, "not-a-directory").apply { writeText("sentinel") }
+            val sig = signAnchor("1.0.0")
+            val repository =
+                RemotePluginRepository(
+                    downloadCache = PluginDownloadCache(File(blocked, "cache")),
+                    storeVerifier = verifier,
+                    downloadInfoProvider = { _, _ -> downloadInfo("1.0.0", sig) },
+                )
+            val path = repository.downloadPlugin(pluginId, "1.0.0", target("uncached-ok.jar")).getOrThrow()
+            assertTrue(File(path).readBytes().contentEquals(jarBytes))
+            assertEquals(sig, PluginSignatureSidecar.read(path))
+            assertEquals("sentinel", blocked.readText())
         }
 
     @Test

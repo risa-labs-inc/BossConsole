@@ -644,9 +644,6 @@
     <ID>MaxLineLength:DesktopGitService.kt$GitService$val errorMessage = "Unexpected error during clone: ${e.message ?: e.javaClass.simpleName}. Please check logs for details."</ID>
     <ID>MaxLineLength:DesktopGitTerminalService.kt$GitTerminalService$logger.warn(LogCategory.TERMINAL, "Failed to open in sidebar terminal - panel may not be open", mapOf("windowId" to windowId))</ID>
     <ID>MaxLineLength:DesktopLLMSettingsManager.kt$LLMSettingsManager$logger.info(LogCategory.SYSTEM, "Created environment variables template", mapOf("path" to envFile.absolutePath))</ID>
-    <ID>MaxLineLength:DesktopMainFunctionDetector.kt$DesktopMainFunctionDetector$private fun generateJavaScriptCommand(detected: DetectedMainFunction): String</ID>
-    <ID>MaxLineLength:DesktopMainFunctionDetector.kt$DesktopMainFunctionDetector$private fun generatePythonCommand(detected: DetectedMainFunction): String</ID>
-    <ID>MaxLineLength:DesktopMainFunctionDetector.kt$DesktopMainFunctionDetector$private fun generateTypeScriptCommand(detected: DetectedMainFunction): String</ID>
     <ID>MaxLineLength:DesktopRunConfigurationManager.kt$RunConfigurationManager$logger.debug(LogCategory.SYSTEM, "Configuration already exists, skipping", mapOf("filePath" to config.filePath))</ID>
     <ID>MaxLineLength:DesktopRunConfigurationManager.kt$RunConfigurationManager$logger.debug(LogCategory.SYSTEM, "Found runnable configurations", mapOf("count" to detectedWithUniqueNames.size))</ID>
     <ID>MaxLineLength:DesktopRunConfigurationManager.kt$RunConfigurationManager$logger.debug(LogCategory.SYSTEM, "Scanning project for run configurations", mapOf("path" to projectPath))</ID>
@@ -1106,9 +1103,6 @@
     <ID>ReturnCount:DesktopBrowserAccessor.kt$private fun findBrowserForTab( splitViewState: ai.rever.boss.components.window_panel.SplitViewState, tabId: String, ): LockedBrowser?</ID>
     <ID>ReturnCount:DesktopLLMSettingsManager.kt$actual fun getEnvironmentVariable(name: String): String?</ID>
     <ID>ReturnCount:DesktopMainFunctionDetector.kt$DesktopMainFunctionDetector$private fun findProjectRootInternal(startDir: File?): File?</ID>
-    <ID>ReturnCount:DesktopMainFunctionDetector.kt$DesktopMainFunctionDetector$private fun generateJavaCommand( detected: DetectedMainFunction, projectDir: File, forWindows: Boolean, ): String</ID>
-    <ID>ReturnCount:DesktopMainFunctionDetector.kt$DesktopMainFunctionDetector$private fun generateKotlinCommand( detected: DetectedMainFunction, projectDir: File, forWindows: Boolean, tempDirPath: String, ): String</ID>
-    <ID>ReturnCount:DesktopMainFunctionDetector.kt$DesktopMainFunctionDetector$private fun generateRustCommand( detected: DetectedMainFunction, projectDir: File, forWindows: Boolean, tempDirPath: String, ): String</ID>
     <ID>ReturnCount:DesktopProjectCreationService.kt$ProjectCreationService$actual fun validateProjectLocation( parentDirectory: String, projectName: String, ): ValidationResult</ID>
     <ID>ReturnCount:DesktopRunnerTerminalService.kt$RunnerTerminalService$actual suspend fun stopRunner( windowId: String, configId: String, ): Boolean</ID>
     <ID>ReturnCount:DesktopUpdateService.kt$UpdateService$actual suspend fun checkForUpdates(): UpdateInfo</ID>

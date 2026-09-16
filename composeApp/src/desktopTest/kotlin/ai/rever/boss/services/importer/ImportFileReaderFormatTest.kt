@@ -11,6 +11,43 @@ import kotlin.test.assertTrue
  */
 class ImportFileReaderFormatTest {
     @Test
+    fun `secret requests reject empty credentials but preserve whitespace`() {
+        val request =
+            ai.rever.boss.services.supabase.models
+                .CreateSecretRequest("https://example.com", "john", "")
+        assertTrue(request.validate().isFailure)
+        assertTrue(request.copy(password = " ").validate().isSuccess)
+        val update =
+            ai.rever.boss.services.supabase.models
+                .UpdateSecretRequest("id", "https://example.com", "john", "")
+        assertTrue(update.validate().isFailure)
+        assertTrue(update.copy(password = " ").validate().isSuccess)
+    }
+
+    @Test
+    fun `Bitwarden null encryption flag and whitespace password survive preview`() {
+        val json = """{"encrypted":null,"items":[{"type":1,"login":{
+            "uris":[{"uri":"https://example.com"}],"username":"john","password":"   "}}]}"""
+        val preview = ImportFileReader.parseContent("vault.json", json).getOrThrow()
+        val password = preview.passwords.single().password
+        assertEquals("   ", password)
+        assertTrue(
+            ai.rever.boss.services.supabase.models
+                .CreateSecretRequest(
+                    website = "https://example.com",
+                    username = "john",
+                    password = password,
+                ).validate()
+                .isSuccess,
+        )
+    }
+
+    @Test
+    fun `KeePass sniffing bounds a long unterminated comment`() {
+        assertEquals(false, KeePassXmlParser.looksLikeKeePass("<!--" + " ".repeat(100_000)))
+    }
+
+    @Test
     fun `routes a Bitwarden JSON export to the Bitwarden parser`() {
         val json =
             """
@@ -83,15 +120,15 @@ class ImportFileReaderFormatTest {
     }
 
     @Test
-    fun `whitespace-only passwords are skipped to match the vault request contract`() {
+    fun `whitespace-only passwords are retained by JSON and CSV previews`() {
         val json = """{"items":[{"type":1,"name":"example.test",
             "login":{"username":"u","password":"   "}}]}"""
         val preview = ImportFileReader.parseContent("vault.json", json).getOrThrow()
-        assertTrue(preview.passwords.isEmpty())
-        assertEquals(SkipReason.MISSING_PASSWORD, preview.skipped.single().reason)
+        assertEquals("   ", preview.passwords.single().password)
+        assertTrue(preview.skipped.isEmpty())
         val csv = "url,username,password\nexample.test,u,   \n"
         val csvPreview = ImportFileReader.parseContent("vault.csv", csv).getOrThrow()
-        assertEquals(SkipReason.MISSING_PASSWORD, csvPreview.skipped.single().reason)
+        assertEquals("   ", csvPreview.passwords.single().password)
     }
 
     @Test

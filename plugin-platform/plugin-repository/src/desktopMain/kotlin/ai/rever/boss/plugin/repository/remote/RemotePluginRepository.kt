@@ -47,8 +47,44 @@ class RemotePluginRepository(
             PluginStoreClient.getDownloadUrl(pluginId)
         }
     },
+    private val copyCachedJar: (File, File) -> Unit = { source, target ->
+        source.copyTo(target, overwrite = true)
+        Unit
+    },
 ) : PluginRepository {
     private val logger = BossLogger.forComponent("RemotePluginRepository")
+
+    // Cache availability must never decide whether a verified download succeeds.
+    private fun <T> cacheOrNull(
+        operation: String,
+        action: () -> T,
+    ): T? =
+        try {
+            action()
+        } catch (cancelled: CancellationException) {
+            // CancellationException extends IllegalStateException; it must be handled before cache refusals.
+            throw cancelled
+        } catch (failure: java.io.IOException) {
+            cacheUnavailable(operation, failure)
+        } catch (failure: IllegalStateException) {
+            cacheUnavailable(operation, failure)
+        } catch (failure: SecurityException) {
+            cacheUnavailable(operation, failure)
+        } catch (failure: IllegalArgumentException) {
+            cacheUnavailable(operation, failure)
+        }
+
+    private fun cacheUnavailable(
+        operation: String,
+        failure: Exception,
+    ): Nothing? {
+        logger.warn(
+            LogCategory.SYSTEM,
+            "Plugin cache unavailable; continuing without cache",
+            mapOf("operation" to operation, "failureType" to failure.javaClass.simpleName),
+        )
+        return null
+    }
 
     /**
      * Enforce the store's anchor signature for a JAR whose SHA-256 has
@@ -327,7 +363,10 @@ class RemotePluginRepository(
                 // below binds the cached bytes to the store key too — a JAR
                 // cached during the warn-and-allow window doesn't dodge
                 // enforcement through the cache path.
-                val cachedFile = downloadCache.getCachedJar(pluginId, downloadInfo.version, downloadInfo.sha256)
+                val cachedFile =
+                    cacheOrNull("lookup") {
+                        downloadCache.getCachedJar(pluginId, downloadInfo.version, downloadInfo.sha256)
+                    }
                 if (cachedFile != null) {
                     logger.info(
                         LogCategory.NETWORK,
@@ -346,14 +385,21 @@ class RemotePluginRepository(
                         pluginId = pluginId,
                         versionLabel = downloadInfo.version,
                         requestedVersion = version,
-                        onVerificationFailure = { downloadCache.removeCachedJar(pluginId, downloadInfo.version) },
+                        onVerificationFailure = {
+                            cacheOrNull("purge") { downloadCache.removeCachedJar(pluginId, downloadInfo.version) }
+                        },
                     )
-                    cachedFile.copyTo(File(targetPath), overwrite = true)
-                    PluginSignatureSidecar.persist(targetPath, downloadInfo.signature)
-                    // Nothing was fetched, but the caller's progress row exists and
-                    // would otherwise sit at 0% until the next phase moved it.
-                    onProgress?.invoke(1f)
-                    return@runCatching targetPath
+                    val copied =
+                        cacheOrNull("copy") {
+                            copyCachedJar(cachedFile, File(targetPath))
+                            true
+                        } == true
+                    if (copied) {
+                        PluginSignatureSidecar.persist(targetPath, downloadInfo.signature)
+                        // Nothing was fetched, but the caller still needs completed progress.
+                        onProgress?.invoke(1f)
+                        return@runCatching targetPath
+                    }
                 }
 
                 // Initialize progress tracking
@@ -435,7 +481,7 @@ class RemotePluginRepository(
                     PluginSignatureSidecar.persist(targetPath, downloadInfo.signature)
 
                     // Cache the downloaded JAR
-                    downloadCache.cacheJar(pluginId, downloadInfo.version, File(targetPath))
+                    cacheOrNull("write") { downloadCache.cacheJar(pluginId, downloadInfo.version, File(targetPath)) }
 
                     progressFlow.value = 1f
                     onProgress?.invoke(1f)

@@ -76,7 +76,7 @@ object ImportService {
                         // them, and they render as red failures.
                         entry.username.isBlank() -> SkipReason.MISSING_USERNAME
 
-                        entry.password.isBlank() -> SkipReason.MISSING_PASSWORD
+                        entry.password.isEmpty() -> SkipReason.MISSING_PASSWORD
 
                         key in existing -> SkipReason.ALREADY_EXISTS
 

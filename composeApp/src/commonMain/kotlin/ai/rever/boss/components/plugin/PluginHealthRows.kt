@@ -83,15 +83,15 @@ private fun infoRow(
             )
         }
 
-        info.state == PluginState.DISABLED -> {
-            unavailableRow(info, "The plugin is disabled.").copy(
-                action = if (!info.enabled) PluginHealthAction.ENABLE else null,
-            )
-        }
-
         info.errorMessage != null || info.state == PluginState.ERROR -> {
             attentionRow(info, "The plugin reported a manager error.").copy(
                 action = reloadActionFor(input.pluginId, info),
+            )
+        }
+
+        info.state == PluginState.DISABLED -> {
+            unavailableRow(info, "The plugin is disabled.").copy(
+                action = if (!info.enabled) PluginHealthAction.ENABLE else null,
             )
         }
 

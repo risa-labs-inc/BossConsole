@@ -3,6 +3,7 @@ package ai.rever.boss.health
 import ai.rever.boss.components.plugin.PluginHealthRow
 import ai.rever.boss.components.plugin.PluginHealthSnapshot
 import ai.rever.boss.components.plugin.PluginHealthStatus
+import ai.rever.boss.components.plugin.pluginHealthSnapshot
 import ai.rever.boss.mcp.McpKillSwitchFault
 import ai.rever.boss.mcp.McpPolicyFault
 import kotlinx.serialization.json.JsonArray
@@ -16,6 +17,19 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class WorkspaceHealthReportTest {
+    @Test
+    fun `snapshot preserves watchdog stops and manager failures separately`() {
+        val running = row("watchdog", PluginHealthStatus.HEALTHY)
+        val failed = row("reload", PluginHealthStatus.NEEDS_ATTENTION, detail = "Manager error")
+        val snapshot = pluginHealthSnapshot(listOf(running, failed), setOf("watchdog", "reload"))
+        val report = workspaceHealthReport(inputs(plugins = listOf(snapshot)))
+        assertEquals(setOf("watchdog"), snapshot.sandboxDisabledPluginIds)
+        assertEquals(
+            setOf(HealthCodes.PLUGIN_STOPPED, HealthCodes.PLUGIN_NEEDS_ATTENTION),
+            report.findings.map { it.code }.toSet(),
+        )
+    }
+
     @Test
     fun `a workspace with nothing wrong is not degraded`() {
         val report = workspaceHealthReport(inputs(plugins = listOf(snapshot(row("notes", PluginHealthStatus.HEALTHY)))))
@@ -64,7 +78,8 @@ class WorkspaceHealthReportTest {
         val disabled = row("notes", PluginHealthStatus.UNAVAILABLE, detail = "The plugin is disabled.")
         val restricted = row("admin", PluginHealthStatus.UNAVAILABLE, detail = "Access is required for this plugin.")
 
-        val report = workspaceHealthReport(inputs(plugins = listOf(snapshot(disabled, restricted))))
+        val snapshot = pluginHealthSnapshot(listOf(disabled, restricted), setOf("notes"))
+        val report = workspaceHealthReport(inputs(plugins = listOf(snapshot)))
 
         assertFalse(report.degraded)
     }

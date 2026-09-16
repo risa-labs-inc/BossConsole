@@ -20,16 +20,6 @@ import kotlin.test.assertTrue
 class MainFunctionDetectorTest {
     private val detector = DesktopMainFunctionDetector()
 
-    /**
-     * Which shell [DesktopMainFunctionDetector.generateCommand] builds for. Named rather
-     * than passed as a bare boolean so an expectation says which shell it belongs to, and
-     * so both are exercised from any runner - the host's own OS decides nothing here.
-     */
-    private companion object {
-        const val POSIX = false
-        const val WINDOWS = true
-    }
-
     private fun lines(vararg lines: String) = lines.joinToString("\n")
 
     // ==================== Kotlin ====================
@@ -292,6 +282,12 @@ class MainFunctionDetectorTest {
     }
 
     // ==================== generateCommand: quoting and injection safety ====================
+    //
+    // Every case below is run through the platform-explicit 3-argument [generateCommand]
+    // overload, once with `forWindows = false` (POSIX) and once with `forWindows = true`
+    // (PowerShell) - BossConsole#594: the single-argument override only ever exercises
+    // whichever shell the CI runner happens to be on, which is exactly how a PowerShell
+    // parse error on every apostrophe-containing Windows path shipped with green CI.
 
     private fun detectedIn(
         path: String,
@@ -306,39 +302,79 @@ class MainFunctionDetectorTest {
     )
 
     @Test
-    fun `python command single-quotes the path`() {
+    fun `python command single-quotes the path on posix`() {
         val command =
-            detector.generateCommand(detectedIn("/no-such-root/app.py", Language.PYTHON), "/no-such-root", POSIX)
+            detector.generateCommand(
+                detectedIn("/no-such-root/app.py", Language.PYTHON),
+                "/no-such-root",
+                forWindows = false,
+            )
         assertEquals("python3 '/no-such-root/app.py'", command)
     }
 
     @Test
-    fun `injection-shaped path stays inert inside single quotes`() {
+    fun `python command single-quotes the path on powershell`() {
+        val command =
+            detector.generateCommand(
+                detectedIn("/no-such-root/app.py", Language.PYTHON),
+                "/no-such-root",
+                forWindows = true,
+            )
+        assertEquals("python3 '/no-such-root/app.py'", command)
+    }
+
+    @Test
+    fun `injection-shaped path stays inert inside single quotes on posix`() {
         val command =
             detector.generateCommand(
                 detectedIn("/no-such-root/\$(rm -rf ~)/app.py", Language.PYTHON),
                 "/no-such-root",
-                POSIX,
+                forWindows = false,
             )
         assertEquals("python3 '/no-such-root/\$(rm -rf ~)/app.py'", command)
     }
 
     @Test
-    fun `single quote in path is escaped with the quote-backslash-quote idiom`() {
+    fun `single quote in path is escaped with the quote-backslash-quote idiom on posix`() {
         val command =
-            detector.generateCommand(detectedIn("/no-such-root/it's.py", Language.PYTHON), "/no-such-root", POSIX)
+            detector.generateCommand(
+                detectedIn("/no-such-root/it's.py", Language.PYTHON),
+                "/no-such-root",
+                forWindows = false,
+            )
         assertEquals("python3 '/no-such-root/it'\\''s.py'", command)
+    }
+
+    @Test
+    fun `single quote in path is doubled for powershell, not backslash-escaped`() {
+        // BossConsole#594: 'it'\''s' is a PowerShell parse error ("The string is missing
+        // the terminator: '."); PowerShell doubles the embedded quote instead.
+        val command =
+            detector.generateCommand(
+                detectedIn("C:\\Users\\it's\\app.py", Language.PYTHON),
+                "C:\\Users",
+                forWindows = true,
+            )
+        assertEquals("python3 'C:\\Users\\it''s\\app.py'", command)
     }
 
     @Test
     fun `javascript and typescript commands use node and ts-node`() {
         assertEquals(
             "node '/no-such-root/tool.js'",
-            detector.generateCommand(detectedIn("/no-such-root/tool.js", Language.JAVASCRIPT), "/no-such-root", POSIX),
+            detector.generateCommand(
+                detectedIn("/no-such-root/tool.js", Language.JAVASCRIPT),
+                "/no-such-root",
+                forWindows = false,
+            ),
         )
         assertEquals(
             "npx ts-node '/no-such-root/tool.ts'",
-            detector.generateCommand(detectedIn("/no-such-root/tool.ts", Language.TYPESCRIPT), "/no-such-root", POSIX),
+            detector.generateCommand(
+                detectedIn("/no-such-root/tool.ts", Language.TYPESCRIPT),
+                "/no-such-root",
+                forWindows = false,
+            ),
         )
     }
 
@@ -346,7 +382,11 @@ class MainFunctionDetectorTest {
     fun `go command runs the file directly`() {
         assertEquals(
             "go run '/no-such-root/main.go'",
-            detector.generateCommand(detectedIn("/no-such-root/main.go", Language.GO), "/no-such-root", POSIX),
+            detector.generateCommand(
+                detectedIn("/no-such-root/main.go", Language.GO),
+                "/no-such-root",
+                forWindows = false,
+            ),
         )
     }
 
@@ -357,35 +397,7 @@ class MainFunctionDetectorTest {
             detector.generateCommand(
                 detectedIn("/no-such-root/build tool.kts", Language.KOTLIN),
                 "/no-such-root",
-                POSIX,
-            ),
-        )
-    }
-
-    // ==================== generateCommand: the Windows branch ====================
-    //
-    // The POSIX single-quote escape (`'\''`) is a parse error in PowerShell, which is
-    // what these used to emit on every platform: PowerShell reads `'it'` then a bare
-    // backslash, then `''s'` opens a string that never closes. An embedded quote is
-    // doubled there instead. These assert the Windows branch explicitly rather than
-    // through the host, so they cover it from any runner.
-
-    @Test
-    fun `windows quotes a path with an apostrophe the way PowerShell parses it`() {
-        assertEquals(
-            "python3 'C:\\Users\\it''s\\app.py'",
-            detector.generateCommand(detectedIn("C:\\Users\\it's\\app.py", Language.PYTHON), "C:\\Users", WINDOWS),
-        )
-    }
-
-    @Test
-    fun `windows leaves a plain path and its backslashes alone`() {
-        assertEquals(
-            "go run 'C:\\no-such-root\\app\\main.go'",
-            detector.generateCommand(
-                detectedIn("C:\\no-such-root\\app\\main.go", Language.GO),
-                "C:\\no-such-root",
-                WINDOWS,
+                forWindows = false,
             ),
         )
     }
@@ -403,7 +415,7 @@ class MainFunctionDetectorTest {
             detector.generateCommand(
                 detectedIn("/no-such-root/Main.kt", Language.KOTLIN),
                 "/no-such-root",
-                POSIX,
+                false,
                 "/var/tmp",
             ),
         )
@@ -417,7 +429,7 @@ class MainFunctionDetectorTest {
             detector.generateCommand(
                 detectedIn("C:\\no-such-root\\Main.kt", Language.KOTLIN),
                 "C:\\no-such-root",
-                WINDOWS,
+                true,
                 "C:\\Temp",
             ),
         )
@@ -430,7 +442,7 @@ class MainFunctionDetectorTest {
             detector.generateCommand(
                 detectedIn("/no-such-root/main.rs", Language.RUST),
                 "/no-such-root",
-                POSIX,
+                false,
                 "/var/tmp",
             ),
         )
@@ -443,7 +455,7 @@ class MainFunctionDetectorTest {
             detector.generateCommand(
                 detectedIn("C:\\no-such-root\\main.rs", Language.RUST),
                 "C:\\no-such-root",
-                WINDOWS,
+                true,
                 "C:\\Temp",
             ),
         )
@@ -456,7 +468,7 @@ class MainFunctionDetectorTest {
             detector.generateCommand(
                 detectedIn("C:\\no-such-root\\main.rs", Language.RUST),
                 "C:\\no-such-root",
-                WINDOWS,
+                true,
                 "C:\\it's temp",
             ),
         )
@@ -469,7 +481,7 @@ class MainFunctionDetectorTest {
             detector.generateCommand(
                 detectedIn("/no-such-root/a\\b.rs", Language.RUST),
                 "/no-such-root",
-                POSIX,
+                false,
                 "/var/tmp",
             ),
         )
@@ -482,7 +494,7 @@ class MainFunctionDetectorTest {
             detector.generateCommand(
                 detectedIn("C:\\no-such-root\\main.rs", Language.RUST),
                 "C:\\no-such-root",
-                WINDOWS,
+                true,
                 "C:\\Temp\\",
             ),
         )
@@ -491,7 +503,7 @@ class MainFunctionDetectorTest {
             detector.generateCommand(
                 detectedIn("/no-such-root/main.rs", Language.RUST),
                 "/no-such-root",
-                POSIX,
+                false,
                 "/var/tmp/",
             ),
         )

@@ -31,6 +31,14 @@ object PluginStoreClient {
             isLenient = true
         }
 
+    private fun endpoint(vararg segments: String): String =
+        PluginStoreConfig.pluginStoreUrl + "/" +
+            segments.joinToString("/") { segment ->
+                require(segment.isNotEmpty() && segment != "." && segment != "..") { "Invalid endpoint segment" }
+                // Encode raw values once, including literal percent signs, plus signs and separators.
+                segment.encodeURLParameter(spaceToPlus = false)
+            }
+
     private val httpClient: HttpClient by lazy {
         createHttpClient()
     }
@@ -48,7 +56,7 @@ object PluginStoreClient {
         sortBy: String = "downloads",
     ): PluginListResponse {
         val response =
-            httpClient.get("${PluginStoreConfig.pluginStoreUrl}/list") {
+            httpClient.get(endpoint("list")) {
                 parameter("page", page)
                 parameter("pageSize", pageSize)
                 parameter("sortBy", sortBy)
@@ -79,7 +87,7 @@ object PluginStoreClient {
             )
 
         val response =
-            httpClient.post("${PluginStoreConfig.pluginStoreUrl}/search") {
+            httpClient.post(endpoint("search")) {
                 contentType(ContentType.Application.Json)
                 header("apikey", PluginStoreConfig.anonKey)
                 setBody(json.encodeToString(SearchRequest.serializer(), request))
@@ -97,7 +105,7 @@ object PluginStoreClient {
      */
     suspend fun getPlugin(pluginId: String): PluginDetailResponse? {
         val response =
-            httpClient.get("${PluginStoreConfig.pluginStoreUrl}/$pluginId") {
+            httpClient.get(endpoint(pluginId)) {
                 header("apikey", PluginStoreConfig.anonKey)
             }
 
@@ -117,7 +125,7 @@ object PluginStoreClient {
      */
     suspend fun getPopularTags(limit: Int = 20): PopularTagsResponse {
         val response =
-            httpClient.get("${PluginStoreConfig.pluginStoreUrl}/tags/popular") {
+            httpClient.get(endpoint("tags", "popular")) {
                 parameter("limit", limit)
                 header("apikey", PluginStoreConfig.anonKey)
             }
@@ -138,7 +146,7 @@ object PluginStoreClient {
      */
     suspend fun getDownloadUrl(pluginId: String): DownloadInfoResponse {
         val response =
-            httpClient.get("${PluginStoreConfig.pluginStoreUrl}/$pluginId/download") {
+            httpClient.get(endpoint(pluginId, "download")) {
                 header("apikey", PluginStoreConfig.anonKey)
                 PluginStoreConfig.accessToken?.let {
                     header("Authorization", "Bearer $it")
@@ -160,7 +168,7 @@ object PluginStoreClient {
         version: String,
     ): DownloadInfoResponse {
         val response =
-            httpClient.get("${PluginStoreConfig.pluginStoreUrl}/$pluginId/download/$version") {
+            httpClient.get(endpoint(pluginId, "download", version)) {
                 header("apikey", PluginStoreConfig.anonKey)
                 PluginStoreConfig.accessToken?.let {
                     header("Authorization", "Bearer $it")
@@ -191,7 +199,7 @@ object PluginStoreClient {
                 ?: throw PluginStoreException("Authentication required to rate plugins")
 
         val response =
-            httpClient.post("${PluginStoreConfig.pluginStoreUrl}/$pluginId/rate") {
+            httpClient.post(endpoint(pluginId, "rate")) {
                 contentType(ContentType.Application.Json)
                 header("apikey", PluginStoreConfig.anonKey)
                 header("Authorization", "Bearer $accessToken")
@@ -215,7 +223,7 @@ object PluginStoreClient {
     suspend fun checkHealth(): Boolean =
         try {
             val response =
-                httpClient.get("${PluginStoreConfig.pluginStoreUrl}/health") {
+                httpClient.get(endpoint("health")) {
                     header("apikey", PluginStoreConfig.anonKey)
                 }
             response.status.isSuccess()
@@ -249,7 +257,7 @@ object PluginStoreClient {
                 ?: throw PluginStoreException("Authentication required to publish plugins")
 
         val response =
-            httpClient.post("${PluginStoreConfig.pluginStoreUrl}/publish") {
+            httpClient.post(endpoint("publish")) {
                 contentType(ContentType.Application.Json)
                 header("apikey", PluginStoreConfig.anonKey)
                 header("Authorization", "Bearer $accessToken")
@@ -281,7 +289,7 @@ object PluginStoreClient {
                 ?: throw PluginStoreException("Authentication required to publish versions")
 
         val response =
-            httpClient.post("${PluginStoreConfig.pluginStoreUrl}/$pluginId/version") {
+            httpClient.post(endpoint(pluginId, "version")) {
                 contentType(ContentType.Application.Json)
                 header("apikey", PluginStoreConfig.anonKey)
                 header("Authorization", "Bearer $accessToken")
@@ -330,7 +338,7 @@ object PluginStoreClient {
                 ?: throw PluginStoreException("Authentication required to finalize versions")
 
         val response =
-            httpClient.post("${PluginStoreConfig.pluginStoreUrl}/version/finalize") {
+            httpClient.post(endpoint("version", "finalize")) {
                 contentType(ContentType.Application.Json)
                 header("apikey", PluginStoreConfig.anonKey)
                 header("Authorization", "Bearer $accessToken")
@@ -371,7 +379,7 @@ object PluginStoreClient {
                 ?: throw PluginStoreException("Authentication required for admin actions")
 
         val response =
-            httpClient.post("${PluginStoreConfig.pluginStoreUrl}/admin/$pluginId/publish") {
+            httpClient.post(endpoint("admin", pluginId, "publish")) {
                 contentType(ContentType.Application.Json)
                 header("apikey", PluginStoreConfig.anonKey)
                 header("Authorization", "Bearer $accessToken")
@@ -400,7 +408,7 @@ object PluginStoreClient {
                 ?: throw PluginStoreException("Authentication required for admin actions")
 
         val response =
-            httpClient.delete("${PluginStoreConfig.pluginStoreUrl}/admin/$pluginId") {
+            httpClient.delete(endpoint("admin", pluginId)) {
                 header("apikey", PluginStoreConfig.anonKey)
                 header("Authorization", "Bearer $accessToken")
             }
@@ -430,7 +438,7 @@ object PluginStoreClient {
                 ?: throw PluginStoreException("Authentication required for admin actions")
 
         val response =
-            httpClient.post("${PluginStoreConfig.pluginStoreUrl}/admin/$pluginId/verify") {
+            httpClient.post(endpoint("admin", pluginId, "verify")) {
                 contentType(ContentType.Application.Json)
                 header("apikey", PluginStoreConfig.anonKey)
                 header("Authorization", "Bearer $accessToken")
@@ -463,7 +471,7 @@ object PluginStoreClient {
                 ?: throw PluginStoreException("JWT authentication required to create API keys")
 
         val response =
-            httpClient.post("${PluginStoreConfig.pluginStoreUrl}/api-keys") {
+            httpClient.post(endpoint("api-keys")) {
                 contentType(ContentType.Application.Json)
                 header("apikey", PluginStoreConfig.anonKey)
                 header("Authorization", "Bearer $accessToken")
@@ -492,7 +500,7 @@ object PluginStoreClient {
                 ?: throw PluginStoreException("JWT authentication required to list API keys")
 
         val response =
-            httpClient.get("${PluginStoreConfig.pluginStoreUrl}/api-keys") {
+            httpClient.get(endpoint("api-keys")) {
                 header("apikey", PluginStoreConfig.anonKey)
                 header("Authorization", "Bearer $accessToken")
             }
@@ -519,7 +527,7 @@ object PluginStoreClient {
                 ?: throw PluginStoreException("JWT authentication required to revoke API keys")
 
         val response =
-            httpClient.delete("${PluginStoreConfig.pluginStoreUrl}/api-keys/$keyId") {
+            httpClient.delete(endpoint("api-keys", keyId)) {
                 header("apikey", PluginStoreConfig.anonKey)
                 header("Authorization", "Bearer $accessToken")
             }

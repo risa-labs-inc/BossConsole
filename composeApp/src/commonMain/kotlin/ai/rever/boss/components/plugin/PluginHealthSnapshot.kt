@@ -32,5 +32,17 @@ internal fun currentPluginHealth(manager: DynamicPluginManager): PluginHealthSna
             incompatiblePluginIds = PluginCrashRegistry.incompatiblePlugins.value,
         )
     val sandboxDisabled = states.keys.filterTo(mutableSetOf()) { manager.sandboxManager.isPluginDisabled(it) }
-    return PluginHealthSnapshot(healthRowsWithSandboxDisables(rows, sandboxDisabled), sandboxDisabled)
+    return pluginHealthSnapshot(rows, sandboxDisabled)
+}
+
+/** Keep intentional disables out of watchdog findings without hiding existing manager errors. */
+internal fun pluginHealthSnapshot(
+    rows: List<PluginHealthRow>,
+    sandboxDisabled: Set<String>,
+): PluginHealthSnapshot {
+    val stopped =
+        rows
+            .filter { it.status == PluginHealthStatus.HEALTHY && it.pluginId in sandboxDisabled }
+            .mapTo(mutableSetOf()) { it.pluginId }
+    return PluginHealthSnapshot(healthRowsWithSandboxDisables(rows, stopped), stopped)
 }

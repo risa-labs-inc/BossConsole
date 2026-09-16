@@ -118,7 +118,11 @@ class DevPluginReloaderTest {
             val pluginId = "protected-test-plugin"
             val stagingRoot = DevPluginArtifacts.stagingRoot()
             val vDir = File(stagingRoot, "$pluginId/v1000").apply { mkdirs() }
-            File(vDir, "$pluginId.jar").writeText("valid-dev-jar")
+            java.util.jar.JarOutputStream(File(vDir, "$pluginId.jar").outputStream()).use { jar ->
+                jar.putNextEntry(java.util.jar.JarEntry("META-INF/boss-plugin/plugin.json"))
+                jar.write("""{"pluginId":"$pluginId"}""".toByteArray())
+                jar.closeEntry()
+            }
 
             val manager1 = createManager()
             val manager2 = createManager()

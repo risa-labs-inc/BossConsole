@@ -107,7 +107,7 @@ class SecretServiceBridgeTest {
                 assertFailsWith<StatusException> {
                     anonymousCaller().getUserSecrets(SecretPaginatedRequest.newBuilder().build())
                 }
-            assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+            assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
             assertEquals(0, provider.getUserSecretsCalls.get())
         }
 
@@ -118,7 +118,7 @@ class SecretServiceBridgeTest {
                 assertFailsWith<StatusException> {
                     anonymousCaller().getUserSecretsWithSharingInfo(SecretPaginatedRequest.newBuilder().build())
                 }
-            assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+            assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
             assertEquals(0, provider.getUserSecretsWithSharingCalls.get())
         }
 
@@ -129,7 +129,7 @@ class SecretServiceBridgeTest {
                 assertFailsWith<StatusException> {
                     anonymousCaller().searchSecrets(SearchSecretsRequest.newBuilder().setQuery("q").build())
                 }
-            assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+            assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
             assertEquals(0, provider.searchSecretsCalls.get())
         }
 
@@ -142,7 +142,7 @@ class SecretServiceBridgeTest {
                         CreateSecretProtoRequest.newBuilder().setWebsite("evil.example").build(),
                     )
                 }
-            assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+            assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
             assertEquals(0, provider.createSecretCalls.get())
         }
 
@@ -168,7 +168,7 @@ class SecretServiceBridgeTest {
                 assertFailsWith<StatusException> {
                     anonymousCaller().deleteSecret(SecretIdRequest.newBuilder().setId("s1").build())
                 }
-            assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+            assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
             assertEquals(0, provider.deleteSecretCalls.get())
         }
 
@@ -181,7 +181,7 @@ class SecretServiceBridgeTest {
                         UpdateSecretProtoRequest.newBuilder().setSecretId("s1").build(),
                     )
                 }
-            assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+            assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
             assertEquals(0, provider.updateSecretCalls.get())
         }
 
@@ -222,7 +222,7 @@ class SecretServiceBridgeTest {
                     assertFailsWith<StatusException> {
                         lateAnonymous.getUserSecrets(SecretPaginatedRequest.newBuilder().build())
                     }
-                assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+                assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
                 assertEquals(0, provider.getUserSecretsCalls.get())
 
                 val response = lateAuthenticated.getUserSecrets(SecretPaginatedRequest.newBuilder().build())
@@ -260,7 +260,7 @@ class SecretServiceBridgeTest {
                 assertFailsWith<StatusException> {
                     revocable.getUserSecrets(SecretPaginatedRequest.newBuilder().build())
                 }
-            assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+            assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
             assertEquals(1, provider.getUserSecretsCalls.get(), "the revoked call must not have reached the vault")
         }
 
@@ -275,8 +275,8 @@ class SecretServiceBridgeTest {
                 assertFailsWith<StatusException> {
                     anonymousCaller().unshareSecret(UnshareSecretProtoRequest.newBuilder().setSecretId("s1").build())
                 }
-            assertEquals(Status.Code.PERMISSION_DENIED, shareFailure.status.code)
-            assertEquals(Status.Code.PERMISSION_DENIED, unshareFailure.status.code)
+            assertEquals(Status.Code.UNAUTHENTICATED, shareFailure.status.code)
+            assertEquals(Status.Code.UNAUTHENTICATED, unshareFailure.status.code)
             assertEquals(0, provider.shareSecretCalls.get())
             assertEquals(0, provider.unshareSecretCalls.get())
         }
@@ -288,7 +288,7 @@ class SecretServiceBridgeTest {
                 assertFailsWith<StatusException> {
                     anonymousCaller().getSecretShares(SecretIdRequest.newBuilder().setId("s1").build())
                 }
-            assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+            assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
             assertEquals(0, provider.getSecretSharesCalls.get())
         }
 

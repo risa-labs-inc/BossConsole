@@ -72,7 +72,7 @@ object KeePassXmlParser {
      */
     // A leading BOM is stripped first (written as an escape: a literal U+FEFF is
     // invisible and ktlintFormat would silently remove it).
-    fun looksLikeKeePass(text: String): Boolean = ROOT_ELEMENT.containsMatchIn(text.removePrefix("\uFEFF"))
+    fun looksLikeKeePass(text: String): Boolean = ROOT_ELEMENT.containsMatchIn(text.take(4096).removePrefix("\uFEFF"))
 
     private val ROOT_ELEMENT =
         Regex(

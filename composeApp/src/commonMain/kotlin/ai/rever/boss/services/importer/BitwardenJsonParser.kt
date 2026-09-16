@@ -51,8 +51,10 @@ object BitwardenJsonParser {
         // An encrypted export (`"encrypted": true`) has no readable passwords.
         val items =
             root
-                ?.takeIf { it["encrypted"] == null || (it["encrypted"] as? JsonPrimitive)?.contentOrNull == "false" }
-                ?.get("items") as? JsonArray
+                ?.takeIf {
+                    it["encrypted"] == null || it["encrypted"] == kotlinx.serialization.json.JsonNull ||
+                        (it["encrypted"] as? JsonPrimitive)?.contentOrNull == "false"
+                }?.get("items") as? JsonArray
                 ?: return emptyList()
         return items.mapNotNull { element -> (element as? JsonObject)?.let(::loginOf) }
     }

@@ -1,5 +1,8 @@
 package ai.rever.boss.ipc
 
+import ai.rever.boss.ipc.auth.IpcClientCredentials
+import ai.rever.boss.ipc.auth.IpcTlsIdentity
+import ai.rever.boss.ipc.auth.ProcessTokenClientInterceptor
 import io.grpc.ClientInterceptor
 import io.grpc.ConnectivityState
 import io.grpc.ManagedChannel
@@ -14,33 +17,38 @@ import java.util.concurrent.TimeUnit
  *
  * Usage:
  * ```kotlin
- * val client = BossIpcClient(address)
+ * val client = BossIpcClient(address, credentials)
  * val channel = client.channel
  * val stub = MyServiceGrpcKt.MyServiceCoroutineStub(channel)
  * ```
  */
 class BossIpcClient(
     private val address: String,
-    private val usePlaintext: Boolean = true,
-    /**
-     * Applied to every call this client's channel makes, in order. Empty by default, which changes
-     * nothing about how this class behaves — the one caller that populates it today is
-     * [ChildProcessBootstrap], attaching a [ai.rever.boss.ipc.auth.ProcessTokenClientInterceptor] so
-     * the kernel can verify who is calling (BossConsole#53).
-     */
+    private val credentials: IpcClientCredentials,
     private val interceptors: List<ClientInterceptor> = emptyList(),
 ) {
     private val logger = LoggerFactory.getLogger(BossIpcClient::class.java)
 
-    val channel: ManagedChannel by lazy {
+    private val lifecycle = Any()
+    private var existingChannel: ManagedChannel? = null
+    private var closed = false
+
+    val channel: ManagedChannel
+        get() =
+            synchronized(lifecycle) {
+                check(!closed) { "IPC client has been closed" }
+                existingChannel ?: buildChannel().also { existingChannel = it }
+            }
+
+    private fun buildChannel(): ManagedChannel {
         val builder = IpcAddressResolver.configureChannelBuilder(address)
-        if (usePlaintext) {
-            builder.usePlaintext()
-        }
+        builder.sslContext(IpcTlsIdentity.clientContext(credentials.certificateBase64))
+        builder.overrideAuthority(IpcTlsIdentity.AUTHORITY)
+        builder.intercept(ProcessTokenClientInterceptor(credentials.token))
         if (interceptors.isNotEmpty()) {
             builder.intercept(interceptors)
         }
-        builder.build().also {
+        return builder.build().also {
             logger.info("IPC client connected to: {}", address)
         }
     }
@@ -76,18 +84,22 @@ class BossIpcClient(
      * Check if the channel is currently connected.
      */
     val isConnected: Boolean
-        get() = channel.getState(false) == ConnectivityState.READY
+        get() = synchronized(lifecycle) { existingChannel?.getState(false) == ConnectivityState.READY }
 
     /**
      * Gracefully shut down the channel.
      */
     fun shutdown(timeoutMs: Long = 5_000) {
-        if (!channel.isShutdown) {
+        val current =
+            synchronized(lifecycle) {
+                closed = true
+                existingChannel
+            } ?: return
+        if (!current.isShutdown) {
             logger.info("Shutting down IPC client to: {}", address)
-            channel.shutdown()
-            if (!channel.awaitTermination(timeoutMs, TimeUnit.MILLISECONDS)) {
-                logger.warn("IPC client did not terminate in {}ms, forcing", timeoutMs)
-                channel.shutdownNow()
+            current.shutdown()
+            if (!current.awaitTermination(timeoutMs, TimeUnit.MILLISECONDS)) {
+                current.shutdownNow()
             }
         }
     }

@@ -29,6 +29,11 @@ class HeadlessOutputEncodingTest {
     lateinit var tempDir: Path
 
     @Test
+    fun `runtime stays on the JDK 17 console encoding contract`() {
+        assertEquals(17, Runtime.version().feature(), "Revalidate console detection before changing the shipped JDK")
+    }
+
+    @Test
     fun `only a stream the JVM did not mark as a console is switched to UTF-8`() {
         assertTrue(writesUtf8(null))
         assertTrue(writesUtf8(""))

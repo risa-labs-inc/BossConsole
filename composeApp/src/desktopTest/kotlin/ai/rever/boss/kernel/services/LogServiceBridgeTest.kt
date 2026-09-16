@@ -143,7 +143,7 @@ class LogServiceBridgeTest {
                         tokenRegistry.revoke(CALLER)
                         provider.setLogs(listOf(LogEntryData(1L, "after", LogSourceData.STDOUT)))
                         val failure = assertFailsWith<StatusException> { watching.await() }
-                        assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+                        assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
                         assertTrue(received.tryReceive().isFailure, "revocation must prevent the next snapshot")
                     } finally {
                         watching.cancel()
@@ -155,7 +155,7 @@ class LogServiceBridgeTest {
 
     private suspend fun assertRefused(call: suspend () -> Unit) {
         val failure = assertFailsWith<StatusException> { call() }
-        assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+        assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
     }
 
     /** Records every method it was actually asked to perform, so a refusal can be proven silent. */

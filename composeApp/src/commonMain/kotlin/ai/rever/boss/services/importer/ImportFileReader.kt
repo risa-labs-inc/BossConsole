@@ -115,7 +115,7 @@ object ImportFileReader {
                 when {
                     entry.website.isBlank() || isNonWebPasswordEntry(entry.website) -> SkipReason.MISSING_URL
                     entry.username.isBlank() -> SkipReason.MISSING_USERNAME
-                    entry.password.isBlank() -> SkipReason.MISSING_PASSWORD
+                    entry.password.isEmpty() -> SkipReason.MISSING_PASSWORD
                     else -> null
                 }
             if (reason == null) {
@@ -197,7 +197,7 @@ object ImportFileReader {
     /**
      * Turn one CSV row into a credential, or say why it can't be used.
      *
-     * `CreateSecretRequest.validate()` rejects any blank field, so blanks are
+     * `CreateSecretRequest.validate()` rejects empty passwords and blank identities, so these are
      * filtered here rather than letting the RPC refuse them one at a time.
      * Exports legitimately contain such rows — a passkey-only entry carries a
      * username but no password.
@@ -223,7 +223,7 @@ object ImportFileReader {
                 row.size <= maxOf(columns.url, columns.password) -> SkipReason.MALFORMED_ROW
                 url.isEmpty() -> SkipReason.MISSING_URL
                 username.isEmpty() -> SkipReason.MISSING_USERNAME
-                password.isBlank() -> SkipReason.MISSING_PASSWORD
+                password.isEmpty() -> SkipReason.MISSING_PASSWORD
                 else -> null
             }
 
