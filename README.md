@@ -255,6 +255,7 @@ Scoped deliberately: this covers the **Docker and Kubernetes plugins only**, bec
 | Plugin | What it does |
 |--------|--------------|
 | **[Secret Manager](https://github.com/risa-labs-inc/boss-plugin-secret-manager)** | Encrypted credential vault - website/username/password, notes, tags, 2FA, expiry. Row-level-scoped to you, browser auto-fill, and permission-gated `secret_*` MCP tools. A second section lists what other people have shared with you, read-only |
+| **[BOSS Agent Guardrail](https://github.com/krish57-bit/boss-guardrail-plugin)** | Native safety middleware intercepting and blocking destructive AI agent terminal commands (`rm -rf`, `docker prune`, `curl \| bash`). Pops an interactive Compose Desktop approval sheet for the human operator to Allow or Deny. |
 
 ### Productivity & admin
 | Plugin | What it does |
