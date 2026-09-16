@@ -35,6 +35,7 @@ dependencies {
     implementation(project(":boss-ipc"))
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.slf4j.api)
+    implementation(libs.jna)
     runtimeOnly(libs.slf4j.simple)
 
     testImplementation(libs.kotlin.test.junit)

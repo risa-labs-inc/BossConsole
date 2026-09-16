@@ -1,23 +1,18 @@
 package ai.rever.boss.service.filesystem
 
+import ai.rever.boss.ipc.auth.ProcessAuthority
 import ai.rever.boss.ipc.proto.services.CreateFileRequest
 import ai.rever.boss.ipc.proto.services.DeleteFileRequest
 import ai.rever.boss.ipc.proto.services.FileSystemServiceGrpcKt
-import io.grpc.ManagedChannel
-import io.grpc.ManagedChannelBuilder
-import io.grpc.Server
 import io.grpc.Status
 import io.grpc.StatusException
-import io.grpc.netty.NettyServerBuilder
 import kotlinx.coroutines.runBlocking
 import org.junit.Assume.assumeTrue
 import java.io.File
 import java.io.IOException
-import java.net.InetSocketAddress
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.attribute.PosixFilePermission
-import java.util.concurrent.TimeUnit
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -26,7 +21,8 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class FileSystemServiceMutationTest {
-    private val service = FileSystemServiceImpl()
+    private val transport = AuthenticatedFileService(FileSystemServiceImpl())
+    private val service = AuthenticatedFileService.stub(transport.channelFor("mutation-host", ProcessAuthority.HOST))
     private val testDirectory =
         File.createTempFile("filesystem-service-mutation-", "").let { file ->
             file.delete()
@@ -36,6 +32,7 @@ class FileSystemServiceMutationTest {
 
     @AfterTest
     fun cleanUp() {
+        transport.close()
         testDirectory.deleteRecursively()
     }
 
@@ -100,20 +97,22 @@ class FileSystemServiceMutationTest {
     }
 
     @Test
-    fun `create with a missing parent preserves the I O exception`() {
+    fun `create with a missing parent reports the deferred I O failure over authenticated transport`() {
         val file = testDirectory.resolve("missing-parent/file.txt")
 
-        assertFailsWith<IOException> { createFile(file) }
+        val error = assertFailsWith<StatusException> { createFile(file) }
+        assertEquals(Status.Code.UNKNOWN, error.status.code)
 
         assertFalse(file.exists())
     }
 
     @Test
-    fun `create with a regular-file parent preserves the I O exception`() {
+    fun `create with a regular-file parent reports the deferred I O failure over authenticated transport`() {
         val parent = testDirectory.resolve("regular-file-parent").apply { createNewFile() }
         val file = parent.resolve("child.txt")
 
-        assertFailsWith<IOException> { createFile(file) }
+        val error = assertFailsWith<StatusException> { createFile(file) }
+        assertEquals(Status.Code.UNKNOWN, error.status.code)
 
         assertFalse(file.exists())
     }
@@ -286,22 +285,6 @@ class FileSystemServiceMutationTest {
     }
 
     private fun withGrpcService(block: (FileSystemServiceGrpcKt.FileSystemServiceCoroutineStub) -> Unit) {
-        val server: Server =
-            NettyServerBuilder
-                .forAddress(InetSocketAddress("127.0.0.1", 0))
-                .addService(service)
-                .build()
-                .start()
-        val channel: ManagedChannel =
-            ManagedChannelBuilder
-                .forAddress("127.0.0.1", server.port)
-                .usePlaintext()
-                .build()
-        try {
-            block(FileSystemServiceGrpcKt.FileSystemServiceCoroutineStub(channel))
-        } finally {
-            channel.shutdownNow().awaitTermination(5, TimeUnit.SECONDS)
-            server.shutdownNow().awaitTermination(5, TimeUnit.SECONDS)
-        }
+        block(service)
     }
 }
