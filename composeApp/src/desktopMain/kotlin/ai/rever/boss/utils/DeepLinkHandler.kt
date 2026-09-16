@@ -195,7 +195,11 @@ actual object DeepLinkHandler {
             try {
                 Desktop.getDesktop().setOpenURIHandler { event ->
                     val uri = event.uri.toString()
-                    logger.info(LogCategory.SYSTEM, "Received deep link (macOS)", mapOf("uri" to LogSanitizer.maskUriParams(uri)))
+                    logger.info(
+                        LogCategory.SYSTEM,
+                        "Received deep link (macOS)",
+                        mapOf("uri" to LogSanitizer.describeUri(uri)),
+                    )
 
                     // Handle http/https URLs for default browser functionality
                     if (uri.startsWith("http://") || uri.startsWith("https://")) {
@@ -239,7 +243,7 @@ actual object DeepLinkHandler {
                         logger.info(
                             LogCategory.SYSTEM,
                             "Received deep link (Windows via Desktop)",
-                            mapOf("uri" to LogSanitizer.maskUriParams(uri)),
+                            mapOf("uri" to LogSanitizer.describeUri(uri)),
                         )
 
                         // Handle http/https URLs for default browser functionality
@@ -266,7 +270,7 @@ actual object DeepLinkHandler {
             try {
                 Desktop.getDesktop().setOpenURIHandler { event ->
                     val uri = event.uri.toString()
-                    logger.info(LogCategory.SYSTEM, "Received deep link", mapOf("uri" to LogSanitizer.maskUriParams(uri)))
+                    logger.info(LogCategory.SYSTEM, "Received deep link", mapOf("uri" to LogSanitizer.describeUri(uri)))
 
                     // Handle http/https URLs for default browser functionality
                     if (uri.startsWith("http://") || uri.startsWith("https://")) {
@@ -322,7 +326,7 @@ actual object DeepLinkHandler {
             logger.info(
                 LogCategory.SYSTEM,
                 "Received deep link from command line",
-                mapOf("uri" to LogSanitizer.maskUriParams(link)),
+                mapOf("uri" to LogSanitizer.describeUri(link)),
             )
             // A link in this process's argv is how a registered protocol handler
             // or a file association delivers something somebody asked the OS to
@@ -363,7 +367,10 @@ actual object DeepLinkHandler {
         logger.info(
             LogCategory.SYSTEM,
             "Processing deep link",
-            mapOf("uri" to LogSanitizer.maskUriParams(uri), "origin" to origin.name),
+            // Every line here that logs a whole link logs its shape only. The query can be another URL
+            // (`boss://url?url=`), a command (`boss://terminal?command=`) or a credential under a name
+            // maskUriParams does not list, and these lines are INFO or WARN.
+            mapOf("uri" to LogSanitizer.describeUri(uri), "origin" to origin.name),
         )
 
         // Routes match the whole host, never a prefix, so an unknown longer host
@@ -378,7 +385,7 @@ actual object DeepLinkHandler {
             logger.warn(
                 LogCategory.SYSTEM,
                 "Deep link host is not routed, passing to the auth/other flow",
-                mapOf("uri" to LogSanitizer.maskUriParams(uri)),
+                mapOf("uri" to LogSanitizer.describeUri(uri)),
             )
             _deepLinkFlow.value = uri
             return null
@@ -726,7 +733,7 @@ actual object DeepLinkHandler {
             .getInstance()
             .queueCommand(cliCommand)
 
-        logger.info(LogCategory.BROWSER, "URL command queued", mapOf("url" to url))
+        logger.info(LogCategory.BROWSER, "URL command queued", mapOf("url" to LogSanitizer.describeUri(url)))
     }
 
     /**

@@ -12,6 +12,7 @@ import ai.rever.boss.utils.WindowFocusManager
 import ai.rever.boss.utils.extractFileName
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.LogSanitizer
 import ai.rever.boss.window.Project
 import ai.rever.boss.window.WindowManager
 import kotlinx.coroutines.*
@@ -232,7 +233,7 @@ class CLICommandHandler private constructor() {
         // Normalize and validate URL (adds https:// if missing)
         val normalizedUrl = CLISecurityValidator.normalizeAndValidateUrl(url)
         if (normalizedUrl == null) {
-            logger.warn(LogCategory.SYSTEM, "Invalid URL", mapOf("url" to url))
+            logger.warn(LogCategory.SYSTEM, "Invalid URL", mapOf("url" to LogSanitizer.describeUri(url)))
             return
         }
 
