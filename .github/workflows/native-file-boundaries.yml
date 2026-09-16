@@ -2,6 +2,9 @@ name: Native file boundaries
 
 on:
   push:
+    # Match the main build: PR merge trees cover feature branches, and pushes
+    # cover integration branches. Avoid two five-job matrices per PR update.
+    branches: [main, develop, dev]
     paths:
       - 'modules/boss-native-files/**'
       - 'modules/boss-process-manager/**'
@@ -13,6 +16,10 @@ on:
       - 'modules/boss-process-manager/**'
       - '.github/workflows/native-file-boundaries.yml'
   workflow_dispatch:
+
+concurrency:
+  group: native-file-boundaries-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read

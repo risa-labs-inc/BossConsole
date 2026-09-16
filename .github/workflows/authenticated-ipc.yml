@@ -16,6 +16,10 @@ on:
       - '.github/workflows/authenticated-ipc.yml'
   workflow_dispatch:
 
+concurrency:
+  group: authenticated-ipc-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
