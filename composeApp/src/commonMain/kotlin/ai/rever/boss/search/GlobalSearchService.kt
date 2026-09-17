@@ -514,11 +514,9 @@ object GlobalSearchService {
      * Search commands/actions from KeymapActions.
      */
     private fun searchCommands(query: String): List<SearchResult.CommandResult> {
-        // BossConsole#700: an id with no Spotlight-reachable dispatch route (the editor verbs,
-        // the debug external-link entry) must not be offered as a selectable command at all -
-        // reporting it "unavailable" only after selection is the weaker fix the issue explicitly
-        // asks to avoid.
-        val allActionIds = KeymapActions.getAllActionIds().filterNot { it in SPOTLIGHT_UNSUPPORTED_COMMAND_IDS }
+        // Only advertise commands that the production selection dispatcher can execute. Keymap
+        // registration alone is not an execution capability (notably for editor plugin actions).
+        val allActionIds = SearchCommandCatalog.supportedActionIds
         val settings = KeymapSettingsManager.currentSettings.value
         val results = mutableListOf<SearchResult.CommandResult>()
 

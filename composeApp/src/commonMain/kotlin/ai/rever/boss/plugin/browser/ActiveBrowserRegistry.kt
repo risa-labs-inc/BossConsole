@@ -182,6 +182,14 @@ object ActiveBrowserRegistry {
      */
     fun republish() = publishWindows()
 
+    /** Read the strict menu-eligibility rule at selection time, including current handle liveness. */
+    fun hasActiveMainPanelBrowser(windowId: String): Boolean =
+        windowId in
+            activeBrowserWindows(
+                entries.values.toList(),
+                ::isLive,
+            )
+
     /** The browser a window-scoped action should act on in [windowId], or null if there is none. */
     fun activeIn(windowId: String): BrowserHandle? {
         val liveEntries = entries.values.filter { isLive(it.handleId) }

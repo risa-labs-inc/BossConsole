@@ -51,13 +51,13 @@ import ai.rever.boss.html.HtmlFileOpenMode
 import ai.rever.boss.html.HtmlFileSettingsManager
 import ai.rever.boss.icons.FileIcons
 import ai.rever.boss.keymap.KeymapSettingsManager
-import ai.rever.boss.keymap.model.KeymapActions
 import ai.rever.boss.mcp.McpToolRegistryImpl
 import ai.rever.boss.platform.rememberDirectoryPicker
 import ai.rever.boss.plugin.api.Panel.Companion.left
 import ai.rever.boss.plugin.api.Panel.Companion.top
 import ai.rever.boss.plugin.api.PluginLoaderDelegate
 import ai.rever.boss.plugin.api.TabInfo
+import ai.rever.boss.plugin.browser.ActiveBrowserRegistry
 import ai.rever.boss.plugin.sandbox.notification.ToastMessage
 import ai.rever.boss.plugin.sandbox.notification.ToastType
 import ai.rever.boss.plugin.tab.codeeditor.EditorTabInfo
@@ -69,7 +69,10 @@ import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.project.DefaultWorkingDirectory
 import ai.rever.boss.run.RunConfigurationManager
 import ai.rever.boss.run.RunExecutionService
-import ai.rever.boss.search.SPOTLIGHT_UNSUPPORTED_COMMAND_IDS
+import ai.rever.boss.search.SearchCommandDispatchOutcome
+import ai.rever.boss.search.SearchCommandDispatcher
+import ai.rever.boss.search.SearchCommandInvocation
+import ai.rever.boss.search.SearchCommandTargets
 import ai.rever.boss.search.SearchSources
 import ai.rever.boss.search.ToolSearchRecord
 import ai.rever.boss.search.rememberSpotlightFileIndexer
@@ -82,6 +85,7 @@ import ai.rever.boss.terminal.TerminalLinkSettingsManager
 import ai.rever.boss.utils.WindowFocusManager
 import ai.rever.boss.utils.extractFileName
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.window.ClosedTabHistory
 import ai.rever.boss.window.MenuActionsHandler
 import ai.rever.boss.window.Project
 import ai.rever.boss.window.WindowOperations
@@ -577,139 +581,183 @@ internal fun BossAppDialogs(state: BossAppState) {
                 state.focusRequester.requestFocus()
             },
             onCommandSelect = { actionId ->
-                state.showGlobalSearchDialog = false
-                // Execute the command via MenuActionsHandler
-                when (actionId) {
-                    KeymapActions.WINDOW_NEW -> {
-                        WindowOperations.createNewWindow()
-                    }
-
-                    KeymapActions.WINDOW_CLOSE -> {
-                        WindowOperations.closeWindow(windowId)
-                    }
-
-                    KeymapActions.TAB_NEW -> {
-                        MenuActionsHandler.triggerNewTab(windowId)
-                    }
-
-                    KeymapActions.TAB_CLOSE -> {
-                        MenuActionsHandler.triggerCloseTab(windowId)
-                    }
-
-                    KeymapActions.BROWSER_RELOAD -> {
-                        MenuActionsHandler.triggerReloadBrowser(windowId)
-                    }
-
-                    KeymapActions.BROWSER_ZOOM_RESET -> {
-                        MenuActionsHandler.triggerActualSize(windowId)
-                    }
-
-                    KeymapActions.BROWSER_ZOOM_IN -> {
-                        MenuActionsHandler.triggerZoomIn(windowId)
-                    }
-
-                    KeymapActions.BROWSER_ZOOM_OUT -> {
-                        MenuActionsHandler.triggerZoomOut(windowId)
-                    }
-
-                    KeymapActions.PANEL_NAVIGATE_LEFT -> {
-                        MenuActionsHandler.triggerNavigatePanelLeft(windowId)
-                    }
-
-                    KeymapActions.PANEL_NAVIGATE_RIGHT -> {
-                        MenuActionsHandler.triggerNavigatePanelRight(windowId)
-                    }
-
-                    KeymapActions.PANEL_NAVIGATE_UP -> {
-                        MenuActionsHandler.triggerNavigatePanelUp(windowId)
-                    }
-
-                    KeymapActions.PANEL_NAVIGATE_DOWN -> {
-                        MenuActionsHandler.triggerNavigatePanelDown(windowId)
-                    }
-
-                    KeymapActions.PANEL_SPLIT_VERTICAL -> {
-                        MenuActionsHandler.triggerSplitVertically(windowId)
-                    }
-
-                    KeymapActions.PANEL_SPLIT_HORIZONTAL -> {
-                        MenuActionsHandler.triggerSplitHorizontally(windowId)
-                    }
-
-                    KeymapActions.QUICK_SWITCHER_OPEN -> {
-                        openTopOfMindQuickSwitcher(windowId, coroutineScope)
-                    }
-
-                    KeymapActions.WORKSPACE_SAVE -> {
-                        MenuActionsHandler.triggerSaveWorkspace(windowId)
-                    }
-
-                    KeymapActions.CODEBASE_OPEN -> {
-                        MenuActionsHandler.triggerOpenCodebase(windowId)
-                    }
-
-                    KeymapActions.GLOBAL_SEARCH_OPEN -> {
-                        state.showGlobalSearchDialog = true
-                    }
-
-                    KeymapActions.FOCUS_MODE_TOGGLE -> {
-                        MenuActionsHandler.triggerToggleFocusMode(windowId)
-                    }
-
-                    KeymapActions.CHROME_DENSITY_CYCLE -> {
-                        MenuActionsHandler.triggerChromeDensityCycle(windowId)
-                    }
-
-                    KeymapActions.SETTINGS_OPEN -> {
-                        MenuActionsHandler.triggerOpenSettings(windowId)
-                    }
-
-                    KeymapActions.HELP_SHORTCUTS -> {
-                        MenuActionsHandler.triggerShowShortcutHelp(windowId)
-                    }
-
-                    else -> {
-                        // Every tab-navigation and browser-history command Spotlight advertises
-                        // (BossConsole#700) - previously silently discarded here.
-                        when (val outcome = dispatchSpotlightTabBrowserCommand(actionId, windowId)) {
-                            is SpotlightDispatchOutcome.Dispatched -> {}
-
-                            // Recognized, but the state it needs (another tab, a closed-tab
-                            // history entry, a tab at that position) is not there right now.
-                            is SpotlightDispatchOutcome.Unavailable -> {
-                                StatusMessageManager.showMessage(
-                                    "\"${KeymapActions.getDescription(actionId)}\": ${outcome.reason}",
-                                    durationMs = 4_000L,
-                                )
+                var restoreMainWindowFocus = true
+                val targets =
+                    SearchCommandTargets(
+                        activePanelTabCount =
+                            splitViewState
+                                .getActiveTabsComponent()
+                                ?.tabsState
+                                ?.value
+                                ?.tabs
+                                ?.size ?: 0,
+                        hasClosedTabs = ClosedTabHistory.hasEntries(windowId),
+                        hasActiveBrowser = ActiveBrowserRegistry.hasActiveMainPanelBrowser(windowId),
+                    )
+                val outcome =
+                    SearchCommandDispatcher.dispatch(actionId, windowId, targets) { invocation ->
+                        // Close before emitting an event so focus-taking commands do not compete
+                        // with Spotlight's dialog window.
+                        state.showGlobalSearchDialog = false
+                        val targetWindow = invocation.windowId
+                        when (invocation.action) {
+                            SearchCommandInvocation.Action.WINDOW_NEW -> {
+                                WindowOperations.createNewWindow()
                             }
 
-                            SpotlightDispatchOutcome.NotRecognized -> {
-                                // A catalog id neither handled above, dispatched, nor named
-                                // unsupported - SpotlightCommandCoverageTest exists to catch this
-                                // before it ships. Reaching it here anyway (GlobalSearchService
-                                // already excludes SPOTLIGHT_UNSUPPORTED_COMMAND_IDS from
-                                // Spotlight's results, so this would mean a stale result list
-                                // from before a dismiss/reopen) is a wiring bug for an
-                                // unclassified id, not a user-facing limitation - log it there,
-                                // but show the same message either way rather than discarding
-                                // the selection with no signal.
-                                if (actionId !in SPOTLIGHT_UNSUPPORTED_COMMAND_IDS) {
-                                    logger.warn(
-                                        LogCategory.UI,
-                                        "Spotlight command has no dispatch route",
-                                        mapOf("actionId" to actionId),
-                                    )
+                            SearchCommandInvocation.Action.WINDOW_CLOSE -> {
+                                WindowOperations.closeWindow(targetWindow!!)
+                            }
+
+                            SearchCommandInvocation.Action.TAB_NEW -> {
+                                MenuActionsHandler.triggerNewTab(targetWindow!!)
+                            }
+
+                            SearchCommandInvocation.Action.TAB_CLOSE -> {
+                                MenuActionsHandler.triggerCloseTab(targetWindow!!)
+                            }
+
+                            SearchCommandInvocation.Action.TAB_NEXT -> {
+                                MenuActionsHandler.triggerNextTab(targetWindow!!)
+                            }
+
+                            SearchCommandInvocation.Action.TAB_PREVIOUS -> {
+                                MenuActionsHandler.triggerPreviousTab(targetWindow!!)
+                            }
+
+                            SearchCommandInvocation.Action.TAB_CYCLE_COMMIT -> {
+                                MenuActionsHandler.triggerCommitTabCycle(targetWindow!!)
+                            }
+
+                            SearchCommandInvocation.Action.TAB_REOPEN_CLOSED -> {
+                                MenuActionsHandler.triggerReopenClosedTab(targetWindow!!)
+                            }
+
+                            SearchCommandInvocation.Action.TAB_NEXT_POSITIONAL -> {
+                                MenuActionsHandler.triggerNextTabPositional(targetWindow!!)
+                            }
+
+                            SearchCommandInvocation.Action.TAB_PREVIOUS_POSITIONAL -> {
+                                MenuActionsHandler.triggerPreviousTabPositional(targetWindow!!)
+                            }
+
+                            SearchCommandInvocation.Action.TAB_SELECT_INDEX -> {
+                                if (invocation.index == MenuActionsHandler.LAST_TAB_INDEX) {
+                                    MenuActionsHandler.triggerSelectLastTab(targetWindow!!)
+                                } else {
+                                    MenuActionsHandler.triggerSelectTabByIndex(targetWindow!!, invocation.index!!)
                                 }
-                                val description = KeymapActions.getDescription(actionId)
-                                StatusMessageManager.showMessage(
-                                    "\"$description\" isn't available from Spotlight yet",
-                                    durationMs = 4_000L,
-                                )
+                            }
+
+                            SearchCommandInvocation.Action.BROWSER_RELOAD -> {
+                                MenuActionsHandler.triggerReloadBrowser(targetWindow!!)
+                            }
+
+                            SearchCommandInvocation.Action.BROWSER_ZOOM_RESET -> {
+                                MenuActionsHandler.triggerActualSize(targetWindow!!)
+                            }
+
+                            SearchCommandInvocation.Action.BROWSER_ZOOM_IN -> {
+                                MenuActionsHandler.triggerZoomIn(targetWindow!!)
+                            }
+
+                            SearchCommandInvocation.Action.BROWSER_ZOOM_OUT -> {
+                                MenuActionsHandler.triggerZoomOut(targetWindow!!)
+                            }
+
+                            SearchCommandInvocation.Action.BROWSER_FIND -> {
+                                restoreMainWindowFocus = false
+                                MenuActionsHandler.triggerBrowserFind(targetWindow!!)
+                            }
+
+                            SearchCommandInvocation.Action.BROWSER_BACK -> {
+                                MenuActionsHandler.triggerBrowserBack(targetWindow!!)
+                            }
+
+                            SearchCommandInvocation.Action.BROWSER_FORWARD -> {
+                                MenuActionsHandler.triggerBrowserForward(targetWindow!!)
+                            }
+
+                            SearchCommandInvocation.Action.BROWSER_DEVTOOLS -> {
+                                restoreMainWindowFocus = false
+                                MenuActionsHandler.triggerBrowserDevTools(targetWindow!!)
+                            }
+
+                            SearchCommandInvocation.Action.PANEL_NAVIGATE_LEFT -> {
+                                MenuActionsHandler.triggerNavigatePanelLeft(targetWindow!!)
+                            }
+
+                            SearchCommandInvocation.Action.PANEL_NAVIGATE_RIGHT -> {
+                                MenuActionsHandler.triggerNavigatePanelRight(targetWindow!!)
+                            }
+
+                            SearchCommandInvocation.Action.PANEL_NAVIGATE_UP -> {
+                                MenuActionsHandler.triggerNavigatePanelUp(targetWindow!!)
+                            }
+
+                            SearchCommandInvocation.Action.PANEL_NAVIGATE_DOWN -> {
+                                MenuActionsHandler.triggerNavigatePanelDown(targetWindow!!)
+                            }
+
+                            SearchCommandInvocation.Action.PANEL_SPLIT_VERTICAL -> {
+                                MenuActionsHandler.triggerSplitVertically(targetWindow!!)
+                            }
+
+                            SearchCommandInvocation.Action.PANEL_SPLIT_HORIZONTAL -> {
+                                MenuActionsHandler.triggerSplitHorizontally(targetWindow!!)
+                            }
+
+                            SearchCommandInvocation.Action.QUICK_SWITCHER_OPEN -> {
+                                restoreMainWindowFocus = false
+                                openTopOfMindQuickSwitcher(targetWindow!!, coroutineScope)
+                            }
+
+                            SearchCommandInvocation.Action.WORKSPACE_SAVE -> {
+                                MenuActionsHandler.triggerSaveWorkspace(targetWindow!!)
+                            }
+
+                            SearchCommandInvocation.Action.CODEBASE_OPEN -> {
+                                MenuActionsHandler.triggerOpenCodebase(targetWindow!!)
+                            }
+
+                            SearchCommandInvocation.Action.GLOBAL_SEARCH_OPEN -> {
+                                restoreMainWindowFocus = false
+                                state.showGlobalSearchDialog = true
+                            }
+
+                            SearchCommandInvocation.Action.FOCUS_MODE_TOGGLE -> {
+                                MenuActionsHandler.triggerToggleFocusMode(targetWindow!!)
+                            }
+
+                            SearchCommandInvocation.Action.SETTINGS_OPEN -> {
+                                restoreMainWindowFocus = false
+                                MenuActionsHandler.triggerOpenSettings(targetWindow!!)
+                            }
+
+                            SearchCommandInvocation.Action.CHROME_DENSITY_CYCLE -> {
+                                MenuActionsHandler.triggerChromeDensityCycle(targetWindow!!)
+                            }
+
+                            SearchCommandInvocation.Action.HELP_SHORTCUTS -> {
+                                restoreMainWindowFocus = false
+                                MenuActionsHandler.triggerShowShortcutHelp(targetWindow!!)
                             }
                         }
                     }
+                when (outcome) {
+                    SearchCommandDispatchOutcome.Dispatched -> {
+                        if (restoreMainWindowFocus) state.focusRequester.requestFocus()
+                    }
+
+                    is SearchCommandDispatchOutcome.Rejected -> {
+                        logger.warn(
+                            LogCategory.UI,
+                            "Spotlight command rejected",
+                            mapOf("actionId" to actionId, "reason" to outcome.reason),
+                        )
+                    }
                 }
-                state.focusRequester.requestFocus()
+                outcome
             },
             onToolSelect = { panelId ->
                 state.showGlobalSearchDialog = false
