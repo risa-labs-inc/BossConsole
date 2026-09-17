@@ -4,6 +4,7 @@ import androidx.compose.runtime.Immutable
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlin.time.Clock
+import kotlin.uuid.Uuid
 
 /**
  * Represents a tab configuration within a workspace.
@@ -199,9 +200,9 @@ data class LayoutWorkspace(
 ) {
     companion object {
         /**
-         * Generate a unique workspace ID based on current timestamp.
+         * Generate an independent identity even when several copies are created in one millisecond.
          */
-        fun generateId(): String = "workspace-${Clock.System.now().toEpochMilliseconds()}"
+        fun generateId(): String = "workspace-${Uuid.random()}"
     }
 }
 

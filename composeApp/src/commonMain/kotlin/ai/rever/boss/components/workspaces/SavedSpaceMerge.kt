@@ -109,7 +109,7 @@ internal fun isSpaceSlot(id: String): Boolean = id in PredefinedWorkspaces.allId
  * The Space an explicit save should write when the current one is a [isSpaceSlot].
  *
  * **A new Space, not an overwrite.** [id] is a parameter because `LayoutWorkspace.generateId()` is
- * a clock read; the caller passes a fresh one. A NEW id is the load-bearing half - a file carrying
+ * nondeterministic; the caller passes a fresh one. A NEW id is the load-bearing half - a file carrying
  * a slot's id is the legacy shape [mergeSavedWorkspaces] has to clean up after, and minting one is
  * what stops this creating more of them.
  *
@@ -238,7 +238,7 @@ internal fun mergeSavedWorkspaces(
 /**
  * What a legacy file's id becomes when it is adopted.
  *
- * Deliberately not something `generateId()` could produce (`workspace-<epoch millis>`), so an
+ * Deliberately not something `generateId()` could produce (`workspace-<uuid>`), so an
  * adopted id is recognisable as one and can never be mistaken for a Space the user saved normally.
  */
 

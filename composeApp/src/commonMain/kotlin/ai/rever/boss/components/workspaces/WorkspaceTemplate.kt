@@ -80,8 +80,8 @@ internal fun projectNameFor(projectPath: String): String =
  * space in it (`cd /Users/me/My Project && claude` is two arguments) or write a quoted path into
  * a `filePath`, which is not shell-parsed and would be opened with the quotes in its name.
  *
- * [stamp] is a parameter so this is testable: [LayoutWorkspace.generateId] is a clock read, and
- * two calls in one millisecond return the same id. The project NAME is not a parameter - it is
+ * [stamp] is a parameter so this is testable: [LayoutWorkspace.generateId] produces a random identity.
+ * The project NAME is not a parameter - it is
  * [projectNameFor] of the path, so a caller cannot hand in a name that disagrees with the project
  * the placeholders were resolved against.
  */
