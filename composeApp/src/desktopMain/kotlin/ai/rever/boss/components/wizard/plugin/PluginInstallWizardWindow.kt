@@ -60,7 +60,7 @@ fun PluginInstallWizardWindow(
 }
 
 @Composable
-private fun RunInstallation(
+internal fun RunInstallation(
     currentStep: PluginInstallStep,
     state: PluginInstallWizardState,
     install: suspend (List<WizardPluginInfo>, (Float, String) -> Unit) -> Result<PluginInstallResult>,
@@ -73,7 +73,7 @@ private fun RunInstallation(
                 !state.isInstalling &&
                 !state.installationAttempted
         if (!shouldInstall) return@LaunchedEffect
-        val selectedPlugins = state.getSelectedPlugins()
+        val selectedPlugins = state.getInstallationPlugins()
         if (selectedPlugins.isEmpty()) {
             state.completeInstallation(emptyList())
             state.goToNextStep()
@@ -167,7 +167,7 @@ private fun WizardStepContent(
                     state.installationProgress,
                     state.installationStatus,
                     state.installationError,
-                    state.getSelectedPlugins(),
+                    state.getInstallationPlugins(),
                     state::prepareInstallationRetry,
                 )
             }
@@ -179,6 +179,7 @@ private fun WizardStepContent(
                     bossTermReady,
                     onSetupBossTerm,
                     onComplete,
+                    onRetryFailed = state::retryFailedPlugins,
                 )
             }
         }

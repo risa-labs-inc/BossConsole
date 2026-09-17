@@ -230,6 +230,19 @@ class PluginInstallWizardState(
      */
     fun hasSelectedPlugins(): Boolean = _selectedPlugins.any { it.value }
 
+    private var retryPluginIds: Set<String>? = null
+
+    /** The original review selection survives a failed-only retry. */
+    fun getInstallationPlugins(): List<WizardPluginInfo> =
+        retryPluginIds?.let { ids -> availablePlugins.filter { it.id in ids } } ?: getSelectedPlugins()
+
+    fun retryFailedPlugins() {
+        if (isInstalling || wizardState.currentStep != PluginInstallStep.Complete || failedPlugins.isEmpty()) return
+        retryPluginIds = failedPlugins.map { it.first }.toSet()
+        prepareInstallationRetry()
+        wizardState.goToStep(PluginInstallStep.allSteps.indexOf(PluginInstallStep.Installing))
+    }
+
     /**
      * Update installation progress.
      */
@@ -250,7 +263,7 @@ class PluginInstallWizardState(
         installationProgress = 0f
         installationStatus = "Preparing installation..."
         installationError = null
-        installedPluginIds = emptyList()
+        if (retryPluginIds == null) installedPluginIds = emptyList()
         failedPlugins = emptyList()
     }
 
@@ -267,8 +280,10 @@ class PluginInstallWizardState(
         isInstalling = false
         installationProgress = 1f
         installationStatus = "Installation complete"
-        installedPluginIds = installedIds
+        installedPluginIds =
+            if (retryPluginIds == null) installedIds else (installedPluginIds + installedIds).distinct()
         failedPlugins = failed
+        retryPluginIds = null
     }
 
     /**
@@ -286,7 +301,7 @@ class PluginInstallWizardState(
         installationProgress = 0f
         installationStatus = "Preparing installation..."
         installationError = null
-        installedPluginIds = emptyList()
+        if (retryPluginIds == null) installedPluginIds = emptyList()
         failedPlugins = emptyList()
         installationRunId++
     }
@@ -302,6 +317,7 @@ class PluginInstallWizardState(
      * Navigate to the previous step.
      */
     fun goToPreviousStep() {
+        retryPluginIds = null
         wizardState.goToPreviousStep()
     }
 
@@ -309,6 +325,7 @@ class PluginInstallWizardState(
      * Reset the wizard to initial state.
      */
     fun reset() {
+        retryPluginIds = null
         wizardState.reset()
         installationProgress = 0f
         installationStatus = ""

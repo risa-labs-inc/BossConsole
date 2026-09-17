@@ -38,6 +38,7 @@ import androidx.compose.material.Icon
 import androidx.compose.material.IconButton
 import androidx.compose.material.LinearProgressIndicator
 import androidx.compose.material.Text
+import androidx.compose.material.TextButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.filled.Check
@@ -646,6 +647,7 @@ internal fun CompleteStepContent(
     bossTermReady: Boolean = false,
     onSetupBossTerm: (() -> Unit)? = null,
     onFinish: (() -> Unit)? = null,
+    onRetryFailed: (() -> Unit)? = null,
 ) {
     val hasFailures = failedPlugins.isNotEmpty()
 
@@ -655,6 +657,7 @@ internal fun CompleteStepContent(
             failedPlugins = failedPlugins,
             onSetupBossTerm = onSetupBossTerm,
             onFinish = onFinish,
+            onRetryFailed = onRetryFailed,
         )
         return
     }
@@ -722,13 +725,7 @@ internal fun CompleteStepContent(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            Text(
-                text = "You can retry installing these tools from the Toolbox",
-                fontSize = 13.sp,
-                color = BossTheme.colors.textSecondary.copy(alpha = 0.8f),
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 32.dp),
-            )
+            FailedInstallRetryHint(onRetryFailed)
         } else {
             Spacer(modifier = Modifier.height(32.dp))
 
@@ -741,6 +738,23 @@ internal fun CompleteStepContent(
             )
         }
     }
+}
+
+@Composable
+private fun FailedInstallRetryHint(onRetryFailed: (() -> Unit)?) {
+    Text(
+        text =
+            if (onRetryFailed == null) {
+                "You can retry installing these tools from the Toolbox"
+            } else {
+                "Successful tools stay installed."
+            },
+        fontSize = 13.sp,
+        color = BossTheme.colors.textSecondary.copy(alpha = 0.8f),
+        textAlign = TextAlign.Center,
+        modifier = Modifier.padding(horizontal = 32.dp),
+    )
+    onRetryFailed?.let { retry -> TextButton(onClick = retry) { Text("Retry failed tools") } }
 }
 
 @Composable
@@ -764,6 +778,7 @@ private fun BossTermOfferContent(
     failedPlugins: List<Pair<String, String>>,
     onSetupBossTerm: () -> Unit,
     onFinish: () -> Unit,
+    onRetryFailed: (() -> Unit)?,
 ) {
     val failedCount = failedPlugins.size
     Column(
@@ -802,7 +817,7 @@ private fun BossTermOfferContent(
                     "and has its own short setup."
             } else {
                 "$installedCount tools are ready and $failedCount could not be installed. " +
-                    "You can retry those later from Toolbox. BOSS Term is ready for its own setup."
+                    "BOSS Term is ready for its own setup."
             },
             fontSize = 13.sp,
             lineHeight = 20.sp,
@@ -812,6 +827,7 @@ private fun BossTermOfferContent(
         if (failedPlugins.isNotEmpty()) {
             Spacer(Modifier.height(12.dp))
             FailedPluginDetails(failedPlugins)
+            onRetryFailed?.let { retry -> TextButton(onClick = retry) { Text("Retry failed tools") } }
         }
         Spacer(Modifier.height(22.dp))
         Row(
