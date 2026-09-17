@@ -1,6 +1,16 @@
 package ai.rever.boss.components.home
 
 import ai.rever.boss.components.events.DashboardEventBus
+import ai.rever.boss.components.events.DashboardNewTabEvent
+import ai.rever.boss.components.events.DashboardOpenTabTypeEvent
+import ai.rever.boss.plugin.api.TabTypeId
+import androidx.compose.runtime.mutableStateMapOf
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import java.io.File
 import kotlin.reflect.KFunction
 import kotlin.reflect.KVisibility
@@ -170,6 +180,47 @@ class HomeActionRoutingTest {
                 "registry key and Arcade silently stops opening",
         )
     }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun `Home input tools emit full identity and instant tools bypass the dialog`() =
+        runTest {
+            val requests = mutableListOf<DashboardNewTabEvent>()
+            val instant = mutableListOf<DashboardOpenTabTypeEvent>()
+            backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+                DashboardEventBus.newTabEvents.collect { requests += it }
+            }
+            backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+                DashboardEventBus.openTabTypeEvents.collect { instant += it }
+            }
+            val installing = mutableStateMapOf<String, Unit>()
+
+            fun tool(
+                plugin: String,
+                needsInput: Boolean,
+            ) = HomeTool(
+                id = plugin,
+                label = plugin,
+                icon = HomeToolIcon.FromStore("", "T"),
+                launch = HomeToolLaunch.OpenTab("query", plugin, needsInput),
+            )
+            HomeActions("window-a", this).launch(tool("first", true), installing)
+            HomeActions("window-b", this).launch(tool("second", true), installing)
+            HomeActions("window-b", this).launch(tool("instant", false), installing)
+            HomeActions("window-a", this).newTab()
+            runCurrent()
+            assertEquals(
+                listOf(
+                    DashboardNewTabEvent("window-a", TabTypeId("query", "first")),
+                    DashboardNewTabEvent("window-b", TabTypeId("query", "second")),
+                    DashboardNewTabEvent("window-a"),
+                ),
+                requests,
+            )
+            assertEquals("instant", instant.single().typePluginId)
+            assertEquals("query", instant.single().typeId)
+            assertEquals("window-b", instant.single().sourceWindowId)
+        }
 
     private fun KFunction<*>.hasSourceWindowId(): Boolean = parameters.any { it.name == "sourceWindowId" }
 

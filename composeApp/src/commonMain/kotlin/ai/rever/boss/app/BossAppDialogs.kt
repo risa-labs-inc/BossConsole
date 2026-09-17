@@ -296,29 +296,19 @@ internal fun BossAppDialogs(state: BossAppState) {
         // to do nothing at all - which is exactly what the pane menu's split did until this
         // existed.
         val place: (TabInfo) -> Unit = { tab ->
-            val split = splitViewState.consumePendingSplit()
-            if (split == null) {
-                val target =
-                    splitViewState.getActiveTabsComponent()
-                        ?: splitViewState.getLastInteractedTabComponent()
-                        ?: state.tabsComponent
-                target.addTab(tab)
-            } else {
-                splitViewState.splitPanel(
-                    split.panelId,
-                    split.direction.orientation,
-                    tabToMove = tab,
-                    placeBefore = split.direction.placeBefore,
-                )
-            }
+            placeNewTab(
+                splitViewState,
+                tab,
+                state.newTabDialogRequest.sourcePanelId,
+                state.tabsComponent,
+            )
         }
 
         NewTabDialog(
             onDismiss = {
                 state.showNewTabDialog = false
-                state.newTabDialogInitialType = null
                 // A split asked for and then abandoned must not fire on the next ordinary New Tab.
-                splitViewState.cancelPendingSplit()
+                state.newTabDialogRequest.dismiss(splitViewState::cancelPendingSplit)
                 state.focusRequester.requestFocus()
             },
             tabRegistry = state.tabRegistry,
@@ -333,7 +323,10 @@ internal fun BossAppDialogs(state: BossAppState) {
                     // The pane the tab would otherwise have landed in - see `place` above, which
                     // adds to the active component. Splitting anything else would put the new
                     // pane somewhere the user was not looking.
-                    splitViewState.requestSplitWithNewTab(splitViewState.activePanelId, direction)
+                    splitViewState.requestSplitWithNewTab(
+                        state.newTabDialogRequest.sourcePanelId ?: splitViewState.activePanelId,
+                        direction,
+                    )
                 }
             },
             onCreateTab = { type, path ->
@@ -389,6 +382,8 @@ internal fun BossAppDialogs(state: BossAppState) {
                 state.newTabDialogInitialType = null
             },
             initialTabType = state.newTabDialogInitialType,
+            initialPluginType = state.newTabDialogRequestedType,
+            windowId = state.windowId,
             // Plugin tab types build their own TabInfo; open it in the
             // same target component as the built-in types.
             onCreateTabInfo = { tabInfo ->

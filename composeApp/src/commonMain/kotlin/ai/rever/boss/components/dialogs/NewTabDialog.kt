@@ -273,6 +273,7 @@ fun NewTabDialog(
     splitDirection: SplitDirection? = null,
     /** Null when this caller cannot split (no split view to split), which hides the picker. */
     onSplitDirectionChange: ((SplitDirection?) -> Unit)? = null,
+    initialPluginType: TabTypeId? = null,
 ) {
     val availableTypes = TabType.entries.filter { tabRegistry.isRegistered(it.tabTypeId) }
     // Plugin-registered tab types that opted into the dialog (newTabSpec).
@@ -287,24 +288,18 @@ fun NewTabDialog(
         } else {
             emptyList()
         }
-    val defaultType =
-        if (initialTabType != null && initialTabType in availableTypes) {
-            initialTabType
-        } else {
-            availableTypes.firstOrNull() ?: TabType.URL
-        }
-    var selectedType by remember { mutableStateOf(defaultType) }
-    // Non-null when a plugin tab type is selected; built-in selection then
-    // idles. Defaults to the first plugin type when no built-ins are
-    // available. Keyed on availableTypes/pluginTypes so the default is
-    // (re)applied if the registry populates after the dialog first composes
-    // (built-ins are async-loaded plugins — an unkeyed remember would leave
-    // nothing selected). Once the user picks a type the key is stable, so
-    // their choice sticks.
-    var selectedPluginType by remember(availableTypes.isEmpty(), pluginTypes.firstOrNull()?.typeId) {
-        mutableStateOf(if (availableTypes.isEmpty()) pluginTypes.firstOrNull()?.typeId else null)
+    // One full registry key for both built-ins and plugins. Registry updates may supply a
+    // default only until a request or a deliberate tile click has made a choice.
+    var chosenTypeId by remember(initialPluginType, initialTabType) {
+        mutableStateOf(initialPluginType ?: initialTabType?.tabTypeId)
     }
+    val selectedId = chosenTypeId ?: availableTypes.firstOrNull()?.tabTypeId ?: pluginTypes.firstOrNull()?.typeId
+    val selectedType = TabType.entries.firstOrNull { it.tabTypeId == selectedId } ?: TabType.URL
+    val selectedPluginType = selectedId?.takeIf { it !in builtinTypeIds }
     val selectedPluginTypeInfo = selectedPluginType?.let { id -> pluginTypes.firstOrNull { it.typeId == id } }
+    val selectionUnavailable =
+        selectedId != null &&
+            availableTypes.none { it.tabTypeId == selectedId } && selectedPluginTypeInfo == null
     var pluginInput by remember(selectedPluginType) { mutableStateOf("") }
 
     // Guards the create action against a second click landing before the dialog
@@ -581,8 +576,7 @@ fun NewTabDialog(
 
                                         else -> {}
                                     }
-                                    selectedPluginType = null
-                                    selectedType = TabType.URL
+                                    chosenTypeId = TabType.URL.tabTypeId
                                     inputText = urlText
                                     // `urlField` is deliberately NOT rewritten from `urlText`
                                     // here, and the reason is the display/target split rather
@@ -622,8 +616,7 @@ fun NewTabDialog(
 
                                         else -> {}
                                     }
-                                    selectedPluginType = null
-                                    selectedType = TabType.FILE
+                                    chosenTypeId = TabType.FILE.tabTypeId
                                     inputText = fileText
                                 },
                                 modifier = Modifier.weight(1f),
@@ -652,8 +645,7 @@ fun NewTabDialog(
 
                                         else -> {}
                                     }
-                                    selectedPluginType = null
-                                    selectedType = TabType.TERMINAL
+                                    chosenTypeId = TabType.TERMINAL.tabTypeId
                                     inputText = terminalCommand
                                 },
                                 modifier = Modifier.weight(1f),
@@ -687,7 +679,7 @@ fun NewTabDialog(
                                     // rearranges itself on its way out.
                                     if (pluginType.newTabSpec?.needsNoInput() == true) {
                                         if (!openPluginTab(pluginType, "") && !opening) {
-                                            selectedPluginType = pluginType.typeId
+                                            chosenTypeId = pluginType.typeId
                                         }
                                         return@TabTypeOption
                                     }
@@ -706,7 +698,7 @@ fun NewTabDialog(
 
                                         else -> {}
                                     }
-                                    selectedPluginType = pluginType.typeId
+                                    chosenTypeId = pluginType.typeId
                                 },
                                 modifier = Modifier.weight(1f),
                             )
@@ -734,7 +726,7 @@ fun NewTabDialog(
 
                                         else -> {}
                                     }
-                                    selectedType = TabType.JUPYTER
+                                    chosenTypeId = TabType.JUPYTER.tabTypeId
                                     inputText = jupyterName
                                 },
                                 modifier = Modifier.weight(1f),
@@ -765,7 +757,13 @@ fun NewTabDialog(
                         // That put a focused "Enter URL or search term" next to a "Play"
                         // button that discards whatever is typed, and on the refusal path
                         // a whole file tree beside a button that silently fails again.
-                        if (selectedPluginTypeInfo != null) {
+                        if (selectionUnavailable) {
+                            Text(
+                                "The selected tool (${selectedId?.pluginId}:${selectedId?.typeId}) is unavailable. " +
+                                    "Choose another tool above, or cancel and enable it in the Toolbox.",
+                                color = BossTheme.colors.textSecondary,
+                            )
+                        } else if (selectedPluginTypeInfo != null) {
                             val spec = selectedPluginTypeInfo.newTabSpec!!
                             // Nothing to ask for. The confirm button below is already
                             // plugin-scoped on this same condition, so it keeps carrying
@@ -1636,7 +1634,9 @@ fun NewTabDialog(
 
                     Button(
                         onClick = {
-                            if (selectedPluginTypeInfo != null) {
+                            if (selectionUnavailable) {
+                                // The registry can change while the dialog is open. Never substitute.
+                            } else if (selectedPluginTypeInfo != null) {
                                 confirmPluginTab()
                             } else {
                                 // Same rule as Enter: a ghost completion on screen is what the
@@ -1651,7 +1651,9 @@ fun NewTabDialog(
                             }
                         },
                         enabled =
-                            if (selectedPluginTypeInfo != null) {
+                            if (selectionUnavailable) {
+                                false
+                            } else if (selectedPluginTypeInfo != null) {
                                 selectedPluginTypeInfo.newTabSpec!!.inputOptional || pluginInput.isNotBlank()
                             } else {
                                 availableTypes.isNotEmpty() &&
@@ -1666,7 +1668,9 @@ fun NewTabDialog(
                             ),
                     ) {
                         Text(
-                            if (selectedPluginTypeInfo != null) {
+                            if (selectionUnavailable) {
+                                "Create Tab"
+                            } else if (selectedPluginTypeInfo != null) {
                                 selectedPluginTypeInfo.newTabSpec!!.confirmLabel
                             } else {
                                 when (selectedType) {
