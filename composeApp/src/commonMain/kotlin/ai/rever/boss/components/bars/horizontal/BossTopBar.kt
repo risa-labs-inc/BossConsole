@@ -819,6 +819,11 @@ fun BossTopRightBar(
 ) {
     val currentUser by AuthService.currentUser.collectAsState()
 
+    // Browser Zoom Badge (appears when active browser zoom != 100%)
+    ai.rever.boss.components.plugin.tab_types.fluck.BrowserZoomBadge(
+        modifier = Modifier.padding(end = 8.dp),
+    )
+
     // Show user email if logged in
     currentUser?.let { user ->
         Text(
