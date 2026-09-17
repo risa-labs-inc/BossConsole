@@ -415,8 +415,8 @@ class MainFunctionDetectorTest {
             detector.generateCommand(
                 detectedIn("/no-such-root/Main.kt", Language.KOTLIN),
                 "/no-such-root",
-                false,
-                "/var/tmp",
+                forWindows = false,
+                tempDir = "/var/tmp",
             ),
         )
     }
@@ -429,8 +429,8 @@ class MainFunctionDetectorTest {
             detector.generateCommand(
                 detectedIn("C:\\no-such-root\\Main.kt", Language.KOTLIN),
                 "C:\\no-such-root",
-                true,
-                "C:\\Temp",
+                forWindows = true,
+                tempDir = "C:\\Temp",
             ),
         )
     }
@@ -442,8 +442,8 @@ class MainFunctionDetectorTest {
             detector.generateCommand(
                 detectedIn("/no-such-root/main.rs", Language.RUST),
                 "/no-such-root",
-                false,
-                "/var/tmp",
+                forWindows = false,
+                tempDir = "/var/tmp",
             ),
         )
     }
@@ -455,8 +455,8 @@ class MainFunctionDetectorTest {
             detector.generateCommand(
                 detectedIn("C:\\no-such-root\\main.rs", Language.RUST),
                 "C:\\no-such-root",
-                true,
-                "C:\\Temp",
+                forWindows = true,
+                tempDir = "C:\\Temp",
             ),
         )
     }
@@ -468,8 +468,22 @@ class MainFunctionDetectorTest {
             detector.generateCommand(
                 detectedIn("C:\\no-such-root\\main.rs", Language.RUST),
                 "C:\\no-such-root",
-                true,
-                "C:\\it's temp",
+                forWindows = true,
+                tempDir = "C:\\it's temp",
+            ),
+        )
+    }
+
+    @Test
+    fun `windows kotlin invokes a quoted jar in a temp path with spaces and apostrophes`() {
+        assertEquals(
+            "kotlinc 'C:\\no-such-root\\Main.kt' -include-runtime -d 'C:\\it''s temp\\Main.jar'; " +
+                "java -jar 'C:\\it''s temp\\Main.jar'",
+            detector.generateCommand(
+                detectedIn("C:\\no-such-root\\Main.kt", Language.KOTLIN),
+                "C:\\no-such-root",
+                forWindows = true,
+                tempDir = "C:\\it's temp",
             ),
         )
     }
@@ -481,8 +495,8 @@ class MainFunctionDetectorTest {
             detector.generateCommand(
                 detectedIn("/no-such-root/a\\b.rs", Language.RUST),
                 "/no-such-root",
-                false,
-                "/var/tmp",
+                forWindows = false,
+                tempDir = "/var/tmp",
             ),
         )
     }
@@ -494,8 +508,8 @@ class MainFunctionDetectorTest {
             detector.generateCommand(
                 detectedIn("C:\\no-such-root\\main.rs", Language.RUST),
                 "C:\\no-such-root",
-                true,
-                "C:\\Temp\\",
+                forWindows = true,
+                tempDir = "C:\\Temp\\",
             ),
         )
         assertEquals(
@@ -503,8 +517,8 @@ class MainFunctionDetectorTest {
             detector.generateCommand(
                 detectedIn("/no-such-root/main.rs", Language.RUST),
                 "/no-such-root",
-                false,
-                "/var/tmp/",
+                forWindows = false,
+                tempDir = "/var/tmp/",
             ),
         )
     }
