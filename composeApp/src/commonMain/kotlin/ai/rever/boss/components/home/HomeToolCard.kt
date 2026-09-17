@@ -1,15 +1,19 @@
 package ai.rever.boss.components.home
 
+import ai.rever.boss.components.overlays.HoverTooltipBox
+import ai.rever.boss.components.overlays.TooltipPlacement
 import ai.rever.boss.plugin.ui.BossMotion
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -37,6 +41,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -81,6 +87,26 @@ internal fun HomeToolCard(
     modifier: Modifier = Modifier,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    HoverTooltipBox(
+        text = tool.description,
+        modifier = modifier,
+        maxWidth = 320.dp,
+        focused = isFocused,
+        placement = TooltipPlacement.TOP,
+    ) {
+        HomeToolCardContent(tool, state, shortcut, onClick, interactionSource)
+    }
+}
+
+@Composable
+private fun HomeToolCardContent(
+    tool: HomeTool,
+    state: HomeToolState,
+    shortcut: String?,
+    onClick: () -> Unit,
+    interactionSource: MutableInteractionSource,
+) {
     val isHovered by interactionSource.collectIsHoveredAsState()
     val colors = BossTheme.colors
     val space = BossTheme.space
@@ -111,8 +137,11 @@ internal fun HomeToolCard(
 
     Column(
         modifier =
-            modifier
-                .height(HomeToolHeight)
+            Modifier
+                .fillMaxWidth()
+                .semantics {
+                    if (tool.description.isNotBlank()) contentDescription = "${tool.label}. ${tool.description}"
+                }.height(HomeToolHeight)
                 .clip(BossTheme.radius.cardShape)
                 .background(background)
                 // A dashed border is not available without a custom stroke, so an installable
@@ -125,7 +154,11 @@ internal fun HomeToolCard(
                     } else {
                         Modifier
                     },
-                ).clickable(enabled = enabled) { onClick() }
+                ).clickable(
+                    interactionSource = interactionSource,
+                    indication = LocalIndication.current,
+                    enabled = enabled,
+                ) { onClick() }
                 .hoverable(interactionSource, enabled = enabled)
                 .padding(space.md),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -133,18 +166,26 @@ internal fun HomeToolCard(
     ) {
         TileIcon(tool = tool, state = state, tint = iconTint)
 
-        Text(
-            text = tool.label,
-            color = if (installable) colors.textSecondary else colors.textPrimary,
-            style = BossTheme.type.body,
-            textAlign = TextAlign.Center,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.fillMaxWidth(),
-        )
+        TileLabel(tool.label, if (installable) colors.textSecondary else colors.textPrimary)
 
         TileHint(state = state, shortcut = shortcut)
     }
+}
+
+@Composable
+private fun TileLabel(
+    label: String,
+    color: Color,
+) {
+    Text(
+        text = label,
+        color = color,
+        style = BossTheme.type.body,
+        textAlign = TextAlign.Center,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.fillMaxWidth(),
+    )
 }
 
 @Composable

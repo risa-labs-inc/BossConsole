@@ -124,6 +124,7 @@ class StoreHomeCatalogProvider(
             // is not user-installable, and loading one as a regular plugin fails
             // BinaryCompatibilityValidator with a cross-classloader IllegalAccessError.
             isService = row.type == PluginType.SERVICE,
+            description = row.description,
         )
 
     /**

@@ -74,6 +74,7 @@ data class HomeStorePluginInput(
      * `IllegalAccessError`.
      */
     val isService: Boolean,
+    val description: String = "",
 )
 
 /**
@@ -192,6 +193,7 @@ object HomeToolCatalog {
                         icon = HomeToolIcon.FromStore(row.iconUrl, initialsFor(label)),
                         launch = HomeToolLaunch.Install(row.pluginId),
                         pluginId = row.pluginId,
+                        description = row.description,
                     )
                 }.toList()
 

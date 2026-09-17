@@ -49,12 +49,12 @@ object SwingTooltip {
             val existing = label
             val w: JWindow
             if (existing != null && window != null) {
-                existing.text = text
+                existing.text = swingTooltipMarkup(text)
                 w = window!!
                 w.pack() // re-fit to the new text
             } else {
                 val fresh =
-                    JLabel(text).apply {
+                    JLabel(swingTooltipMarkup(text)).apply {
                         isOpaque = true
                         background = AwtColor(0x2B, 0x2B, 0x2B)
                         foreground = AwtColor.WHITE
@@ -118,4 +118,17 @@ object SwingTooltip {
     fun hide() {
         SwingUtilities.invokeLater { window?.isVisible = false }
     }
+}
+
+/** Store descriptions are plain text, never Swing HTML or remote image markup. */
+internal fun swingTooltipMarkup(text: String): String {
+    val escaped =
+        text
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace("\n", "<br>")
+    // Preserve compact title tooltips while bounding longer purpose descriptions.
+    val width = if (text.length > 60) " style='width:240px'" else ""
+    return "<html><body$width>$escaped</body></html>"
 }
