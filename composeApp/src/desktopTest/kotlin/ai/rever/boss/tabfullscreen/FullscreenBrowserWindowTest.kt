@@ -294,6 +294,34 @@ class FullscreenBrowserWindowTest {
     }
 
     @Test
+    fun `focus recovery stays bounded while the frame remains focused`() {
+        assertEquals(
+            BrowserFocusRecoveryDecision.RETRY,
+            browserFocusRecoveryDecision(
+                frameFocused = true,
+                requestAccepted = false,
+                focusWithinView = false,
+                attempt = 2,
+                maxAttempts = 3,
+            ),
+        )
+    }
+
+    @Test
+    fun `delivered focus wins regardless of request acceptance`() {
+        assertEquals(
+            BrowserFocusRecoveryDecision.COMPLETE,
+            browserFocusRecoveryDecision(
+                frameFocused = true,
+                requestAccepted = false,
+                focusWithinView = true,
+                attempt = 3,
+                maxAttempts = 3,
+            ),
+        )
+    }
+
+    @Test
     fun `rendering descendant counts as browser view focus`() {
         val browserView = JPanel()
         val renderingSurface = JButton()

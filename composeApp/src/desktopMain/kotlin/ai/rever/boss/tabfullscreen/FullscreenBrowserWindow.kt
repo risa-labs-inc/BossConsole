@@ -909,19 +909,17 @@ object FullscreenBrowserWindow {
      * Focuses the BrowserView after the containing window is active.
      *
      * JxBrowser runs off-screen, so keyboard events reach Chromium only through the
-     * focused AWT BrowserView. macOS may reject the first request while a fullscreen
-     * Space is still settling; retry once on the EDT and log a useful diagnostic if it
-     * still fails.
+     * focused AWT BrowserView. macOS may accept a request while a fullscreen Space is
+     * still settling without delivering focus. Verify ownership on the EDT, retry a
+     * bounded number of times, and log a useful diagnostic only while this frame still
+     * owns focus.
      */
     private fun requestBrowserViewFocus(
         frame: JFrame,
         browser: Browser,
         expectedEpoch: Long,
     ) {
-        if (!isCurrentFrameSession(expectedEpoch, browser, frame) ||
-            isExiting ||
-            !hasReachedFullscreen
-        ) {
+        if (!isCurrentFrameSession(expectedEpoch, browser, frame) || isExiting) {
             return
         }
         val browserView = currentBrowserView ?: return
@@ -930,7 +928,7 @@ object FullscreenBrowserWindow {
         fun attemptFocus(attempt: Int) {
             if (!isCurrentFrameSession(expectedEpoch, browser, frame) ||
                 isExiting ||
-                !hasReachedFullscreen ||
+                currentBrowserView !== browserView ||
                 !frame.isFocused
             ) {
                 return
@@ -943,7 +941,7 @@ object FullscreenBrowserWindow {
             SwingUtilities.invokeLater {
                 if (!isCurrentFrameSession(expectedEpoch, browser, frame) ||
                     isExiting ||
-                    !hasReachedFullscreen ||
+                    currentBrowserView !== browserView ||
                     !frame.isFocused
                 ) {
                     return@invokeLater
@@ -982,7 +980,22 @@ object FullscreenBrowserWindow {
             }
         }
 
-        attemptFocus(0)
+        if (frame.isFocused) {
+            attemptFocus(0)
+        } else {
+            // requestFocus() during entry is asynchronous. Wait briefly for the
+            // frame's focus event without trying to reactivate it here.
+            browserFocusRetryTimer =
+                Timer(BROWSER_FOCUS_RETRY_DELAY_MS) {
+                    browserFocusRetryTimer = null
+                    if (frame.isFocused) {
+                        attemptFocus(0)
+                    }
+                }.apply {
+                    isRepeats = false
+                    start()
+                }
+        }
     }
 
     private fun cancelBrowserViewFocusRecovery() {
