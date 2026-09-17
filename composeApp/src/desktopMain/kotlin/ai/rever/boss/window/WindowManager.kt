@@ -4,7 +4,10 @@ import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.window.Project
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.WindowPosition
 import kotlinx.coroutines.channels.BufferOverflow
@@ -323,6 +326,12 @@ data class BossWindowState(
     val position: WindowPosition?,
     val windowType: WindowType = WindowType.MAIN,
 ) {
+    /**
+     * Whether the native window should be shown. A hidden final macOS main
+     * window remains managed so its live workspace and Compose tree survive.
+     */
+    var isVisible by mutableStateOf(true)
+
     /**
      * Stream of programmatic resize requests (BossTerm "Fit host to my screen").
      * An event stream — not a value — so a fit and a restore (or two fits) can't
