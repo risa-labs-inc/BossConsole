@@ -61,6 +61,7 @@ private val HomeToolHeight: Dp = 104.dp
 internal enum class HomeToolState {
     READY,
     INSTALLABLE,
+    DISABLED,
     INSTALLING,
 }
 
@@ -236,6 +237,10 @@ private fun TileHint(
         when {
             state == HomeToolState.INSTALLING -> {
                 HintText("Installing", colors.textMuted)
+            }
+
+            state == HomeToolState.DISABLED -> {
+                HintText("Off · Recovery", colors.textSecondary)
             }
 
             state == HomeToolState.INSTALLABLE -> {

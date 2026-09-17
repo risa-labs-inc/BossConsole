@@ -11,6 +11,8 @@ import ai.rever.boss.utils.AppVersion
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 
 /**
  * Answers the home screen's two store questions: what could be installed, and install it.
@@ -65,17 +67,13 @@ class StoreHomeCatalogProvider(
      * every row the local repository contributes is by definition a jar already in the plugins
      * directory.
      *
-     * Degrades to empty on any failure. A home screen that cannot reach the network should show
-     * the tools that are installed, not an error - the grid is still strictly more than the
-     * hardcoded twelve cards it replaces.
+     * Failures propagate to Home for an explicit retry, without removing installed tools.
+     * Only successful results, including an empty catalogue, are cached.
      */
-    // Two early returns for the two ways there is nothing to show (no store, store failed) plus
-    // the result. Collapsing them would hide which happened, and they log differently.
-    @Suppress("ReturnCount")
     override suspend fun discoverable(): List<HomeStorePluginInput> {
         cached?.let { return it }
 
-        val store = repository() ?: return emptyList()
+        val store = repository() ?: error("The plugin store is not available yet")
         val listing = runCatching { store.listPlugins().getOrThrow() }
         // Cancellation is not a store failure. This runs in a LaunchedEffect that is cancelled
         // whenever the screen leaves composition, and `runCatching` around a suspending call also
@@ -92,13 +90,16 @@ class StoreHomeCatalogProvider(
             // Deliberately not cached: a failure is usually transient (the store was not up yet,
             // the network was down), and the next time the screen mounts is a reasonable moment to
             // try again.
-            return emptyList()
+            throw error
         }
         return listing
             .getOrNull()
             .orEmpty()
             .map(::toInput)
-            .also { cached = it }
+            .also {
+                currentCoroutineContext().ensureActive()
+                cached = it
+            }
     }
 
     override suspend fun install(pluginId: String): Result<Unit> {

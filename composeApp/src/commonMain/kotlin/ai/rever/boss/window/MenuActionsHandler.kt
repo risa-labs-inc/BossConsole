@@ -763,12 +763,25 @@ object MenuActionsHandler {
         _reloadAllPluginsEvents.tryEmit(windowId)
     }
 
-    private val _showPluginHealthCenterEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
-    val showPluginHealthCenterEvents: SharedFlow<String> = _showPluginHealthCenterEvents.asSharedFlow()
+    internal data class PluginHealthRequest(
+        val windowId: String,
+        val target: ai.rever.boss.components.plugin.PluginRecoveryTarget?,
+    )
+
+    private val _showPluginHealthCenterEvents = MutableSharedFlow<PluginHealthRequest>(extraBufferCapacity = 10)
+    internal val showPluginHealthCenterEvents: SharedFlow<PluginHealthRequest> =
+        _showPluginHealthCenterEvents.asSharedFlow()
 
     /** Open the host-owned Plugin Health & Recovery Center for one window. */
     fun triggerShowPluginHealthCenter(windowId: String) {
-        _showPluginHealthCenterEvents.tryEmit(windowId)
+        _showPluginHealthCenterEvents.tryEmit(PluginHealthRequest(windowId, null))
+    }
+
+    internal fun triggerPluginRecovery(
+        windowId: String,
+        target: ai.rever.boss.components.plugin.PluginRecoveryTarget,
+    ) {
+        _showPluginHealthCenterEvents.tryEmit(PluginHealthRequest(windowId, target))
     }
 
     /**

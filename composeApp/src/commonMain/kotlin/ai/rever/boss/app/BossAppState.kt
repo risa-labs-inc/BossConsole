@@ -105,6 +105,7 @@ internal class BossAppState(
 
     /** Window-local operational view of plugin lifecycle problems and their safe remedies. */
     var showPluginHealthCenter by mutableStateOf(false)
+    var pluginRecoveryTarget by mutableStateOf<ai.rever.boss.components.plugin.PluginRecoveryTarget?>(null)
     var showProjectDialog by mutableStateOf(false)
 
     /**

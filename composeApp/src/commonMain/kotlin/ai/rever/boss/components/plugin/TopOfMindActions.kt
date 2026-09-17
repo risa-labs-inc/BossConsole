@@ -78,7 +78,7 @@ internal fun openTopOfMindQuickSwitcher(
     scope: CoroutineScope,
 ) {
     if (openTopOfMind(ACTION_OPEN_QUICK_SWITCHER, windowId, scope)) return
-    offerTopOfMind()
+    offerTopOfMind(windowId)
 }
 
 /** Dispatch [action] at the plugin and, if it answered, bring its panel up in [windowId]. */
@@ -107,10 +107,8 @@ private fun openTopOfMind(
  * before installed because `MissingPluginOffer.isInstalled` counts both as installed. A second
  * copy of that ordering here is a second chance to get it wrong.
  *
- * `servesNoPanel = true` is passed unconditionally, and reads here as "serves no such action":
- * this is only reached after `dispatch` has already returned false, so a plugin that is present,
- * enabled and running is by definition one whose handler did not know the action - an older build.
- * The ordering above means it is only consulted once the states that outrank it are ruled out.
+ * An unanswered action is a missing capability only after the plugin reaches LOADED. During
+ * startup it stays a STARTING notice, never an invitation to reload a plugin still loading.
  *
  * Three outcomes, one per thing the user can do:
  *
@@ -119,10 +117,11 @@ private fun openTopOfMind(
  *   `userInitiated`, so a keypress re-asks even after a previous dismissal.
  * - **installed but switched off** - Enable, through the host's one enable-offering dialog. An
  *   Install button cannot fix this: `installPlugin` would refuse or rewrite the same jar.
- * - **anything else** - a status line naming the state, because there is no button that would
- *   help: an update, an administrator, or simply waiting for startup to finish.
+ * - **failed/incompatible/missing capability** - the existing recovery center for this window
+ *   and plugin, preserving the reason and a route to the Toolbox.
+ * - **access/startup** - the existing explanatory status line.
  */
-private fun offerTopOfMind() {
+private fun offerTopOfMind(windowId: String) {
     val manager = DynamicPluginManager.anyActiveManager()
     val missingPermissions =
         manager
@@ -130,18 +129,19 @@ private fun offerTopOfMind() {
             ?.firstOrNull { it.pluginId == TOP_OF_MIND_PLUGIN_ID }
             ?.missingPermissions
             .orEmpty()
+    val state =
+        manager
+            ?.pluginStates
+            ?.value
+            ?.get(TOP_OF_MIND_PLUGIN_ID)
+            ?.state
     val absence =
         pluginSectionAbsence(
             installed = MissingPluginOffer.isInstalled(TOP_OF_MIND_PLUGIN_ID),
-            state =
-                manager
-                    ?.pluginStates
-                    ?.value
-                    ?.get(TOP_OF_MIND_PLUGIN_ID)
-                    ?.state,
+            state = state,
             isIncompatible = PluginCrashRegistry.isIncompatible(TOP_OF_MIND_PLUGIN_ID),
             missingPermissions = missingPermissions,
-            servesNoPanel = true,
+            servesNoPanel = state == ai.rever.boss.plugin.api.PluginState.LOADED,
         )
 
     logger.info(
@@ -168,7 +168,12 @@ private fun offerTopOfMind() {
     // installer factory, and the enable offer refuses a plugin the user already declined this
     // session. A keypress that produced neither a dialog nor a word is the failure this whole
     // function exists to end, so the sentence is the fallback for both.
-    if (!offered) {
+    if (!offered && pluginSectionOffersRecovery(absence)) {
+        ai.rever.boss.window.MenuActionsHandler.triggerPluginRecovery(
+            windowId,
+            PluginRecoveryTarget(TOP_OF_MIND_PLUGIN_ID, topOfMindAbsenceMessage(absence, missingPermissions)),
+        )
+    } else if (!offered) {
         StatusMessageManager.showMessage(topOfMindAbsenceMessage(absence, missingPermissions), durationMs = 5_000)
     }
 }

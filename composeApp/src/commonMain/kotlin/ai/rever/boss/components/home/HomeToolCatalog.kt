@@ -115,6 +115,7 @@ object HomeToolCatalog {
         installedPluginIds: Set<String>,
         access: RegistryAccess,
         installedVersionOf: (String) -> String? = { null },
+        disabledPluginIds: Set<String> = emptySet(),
     ): List<HomeTool> {
         val hostTools = HOST_ACTIONS.map(::hostTool)
 
@@ -158,7 +159,7 @@ object HomeToolCatalog {
         // already contributing a tab or panel must not also appear as something to install, which
         // is what a naive id comparison would allow (its tool id is "tab:arcade", its store row's
         // is its plugin id).
-        val representedPlugins = ready.mapNotNull { it.pluginId }.toSet() + installedPluginIds
+        val representedPlugins = ready.mapNotNull { it.pluginId }.toSet() + (installedPluginIds - disabledPluginIds)
 
         val installTools =
             storeCatalogue
@@ -190,7 +191,12 @@ object HomeToolCatalog {
                         // Straight from the store row. Blank resolves to initials at render time,
                         // so a populated icon_url starts appearing with no client change.
                         icon = HomeToolIcon.FromStore(row.iconUrl, initialsFor(label)),
-                        launch = HomeToolLaunch.Install(row.pluginId),
+                        launch =
+                            if (row.pluginId in disabledPluginIds && row.pluginId in installedPluginIds) {
+                                HomeToolLaunch.Recover(row.pluginId)
+                            } else {
+                                HomeToolLaunch.Install(row.pluginId)
+                            },
                         pluginId = row.pluginId,
                     )
                 }.toList()
@@ -200,7 +206,7 @@ object HomeToolCatalog {
         // alphabetically - there is no category data to order by.
         return hostTools +
             ready.sortedBy { it.label.lowercase() } +
-            installTools.sortedBy { it.label.lowercase() }
+            installTools.sortedWith(compareBy<HomeTool> { !it.isInstalled }.thenBy { it.label.lowercase() })
     }
 
     private fun hostTool(action: HomeHostAction): HomeTool =
