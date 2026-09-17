@@ -108,8 +108,8 @@ class McpPolicyEngine(
     private val _config = MutableStateFlow(loadConfig())
     val config: StateFlow<McpToolPolicyConfig> = _config.asStateFlow()
 
-    private val _sessionTrustedTools = MutableStateFlow<Set<String>>(emptySet())
-    val sessionTrustedTools: StateFlow<Set<String>> = _sessionTrustedTools.asStateFlow()
+    private val _sessionTrustedTools = MutableStateFlow<Set<Pair<String, String?>>>(emptySet())
+    val sessionTrustedTools: StateFlow<Set<Pair<String, String?>>> = _sessionTrustedTools.asStateFlow()
 
     /** Capture before reading policy; a reset invalidates every older authorization. */
     internal fun revocationVersion(
@@ -140,7 +140,7 @@ class McpPolicyEngine(
             ) {
                 false
             } else {
-                if (grantSessionTrust) trustForSession(toolName)
+                if (grantSessionTrust) trustForSession(toolName, providerId)
                 true
             }
         }
@@ -186,7 +186,7 @@ class McpPolicyEngine(
         if (configuredProvider == McpPolicyAction.DENY) {
             return McpPolicyAction.DENY
         }
-        if (toolName in _sessionTrustedTools.value) {
+        if ((toolName to providerId) in _sessionTrustedTools.value) {
             return McpPolicyAction.ALLOW
         }
         if (configuredTool != null) return configuredTool
@@ -200,27 +200,39 @@ class McpPolicyEngine(
     }
 
     /**
-     * Trust [toolName] for the duration of this session only.
+     * Trust [toolName] from [providerId] for the duration of this session only.
      * Session trust is not written to disk and clears upon app restart.
      */
-    fun trustForSession(toolName: String) {
-        _sessionTrustedTools.update { it + toolName }
+    fun trustForSession(
+        toolName: String,
+        providerId: String? = null,
+    ) {
+        _sessionTrustedTools.update { it + (toolName to providerId) }
         logger.info(
             LogCategory.SYSTEM,
             "Tool trusted for current session",
-            mapOf("tool" to toolName),
+            mapOf(
+                "tool" to toolName,
+                "provider" to (providerId ?: "<unspecified>"),
+            ),
         )
     }
 
     /**
-     * Revoke session trust for [toolName].
+     * Revoke session trust for [toolName] from [providerId].
      */
-    fun revokeSessionTrust(toolName: String) {
-        _sessionTrustedTools.update { it - toolName }
+    fun revokeSessionTrust(
+        toolName: String,
+        providerId: String? = null,
+    ) {
+        _sessionTrustedTools.update { it - (toolName to providerId) }
         logger.info(
             LogCategory.SYSTEM,
             "Revoked session trust for tool",
-            mapOf("tool" to toolName),
+            mapOf(
+                "tool" to toolName,
+                "provider" to (providerId ?: "<unspecified>"),
+            ),
         )
     }
 
@@ -385,7 +397,9 @@ class McpPolicyEngine(
                 )
             if (outcome == McpProactivePolicyOutcome.Saved) {
                 changes.forEach { revocations[it.toolName] = revocationVersion(it.toolName) + 1 }
-                _sessionTrustedTools.update { trusted -> trusted - changes.map { it.toolName }.toSet() }
+                _sessionTrustedTools.update { trusted ->
+                    trusted - changes.map { it.toolName to (it.providerId as String?) }.toSet()
+                }
             }
             outcome
         }
@@ -500,11 +514,18 @@ class McpPolicyEngine(
      * since a revoke that did not actually take effect on disk is worse than useless: the UI
      * would show the tool as reset while the file, and the next restart, still say otherwise.
      */
-    fun revokePersistedPolicy(toolName: String): Boolean =
+    fun revokePersistedPolicy(
+        toolName: String,
+        providerId: String? = null,
+    ): Boolean =
         synchronized(lock) {
             // Even a failed reset invalidates queued answers. The previous durable rule remains
             // visible on failure, but an older answer cannot restore trust behind this reset.
-            revokeSessionTrust(toolName)
+            if (providerId != null) {
+                revokeSessionTrust(toolName, providerId)
+            } else {
+                _sessionTrustedTools.update { set -> set.filterNot { it.first == toolName }.toSet() }
+            }
             val saved =
                 applyConfig(
                     key = toolName,
@@ -516,7 +537,7 @@ class McpPolicyEngine(
                 )
             // Publish last: a caller observing this version must also see the reset policy.
             // Calls that captured the previous version cannot pass the locked approval guard.
-            revocations[toolName] = revocationVersion(toolName) + 1
+            revocations[toolName] = revocationVersion(toolName, providerId) + 1
             saved
         }
 

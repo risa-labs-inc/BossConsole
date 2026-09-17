@@ -39,7 +39,7 @@ class McpProviderRevocationTest {
                 toolName = "run_command",
             ),
         )
-        assertFalse("run_command" in engine.sessionTrustedTools.value)
+        assertFalse(("run_command" to "p") in engine.sessionTrustedTools.value)
         assertFalse("p" in engine.config.value.providerRules)
         assertTrue(engine.confirmInvocation("k8s_delete", other, false, providerId = "other"))
         assertTrue(

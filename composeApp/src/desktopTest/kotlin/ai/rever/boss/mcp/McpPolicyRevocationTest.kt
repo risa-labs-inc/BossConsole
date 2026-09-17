@@ -127,7 +127,7 @@ class McpPolicyRevocationTest {
                 assertIs<McpPolicyFault.PolicyPersistFailed>(engine.fault.value)
                 assertEquals(action, engine.config.value.rules["run_command"])
                 assertEquals(action, engine.policyFor("run_command"))
-                assertEquals(setOf("helm_upgrade"), engine.sessionTrustedTools.value)
+                assertEquals(setOf("helm_upgrade" to null), engine.sessionTrustedTools.value)
                 assertEquals(McpPolicyAction.DENY, engine.policyFor("docker_rm"))
                 assertEquals(action, McpPolicyEngine(backup).policyFor("run_command"))
                 assertEquals(McpPolicyAction.DENY, McpPolicyEngine(backup).policyFor("docker_rm"))

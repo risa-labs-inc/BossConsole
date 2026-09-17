@@ -192,4 +192,53 @@ class McpPolicyEngineTest {
         // DENY always wins, even when session-trusted
         assertEquals(McpPolicyAction.DENY, engine.policyFor("danger_tool"))
     }
+
+    @Test
+    fun `session trust is scoped to specific provider, leaving same-named tool in other providers un-trusted`() {
+        val engine = McpPolicyEngine(policyFile = null)
+
+        assertEquals(McpPolicyAction.ASK, engine.policyFor("env_sync", "providerA"))
+        assertEquals(McpPolicyAction.ASK, engine.policyFor("env_sync", "providerB"))
+
+        engine.trustForSession("env_sync", "providerA")
+        assertEquals(McpPolicyAction.ALLOW, engine.policyFor("env_sync", "providerA"))
+        assertEquals(McpPolicyAction.ASK, engine.policyFor("env_sync", "providerB"))
+    }
+
+    @Test
+    fun `revoking session trust for one provider leaves same-named tool in another provider trusted`() {
+        val engine = McpPolicyEngine(policyFile = null)
+
+        engine.trustForSession("env_sync", "providerA")
+        engine.trustForSession("env_sync", "providerB")
+
+        assertEquals(McpPolicyAction.ALLOW, engine.policyFor("env_sync", "providerA"))
+        assertEquals(McpPolicyAction.ALLOW, engine.policyFor("env_sync", "providerB"))
+
+        engine.revokeSessionTrust("env_sync", "providerA")
+
+        assertEquals(McpPolicyAction.ASK, engine.policyFor("env_sync", "providerA"))
+        assertEquals(McpPolicyAction.ALLOW, engine.policyFor("env_sync", "providerB"))
+    }
+
+    @Test
+    fun `null-provider session trust covers only null-provider lookups`() {
+        val engine = McpPolicyEngine(policyFile = null)
+
+        engine.trustForSession("env_sync")
+        assertEquals(McpPolicyAction.ALLOW, engine.policyFor("env_sync"))
+        assertEquals(McpPolicyAction.ASK, engine.policyFor("env_sync", "providerA"))
+
+        engine.revokeSessionTrust("env_sync")
+        assertEquals(McpPolicyAction.ASK, engine.policyFor("env_sync"))
+    }
+
+    @Test
+    fun `provider-scoped session trust does not cover null-provider lookups`() {
+        val engine = McpPolicyEngine(policyFile = null)
+
+        engine.trustForSession("env_sync", "providerA")
+        assertEquals(McpPolicyAction.ASK, engine.policyFor("env_sync"))
+        assertEquals(McpPolicyAction.ALLOW, engine.policyFor("env_sync", "providerA"))
+    }
 }
