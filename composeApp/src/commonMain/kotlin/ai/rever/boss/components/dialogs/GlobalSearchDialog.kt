@@ -75,7 +75,7 @@ internal class SpotlightDialogState {
     var selectedIndex by mutableStateOf(0)
     var isSearching by mutableStateOf(false)
     var scrollToSelected by mutableStateOf(false)
-    var searchGeneration by mutableStateOf(0)
+    var searchGeneration = 0
 }
 
 // Theme colors — reactive getters into the BOSS design system tokens
