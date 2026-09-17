@@ -1,3 +1,5 @@
+@file:Suppress("PackageNaming")
+
 package ai.rever.boss.components.plugin.tab_types.fluck
 
 import ai.rever.boss.plugin.browser.ActiveBrowserRegistry
@@ -33,6 +35,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -66,15 +69,11 @@ fun BrowserZoomBadge(modifier: Modifier = Modifier) {
         val handle = ActiveBrowserRegistry.activeIn(windowId)
         if (handle != null) {
             currentZoom = handle.getZoomLevel()
-            val listener: (Double) -> Unit = { newZoom ->
-                currentZoom = newZoom
-            }
-            handle.addZoomListener(listener)
+            handle.addZoomListener { newZoom -> currentZoom = newZoom }
         }
     }
 
     val showBadge = hasBrowserInWindow && isNonDefaultZoom(currentZoom)
-    val colors = BossTheme.colors
 
     AnimatedVisibility(
         visible = showBadge,
@@ -82,94 +81,86 @@ fun BrowserZoomBadge(modifier: Modifier = Modifier) {
         exit = fadeOut() + scaleOut(targetScale = 0.85f),
         modifier = modifier,
     ) {
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = colors.panel,
-            elevation = 2.dp,
-            modifier =
-                Modifier
-                    .border(
-                        width = 1.dp,
-                        color = colors.line,
-                        shape = RoundedCornerShape(12.dp),
-                    ),
+        BrowserZoomBadgeSurface(
+            windowId = windowId,
+            currentZoom = currentZoom,
+        )
+    }
+}
+
+@Composable
+private fun BrowserZoomBadgeSurface(
+    windowId: String,
+    currentZoom: Double,
+) {
+    val colors = BossTheme.colors
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = colors.panel,
+        elevation = 2.dp,
+        modifier = Modifier.border(1.dp, colors.line, RoundedCornerShape(12.dp)),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-            ) {
-                // Zoom Out Button
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier =
-                        Modifier
-                            .size(20.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .clickable {
-                                ActiveBrowserRegistry.activeIn(windowId)?.zoomOut()
-                            },
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Remove,
-                        contentDescription = "Zoom Out",
-                        tint = colors.textSecondary,
-                        modifier = Modifier.size(12.dp),
-                    )
-                }
-
-                // Percentage Badge (Click to reset to 100%)
-                Text(
-                    text = formatZoomPercentage(currentZoom),
-                    color = colors.signal,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier =
-                        Modifier
-                            .clip(RoundedCornerShape(4.dp))
-                            .clickable {
-                                ActiveBrowserRegistry.activeIn(windowId)?.resetZoom()
-                            }.padding(horizontal = 4.dp, vertical = 1.dp),
-                )
-
-                // Zoom In Button
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier =
-                        Modifier
-                            .size(20.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .clickable {
-                                ActiveBrowserRegistry.activeIn(windowId)?.zoomIn()
-                            },
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = "Zoom In",
-                        tint = colors.textSecondary,
-                        modifier = Modifier.size(12.dp),
-                    )
-                }
-
-                // Reset Button Icon
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier =
-                        Modifier
-                            .size(20.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .clickable {
-                                ActiveBrowserRegistry.activeIn(windowId)?.resetZoom()
-                            },
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Refresh,
-                        contentDescription = "Reset Zoom to 100%",
-                        tint = colors.textSecondary,
-                        modifier = Modifier.size(12.dp),
-                    )
-                }
-            }
+            ZoomIconButton(
+                icon = Icons.Default.Remove,
+                contentDescription = "Zoom Out",
+                onClick = { ActiveBrowserRegistry.activeIn(windowId)?.zoomOut() },
+            )
+            ZoomPercentageText(
+                currentZoom = currentZoom,
+                onClick = { ActiveBrowserRegistry.activeIn(windowId)?.resetZoom() },
+            )
+            ZoomIconButton(
+                icon = Icons.Default.Add,
+                contentDescription = "Zoom In",
+                onClick = { ActiveBrowserRegistry.activeIn(windowId)?.zoomIn() },
+            )
+            ZoomIconButton(
+                icon = Icons.Default.Refresh,
+                contentDescription = "Reset Zoom",
+                onClick = { ActiveBrowserRegistry.activeIn(windowId)?.resetZoom() },
+            )
         }
     }
+}
+
+@Composable
+private fun ZoomIconButton(
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier.size(20.dp).clip(RoundedCornerShape(6.dp)).clickable { onClick() },
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = BossTheme.colors.textSecondary,
+            modifier = Modifier.size(12.dp),
+        )
+    }
+}
+
+@Composable
+private fun ZoomPercentageText(
+    currentZoom: Double,
+    onClick: () -> Unit,
+) {
+    Text(
+        text = formatZoomPercentage(currentZoom),
+        color = BossTheme.colors.signal,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Bold,
+        modifier =
+            Modifier
+                .clip(RoundedCornerShape(4.dp))
+                .clickable { onClick() }
+                .padding(horizontal = 4.dp, vertical = 1.dp),
+    )
 }

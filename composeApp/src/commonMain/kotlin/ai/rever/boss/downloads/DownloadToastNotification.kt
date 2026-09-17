@@ -1,3 +1,5 @@
+@file:Suppress("MatchingDeclarationName")
+
 package ai.rever.boss.downloads
 
 import ai.rever.boss.plugin.api.TransferInfo
@@ -70,7 +72,7 @@ fun DownloadToastOverlay(
     onDismiss: ((String) -> Unit)? = null,
 ) {
     val transfers by DownloadCenter.transfers.collectAsState()
-    val activeTransfers = transfers.take(2) // Show at most top 2 active downloads
+    val activeTransfers = transfers.take(2)
 
     if (activeTransfers.isEmpty()) return
 
@@ -99,90 +101,88 @@ fun DownloadToastCard(
     onInstall: (() -> Unit)? = null,
 ) {
     val colors = BossTheme.colors
-
     Surface(
         shape = RoundedCornerShape(10.dp),
         color = colors.raised,
         elevation = 6.dp,
-        modifier =
-            Modifier
-                .width(280.dp)
-                .border(1.dp, colors.line, RoundedCornerShape(10.dp)),
+        modifier = Modifier.width(280.dp).border(1.dp, colors.line, RoundedCornerShape(10.dp)),
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Icon(
-                        imageVector = if (data.isComplete) Icons.Default.CheckCircle else Icons.Default.Download,
-                        contentDescription = null,
-                        tint = if (data.isComplete) colors.ok else colors.signal,
-                        modifier = Modifier.size(16.dp),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = data.title,
-                        color = colors.textPrimary,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-
-                Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = "Dismiss",
-                    tint = colors.textMuted,
-                    modifier =
-                        Modifier
-                            .size(14.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                            .clickable { onCancel() },
-                )
-            }
-
+            ToastHeaderRow(data = data, onCancel = onCancel)
             Spacer(Modifier.height(6.dp))
-
-            Text(
-                text = data.statusText,
-                color = colors.textSecondary,
-                fontSize = 11.sp,
-            )
-
+            Text(text = data.statusText, color = colors.textSecondary, fontSize = 11.sp)
             Spacer(Modifier.height(6.dp))
-
-            if (!data.isComplete && data.progress != null) {
-                LinearProgressIndicator(
-                    progress = data.progress,
-                    color = colors.signal,
-                    backgroundColor = colors.line,
-                    modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)),
-                )
-            } else if (!data.isComplete) {
-                LinearProgressIndicator(
-                    color = colors.signal,
-                    backgroundColor = colors.line,
-                    modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)),
-                )
-            } else if (onInstall != null) {
-                Text(
-                    text = "Click to Install",
-                    color = colors.data,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier =
-                        Modifier
-                            .clickable { onInstall() }
-                            .padding(top = 2.dp),
-                )
-            }
+            ToastProgressFooter(data = data, onInstall = onInstall)
         }
+    }
+}
+
+@Composable
+private fun ToastHeaderRow(
+    data: DownloadToastData,
+    onCancel: () -> Unit,
+) {
+    val colors = BossTheme.colors
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.weight(1f),
+        ) {
+            Icon(
+                imageVector = if (data.isComplete) Icons.Default.CheckCircle else Icons.Default.Download,
+                contentDescription = null,
+                tint = if (data.isComplete) colors.ok else colors.signal,
+                modifier = Modifier.size(16.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = data.title,
+                color = colors.textPrimary,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Icon(
+            imageVector = Icons.Default.Close,
+            contentDescription = "Dismiss",
+            tint = colors.textMuted,
+            modifier = Modifier.size(14.dp).clip(RoundedCornerShape(4.dp)).clickable { onCancel() },
+        )
+    }
+}
+
+@Composable
+private fun ToastProgressFooter(
+    data: DownloadToastData,
+    onInstall: (() -> Unit)? = null,
+) {
+    val colors = BossTheme.colors
+    if (!data.isComplete && data.progress != null) {
+        LinearProgressIndicator(
+            progress = data.progress,
+            color = colors.signal,
+            backgroundColor = colors.line,
+            modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)),
+        )
+    } else if (!data.isComplete) {
+        LinearProgressIndicator(
+            color = colors.signal,
+            backgroundColor = colors.line,
+            modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)),
+        )
+    } else if (onInstall != null) {
+        Text(
+            text = "Click to Install",
+            color = colors.data,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.clickable { onInstall() }.padding(top = 2.dp),
+        )
     }
 }
