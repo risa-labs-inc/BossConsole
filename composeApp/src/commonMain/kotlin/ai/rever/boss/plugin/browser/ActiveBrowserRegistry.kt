@@ -55,6 +55,8 @@ object ActiveBrowserRegistry {
 
     private val _windowsWithActiveBrowser = MutableStateFlow<Set<String>>(emptySet())
 
+    private val _activeHandleIdByWindow = MutableStateFlow<Map<String, String>>(emptyMap())
+
     /**
      * Windows where a browser is the surface the user is actually in.
      *
@@ -88,6 +90,19 @@ object ActiveBrowserRegistry {
     val windowsWithActiveBrowser: StateFlow<Set<String>> = _windowsWithActiveBrowser.asStateFlow()
 
     /**
+     * The handle a window-scoped action acts on, per window: [windowId] -> handleId of the
+     * entry [selectActiveHandleId] ranks first, under the SAME filter [activeBrowserWindows]
+     * applies (`inMainPanel && panelActive` and live).
+     *
+     * The window set above only says a window HAS an active browser, and it cannot tell two
+     * browser tabs in one window apart: switching tabs changes the handle while the set
+     * stays equal, so a StateFlow on the set never emits. UI that renders PER-HANDLE state
+     * (the zoom badge in the top bar) keys on this map instead, and it is published from the
+     * same snapshot so the two cannot drift.
+     */
+    val activeHandleIdByWindow: StateFlow<Map<String, String>> = _activeHandleIdByWindow.asStateFlow()
+
+    /**
      * Recompute [windowsWithActiveBrowser] from [entries].
      *
      * Snapshot and assignment go under one lock, shared with every mutator. Without it two
@@ -99,7 +114,9 @@ object ActiveBrowserRegistry {
      */
     private fun publishWindows() =
         synchronized(publishLock) {
-            _windowsWithActiveBrowser.value = activeBrowserWindows(entries.values.toList(), ::isLive)
+            val live = entries.values.toList()
+            _windowsWithActiveBrowser.value = activeBrowserWindows(live, ::isLive)
+            _activeHandleIdByWindow.value = activeHandleIds(live, ::isLive)
         }
 
     /**
@@ -215,6 +232,26 @@ internal fun activeBrowserWindows(
         .filter { it.inMainPanel && it.panelActive && isLive(it.handleId) }
         .map { it.windowId }
         .toSet()
+
+/**
+ * The window-scoped dispatch target of every window that has one: [windowId] -> handleId of
+ * the entry [selectActiveHandleId] ranks first, under the SAME filter [activeBrowserWindows]
+ * applies (`inMainPanel && panelActive` and live).
+ *
+ * Its keys are therefore exactly [activeBrowserWindows]' set, which keeps the badge's
+ * visibility gate and its dispatch target on one definition; the value adds what the set
+ * cannot: WHICH handle is active, so a per-handle read is possible.
+ */
+internal fun activeHandleIds(
+    candidates: Collection<ActiveBrowserRegistry.Entry>,
+    isLive: (String) -> Boolean,
+): Map<String, String> =
+    candidates
+        .filter { it.inMainPanel && it.panelActive && isLive(it.handleId) }
+        .groupBy { it.windowId }
+        .mapValues { (windowId, windowEntries) ->
+            selectActiveHandleId(windowEntries, windowId).orEmpty()
+        }
 
 /**
  * Of the live browser surfaces composed in [windowId], which one owns a window-scoped action.

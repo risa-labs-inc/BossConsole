@@ -26,7 +26,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -60,20 +60,27 @@ fun isNonDefaultZoom(zoomLevel: Double): Boolean = kotlin.math.abs(zoomLevel - 1
 @Composable
 fun BrowserZoomBadge(modifier: Modifier = Modifier) {
     val windowId = LocalWindowId.current ?: return
-    val windowsWithBrowser by ActiveBrowserRegistry.windowsWithActiveBrowser.collectAsState()
-    val hasBrowserInWindow = windowsWithBrowser.contains(windowId)
+    val activeHandleIds by ActiveBrowserRegistry.activeHandleIdByWindow.collectAsState()
+    val activeHandleId = activeHandleIds[windowId]
 
-    var currentZoom by remember(windowId) { mutableStateOf(1.0) }
+    var currentZoom by remember { mutableStateOf(1.0) }
+    val zoomListener = remember { { zoom: Double -> currentZoom = zoom } }
 
-    LaunchedEffect(windowId, windowsWithBrowser) {
+    // One listener per active handle: re-keying on the handle id re-runs this whenever the
+    // window's active browser surface changes (including a tab switch, which never changes
+    // the window set), and onDispose detaches it, so listeners cannot accumulate.
+    DisposableEffect(windowId, activeHandleId) {
         val handle = ActiveBrowserRegistry.activeIn(windowId)
         if (handle != null) {
             currentZoom = handle.getZoomLevel()
-            handle.addZoomListener { newZoom -> currentZoom = newZoom }
+            handle.addZoomListener(zoomListener)
+        }
+        onDispose {
+            handle?.removeZoomListener(zoomListener)
         }
     }
 
-    val showBadge = hasBrowserInWindow && isNonDefaultZoom(currentZoom)
+    val showBadge = activeHandleId != null && isNonDefaultZoom(currentZoom)
 
     AnimatedVisibility(
         visible = showBadge,
