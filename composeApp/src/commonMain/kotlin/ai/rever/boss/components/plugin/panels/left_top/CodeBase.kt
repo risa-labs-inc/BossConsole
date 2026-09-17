@@ -1,76 +1,25 @@
 package ai.rever.boss.components.plugin.panels.left_top
 
 import ai.rever.boss.plugin.api.FileNodeData
+import ai.rever.boss.project.RecentProjectHistory
 import ai.rever.boss.utils.extractFileName
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.window.Project
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
 
 // Global project state with persistence - manages shared recent projects list
 // Note: Selected project is per-window via WindowProjectState. This object only manages recent projects.
 object ProjectState {
     private val logger = BossLogger.forComponent("ProjectState")
-    private const val MAX_RECENT_PROJECTS = 10
     private const val RECENT_PROJECTS_FILE = "recent-projects.json"
-
-    // Recent projects list - loaded from disk on init (shared across all windows)
-    private val _recentProjects = MutableStateFlow<List<Project>>(emptyList())
-    val recentProjects: StateFlow<List<Project>> = _recentProjects.asStateFlow()
-
     private val ioScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO)
+    private val history = RecentProjectHistory(ioScope, ::loadRecentProjects, ::saveRecentProjects)
+    val recentProjects: StateFlow<List<Project>> = history.recentProjects
 
-    init {
-        // Load recent projects from disk on startup (async to avoid blocking main thread)
-        ioScope.launch {
-            loadRecentProjects()
-        }
-    }
+    fun removeRecentProject(projectPath: String) = history.removeRecentProject(projectPath)
 
-    /**
-     * Remove a project from the recent projects list.
-     */
-    fun removeRecentProject(projectPath: String) {
-        val updated = _recentProjects.value.filter { it.path != projectPath }
-        _recentProjects.value = updated
-
-        // Save to disk (async)
-        ioScope.launch {
-            saveRecentProjects()
-        }
-    }
-
-    /**
-     * Update recent projects list without changing the global selected project.
-     * Called by per-window project states when they select a project.
-     */
-    fun updateRecentProjects(project: Project) {
-        val updatedProject = project.copy(lastOpened = System.currentTimeMillis())
-
-        // Update recent projects list with LRU behavior
-        val updated = _recentProjects.value.toMutableList()
-
-        // Remove if already exists
-        updated.removeAll { it.path == updatedProject.path }
-
-        // Add to front - being at position 0 means most recently used
-        updated.add(0, updatedProject)
-
-        // Keep only MAX_RECENT_PROJECTS
-        while (updated.size > MAX_RECENT_PROJECTS) {
-            updated.removeLast()
-        }
-
-        _recentProjects.value = updated
-
-        // Save to disk (async)
-        ioScope.launch {
-            saveRecentProjects()
-        }
-    }
+    fun updateRecentProjects(project: Project) = history.updateRecentProjects(project)
 
     private fun getRecentProjectsFile(): java.io.File {
         val bossDir = ai.rever.boss.plugin.pathutils.BossDirectories.rootDir
@@ -78,7 +27,7 @@ object ProjectState {
         return java.io.File(bossDir, RECENT_PROJECTS_FILE)
     }
 
-    private suspend fun loadRecentProjects() =
+    private suspend fun loadRecentProjects(): List<Project>? =
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 val file = getRecentProjectsFile()
@@ -117,7 +66,6 @@ object ProjectState {
                             }
                         }
 
-                    _recentProjects.value = validProjects
                     logger.debug(
                         LogCategory.FILE,
                         "Loaded recent projects from disk",
@@ -127,23 +75,23 @@ object ProjectState {
                         ),
                     )
 
-                    // Save cleaned list if any projects were removed
-                    if (validProjects.size < projects.size) {
-                        saveRecentProjects()
-                    }
+                    validProjects
+                } else {
+                    emptyList()
                 }
             } catch (e: Exception) {
                 logger.warn(LogCategory.FILE, "Failed to load recent projects", error = e)
+                null
             }
         }
 
-    private suspend fun saveRecentProjects() =
+    private suspend fun saveRecentProjects(projects: List<Project>) =
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 val file = getRecentProjectsFile()
                 val json =
                     kotlinx.serialization.json.Json
-                        .encodeToString(_recentProjects.value)
+                        .encodeToString(projects)
                 file.writeText(json)
             } catch (e: Exception) {
                 logger.warn(LogCategory.FILE, "Failed to save recent projects", error = e)
