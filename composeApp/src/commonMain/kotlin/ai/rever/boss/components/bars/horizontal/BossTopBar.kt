@@ -15,7 +15,6 @@ import ai.rever.boss.components.model.BossDraggableComponent
 import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.components.overlays.contextMenu
 import ai.rever.boss.components.plugin.panels.left_top.ProjectState
-import ai.rever.boss.components.plugin.tab_types.fluck.BrowserZoomBadge
 import ai.rever.boss.components.windows.SettingsWindow
 import ai.rever.boss.components.workspaces.LayoutWorkspace
 import ai.rever.boss.components.workspaces.WorkspaceButton
@@ -821,9 +820,7 @@ fun BossTopRightBar(
     val currentUser by AuthService.currentUser.collectAsState()
 
     // Browser Zoom Badge (appears when active browser zoom != 100%)
-    BrowserZoomBadge(
-        modifier = Modifier.padding(end = 8.dp),
-    )
+    BrowserZoomBadge()
 
     // Show user email if logged in
     currentUser?.let { user ->

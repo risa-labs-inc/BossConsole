@@ -205,6 +205,16 @@ object ActiveBrowserRegistry {
         val handleId = selectActiveHandleId(liveEntries, windowId) ?: return null
         return handles[handleId]?.takeIf { it.isValid }
     }
+
+    /**
+     * The handle registered under [handleId], or null if unknown.
+     *
+     * Lets a UI that already knows the ranked active handle id from
+     * [activeHandleIdByWindow] read or act on THAT handle instead of re-asking
+     * [activeIn] and meeting a possibly newer ranking between the two reads.
+     * Callers that care about liveness still filter on [BrowserHandle.isValid].
+     */
+    fun handleById(handleId: String): BrowserHandle? = handles[handleId]
 }
 
 /**
@@ -249,9 +259,9 @@ internal fun activeHandleIds(
     candidates
         .filter { it.inMainPanel && it.panelActive && isLive(it.handleId) }
         .groupBy { it.windowId }
-        .mapValues { (windowId, windowEntries) ->
-            selectActiveHandleId(windowEntries, windowId).orEmpty()
-        }
+        .mapNotNull { (windowId, windowEntries) ->
+            selectActiveHandleId(windowEntries, windowId)?.let { windowId to it }
+        }.toMap()
 
 /**
  * Of the live browser surfaces composed in [windowId], which one owns a window-scoped action.

@@ -1,7 +1,7 @@
 package ai.rever.boss.fluck
 
-import ai.rever.boss.components.plugin.tab_types.fluck.formatZoomPercentage
-import ai.rever.boss.components.plugin.tab_types.fluck.isNonDefaultZoom
+import ai.rever.boss.components.bars.horizontal.formatZoomPercentage
+import ai.rever.boss.components.bars.horizontal.isNonDefaultZoom
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse

@@ -139,21 +139,3 @@ fun getModifierSymbol(modifier: String): String =
     }
 
 fun isMacOS(): Boolean = System.getProperty("os.name").contains("Mac", ignoreCase = true)
-
-/**
- * Returns a canonical key combo identifier string for conflict checking (e.g. "cmd+w").
- */
-fun KeyboardShortcut.canonicalCombo(): String {
-    val sortedMods = modifiers.map { it.lowercase().trim() }.sorted().joinToString("+")
-    val normKey = key.lowercase().trim()
-    return if (sortedMods.isNotEmpty()) "$sortedMods+$normKey" else normKey
-}
-
-/**
- * Detects duplicate keyboard shortcuts sharing the exact same key binding combination.
- * Returns a map from canonical key combo to the list of conflicting shortcuts.
- */
-fun findShortcutConflicts(shortcuts: List<KeyboardShortcut>): Map<String, List<KeyboardShortcut>> {
-    val grouped = shortcuts.groupBy { it.canonicalCombo() }
-    return grouped.filter { it.value.size > 1 }
-}
