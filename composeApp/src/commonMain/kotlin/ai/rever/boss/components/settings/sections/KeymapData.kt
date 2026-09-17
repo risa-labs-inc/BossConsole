@@ -157,4 +157,3 @@ fun findShortcutConflicts(shortcuts: List<KeyboardShortcut>): Map<String, List<K
     val grouped = shortcuts.groupBy { it.canonicalCombo() }
     return grouped.filter { it.value.size > 1 }
 }
-

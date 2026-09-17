@@ -9,18 +9,19 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class DownloadToastNotificationTest {
-
     @Test
     fun `formatDownloadToastData formats active downloading transfer correctly`() {
-        val transfer = Transfer(
-            info = TransferInfo(
-                id = "test-plugin-1",
-                title = "Test Plugin",
-                kind = TransferKind.PLUGIN_INSTALL,
-                phase = TransferPhase.DOWNLOADING,
-                progress = 0.65f,
+        val transfer =
+            Transfer(
+                info =
+                    TransferInfo(
+                        id = "test-plugin-1",
+                        title = "Test Plugin",
+                        kind = TransferKind.PLUGIN_INSTALL,
+                        phase = TransferPhase.DOWNLOADING,
+                        progress = 0.65f,
+                    ),
             )
-        )
 
         val data = formatDownloadToastData(transfer)
 
@@ -33,15 +34,17 @@ class DownloadToastNotificationTest {
 
     @Test
     fun `formatDownloadToastData formats ready to install transfer as complete`() {
-        val transfer = Transfer(
-            info = TransferInfo(
-                id = "boss-update-1",
-                title = "BOSS Console Update",
-                kind = TransferKind.APP_UPDATE,
-                phase = TransferPhase.READY_TO_INSTALL,
-                progress = 1.0f,
+        val transfer =
+            Transfer(
+                info =
+                    TransferInfo(
+                        id = "boss-update-1",
+                        title = "BOSS Console Update",
+                        kind = TransferKind.APP_UPDATE,
+                        phase = TransferPhase.READY_TO_INSTALL,
+                        progress = 1.0f,
+                    ),
             )
-        )
 
         val data = formatDownloadToastData(transfer)
 

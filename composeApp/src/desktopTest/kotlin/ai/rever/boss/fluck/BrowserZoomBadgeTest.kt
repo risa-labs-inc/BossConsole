@@ -8,7 +8,6 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class BrowserZoomBadgeTest {
-
     @Test
     fun `formatZoomPercentage formats 1_0 to 100 percent`() {
         assertEquals("100%", formatZoomPercentage(1.0))

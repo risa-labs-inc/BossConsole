@@ -55,9 +55,7 @@ fun isNonDefaultZoom(zoomLevel: Double): Boolean = kotlin.math.abs(zoomLevel - 1
  * Automatically appears when active tab zoom is not 100%, offering 1-click reset and zoom +/- controls.
  */
 @Composable
-fun BrowserZoomBadge(
-    modifier: Modifier = Modifier,
-) {
+fun BrowserZoomBadge(modifier: Modifier = Modifier) {
     val windowId = LocalWindowId.current ?: return
     val windowsWithBrowser by ActiveBrowserRegistry.windowsWithActiveBrowser.collectAsState()
     val hasBrowserInWindow = windowsWithBrowser.contains(windowId)
