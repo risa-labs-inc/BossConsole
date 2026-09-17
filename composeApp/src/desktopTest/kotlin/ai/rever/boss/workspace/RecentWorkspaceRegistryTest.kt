@@ -23,6 +23,16 @@ class RecentWorkspaceRegistryTest {
     }
 
     @Test
+    fun `addWorkspace normalizes Windows backslashes and trailing slashes`() {
+        RecentWorkspaceRegistry.addWorkspace("C:\\Users\\boss\\project-win\\", "")
+
+        val workspaces = RecentWorkspaceRegistry.getRecentWorkspaces()
+        assertEquals(1, workspaces.size)
+        assertEquals("C:/Users/boss/project-win", workspaces[0].path)
+        assertEquals("project-win", workspaces[0].name)
+    }
+
+    @Test
     fun `addWorkspace promotes existing workspace to top`() {
         RecentWorkspaceRegistry.addWorkspace("/Users/boss/project-1", "P1")
         RecentWorkspaceRegistry.addWorkspace("/Users/boss/project-2", "P2")

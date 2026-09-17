@@ -5,6 +5,18 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
+ * Normalizes directory path separators and trailing slashes for cross-platform consistency.
+ */
+fun normalizeWorkspacePath(path: String): String {
+    val trimmed = path.trim().replace('\\', '/')
+    return if (trimmed.endsWith('/') && trimmed.length > 1) {
+        trimmed.dropLast(1)
+    } else {
+        trimmed
+    }
+}
+
+/**
  * Metadata representing a recent workspace directory for project picker and quick switching.
  */
 data class RecentWorkspaceItem(
@@ -34,9 +46,10 @@ object RecentWorkspaceRegistry {
         path: String,
         name: String,
     ) {
-        val cleanPath = path.trim()
-        val cleanName = name.trim().ifEmpty { cleanPath.substringAfterLast('/').ifEmpty { "Workspace" } }
+        val cleanPath = normalizeWorkspacePath(path)
         if (cleanPath.isEmpty()) return
+
+        val cleanName = name.trim().ifEmpty { cleanPath.substringAfterLast('/').ifEmpty { "Workspace" } }
 
         synchronized(lock) {
             val existingIndex = workspaceList.indexOfFirst { it.path.equals(cleanPath, ignoreCase = true) }
@@ -72,7 +85,7 @@ object RecentWorkspaceRegistry {
      * Toggles pin status for a workspace path. Pinned workspaces are preserved during capacity eviction.
      */
     fun togglePin(path: String): Boolean {
-        val cleanPath = path.trim()
+        val cleanPath = normalizeWorkspacePath(path)
         synchronized(lock) {
             val index = workspaceList.indexOfFirst { it.path.equals(cleanPath, ignoreCase = true) }
             if (index != -1) {
@@ -106,7 +119,7 @@ object RecentWorkspaceRegistry {
      * Removes a workspace from the buffer.
      */
     fun removeWorkspace(path: String) {
-        val cleanPath = path.trim()
+        val cleanPath = normalizeWorkspacePath(path)
         synchronized(lock) {
             workspaceList.removeAll { it.path.equals(cleanPath, ignoreCase = true) }
             _workspacesFlow.value = workspaceList.toList()
