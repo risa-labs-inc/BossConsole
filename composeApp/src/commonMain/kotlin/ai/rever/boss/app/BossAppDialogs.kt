@@ -486,7 +486,7 @@ internal fun BossAppDialogs(state: BossAppState) {
         GlobalSearchDialog(
             projectPath = selectedProject.path,
             fileIndexer = spotlightFileIndexer,
-            onIndexProject = { state.spotlightFileIndexes.ensureIndexed(selectedProject.path) },
+            onIndexProject = { state.spotlightFileIndexes.ensureIndexed(selectedProject.path, refresh = true) },
             workspaceManager = workspaceManager,
             windowId = windowId,
             onDismiss = {

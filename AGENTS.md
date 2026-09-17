@@ -2254,3 +2254,12 @@ inspects at most 4096 characters; full XML parsing still enforces its own limits
 Dev reload resolves staged JARs with manifest identity validation, matching startup.
 The scaffold wrapper source/hash is recorded in `resources/launcher/README.md`;
 update it with the pinned distribution checksum and scaffold validation together.
+
+## Spotlight file freshness
+
+Each dialog opening requests a refresh of its window-owned file index; Refresh files repeats
+that request while the dialog stays open. The previous snapshot stays usable until replacement.
+An active scan is reused across close/reopen, never duplicated; project replacement and window
+closure still cancel it. This deliberately trades a new scan on completed-index reopen for
+freshness. There is no filesystem watcher or live refresh interval. Preserve the index walk's
+confinement, cancellation and window ownership when extending freshness triggers.

@@ -34,10 +34,14 @@ internal class SpotlightFileIndexOwner(
         }
     }
 
-    fun ensureIndexed(projectPath: String) {
+    /** Refresh retains the visible snapshot until replacement and coalesces with an active scan. */
+    fun ensureIndexed(
+        projectPath: String,
+        refresh: Boolean = false,
+    ) {
         if (projectPath.isBlank()) return
         val indexer = indexerFor(projectPath)
         if (indexingJob?.isActive == true) return
-        indexingJob = scope.launch { indexer.indexProject(projectPath) }
+        indexingJob = scope.launch { indexer.indexProject(projectPath, forceReindex = refresh) }
     }
 }

@@ -411,6 +411,7 @@ fun GlobalSearchDialog(
                     SearchDialogHeader(
                         fileCount = indexedFiles.size,
                         isIndexing = isIndexing,
+                        onRefresh = onIndexProject.takeIf { projectPath.isNotBlank() },
                         onClose = onDismiss,
                     )
                 }
@@ -512,6 +513,7 @@ fun GlobalSearchDialog(
 private fun SearchDialogHeader(
     fileCount: Int,
     isIndexing: Boolean,
+    onRefresh: (() -> Unit)?,
     onClose: () -> Unit,
 ) {
     Row(
@@ -519,58 +521,11 @@ private fun SearchDialogHeader(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            // Spotlight-style icon
-            Box(
-                modifier =
-                    Modifier
-                        .size(36.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(SelectionAccent.copy(alpha = 0.15f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.Search,
-                    contentDescription = null,
-                    tint = SelectionAccent,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
+        SearchDialogIdentity(fileCount, isIndexing)
 
-            Column {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = "BOSS Search",
-                        color = BossTheme.colors.textPrimary,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    // Shortcut hint
-                    Box(
-                        modifier =
-                            Modifier
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(BossTheme.colors.raised)
-                                .padding(horizontal = 6.dp, vertical = 2.dp),
-                    ) {
-                        Text(
-                            text = "⇧⇧",
-                            color = BossTheme.colors.textSecondary,
-                            fontSize = 11.sp,
-                        )
-                    }
-                }
-                Text(
-                    text = if (isIndexing) "Indexing files..." else "$fileCount files indexed",
-                    color = BossTheme.colors.textSecondary,
-                    fontSize = 11.sp,
-                )
+        onRefresh?.let { refresh ->
+            TextButton(onClick = refresh, enabled = !isIndexing) {
+                Text("Refresh files")
             }
         }
 
@@ -584,6 +539,67 @@ private fun SearchDialogHeader(
                 contentDescription = "Close",
                 tint = BossTheme.colors.textSecondary,
                 modifier = Modifier.size(20.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SearchDialogIdentity(
+    fileCount: Int,
+    isIndexing: Boolean,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        // Spotlight-style icon
+        Box(
+            modifier =
+                Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(SelectionAccent.copy(alpha = 0.15f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Search,
+                contentDescription = null,
+                tint = SelectionAccent,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+
+        Column {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = "BOSS Search",
+                    color = BossTheme.colors.textPrimary,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                // Shortcut hint
+                Box(
+                    modifier =
+                        Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(BossTheme.colors.raised)
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                ) {
+                    Text(
+                        text = "⇧⇧",
+                        color = BossTheme.colors.textSecondary,
+                        fontSize = 11.sp,
+                    )
+                }
+            }
+            Text(
+                text = if (isIndexing) "Indexing files..." else "$fileCount files indexed",
+                color = BossTheme.colors.textSecondary,
+                fontSize = 11.sp,
             )
         }
     }

@@ -65,6 +65,8 @@ class SpotlightSearchEffectTest {
                     }
                     assertEquals(first.results, second.results)
                     assertEquals("needle", first.query)
+
+                    assertRefreshedQuery(files, second)
                 } finally {
                     composition.dispose()
                     recomposer.cancel()
@@ -74,6 +76,31 @@ class SpotlightSearchEffectTest {
                 }
             }
         }
+
+    private suspend fun assertRefreshedQuery(
+        files: androidx.compose.runtime.MutableState<List<IndexedFile>>,
+        second: SpotlightDialogState,
+    ) {
+        // A completed refresh renames a matching file without editing the query.
+        files.value = listOf(IndexedFile("needle-renamed.kt", "/a/needle-renamed.kt", "needle-renamed.kt"))
+        Snapshot.sendApplyNotifications()
+        withTimeout(5_000) {
+            while (second.results
+                    .filterIsInstance<SearchResult.FileResult>()
+                    .singleOrNull()
+                    ?.path !=
+                "/a/needle-renamed.kt"
+            ) {
+                delay(10)
+            }
+        }
+        files.value = emptyList()
+        Snapshot.sendApplyNotifications()
+        withTimeout(5_000) {
+            while (second.results.filterIsInstance<SearchResult.FileResult>().isNotEmpty()) delay(10)
+        }
+        assertEquals("needle", second.query)
+    }
 
     private class NoNodes : AbstractApplier<Unit>(Unit) {
         override fun insertTopDown(
