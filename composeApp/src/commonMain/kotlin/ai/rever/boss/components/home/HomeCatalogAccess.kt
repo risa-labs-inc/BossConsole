@@ -19,9 +19,8 @@ interface HomeCatalogProvider {
     /**
      * Store rows the grid could offer, already reduced and already compatibility-checked.
      *
-     * Returns empty rather than failing when the store is unreachable: a home screen that
-     * cannot reach the network should show the tools that are installed, not an error. The
-     * implementation logs the failure.
+     * An empty list means a successful empty catalogue. Failures propagate so Home can
+     * offer retry while keeping installed tools available. Cancellation also propagates.
      */
     suspend fun discoverable(): List<HomeStorePluginInput>
 
