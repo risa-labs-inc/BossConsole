@@ -2254,3 +2254,14 @@ inspects at most 4096 characters; full XML parsing still enforces its own limits
 Dev reload resolves staged JARs with manifest identity validation, matching startup.
 The scaffold wrapper source/hash is recorded in `resources/launcher/README.md`;
 update it with the pinned distribution checksum and scaffold validation together.
+
+## Operator project-opening routes
+
+Top-bar recents, the recent-project picker, and native browse route through
+`ProjectOpenCoordinator`. The picker only returns the selection; it cannot mutate window state.
+Validate the directory both when selected and when a destination is confirmed, and keep missing
+recent entries with visible feedback because an unavailable volume need not mean deletion.
+Same-project selections do nothing; a different project asks Current/New Window when a project
+is already open. Keep mode-dialog dismissal separate from error dismissal: the existing mode
+dialog calls onDismiss after its action, which must not clear a confirmation-time failure.
+CLI, deep links, startup restore, clone and new-project flows retain their separate contracts.

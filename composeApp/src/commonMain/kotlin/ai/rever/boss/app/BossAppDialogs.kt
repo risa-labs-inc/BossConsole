@@ -15,6 +15,7 @@ import ai.rever.boss.components.dialogs.ShortcutHelpDialog
 import ai.rever.boss.components.dialogs.TabType
 import ai.rever.boss.components.dialogs.TerminalLinkOpenDialog
 import ai.rever.boss.components.dialogs.ToolLauncherDialog
+import ai.rever.boss.components.dialogs.rememberProjectOpener
 import ai.rever.boss.components.events.DashboardEventBus
 import ai.rever.boss.components.events.FileEventBus
 import ai.rever.boss.components.events.PanelEventBus
@@ -1076,25 +1077,22 @@ internal fun BossAppDialogs(state: BossAppState) {
         )
     }
 
-    // Directory picker for project selection (must be outside conditional for Compose)
+    val projectOpener =
+        rememberProjectOpener(
+            currentProject = selectedProject,
+            onOpenCurrent = { project ->
+                selectProjectInWindow(windowProjectState, project)
+                state.draggablePanelComponent.setPanelVisible(left.top, true)
+                state.focusRequester.requestFocus()
+            },
+            onOpenNew = { project -> WindowOperations.createNewWindowWithProject(project) },
+        )
+    // Both native browse and recent rows use the same validation and destination choice.
     val directoryPicker =
         rememberDirectoryPicker { path ->
             path?.let {
-                val projectName = it.extractFileName().ifEmpty { "Unknown" }
-                selectProjectInWindow(
-                    windowProjectState,
-                    Project(
-                        name = projectName,
-                        path = it,
-                    ),
-                )
-                // Show CodeBase panel when project is selected
-                state.draggablePanelComponent.setPanelVisible(
-                    left.top,
-                    true,
-                )
-                // Close the dialog after selection
                 state.showProjectDialog = false
+                projectOpener.request(Project(name = it.extractFileName().ifEmpty { "Unknown" }, path = it))
             }
         }
 
@@ -1103,6 +1101,7 @@ internal fun BossAppDialogs(state: BossAppState) {
     if (state.showProjectDialog) {
         ProjectSelectionDialog(
             onDismiss = { state.showProjectDialog = false },
+            onProjectSelected = projectOpener::request,
             onOpenDirectoryPicker = {
                 state.showProjectDialog = false
                 directoryPicker.pickDirectory()

@@ -393,7 +393,7 @@
     <ID>LongMethod:ProfileManagementSection.kt$@Composable fun ProfileManagementSection( currentProfile: String, onProfileChange: (String) -&gt; Unit, )</ID>
     <ID>LongMethod:ProjectCard.kt$@Composable fun ProjectCard( project: Project, onClick: () -&gt; Unit, onRemove: (() -&gt; Unit)? = null, modifier: Modifier = Modifier, )</ID>
     <ID>LongMethod:ProjectOpenModeDialog.kt$@Composable fun ProjectOpenModeDialog( project: Project, onDismiss: () -&gt; Unit, onOpenInCurrentWindow: (Project) -&gt; Unit, onOpenInNewWindow: (Project) -&gt; Unit, )</ID>
-    <ID>LongMethod:ProjectSelectionDialog.kt$@Composable fun ProjectSelectionDialog( onDismiss: () -&gt; Unit, onOpenDirectoryPicker: () -&gt; Unit = {}, )</ID>
+    <ID>LongMethod:ProjectSelectionDialog.kt$@Composable fun ProjectSelectionDialog( onDismiss: () -&gt; Unit, onProjectSelected: (Project) -&gt; Unit, onOpenDirectoryPicker: () -&gt; Unit = {}, )</ID>
     <ID>LongMethod:ReleaseNotesMarkdown.kt$@Composable internal fun NotesBlockView(block: NotesBlock)</ID>
     <ID>LongMethod:ReleaseNotesMarkdown.kt$internal fun parseReleaseNotes(source: String): List&lt;NotesBlock&gt;</ID>
     <ID>LongMethod:RemoteWidgetRenderer.kt$@Composable private fun RenderNode( node: WidgetNode, tree: WidgetTree, onEvent: (nodeId: String, event: WidgetEvent) -&gt; Unit, )</ID>
