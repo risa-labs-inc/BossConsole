@@ -98,7 +98,11 @@ actual object URLHandlerService {
      */
     actual fun handleURL(url: String) {
         if (!isAppReady) {
-            logger.debug(LogCategory.BROWSER, "App not ready, queueing URL", mapOf("url" to url))
+            logger.debug(
+                LogCategory.BROWSER,
+                "App not ready, queueing URL",
+                mapOf("url" to LogSanitizer.maskUriParams(url)),
+            )
             urlQueue.add(url)
             return
         }
@@ -131,23 +135,16 @@ actual object URLHandlerService {
                 return
             }
 
-            // Bring BOSS window to front BEFORE processing URL
-            WindowFocusManager.bringToFront()
-            logger.debug(LogCategory.BROWSER, "Brought window to front")
-
-            // Resolve the target window. Uses the registration/focus-gain-backed
-            // lookup, not focusedWindowFlow alone: bringToFront() above is async
-            // (SwingUtilities.invokeLater), so on a cold start or an MCP/CLI
-            // caller that holds OS focus the flow can still be null while a
-            // usable window is plainly registered.
-            val focusedWindowId = WindowFocusManager.resolveActionableWindowId()
-            if (focusedWindowId == null) {
-                logger.warn(LogCategory.BROWSER, "No usable window registered, cannot open URL", mapOf("url" to url))
+            // Resolve once for both activation and routing. The no-argument
+            // bringToFront() can raise a different first-registered window.
+            val title = extractDomain(url) ?: "Loading..."
+            val route = prepareCurrentExternalUrlRoute(url, title)
+            if (route == null) {
+                val logData = mapOf("url" to LogSanitizer.maskUriParams(url))
+                logger.warn(LogCategory.BROWSER, "No usable window registered, cannot open URL", logData)
                 return
             }
-
-            // Extract domain for tab title
-            val title = extractDomain(url) ?: "Loading..."
+            logger.debug(LogCategory.BROWSER, "Prepared URL target window", mapOf("windowId" to route.targetWindowId))
 
             // Increment processing counter BEFORE launching coroutine
             val count = processingCount.incrementAndGet()
@@ -162,8 +159,8 @@ actual object URLHandlerService {
             // Emit URL open event - focused window will handle it
             CoroutineScope(Dispatchers.Main).launch {
                 try {
-                    URLEventBus.openURL(url, title, sourceWindowId = focusedWindowId)
-                    logger.debug(LogCategory.BROWSER, "Emitted URL open event", mapOf("url" to url, "windowId" to focusedWindowId))
+                    route.emit()
+                    logUrlEmission(url, route.targetWindowId)
 
                     // CRITICAL: Wait for tab to actually be created before decrementing
                     // The event emission is instant, but tab creation (splitViewState.openUrlInActivePanel)
@@ -288,4 +285,48 @@ actual object URLHandlerService {
             handleURL(url)
         }
     }
+
+    private fun logUrlEmission(
+        url: String,
+        targetWindowId: String,
+    ) {
+        logger.debug(
+            LogCategory.BROWSER,
+            "Emitted URL open event",
+            mapOf("url" to LogSanitizer.maskUriParams(url), "windowId" to targetWindowId),
+        )
+    }
 }
+
+private fun prepareCurrentExternalUrlRoute(
+    url: String,
+    title: String,
+): ExternalUrlRoute? =
+    prepareExternalUrlRoute(
+        url = url,
+        title = title,
+        resolveWindowId = WindowFocusManager::resolveActionableWindowId,
+        focusWindow = WindowFocusManager::focusWindow,
+        openUrl = URLEventBus::openURL,
+    )
+
+internal class ExternalUrlRoute(
+    val targetWindowId: String,
+    private val emitUrl: suspend () -> Unit,
+) {
+    suspend fun emit() = emitUrl()
+}
+
+/** Prepares an external URL event only after the focus request for its exact target window is accepted. */
+internal fun prepareExternalUrlRoute(
+    url: String,
+    title: String,
+    resolveWindowId: () -> String?,
+    focusWindow: (String) -> Boolean,
+    openUrl: suspend (String, String, String) -> Unit,
+): ExternalUrlRoute? =
+    resolveWindowId()?.takeIf(focusWindow)?.let { windowId ->
+        ExternalUrlRoute(windowId) {
+            openUrl(url, title, windowId)
+        }
+    }
