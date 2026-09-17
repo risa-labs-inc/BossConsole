@@ -2620,6 +2620,10 @@ internal class BrowserHandleImpl(
     /** Diagnostic snapshot of every worker native disposal drains; never a disposal fence. */
     override val hasPendingBrowserCall: Boolean get() = ownedExecutors.any { it.pending > 0 }
 
+    /** See [BrowserHandle.awaitBrowserCallsQuiescent]. Polls the same workers, diagnostic only. */
+    override suspend fun awaitBrowserCallsQuiescent(timeoutMs: Long): Boolean =
+        awaitQuiescent(timeoutMs, QUIESCENT_POLL_MS) { hasPendingBrowserCall }
+
     override fun getCurrentUrl(): String = syncCall("url", "") { browser.url() }
 
     override fun getTitle(): String = syncCall("title", "") { browser.title() }
@@ -4339,6 +4343,15 @@ internal class BrowserHandleImpl(
     companion object {
         /** How much of a page-authored co-browse status string reaches the log. */
         private const val STATUS_LOG_LIMIT = 80
+
+        /**
+         * How often [awaitBrowserCallsQuiescent] re-reads the workers.
+         *
+         * Short enough that a teardown deferred on it is not noticeably delayed once the work
+         * finishes, long enough that waiting out a full deadline costs a bounded number of reads
+         * of four atomics rather than a spin.
+         */
+        private const val QUIESCENT_POLL_MS = 25L
 
         /**
          * Popup browsers we are currently waiting to capture an upload body for.
