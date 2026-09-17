@@ -10,6 +10,9 @@ import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.remember
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 
 private val logger = BossLogger.forComponent("BookmarkAPIAccess")
 
@@ -31,14 +34,17 @@ private val logger = BossLogger.forComponent("BookmarkAPIAccess")
  */
 object BookmarkAPIAccess {
     // Cache for the default plugin reference
-    private var cachedDefaultPlugin: DefaultPlugin? = null
+    private val defaultPlugin = MutableStateFlow<DefaultPlugin?>(null)
+    private val cachedDefaultPlugin: DefaultPlugin? get() = defaultPlugin.value
+
+    internal val initialization: StateFlow<DefaultPlugin?> get() = defaultPlugin
 
     /**
      * Set the DefaultPlugin reference for API access.
      * Call this once from BossApp when creating the DefaultPlugin.
      */
     fun initialize(defaultPlugin: DefaultPlugin) {
-        cachedDefaultPlugin = defaultPlugin
+        this.defaultPlugin.value = defaultPlugin
         logger.debug(LogCategory.SYSTEM, "BookmarkAPIAccess initialized")
     }
 
@@ -51,6 +57,11 @@ object BookmarkAPIAccess {
         val plugin = cachedDefaultPlugin ?: return null
         return plugin.getPluginAPI(BookmarkDataProvider::class.java)
     }
+
+    fun getLibrary(): ai.rever.boss.plugin.bookmark.BookmarkLibraryProvider? =
+        cachedDefaultPlugin?.getPluginAPI(ai.rever.boss.plugin.bookmark.BookmarkLibraryProvider::class.java)
+
+    internal fun registryVersion(): StateFlow<Int>? = cachedDefaultPlugin?.apiRegistryVersion
 
     /**
      * Get the BookmarkDataProvider using the provided DefaultPlugin.
@@ -132,10 +143,32 @@ object BookmarkAPIAccess {
  */
 @Composable
 fun rememberBookmarkCollections(): List<BookmarkCollection> {
-    val provider = BookmarkAPIAccess.getProvider()
+    val provider = rememberBookmarkProvider()
     return if (provider != null) {
         provider.collections.collectAsState().value
     } else {
         emptyList()
     }
+}
+
+/** Observe plugin availability as well as its data, so disabling it removes live actions. */
+@Composable
+internal fun rememberBookmarkProvider(): BookmarkDataProvider? {
+    val plugin = BookmarkAPIAccess.initialization.collectAsState().value
+    val registryVersion = plugin?.apiRegistryVersion?.collectAsState()?.value
+    val states =
+        ai.rever.boss.components.plugin.DynamicPluginManager
+            .anyActiveManager()
+            ?.pluginStates
+            ?.collectAsState()
+            ?.value
+    return remember(plugin, states, registryVersion) { BookmarkAPIAccess.getProvider() }
+}
+
+/** Observe API registration as well as plugin load/unload, including asynchronous registration. */
+@Composable
+internal fun rememberBookmarkLibrary(): ai.rever.boss.plugin.bookmark.BookmarkLibraryProvider? {
+    val provider = rememberBookmarkProvider()
+    val version = BookmarkAPIAccess.registryVersion()?.collectAsState()?.value
+    return androidx.compose.runtime.remember(provider, version) { BookmarkAPIAccess.getLibrary() }
 }

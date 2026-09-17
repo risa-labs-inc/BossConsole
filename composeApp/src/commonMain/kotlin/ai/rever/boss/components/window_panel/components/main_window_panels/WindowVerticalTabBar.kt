@@ -643,6 +643,9 @@ private fun WindowTabBarFavorites(
         apiReachable = lead.state.bookmarksApiReachable,
         onOpen = lead.state.openFavorite,
         onRemove = lead.state.removeFavorite,
+        onEdit = lead.state.editFavorite,
+        onDelete = lead.state.deleteFavorite,
+        onOpenNew = lead.state.openFavoriteNew,
         // Never a silent click: if the offer declines to raise a prompt, say so in the log rather
         // than leaving a button that does nothing and reports nothing.
         onInstallPlugin = {

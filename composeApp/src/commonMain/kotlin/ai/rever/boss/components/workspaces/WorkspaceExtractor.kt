@@ -4,11 +4,11 @@ import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
 import ai.rever.boss.components.window_panel.SplitNode
 import ai.rever.boss.components.window_panel.SplitViewState
 import ai.rever.boss.plugin.api.TabInfo
+import ai.rever.boss.plugin.api.TerminalTabInfoInterface
 import ai.rever.boss.plugin.tab.codeeditor.EditorTabInfo
 import ai.rever.boss.plugin.tab.composer.ComposerTabInfo
 import ai.rever.boss.plugin.tab.diff.DiffTabInfo
 import ai.rever.boss.plugin.tab.jupyter.JupyterTabInfo
-import ai.rever.boss.plugin.tab.terminal.TerminalTabInfo
 import ai.rever.boss.plugin.workspace.SplitConfig.HorizontalSplit
 import ai.rever.boss.plugin.workspace.SplitConfig.SinglePanel
 import ai.rever.boss.plugin.workspace.SplitConfig.VerticalSplit
@@ -155,7 +155,7 @@ internal fun extractTabConfig(
             )
         }
 
-        is TerminalTabInfo -> {
+        is TerminalTabInfoInterface -> {
             TabConfig(
                 type = "terminal",
                 title = tab.title,

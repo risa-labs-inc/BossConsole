@@ -47,6 +47,7 @@ fun BookmarkDialog(
     workspaces: List<ai.rever.boss.components.workspaces.LayoutWorkspace>,
     onDismiss: () -> Unit,
     onConfirm: (collectionIds: Set<String>, workspacePanelMap: Map<String, String?>) -> Unit,
+    unavailableReason: String? = null,
 ) {
     // Multi-select state
     // Preselect "Favorites" collection
@@ -121,6 +122,10 @@ fun BookmarkDialog(
                             .weight(1f)
                             .verticalScroll(rememberScrollState()),
                 ) {
+                    if (unavailableReason != null) {
+                        Text(unavailableReason, color = BossTheme.colors.textPrimary)
+                        Spacer(modifier = Modifier.height(12.dp))
+                    }
                     // Section 1: Collections (multi-select pills)
                     Text(
                         text = "Select Collections",
@@ -255,7 +260,7 @@ fun BookmarkDialog(
 
                     Button(
                         onClick = { onConfirm(selectedCollections, workspacePanelSelections) },
-                        enabled = selectedCollections.isNotEmpty(),
+                        enabled = unavailableReason == null && selectedCollections.isNotEmpty(),
                         colors =
                             ButtonDefaults.buttonColors(
                                 backgroundColor = BossTheme.colors.signal,

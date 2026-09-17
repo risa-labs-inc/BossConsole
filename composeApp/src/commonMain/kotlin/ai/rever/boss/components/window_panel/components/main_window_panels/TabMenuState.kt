@@ -1,9 +1,10 @@
 package ai.rever.boss.components.window_panel.components.main_window_panels
 
+import ai.rever.boss.components.bars.horizontal.StatusMessageManager
 import ai.rever.boss.components.bookmarks.Bookmark
-import ai.rever.boss.components.bookmarks.WorkspacePanelTarget
-import ai.rever.boss.components.dialogs.BookmarkDialog
-import ai.rever.boss.components.dialogs.RemoveBookmarkConfirmationDialog
+import ai.rever.boss.components.dialogs.BookmarkDeleteDialog
+import ai.rever.boss.components.dialogs.BookmarkEditorDialog
+import ai.rever.boss.components.dialogs.bookmarkProviderCall
 import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.components.window_panel.SplitOrientation
 import ai.rever.boss.components.window_panel.SplitViewState
@@ -11,14 +12,21 @@ import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.plugin.tab.codeeditor.EditorTabInfo
 import ai.rever.boss.plugin.tab.jupyter.JupyterTabInfo
+import ai.rever.boss.project.DefaultWorkingDirectory
 import ai.rever.boss.services.bookmarks.BookmarkAPIAccess
+import ai.rever.boss.services.bookmarks.TerminalBookmarkLinks
+import ai.rever.boss.services.bookmarks.bookmarkSaveProblem
 import ai.rever.boss.services.bookmarks.rememberBookmarkCollections
+import ai.rever.boss.services.bookmarks.rememberBookmarkLibrary
 import ai.rever.boss.utils.revealInFileManager
 import ai.rever.boss.utils.revealInFileManagerLabel
+import ai.rever.boss.window.LocalWindowProjectState
 import ai.rever.boss.window.WindowOperations
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.outlined.BookmarkRemove
 import androidx.compose.material.icons.outlined.ChevronLeft
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Clear
@@ -29,7 +37,6 @@ import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Splitscreen
 import androidx.compose.material.icons.outlined.Star
-import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material.icons.outlined.ViewColumn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
@@ -37,9 +44,11 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.focus.FocusRequester
 import com.arkivanov.decompose.extensions.compose.subscribeAsState
+import kotlinx.coroutines.launch
 import java.lang.reflect.Method
 import java.util.Optional
 import java.util.concurrent.ConcurrentHashMap
@@ -99,6 +108,8 @@ class TabMenuState internal constructor(
      * the pointer leaves, dialogs included, so it has to know a dialog it raised is still open.
      */
     val anyDialogOpen: () -> Boolean,
+    val editBookmark: (Bookmark) -> Unit = {},
+    val deleteBookmark: (Bookmark) -> Unit = {},
 )
 
 /**
@@ -115,14 +126,22 @@ fun BossTabsComponent.rememberTabMenuState(
     vertical: Boolean = false,
 ): TabMenuState {
     val tabsState = tabsState.subscribeAsState()
+    val selectedProject =
+        LocalWindowProjectState.current
+            ?.selectedProject
+            ?.collectAsState()
+            ?.value
+    val defaultDirectory = selectedProject?.path?.takeIf { it.isNotBlank() } ?: DefaultWorkingDirectory.nominalPath()
 
     var showBookmarkDialog by remember { mutableStateOf(false) }
     var tabToBookmark by remember { mutableStateOf<TabInfo?>(null) }
 
-    // Remove bookmark dialog state
-    var showRemoveBookmarkDialog by remember { mutableStateOf(false) }
-    var bookmarkToRemove by remember { mutableStateOf<Triple<String, String, String>?>(null) }
-    // Triple = (collectionId, bookmarkId, tabTitle)
+    var bookmarkToEdit by remember { mutableStateOf<Bookmark?>(null) }
+    var deleteTarget by remember { mutableStateOf<Bookmark?>(null) }
+    var preferFavorite by remember { mutableStateOf<Boolean?>(null) }
+    val scope = rememberCoroutineScope()
+    val library = rememberBookmarkLibrary()
+    val libraryState = library?.state?.collectAsState()?.value
 
     // Observe collections for reactive context menu updates (gracefully handles missing plugin)
     val collections = rememberBookmarkCollections()
@@ -142,7 +161,7 @@ fun BossTabsComponent.rememberTabMenuState(
             // buildList runs during composition (every tab-bar
             // recomposition, e.g. on every terminal output line), so
             // doing it here flips the active panel away from whichever
-            // split the user is actually in — stealing focus back to the
+            // split the user is actually in - stealing focus back to the
             // output-producing panel. Panel activation on right-click is
             // already handled by the panel's pointerInput press handler;
             // left-click activation by the tab onClick above.
@@ -192,7 +211,7 @@ fun BossTabsComponent.rememberTabMenuState(
             // Host tab types expose filePath directly. Dynamic plugin tabs (e.g. the
             // editor-tab plugin's EditorTabData) live in a plugin classloader we can't
             // reference by type, so fall back to reading a `filePath` getter reflectively
-            // — the same duck-typing the editor-tab plugin uses for host tab types.
+            // - the same duck-typing the editor-tab plugin uses for host tab types.
             // The reflected value is assumed absolute: revealInFileManager resolves via
             // File(path).absolutePath, so a relative path would resolve against the CWD.
             val revealPath =
@@ -226,48 +245,61 @@ fun BossTabsComponent.rememberTabMenuState(
             @Suppress("UNUSED_EXPRESSION")
             collections
 
-            val tabConfig = convertTabInfoToTabConfig(config)
-            val existingBookmark = BookmarkAPIAccess.findBookmarkForTab(tabConfig)
-
-            if (existingBookmark != null) {
-                // Tab is already bookmarked - show remove option WITH CONFIRMATION
-                val (collectionId, bookmarkId) = existingBookmark
-                add(
-                    ContextMenuItem("Remove from Bookmarks", Icons.Filled.Star, onClick = {
-                        bookmarkToRemove = Triple(collectionId, bookmarkId, config.title)
-                        showRemoveBookmarkDialog = true
-                    }),
-                )
-            } else {
-                // Tab is not bookmarked - show add option
-                add(
-                    ContextMenuItem("Add to Bookmarks", Icons.Outlined.Star, onClick = {
-                        tabToBookmark = config
-                        showBookmarkDialog = true
-                    }),
-                )
-            }
-
-            // Favorite current workspace
-            val currentWorkspace = workspaceManager.currentWorkspace.value
-            if (currentWorkspace != null) {
-                val isFavorited = BookmarkAPIAccess.isFavorite(currentWorkspace.id)
+            val tabConfig = convertTabInfoToTabConfig(config, defaultDirectory)
+            val existingIds = BookmarkAPIAccess.findBookmarkForTab(tabConfig)
+            val matchedId =
+                if (tabConfig.type == "terminal") {
+                    TerminalBookmarkLinks.find(config.id)
+                } else {
+                    existingIds?.second
+                }
+            val existingBookmark =
+                libraryState?.collections?.flatMap { it.bookmarks }?.find { it.id == matchedId }
+            val problem = bookmarkSaveProblem(tabConfig)
+            val available = library != null && libraryState?.ready == true
+            val isFavorite = existingBookmark?.id in libraryState?.favoriteBookmarkIds.orEmpty()
+            if (available && problem == null) {
                 add(
                     ContextMenuItem(
-                        if (isFavorited) "Unfavorite Space" else "Favorite Space",
-                        // The icon shows what the action DOES, matching the label: "Unfavorite"
-                        // empties the star, "Favorite" fills it.
-                        if (isFavorited) Icons.Outlined.StarBorder else Icons.Filled.Star,
+                        if (existingBookmark == null) "Save Bookmark…" else "Remove Bookmark…",
+                        if (existingBookmark == null) Icons.Outlined.BookmarkBorder else Icons.Outlined.BookmarkRemove,
                         onClick = {
-                            if (isFavorited) {
-                                BookmarkAPIAccess.removeFavoriteWorkspace(currentWorkspace.id)
+                            if (existingBookmark != null) {
+                                deleteTarget = existingBookmark
                             } else {
-                                BookmarkAPIAccess.addFavoriteWorkspace(currentWorkspace.id, currentWorkspace.name)
+                                bookmarkToEdit = null
+                                tabToBookmark = config
+                                preferFavorite = false
+                                showBookmarkDialog = true
                             }
                         },
                     ),
                 )
             }
+            add(
+                ContextMenuItem(
+                    when {
+                        !available -> "Bookmarks unavailable - update or enable Bookmarks in Tools"
+                        problem != null -> problem
+                        isFavorite -> "Remove from Favorites"
+                        else -> "Add to Favorites"
+                    },
+                    Icons.Outlined.Star,
+                    enabled = available && problem == null,
+                    onClick = {
+                        if (existingBookmark != null && library != null) {
+                            scope.launch {
+                                updateTabFavorite(library, existingBookmark.id, !isFavorite)
+                            }
+                        } else {
+                            bookmarkToEdit = null
+                            tabToBookmark = config
+                            preferFavorite = true
+                            showBookmarkDialog = true
+                        }
+                    },
+                ),
+            )
 
             add(ContextMenuItem(isDivider = true))
 
@@ -334,71 +366,80 @@ fun BossTabsComponent.rememberTabMenuState(
 
     return TabMenuState(
         items = tabMenuItems,
-        anyDialogOpen = { showBookmarkDialog || showRemoveBookmarkDialog },
+        anyDialogOpen = { showBookmarkDialog || deleteTarget != null },
         bookmarkTab = { tab ->
             tabToBookmark = tab
+            bookmarkToEdit = null
+            preferFavorite = true
             showBookmarkDialog = true
         },
+        editBookmark = { bookmark ->
+            tabToBookmark = null
+            bookmarkToEdit = bookmark
+            preferFavorite = null
+            showBookmarkDialog = true
+        },
+        deleteBookmark = { deleteTarget = it },
         dialogs = {
-            // Bookmark dialog (gracefully handles missing bookmarks plugin)
-            if (showBookmarkDialog && tabToBookmark != null) {
-                val dialogCollections = rememberBookmarkCollections()
-                val workspaces by workspaceManager.workspaces.collectAsState()
-                BookmarkDialog(
-                    tabTitle = tabToBookmark!!.title,
-                    collections = dialogCollections,
-                    workspaces = workspaces,
-                    onDismiss = {
-                        showBookmarkDialog = false
-                        tabToBookmark = null
-                    },
-                    onConfirm = { collectionIds, workspacePanelMap ->
-                        val tabConfig = convertTabInfoToTabConfig(tabToBookmark!!)
-                        val workspace = workspaceManager.currentWorkspace.value
-
-                        // Convert workspacePanelMap to list of WorkspacePanelTarget
-                        val targetWorkspaces =
-                            workspacePanelMap.map { (workspaceName, panelId) ->
-                                WorkspacePanelTarget(workspaceName = workspaceName, panelId = panelId)
+            val editedConfig =
+                bookmarkToEdit?.tabConfig ?: tabToBookmark?.let { convertTabInfoToTabConfig(it, defaultDirectory) }
+            if (showBookmarkDialog && editedConfig != null) {
+                if (library != null) {
+                    BookmarkEditorDialog(
+                        provider = library,
+                        config = editedConfig,
+                        existing = bookmarkToEdit,
+                        preferFavorite = preferFavorite,
+                        onSaved = { bookmarkId ->
+                            tabToBookmark?.takeIf { editedConfig.type == "terminal" }?.let {
+                                TerminalBookmarkLinks.bind(it.id, bookmarkId)
                             }
-
-                        // Create bookmark for each selected collection
-                        collectionIds.forEach { collectionId ->
-                            val bookmark =
-                                Bookmark(
-                                    tabConfig = tabConfig,
-                                    workspaceName = workspace?.name ?: "Unknown",
-                                    targetWorkspaces = targetWorkspaces,
-                                )
-                            val collection = dialogCollections.find { it.id == collectionId }
-                            if (collection != null) {
-                                BookmarkAPIAccess.addBookmark(collection.name, bookmark)
+                        },
+                        onDismiss = {
+                            showBookmarkDialog = false
+                            tabToBookmark = null
+                            bookmarkToEdit = null
+                        },
+                    )
+                } else {
+                    androidx.compose.material.AlertDialog(
+                        onDismissRequest = { showBookmarkDialog = false },
+                        title = { androidx.compose.material.Text("Bookmarks unavailable") },
+                        text = {
+                            androidx.compose.material.Text(
+                                "Update or enable Bookmarks in Tools, then try again.",
+                            )
+                        },
+                        confirmButton = {
+                            androidx.compose.material.TextButton(onClick = { showBookmarkDialog = false }) {
+                                androidx.compose.material.Text("Close")
                             }
-                        }
-
-                        showBookmarkDialog = false
-                        tabToBookmark = null
-                    },
-                )
+                        },
+                    )
+                }
             }
-
-            // Remove bookmark confirmation dialog
-            if (showRemoveBookmarkDialog && bookmarkToRemove != null) {
-                RemoveBookmarkConfirmationDialog(
-                    bookmarkTitle = bookmarkToRemove!!.third,
-                    onDismiss = {
-                        showRemoveBookmarkDialog = false
-                        bookmarkToRemove = null
-                    },
-                    onConfirm = {
-                        bookmarkToRemove?.let { (collectionId, bookmarkId, _) ->
-                            BookmarkAPIAccess.removeBookmark(collectionId, bookmarkId)
-                        }
-                        showRemoveBookmarkDialog = false
-                        bookmarkToRemove = null
-                    },
-                )
+            deleteTarget?.let { target ->
+                library?.let { provider ->
+                    BookmarkDeleteDialog(provider, target, onDismiss = { deleteTarget = null })
+                }
             }
         },
+    )
+}
+
+private suspend fun updateTabFavorite(
+    library: ai.rever.boss.plugin.bookmark.BookmarkLibraryProvider,
+    bookmarkId: String,
+    favorite: Boolean,
+) {
+    bookmarkProviderCall(
+        action = {
+            val result = library.setFavorite(bookmarkId, favorite, library.state.value.revision)
+            val successMessage = if (favorite) "Added to Favorites" else "Removed from Favorites"
+            StatusMessageManager.showMessage(
+                if (result.success) successMessage else result.message ?: "Could not update Favorites",
+            )
+        },
+        onError = { StatusMessageManager.showMessage(it) },
     )
 }

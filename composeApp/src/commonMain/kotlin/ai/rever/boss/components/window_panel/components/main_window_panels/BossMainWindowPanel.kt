@@ -314,6 +314,9 @@ class TabBarState
         val collapsedToActiveTab: Boolean,
         /** Scroll state for this panel's rows. */
         val listState: LazyListState,
+        val editFavorite: ((ai.rever.boss.plugin.bookmark.Bookmark) -> Unit)? = null,
+        val deleteFavorite: ((ai.rever.boss.plugin.bookmark.Bookmark) -> Unit)? = null,
+        val openFavoriteNew: ((ai.rever.boss.plugin.bookmark.Bookmark) -> Unit)? = null,
     ) {
         /**
          * How many lazy-list items this group contributes, tabs and its own leading rows alike.
@@ -427,10 +430,20 @@ fun BossTabsComponent.rememberTabBarState(
     // Observe collections for reactive context menu updates (gracefully handles missing plugin)
     val collections = rememberBookmarkCollections()
 
-    // Favorites: every bookmark across every collection, flattened. Collections organise the
-    // bookmarks panel; the sidebar grid is a flat "things I go to constantly", so the grouping
-    // is deliberately dropped here rather than rendered as more sections.
-    val favorites = remember(collections) { collections.flatMap { it.bookmarks } }
+    val bookmarkLibrary =
+        ai.rever.boss.services.bookmarks
+            .rememberBookmarkLibrary()
+    val bookmarkLibraryState = bookmarkLibrary?.state?.collectAsState()?.value
+    val favorites =
+        remember(collections, bookmarkLibraryState) {
+            if (bookmarkLibraryState != null) {
+                bookmarkLibraryState.collections
+                    .flatMap { it.bookmarks }
+                    .filter { it.id in bookmarkLibraryState.favoriteBookmarkIds }
+            } else {
+                collections.flatMap { it.bookmarks }
+            }
+        }
 
     // Whether the plugin that owns bookmarks is present at all. Null provider is how
     // BookmarkAPIAccess reports its absence, and it is the difference between "you have saved
@@ -453,8 +466,7 @@ fun BossTabsComponent.rememberTabBarState(
     // running, which is exactly the gap the first version fell into.
     val bookmarksInstalled =
         remember(pluginStates) { MissingPluginOffer.isInstalled(BOOKMARKS_PLUGIN_ID) }
-    val bookmarksApiReachable =
-        remember(pluginStates) { BookmarkAPIAccess.getProvider() != null }
+    val bookmarksApiReachable = bookmarkLibrary != null
 
     // LazyListState for tab bar scrolling. Remembered unconditionally even when the caller
     // supplies one: a remember that appears only on some compositions is a positional slot that
@@ -554,33 +566,21 @@ fun BossTabsComponent.rememberTabBarState(
         }
     }
 
-    // Opening a favourite. Routed through the WORKSPACE converter rather than a second
-    // TabConfig -> TabInfo mapping of its own: a bookmark stores exactly the TabConfig a
-    // workspace does, and that function already knows how to rebuild every tab type from one,
-    // favicon cache included. A private copy here would be a second mapping to keep in step with
-    // every new tab type.
-    val openBookmark: (ai.rever.boss.plugin.bookmark.Bookmark) -> Unit = { bookmark ->
-        val projectPath =
-            windowProjectState
-                ?.selectedProject
-                ?.value
-                ?.path
-                .orEmpty()
-        val resolved = DefaultWorkingDirectory.resolve(projectPath)
-        val tabInfo =
-            splitViewState?.let { state ->
-                createTabFromWorkspaceConfig(bookmark.tabConfig, resolved, state)
+    val openSavedBookmark: (ai.rever.boss.plugin.bookmark.Bookmark, Boolean) -> Unit = { bookmark, forceNew ->
+        val requestedPanel = currentPanelId ?: splitViewState?.activePanelId
+        edgeScrollScope.launch {
+            val result =
+                ai.rever.boss.services.bookmarks.HostBookmarkOpeningProvider.shared
+                    .openBookmark(bookmark, windowId, requestedPanel, forceNew)
+            if (!result.success) {
+                ai.rever.boss.components.bars.horizontal.StatusMessageManager.showMessage(
+                    result.message ?: "Could not open bookmark.",
+                    durationMs = 6000,
+                )
             }
-        if (tabInfo != null) {
-            openCreatedTab(tabInfo)
-        } else {
-            bossMainWindowPanelLogger.warn(
-                LogCategory.UI,
-                "Favourite could not be opened",
-                mapOf("type" to bookmark.tabConfig.type, "title" to bookmark.tabConfig.title),
-            )
         }
     }
+    val openBookmark: (ai.rever.boss.plugin.bookmark.Bookmark) -> Unit = { openSavedBookmark(it, false) }
 
     // Activating a tab, in one place: a full tab row and a rail dot both do it, and both owe the
     // owner an onTabActivated afterwards.
@@ -904,10 +904,23 @@ fun BossTabsComponent.rememberTabBarState(
         activateTab = activateTab,
         favorites = favorites,
         removeFavorite = { bookmark ->
-            collections
-                .firstOrNull { collection -> collection.bookmarks.any { it.id == bookmark.id } }
-                ?.let { BookmarkAPIAccess.removeBookmark(it.id, bookmark.id) }
+            val provider = BookmarkAPIAccess.getLibrary()
+            if (provider != null) {
+                edgeScrollScope.launch {
+                    val result = provider.setFavorite(bookmark.id, false, provider.state.value.revision)
+                    ai.rever.boss.components.bars.horizontal.StatusMessageManager.showMessage(
+                        if (result.success) {
+                            "Removed from Favorites. Still saved in Bookmarks."
+                        } else {
+                            result.message ?: "Could not update Favorites."
+                        },
+                    )
+                }
+            }
         },
+        editFavorite = tabMenu.editBookmark,
+        deleteFavorite = tabMenu.deleteBookmark,
+        openFavoriteNew = { openSavedBookmark(it, true) },
         openFavorite = openBookmark,
         bookmarksInstalled = bookmarksInstalled,
         bookmarksApiReachable = bookmarksApiReachable,
@@ -2540,47 +2553,18 @@ class BossTabsComponent(
 /**
  * Convert TabInfo to TabConfig for bookmark storage
  */
-internal fun convertTabInfoToTabConfig(tabInfo: TabInfo): TabConfig =
-    when (tabInfo) {
-        is FluckTabInfo -> {
-            TabConfig(
-                type = "browser",
-                title = tabInfo.title,
-                url = tabInfo.url,
-                faviconCacheKey = tabInfo.faviconCacheKey,
-            )
-        }
-
-        is EditorTabInfo -> {
-            TabConfig(
-                type = "editor",
-                title = tabInfo.title,
-                filePath = tabInfo.filePath,
-            )
-        }
-
-        is TerminalTabInfo -> {
-            TabConfig(
-                type = "terminal",
-                title = tabInfo.title,
-            )
-        }
-
-        is JupyterTabInfo -> {
-            TabConfig(
-                type = "jupyter",
-                title = tabInfo.title,
-                filePath = tabInfo.filePath,
-            )
-        }
-
-        else -> {
-            TabConfig(
-                type = "unknown",
-                title = tabInfo.title,
-            )
-        }
-    }
+internal fun convertTabInfoToTabConfig(
+    tabInfo: TabInfo,
+    defaultWorkingDirectory: String = DefaultWorkingDirectory.nominalPath(),
+): TabConfig {
+    val extracted =
+        ai.rever.boss.components.workspaces
+            .extractTabConfig(tabInfo, defaultWorkingDirectory)
+            ?: TabConfig(type = "unknown", title = tabInfo.title)
+    // Diff renderers resolve paths against the active project. Remember that
+    // context so reopening cannot silently compare a different project's file.
+    return if (extracted.type == "diff") extracted.copy(workingDirectory = defaultWorkingDirectory) else extracted
+}
 
 /**
  * Whether the surrounding composition is inside a [BossMainWindowPanel].

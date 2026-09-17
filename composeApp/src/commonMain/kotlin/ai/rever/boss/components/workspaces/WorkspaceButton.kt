@@ -3,8 +3,10 @@ package ai.rever.boss.components.workspaces
 import ai.rever.boss.components.buttons.BossActionButton
 import ai.rever.boss.components.icons.SpaceIcon
 import ai.rever.boss.components.overlays.ContextMenuItem
+import ai.rever.boss.components.window_panel.components.main_window_panels.favoriteWorkspaceItem
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.plugin.workspace.SplitConfig.SinglePanel
+import ai.rever.boss.services.bookmarks.rememberBookmarkProvider
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Circle
@@ -108,9 +110,12 @@ fun WorkspaceButton(
     var showOpenDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
 
+    val favoriteItem = favoriteWorkspaceItem(currentWorkspace, rememberBookmarkProvider())
+
     // Build options submenu items
     val optionsSubMenu =
         buildList {
+            favoriteItem?.let(::add)
             // Save workspace
             add(
                 ContextMenuItem(

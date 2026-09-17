@@ -2,7 +2,9 @@ package ai.rever.boss.components.window_panel.components.main_window_panels
 
 import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.components.workspaces.workspaceManager
-import ai.rever.boss.services.bookmarks.BookmarkAPIAccess
+import ai.rever.boss.plugin.api.BookmarkDataProvider
+import ai.rever.boss.plugin.workspace.LayoutWorkspace
+import ai.rever.boss.services.bookmarks.rememberBookmarkProvider
 import ai.rever.boss.window.TabBarPosition
 import ai.rever.boss.window.WindowAppearanceSettingsManager
 import ai.rever.boss.window.displayName
@@ -37,6 +39,9 @@ import kotlinx.coroutines.launch
 @Composable
 fun rememberBarMenuItems(openNewTab: () -> Unit): List<ContextMenuItem> {
     val settings by WindowAppearanceSettingsManager.currentSettings.collectAsState()
+
+    val currentWorkspace by workspaceManager.currentWorkspace.collectAsState()
+    val favoriteItem = favoriteWorkspaceItem(currentWorkspace, rememberBookmarkProvider())
 
     // Kept apart from any scope the surface uses for its own work, so a settings write is never
     // cancelled by a bar that recomposed mid-drag, and neither reads as the other's concern.
@@ -76,7 +81,7 @@ fun rememberBarMenuItems(openNewTab: () -> Unit): List<ContextMenuItem> {
 
         add(ContextMenuItem(isDivider = true))
 
-        favoriteWorkspaceItem()?.let(::add)
+        favoriteItem?.let(::add)
     }
 }
 
@@ -111,9 +116,14 @@ private fun tabBarPositionItem(
     )
 
 /** Star this workspace, or unstar it. Absent when no workspace is loaded, rather than disabled. */
-private fun favoriteWorkspaceItem(): ContextMenuItem? {
-    val current = workspaceManager.currentWorkspace.value ?: return null
-    val isFavorited = BookmarkAPIAccess.isFavorite(current.id)
+@Composable
+internal fun favoriteWorkspaceItem(
+    current: LayoutWorkspace?,
+    provider: BookmarkDataProvider?,
+): ContextMenuItem? {
+    if (current == null || provider == null) return null
+    val favorites by provider.favoriteWorkspaces.collectAsState()
+    val isFavorited = favorites.any { it.workspaceId == current.id }
     return ContextMenuItem(
         if (isFavorited) "Unfavorite Space" else "Favorite Space",
         // The icon shows what the action DOES, matching the label: "Unfavorite" empties the
@@ -121,9 +131,9 @@ private fun favoriteWorkspaceItem(): ContextMenuItem? {
         if (isFavorited) Icons.Outlined.StarBorder else Icons.Filled.Star,
         onClick = {
             if (isFavorited) {
-                BookmarkAPIAccess.removeFavoriteWorkspace(current.id)
+                provider.removeFavoriteWorkspace(current.id)
             } else {
-                BookmarkAPIAccess.addFavoriteWorkspace(current.id, current.name)
+                provider.addFavoriteWorkspace(current.id, current.name)
             }
         },
     )

@@ -37,6 +37,7 @@ kotlin {
         commonMain {
             dependencies {
                 implementation(libs.kotlinx.serialization.json)
+                implementation(libs.kotlinx.coroutines.core)
                 implementation(projects.pluginPlatform.pluginWorkspaceTypes)
                 // Compose runtime for @Immutable, and the Compose compiler plugin applied above
                 // also refuses to run without a runtime on the compile classpath.

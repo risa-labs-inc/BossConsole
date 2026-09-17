@@ -74,7 +74,8 @@ import ai.rever.boss.search.SearchSources
 import ai.rever.boss.search.ToolSearchRecord
 import ai.rever.boss.search.rememberSpotlightFileIndexer
 import ai.rever.boss.services.auth.UserDataStorage
-import ai.rever.boss.services.bookmarks.BookmarkAPIAccess
+import ai.rever.boss.services.bookmarks.BookmarkSearchRequest
+import ai.rever.boss.services.bookmarks.openBookmarkFromSearch
 import ai.rever.boss.services.terminal.TerminalAPIAccess
 import ai.rever.boss.settings.MICROKERNEL_MODE_CONFIRMATION_MESSAGE
 import ai.rever.boss.settings.MicrokernelModePreference
@@ -527,35 +528,12 @@ internal fun BossAppDialogs(state: BossAppState) {
             },
             onBookmarkSelect = { bookmarkId, collectionId ->
                 state.showGlobalSearchDialog = false
-                // Find the bookmark and open it (gracefully handles missing plugin)
-                val collection = BookmarkAPIAccess.getCollections().find { it.id == collectionId }
-                val bookmark = collection?.bookmarks?.find { it.id == bookmarkId }
-                if (bookmark != null) {
-                    coroutineScope.launch {
-                        // Open the bookmark as a new tab using the tab config
-                        when (bookmark.tabConfig.type) {
-                            "browser" -> {
-                                bookmark.tabConfig.url?.let { url ->
-                                    splitViewState.openUrlInActivePanel(url, bookmark.tabConfig.title)
-                                }
-                            }
-
-                            "editor" -> {
-                                bookmark.tabConfig.filePath?.let { filePath ->
-                                    FileEventBus.openFile(filePath, sourceWindowId = windowId, projectPath = selectedProject.path)
-                                }
-                            }
-
-                            // Route .ipynb through the same file bus as editor; the router opens
-                            // it in the notebook tab when the plugin is present, else the editor.
-                            "jupyter" -> {
-                                bookmark.tabConfig.filePath?.takeIf { it.isNotBlank() }?.let { filePath ->
-                                    FileEventBus.openFile(filePath, sourceWindowId = windowId, projectPath = selectedProject.path)
-                                }
-                            }
-
-                            else -> {} // Other tab types can be added later
-                        }
+                val targetPanelId = splitViewState.activePanelId
+                coroutineScope.launch {
+                    val request = BookmarkSearchRequest(bookmarkId, collectionId, windowId, targetPanelId)
+                    val result = openBookmarkFromSearch(request)
+                    if (!result.success) {
+                        StatusMessageManager.showMessage(result.message ?: "The bookmark could not be opened.")
                     }
                 }
                 state.focusRequester.requestFocus()

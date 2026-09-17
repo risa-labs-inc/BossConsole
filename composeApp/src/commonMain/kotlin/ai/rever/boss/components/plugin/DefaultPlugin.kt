@@ -1157,6 +1157,7 @@ class DefaultPlugin(
 
     init {
         logger.info(LogCategory.SYSTEM, "Initializing DefaultPlugin with sandboxed contexts")
+        registerPluginAPI(ai.rever.boss.services.bookmarks.HostBookmarkOpeningProvider.shared)
 
         // Back-to-tab, started per window and unconditionally. This used to run from
         // ApiActiveTabsProviderAdapter's init, which is created `by lazy` behind
