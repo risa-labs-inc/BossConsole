@@ -1050,17 +1050,25 @@ private suspend fun checkProjectPath(rawPath: String): ProjectPathCheck {
     // Same gate the boss://folder deep link runs before opening a project folder: a connected
     // MCP client is no more trusted than a web page, so both surfaces share one definition of
     // an acceptable project path, failing closed.
+    //
+    // The strict character gate runs BEFORE the isAbsolute check (BossConsole#832):
+    // java.io.File.isAbsolute is platform-shaped - a POSIX-style `/tmp;rm -rf /` is
+    // absolute on macOS/Linux but NOT on Windows (no drive letter), so the old order
+    // reported a metacharacter-bearing path as a mere "must be absolute" on Windows
+    // and its own cross-platform regression test failed on windows-latest. The
+    // characters in the path are the security property; ordering the strict gate
+    // first gives every platform the same refusal for the same dangerous input.
     val rejection =
         when {
-            !File(expandedPath).isAbsolute -> {
-                "Path must be absolute (got '$rawPath'): a relative path would resolve against the " +
-                    "BOSS process's working directory, not the caller's."
-            }
-
             !CLISecurityValidator.isValidPath(expandedPath) -> {
                 "Refusing to open '$rawPath': the path contains characters the boss:// folder deep " +
                     "link rejects for the same operation (`..`, or shell metacharacters like `;`, `&`, " +
                     "`|`, `$` and a backtick). Pass a plain absolute path to the project directory instead."
+            }
+
+            !File(expandedPath).isAbsolute -> {
+                "Path must be absolute (got '$rawPath'): a relative path would resolve against the " +
+                    "BOSS process's working directory, not the caller's."
             }
 
             else -> {
