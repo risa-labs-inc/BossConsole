@@ -145,23 +145,16 @@ fun RowScope.BossLeftBottomBar(tabsComponent: BossTabsComponent? = null) {
                 when (activeTab) {
                     is EditorTabInfo -> {
                         // Show file path from project root
-                        val projectRoot =
-                            currentProject.path.let {
-                                if (it.endsWith("/")) it else "$it/"
-                            }
-                        val relativePath = activeTab.filePath.removePrefix(projectRoot)
-                        val pathParts = relativePath.split("/")
+                        val pathParts = editorBreadcrumbSegments(activeTab.filePath, currentProject.path)
 
                         pathParts.forEachIndexed { index, part ->
-                            if (part.isNotEmpty()) {
-                                BossActionButton(
-                                    text = part,
-                                    color = BossTheme.colors.textSecondary,
-                                    onClick = {},
-                                )
-                                if (index < pathParts.lastIndex && pathParts[index + 1].isNotEmpty()) {
-                                    RightArrow()
-                                }
+                            BossActionButton(
+                                text = part,
+                                color = BossTheme.colors.textSecondary,
+                                onClick = {},
+                            )
+                            if (index < pathParts.lastIndex) {
+                                RightArrow()
                             }
                         }
                     }

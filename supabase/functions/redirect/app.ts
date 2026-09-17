@@ -348,5 +348,5 @@ app.notFound((c) => {
 // Global error handler
 app.onError((err, c) => {
   console.error("Global error:", err)
-  return c.json({ error: err.message }, 500)
+  return c.json({ error: "Internal server error" }, 500)
 })

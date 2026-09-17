@@ -71,6 +71,28 @@ For a bottom split use `panel: horizontal_split`. Reuse a pane across calls by p
 - Supabase + Edge Functions
 - BossTerm for terminal integration (bundled in the `terminal-tab` plugin)
 
+## Remote UI property patches are tri-state
+
+`WidgetDiffEngine` must distinguish three operations on a widget property: leave it alone, set it
+to a string, and remove it. An empty string cannot mean removal. It is a valid value for text,
+labels, selections and event ids, and the builder emits both omitted optional properties and
+present empty required properties.
+
+`DiffOperation.NodeUpdated.changedProperties` therefore carries assignments, while
+`removedProperties` carries deletes. The wire mirrors that split through additive
+`NodeUpdated.removed_properties`
+field 4, introduced with IPC 1.2.0. `apply` removes first and then applies changed values, so an
+explicit set wins if a malformed or hand-built patch names one key in both collections. Encoders
+sort removed keys for deterministic bytes. Older receivers safely ignore field 4; they retain a
+stale property until a full tree arrives, which is the existing failure rather than a new one.
+
+`NodeUpdated` is a manually implemented plain class rather than a data class now because
+`boss-ui-sdk` is published to external runtimes. Keep its original three-argument constructor,
+`component1` through `component3`, `copy`, and generated `copy$default` JVM descriptors. New code
+that needs to alter the removal set uses the four-argument constructor or
+`copyWithRemovedProperties`. `WidgetDiffEngineTest` reflects the old descriptors so a refactor
+cannot silently break an already-built runtime.
+
 ## Plugin dependencies are resolved at install time
 
 `plugin.json` `dependencies` used to be read in exactly one place -
@@ -530,6 +552,11 @@ Adding one means an entry in `CredentialBrokers.all()`. The plugin-facing side n
 null for every plugin, silently - that has happened before with `mcpToolRegistry`. The
 implementation lives in `desktopMain` (it speaks HTTP), so `DefaultPlugin` reads it through
 `BrokeredCredentialAccess`, a commonMain holder that `main.kt` populates at startup.
+
+It happened a second time with `registerSearchProvider`: neither wrapper forwarded it, so no
+plugin's search provider ever reached global search. `PluginContextWrapperForwardingTest` now
+fails when either wrapper does not declare a `PluginContext` member. It matches by name, so it
+cannot tell a wrong forward from a right one, and a third wrapper has to be added to it.
 
 ### AI credentials are not configured here
 
@@ -2027,6 +2054,8 @@ workspace by selecting the tools you need." Tools install app-wide, not into a S
 
 ## Documentation
 
+- [Authenticated IPC rollout](docs/authenticated-ipc-rollout.md): paired runtime release, ownership, and credential lifetime.
+
 - [MCP for agent-less operators](docs/mcp-agentless-operators.md) - Toolbox kill-switches and attach path
 
 - [Core Subsystems](docs/SUBSYSTEMS.md) - Auth, UI, keyboard shortcuts, threading, default applications, runner, BossTerm
@@ -2081,6 +2110,23 @@ no second sandbox prompt. Explicit policies and session trust retain precedence.
 HIGH/CRITICAL names use the mutating default, while unknown names remain allowed
 by default. Risk reasons and sanitized arguments appear together in the existing
 approval dialog. #362 is closed pending extraction into a management plugin.
+
+## Process log authority and lifetime
+
+Process logs are host-owned infrastructure, not an OS sandbox. Log setup fails closed
+before spawning when the log root crosses an unapproved symlink, the filesystem cannot
+provide persistent Windows ACLs, or the native platform is unsupported. No child is
+started with unprotected fallback logs. Operators must use a supported private local
+log directory; setup failures must not expose credential-bearing environment values.
+
+Each process id shares one rotating writer across overlapping generations. Drain
+lifetimes follow the owned parent, not descendant EOF. After parent exit, each pipe
+drains only its observed remaining snapshot (at most 1 MiB); later descendant output
+is outside this log contract. Closing the read end can give a later descendant write
+EPIPE/SIGPIPE and terminate a native descendant that has not disabled SIGPIPE. Recording failure does not stop draining a live parent's
+output. Idle polling backs off to 100 ms and resets to 1 ms after output, so a busy
+small pipe does not pay a fixed 10 ms delay between batches. Retention is bounded
+per process id, not across all distinct process ids.
 
 **The bottom bar's "MCP: `<tool>`" status line is clickable into an activity log of the last 100
 calls this session.** Before this it was the only visibility into MCP activity at all - every

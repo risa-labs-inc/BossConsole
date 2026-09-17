@@ -94,7 +94,7 @@ class SupabaseServiceBridgeTest {
                             .build(),
                     )
                 }
-            assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+            assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
             assertTrue(provider.selectCalls.isEmpty())
         }
 
@@ -111,7 +111,7 @@ class SupabaseServiceBridgeTest {
                             .build(),
                     )
                 }
-            assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+            assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
             assertTrue(provider.rpcCalls.isEmpty(), "create_secret must never have reached the provider")
         }
 

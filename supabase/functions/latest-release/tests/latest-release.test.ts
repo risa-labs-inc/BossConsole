@@ -266,3 +266,26 @@ Deno.test("engine platform miss returns 404 listing available names", async () =
     assertEquals(body.available, ["boss-chromium-linux-x64.zip"])
   })
 })
+
+Deno.test("unexpected upstream exceptions return a generic 500", async () => {
+  const originalFetch = globalThis.fetch
+  const originalUrl = Deno.env.get("SUPABASE_URL")
+  const originalKey = Deno.env.get("SUPABASE_ANON_KEY")
+  const diagnostic = "private-upstream-host: secret diagnostic"
+  Deno.env.set("SUPABASE_URL", "https://api.example.invalid")
+  Deno.env.set("SUPABASE_ANON_KEY", "test-key")
+  globalThis.fetch = () => Promise.reject(new Error(diagnostic))
+  try {
+    const res = await app.request("/latest-release?app=boss")
+    assertEquals(res.status, 500)
+    const body = await res.text()
+    assertEquals(JSON.parse(body), { error: "Internal server error" })
+    assertEquals(body.includes(diagnostic), false)
+  } finally {
+    globalThis.fetch = originalFetch
+    if (originalUrl === undefined) Deno.env.delete("SUPABASE_URL")
+    else Deno.env.set("SUPABASE_URL", originalUrl)
+    if (originalKey === undefined) Deno.env.delete("SUPABASE_ANON_KEY")
+    else Deno.env.set("SUPABASE_ANON_KEY", originalKey)
+  }
+})

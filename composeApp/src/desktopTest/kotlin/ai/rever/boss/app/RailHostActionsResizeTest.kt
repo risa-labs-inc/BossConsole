@@ -11,7 +11,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.unit.dp
 import org.junit.Rule
@@ -26,7 +28,8 @@ class RailHostActionsResizeTest {
 
     @Test
     fun `five actions leave a short rail and return when it grows`() {
-        var height by mutableStateOf(300.dp)
+        // The fixed Home control adds 36dp ahead of the measured action budget.
+        var height by mutableStateOf(336.dp)
         var fits by mutableStateOf(true)
         var actionCount by mutableStateOf(5)
         val reports = mutableListOf<Boolean>()
@@ -44,10 +47,11 @@ class RailHostActionsResizeTest {
         }
         rule.waitForIdle()
         assertFullActions()
-        rule.runOnIdle { height = 260.dp }
+        rule.runOnIdle { height = 296.dp }
         rule.waitForIdle()
         rule.runOnIdle { assertFalse(fits) }
         rule.onNodeWithTag("action-4").assertDoesNotExist()
+        rule.onNodeWithContentDescription("Home").assertIsDisplayed()
         // Loading/unloading the optional Toolbox changes the budget without resizing.
         rule.runOnIdle { actionCount = 4 }
         rule.waitForIdle()
@@ -56,7 +60,7 @@ class RailHostActionsResizeTest {
         rule.runOnIdle { actionCount = 5 }
         rule.waitForIdle()
         rule.runOnIdle { assertFalse(fits) }
-        rule.runOnIdle { height = 300.dp }
+        rule.runOnIdle { height = 336.dp }
         rule.waitForIdle()
         assertFullActions()
         rule.runOnIdle { assertEquals(listOf(true, false, true, false, true), reports) }

@@ -398,6 +398,7 @@ fun ApplicationScope.BossWindow(
         MenuBar {
             // File Menu
             Menu("File") {
+                Item("Go Home", onClick = { MenuActionsHandler.triggerGoHome(windowState.id) })
                 Item(
                     "New Tab",
                     shortcut = shortcutBridge.getKeyShortcut(KeymapActions.TAB_NEW),

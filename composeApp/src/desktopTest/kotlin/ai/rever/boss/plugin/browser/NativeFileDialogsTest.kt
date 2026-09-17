@@ -9,6 +9,7 @@ import com.teamdev.jxbrowser.browser.callback.SaveFileCallback
 import com.teamdev.jxbrowser.callback.Advisable
 import com.teamdev.jxbrowser.callback.Callback
 import com.teamdev.jxbrowser.callback.internal.DefaultCallbacks
+import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.Optional
 import java.util.concurrent.CountDownLatch
@@ -249,6 +250,168 @@ class NativeFileDialogsTest {
         val uppercase = pathWithExtension(Paths.get("reports", "report.PDF"), "pdf")
         assertEquals("report.PDF", uppercase.fileName.toString(), "matching is case-insensitive")
         assertEquals(bare.parent, pathWithExtension(bare, "pdf").parent, "the file must not move directory")
+    }
+
+    /**
+     * The first native panel confirmed `report`, but Chromium will write `report.pdf`. If that
+     * second path exists, it must become the name in a native panel before it can be returned.
+     */
+    @Test
+    fun `an existing appended target is presented to the native panel`() {
+        val selected = Paths.get("reports", "report")
+        val actualTarget = Paths.get("reports", "report.pdf")
+        val picks = mutableListOf<Path?>(selected, actualTarget)
+        val suggestions = mutableListOf<Pair<String, String>>()
+
+        val result =
+            chooseSaveTarget(
+                suggestedFileName = "initial.pdf",
+                suggestedDirectory = "downloads",
+                requiredExtension = "pdf",
+                targetExists = { it == actualTarget },
+            ) { fileName, directory ->
+                suggestions += fileName to directory
+                picks.removeFirstOrNull()
+            }
+
+        assertEquals(actualTarget, result)
+        assertTrue(picks.isEmpty(), "the policy must stop after the confirmed target")
+        assertEquals(
+            listOf("initial.pdf" to "downloads", "report.pdf" to selected.parent.toString()),
+            suggestions,
+            "the second panel must name the file that will really be replaced",
+        )
+    }
+
+    @Test
+    fun `cancelling the appended-target confirmation refuses the save`() {
+        val selected = Paths.get("reports", "report")
+        val actualTarget = Paths.get("reports", "report.pdf")
+        val picks = mutableListOf<Path?>(selected, null)
+
+        val result =
+            chooseSaveTarget(
+                suggestedFileName = "report",
+                suggestedDirectory = "reports",
+                requiredExtension = "pdf",
+                targetExists = { it == actualTarget },
+            ) { _, _ -> picks.removeFirstOrNull() }
+
+        assertEquals(null, result, "cancel must not fall through to the unconfirmed target")
+        assertTrue(picks.isEmpty())
+    }
+
+    @Test
+    fun `cancelling the first required-extension panel refuses the save`() {
+        var probes = 0
+
+        val result =
+            chooseSaveTarget(
+                suggestedFileName = "report",
+                suggestedDirectory = "reports",
+                requiredExtension = "pdf",
+                targetExists = {
+                    probes += 1
+                    true
+                },
+            ) { _, _ -> null }
+
+        assertEquals(null, result)
+        assertEquals(0, probes, "cancellation must not manufacture or probe a target")
+    }
+
+    @Test
+    fun `renaming to another colliding target can reach a third panel`() {
+        val first = Paths.get("reports", "report")
+        val second = Paths.get("reports", "renamed")
+        val confirmed = Paths.get("reports", "final.pdf")
+        val picks = mutableListOf<Path?>(first, second, confirmed)
+        val collisions = setOf(pathWithExtension(first, "pdf"), pathWithExtension(second, "pdf"))
+
+        val result =
+            chooseSaveTarget(
+                suggestedFileName = "report",
+                suggestedDirectory = "reports",
+                requiredExtension = "pdf",
+                targetExists = { it in collisions },
+            ) { _, _ -> picks.removeFirstOrNull() }
+
+        assertEquals(confirmed, result)
+        assertTrue(picks.isEmpty(), "the third accepted target must terminate the loop")
+    }
+
+    @Test
+    fun `save-as-pdf callback requires the pdf extension`() {
+        assertEquals("pdf", requiredExtensionFor(SaveAsPdfCallback::class.java))
+        assertEquals(null, requiredExtensionFor(SaveFileCallback::class.java))
+    }
+
+    @Test
+    fun `an indeterminate disk probe is treated as a collision`() {
+        val target = Paths.get("reports", "report.pdf")
+
+        assertTrue(targetExistsOrUnknown(target) { false })
+        assertFalse(targetExistsOrUnknown(target) { true })
+    }
+
+    @Test
+    fun `an already-suffixed target needs no second panel`() {
+        val selected = Paths.get("reports", "report.PDF")
+        var pickCount = 0
+
+        val result =
+            chooseSaveTarget(
+                suggestedFileName = selected.fileName.toString(),
+                suggestedDirectory = selected.parent.toString(),
+                requiredExtension = "pdf",
+                targetExists = { true },
+            ) { _, _ ->
+                pickCount += 1
+                selected
+            }
+
+        assertEquals(selected, result)
+        assertEquals(1, pickCount, "the first panel already confirmed this exact target")
+    }
+
+    @Test
+    fun `a new appended target is returned without a redundant second panel`() {
+        val selected = Paths.get("reports", "fresh-report")
+        var pickCount = 0
+
+        val result =
+            chooseSaveTarget(
+                suggestedFileName = selected.fileName.toString(),
+                suggestedDirectory = selected.parent.toString(),
+                requiredExtension = "pdf",
+                targetExists = { false },
+            ) { _, _ ->
+                pickCount += 1
+                selected
+            }
+
+        assertEquals(Paths.get("reports", "fresh-report.pdf"), result)
+        assertEquals(1, pickCount)
+    }
+
+    @Test
+    fun `an ordinary browser save returns the selected path without probing the disk`() {
+        val selected = Paths.get("downloads", "page.html")
+        var pickCount = 0
+
+        val result =
+            chooseSaveTarget(
+                suggestedFileName = selected.fileName.toString(),
+                suggestedDirectory = selected.parent.toString(),
+                requiredExtension = null,
+                targetExists = { error("ordinary saves already confirm their visible target") },
+            ) { _, _ ->
+                pickCount += 1
+                selected
+            }
+
+        assertEquals(selected, result)
+        assertEquals(1, pickCount)
     }
 
     @Test

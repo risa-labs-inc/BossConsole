@@ -1,5 +1,6 @@
 package ai.rever.boss.ipc
 
+import ai.rever.boss.ipc.auth.IpcTlsIdentity
 import ai.rever.boss.ipc.auth.ProcessIdentityInterceptor
 import ai.rever.boss.ipc.auth.ProcessTokenRegistry
 import io.grpc.BindableService
@@ -13,7 +14,7 @@ import java.util.concurrent.TimeUnit
  *
  * Usage:
  * ```kotlin
- * val server = BossIpcServer(address)
+ * val server = BossIpcServer(address, tokenRegistry, tlsIdentity)
  *     .addService(MyServiceImpl())
  *     .start()
  * ```
@@ -28,20 +29,9 @@ import java.util.concurrent.TimeUnit
  */
 class BossIpcServer(
     private val address: String,
-    /**
-     * When present, every call is run through a [ProcessIdentityInterceptor] backed by this registry,
-     * so a service on this server can read a verified caller identity from the gRPC [io.grpc.Context]
-     * instead of trusting a request field (BossConsole#53). Null (the default) installs no interceptor,
-     * which is a no-op for a service that never checks identity - most `BossIpcServer` instances (every
-     * child process's own `processServer`, every test server) have no use for one. It stops being a
-     * no-op for a server hosting a service that fails closed on a missing identity - a growing list
-     * under `ai.rever.boss.kernel.services`, deliberately not enumerated here since the list has
-     * already drifted stale once: check each bridge's own KDoc for whether it requires identity.
-     * With no registry, every call to such a service is refused, not merely unauthenticated as
-     * before - a silent total outage rather than the pre-BossConsole#53 status quo. Any kernel
-     * server hosting one of those bridges must be constructed with a real registry.
-     */
-    private val tokenRegistry: ProcessTokenRegistry? = null,
+    // Every production endpoint requires both verified process identity and pinned TLS.
+    private val tokenRegistry: ProcessTokenRegistry,
+    private val tlsIdentity: IpcTlsIdentity,
 ) {
     private val logger = LoggerFactory.getLogger(BossIpcServer::class.java)
     private val services = mutableListOf<BindableService>()
@@ -67,13 +57,14 @@ class BossIpcServer(
 
     private fun buildAndStart() {
         val builder = IpcAddressResolver.configureServerBuilder(address)
+        builder.sslContext(tlsIdentity.serverContext())
         services.forEach { builder.addService(it) }
         // Consulted only for methods no directly-registered service claims, so build-time registration
         // takes precedence. That is a CHANGE: a rebuild put everything in the primary registry, where the
         // last one added won, so re-adding a service after start used to replace the build-time one and
         // now silently does nothing. Nothing in the tree relies on either behaviour.
         builder.fallbackHandlerRegistry(lateServices)
-        tokenRegistry?.let { builder.intercept(ProcessIdentityInterceptor(it)) }
+        builder.intercept(ProcessIdentityInterceptor(tokenRegistry))
         server = builder.build().start()
         logger.info("IPC server started on: {}", address)
         IpcAddressResolver.secureSocketFile(address)

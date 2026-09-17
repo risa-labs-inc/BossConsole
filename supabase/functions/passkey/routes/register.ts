@@ -109,7 +109,8 @@ register.openapi(registerChallengeRoute, async (ctx) => {
 
     return ctx.json(result, 200)
   } catch (error) {
-    return ctx.json({ error: (error as Error).message }, 500)
+    console.error('Route error:', error)
+    return ctx.json({ error: 'Internal server error' }, 500)
   }
 })
 
@@ -216,7 +217,8 @@ register.openapi(registerCompleteRoute, async (ctx) => {
 
     return ctx.json(result, 200)
   } catch (error) {
-    return ctx.json({ error: (error as Error).message }, 500)
+    console.error('Route error:', error)
+    return ctx.json({ error: 'Internal server error' }, 500)
   }
 })
 

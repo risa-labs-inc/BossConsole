@@ -1,6 +1,7 @@
 package ai.rever.boss.kernel.services
 
 import ai.rever.boss.ipc.BossIpcServer
+import ai.rever.boss.ipc.auth.IpcTlsIdentity
 import ai.rever.boss.ipc.auth.ProcessIdentityInterceptor
 import ai.rever.boss.ipc.auth.ProcessTokenClientInterceptor
 import ai.rever.boss.ipc.auth.ProcessTokenRegistry
@@ -19,15 +20,15 @@ import ai.rever.boss.plugin.api.TabSplitMode
 import ai.rever.boss.plugin.api.TabsComponent
 import ai.rever.boss.plugin.workspace.LayoutWorkspace
 import io.grpc.ManagedChannel
-import io.grpc.ManagedChannelBuilder
 import io.grpc.Metadata
 import io.grpc.Server
-import io.grpc.ServerBuilder
 import io.grpc.ServerCall
 import io.grpc.ServerCallHandler
 import io.grpc.ServerInterceptor
 import io.grpc.Status
 import io.grpc.StatusException
+import io.grpc.netty.NettyChannelBuilder
+import io.grpc.netty.NettyServerBuilder
 import kotlinx.coroutines.runBlocking
 import java.util.concurrent.TimeUnit
 import kotlin.test.AfterTest
@@ -49,6 +50,7 @@ import kotlin.test.assertTrue
  */
 class SplitViewServiceBridgeTest {
     private val exercisedRpcs = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+    private val tls = IpcTlsIdentity.create()
     private lateinit var tokenRegistry: ProcessTokenRegistry
     private lateinit var provider: FakeSplitViewOperations
     private lateinit var server: Server
@@ -62,8 +64,9 @@ class SplitViewServiceBridgeTest {
         tokenRegistry = ProcessTokenRegistry()
         provider = FakeSplitViewOperations()
         server =
-            ServerBuilder
+            NettyServerBuilder
                 .forPort(0)
+                .sslContext(tls.serverContext())
                 .intercept(ProcessIdentityInterceptor(tokenRegistry))
                 .intercept(
                     object : ServerInterceptor {
@@ -80,12 +83,20 @@ class SplitViewServiceBridgeTest {
                 .build()
                 .start()
         authenticatedChannel =
-            ManagedChannelBuilder
+            NettyChannelBuilder
                 .forAddress("localhost", server.port)
-                .usePlaintext()
+                .sslContext(IpcTlsIdentity.clientContext(tls.certificateBase64))
+                .overrideAuthority(IpcTlsIdentity.AUTHORITY)
                 .intercept(ProcessTokenClientInterceptor(tokenRegistry.issue(CALLER)))
                 .build()
-        anonymousChannel = ManagedChannelBuilder.forAddress("localhost", server.port).usePlaintext().build()
+        anonymousChannel =
+            NettyChannelBuilder
+                .forAddress(
+                    "localhost",
+                    server.port,
+                ).sslContext(IpcTlsIdentity.clientContext(tls.certificateBase64))
+                .overrideAuthority(IpcTlsIdentity.AUTHORITY)
+                .build()
         authenticated = SplitViewServiceGrpcKt.SplitViewServiceCoroutineStub(authenticatedChannel)
         anonymous = SplitViewServiceGrpcKt.SplitViewServiceCoroutineStub(anonymousChannel)
     }
@@ -254,8 +265,15 @@ class SplitViewServiceBridgeTest {
     @Test
     fun `late registered production bridge rejects anonymous and accepts authenticated calls`() =
         runBlocking {
-            val lateServer = BossIpcServer("tcp://localhost:0", tokenRegistry).start()
-            val channel = ManagedChannelBuilder.forAddress("localhost", lateServer.port).usePlaintext().build()
+            val lateServer = BossIpcServer("tcp://localhost:0", tokenRegistry, tls).start()
+            val channel =
+                NettyChannelBuilder
+                    .forAddress(
+                        "localhost",
+                        lateServer.port,
+                    ).sslContext(IpcTlsIdentity.clientContext(tls.certificateBase64))
+                    .overrideAuthority(IpcTlsIdentity.AUTHORITY)
+                    .build()
             try {
                 lateServer.addService(SplitViewServiceBridge(provider))
                 val stub = SplitViewServiceGrpcKt.SplitViewServiceCoroutineStub(channel)
@@ -275,7 +293,7 @@ class SplitViewServiceBridgeTest {
 
     private suspend fun assertRefused(call: suspend () -> Unit) {
         val failure = assertFailsWith<StatusException> { call() }
-        assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+        assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
     }
 
     /** Records every method it was actually asked to perform, so a refusal can be proven silent. */

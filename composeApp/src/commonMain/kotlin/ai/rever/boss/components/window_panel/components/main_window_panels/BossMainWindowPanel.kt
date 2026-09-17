@@ -950,7 +950,8 @@ fun BossTabsComponent.rememberTabBarState(
                                     ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo(
                                         id = "fluck-$timestamp",
                                         typeId = FluckTabType.typeId,
-                                        _title = "Loading...",
+                                        _title =
+                                            if (FluckTabInfo.isHomeUrl(path)) FluckTabInfo.HOME_TITLE else "Loading...",
                                         url = path,
                                     )
                                 placeNewTab(fluckTab)
@@ -1501,7 +1502,7 @@ fun BossTabsComponent.BossMainPanelContent(modifier: Modifier) {
                             ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo(
                                 id = "fluck-$timestamp",
                                 typeId = FluckTabType.typeId,
-                                _title = "Loading...",
+                                _title = if (FluckTabInfo.isHomeUrl(path)) FluckTabInfo.HOME_TITLE else "Loading...",
                                 url = path,
                             )
                         val tabIndex = addTab(fluckTab)

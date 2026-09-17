@@ -20,12 +20,12 @@ service TerminalService {
   // the cell grid (TerminalTextBuffer + IncrementalSnapshotBuilder from
   // bossterm-core); host subscribes to deltas and renders with a pure-Compose
   // widget. PR #742 pivoted terminal-tab back to in-process, so the host
-  // does not implement any of the RPCs below today and IpcVersion.CURRENT
-  // stays at 1.0.0. The messages and RPC declarations are kept generated
-  // (proto3 additive) so a future minor bump can re-enable them without
-  // re-running the proto changes. Do not rely on these from a plugin until
-  // IpcVersion.CURRENT advances to at least 1.1.0 and the host gains a
-  // concrete TerminalService implementation.
+  // does not implement any of the RPCs below today. The messages and RPC
+  // declarations are kept generated (proto3 additive) so a future release
+  // can re-enable them without re-running the proto changes. A global IPC
+  // version can advance for unrelated services, so it is not a terminal
+  // capability signal. Do not rely on these from a plugin until the host
+  // publishes a concrete TerminalService implementation and capability.
 
   // Server-stream of cell deltas for the session's screen + visible viewport.
   // Each TerminalGridDelta carries either an incremental change set or a

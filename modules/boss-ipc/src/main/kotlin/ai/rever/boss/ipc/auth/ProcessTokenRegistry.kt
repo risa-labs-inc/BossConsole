@@ -2,81 +2,120 @@ package ai.rever.boss.ipc.auth
 
 import java.security.SecureRandom
 import java.util.HexFormat
-import java.util.concurrent.ConcurrentHashMap
+import java.util.UUID
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicBoolean
 
-/** 32 random bytes, hex encoded — the same shape as `SingleInstanceManager`'s channel token. */
-private const val TOKEN_BYTES = 32
+/** Privileges assigned by host code, never by a registration request or child manifest. */
+enum class ProcessAuthority { PROCESS, SUPERVISOR, HOST }
 
-private val secureRandom = SecureRandom()
+/** A replacement process has a new instance identity even when its display identifier is reused. */
+class ProcessIdentity internal constructor(
+    val processId: String,
+    val instanceId: String,
+    val authority: ProcessAuthority,
+    val expectedAddress: String?,
+)
 
-/** Mints a fresh per-process credential. Never log the result. */
-private fun newProcessToken(): String {
-    val bytes = ByteArray(TOKEN_BYTES)
-    secureRandom.nextBytes(bytes)
-    return HexFormat.of().formatHex(bytes)
-}
-
-/**
- * Issues and resolves per-process IPC credentials.
- *
- * A caller's identity must be established by the kernel independently of any `process_id` an IPC
- * request happens to carry (BossConsole#53): a request field is whatever the caller chose to write,
- * while a token here is minted by the kernel itself and handed to exactly one process at spawn time.
- * [identityFor] is therefore the only path from "a caller presented X" to "X is who they are" —
- * nothing in this class derives an identity from a request body, and nothing outside it can mint one.
- *
- * One instance is shared by whatever mints credentials (a [ai.rever.boss.process.ProcessSpawner]) and
- * whatever verifies them (a [ProcessIdentityInterceptor] on the kernel's IPC server), so both sides of
- * a spawn agree on the same table. Thread-safe: a token is issued from the spawning thread and looked
- * up from gRPC's own threads.
- *
- * This authenticates possession of a child credential, not an OS sandbox boundary. The environment
- * can be inherited by descendants or inspected by same-user processes. Plugin runtimes should strip
- * BOSS_PROCESS_TOKEN before launching unrelated subprocesses and must never print their environment.
- */
+/** Host-owned credentials, with per-incarnation revocation for existing calls as well as new calls. */
 class ProcessTokenRegistry {
-    private val processIdByToken = ConcurrentHashMap<String, String>()
-    private val tokenByProcessId = ConcurrentHashMap<String, String>()
+    private val credentials = mutableMapOf<String, IssuedCredential>()
+    private val tokenByProcessId = mutableMapOf<String, String>()
 
-    /**
-     * Mint a fresh credential for [processId], replacing and invalidating whatever it held before.
-     *
-     * Always a new token, even for a `processId` this registry has already issued one for — that is
-     * what stops a restart inheriting its predecessor's credential (#53: "process restart must not
-     * accidentally inherit the previous process's credential"), since a respawn calls this again for
-     * the same id and the old token stops resolving to anything the moment the new one is stored.
-     */
-    @Synchronized
-    fun issue(processId: String): String {
-        val token = newProcessToken()
-        tokenByProcessId.put(processId, token)?.let { previous -> processIdByToken.remove(previous, processId) }
-        processIdByToken[token] = processId
+    @JvmOverloads
+    fun issue(
+        processId: String,
+        authority: ProcessAuthority = ProcessAuthority.PROCESS,
+        expectedAddress: String? = null,
+    ): String {
+        val token = ByteArray(32).also { SecureRandom().nextBytes(it) }.let { HexFormat.of().formatHex(it) }
+        val identity = ProcessIdentity(processId, UUID.randomUUID().toString(), authority, expectedAddress)
+        val previous =
+            synchronized(this) {
+                val old = tokenByProcessId.put(processId, token)?.let { credentials.remove(it) }
+                credentials[token] = IssuedCredential(identity)
+                old
+            }
+        previous?.revoke()
         return token
     }
 
-    /**
-     * The process identity [token] was issued for, or null when it names nothing this registry
-     * currently holds — absent, blank, unknown, or a token a later [issue] or [revoke] has since
-     * invalidated.
-     */
+    fun identityFor(token: String?): String? = principalFor(token)?.processId
+
     @Synchronized
-    fun identityFor(token: String?): String? {
-        if (token.isNullOrBlank()) return null
-        return processIdByToken[token]
-    }
+    fun principalFor(token: String?): ProcessIdentity? = credentials[token]?.identity
 
     /** A late exit callback must not revoke a replacement process's credential. */
-    @Synchronized
     fun revokeIfCurrent(
         processId: String,
         token: String?,
     ) {
-        if (token != null && tokenByProcessId[processId] == token) revoke(processId)
+        val removed =
+            synchronized(this) {
+                if (token != null && tokenByProcessId[processId] == token) {
+                    tokenByProcessId.remove(processId)
+                    credentials.remove(token)
+                } else {
+                    null
+                }
+            }
+        removed?.revoke()
     }
 
-    /** Invalidate [processId]'s current credential, if it has one. Idempotent. */
-    @Synchronized
     fun revoke(processId: String) {
-        tokenByProcessId.remove(processId)?.let { processIdByToken.remove(it, processId) }
+        val removed = synchronized(this) { tokenByProcessId.remove(processId)?.let { credentials.remove(it) } }
+        removed?.revoke()
+    }
+
+    /** Subscription and revocation cannot lose each other, including a revoke during call admission. */
+    internal fun onRevoked(
+        token: String,
+        action: () -> Unit,
+    ): AutoCloseable {
+        val credential = synchronized(this) { credentials[token] }
+        if (credential == null) {
+            action()
+            return AutoCloseable { }
+        }
+        return credential.onRevoked(action)
+    }
+
+    companion object {
+        /** A child receives only its own host-controller credential, never the kernel's registry. */
+        fun forHostController(token: String): ProcessTokenRegistry {
+            require(token.length == 64 && token.all { it in '0'..'9' || it in 'a'..'f' }) {
+                "Invalid host controller credential"
+            }
+            return ProcessTokenRegistry().apply {
+                val identity = ProcessIdentity("host", UUID.randomUUID().toString(), ProcessAuthority.HOST, null)
+                credentials[token] = IssuedCredential(identity)
+                tokenByProcessId[identity.processId] = token
+            }
+        }
+    }
+}
+
+private class IssuedCredential(
+    val identity: ProcessIdentity,
+) {
+    private val revoked = AtomicBoolean()
+    private val listeners = CopyOnWriteArrayList<() -> Unit>()
+
+    fun onRevoked(action: () -> Unit): AutoCloseable {
+        val called = AtomicBoolean()
+        val once = { if (called.compareAndSet(false, true)) action() }
+        listeners.add(once)
+        if (revoked.get()) {
+            listeners.remove(once)
+            once()
+        }
+        return AutoCloseable { listeners.remove(once) }
+    }
+
+    fun revoke() {
+        if (revoked.compareAndSet(false, true)) {
+            listeners.forEach { runCatching { it() } }
+            listeners.clear()
+        }
     }
 }

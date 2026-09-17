@@ -78,7 +78,8 @@ auth.openapi(authChallengeRoute, async (ctx) => {
 
     return ctx.json(result, 200)
   } catch (error) {
-    return ctx.json({ error: (error as Error).message }, 500)
+    console.error('Route error:', error)
+    return ctx.json({ error: 'Internal server error' }, 500)
   }
 })
 
@@ -164,7 +165,8 @@ auth.openapi(authCompleteRoute, async (ctx) => {
 
     return ctx.json(result, 200)
   } catch (error) {
-    return ctx.json({ error: (error as Error).message }, 500)
+    console.error('Route error:', error)
+    return ctx.json({ error: 'Internal server error' }, 500)
   }
 })
 
@@ -220,7 +222,8 @@ auth.openapi(authStatusRoute, async (ctx) => {
 
     return ctx.json(result, 200)
   } catch (error) {
-    return ctx.json({ error: (error as Error).message }, 500)
+    console.error('Route error:', error)
+    return ctx.json({ error: 'Internal server error' }, 500)
   }
 })
 

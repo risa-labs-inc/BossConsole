@@ -7,6 +7,12 @@ on:
     branches: [ main, dev ]
   workflow_dispatch:
 
+# Only superseded PR validation is disposable. Push/manual runs get unique
+# groups so a new commit cannot cancel validation used by a release.
+concurrency:
+  group: build-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   JAVA_VERSION: '17'
   JAVA_DISTRIBUTION: 'temurin'
@@ -109,6 +115,16 @@ jobs:
         # property names against the Kotlin, which are hand-matched across two files and
         # two languages and drift into a gesture that silently does nothing.
         run: node scripts/test/test-swipe-nav.js
+
+      - name: 🧪 Form field detector
+        # FormFieldDetector is JavaScript inside a Kotlin string too, and it is the one with
+        # no Kotlin test at all - so until now nothing read it, by grep or by execution, while
+        # it was injected into the main frame. This runs both of its scripts against
+        # a fake DOM. It also pins the keys the script emits against the ones parseFieldInfoJson
+        # picks back out: those are hand-matched across two languages in one file, and a
+        # rename on either side does not fail, it silently yields an empty string for that
+        # field forever.
+        run: node scripts/test/test-form-field-detector.js
 
       - name: ✍️ No new em-dashes in prose
         # House style is a spaced hyphen. Scoped to ADDED lines on purpose: the
@@ -223,17 +239,8 @@ jobs:
           ./gradlew --stop || true
         shell: bash
 
-      - name: 🧪 Run Tests
-        run: |
-          echo "🧪 Running tests on ${{ matrix.os }}"
-          ./gradlew test --continue
-        env:
-          # boss-plugin-api-core resolution from GitHub Packages (settings/composeApp repos)
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Windows-specific: disable daemon to avoid file handle issues (KT-55959)
-          GRADLE_OPTS: ${{ matrix.os == 'windows-latest' && '-Dorg.gradle.daemon=false -Dorg.gradle.parallel=false -Dorg.gradle.caching=true -Dkotlin.daemon.jvm.options=-Xmx2g' || '-Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Dorg.gradle.caching=true' }}
-
-      - name: 🔨 Build Application
+      - name: 🔨 Build and Test Application
+        shell: bash
         run: |
           echo "🔨 Building application for ${{ matrix.os }}"
           # detekt and ktlintCheck are authoritative in the code-quality job;
@@ -245,20 +252,19 @@ jobs:
           # only the umbrella task and left 351 ktlint tasks running per OS,
           # which is how a formatting slip failed this job instead of (just)
           # code-quality.
-          ./gradlew build -PskipLint --stacktrace
+          # Keep the union of the old task requests, including explicit JVM
+          # test tasks and build -> check -> allTests -> desktopTest. One graph
+          # avoids another configuration pass and single-use daemon startup.
+          tasks=(test build)
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            tasks+=(createExecutableJar)
+          fi
+          ./gradlew "${tasks[@]}" -PskipLint --continue --stacktrace
         env:
           # boss-plugin-api-core resolution from GitHub Packages (settings/composeApp repos)
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Windows-specific: disable daemon to avoid file handle issues (KT-55959)
           GRADLE_OPTS: ${{ matrix.os == 'windows-latest' && '-Dorg.gradle.daemon=false -Dorg.gradle.parallel=false -Dorg.gradle.caching=true -Dkotlin.daemon.jvm.options=-Xmx2g' || '-Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Dorg.gradle.caching=true' }}
-
-      - name: 🏗️ Create Executable JAR
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          echo "🏗️ Creating executable JAR"
-          ./gradlew createExecutableJar
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 📊 Upload Test Results
         uses: actions/upload-artifact@v7
@@ -283,7 +289,6 @@ jobs:
 
   code-quality:
     runs-on: ubuntu-latest
-    needs: version-check
 
     steps:
       - name: 📥 Checkout Repository
@@ -306,7 +311,7 @@ jobs:
           # detekt is baselined per module: existing debt is frozen in
           # detekt-baseline.xml files, only NEW violations fail this step.
           # ktlintCheck gates formatting since the format-the-world PR.
-          ./gradlew detekt ktlintCheck
+          ./gradlew detekt ktlintCheck :composeApp:dependencies --continue
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -328,16 +333,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 🔒 Dependency Check
-        run: |
-          echo "🔒 Checking dependencies"
-          ./gradlew :composeApp:dependencies
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
   compatibility-test:
     runs-on: ubuntu-latest
-    needs: version-check
 
     steps:
       - name: 📥 Checkout Repository
@@ -356,17 +353,13 @@ jobs:
         run: |
           echo "🧪 Testing centralized version system"
           
-          # Test version increment tasks
+          # Display the configured version and compile its generated constants.
           echo "📋 Current version info:"
-          ./gradlew showVersion
+          # One invocation still exercises every original compatibility task.
+          ./gradlew showVersion generateVersionConstants :composeApp:compileKotlinDesktop
           
-          echo "🔄 Testing version increment (dry run):"
-          echo "- Patch increment test"
           ORIGINAL_VERSION=$(grep "^app.version=" version.properties | cut -d'=' -f2)
           echo "Original version: $ORIGINAL_VERSION"
-          
-          # Test that version system works
-          ./gradlew generateVersionConstants
           
           # Verify generated constants exist
           if [ -f "composeApp/build/generated/source/version/ai/rever/boss/utils/VersionConstants.kt" ]; then
@@ -376,15 +369,6 @@ jobs:
             echo "❌ Version constants not generated"
             exit 1
           fi
-
-      - name: 🔄 Test Auto-Update Integration
-        run: |
-          echo "🔄 Testing auto-update system integration"
-          
-          # Compile to ensure Version.CURRENT works with generated constants
-          ./gradlew :composeApp:compileKotlinDesktop
-          
-          echo "✅ Auto-update integration test passed"
 
   boss-ai-tests:
     name: BOSS AI contracts
@@ -400,8 +384,8 @@ jobs:
   database-tests:
     name: 🧪 Database (pgTAP)
     runs-on: ubuntu-latest
-    needs: [version-check, boss-ai-tests]
-    if: ${{ !cancelled() && needs.version-check.result == 'success' }}
+    needs: [boss-ai-tests]
+    if: ${{ !cancelled() }}
 
     steps:
       - name: Require BOSS AI contract checks
@@ -444,7 +428,7 @@ jobs:
 
   build-summary:
     if: ${{ !cancelled() }}
-    needs: [version-check, build-test, code-quality, compatibility-test, database-tests, boss-ai-tests]
+    needs: [version-check, script-tests, build-test, code-quality, compatibility-test, database-tests, boss-ai-tests]
     runs-on: ubuntu-latest
 
     steps:
@@ -460,6 +444,7 @@ jobs:
           # Job status
           echo "### 📋 Job Results" >> $GITHUB_STEP_SUMMARY
           echo "- **Version Check**: ${{ needs.version-check.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Shell Script Tests**: ${{ needs.script-tests.result }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Build & Test**: ${{ needs.build-test.result }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Code Quality**: ${{ needs.code-quality.result }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Compatibility Test**: ${{ needs.compatibility-test.result }}" >> $GITHUB_STEP_SUMMARY
@@ -467,7 +452,7 @@ jobs:
           echo "- **BOSS AI contracts**: ${{ needs.boss-ai-tests.result }}" >> $GITHUB_STEP_SUMMARY
 
           # Overall status
-          if [[ "${{ needs.build-test.result }}" == "success" && "${{ needs.code-quality.result }}" == "success" && "${{ needs.compatibility-test.result }}" == "success" && "${{ needs.database-tests.result }}" == "success" && "${{ needs.boss-ai-tests.result }}" == "success" ]]; then
+          if [[ "${{ needs.version-check.result }}" == "success" && "${{ needs.script-tests.result }}" == "success" && "${{ needs.build-test.result }}" == "success" && "${{ needs.code-quality.result }}" == "success" && "${{ needs.compatibility-test.result }}" == "success" && "${{ needs.database-tests.result }}" == "success" && "${{ needs.boss-ai-tests.result }}" == "success" ]]; then
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "🎉 **Overall Status**: ✅ SUCCESS" >> $GITHUB_STEP_SUMMARY
           else

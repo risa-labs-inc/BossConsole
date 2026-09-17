@@ -162,7 +162,7 @@ class ActiveTabsServiceBridgeTest {
                         tokenRegistry.revoke(CALLER)
                         provider.setTabs(listOf(tab("after-revocation")))
                         val failure = assertFailsWith<StatusException> { watching.await() }
-                        assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+                        assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
                         assertTrue(received.tryReceive().isFailure, "revocation must prevent the next snapshot")
                     } finally {
                         watching.cancel()
@@ -174,7 +174,7 @@ class ActiveTabsServiceBridgeTest {
 
     private suspend fun assertRefused(call: suspend () -> Unit) {
         val failure = assertFailsWith<StatusException> { call() }
-        assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+        assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
     }
 
     private fun tab(

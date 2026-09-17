@@ -162,7 +162,6 @@
     <ID>CyclomaticComplexMethod:MenuShortcutBridge.kt$MenuShortcutBridge$private fun keyNameToComposeKey(keyName: String): Key?</ID>
     <ID>CyclomaticComplexMethod:PasskeyAuthService.kt$PasskeyAuthService$suspend fun authenticateWithPasskey( email: String? = null, credentialId: String? = null, ): Result&lt;Unit&gt;</ID>
     <ID>CyclomaticComplexMethod:PasskeyWaitingScreen.kt$@Composable fun PasskeyWaitingScreen( email: String, viewModel: LoginViewModel, onBack: () -&gt; Unit, onSuccess: () -&gt; Unit, )</ID>
-    <ID>CyclomaticComplexMethod:PerformanceDataProviderImpl.kt$PerformanceDataProviderImpl$private fun queryProcessMetrics(pids: List&lt;Long&gt;): Map&lt;Long, OsProcessMetrics&gt;</ID>
     <ID>CyclomaticComplexMethod:PerformanceMonitor.kt$PerformanceMonitor$fun start()</ID>
     <ID>CyclomaticComplexMethod:PluginInstallService.kt$PluginInstallService$private fun downloadFromGitHubRelease( owner: String, repo: String, pluginDir: File, ): String?</ID>
     <ID>CyclomaticComplexMethod:PluginInstallService.kt$PluginInstallService$suspend fun installPlugins( plugins: List&lt;WizardPluginInfo&gt;, onProgress: (Float, String) -&gt; Unit, ): Result&lt;PluginInstallResult&gt;</ID>
@@ -480,7 +479,6 @@
     <ID>LoopWithTooManyJumpStatements:DesktopGitService.kt$GitService$while</ID>
     <ID>LoopWithTooManyJumpStatements:GitHubUpdateSource.kt$GitHubUpdateSource$while</ID>
     <ID>LoopWithTooManyJumpStatements:GlobalSearchDialog.kt$for</ID>
-    <ID>LoopWithTooManyJumpStatements:PerformanceDataProviderImpl.kt$PerformanceDataProviderImpl$for</ID>
     <ID>LoopWithTooManyJumpStatements:PluginInstallService.kt$PluginInstallService$for</ID>
     <ID>LoopWithTooManyJumpStatements:PluginStoreSetup.kt$PluginStoreSetup$for</ID>
     <ID>LoopWithTooManyJumpStatements:ReleaseNotesMarkdown.kt$while</ID>

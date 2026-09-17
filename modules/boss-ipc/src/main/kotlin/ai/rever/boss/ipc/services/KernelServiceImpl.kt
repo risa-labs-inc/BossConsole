@@ -1,8 +1,9 @@
 package ai.rever.boss.ipc.services
 
+import ai.rever.boss.ipc.auth.IpcCall
+import ai.rever.boss.ipc.auth.ProcessAuthority
 import ai.rever.boss.ipc.proto.*
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.flow
 import org.slf4j.LoggerFactory
 import java.util.concurrent.ConcurrentHashMap
@@ -32,6 +33,8 @@ class KernelServiceImpl(
     override suspend fun registerProcess(request: RegisterProcessRequest): RegisterProcessResponse {
         val manifest = request.manifest
         val processId = manifest.processId
+        val caller = IpcCall.requireOwnProcess(processId)
+        IpcCall.requirePermission(caller.expectedAddress != null && request.ipcAddress == caller.expectedAddress)
 
         logger.info(
             "Process registering: id={}, type={}, name={}, ipc={}",
@@ -41,14 +44,6 @@ class KernelServiceImpl(
             request.ipcAddress,
         )
 
-        registeredProcesses[processId] =
-            RegisteredProcessInfo(
-                manifest = manifest,
-                ipcAddress = request.ipcAddress,
-                registeredAt = System.currentTimeMillis(),
-            )
-        lastHeartbeats[processId] = System.currentTimeMillis()
-
         // Notify the kernel's process registry
         try {
             onProcessRegistered(processId, manifest, request.ipcAddress)
@@ -57,9 +52,18 @@ class KernelServiceImpl(
             return RegisterProcessResponse
                 .newBuilder()
                 .setSuccess(false)
-                .setErrorMessage("Registration callback failed: ${e.message}")
+                .setErrorMessage("Registration callback failed")
                 .build()
         }
+
+        IpcCall.requireOwnProcess(processId)
+        registeredProcesses[processId] =
+            RegisteredProcessInfo(
+                manifest = manifest,
+                ipcAddress = request.ipcAddress,
+                registeredAt = System.currentTimeMillis(),
+            )
+        lastHeartbeats[processId] = System.currentTimeMillis()
 
         // Build service address map for the child process
         val serviceAddresses =
@@ -81,6 +85,7 @@ class KernelServiceImpl(
         flow {
             requests.collect { ping ->
                 val processId = ping.processId
+                IpcCall.requireOwnProcess(processId)
                 lastHeartbeats[processId] = System.currentTimeMillis()
 
                 // Update metrics if provided
@@ -101,12 +106,8 @@ class KernelServiceImpl(
 
     override suspend fun requestShutdown(request: ShutdownRequest): ShutdownResponse {
         val processId = request.processId
-        logger.info(
-            "Shutdown requested for process: id={}, force={}, reason={}",
-            processId,
-            request.force,
-            request.reason,
-        )
+        IpcCall.requireProcessControl(processId)
+        logger.info("Shutdown requested for process: id={}, force={}", processId, request.force)
 
         val success =
             try {
@@ -129,6 +130,7 @@ class KernelServiceImpl(
 
     override suspend fun getProcessStatus(request: ProcessStatusRequest): ProcessStatusResponse {
         val processId = request.processId
+        IpcCall.requireProcessControl(processId)
         val info =
             registeredProcesses[processId]
                 ?: return ProcessStatusResponse
@@ -149,16 +151,20 @@ class KernelServiceImpl(
     }
 
     override suspend fun listProcesses(request: Empty): ListProcessesResponse {
+        val caller = IpcCall.current()
         val statuses =
-            registeredProcesses.map { (id, info) ->
-                ProcessStatusResponse
-                    .newBuilder()
-                    .setProcessId(id)
-                    .setState(ProcessState.PROCESS_STATE_RUNNING)
-                    .setStartTime(info.registeredAt)
-                    .apply { info.lastMetrics.get()?.let { setMetrics(it) } }
-                    .build()
-            }
+            registeredProcesses
+                .filterKeys {
+                    it == caller.processId || caller.authority != ProcessAuthority.PROCESS
+                }.map { (id, info) ->
+                    ProcessStatusResponse
+                        .newBuilder()
+                        .setProcessId(id)
+                        .setState(ProcessState.PROCESS_STATE_RUNNING)
+                        .setStartTime(info.registeredAt)
+                        .apply { info.lastMetrics.get()?.let { setMetrics(it) } }
+                        .build()
+                }
 
         return ListProcessesResponse
             .newBuilder()

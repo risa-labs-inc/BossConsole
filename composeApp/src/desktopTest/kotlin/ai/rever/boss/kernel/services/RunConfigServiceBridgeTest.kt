@@ -1,5 +1,6 @@
 package ai.rever.boss.kernel.services
 
+import ai.rever.boss.ipc.auth.IpcTlsIdentity
 import ai.rever.boss.ipc.auth.ProcessIdentityInterceptor
 import ai.rever.boss.ipc.auth.ProcessTokenClientInterceptor
 import ai.rever.boss.ipc.auth.ProcessTokenRegistry
@@ -14,11 +15,11 @@ import ai.rever.boss.plugin.api.RunConfigurationData
 import ai.rever.boss.plugin.api.RunConfigurationDataProvider
 import ai.rever.boss.plugin.api.RunConfigurationTypeData
 import io.grpc.ManagedChannel
-import io.grpc.ManagedChannelBuilder
 import io.grpc.Server
-import io.grpc.ServerBuilder
 import io.grpc.Status
 import io.grpc.StatusException
+import io.grpc.netty.NettyChannelBuilder
+import io.grpc.netty.NettyServerBuilder
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -50,6 +51,7 @@ import kotlin.test.assertTrue
  * known configuration, never the caller's.
  */
 class RunConfigServiceBridgeTest {
+    private val tls = IpcTlsIdentity.create()
     private lateinit var tokenRegistry: ProcessTokenRegistry
     private lateinit var provider: FakeRunConfigurationDataProvider
     private lateinit var server: Server
@@ -63,19 +65,28 @@ class RunConfigServiceBridgeTest {
         tokenRegistry = ProcessTokenRegistry()
         provider = FakeRunConfigurationDataProvider()
         server =
-            ServerBuilder
+            NettyServerBuilder
                 .forPort(0)
+                .sslContext(tls.serverContext())
                 .intercept(ProcessIdentityInterceptor(tokenRegistry))
                 .addService(RunConfigServiceBridge(provider))
                 .build()
                 .start()
         authenticatedChannel =
-            ManagedChannelBuilder
+            NettyChannelBuilder
                 .forAddress("localhost", server.port)
-                .usePlaintext()
+                .sslContext(IpcTlsIdentity.clientContext(tls.certificateBase64))
+                .overrideAuthority(IpcTlsIdentity.AUTHORITY)
                 .intercept(ProcessTokenClientInterceptor(tokenRegistry.issue(CALLER)))
                 .build()
-        anonymousChannel = ManagedChannelBuilder.forAddress("localhost", server.port).usePlaintext().build()
+        anonymousChannel =
+            NettyChannelBuilder
+                .forAddress(
+                    "localhost",
+                    server.port,
+                ).sslContext(IpcTlsIdentity.clientContext(tls.certificateBase64))
+                .overrideAuthority(IpcTlsIdentity.AUTHORITY)
+                .build()
         authenticated = RunConfigurationServiceGrpcKt.RunConfigurationServiceCoroutineStub(authenticatedChannel)
         anonymous = RunConfigurationServiceGrpcKt.RunConfigurationServiceCoroutineStub(anonymousChannel)
     }
@@ -93,18 +104,18 @@ class RunConfigServiceBridgeTest {
     @Test
     fun `every RPC is refused with no credential, and never reaches the provider`() =
         runBlocking {
-            assertFailsWithPermissionDenied {
+            assertUnauthenticated {
                 anonymous.watchDetectedConfigurations(Empty.getDefaultInstance()).take(1).toList()
             }
-            assertFailsWithPermissionDenied { anonymous.watchIsScanning(Empty.getDefaultInstance()).take(1).toList() }
-            assertFailsWithPermissionDenied { anonymous.watchLastError(Empty.getDefaultInstance()).take(1).toList() }
-            assertFailsWithPermissionDenied {
+            assertUnauthenticated { anonymous.watchIsScanning(Empty.getDefaultInstance()).take(1).toList() }
+            assertUnauthenticated { anonymous.watchLastError(Empty.getDefaultInstance()).take(1).toList() }
+            assertUnauthenticated {
                 anonymous.scanProject(ScanProjectRequest.newBuilder().setProjectPath("/tmp").build())
             }
-            assertFailsWithPermissionDenied {
+            assertUnauthenticated {
                 anonymous.execute(ExecuteConfigRequest.newBuilder().setConfiguration(protoConfig("known-1")).build())
             }
-            assertFailsWithPermissionDenied { anonymous.clearError(Empty.getDefaultInstance()) }
+            assertUnauthenticated { anonymous.clearError(Empty.getDefaultInstance()) }
 
             assertTrue(provider.calls.isEmpty(), "a refused call must never reach the provider")
         }
@@ -183,7 +194,7 @@ class RunConfigServiceBridgeTest {
         runBlocking {
             tokenRegistry.revoke(CALLER)
             val failure = assertFailsWith<StatusException> { authenticated.clearError(Empty.getDefaultInstance()) }
-            assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+            assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
             assertTrue(provider.calls.isEmpty())
         }
 
@@ -202,7 +213,7 @@ class RunConfigServiceBridgeTest {
                         tokenRegistry.revoke(CALLER)
                         provider.setScanning(true)
                         val failure = assertFailsWith<StatusException> { watching.await() }
-                        assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+                        assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
                         assertTrue(received.tryReceive().isFailure, "revocation must prevent the next snapshot")
                     } finally {
                         watching.cancel()
@@ -243,6 +254,11 @@ class RunConfigServiceBridgeTest {
             assertFailsWithPermissionDenied { authenticated.execute(request) }
             assertTrue(provider.executed.isEmpty(), "a rescan must never select a replacement execution silently")
         }
+
+    private suspend fun assertUnauthenticated(call: suspend () -> Unit) {
+        val failure = assertFailsWith<StatusException> { call() }
+        assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
+    }
 
     private suspend fun assertFailsWithPermissionDenied(call: suspend () -> Unit) {
         val failure = assertFailsWith<StatusException> { call() }

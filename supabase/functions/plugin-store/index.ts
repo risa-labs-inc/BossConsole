@@ -144,7 +144,7 @@ app.notFound((ctx) => {
 // Global error handler
 app.onError((err, ctx) => {
   console.error('Global error:', err)
-  return ctx.json({ error: err.message }, 500)
+  return ctx.json({ error: 'Internal server error' }, 500)
 })
 
 Deno.serve(app.fetch)

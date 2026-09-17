@@ -3,8 +3,6 @@ package ai.rever.boss.ipc
 import ai.rever.boss.ipc.proto.*
 import ai.rever.boss.ipc.services.StateServiceImpl
 import com.google.protobuf.ByteString
-import io.grpc.ManagedChannelBuilder
-import io.grpc.ServerBuilder
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -12,7 +10,6 @@ import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
-import java.net.ServerSocket
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -21,32 +18,20 @@ import kotlin.test.assertTrue
  * Integration tests for StateService — get/set/watch + optimistic concurrency.
  */
 class StateServiceTest {
-    private var server: io.grpc.Server? = null
+    private lateinit var testServer: IpcTestServer
     private var channel: io.grpc.ManagedChannel? = null
-    private var port: Int = 0
     private lateinit var stateService: StateServiceImpl
 
     @Before
     fun setUp() {
-        port = ServerSocket(0).use { it.localPort }
         stateService = StateServiceImpl()
-        server =
-            ServerBuilder
-                .forPort(port)
-                .addService(stateService)
-                .build()
-                .start()
-        channel =
-            ManagedChannelBuilder
-                .forAddress("localhost", port)
-                .usePlaintext()
-                .build()
+        testServer = IpcTestServer(stateService)
+        channel = testServer.channelFor("test-process")
     }
 
     @After
     fun tearDown() {
-        channel?.shutdownNow()
-        server?.shutdownNow()
+        testServer.close()
     }
 
     @Test
