@@ -640,8 +640,15 @@ fun BossDraggableComponent.BossTopLeftBar(
                             }
                         },
                     onStash = {
+                        // Capture the invoking window before the coroutine can suspend.
+                        val stashProjectPath = windowProjectPath
+                        val stashWindowState = windowGitState
                         scope.launch {
-                            val result = GitService.stash()
+                            val result =
+                                GitService.stash(
+                                    projectPath = stashProjectPath,
+                                    windowGitState = stashWindowState,
+                                )
                             when (result) {
                                 is GitSuccess -> gitSuccessMessage = result.message
                                 is GitError -> gitErrorMessage = result.message
@@ -649,8 +656,15 @@ fun BossDraggableComponent.BossTopLeftBar(
                         }
                     },
                     onStashPop = { index ->
+                        val stashProjectPath = windowProjectPath
+                        val stashWindowState = windowGitState
                         scope.launch {
-                            val result = GitService.stashPop(index)
+                            val result =
+                                GitService.stashPop(
+                                    index = index,
+                                    projectPath = stashProjectPath,
+                                    windowGitState = stashWindowState,
+                                )
                             when (result) {
                                 is GitSuccess -> gitSuccessMessage = result.message
                                 is GitError -> gitErrorMessage = result.message
