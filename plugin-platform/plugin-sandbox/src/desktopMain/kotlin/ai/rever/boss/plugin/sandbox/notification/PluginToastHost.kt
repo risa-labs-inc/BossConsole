@@ -9,6 +9,9 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.border
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -33,8 +36,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -94,9 +99,24 @@ fun PluginToastHost(
 ) {
     val toasts by toastState.toasts.collectAsState()
 
+    // Hovering the toast area freezes the auto-dismiss timers, so a toast does not vanish while the
+    // user is reading it or moving the pointer toward its action/dismiss button. Leaving resumes
+    // them, each with its full duration afresh. INDEFINITE toasts have no timer and are unaffected.
+    val interactionSource = remember { MutableInteractionSource() }
+    val hovered by interactionSource.collectIsHoveredAsState()
+    DisposableEffect(toastState, hovered) {
+        if (hovered) toastState.pauseAutoDismiss() else toastState.resumeAutoDismiss()
+        // The overlay is removed on an empty stack and replaced when window focus changes.
+        // Release its pause even when no pointer-exit event reaches this composition.
+        onDispose {
+            if (hovered) toastState.resumeAutoDismiss()
+        }
+    }
+
     Column(
         modifier =
             modifier
+                .hoverable(interactionSource)
                 .padding(16.dp)
                 .widthIn(max = 400.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
