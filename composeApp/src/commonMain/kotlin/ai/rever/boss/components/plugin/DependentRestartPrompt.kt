@@ -313,6 +313,39 @@ object DependentRestartCoordinator {
         restartAll(dependentIds, afterPluginId = null)
     }
 
+    /** Restart each dependent through the delegate of the window that owns it. */
+    fun restartNowAcrossWindows(dependentsByManager: Map<DynamicPluginManager, List<DependentPlugin>>) {
+        val restarts =
+            dependentsByManager.flatMap { (manager, dependents) ->
+                dependents.map { dependent -> manager to dependent.pluginId }
+            }
+        if (restarts.isEmpty()) return
+
+        restartScope.launch {
+            for ((manager, dependentId) in restarts) {
+                val restart =
+                    manager.restartDependentPlugin
+                        ?.takeIf {
+                            manager in DynamicPluginManager.activeManagers() &&
+                                manager.isInstalled(dependentId)
+                        } ?: continue
+                runCatching { restart(dependentId) }
+                    .onFailure { cause ->
+                        if (cause is CancellationException) throw cause
+                        logger.warn(
+                            LogCategory.SYSTEM,
+                            "Failed to restart a dependent plugin (continuing)",
+                            mapOf(
+                                "dependentPluginId" to dependentId,
+                                "afterPluginId" to "removal",
+                                "error" to (cause.message ?: cause::class.simpleName ?: "unknown"),
+                            ),
+                        )
+                    }
+            }
+        }
+    }
+
     /**
      * One failure does not strand the rest, matching the api hot swap's unload loop.
      *
