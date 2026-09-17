@@ -620,6 +620,11 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
      * The separator comes from [forWindows] rather than [File], whose own is fixed by the
      * host: joining with [File] would make the POSIX branch emit a `\` when generated on
      * Windows, and the seam exists precisely so either branch can be produced anywhere.
+     *
+     * The caller supplies an already-absolute temp directory (production passes
+     * `java.io.tmpdir`, which is absolute on all three platforms); do not reinstate
+     * `File(directory, fileName).absolutePath` here - it would fold the host separator
+     * back into this platform-explicit seam.
      */
     private fun tempFilePath(
         tempDirPath: String,
