@@ -255,7 +255,6 @@ Scoped deliberately: this covers the **Docker and Kubernetes plugins only**, bec
 | Plugin | What it does |
 |--------|--------------|
 | **[Secret Manager](https://github.com/risa-labs-inc/boss-plugin-secret-manager)** | Encrypted credential vault - website/username/password, notes, tags, 2FA, expiry. Row-level-scoped to you, browser auto-fill, and permission-gated `secret_*` MCP tools. A second section lists what other people have shared with you, read-only |
-| **[BOSS Agent Guardrail](https://github.com/krish57-bit/boss-guardrail-plugin)** | Native safety middleware intercepting and blocking destructive AI agent terminal commands (`rm -rf`, `docker prune`, `curl \| bash`). Pops an interactive Compose Desktop approval sheet for the human operator to Allow or Deny. |
 
 ### Productivity & admin
 | Plugin | What it does |
@@ -266,6 +265,13 @@ Scoped deliberately: this covers the **Docker and Kubernetes plugins only**, bec
 | **[Admin Role Management](https://github.com/risa-labs-inc/boss-plugin-admin-role-management) / [Role Creation](https://github.com/risa-labs-inc/boss-plugin-role-creation)** | Manage roles and permissions; build custom roles (admin) |
 
 *…and more in [boss-plugins](https://github.com/risa-labs-inc/boss-plugins), including analytics, fluck-agent (chat about the current page), and hardware integrations.*
+
+### Community plugins (third-party, not audited)
+Not published by Risa Labs and not in the Toolbox store. Install from the plugin's own repo and read its stated limitations first.
+
+| Plugin | What it does |
+|--------|--------------|
+| **[Agent Guardrail](https://github.com/krish57-bit/boss-guardrail-plugin)** | Adds a `guardrail_run` MCP tool that pattern-matches agent shell commands for destructive shapes (`rm -rf`, `git push --force`, `curl \| bash`) and asks for approval in a BOSS dialog before running them. Only covers commands sent through that tool. Best-effort and bypassable, not a substitute for the per-tool MCP kill-switch |
 
 ---
 
@@ -459,6 +465,7 @@ BOSS is developed in the open, end to end - the host app, the plugin platform, t
 - **Security** - [secret-manager](https://github.com/risa-labs-inc/boss-plugin-secret-manager)
 - **Productivity** - [bookmarks](https://github.com/risa-labs-inc/boss-plugin-bookmarks) · [downloads](https://github.com/risa-labs-inc/boss-plugin-downloads) · [topofmind](https://github.com/risa-labs-inc/boss-plugin-topofmind)
 - **Admin** - [admin-role-management](https://github.com/risa-labs-inc/boss-plugin-admin-role-management) · [role-creation](https://github.com/risa-labs-inc/boss-plugin-role-creation)
+- **Community (third-party, not audited)** - [boss-guardrail-plugin](https://github.com/krish57-bit/boss-guardrail-plugin)
 
 **Releases** - [**BossConsole-Releases**](https://github.com/risa-labs-inc/BossConsole-Releases) hosts the pre-built installers for every platform.
 
