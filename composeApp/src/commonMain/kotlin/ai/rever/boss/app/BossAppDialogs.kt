@@ -31,6 +31,7 @@ import ai.rever.boss.components.plugin.PluginHealthCenterDialog
 import ai.rever.boss.components.plugin.PluginLoadGateHost
 import ai.rever.boss.components.plugin.PluginLoadRemedyAccess
 import ai.rever.boss.components.plugin.PluginStoreVersionBridge
+import ai.rever.boss.components.plugin.PluginUpdateAlreadyInProgressException
 import ai.rever.boss.components.plugin.PluginUpdateBridge
 import ai.rever.boss.components.plugin.openTopOfMindQuickSwitcher
 import ai.rever.boss.components.plugin.providers.GenericDialogHostContent
@@ -136,6 +137,12 @@ internal fun BossAppDialogs(state: BossAppState) {
                             r.isSuccess -> {
                                 StatusMessageManager.showMessage(
                                     "Updated ${prompt.displayName} to v${r.getOrNull()}",
+                                )
+                            }
+
+                            cause is PluginUpdateAlreadyInProgressException -> {
+                                StatusMessageManager.showMessage(
+                                    "${prompt.displayName} update is still in progress",
                                 )
                             }
 
@@ -337,7 +344,7 @@ internal fun BossAppDialogs(state: BossAppState) {
                             FluckTabInfo(
                                 id = "browser-${Random.nextLong()}",
                                 typeId = TabTypeId("fluck"),
-                                _title = "Loading...",
+                                _title = if (FluckTabInfo.isHomeUrl(path)) FluckTabInfo.HOME_TITLE else "Loading...",
                                 url = path,
                             )
                         place(tab)

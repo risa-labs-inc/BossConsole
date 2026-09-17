@@ -236,7 +236,7 @@ download.openapi(downloadLatestRoute, async (ctx) => {
     }, 200)
   } catch (error) {
     console.error('Error generating download URL:', error)
-    return ctx.json({ error: (error as Error).message }, 500)
+    return ctx.json({ error: 'Internal server error' }, 500)
   }
 })
 
@@ -382,7 +382,7 @@ download.openapi(downloadVersionRoute, async (ctx) => {
     }, 200)
   } catch (error) {
     console.error('Error generating download URL:', error)
-    return ctx.json({ error: (error as Error).message }, 500)
+    return ctx.json({ error: 'Internal server error' }, 500)
   }
 })
 

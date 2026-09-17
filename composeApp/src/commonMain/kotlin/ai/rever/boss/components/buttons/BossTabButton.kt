@@ -196,8 +196,12 @@ fun BossTabButton(
             // browser's heavyweight surface, so a tab tooltip over a browser tab would
             // be hidden by the page. Show it in a small native window instead.
             // OFF_SCREEN keeps the Compose path below unchanged.
-            DisposableEffect(fileName) {
+            // A terminal's activity indicator can change its title while the pointer stays
+            // still. Refresh the existing native window without hiding it between titles.
+            LaunchedEffect(fileName, heavyweightTooltip) {
                 heavyweightTooltip(fileName)
+            }
+            DisposableEffect(Unit) {
                 onDispose { OverlayConfig.hideHeavyweightTooltip?.invoke() }
             }
         } else {

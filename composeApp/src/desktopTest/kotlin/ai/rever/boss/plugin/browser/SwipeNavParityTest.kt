@@ -13,6 +13,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlin.test.fail
 
 class SwipeNavParityTest {
     private val root =
@@ -71,25 +72,74 @@ class SwipeNavParityTest {
         val evidence = File.createTempFile("swipe-native-results", ".json")
         val output = File.createTempFile("swipe-native-page", ".log")
         try {
-            evidence.writeText(results.toString())
-            val process =
-                try {
-                    ProcessBuilder(
-                        "node",
-                        File(root, "scripts/test/test-swipe-nav.js").absolutePath,
-                        "--native-results",
-                        evidence.absolutePath,
-                    ).redirectErrorStream(true).redirectOutput(output).start()
-                } catch (error: IOException) {
-                    throw IOException("SwipeNavParityTest requires node on PATH", error)
-                }
-            val completed = process.waitFor(30, TimeUnit.SECONDS)
-            if (!completed) process.destroyForcibly()
-            assertTrue(completed, "page parity suite timed out")
-            assertEquals(0, process.exitValue(), output.readText())
+            evidence.writeText(results.toString(), Charsets.UTF_8)
+
+            val process = runEvidenceProbe(evidence, output)
+            val completed = process.waitFor(120, TimeUnit.SECONDS)
+            if (!completed) {
+                // Kill child node process on Windows/POSIX before killing wrapper
+                process.descendants().forEach { it.destroyForcibly() }
+                process.destroyForcibly()
+                process.waitFor(10, TimeUnit.SECONDS)
+            }
+
+            val rawOutput = if (output.isFile) output.readText(Charsets.UTF_8) else ""
+            val normalizedEvidence = normalizeTerminalEvidence(rawOutput)
+
+            assertTrue(
+                completed,
+                "page parity suite timed out after 120s; partial output:\n$normalizedEvidence",
+            )
+            assertEquals(0, process.exitValue(), normalizedEvidence)
         } finally {
             evidence.delete()
             output.delete()
         }
     }
+
+    private fun runEvidenceProbe(
+        evidence: File,
+        output: File,
+    ): Process {
+        val script = File(root, "scripts/test/test-swipe-nav.js")
+        val isWindows = System.getProperty("os.name").orEmpty().contains("Windows", ignoreCase = true)
+
+        fun buildProcess(command: List<String>): Process =
+            ProcessBuilder(command)
+                .directory(root)
+                .redirectErrorStream(true)
+                .redirectOutput(output)
+                .start()
+
+        return try {
+            // Try direct node execution first to preserve clear missing-node diagnostics
+            buildProcess(listOf("node", script.absolutePath, "--native-results", evidence.absolutePath))
+        } catch (e: IOException) {
+            if (isWindows) {
+                // Fallback for Windows setups where node is a .cmd/.bat shim
+                try {
+                    buildProcess(
+                        listOf(
+                            "cmd.exe",
+                            "/c",
+                            "node",
+                            script.absolutePath,
+                            "--native-results",
+                            evidence.absolutePath,
+                        ),
+                    )
+                } catch (_: IOException) {
+                    fail("SwipeNavParityTest requires node on PATH: ${e.message}")
+                }
+            } else {
+                fail("SwipeNavParityTest requires node on PATH: ${e.message}")
+            }
+        }
+    }
+
+    private fun normalizeTerminalEvidence(raw: String): String =
+        raw
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .trimEnd()
 }

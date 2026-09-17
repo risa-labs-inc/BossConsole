@@ -1,6 +1,7 @@
 package ai.rever.boss.run
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.extractFileName
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -8,6 +9,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -34,6 +37,7 @@ actual object RunConfigurationManager {
     private val detector = DesktopMainFunctionDetector()
 
     private val _currentSettings = MutableStateFlow(RunConfigurationSettings())
+    private val settingsMutex = Mutex()
     actual val currentSettings: StateFlow<RunConfigurationSettings> = _currentSettings.asStateFlow()
 
     private val _detectedConfigurations = MutableStateFlow<List<RunConfiguration>>(emptyList())
@@ -84,7 +88,9 @@ actual object RunConfigurationManager {
 
                 // Save cleaned settings if we deduplicated anything
                 if (deduplicated.size != settings.configurations.size) {
-                    settingsFile.writeText(json.encodeToString(RunConfigurationSettings.serializer(), cleanedSettings))
+                    val cleanedContent =
+                        json.encodeToString(RunConfigurationSettings.serializer(), cleanedSettings)
+                    settingsFile.atomicWriteText(cleanedContent)
                     logger.debug(
                         LogCategory.SYSTEM,
                         "Cleaned up duplicate run configurations",
@@ -208,31 +214,35 @@ actual object RunConfigurationManager {
      * - Generates unique name with number suffix if name already exists
      */
     actual suspend fun addConfiguration(config: RunConfiguration) {
-        val current = _currentSettings.value
+        settingsMutex.withLock {
+            val current = _currentSettings.value
 
-        // Check if configuration with same filePath already exists
-        val existingByPath = current.configurations.find { it.filePath == config.filePath }
-        if (existingByPath != null) {
-            logger.debug(LogCategory.SYSTEM, "Configuration already exists, skipping", mapOf("filePath" to config.filePath))
-            return
-        }
-
-        // Generate unique name if needed
-        val uniqueName = generateUniqueName(config.name, current.configurations.map { it.name })
-        val configWithUniqueName =
-            if (uniqueName != config.name) {
-                config.copy(name = uniqueName)
-            } else {
-                config
+            val existingByPath = current.configurations.find { it.filePath == config.filePath }
+            if (existingByPath != null) {
+                logger.debug(
+                    LogCategory.SYSTEM,
+                    "Configuration already exists, skipping",
+                    mapOf("filePath" to config.filePath),
+                )
+                return@withLock
             }
 
-        val updated =
-            current.copy(
-                configurations = current.configurations + configWithUniqueName,
-            )
-        _currentSettings.value = updated
-        saveSettings()
-        logger.debug(LogCategory.SYSTEM, "Added run configuration", mapOf("name" to configWithUniqueName.name))
+            val uniqueName = generateUniqueName(config.name, current.configurations.map { it.name })
+            val configWithUniqueName =
+                if (uniqueName != config.name) {
+                    config.copy(name = uniqueName)
+                } else {
+                    config
+                }
+
+            val updated =
+                current.copy(
+                    configurations = current.configurations + configWithUniqueName,
+                )
+            _currentSettings.value = updated
+            persistSettings(updated)
+            logger.debug(LogCategory.SYSTEM, "Added run configuration", mapOf("name" to configWithUniqueName.name))
+        }
     }
 
     /**
@@ -261,31 +271,35 @@ actual object RunConfigurationManager {
      * Remove a run configuration by ID.
      */
     actual suspend fun removeConfiguration(configId: String) {
-        val current = _currentSettings.value
-        val updated =
-            current.copy(
-                configurations = current.configurations.filter { it.id != configId },
-                lastUsedConfigId = if (current.lastUsedConfigId == configId) null else current.lastUsedConfigId,
-                recentConfigIds = current.recentConfigIds.filter { it != configId },
-            )
-        _currentSettings.value = updated
-        saveSettings()
+        settingsMutex.withLock {
+            val current = _currentSettings.value
+            val updated =
+                current.copy(
+                    configurations = current.configurations.filter { it.id != configId },
+                    lastUsedConfigId = if (current.lastUsedConfigId == configId) null else current.lastUsedConfigId,
+                    recentConfigIds = current.recentConfigIds.filter { it != configId },
+                )
+            _currentSettings.value = updated
+            persistSettings(updated)
+        }
     }
 
     /**
      * Update an existing run configuration.
      */
     actual suspend fun updateConfiguration(config: RunConfiguration) {
-        val current = _currentSettings.value
-        val updated =
-            current.copy(
-                configurations =
-                    current.configurations.map {
-                        if (it.id == config.id) config else it
-                    },
-            )
-        _currentSettings.value = updated
-        saveSettings()
+        settingsMutex.withLock {
+            val current = _currentSettings.value
+            val updated =
+                current.copy(
+                    configurations =
+                        current.configurations.map {
+                            if (it.id == config.id) config else it
+                        },
+                )
+            _currentSettings.value = updated
+            persistSettings(updated)
+        }
     }
 
     /**
@@ -299,10 +313,15 @@ actual object RunConfigurationManager {
      * Save current settings to disk.
      */
     actual suspend fun saveSettings() =
+        settingsMutex.withLock {
+            persistSettings(_currentSettings.value)
+        }
+
+    private suspend fun persistSettings(settings: RunConfigurationSettings) =
         withContext(Dispatchers.IO) {
             try {
-                val content = json.encodeToString(RunConfigurationSettings.serializer(), _currentSettings.value)
-                settingsFile.writeText(content)
+                val content = json.encodeToString(RunConfigurationSettings.serializer(), settings)
+                settingsFile.atomicWriteText(content)
                 logger.debug(LogCategory.SYSTEM, "Run settings saved", mapOf("path" to settingsFile.absolutePath))
             } catch (e: Exception) {
                 logger.warn(LogCategory.SYSTEM, "Failed to save run settings", error = e)

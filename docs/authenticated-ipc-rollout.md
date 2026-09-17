@@ -26,9 +26,10 @@ is therefore not confidential. Watching an absent key waits, and fails permissio
 if a foreign instance subsequently creates it. Applications requiring confidential key
 existence need a separately specified state-addressing contract before relying on this API.
 
-The published IPC artifact is `boss-ipc-1.1.0.jar`, and the paired runtime declares
+The authentication contract was introduced in `boss-ipc-1.1.0.jar`, and a paired runtime declares
 `minIpcVersion: 1.1.0`. This distinguishes the credential-required JVM API from the
-old `boss-ipc-1.0.0.jar` and lets version-aware old hosts refuse the new runtime.
+old `boss-ipc-1.0.0.jar` and lets version-aware old hosts refuse the new runtime. Later
+additive IPC releases retain that authenticated contract while advancing the artifact version.
 The transport marker is still required; a numeric version is not a TLS capability check.
 `connectToService` no longer opens unauthenticated peer connections: absent services
 return null, and known services without a delegated credential fail explicitly.

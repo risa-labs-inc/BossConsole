@@ -2,6 +2,7 @@ package ai.rever.boss.app
 
 import ai.rever.boss.components.bars.horizontal.StatusMessageManager
 import ai.rever.boss.components.dialogs.TabType
+import ai.rever.boss.components.home.goHome
 import ai.rever.boss.components.plugin.AvailablePluginUpdate
 import ai.rever.boss.components.plugin.DynamicPluginManager
 import ai.rever.boss.components.plugin.InstalledPluginRef
@@ -110,6 +111,26 @@ internal fun BossAppMenuActionEffects(
                 WindowAppearanceSettingsManager.updateSettings(restored)
             }
         }
+    }
+
+    LaunchedEffect(windowId) {
+        MenuActionsHandler.goHomeEvents
+            .onEach { eventWindowId ->
+                if (eventWindowId == windowId) {
+                    val panelId = goHome(splitViewState, state.tabRegistry)
+                    if (panelId == null) {
+                        StatusMessageManager.showMessage(
+                            "Home needs the browser tool. Enable or install Fluck Browser from Tools.",
+                        )
+                    } else {
+                        androidx.compose.runtime.withFrameNanos { }
+                        if (splitViewState.activePanelId == panelId && splitViewState.getPanel(panelId) != null) {
+                            // A pane can close or unmount during the frame boundary.
+                            runCatching { splitViewState.focusRequesterFor(panelId).requestFocus() }
+                        }
+                    }
+                }
+            }.launchIn(this)
     }
 
     // Listen for menu actions from MenuBar (File > New Tab, etc.)

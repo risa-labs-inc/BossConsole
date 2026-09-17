@@ -27,6 +27,7 @@ import ai.rever.boss.plugin.api.McpToolRegistry
 import ai.rever.boss.plugin.api.NavigationResolverProvider
 import ai.rever.boss.plugin.api.NavigationTargetProvider
 import ai.rever.boss.plugin.api.NotificationProvider
+import ai.rever.boss.plugin.api.OrganisationMembersProvider
 import ai.rever.boss.plugin.api.PanelComponentWithUI
 import ai.rever.boss.plugin.api.PanelEventProvider
 import ai.rever.boss.plugin.api.PanelId
@@ -43,6 +44,7 @@ import ai.rever.boss.plugin.api.ProjectSearchProvider
 import ai.rever.boss.plugin.api.RoleManagementProvider
 import ai.rever.boss.plugin.api.RunConfigurationDataProvider
 import ai.rever.boss.plugin.api.ScreenCaptureProvider
+import ai.rever.boss.plugin.api.SearchProvider
 import ai.rever.boss.plugin.api.SecretDataProvider
 import ai.rever.boss.plugin.api.SemanticTokenProvider
 import ai.rever.boss.plugin.api.SettingsProvider
@@ -87,8 +89,8 @@ class PluginRegistrationTracker {
 
     /**
      * UI extension teardown callbacks by plugin — panel menus, settings
-     * pages, deep-link handlers, shortcut providers, status-bar items. Each
-     * registration records the exact undo action captured at register time,
+     * pages, deep-link handlers, shortcut providers, status-bar items, search
+     * providers. Each registration records the exact undo action captured at register time,
      * so [unregisterAll] is one loop and a NEW extension kind needs no edit
      * here (the old per-kind enum + per-kind teardown loop meant a forgotten
      * loop would leak a kind past unload).
@@ -397,6 +399,9 @@ class TrackingPluginContext(
     // Navigation resolver provider - delegate to underlying context
     override val navigationResolverProvider: NavigationResolverProvider? get() = delegate.navigationResolverProvider
 
+    // Organisation co-members - delegate to underlying context
+    override val organisationMembersProvider: OrganisationMembersProvider? get() = delegate.organisationMembersProvider
+
     // Semantic token provider - delegate to underlying context
     override val semanticTokenProvider: SemanticTokenProvider? get() = delegate.semanticTokenProvider
 
@@ -503,6 +508,18 @@ class TrackingPluginContext(
         delegate.unregisterStatusBarItem(itemId)
     }
 
+    // Global search providers, recorded the same way. Without these overrides the call reached the
+    // PluginContext default, which does nothing, so no plugin's provider was ever registered.
+    override fun registerSearchProvider(provider: SearchProvider) {
+        val id = provider.providerId
+        tracker.recordUiExtensionRegistration(pluginId) { delegate.unregisterSearchProvider(id) }
+        delegate.registerSearchProvider(provider)
+    }
+
+    override fun unregisterSearchProvider(providerId: String) {
+        delegate.unregisterSearchProvider(providerId)
+    }
+
     // Plugin-to-plugin API access - delegate to underlying context
     override fun <T : Any> getPluginAPI(apiClass: Class<T>): T? = delegate.getPluginAPI(apiClass)
 
@@ -519,7 +536,9 @@ class TrackingPluginContext(
     fun getRegisteredTabTypes(): Set<TabTypeId> = tracker.getTabTypesForPlugin(pluginId)
 
     /**
-     * Unregister all panels and tab types registered by this plugin.
+     * Unregister everything this plugin registered through this context: panels, tab types, MCP tool
+     * providers and the recorded UI extensions (panel menus, settings pages, deep-link handlers,
+     * shortcuts, status-bar items, search providers).
      */
     fun unregisterAll() {
         println("[TrackingPluginContext] unregisterAll called for plugin: $pluginId")
@@ -546,7 +565,7 @@ class TrackingPluginContext(
             delegate.unregisterMcpToolProvider(providerId)
         }
 
-        // Unregister all UI extensions (panel menu items, settings pages,
+        // Unregister all UI extensions (search providers, panel menu items, settings pages,
         // deep-link handlers, shortcuts, status-bar widgets) — same lifecycle
         // guarantee as MCP tools: gone the moment the plugin is disabled. One
         // loop over the recorded undo callbacks; new kinds need no edit here.

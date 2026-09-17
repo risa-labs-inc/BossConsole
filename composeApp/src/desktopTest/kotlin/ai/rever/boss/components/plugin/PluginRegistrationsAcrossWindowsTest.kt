@@ -213,20 +213,18 @@ class PluginRegistrationsAcrossWindowsTest {
     fun `a closed window's plugin teardown keeps the other window's registrations`() {
         // What closing a window runs: DefaultPlugin.dispose -> disposeWindow -> uninstallPlugin(force)
         // -> TrackingPluginContext.unregisterAll, through the sandbox wrapper, per loaded plugin.
-        // Search is left out here: the wrappers do not forward it on this base (#670).
-        val teardownKinds = kinds.filter { it.name != "search provider" }
         withTwoWindows { first, second ->
             val pluginId = "plugin.$nonce"
             val firstContext = pluginContext(pluginId, first)
             val secondContext = pluginContext(pluginId, second)
-            for (kind in teardownKinds) {
+            for (kind in kinds) {
                 kind.register(firstContext, idFor(kind), "first")
                 kind.register(secondContext, idFor(kind), "second")
             }
 
             secondContext.unregisterAll()
 
-            assertEveryKind(teardownKinds) { kind -> expect("first", kind) }
+            assertEveryKind(kinds) { kind -> expect("first", kind) }
         }
     }
 

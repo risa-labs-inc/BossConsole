@@ -255,6 +255,10 @@ class DynamicPluginManager(
     @Volatile
     internal var persistedReloadJarPath: ((String) -> String?)? = null
 
+    /** Restarts a dependent through this window's plugin delegate. */
+    @Volatile
+    internal var restartDependentPlugin: (suspend (String) -> Unit)? = null
+
     companion object {
         private val companionLogger = BossLogger.forComponent("DynamicPluginManager")
 
@@ -1284,6 +1288,19 @@ class DynamicPluginManager(
                 isDisabled = { id -> _pluginStates.value[id]?.state == PluginState.DISABLED },
             ).sortedBy { dependent -> dependent.loadPriority }
 
+    /** Checks unload-aware components without treating approved dependents as a veto. */
+    internal suspend fun checkUnloadAware(pluginId: String): CanUnloadResult {
+        val reasons = mutableListOf<String>()
+        for (ref in unloadAwareComponents) {
+            val component = ref.get() ?: continue
+            val result = component.checkCanUnload(pluginId)
+            if (result is CanUnloadResult.NotAllowed) {
+                reasons.addAll(result.reasons)
+            }
+        }
+        return if (reasons.isEmpty()) CanUnloadResult.Ok else CanUnloadResult.NotAllowed(reasons)
+    }
+
     /**
      * Check if a plugin can be unloaded without issues.
      *
@@ -1293,13 +1310,9 @@ class DynamicPluginManager(
     suspend fun checkCanUnload(pluginId: String): CanUnloadResult {
         val reasons = mutableListOf<String>()
 
-        // Check with all unload-aware components
-        for (ref in unloadAwareComponents) {
-            val component = ref.get() ?: continue
-            val result = component.checkCanUnload(pluginId)
-            if (result is CanUnloadResult.NotAllowed) {
-                reasons.addAll(result.reasons)
-            }
+        val unloadAwareResult = checkUnloadAware(pluginId)
+        if (unloadAwareResult is CanUnloadResult.NotAllowed) {
+            reasons.addAll(unloadAwareResult.reasons)
         }
 
         // Check for dependent plugins. Only plugins that actually require this one veto the
@@ -2385,6 +2398,7 @@ class DynamicPluginManager(
         // hot swap would try to reload into it, and a process-wide holder that resolves a manager
         // lazily (HomeCatalogAccess's installer) would hand it an install that lands nowhere.
         liveManagers.removeIf { it.get() === this || it.get() == null }
+        restartDependentPlugin = null
 
         // Cancel scope
         managerScope.cancel()

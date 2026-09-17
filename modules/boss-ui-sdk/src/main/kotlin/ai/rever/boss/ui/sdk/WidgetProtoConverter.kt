@@ -81,6 +81,7 @@ object WidgetProtoConverter {
                             // default" — reading the field unconditionally would silently wipe a node's
                             // layout on any property-only update.
                             newModifier = if (op.updated.hasModifier()) op.updated.modifier.toKotlin() else null,
+                            removedProperties = op.updated.removedPropertiesList.toSet(),
                         )
                     }
 
@@ -145,6 +146,7 @@ object WidgetProtoConverter {
                                 .newBuilder()
                                 .setNodeId(op.nodeId)
                                 .putAllChangedProperties(op.changedProperties)
+                                .addAllRemovedProperties(op.removedProperties.sorted())
                                 .apply { op.newModifier?.let { setModifier(it.toProto()) } }
                                 .build()
                         ProtoDiffOp.newBuilder().setUpdated(updated).build()

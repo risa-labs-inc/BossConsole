@@ -2,6 +2,7 @@ package ai.rever.boss.ui.sdk
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
@@ -407,4 +408,88 @@ class WidgetDiffEngineTest {
         assertEquals(expected.nodes[colId]!!.childIds, result.nodes[colId]!!.childIds)
         assertEquals("World", result.nodes[text2Id]!!.properties["value"])
     }
+
+    @Test
+    fun `property removal is an explicit patch and converges exactly`() {
+        val before = propertyTree(mapOf("value" to "Ready", "style" to "muted"))
+        val after = propertyTree(mapOf("value" to "Ready"))
+
+        val update = assertIs<DiffOperation.NodeUpdated>(WidgetDiffEngine.diff(before, after).single())
+        val applied = WidgetDiffEngine.apply(before, listOf(update))
+
+        assertEquals(setOf("style"), update.removedProperties)
+        assertFalse("style" in update.changedProperties, "removal must not masquerade as an empty value")
+        assertEquals(after.nodes, applied.nodes)
+        assertTrue(WidgetDiffEngine.diff(applied, after).isEmpty(), "an applied removal must settle the diff")
+    }
+
+    @Test
+    fun `empty string remains a real value rather than becoming removal`() {
+        val before = propertyTree(mapOf("value" to "Ready"))
+        val after = propertyTree(mapOf("value" to ""))
+
+        val update = assertIs<DiffOperation.NodeUpdated>(WidgetDiffEngine.diff(before, after).single())
+        val applied = WidgetDiffEngine.apply(before, listOf(update))
+
+        assertEquals(mapOf("value" to ""), update.changedProperties)
+        assertTrue(update.removedProperties.isEmpty())
+        assertEquals("", applied.nodes["node"]?.properties?.get("value"))
+        assertTrue("value" in applied.nodes.getValue("node").properties)
+    }
+
+    @Test
+    fun `explicit change wins over a contradictory hand-built removal`() {
+        val before = propertyTree(mapOf("label" to "Before"))
+        val update =
+            DiffOperation.NodeUpdated(
+                nodeId = "node",
+                changedProperties = mapOf("label" to "After"),
+                newModifier = null,
+                removedProperties = setOf("label"),
+            )
+
+        val applied = WidgetDiffEngine.apply(before, listOf(update))
+
+        assertEquals("After", applied.nodes["node"]?.properties?.get("label"))
+    }
+
+    @Test
+    fun `legacy three argument constructor remains available on the JVM`() {
+        val type = DiffOperation.NodeUpdated::class.java
+        val constructor =
+            type.getDeclaredConstructor(
+                String::class.java,
+                Map::class.java,
+                WidgetModifier::class.java,
+            )
+        val copy = type.getDeclaredMethod("copy", String::class.java, Map::class.java, WidgetModifier::class.java)
+        val component1 = type.getDeclaredMethod("component1")
+        val component2 = type.getDeclaredMethod("component2")
+        val component3 = type.getDeclaredMethod("component3")
+        val copyDefault =
+            type.getDeclaredMethod(
+                "copy\$default",
+                type,
+                String::class.java,
+                Map::class.java,
+                WidgetModifier::class.java,
+                Int::class.javaPrimitiveType,
+                Any::class.java,
+            )
+
+        val update = constructor.newInstance("node", mapOf("value" to "next"), null)
+
+        assertTrue(update.removedProperties.isEmpty())
+        assertEquals(type, copy.returnType)
+        assertEquals(type, copyDefault.returnType)
+        assertEquals(String::class.java, component1.returnType)
+        assertEquals(Map::class.java, component2.returnType)
+        assertEquals(WidgetModifier::class.java, component3.returnType)
+    }
+
+    private fun propertyTree(properties: Map<String, String>): WidgetTree =
+        WidgetTree(
+            rootId = "node",
+            nodes = mapOf("node" to WidgetNode("node", WidgetType.TEXT, properties = properties)),
+        )
 }
