@@ -1811,6 +1811,8 @@ class SplitViewState(
         return true
     }
 
+    fun hasPreservedWorkspace(workspaceId: String): Boolean = preservedWorkspaceStates.containsKey(workspaceId)
+
     fun restorePreservedState(workspaceId: String): Boolean {
         // Check if we have a preserved state for this workspace
         val preservedState = preservedWorkspaceStates[workspaceId]

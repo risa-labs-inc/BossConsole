@@ -1,8 +1,10 @@
 package ai.rever.boss.components.workspaces
 
+import ai.rever.boss.app.windowSpaceIdentity
 import ai.rever.boss.components.buttons.BossActionButton
 import ai.rever.boss.components.icons.SpaceIcon
 import ai.rever.boss.components.overlays.ContextMenuItem
+import ai.rever.boss.components.plugin.panels.left_bottom.TopOfMind.LocalSplitViewState
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.plugin.workspace.SplitConfig.SinglePanel
 import androidx.compose.foundation.layout.Box
@@ -88,8 +90,15 @@ fun WorkspaceButton(
      */
     unsavedWorkspaceIds: Set<String> = emptySet(),
 ) {
-    val currentWorkspace by workspaceManager.currentWorkspace.collectAsState()
+    val globalWorkspace by workspaceManager.currentWorkspace.collectAsState()
     val workspaces by workspaceManager.workspaces.collectAsState()
+    val windowState = LocalSplitViewState.current
+    val currentWorkspace =
+        if (windowState != null) {
+            windowSpaceIdentity(windowState.currentWorkspaceId, globalWorkspace, workspaces)
+        } else {
+            globalWorkspace
+        }
 
     // A BOSS theme belongs to a Space, so this menu is where one is given: both are collected
     // rather than read, because the submenu's tick has to move the moment the theme does - the
@@ -336,7 +345,7 @@ fun WorkspaceButton(
             onDismiss = { showOpenDialog = false },
             onOpen = { jsonString ->
                 workspaceManager.importWorkspace(jsonString)?.let { workspace ->
-                    workspaceManager.loadWorkspace(workspace)
+                    // The window switch owns selection, including a canceled dirty-Space prompt.
                     onOpenWorkspace(workspace)
                 }
                 showOpenDialog = false

@@ -80,8 +80,8 @@ internal fun projectNameFor(projectPath: String): String =
  * space in it (`cd /Users/me/My Project && claude` is two arguments) or write a quoted path into
  * a `filePath`, which is not shell-parsed and would be opened with the quotes in its name.
  *
- * [stamp] is a parameter so this is testable: [LayoutWorkspace.generateId] is a clock read, and
- * two calls in one millisecond return the same id. The project NAME is not a parameter - it is
+ * [stamp] is a parameter so this is testable: [LayoutWorkspace.generateId] produces a random identity.
+ * The project NAME is not a parameter - it is
  * [projectNameFor] of the path, so a caller cannot hand in a name that disagrees with the project
  * the placeholders were resolved against.
  */
@@ -201,6 +201,7 @@ suspend fun spaceToOpen(
     picked: LayoutWorkspace,
     projectPath: String,
     manager: WorkspaceManager = workspaceManager,
+    publishSelection: Boolean = true,
 ): LayoutWorkspace {
     val project = DefaultWorkingDirectory.selectedOrNull(projectPath)
     return when {
@@ -216,7 +217,7 @@ suspend fun spaceToOpen(
         }
 
         else -> {
-            materialisedAndSaved(picked, project, manager)
+            materialisedAndSaved(picked, project, manager, publishSelection)
         }
     }
 }
@@ -225,6 +226,7 @@ private suspend fun materialisedAndSaved(
     template: LayoutWorkspace,
     projectPath: String,
     manager: WorkspaceManager,
+    publishSelection: Boolean,
 ): LayoutWorkspace {
     val materialised =
         materialiseTemplateForProject(template, projectPath, savedSpaceNames(manager.workspaces.value))
@@ -242,16 +244,16 @@ private suspend fun materialisedAndSaved(
     // a user who re-themed the template passes that on rather than the baked value; and if that
     // resolves to the baseline, `withSpaceTheme` writes nothing, which is correct - a Space with
     // no theme of its own is exactly what riding the baseline means.
-    manager.setSpaceTheme(materialised.id, manager.themeIdFor(template.id))
-    // Load then save, which is how every other save in the app writes a Space:
-    // saveCurrentWorkspace() persists whatever the manager holds as current, under its own name.
-    manager.loadWorkspace(materialised)
-    manager.saveCurrentWorkspace()
+    // Save the explicit identity first. A failed or superseded switch must not publish a
+    // half-prepared template as the current Space or discard the layout still on screen.
+    val saved = manager.saveWorkspaceAwait(materialised).getOrThrow()
+    manager.setSpaceTheme(saved.id, manager.themeIdFor(template.id))
+    if (publishSelection) manager.loadWorkspace(saved)
     logger.info(
         LogCategory.WORKSPACE,
         "Materialized template into a workspace",
         mapOf("template" to template.name, "workspace" to materialised.name, "id" to materialised.id),
     )
     StatusMessageManager.showMessage("Created Space \"${materialised.name}\"")
-    return materialised
+    return saved
 }

@@ -49,7 +49,7 @@ object PredefinedWorkspaces {
     // nameable in one place. What needs the set is the Space picker's Templates section: "a
     // template" is "one of the eight we ship", which is identity and cannot be derived from the
     // layout - a shipped layout with nothing to parameterise (Browser Only) is still one of ours,
-    // and `LayoutWorkspace.generateId()` mints `workspace-<epoch millis>`, so a saved Space carries
+    // and `LayoutWorkspace.generateId()` mints `workspace-<uuid>`, so a saved Space carries
     // the same `workspace-` prefix and a prefix test would call every Space a template.
     const val CODE_REVIEW_ID = "workspace-code-review"
     const val GEMINI_ID = "workspace-gemini"

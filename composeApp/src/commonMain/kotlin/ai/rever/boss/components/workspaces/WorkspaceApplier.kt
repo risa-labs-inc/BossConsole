@@ -24,18 +24,10 @@ import ai.rever.boss.plugin.workspace.SplitConfig.HorizontalSplit
 import ai.rever.boss.plugin.workspace.SplitConfig.SinglePanel
 import ai.rever.boss.plugin.workspace.SplitConfig.VerticalSplit
 import ai.rever.boss.project.DefaultWorkingDirectory
-import ai.rever.boss.utils.awaitRegistryCondition
-import ai.rever.boss.utils.extractFileName
-import ai.rever.boss.utils.logging.BossLogger
-import ai.rever.boss.utils.logging.LogCategory
-import ai.rever.boss.window.Project
 import ai.rever.boss.window.WindowProjectState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.random.Random
-import kotlin.time.Clock
-
-private val logger = BossLogger.forComponent("WorkspaceApplier")
 
 /**
  * Applies a layout workspace to the split view
@@ -55,34 +47,38 @@ suspend fun applyWorkspace(
     windowProjectState: WindowProjectState? = null,
     restoreProject: Boolean = true,
     warmEngine: () -> Unit = ::warmBrowserEngineForTabs,
+) = applyPreparedWorkspace(
+    workspace,
+    splitViewState,
+    windowProjectState,
+    restoreProject,
+    WorkspaceApplyHooks(warmEngine),
+)
+
+/** One preparation seam and one commit boundary, shared by normal and supersedable applies. */
+internal data class WorkspaceApplyHooks(
+    val warmEngine: () -> Unit = ::warmBrowserEngineForTabs,
+    val beforeApply: () -> Boolean = { true },
+)
+
+internal suspend fun applyPreparedWorkspace(
+    workspace: LayoutWorkspace,
+    splitViewState: SplitViewState,
+    windowProjectState: WindowProjectState? = null,
+    restoreProject: Boolean = true,
+    hooks: WorkspaceApplyHooks = WorkspaceApplyHooks(),
 ) {
     // Generate ID if missing
     val workspaceId = workspace.id.ifEmpty { LayoutWorkspace.generateId() }
 
-    // Restore project if workspace has one and restoreProject is true
-    if (restoreProject && windowProjectState != null) {
-        workspace.projectPath?.let { path ->
-            if (path.isNotEmpty()) {
-                val projectName =
-                    path
-                        .trimEnd('/')
-                        .trimEnd('\\')
-                        .extractFileName()
-                        .ifEmpty { "Project" }
-                windowProjectState.selectProject(
-                    Project(
-                        name = projectName,
-                        path = path,
-                        lastOpened = Clock.System.now().toEpochMilliseconds(),
-                    ),
-                )
-            }
-        }
-    }
+    // Preparing a newer request must not relabel or clear the still-visible Space.
+    // Every mutation below is deferred until the caller accepts this commit.
 
-    // Try to restore preserved state first
-    if (splitViewState.restorePreservedState(workspaceId)) {
-        // State restored successfully
+    if (splitViewState.hasPreservedWorkspace(workspaceId)) {
+        if (hooks.beforeApply()) {
+            restoreWorkspaceProject(workspace, windowProjectState, restoreProject)
+            splitViewState.restorePreservedState(workspaceId)
+        }
         return
     }
 
@@ -94,16 +90,16 @@ suspend fun applyWorkspace(
     // scope, i.e. Main, and docs/THREADING.md rule 1 is about exactly that. Resolved once for
     // the whole tree rather than per tab, mirroring WorkspaceExtractor on the way out.
     //
-    // The `?:` is load-bearing in a way that reads like a bug and is left alone deliberately:
-    // the window's path is "" when no project is selected, and "" is not null, so
-    // `workspace.projectPath` is unreachable whenever windowProjectState is non-null. Using
-    // selectedOrNull here instead would make a saved workspace's recorded project win over the
-    // no-project default - a different answer to "which project do these terminals open in",
-    // which is not what this change is about. Pre-existing, and left that way.
+    // Resolve the project this apply WILL select without publishing that selection during IO.
+    // If no project is restored, preserve the existing empty-path versus null fallback behavior.
     val currentProjectPath =
         withContext(Dispatchers.IO) {
             DefaultWorkingDirectory.resolve(
-                windowProjectState?.selectedProject?.value?.path ?: workspace.projectPath,
+                if (restoreProject && windowProjectState != null && !workspace.projectPath.isNullOrEmpty()) {
+                    workspace.projectPath
+                } else {
+                    windowProjectState?.selectedProject?.value?.path ?: workspace.projectPath
+                },
             )
         }
 
@@ -124,46 +120,19 @@ suspend fun applyWorkspace(
         // reads two version.txt files before it spawns anything. Milliseconds, but milliseconds on
         // the UI thread on every window creation and every workspace switch. Still ahead of the
         // wait below, which is the ordering the whole hook is for.
-        withContext(Dispatchers.IO) { warmEngine() }
+        withContext(Dispatchers.IO) { hooks.warmEngine() }
     }
 
     splitViewState.tabRegistry.awaitTabTypes(requiredTabTypes)
 
-    splitViewState.clearAllPanels()
-
-    // Apply the workspace recursively
-    applyWorkspaceNode(workspace.layout, splitViewState, "main", currentProjectPath)
-}
-
-/**
- * Suspend until every [typeIds] entry is registered, or until the plugin
- * registration timeout elapses. On timeout the apply proceeds anyway — tabs of
- * still-missing types are skipped exactly as before, but a warning is logged
- * instead of failing silently.
- */
-private suspend fun TabRegistry.awaitTabTypes(typeIds: Set<TabTypeId>) {
-    fun missing() = typeIds.filterNot { isRegistered(it) }
-    if (missing().isEmpty()) return
-
-    logger.info(
-        LogCategory.WORKSPACE,
-        "Waiting for plugin tab types before applying workspace",
-        mapOf(
-            "missing" to missing().joinToString { it.typeId },
-        ),
-    )
-    val registered =
-        awaitRegistryCondition(::addChangeListener, ::removeChangeListener) {
-            missing().isEmpty()
+    if (hooks.beforeApply()) {
+        restoreWorkspaceProject(workspace, windowProjectState, restoreProject)
+        // The commit can preserve the currently visible target (reselecting the same Space).
+        // Recheck before rebuilding, or that newly preserved unsaved tree would be discarded.
+        if (!splitViewState.restorePreservedState(workspaceId)) {
+            splitViewState.clearAllPanels()
+            applyWorkspaceNode(workspace.layout, splitViewState, "main", currentProjectPath)
         }
-    if (!registered) {
-        logger.warn(
-            LogCategory.WORKSPACE,
-            "Tab types still unregistered after wait - their tabs will be skipped",
-            mapOf(
-                "missing" to missing().joinToString { it.typeId },
-            ),
-        )
     }
 }
 
