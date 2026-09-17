@@ -1,6 +1,8 @@
 package ai.rever.boss.tabfullscreen
 
 import java.awt.Rectangle
+import javax.swing.JButton
+import javax.swing.JPanel
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -275,5 +277,68 @@ class FullscreenBrowserWindowTest {
     fun `tracked native fullscreen gets a longer confirmation window`() {
         assertEquals(1_500, VideoFullscreenConfirmationDecision.confirmationDelayMs(trackingAvailable = true))
         assertEquals(600, VideoFullscreenConfirmationDecision.confirmationDelayMs(trackingAvailable = false))
+    }
+
+    @Test
+    fun `accepted focus request is retried until ownership is observed`() {
+        assertEquals(
+            BrowserFocusRecoveryDecision.RETRY,
+            browserFocusRecoveryDecision(
+                frameFocused = true,
+                requestAccepted = true,
+                focusWithinView = false,
+                attempt = 0,
+                maxAttempts = 3,
+            ),
+        )
+    }
+
+    @Test
+    fun `rendering descendant counts as browser view focus`() {
+        val browserView = JPanel()
+        val renderingSurface = JButton()
+        browserView.add(renderingSurface)
+
+        assertTrue(isFocusWithin(browserView, renderingSurface))
+        assertFalse(isFocusWithin(browserView, JPanel()))
+    }
+
+    @Test
+    fun `focus recovery exhausts after bounded attempts`() {
+        assertEquals(
+            BrowserFocusRecoveryDecision.EXHAUSTED,
+            browserFocusRecoveryDecision(
+                frameFocused = true,
+                requestAccepted = false,
+                focusWithinView = false,
+                attempt = 3,
+                maxAttempts = 3,
+            ),
+        )
+    }
+
+    @Test
+    fun `focus loss aborts pending recovery`() {
+        assertEquals(
+            BrowserFocusRecoveryDecision.ABORT,
+            browserFocusRecoveryDecision(
+                frameFocused = false,
+                requestAccepted = true,
+                focusWithinView = false,
+                attempt = 0,
+                maxAttempts = 3,
+            ),
+        )
+    }
+
+    @Test
+    fun `stale lifecycle cannot resume focus recovery`() {
+        assertFalse(
+            isCurrentFullscreenLifecycle(
+                expectedEpoch = 7,
+                currentEpoch = 8,
+                isInFullscreenMode = true,
+            ),
+        )
     }
 }

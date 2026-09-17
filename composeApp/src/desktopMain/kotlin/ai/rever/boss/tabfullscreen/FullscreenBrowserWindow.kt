@@ -11,8 +11,10 @@ import com.teamdev.jxbrowser.browser.Browser
 import com.teamdev.jxbrowser.view.swing.BrowserView
 import java.awt.BorderLayout
 import java.awt.Color
+import java.awt.Component
 import java.awt.Frame
 import java.awt.GraphicsEnvironment
+import java.awt.KeyboardFocusManager
 import java.awt.Rectangle
 import java.awt.Window
 import java.awt.event.ActionEvent
@@ -65,6 +67,35 @@ internal fun shouldRestoreFullscreenTabState(
     currentEpoch: Long,
     isInFullscreenMode: Boolean,
 ): Boolean = cleanupEpoch == currentEpoch && !isInFullscreenMode
+
+internal enum class BrowserFocusRecoveryDecision {
+    COMPLETE,
+    RETRY,
+    ABORT,
+    EXHAUSTED,
+}
+
+@Suppress("UNUSED_PARAMETER")
+internal fun browserFocusRecoveryDecision(
+    frameFocused: Boolean,
+    requestAccepted: Boolean,
+    focusWithinView: Boolean,
+    attempt: Int,
+    maxAttempts: Int,
+): BrowserFocusRecoveryDecision =
+    when {
+        !frameFocused -> BrowserFocusRecoveryDecision.ABORT
+        focusWithinView -> BrowserFocusRecoveryDecision.COMPLETE
+        attempt < maxAttempts -> BrowserFocusRecoveryDecision.RETRY
+        else -> BrowserFocusRecoveryDecision.EXHAUSTED
+    }
+
+internal fun isFocusWithin(
+    component: Component,
+    focusOwner: Component?,
+): Boolean =
+    focusOwner === component ||
+        (focusOwner != null && SwingUtilities.isDescendingFrom(focusOwner, component))
 
 private fun displayBounds(frame: JFrame): Rectangle =
     frame.graphicsConfiguration?.bounds
@@ -531,6 +562,7 @@ object FullscreenBrowserWindow {
     private var usesNativeMacOSFullscreen = false
     private var isExiting = false // Prevent multiple exit calls
     private var pageExitFallbackTimer: Timer? = null
+    private var browserFocusRetryTimer: Timer? = null
     private var lifecycleEpoch = 0L
     private val exitCallbackGate = FullscreenExitCallbackGate<Browser>()
     private val videoFullscreenTracker =
@@ -571,6 +603,7 @@ object FullscreenBrowserWindow {
     private const val COMPETING_REQUEST_EXIT_TIMEOUT_MS = 600
     private const val PAGE_EXIT_EVENT_TIMEOUT_MS = 1_000
     private const val BROWSER_FOCUS_RETRY_DELAY_MS = 100
+    private const val BROWSER_FOCUS_MAX_ATTEMPTS = 3
 
     // Delay to allow Compose BrowserView to detach before creating Swing BrowserView
     // This prevents both views from competing for rendering (which causes video freeze)
@@ -803,9 +836,7 @@ object FullscreenBrowserWindow {
 
             frame.toFront()
             frame.requestFocus()
-            if (!isMacOS) {
-                requestBrowserViewFocus(frame, browser, expectedEpoch)
-            }
+            requestBrowserViewFocus(frame, browser, expectedEpoch)
 
             logger.info(LogCategory.BROWSER, "Fullscreen window opened", mapOf("tabId" to tabId, "isMacOS" to isMacOS))
         } catch (e: Exception) {
@@ -858,6 +889,12 @@ object FullscreenBrowserWindow {
         )
         frame.addWindowFocusListener(
             object : WindowAdapter() {
+                override fun windowLostFocus(e: WindowEvent?) {
+                    if (isCurrentFrameSession(expectedEpoch, browser, frame)) {
+                        cancelBrowserViewFocusRecovery()
+                    }
+                }
+
                 override fun windowGainedFocus(e: WindowEvent?) {
                     // The native macOS transition moves the frame to another Space and
                     // can leave the off-screen BrowserView without keyboard focus. Reapply
@@ -887,29 +924,70 @@ object FullscreenBrowserWindow {
         ) {
             return
         }
-        frame.toFront()
-        frame.requestFocus()
         val browserView = currentBrowserView ?: return
-        if (browserView.requestFocusInWindow()) return
+        cancelBrowserViewFocusRecovery()
 
-        Timer(BROWSER_FOCUS_RETRY_DELAY_MS) {
+        fun attemptFocus(attempt: Int) {
             if (!isCurrentFrameSession(expectedEpoch, browser, frame) ||
                 isExiting ||
-                !hasReachedFullscreen
+                !hasReachedFullscreen ||
+                !frame.isFocused
             ) {
-                return@Timer
+                return
             }
-            if (!browserView.requestFocusInWindow()) {
-                logger.warn(
-                    LogCategory.BROWSER,
-                    "Could not focus fullscreen browser view after retry",
-                    mapOf("expectedEpoch" to expectedEpoch),
-                )
+
+            val requestAccepted = browserView.requestFocusInWindow()
+            // requestFocusInWindow() only reports that the request was accepted. Verify
+            // actual ownership on a later EDT tick so accepted-but-undelivered requests
+            // are retried instead of being treated as success.
+            SwingUtilities.invokeLater {
+                if (!isCurrentFrameSession(expectedEpoch, browser, frame) ||
+                    isExiting ||
+                    !hasReachedFullscreen ||
+                    !frame.isFocused
+                ) {
+                    return@invokeLater
+                }
+                val focusOwner = KeyboardFocusManager.getCurrentKeyboardFocusManager().focusOwner
+                when (
+                    browserFocusRecoveryDecision(
+                        frameFocused = frame.isFocused,
+                        requestAccepted = requestAccepted,
+                        focusWithinView = isFocusWithin(browserView, focusOwner),
+                        attempt = attempt,
+                        maxAttempts = BROWSER_FOCUS_MAX_ATTEMPTS,
+                    )
+                ) {
+                    BrowserFocusRecoveryDecision.COMPLETE -> cancelBrowserViewFocusRecovery()
+                    BrowserFocusRecoveryDecision.RETRY -> {
+                        browserFocusRetryTimer =
+                            Timer(BROWSER_FOCUS_RETRY_DELAY_MS) {
+                                browserFocusRetryTimer = null
+                                attemptFocus(attempt + 1)
+                            }.apply {
+                                isRepeats = false
+                                start()
+                            }
+                    }
+                    BrowserFocusRecoveryDecision.ABORT -> cancelBrowserViewFocusRecovery()
+                    BrowserFocusRecoveryDecision.EXHAUSTED -> {
+                        cancelBrowserViewFocusRecovery()
+                        logger.warn(
+                            LogCategory.BROWSER,
+                            "Could not focus fullscreen browser view after retries",
+                            mapOf("expectedEpoch" to expectedEpoch),
+                        )
+                    }
+                }
             }
-        }.apply {
-            isRepeats = false
-            start()
         }
+
+        attemptFocus(0)
+    }
+
+    private fun cancelBrowserViewFocusRecovery() {
+        browserFocusRetryTimer?.stop()
+        browserFocusRetryTimer = null
     }
 
     private fun enterMacOSFullscreen(
@@ -1034,6 +1112,7 @@ object FullscreenBrowserWindow {
         overlay.frame.setBounds(bounds)
         overlay.frame.isVisible = true
         overlay.frame.toFront()
+        overlay.frame.requestFocus()
         requestBrowserViewFocus(overlay.frame, browser, expectedEpoch)
         overlayCoordinator.installFocusBehavior(overlay.frame, currentOwnerWindowId)
         if (watchOwnerExit) {
@@ -1141,6 +1220,7 @@ object FullscreenBrowserWindow {
      */
     private fun resetState(): Long {
         lifecycleEpoch++
+        cancelBrowserViewFocusRecovery()
         overlayCoordinator.clear()
         videoFullscreenTracker.clear()
         fullscreenFrame = null
