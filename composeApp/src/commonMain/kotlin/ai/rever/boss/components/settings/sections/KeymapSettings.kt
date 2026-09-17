@@ -23,6 +23,7 @@ fun KeymapSettings() {
     var selectedCategory by remember { mutableStateOf<ShortcutCategory?>(null) }
 
     val shortcuts = remember { getKeyboardShortcuts() }
+    val conflicts = remember(shortcuts) { findShortcutConflicts(shortcuts) }
 
     val filteredShortcuts =
         shortcuts.filter { shortcut ->
@@ -112,6 +113,7 @@ fun KeymapSettings() {
                     CategorySection(
                         category = category,
                         shortcuts = shortcuts,
+                        conflicts = conflicts,
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                 }
@@ -148,6 +150,7 @@ private fun FilterChipButton(
 private fun CategorySection(
     category: ShortcutCategory,
     shortcuts: List<KeyboardShortcut>,
+    conflicts: Map<String, List<KeyboardShortcut>>,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -167,7 +170,10 @@ private fun CategorySection(
             Spacer(modifier = Modifier.height(12.dp))
 
             shortcuts.forEach { shortcut ->
-                ShortcutRow(shortcut)
+                ShortcutRow(
+                    shortcut = shortcut,
+                    conflicts = conflicts,
+                )
                 if (shortcut != shortcuts.last()) {
                     Divider(
                         modifier = Modifier.padding(vertical = 12.dp),
@@ -180,7 +186,13 @@ private fun CategorySection(
 }
 
 @Composable
-private fun ShortcutRow(shortcut: KeyboardShortcut) {
+private fun ShortcutRow(
+    shortcut: KeyboardShortcut,
+    conflicts: Map<String, List<KeyboardShortcut>>,
+) {
+    val combo = shortcut.canonicalCombo()
+    val conflictingItems = conflicts[combo]?.filter { it.action != shortcut.action }
+
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -197,6 +209,17 @@ private fun ShortcutRow(shortcut: KeyboardShortcut) {
                 style = MaterialTheme.typography.caption,
                 color = BossTheme.colors.textSecondary,
             )
+
+            if (!conflictingItems.isNullOrEmpty()) {
+                val names = conflictingItems.joinToString(", ") { it.action }
+                Text(
+                    text = "⚠️ Conflict with $names",
+                    color = BossTheme.colors.signal,
+                    style = MaterialTheme.typography.caption,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
         }
 
         Spacer(modifier = Modifier.width(16.dp))
