@@ -3,10 +3,7 @@ package ai.rever.boss.components.dialogs
 import ai.rever.boss.components.plugin.panels.left_top.ProjectState
 import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
-import ai.rever.boss.window.LocalWindowProjectState
 import ai.rever.boss.window.Project
-import ai.rever.boss.window.WindowProjectState
-import ai.rever.boss.window.selectProjectInWindow
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -32,13 +29,13 @@ import androidx.compose.ui.window.DialogProperties
  * If no recent projects exist, this dialog automatically opens the directory picker
  * and dismisses itself, avoiding showing an empty dialog to the user.
  */
+@Suppress("LongMethod")
 @Composable
 fun ProjectSelectionDialog(
     onDismiss: () -> Unit,
+    onProjectSelected: (Project) -> Unit,
     onOpenDirectoryPicker: () -> Unit = {},
 ) {
-    // Get window project state from composition local for multi-window support
-    val windowProjectState = LocalWindowProjectState.current
     val recentProjects by ProjectState.recentProjects.collectAsState()
 
     // If no recent projects, skip dialog and open directory picker directly
@@ -106,8 +103,8 @@ fun ProjectSelectionDialog(
                         ProjectListItem(
                             project = project,
                             onClick = {
-                                selectProjectInWindow(windowProjectState, project)
                                 onDismiss()
+                                onProjectSelected(project)
                             },
                         )
                     }

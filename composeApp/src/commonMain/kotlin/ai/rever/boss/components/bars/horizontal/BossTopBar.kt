@@ -6,8 +6,8 @@ import ai.rever.boss.components.buttons.BossActionButton
 import ai.rever.boss.components.buttons.QuickActionHints
 import ai.rever.boss.components.buttons.ToolboxButton
 import ai.rever.boss.components.dialogs.CommitDialog
-import ai.rever.boss.components.dialogs.ProjectOpenModeDialog
 import ai.rever.boss.components.dialogs.ProjectSelectionDialog
+import ai.rever.boss.components.dialogs.rememberProjectOpener
 import ai.rever.boss.components.dialogs.RemoveProjectDialog
 import ai.rever.boss.components.events.PanelEventBus
 import ai.rever.boss.components.events.TerminalLinkEventBus
@@ -459,8 +459,6 @@ fun BossDraggableComponent.BossTopLeftBar(
     val selectedProject by windowProjectState?.selectedProject?.collectAsState()
         ?: remember { mutableStateOf(Project("No Project", "", 0L)) }
     var showProjectDialog by remember { mutableStateOf(false) }
-    var projectToOpen by remember { mutableStateOf<Project?>(null) }
-    var deletedProjectName by remember { mutableStateOf<String?>(null) }
     var projectToRemove by remember { mutableStateOf<Project?>(null) }
 
     // Window-specific git state - each window maintains independent git state
@@ -527,28 +525,12 @@ fun BossDraggableComponent.BossTopLeftBar(
         }
     }
 
-    // Helper function to open project in current window
-    fun openProjectInCurrentWindow(project: Project) {
-        // Use window-specific project state if available, otherwise fallback to global
-        // Panels are opened automatically by BossApp's LaunchedEffect
-        selectProjectInWindow(windowProjectState, project)
-    }
-
-    // Helper function to validate and handle project selection
-    fun handleProjectSelection(project: Project) {
-        val projectDir = File(project.path)
-        if (!projectDir.exists() || !projectDir.isDirectory) {
-            // Project folder was deleted - show message and remove from list
-            deletedProjectName = project.name
-            ProjectState.removeRecentProject(project.path)
-        } else if (selectedProject.path.isNotEmpty()) {
-            // Project exists and another project is already open - show dialog
-            projectToOpen = project
-        } else {
-            // Project exists and no project selected - open directly
-            openProjectInCurrentWindow(project)
-        }
-    }
+    val projectOpener =
+        rememberProjectOpener(
+            currentProject = selectedProject,
+            onOpenCurrent = { selectProjectInWindow(windowProjectState, it) },
+            onOpenNew = { WindowOperations.createNewWindowWithProject(it) },
+        )
 
     BossActionButtonWithLogo(
         text = if (selectedProject.path.isEmpty()) "Open Project" else selectedProject.name,
@@ -557,7 +539,7 @@ fun BossDraggableComponent.BossTopLeftBar(
                 showProjectDialog = { showProjectDialog = true },
                 showNewProjectDialog = { onNewProject?.invoke() },
                 showCloneProjectDialog = { onCloneProject?.invoke() },
-                onProjectSelected = { project -> handleProjectSelection(project) },
+                onProjectSelected = { project -> projectOpener.request(project) },
                 onRemoveProject = { project -> projectToRemove = project },
             ),
         hintText = if (selectedProject.path.isEmpty()) "Click to open a project" else "Current Project: ${selectedProject.path}",
@@ -576,19 +558,7 @@ fun BossDraggableComponent.BossTopLeftBar(
         )
     }
 
-    // Deleted project dialog
-    deletedProjectName?.let { projectName ->
-        BossAlertDialog(
-            onDismissRequest = { deletedProjectName = null },
-            title = { Text("Project Not Found") },
-            text = { Text("The project \"$projectName\" no longer exists. It has been removed from the recent projects list.") },
-            confirmButton = {
-                TextButton(onClick = { deletedProjectName = null }) {
-                    Text("OK")
-                }
-            },
-        )
-    }
+
     // Git branch button (Issue #90)
     // Only show when git is available and project is a git repository
     if (isGitAvailable && isGitRepo) {
@@ -762,13 +732,7 @@ fun BossDraggableComponent.BossTopLeftBar(
                 val project = Project(name = projectName, path = it)
                 // Close the selection dialog
                 showProjectDialog = false
-                // Only show dialog if a project is already selected
-                if (selectedProject.path.isNotEmpty()) {
-                    projectToOpen = project
-                } else {
-                    // No project selected, open directly in current window
-                    openProjectInCurrentWindow(project)
-                }
+                projectOpener.request(project)
             }
         }
 
@@ -777,26 +741,10 @@ fun BossDraggableComponent.BossTopLeftBar(
     if (showProjectDialog) {
         ProjectSelectionDialog(
             onDismiss = { showProjectDialog = false },
+            onProjectSelected = projectOpener::request,
             onOpenDirectoryPicker = {
                 showProjectDialog = false
                 directoryPicker.pickDirectory()
-            },
-        )
-    }
-
-    // Project open mode dialog
-    projectToOpen?.let { project ->
-        ProjectOpenModeDialog(
-            project = project,
-            onDismiss = { projectToOpen = null },
-            onOpenInCurrentWindow = { selectedProj ->
-                openProjectInCurrentWindow(selectedProj)
-                projectToOpen = null
-            },
-            onOpenInNewWindow = { selectedProj ->
-                // Create new window with the project - each window has independent project state
-                WindowOperations.createNewWindowWithProject(selectedProj)
-                projectToOpen = null
             },
         )
     }
