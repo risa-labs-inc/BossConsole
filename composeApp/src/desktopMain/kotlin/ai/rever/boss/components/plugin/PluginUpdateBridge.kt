@@ -1,6 +1,7 @@
 package ai.rever.boss.components.plugin
 
 import ai.rever.boss.components.bars.horizontal.StatusMessageManager
+import ai.rever.boss.components.plugin.PluginDependencyResolution
 import ai.rever.boss.downloads.DownloadCenter
 import ai.rever.boss.plugin.MissingDependencyReporter
 import ai.rever.boss.plugin.PluginPersistence
@@ -9,6 +10,7 @@ import ai.rever.boss.plugin.api.PluginState
 import ai.rever.boss.plugin.api.PluginUnloadIntent
 import ai.rever.boss.plugin.api.TransferKind
 import ai.rever.boss.plugin.api.TransferPhase
+import ai.rever.boss.plugin.loader.PluginManifestReader
 import ai.rever.boss.plugin.loader.PluginSignatureSidecar
 import ai.rever.boss.plugin.readDeferredPluginManifest
 import ai.rever.boss.plugin.updater.UpdateInfo
@@ -166,9 +168,7 @@ actual object PluginUpdateBridge {
                 mgr.updatePlugin(
                     pluginId = pluginId,
                     downloadPath = targetPath,
-                    unloadPlugin = { id ->
-                        if (deferHotReload) Result.success(Unit) else manager.uninstallPlugin(id, force = true).map { }
-                    },
+                    unloadPlugin = { id -> vettedUnload(id, targetPath, deferHotReload, manager) },
                     loadPlugin = { path ->
                         activateUpdate(pluginId, path, manager, deferHotReload)
                     },
@@ -206,13 +206,94 @@ actual object PluginUpdateBridge {
         }.onFailure { logger.warn(LogCategory.SYSTEM, "Post-update plugin reconcile failed", error = it) }
     }
 
+    /**
+     * The unload step of an admitted update, gated on the identity vet running
+     * BEFORE the force-unload (#927's prescribed placement): a refusal throws,
+     * which aborts the swap with the running plugin still loaded for the
+     * session, while the failure path discards the downloaded jar. The
+     * activateUpdate vet stays as belt-and-braces.
+     */
+    private suspend fun vettedUnload(
+        id: String,
+        targetPath: String,
+        deferHotReload: Boolean,
+        manager: DynamicPluginManager,
+    ): Result<Unit> {
+        vetUpdateJarIdentity(id, targetPath)?.let { refusal ->
+            throw IllegalStateException(
+                "Refusing the update swap: the downloaded jar is not $id ($refusal); the running plugin stays loaded.",
+            )
+        }
+        return if (deferHotReload) {
+            Result.success(Unit)
+        } else {
+            manager.uninstallPlugin(id, force = true).map { }
+        }
+    }
+
+    /**
+     * Vet a downloaded update jar's declared identity before it is loaded - the
+     * same two conditions the store installers enforce
+     * (StoreVersionInstaller/StoreMissingDependencyInstaller): nothing binds a
+     * store row to the plugin id its jar declares, and installPlugin acts on
+     * the incoming manifest, so a jar declaring ai.rever.boss.plugin.api would
+     * trigger a process-wide API hot swap from the Update button. Returns null
+     * when the jar may activate, or the refusal reason when it may not.
+     */
+    internal fun vetUpdateJarIdentity(
+        pluginId: String,
+        path: String,
+    ): String? {
+        val declaredId =
+            try {
+                PluginManifestReader.readFromJar(path).pluginId
+            } catch (e: Exception) {
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Update jar manifest unreadable - refusing to activate",
+                    mapOf("pluginId" to pluginId, "path" to path),
+                    error = e,
+                )
+                return "unreadable manifest"
+            }
+        return when {
+            declaredId != pluginId || declaredId in PluginDependencyResolution.NOT_USER_INSTALLABLE -> {
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Refusing an update jar that declares a different plugin",
+                    mapOf("expected" to pluginId, "declared" to declaredId),
+                )
+                "declared id $declaredId"
+            }
+
+            else -> {
+                null
+            }
+        }
+    }
+
     private suspend fun activateUpdate(
         pluginId: String,
         path: String,
         manager: DynamicPluginManager,
         deferHotReload: Boolean,
-    ): Result<Unit> =
-        if (deferHotReload) {
+    ): Result<Unit> {
+        // Vet before loading (see vetUpdateJarIdentity). The unload lambda has
+        // already run by the time this is called, so a refusal here must fail
+        // the update loudly rather than register whatever the jar declares.
+        vetUpdateJarIdentity(pluginId, path)?.let { refusal ->
+            // The refused jar must not survive at its version-named, scannable
+            // path: the next launch's directory scan would register whatever id
+            // it declares (null-signature is warn-and-allowed during the #102
+            // rollout), so the identity attack would survive the session.
+            discardPartialDownload(File(path))
+            return Result.failure(
+                Exception(
+                    "The downloaded update did not declare itself as $pluginId ($refusal). Refusing to activate it.",
+                ),
+            )
+        }
+        return if (deferHotReload) {
             runCatching { stageForRestart(pluginId, path, manager) }
                 .onFailure { discardIfUnswapped(false, File(path)) }
         } else {
@@ -222,6 +303,7 @@ actual object PluginUpdateBridge {
                 }
             }
         }
+    }
 
     /**
      * Records [jarPath] as [pluginId]'s installed jar without touching the running instance, and
