@@ -609,6 +609,20 @@ object WorkspaceMcpToolProvider : McpToolProvider {
         val runningIds = workspaceManager.windowWorkspaces.value[targetWindowId].orEmpty()
         val (space, reused) = resolveBootstrapSpace(targetWindowId, projectPath, runningIds)
 
+        // A project path can match a SAVED Space (matchExistingSpace rules 2 and 3), and a
+        // saved Space can carry terminal startup commands - a materialised "Claude Code"
+        // template substitutes one in. Those commands were not visible in this invocation's
+        // approval arguments, so the path mode must refuse them exactly as the workspaceId
+        // and workspacePath modes do above: a persisted Always Allow on open_workspace must
+        // never become a silent runner of commands embedded in a file on disk.
+        if (space.layout.hasInitialCommands()) {
+            return McpToolResult(
+                "Workspace contains terminal startup commands. Open it through the workspace UI, " +
+                    "or remove the startup commands and invoke open_terminal with each command explicitly.",
+                isError = true,
+            )
+        }
+
         // Fast path: the window already shows this Space, so the live terminal is left alone.
         if (splitViewState.currentWorkspaceId == space.id) {
             return McpToolResult(
