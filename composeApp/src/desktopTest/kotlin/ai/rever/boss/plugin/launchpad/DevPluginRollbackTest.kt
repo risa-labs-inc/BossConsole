@@ -346,17 +346,22 @@ class DevPluginRollbackTest {
             val initialManager2Info = manager2.getPluginInfo(pluginId)
             assertNotNull(initialManager2Info)
 
+            // The manager holds unload-aware components by WeakReference, so the two listeners
+            // must be reachable from this frame for the whole reload: registered inline and
+            // otherwise unreferenced, a GC between registration and the reload collected them,
+            // the reload then saw no refusal and succeeded, and this test failed on the Windows
+            // runner (where the GC happened to land there) while passing everywhere else. They are
+            // used again after the reload so the JIT cannot treat them as dead before it.
             var manager1Unloaded = false
-            manager1.registerUnloadAware(
+            val manager1Aware =
                 object : PluginUnloadAware {
                     override fun checkCanUnload(pluginId: String): CanUnloadResult = CanUnloadResult.Ok
 
                     override fun prepareForUnload(pluginId: String) {
                         manager1Unloaded = true
                     }
-                },
-            )
-            manager2.registerUnloadAware(
+                }
+            val manager2Aware =
                 object : PluginUnloadAware {
                     override fun checkCanUnload(pluginId: String): CanUnloadResult =
                         if (!manager1Unloaded) {
@@ -368,12 +373,19 @@ class DevPluginRollbackTest {
                     override fun prepareForUnload(pluginId: String) {
                         // No preparation needed; manager doesn't hold unloadable resources
                     }
-                },
-            )
+                }
+            manager1.registerUnloadAware(manager1Aware)
+            manager2.registerUnloadAware(manager2Aware)
 
             createDevTestJar(stagingRoot, pluginId, "v2000", "2.0.0")
+            // Deterministic stand-in for the GC that made this flake: with the listeners held
+            // inline, this collection detached them and the reload succeeded.
+            System.gc()
 
             val result = DevPluginReloader.reload(pluginId, stagingRoot)
+            manager1.unregisterUnloadAware(manager1Aware)
+            manager2.unregisterUnloadAware(manager2Aware)
+            assertTrue(manager1Unloaded, "Manager 1 must have been asked to prepare for unload")
             assertTrue(result.isFailure, "Reload must fail when manager 2 refuses unload")
 
             // Manager 1 had unloaded, so rollback cleanly restores its prior v1.jar

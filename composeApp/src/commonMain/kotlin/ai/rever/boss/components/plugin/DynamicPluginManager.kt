@@ -846,6 +846,10 @@ class DynamicPluginManager(
 
     /**
      * Register a component that needs to be notified before plugin unload.
+     *
+     * Held by [WeakReference], like [listeners]: the caller owns the component's lifetime and
+     * must keep it reachable for as long as it should be consulted. A component registered
+     * inline and dropped is collected silently and never asked again.
      */
     fun registerUnloadAware(component: PluginUnloadAware) {
         cleanupDeadReferences(unloadAwareComponents)
