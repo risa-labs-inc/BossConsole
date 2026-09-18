@@ -100,6 +100,8 @@ fun HomeScreen(modifier: Modifier = Modifier) {
                 onSearch = actions::openSearch,
             )
 
+            HomeSideBySideSection(actions = actions)
+
             WhatsNewSection()
 
             JumpBackInSection(

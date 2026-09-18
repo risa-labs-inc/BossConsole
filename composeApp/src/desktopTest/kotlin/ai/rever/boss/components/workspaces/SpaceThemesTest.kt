@@ -168,8 +168,18 @@ class SpaceThemesTest {
     // ==================== the baked template defaults ====================
 
     @Test
-    fun `every layout BOSS ships has a theme, and nothing else does`() {
-        assertEquals(PredefinedWorkspaces.allIds, TEMPLATE_SPACE_THEMES.keys)
+    fun `existing templates retain baked themes while starter splits follow settings`() {
+        val starterIds = setOf(PredefinedWorkspaces.DUAL_BROWSER_ID, PredefinedWorkspaces.BROWSER_TERMINAL_ID)
+        assertEquals(PredefinedWorkspaces.allIds - starterIds, TEMPLATE_SPACE_THEMES.keys)
+        starterIds.forEach { id ->
+            BossThemes.all.forEach { theme ->
+                assertEquals(theme.id, spaceThemeId(id, emptyMap(), theme.id))
+            }
+            assertEquals(
+                BossThemes.CLEAN.id,
+                spaceThemeId(id, mapOf(id to BossThemes.CLEAN.id), BossThemes.BLUEPRINT.id),
+            )
+        }
     }
 
     @Test

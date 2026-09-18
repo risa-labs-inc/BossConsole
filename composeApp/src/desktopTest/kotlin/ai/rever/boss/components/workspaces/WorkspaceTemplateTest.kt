@@ -74,22 +74,26 @@ class WorkspaceTemplateTest {
 
     /**
      * **Being a TEMPLATE is identity; needing a project is shape.** The Space picker groups on the
-     * first and the host materialises on the second, and they agree on seven of the eight built-ins
-     * and disagree on exactly Browser Only - a single browser panel on a fixed URL, which is one of
-     * the layouts we ship and has nothing to parameterise. Conflating them in either direction is
+     * first and the host materialises on the second. Browser Only and the starter splits are
+     * shipped layouts with nothing to parameterise. Conflating them in either direction is
      * the bug: one way files a shipped layout in with the user's own Spaces, the other way tries to
      * name a copy of it after a project the layout does not reference.
      */
     @Test
-    fun `the built-in SET is identity, and only seven of the eight need a project`() {
+    fun `the built-in SET is identity, and only project templates need a project`() {
         val ids = PredefinedWorkspaces.allIds
         val needProject = PredefinedWorkspaces.allWorkspaces.filter { it.requiresProject() }.map { it.id }
 
         assertEquals(EXPECTED_BUILT_IN_IDS, ids, "the shipped set, which the picker's copy mirrors")
         assertEquals(
-            EXPECTED_BUILT_IN_IDS - PredefinedWorkspaces.BROWSER_ONLY_ID,
+            EXPECTED_BUILT_IN_IDS -
+                setOf(
+                    PredefinedWorkspaces.BROWSER_ONLY_ID,
+                    PredefinedWorkspaces.DUAL_BROWSER_ID,
+                    PredefinedWorkspaces.BROWSER_TERMINAL_ID,
+                ),
             needProject.toSet(),
-            "every built-in but Browser Only has placeholders left to substitute",
+            "project-independent starters have no placeholders left to substitute",
         )
     }
 
@@ -125,6 +129,8 @@ class WorkspaceTemplateTest {
             PredefinedWorkspaces.TERMINAL_BROWSER_ID,
             PredefinedWorkspaces.DUAL_TERMINAL_ID,
             PredefinedWorkspaces.BROWSER_ONLY_ID,
+            PredefinedWorkspaces.DUAL_BROWSER_ID,
+            PredefinedWorkspaces.BROWSER_TERMINAL_ID,
         ).forEach { id ->
             assertTrue(id in PredefinedWorkspaces.allIds, "$id is a constant for a layout nobody ships")
         }
@@ -314,10 +320,10 @@ class WorkspaceTemplateTest {
 
     private companion object {
         /**
-         * The eight ids BOSS ships, written out rather than read off `allIds`.
+         * The ids BOSS ships, written out rather than read off `allIds`.
          *
          * A test that derived the expectation from the thing under test would assert nothing. This
-         * is also the list the Space picker's plugin-side copy mirrors, so a ninth built-in fails
+         * is also the list the Space picker's plugin-side copy mirrors, so a new built-in fails
          * here first and names the file to update.
          */
         val EXPECTED_BUILT_IN_IDS =
@@ -330,6 +336,8 @@ class WorkspaceTemplateTest {
                 "workspace-terminal-browser",
                 "workspace-dual-terminal",
                 "workspace-browser",
+                "workspace-dual-browser",
+                "workspace-browser-terminal",
             )
     }
 }

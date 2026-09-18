@@ -45,9 +45,9 @@ object PredefinedWorkspaces {
     /** Id of the terminal + browser workspace, the platform default everywhere else. */
     const val CLAUDE_CODE_ID = "workspace-claude-code"
 
-    // The other six, promoted from literals in the list below so the whole built-in SET is
+    // The other layouts, promoted from literals in the list below so the whole built-in SET is
     // nameable in one place. What needs the set is the Space picker's Templates section: "a
-    // template" is "one of the eight we ship", which is identity and cannot be derived from the
+    // template" is "one of the layouts we ship", which is identity and cannot be derived from the
     // layout - a shipped layout with nothing to parameterise (Browser Only) is still one of ours,
     // and `LayoutWorkspace.generateId()` mints `workspace-<epoch millis>`, so a saved Space carries
     // the same `workspace-` prefix and a prefix test would call every Space a template.
@@ -57,17 +57,18 @@ object PredefinedWorkspaces {
     const val OPENCODE_ID = "workspace-opencode"
     const val TERMINAL_BROWSER_ID = "workspace-terminal-browser"
     const val DUAL_TERMINAL_ID = "workspace-dual-terminal"
+    const val DUAL_BROWSER_ID = "workspace-dual-browser"
+    const val BROWSER_TERMINAL_ID = "workspace-browser-terminal"
 
     /**
      * Every id BOSS ships a layout for.
      *
      * **Identity, not shape.** This is what makes something a TEMPLATE in the Space picker, and it
      * is deliberately a different question from [requiresProject], which asks whether a layout has
-     * placeholders left to substitute. The two agree on seven of these eight and disagree on
-     * Browser Only: a single browser panel on a fixed URL is one of the layouts we ship and has
-     * nothing to parameterise. Templates is the first question; materialising is the second.
+     * placeholders left to substitute. Browser Only and the starter splits have nothing to
+     * parameterise. Templates is the first question; materialising is the second.
      *
-     * Derived from [allWorkspaces] rather than listed again, so a ninth built-in joins the set by
+     * Derived from [allWorkspaces] rather than listed again, so a new built-in joins the set by
      * existing. The constants above are for naming one; this is for asking about all of them.
      */
     val allIds: Set<String> get() = allWorkspaces.map { it.id }.toSet()
@@ -80,6 +81,9 @@ object PredefinedWorkspaces {
      * and put the default workspace on a different origin from the browser's own default.
      */
     const val BROWSER_ONLY_URL = "https://www.risalabs.ai"
+
+    /** Neutral new tabs for users to open their own pages in starter splits. */
+    const val STARTER_BROWSER_URL = "about:blank"
 
     val allWorkspaces =
         listOf(
@@ -405,5 +409,31 @@ object PredefinedWorkspaces {
                         ),
                     ),
             ),
+            // Project-independent starters use the same apply and explicit-save flow as Browser Only.
+            LayoutWorkspace(
+                id = DUAL_BROWSER_ID,
+                name = "Two browsers",
+                description = "Browse two pages side by side",
+                layout =
+                    VerticalSplit(
+                        left =
+                            starterPanel(TabConfig(type = "browser", title = "Browser 1", url = STARTER_BROWSER_URL)),
+                        right =
+                            starterPanel(TabConfig(type = "browser", title = "Browser 2", url = STARTER_BROWSER_URL)),
+                    ),
+            ),
+            LayoutWorkspace(
+                id = BROWSER_TERMINAL_ID,
+                name = "Browser + terminal",
+                description = "Browse on the left, work in a terminal on the right",
+                layout =
+                    VerticalSplit(
+                        left = starterPanel(TabConfig(type = "browser", title = "Browser", url = STARTER_BROWSER_URL)),
+                        // An unset directory follows the current project or the standard no-project default.
+                        right = starterPanel(TabConfig(type = "terminal", title = "Terminal")),
+                    ),
+            ),
         )
+
+    private fun starterPanel(tab: TabConfig) = SinglePanel(PanelConfig(id = generatePanelId(), tabs = listOf(tab)))
 }

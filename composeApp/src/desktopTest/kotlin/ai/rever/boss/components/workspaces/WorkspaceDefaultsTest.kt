@@ -84,11 +84,17 @@ class WorkspaceDefaultsTest {
         assertFalse(workspace.requiresProject())
     }
 
-    /** Every other predefined workspace does need one, which is why it is not applied unasked. */
+    /** Developer templates keep their existing project requirement. */
     @Test
-    fun `every other predefined workspace needs a project`() {
+    fun `developer templates need a project`() {
+        val projectFreeIds =
+            setOf(
+                PredefinedWorkspaces.BROWSER_ONLY_ID,
+                PredefinedWorkspaces.DUAL_BROWSER_ID,
+                PredefinedWorkspaces.BROWSER_TERMINAL_ID,
+            )
         PredefinedWorkspaces.allWorkspaces
-            .filterNot { it.id == PredefinedWorkspaces.BROWSER_ONLY_ID }
+            .filterNot { it.id in projectFreeIds }
             .forEach { assertTrue(it.requiresProject(), it.id) }
     }
 
