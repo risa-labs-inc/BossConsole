@@ -196,8 +196,25 @@ boss mcp ledger tail --file /path/to/mcp-calls.jsonl --json
 ```
 
 The chain detects edits, insertions, reordering, and removals from inside retained history. It is
-not a signature: someone able to rewrite the entire chain can recompute it, and removing only the
-newest tail cannot be distinguished from normal retained history without an external checkpoint.
+not a signature: someone able to rewrite the entire chain can recompute it. Removing only the
+newest records leaves a valid chain, so a plain `verify` cannot see it. `verify` prints the head
+hash for that reason, and `--anchor` is the external checkpoint that closes the gap:
+
+```bash
+# Note the head hash somewhere outside the ledger's own directory (a ticket, a notes file, a CI variable)
+boss mcp ledger verify
+#   Head:    9f2c...e1 (record 412 of 412)
+
+# Later: fails, exit 1, if the ledger no longer contains that record
+boss mcp ledger verify --anchor 9f2c...e1
+```
+
+The anchor must be the full 64-character hash; a shorter prefix is refused, because an anchor is only
+worth what it costs to forge. The check reports `anchor-missing` when the record you anchored is not
+in the chain: its newest records were removed, the history was replaced, or the record aged out of the
+bounded set of rotated backups (so anchor a recent head and refresh it periodically). A broken chain
+is reported as broken first, and an anchor cannot rescue it.
+
 An all-legacy ledger from before integrity tracking exits non-zero until BOSS writes one new record
 that anchors the hash chain; the report distinguishes that ordinary upgrade state from tampering.
 

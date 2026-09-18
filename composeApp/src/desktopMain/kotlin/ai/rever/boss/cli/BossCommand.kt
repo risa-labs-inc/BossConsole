@@ -245,6 +245,12 @@ class BossMcpCommand : CliktCommand(name = "mcp") {
     )
     val ledgerFrom by option("--from", help = "Only records at or after this time (epoch ms, date, or ISO-8601)")
     val ledgerTo by option("--to", help = "Only records at or before this time (epoch ms, date, or ISO-8601)")
+    val ledgerAnchor by option(
+        "--anchor",
+        help =
+            "For 'verify': a head hash recorded earlier. Fails if the ledger no longer contains it, " +
+                "which is how records removed from its end are detected",
+    )
 
     override fun run() {
         when (val act = action?.lowercase()) {
@@ -287,7 +293,7 @@ class BossMcpCommand : CliktCommand(name = "mcp") {
         val outcome =
             when (ledgerAction) {
                 "verify" -> {
-                    McpLedgerCli.verify(ledgerFile, json)
+                    McpLedgerCli.verify(ledgerFile, json, ledgerAnchor)
                 }
 
                 "tail" -> {

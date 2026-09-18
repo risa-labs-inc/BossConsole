@@ -49,6 +49,52 @@ internal data class McpLedgerQuery(
     val toMillis: Long? = null,
 )
 
+private const val ANCHOR_USAGE =
+    "Error: --anchor must be the full 64-character hex head hash printed by 'boss mcp ledger verify'."
+
+private val ANCHOR_SHAPE = Regex("[0-9a-f]{64}")
+
+/**
+ * A `--anchor` value as the lower-case hash it names, or null when it is not a full SHA-256.
+ *
+ * The whole hash and nothing shorter, because an anchor is only worth what it costs to forge: a
+ * prefix short enough to type would let someone who can rewrite the ledger grind a record that
+ * matches it.
+ */
+internal fun parseLedgerAnchor(raw: String): String? = raw.trim().lowercase().takeIf { ANCHOR_SHAPE.matches(it) }
+
+/** The `Head:` line: the hash an operator records outside the file and later passes as `--anchor`. */
+private fun StringBuilder.appendHeadLine(verification: McpLedgerVerification) {
+    val head = verification.headHash ?: return
+    val position = "record ${verification.headRecordIndex} of ${verification.totalRecords}"
+    appendLine("Head:    ${TerminalText.safe(head)} ($position)")
+}
+
+/** The `Anchor:` lines of a verification report, when the caller asked for an anchor check. */
+private fun StringBuilder.appendAnchorResult(verification: McpLedgerVerification) {
+    if (verification.anchorHash == null) return
+    val anchorIndex = verification.anchorRecordIndex
+    when {
+        verification.firstBreak != null -> {
+            appendLine("Anchor:  not checked - the chain is broken, so nothing after the break can be trusted")
+        }
+
+        anchorIndex != null -> {
+            val since = (verification.headRecordIndex ?: anchorIndex) - anchorIndex
+            appendLine("Anchor:  found at record $anchorIndex, with $since verified record(s) written since")
+        }
+
+        else -> {
+            appendLine("Anchor:  NOT FOUND - the ledger no longer contains the record you anchored.")
+            appendLine("         Its newest records were removed, its history was replaced, or the record")
+            appendLine("         aged out of the rotated backups, which are a bounded number.")
+        }
+    }
+}
+
+/** An exception's message as the operator's terminal may safely see it; it can quote ledger content. */
+private fun reasonOf(e: Exception): String = TerminalText.safe(e.message.orEmpty())
+
 /**
  * The read side of the durable MCP operation ledger, for `boss mcp ledger verify|tail|search`.
  *
@@ -80,16 +126,20 @@ internal object McpLedgerCli {
     fun verify(
         fileOverride: String?,
         json: Boolean,
+        anchor: String? = null,
     ): McpLedgerOutcome {
+        val anchorHash = anchor?.let { parseLedgerAnchor(it) }
+        if (anchor != null && anchorHash == null) return McpLedgerOutcome.Failed(ANCHOR_USAGE)
         val ledgerFile = resolveLedgerFile(fileOverride)
         val verification =
             try {
                 requireLedger(ledgerFile)
-                McpOperationLedger(ledgerFile = ledgerFile).verifyChain()
+                McpOperationLedger(ledgerFile = ledgerFile).verifyChain(anchorHash)
             } catch (e: McpLedgerReadException) {
-                return McpLedgerOutcome.Failed("Error: ${e.message}")
+                return McpLedgerOutcome.Failed("Error: ${reasonOf(e)}")
             } catch (e: Exception) {
-                return McpLedgerOutcome.Failed("Error: cannot read ${ledgerFile.absolutePath}: ${e.message}")
+                val where = TerminalText.safe(ledgerFile.absolutePath)
+                return McpLedgerOutcome.Failed("Error: cannot read $where: ${reasonOf(e)}")
             }
         val text =
             if (json) {
@@ -125,9 +175,9 @@ internal object McpLedgerCli {
                 },
             )
         } catch (e: McpLedgerReadException) {
-            McpLedgerOutcome.Failed("Error: ${e.message}")
+            McpLedgerOutcome.Failed("Error: ${reasonOf(e)}")
         } catch (e: Exception) {
-            McpLedgerOutcome.Failed("Error: cannot read the MCP operation ledger: ${e.message}")
+            McpLedgerOutcome.Failed("Error: cannot read the MCP operation ledger: ${reasonOf(e)}")
         }
 
     /** Matching records newest first, capped at [limit], with the total number of matches. */
@@ -150,9 +200,9 @@ internal object McpLedgerCli {
                 },
             )
         } catch (e: McpLedgerReadException) {
-            McpLedgerOutcome.Failed("Error: ${e.message}")
+            McpLedgerOutcome.Failed("Error: ${reasonOf(e)}")
         } catch (e: Exception) {
-            McpLedgerOutcome.Failed("Error: cannot read the MCP operation ledger: ${e.message}")
+            McpLedgerOutcome.Failed("Error: cannot read the MCP operation ledger: ${reasonOf(e)}")
         }
 
     /**
@@ -236,37 +286,46 @@ internal object McpLedgerFormat {
     /** ISO-8601 in UTC, so a timestamp in a report cannot be misread as local time. */
     fun timestamp(epochMillis: Long): String = Instant.ofEpochMilli(epochMillis).toString()
 
+    /** [text] made safe to print; see [TerminalText.safe]. */
+    fun terminalSafe(text: String): String = TerminalText.safe(text)
+
     fun verification(
         ledgerFile: File,
         verification: McpLedgerVerification,
     ): String =
         buildString {
-            appendLine("Ledger:  ${ledgerFile.absolutePath}")
-            appendLine("Files:   ${verification.files.size} (${verification.files.joinToString(", ")})")
+            appendLine("Ledger:  ${terminalSafe(ledgerFile.absolutePath)}")
+            val files = verification.files.joinToString(", ") { terminalSafe(it) }
+            appendLine("Files:   ${verification.files.size} ($files)")
             appendLine(
                 "Records: ${verification.totalRecords} " +
                     "(${verification.chainedRecords} chained, " +
                     "${verification.unverifiableRecords} unverifiable)",
             )
+            appendHeadLine(verification)
             val broken = verification.firstBreak
             if (broken != null) {
                 appendLine(
                     "Chain:   BROKEN - first break at record ${broken.recordIndex} " +
-                        "of ${verification.totalRecords}, ${broken.fileName} line ${broken.lineNumber}",
+                        "of ${verification.totalRecords}, ${terminalSafe(broken.fileName)} line ${broken.lineNumber}",
                 )
-                appendLine("         ${broken.recordId} at ${timestamp(broken.timestamp)}")
+                appendLine("         ${terminalSafe(broken.recordId)} at ${timestamp(broken.timestamp)}")
                 appendLine("         reason:   ${reasonText(broken.reason)}")
-                appendLine("         expected ${broken.expectedHash}")
-                appendLine("         found    ${broken.foundHash}")
+                appendLine("         expected ${terminalSafe(broken.expectedHash)}")
+                appendLine("         found    ${terminalSafe(broken.foundHash)}")
             } else if (verification.coverageGaps.isNotEmpty()) {
+                val gaps = verification.coverageGaps.joinToString(", ") { terminalSafe(it) }
                 appendLine(
-                    "Chain:   INCOMPLETE - ${verification.coverageGaps.joinToString(", ")} missing, " +
+                    "Chain:   INCOMPLETE - $gaps missing, " +
                         "so the chain could not be followed across that gap",
                 )
+            } else if (verification.verdict == "anchor-missing") {
+                appendLine("Chain:   ANCHOR MISSING - the records present check out, but not the one anchored")
             } else if (verification.verdict == "intact") {
+                val oldest = verification.oldestVerifiableFile?.let(::terminalSafe)
                 appendLine(
                     "Chain:   intact - oldest verifiable record is " +
-                        "${verification.oldestVerifiableFile} line ${verification.oldestVerifiableLine}",
+                        "$oldest line ${verification.oldestVerifiableLine}",
                 )
             } else {
                 val explanation =
@@ -285,6 +344,7 @@ internal object McpLedgerFormat {
                     }
                 appendLine("Chain:   UNVERIFIABLE - $explanation")
             }
+            appendAnchorResult(verification)
             if (verification.unverifiableRecords > 0) {
                 appendLine(
                     "Note:    ${verification.unverifiableRecords} record(s) carry no hash and were not " +
@@ -306,7 +366,7 @@ internal object McpLedgerFormat {
         if (entries.isEmpty()) {
             return if (totalMatches == 0) "No matching ledger records." else "No records to show."
         }
-        val toolWidth = entries.maxOf { it.record.toolName.length }.coerceAtMost(40)
+        val toolWidth = entries.maxOf { terminalSafe(it.record.toolName).length }.coerceAtMost(40)
         val policyWidth = entries.maxOf { policyOf(it.record).length }
         val body =
             entries.joinToString("\n") { entry ->
@@ -314,7 +374,7 @@ internal object McpLedgerFormat {
                 buildString {
                     append(timestamp(record.timestamp))
                     append("  ")
-                    append(record.toolName.padEnd(toolWidth))
+                    append(terminalSafe(record.toolName).padEnd(toolWidth))
                     append("  ")
                     append(policyOf(record).padEnd(policyWidth))
                     append("  ")
@@ -322,8 +382,8 @@ internal object McpLedgerFormat {
                     append("ms  ")
                     append(if (record.isError) "error" else "ok   ")
                     append("  hash ")
-                    append(record.hash?.take(12) ?: "unverifiable")
-                    record.errorSnippet?.let { append("\n    error: ").append(it) }
+                    append(record.hash?.take(12)?.let(::terminalSafe) ?: "unverifiable")
+                    record.errorSnippet?.let { append("\n    error: ").append(terminalSafe(it)) }
                 }
             }
         val footer =
@@ -364,6 +424,10 @@ internal object McpLedgerFormat {
             put("oldestVerifiableFile", verification.oldestVerifiableFile)
             put("oldestVerifiableLine", verification.oldestVerifiableLine)
             put("coverageGaps", buildJsonArray { verification.coverageGaps.forEach { add(it) } })
+            put("headHash", verification.headHash)
+            put("headRecordIndex", verification.headRecordIndex)
+            put("anchorHash", verification.anchorHash)
+            put("anchorRecordIndex", verification.anchorRecordIndex)
             put("firstBreak", broken)
         }
     }

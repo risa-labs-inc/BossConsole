@@ -122,7 +122,7 @@ class McpOperationLedger(
     internal fun readEntries(): List<McpLedgerEntry> = store.readEntries()
 
     /** Walks the hash chain across the active file and its rotations. See [McpLedgerVerification]. */
-    internal fun verifyChain(): McpLedgerVerification = store.verify()
+    internal fun verifyChain(anchor: String? = null): McpLedgerVerification = store.verify(anchor)
 
     /** Rotated backups absent while an older one is present, so history has a hole in it. */
     internal fun coverageGaps(): List<String> = store.coverageGaps()
@@ -360,17 +360,33 @@ internal data class McpLedgerVerification(
     val oldestVerifiableLine: Int?,
     val firstBreak: McpLedgerBreak?,
     val coverageGaps: List<String>,
+    /** The hash of the newest record the walk verified, which is what an operator anchors to. */
+    val headHash: String? = null,
+    /** The 1-based position of [headHash] among all records read, counting unhashed ones. */
+    val headRecordIndex: Int? = null,
+    /** The hash the caller expects the chain to still contain, or null when none was given. */
+    val anchorHash: String? = null,
+    /** Where [anchorHash] sits in the chain, or null when a requested anchor is not in it. */
+    val anchorRecordIndex: Int? = null,
 ) {
     /**
-     * `intact`, `broken`, `incomplete`, or `unverifiable`. Never `intact` unless every record
-     * carrying a hash was checked and agreed, so a partly missing or unreadable ledger cannot read
-     * as healthy.
+     * `intact`, `broken`, `incomplete`, `anchor-missing`, or `unverifiable`. Never `intact` unless
+     * every record carrying a hash was checked and agreed, so a partly missing or unreadable ledger
+     * cannot read as healthy.
+     *
+     * `anchor-missing` is the one verdict the chain cannot reach on its own. A hash chain proves
+     * that no record was edited, inserted or removed from the MIDDLE, but a chain with its newest
+     * records deleted is still a perfectly valid chain, so truncation from the end (or replacing
+     * the whole history) verifies as `intact`. Only a hash remembered outside the file can say the
+     * ledger used to be longer: when the caller supplies one and the chain no longer contains it,
+     * every record present may check out and the ledger is still not the one that was anchored.
      */
     val verdict: String
         get() =
             when {
                 firstBreak != null -> "broken"
                 coverageGaps.isNotEmpty() -> "incomplete"
+                anchorHash != null && anchorRecordIndex == null -> "anchor-missing"
                 totalRecords == 0 || chainedRecords == 0 || unverifiableSuffixRecords > 0 -> "unverifiable"
                 else -> "intact"
             }
@@ -390,6 +406,7 @@ internal data class McpLedgerVerification(
  */
 @Suppress(
     "LoopWithTooManyJumpStatements",
+    "LongMethod",
     "ReturnCount",
     "TooGenericExceptionCaught",
     "TooManyFunctions",
@@ -535,7 +552,7 @@ internal class McpLedgerStore(
      * written before integrity tracking existed looks like - so an upgraded ledger reports those and
      * nothing else, rather than calling them tampering.
      */
-    fun verify(): McpLedgerVerification {
+    fun verify(anchor: String? = null): McpLedgerVerification {
         val entries = readEntries()
         var chained = 0
         var unverifiable = 0
@@ -543,6 +560,9 @@ internal class McpLedgerStore(
         var hasSeenChainedRecord = false
         var oldestVerifiable: McpLedgerEntry? = null
         var firstBreak: McpLedgerBreak? = null
+        var headHash: String? = null
+        var headRecordIndex: Int? = null
+        var anchorRecordIndex: Int? = null
         var previous: McpLedgerEntry? = null
         var previousPosition: Int? = null
 
@@ -576,6 +596,9 @@ internal class McpLedgerStore(
 
             chained++
             hasSeenChainedRecord = true
+            headHash = stored
+            headRecordIndex = index + 1
+            if (stored == anchor && anchorRecordIndex == null) anchorRecordIndex = index + 1
             if (oldestVerifiable == null) oldestVerifiable = entry
             previous = entry
             previousPosition = position
@@ -591,6 +614,10 @@ internal class McpLedgerStore(
             oldestVerifiableLine = oldestVerifiable?.lineNumber,
             firstBreak = firstBreak,
             coverageGaps = coverageGaps(),
+            headHash = headHash,
+            headRecordIndex = headRecordIndex,
+            anchorHash = anchor,
+            anchorRecordIndex = anchorRecordIndex,
         )
     }
 
