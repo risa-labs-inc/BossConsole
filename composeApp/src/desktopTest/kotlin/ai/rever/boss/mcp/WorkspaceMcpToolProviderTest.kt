@@ -92,6 +92,76 @@ class WorkspaceMcpToolProviderTest {
     }
 
     @Test
+    fun `workspace IDs cannot select filesystem paths before any window is opened`() =
+        runBlocking {
+            val core = createTestCore()
+            for (id in listOf("workspace-disposable-/../../important.json", "../outside.json", "C:/outside.json")) {
+                for (tool in listOf("open_workspace", "close_workspace")) {
+                    val result = core.invoke(tool, """{"workspaceId":"$id"}""")
+                    assertTrue(result.isError)
+                    assertTrue(result.text.contains("Invalid workspaceId"), result.text)
+                }
+            }
+            assertFalse(isSafeWorkspaceId("workspace-disposable-\\..\\outside.json"))
+            assertTrue(isSafeWorkspaceId("workspace-disposable-123.json"))
+            assertEquals(0, windowCreatorCalls)
+        }
+
+    @Test
+    fun `explicit terminal cwd must be absolute`() =
+        runBlocking {
+            val result = createTestCore().invoke("open_terminal", """{"workingDirectory":"."}""")
+            assertTrue(result.isError)
+            assertTrue(result.text.contains("absolute"), result.text)
+            assertEquals(0, windowCreatorCalls)
+        }
+
+    @Test
+    fun `saved workspace startup commands require an explicit terminal invocation`() =
+        runBlocking {
+            val workspace =
+                LayoutWorkspace(
+                    id = "hidden-command",
+                    name = "Hidden command",
+                    description = "test",
+                    layout =
+                        SplitConfig.SinglePanel(
+                            PanelConfig(
+                                "shell",
+                                listOf(TabConfig(type = "terminal", title = "Shell", initialCommand = "echo hidden")),
+                            ),
+                        ),
+                )
+            fileManager.saveWorkspace(workspace)
+            val file = File(workspaceDir, WorkspaceFileManagerCommon.fileNameForId(workspace.id))
+            val filePath = file.absolutePath.replace('\\', '/')
+            val selectors =
+                listOf(
+                    """{"workspaceId":"hidden-command"}""",
+                    """{"workspacePath":"$filePath"}""",
+                )
+            for (selector in selectors) {
+                val result = createTestCore().invoke("open_workspace", selector)
+                assertTrue(result.isError)
+                assertTrue(result.text.contains("startup commands"), result.text)
+            }
+        }
+
+    @Test
+    fun `workspace command detection traverses both split orientations`() {
+        val empty = SplitConfig.SinglePanel(PanelConfig("empty", emptyList()))
+        val commands =
+            SplitConfig.SinglePanel(
+                PanelConfig(
+                    "commands",
+                    listOf(TabConfig(type = "terminal", title = "Shell", initialCommand = "echo hidden")),
+                ),
+            )
+        assertFalse(empty.hasInitialCommands())
+        assertTrue(SplitConfig.VerticalSplit(empty, SplitConfig.HorizontalSplit(empty, commands)).hasInitialCommands())
+    }
+
+    @Test
     fun `tools exposes workspace and terminal lifecycle operations and aliases`() {
         val tools = WorkspaceMcpToolProvider.tools().map { it.name }.toSet()
         assertTrue(tools.contains("list_workspaces"))
@@ -292,7 +362,7 @@ class WorkspaceMcpToolProviderTest {
             val args = """{"workingDirectory":"${badDir.replace('\\', '/')}"}"""
             val result = core.invoke("open_terminal", args)
             assertTrue(result.isError)
-            assertTrue(result.text.contains("Working directory does not exist or is not a directory"))
+            assertTrue(result.text.contains("Path is not an existing directory"))
         }
 
     @Test
@@ -342,7 +412,7 @@ class WorkspaceMcpToolProviderTest {
             assertEquals("authoritative-999", terminalId)
 
             assertEquals("echo hello", openedCmd)
-            assertEquals(validDir, openedCwd)
+            assertEquals(workspaceDir.canonicalPath, openedCwd)
             assertTrue(busEvents.isEmpty(), "open_terminal must not emit TerminalOpenEvents: $busEvents")
         }
 

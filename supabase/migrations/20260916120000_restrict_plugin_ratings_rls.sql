@@ -77,6 +77,11 @@ DROP POLICY IF EXISTS "Users can delete own ratings" ON public.plugin_ratings;
 -- runtime (service_role bypasses RLS) but document the intended access and
 -- retain it if that role's BYPASSRLS attribute is removed in a future
 -- deployment.
+DROP POLICY IF EXISTS "plugin_ratings service role read" ON public.plugin_ratings;
+DROP POLICY IF EXISTS "plugin_ratings service role write" ON public.plugin_ratings;
+DROP POLICY IF EXISTS "plugin_ratings service role update" ON public.plugin_ratings;
+DROP POLICY IF EXISTS "plugin_ratings service role delete" ON public.plugin_ratings;
+
 CREATE POLICY "plugin_ratings service role read"
     ON public.plugin_ratings FOR SELECT TO service_role
     USING (true);

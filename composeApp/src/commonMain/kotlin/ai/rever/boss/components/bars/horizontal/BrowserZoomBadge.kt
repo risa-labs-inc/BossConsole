@@ -76,7 +76,7 @@ fun BrowserZoomBadge(modifier: Modifier = Modifier) {
     val windowId = LocalWindowId.current ?: return
     val activeHandleIds by ActiveBrowserRegistry.activeHandleIdByWindow.collectAsState()
     val activeHandleId = activeHandleIds[windowId]
-    val activeHandle = activeHandleId?.let { ActiveBrowserRegistry.handleById(it) }
+    val activeHandle = activeHandleId?.let { ActiveBrowserRegistry.handleById(it) }?.takeIf { it.isValid }
 
     var currentZoom by remember { mutableStateOf(1.0) }
     val zoomListener = remember { { zoom: Double -> currentZoom = zoom } }

@@ -20,6 +20,7 @@ internal fun targetExistsOrUnknown(
 /**
  * Pick the path that may actually be written, including any [requiredExtension].
  *
+ * Used only by the macOS native callback; Windows/Linux retain JxBrowser defaults.
  * A native save panel protects the path visible in its name field. If the user removes a required
  * extension, appending it after the panel closes can point at a different existing file, one the
  * panel never asked permission to replace. In that one case this loop presents the real target as

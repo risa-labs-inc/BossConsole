@@ -58,6 +58,12 @@ internal class DrainingBrowserExecutor(
         }
     }
 
+    override fun shutdownNow(): List<Runnable> {
+        val discarded = super.shutdownNow()
+        pendingCount.addAndGet(-discarded.size)
+        return discarded
+    }
+
     init {
         allowCoreThreadTimeOut(true)
     }

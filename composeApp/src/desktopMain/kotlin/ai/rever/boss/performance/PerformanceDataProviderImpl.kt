@@ -14,6 +14,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 import java.time.Instant
 
@@ -37,6 +40,7 @@ class PerformanceDataProviderImpl : PerformanceDataProvider {
     @Volatile private var cachedChildProcesses: List<ChildProcessData> = emptyList()
 
     @Volatile private var childProcessCacheTime: Long = 0L
+    private val childProcessMutex = Mutex()
     private val childProcessCacheIntervalMs = 5_000L
     override val history: StateFlow<List<PerformanceSnapshotData>> = _history.asStateFlow()
 
@@ -93,7 +97,7 @@ class PerformanceDataProviderImpl : PerformanceDataProvider {
     /**
      * Convert internal PerformanceSnapshot to plugin PerformanceSnapshotData.
      */
-    private fun PerformanceSnapshot.toSnapshotData(): PerformanceSnapshotData =
+    private suspend fun PerformanceSnapshot.toSnapshotData(): PerformanceSnapshotData =
         PerformanceSnapshotData(
             timestamp = timestamp,
             heapUsedBytes = memory.heapUsedBytes,
@@ -140,7 +144,7 @@ class PerformanceDataProviderImpl : PerformanceDataProvider {
                         collectionTimeMs = collector.collectionTimeMs,
                     )
                 },
-            childProcesses = collectChildProcesses(),
+            childProcesses = childProcessMutex.withLock { withContext(Dispatchers.IO) { collectChildProcesses() } },
         )
 
     /**

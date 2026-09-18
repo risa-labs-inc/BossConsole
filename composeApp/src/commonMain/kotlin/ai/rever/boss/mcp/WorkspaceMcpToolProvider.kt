@@ -22,6 +22,7 @@ import ai.rever.boss.plugin.api.McpToolProvider
 import ai.rever.boss.plugin.api.McpToolResult
 import ai.rever.boss.plugin.tab.terminal.TerminalTabInfo
 import ai.rever.boss.plugin.tab.terminal.TerminalTabType
+import ai.rever.boss.plugin.workspace.SplitConfig
 import ai.rever.boss.plugin.workspace.SplitConfig.SinglePanel
 import ai.rever.boss.project.DefaultWorkingDirectory
 import ai.rever.boss.utils.extractFileName
@@ -219,7 +220,8 @@ object WorkspaceMcpToolProvider : McpToolProvider {
                     "Space with its first terminal (bootstrap; re-opening a running path re-enters " +
                     "the Space instead of duplicating it), or an existing workspace by " +
                     "'workspaceId' / 'workspacePath', optionally created via 'name' / 'projectPath' " +
-                    "with 'createIfAbsent'.",
+                    "with 'createIfAbsent'. Saved workspaces with terminal startup commands must be opened " +
+                    "through the UI or have those commands submitted explicitly through open_terminal.",
             inputSchema =
                 """
                 {
@@ -400,6 +402,9 @@ object WorkspaceMcpToolProvider : McpToolProvider {
         val workspacePath = args.string("workspacePath")
         val name = args.string("name")
         val projectPath = args.string("projectPath")
+        if (workspaceId != null && !isSafeWorkspaceId(workspaceId)) {
+            return McpToolResult("Invalid workspaceId: expected an identifier, not a path", isError = true)
+        }
         val requestedWindowId = args.string("windowId")
         val createIfAbsent = args.boolean("createIfAbsent") ?: false
         val openTerminal = args.boolean("openTerminal") ?: false
@@ -451,6 +456,7 @@ object WorkspaceMcpToolProvider : McpToolProvider {
 
         // Locate or create workspace
         var workspace: LayoutWorkspace? = null
+        var isShippedTemplate = false
 
         if (!workspacePath.isNullOrBlank()) {
             val file = File(workspacePath)
@@ -465,6 +471,7 @@ object WorkspaceMcpToolProvider : McpToolProvider {
         if (workspace == null && !workspaceId.isNullOrBlank()) {
             // Check predefined templates
             workspace = PredefinedWorkspaces.allWorkspaces.firstOrNull { it.id == workspaceId }
+            isShippedTemplate = workspace != null
 
             // Check saved workspaces
             if (workspace == null) {
@@ -475,7 +482,7 @@ object WorkspaceMcpToolProvider : McpToolProvider {
                     } else {
                         WorkspaceFileManagerCommon.fileNameForId(workspaceId)
                     }
-                workspace = fileManager.loadWorkspace(fileName) ?: fileManager.loadWorkspace(workspaceId)
+                workspace = fileManager.loadWorkspace(fileName)
             }
         }
 
@@ -503,6 +510,16 @@ object WorkspaceMcpToolProvider : McpToolProvider {
                     isError = true,
                 )
             }
+        }
+
+        // Persisted commands were not visible in this MCP invocation's approval arguments.
+        // Require a separate open_terminal call so its command receives normal risk review.
+        if (!isShippedTemplate && workspace.layout.hasInitialCommands()) {
+            return McpToolResult(
+                "Workspace contains terminal startup commands. Open it through the workspace UI, " +
+                    "or remove the startup commands and invoke open_terminal with each command explicitly.",
+                isError = true,
+            )
         }
 
         // Idempotency: Reopening an existing workspace does not duplicate it or disturb unrelated windows
@@ -801,7 +818,8 @@ object WorkspaceMcpToolProvider : McpToolProvider {
             return McpToolResult("Invalid command format (security check failed)", isError = true)
         }
 
-        // Validate working directory if specified
+        // Validate and canonicalize an explicit cwd without resolving it against the host cwd.
+        var canonicalWorkingDirectory: String? = null
         if (!workingDirectory.isNullOrBlank()) {
             if (!CLISecurityValidator.isValidPath(workingDirectory)) {
                 return McpToolResult(
@@ -809,13 +827,11 @@ object WorkspaceMcpToolProvider : McpToolProvider {
                     isError = true,
                 )
             }
-            val dir = File(workingDirectory)
-            if (!dir.exists() || !dir.isDirectory) {
-                return McpToolResult(
-                    "Working directory does not exist or is not a directory: $workingDirectory",
-                    isError = true,
-                )
+            val check = checkProjectPath(workingDirectory)
+            if (check.canonicalPath == null) {
+                return McpToolResult(check.error ?: "Invalid working directory", isError = true)
             }
+            canonicalWorkingDirectory = check.canonicalPath
         }
 
         val targetResolution = resolveTargetWindow(requestedWindowId)
@@ -831,7 +847,7 @@ object WorkspaceMcpToolProvider : McpToolProvider {
             }
 
         val terminalInfo =
-            doOpenTerminal(targetWindowId, workspaceId, workingDirectory, command)
+            doOpenTerminal(targetWindowId, workspaceId, canonicalWorkingDirectory, command)
                 ?: return McpToolResult(
                     "Failed to open terminal in window $targetWindowId",
                     isError = true,
@@ -902,6 +918,9 @@ object WorkspaceMcpToolProvider : McpToolProvider {
             return McpToolResult("workspaceId is required", isError = true)
         }
 
+        if (!isSafeWorkspaceId(workspaceId)) {
+            return McpToolResult("Invalid workspaceId: expected an identifier, not a path", isError = true)
+        }
         val requestedWindowId = args.string("windowId")
         val targetWindowId =
             if (!requestedWindowId.isNullOrBlank()) {
@@ -1129,3 +1148,14 @@ internal fun matchExistingSpace(
         ?: savedSpaces.firstOrNull { it.id in runningIdsInWindow && it.projectPath == projectPath }
         ?: savedSpaces.firstOrNull { it.projectPath == projectPath }
         ?: remembered
+
+/** IDs are names in the workspace store, never caller-selected filesystem paths. */
+internal fun isSafeWorkspaceId(id: String): Boolean =
+    id.isNotBlank() && id != "." && ".." !in id && id.none { it == '/' || it == '\\' || it == ':' || it.isISOControl() }
+
+internal fun SplitConfig.hasInitialCommands(): Boolean =
+    when (this) {
+        is SplitConfig.SinglePanel -> panel.tabs.any { !it.initialCommand.isNullOrBlank() }
+        is SplitConfig.VerticalSplit -> left.hasInitialCommands() || right.hasInitialCommands()
+        is SplitConfig.HorizontalSplit -> top.hasInitialCommands() || bottom.hasInitialCommands()
+    }
