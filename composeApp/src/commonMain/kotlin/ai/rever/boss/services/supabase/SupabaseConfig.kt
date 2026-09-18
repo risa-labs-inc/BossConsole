@@ -2,8 +2,11 @@ package ai.rever.boss.services.supabase
 
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import com.russhwolf.settings.Settings
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.auth.Auth
+import io.github.jan.supabase.auth.SettingsCodeVerifierCache
+import io.github.jan.supabase.auth.SettingsSessionManager
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.functions.Functions
@@ -36,10 +39,17 @@ object SupabaseConfig {
      * Initialize the Supabase client with the provided credentials
      * @param url The Supabase project URL
      * @param anonKey The Supabase anonymous key
+     * @param sessionSettings the backend the Auth module persists its session through.
+     *   Defaults to the AES-GCM-encrypted store under `~/.boss/supabase` (BossConsole#846);
+     *   supabase-kt's own default is `java.util.prefs.Preferences` on the JVM, i.e.
+     *   plaintext tokens in a library-owned store outside the app's data directory.
+     *   Injectable so tests can pin what Auth actually receives without touching the
+     *   real data directory.
      */
     fun initialize(
         url: String,
         anonKey: String,
+        sessionSettings: Settings = createEncryptedSessionSettings(),
     ) {
         if (_client != null) {
             logger.debug(LogCategory.NETWORK, "Supabase client already initialized")
@@ -68,6 +78,12 @@ object SupabaseConfig {
                         // Enable persistent session management and auto-refresh for proper session persistence
                         alwaysAutoRefresh = true
                         autoLoadFromStorage = true
+                        // Persist the session and the PKCE code verifier through the encrypted
+                        // backend rather than supabase-kt's default Settings(), which is
+                        // java.util.prefs.Preferences on the JVM — plaintext tokens outside
+                        // ~/.boss. See EncryptedSessionSettings.kt (BossConsole#846).
+                        sessionManager = SettingsSessionManager(sessionSettings)
+                        codeVerifierCache = SettingsCodeVerifierCache(sessionSettings)
                     }
                     install(Postgrest)
                     defaultLoggingFactory = { level -> NamedSupabaseLogging("main", level) }
