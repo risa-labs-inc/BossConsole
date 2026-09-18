@@ -1,5 +1,6 @@
 package ai.rever.boss.mcp
 
+import ai.rever.boss.plugin.api.McpToolArgs
 import java.io.File
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -195,5 +196,25 @@ class McpPolicyEngineTest {
 
         // DENY always wins, even when session-trusted
         assertEquals(McpPolicyAction.DENY, engine.policyFor("danger_tool", "terminal-tab"))
+    }
+
+    // ---------------------------------------------------------------------
+    // #895: policyFor is argument-aware at the default-resolution step
+    // ---------------------------------------------------------------------
+
+    @Test
+    fun `policyFor with real args classifies destructive shell commands as CRITICAL`() {
+        val engine = McpPolicyEngine(policyFile = null)
+        val destructiveArgs = McpToolArgs(mapOf("command" to "rm -rf /"), """{"command":"rm -rf /"}""")
+        // With real args the risk evaluator sees the destructive pattern → CRITICAL → ASK
+        assertEquals(McpPolicyAction.ASK, engine.policyFor("run_command", args = destructiveArgs))
+    }
+
+    @Test
+    fun `policyFor without args is backward compatible for risk evaluation`() {
+        val engine = McpPolicyEngine(policyFile = null)
+        // No args → empty map, same behaviour as before #895
+        assertEquals(McpPolicyAction.ASK, engine.policyFor("run_command"))
+        assertEquals(McpPolicyAction.ALLOW, engine.policyFor("git_status"))
     }
 }

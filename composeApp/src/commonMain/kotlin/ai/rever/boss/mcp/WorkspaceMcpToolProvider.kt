@@ -805,7 +805,8 @@ object WorkspaceMcpToolProvider : McpToolProvider {
      * confirmation. A persisted "Always Allow" on `open_terminal` therefore runs later
      * invocations unconfirmed, so the grant is as strong as an unconfirmed deep link; the
      * command still passes [CLISecurityValidator.isValidCommand] (shape only) and the risk
-     * evaluator (HIGH, CRITICAL for destructive patterns) on every call.
+     * evaluator (HIGH, CRITICAL for destructive patterns) — now on every call including
+     * ALLOW paths, which escalate CRITICAL findings back to ASK (#895).
      */
     @Suppress("ReturnCount")
     private suspend fun handleOpenTerminal(args: McpToolArgs): McpToolResult {

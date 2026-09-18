@@ -200,12 +200,19 @@ class McpPolicyEngine(
      * read-only declaration: when the caller has the definition in hand it passes
      * `definition.readOnly` and a tool that declared side effects classifies as mutating
      * whatever its name says (#804); without it the name-only catalog decides, as before.
+     *
+     * [args] is the invocation's real arguments, threaded into the risk evaluator at the
+     * default-resolution step so the decision is argument-aware: a shell tool whose command
+     * matches a destructive pattern classifies as CRITICAL rather than the blanket HIGH an
+     * empty-args evaluation produces (#895). Callers without arguments in hand (tests, policy
+     * inspector lookups) omit it and get the previous empty-args behaviour.
      */
     @Suppress("ReturnCount") // Ordered deny, trust, tool-rule, provider-rule and default precedence.
     fun policyFor(
         toolName: String,
         providerId: String? = null,
         declaredReadOnly: Boolean? = null,
+        args: McpToolArgs? = null,
     ): McpPolicyAction {
         if (_fault.value is McpPolicyFault.PersistedPolicyUnreadable) return McpPolicyAction.DENY
         val configuredTool = _config.value.rules[toolName]
@@ -221,7 +228,7 @@ class McpPolicyEngine(
         }
         if (configuredTool != null) return configuredTool
         if (configuredProvider == McpPolicyAction.ALLOW) return McpPolicyAction.ALLOW
-        val risk = DefaultMcpRiskEvaluator().evaluateRisk(toolName, McpToolArgs(emptyMap())).level
+        val risk = DefaultMcpRiskEvaluator().evaluateRisk(toolName, args ?: McpToolArgs(emptyMap())).level
         return if (risk >= McpRiskLevel.HIGH || McpMutatingToolCatalog.isMutating(toolName, declaredReadOnly)) {
             _config.value.defaultMutatingAction
         } else {

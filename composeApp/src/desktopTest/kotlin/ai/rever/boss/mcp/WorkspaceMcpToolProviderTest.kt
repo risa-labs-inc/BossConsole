@@ -496,7 +496,9 @@ class WorkspaceMcpToolProviderTest {
     fun `open_terminal rejects command with newlines or control characters`() =
         runBlocking {
             val core = createTestCore()
-            val args = """{"command":"echo hello\nrm -rf /"}"""
+            // Use a benign second command: rm -rf / would trigger CRITICAL risk
+            // escalation (#895) and re-ask before the handler's newline check runs.
+            val args = """{"command":"echo hello\nls -la"}"""
             val result = core.invoke("open_terminal", args)
             assertTrue(result.isError)
             assertTrue(result.text.contains("security check failed"))

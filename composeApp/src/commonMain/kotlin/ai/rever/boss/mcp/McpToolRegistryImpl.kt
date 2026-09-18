@@ -2,6 +2,7 @@ package ai.rever.boss.mcp
 
 import ai.rever.boss.components.bars.horizontal.StatusMessageManager
 import ai.rever.boss.mcp.sandbox.DefaultMcpRiskEvaluator
+import ai.rever.boss.mcp.sandbox.McpRiskLevel
 import ai.rever.boss.plugin.api.McpToolArgs
 import ai.rever.boss.plugin.api.McpToolDefinition
 import ai.rever.boss.plugin.api.McpToolProvider
@@ -753,13 +754,26 @@ internal class McpToolRegistryCore(
         // this invocation: a tool that declared side effects classifies as mutating whatever
         // its name says (#804), so it gets the mutating default - ASK under the factory
         // config - rather than being auto-allowed for avoiding the catalog's name patterns.
-        val policy = policyEngine.policyFor(toolName, tool.providerId, tool.definition.readOnly)
+        // The invocation's real args are threaded in so the risk evaluator at the default-
+        // resolution step is argument-aware: a destructive command pattern classifies as
+        // CRITICAL rather than the blanket HIGH an empty-args evaluation produces (#895).
+        val policy = policyEngine.policyFor(toolName, tool.providerId, tool.definition.readOnly, args)
+        // A standing ALLOW (persisted rule, provider trust, session trust, read-only default)
+        // must not silently execute commands the risk evaluator itself rates CRITICAL (#895).
+        // Escalate to ASK so the operator reviews the specific arguments before the call runs.
+        val effectivePolicy =
+            if (policy == McpPolicyAction.ALLOW) {
+                val risk = DefaultMcpRiskEvaluator().evaluateRisk(toolName, args)
+                if (risk.level == McpRiskLevel.CRITICAL) McpPolicyAction.ASK else policy
+            } else {
+                policy
+            }
         val startTime = System.nanoTime()
         var disposition = McpApprovalDisposition.AUTO_ALLOWED
         var result: McpToolResult? = null
         var executionStarted = false
         try {
-            val authorization = authorizeInvocation(tool, args, policy, revocation)
+            val authorization = authorizeInvocation(tool, args, effectivePolicy, revocation)
             disposition = authorization.first
             val denial = authorization.second
             result =
@@ -792,7 +806,7 @@ internal class McpToolRegistryCore(
                 ledger.record(
                     toolName = toolName,
                     providerId = tool.providerId,
-                    policyApplied = policy,
+                    policyApplied = effectivePolicy,
                     approvalDisposition = disposition,
                     durationMs = (System.nanoTime() - startTime) / 1_000_000L,
                     isError = result?.isError ?: true,
