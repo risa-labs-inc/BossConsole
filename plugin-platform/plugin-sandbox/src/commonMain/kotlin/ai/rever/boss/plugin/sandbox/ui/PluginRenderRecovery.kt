@@ -56,9 +56,14 @@ import java.util.concurrent.ConcurrentHashMap
  * interval keep the same suspect held and report [Outcome.Settling], which is not
  * visible quarantine progress. If the fault recurs after the interval, that
  * suspect was innocent: it is released and the next one is tried. The host crash
- * policy bounds how long settling faults may be refunded across the whole burst,
- * so a large candidate set cannot make honest escalation unreachable. The cycle
+ * policy bounds how long any recovery outcome may be refunded across the incident,
+ * so a large or slow candidate set cannot make honest escalation unreachable. The cycle
  * ends when the exceptions stop, which leaves exactly the culprit quarantined.
+ *
+ * Queued work can outlive the suspect's final mounted boundary, so settling takes
+ * precedence over an empty mounted set for the same 250 ms. A coincident host fault
+ * may inherit that plugin-shaped verdict briefly; after the fixed deadline, another
+ * fault releases the stale suspect and is reported as host-related.
  *
  * Quarantining everything at once was the first attempt and it was wrong in
  * practice, not just in theory. Against the real crash it disabled four plugins
@@ -216,6 +221,11 @@ object PluginRenderRecovery {
             }
 
             affected.isEmpty() -> {
+                // If the last boundary disappeared because its suspect fell back,
+                // reaching this branch means the fixed settle interval has expired.
+                // Removal did not cure the scene, so do not strand an innocent plugin
+                // in its fallback while subsequent host faults keep arriving.
+                releaseSuspectAsInnocent()
                 notPluginRelated(error)
             }
 

@@ -155,7 +155,7 @@ class PluginRenderRecoveryTest {
     }
 
     @Test
-    fun `settling survives the boundary unmounting before queued work fails`() {
+    fun `settling survives boundary unmounting but releases the suspect after grace`() {
         val unmount = PluginRenderRecovery.registerMounted("plugin.a")
         PluginRenderRecovery.onUnattributedRenderException(error, now = 1_000)
         PluginRenderRecovery.onUnattributedRenderException(error, now = 2_000)
@@ -169,6 +169,14 @@ class PluginRenderRecoveryTest {
             "disposed mount bookkeeping must not turn an in-flight plugin fault into a host fault",
         )
         assertTrue(PluginCrashRegistry.hasCrashed("plugin.a"), "the quarantined culprit must remain held")
+
+        assertIs<PluginRenderRecovery.Outcome.NotPluginRelated>(
+            PluginRenderRecovery.onUnattributedRenderException(error, now = 2_251),
+        )
+        assertFalse(
+            PluginCrashRegistry.hasCrashed("plugin.a"),
+            "an unmounted suspect must not remain paused after its rebuild grace expires",
+        )
     }
 
     @Test
