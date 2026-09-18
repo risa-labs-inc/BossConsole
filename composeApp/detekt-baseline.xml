@@ -110,7 +110,6 @@
     <ID>CyclomaticComplexMethod:BrowserFunctions.kt$private fun configureBrowserPopupHandler( browser: Browser, onOpenInNewTab: (String) -&gt; Unit, )</ID>
     <ID>CyclomaticComplexMethod:BrowserHandleImpl.kt$BrowserHandleImpl$@OptIn(ExperimentalComposeUiApi::class) @Composable override fun Content()</ID>
     <ID>CyclomaticComplexMethod:BrowserHandleImpl.kt$BrowserHandleImpl$override fun dispatchCoBrowseInput(inputJson: String)</ID>
-    <ID>CyclomaticComplexMethod:BrowserHandleImpl.kt$BrowserHandleImpl$private fun getFormFieldInfoFromJS(frame: com.teamdev.jxbrowser.frame.Frame): FormFieldInfo?</ID>
     <ID>CyclomaticComplexMethod:BrowserHandleImpl.kt$BrowserHandleImpl$private fun jsKeyToKeyCode( key: String, code: String, ): KeyCode</ID>
     <ID>CyclomaticComplexMethod:BrowserHandleImpl.kt$BrowserHandleImpl$private fun setupEventListeners()</ID>
     <ID>CyclomaticComplexMethod:BrowserHandleImpl.kt$BrowserHandleImpl$private fun setupPopupHandler()</ID>
@@ -266,7 +265,6 @@
     <ID>LongMethod:BrowserFunctions.kt$private fun configureBrowserPopupHandler( browser: Browser, onOpenInNewTab: (String) -&gt; Unit, )</ID>
     <ID>LongMethod:BrowserHandleImpl.kt$BrowserHandleImpl$@OptIn(ExperimentalComposeUiApi::class) @Composable override fun Content()</ID>
     <ID>LongMethod:BrowserHandleImpl.kt$BrowserHandleImpl$override fun dispatchCoBrowseInput(inputJson: String)</ID>
-    <ID>LongMethod:BrowserHandleImpl.kt$BrowserHandleImpl$private fun getFormFieldInfoFromJS(frame: com.teamdev.jxbrowser.frame.Frame): FormFieldInfo?</ID>
     <ID>LongMethod:BrowserHandleImpl.kt$BrowserHandleImpl$private fun setupContextMenuHandler()</ID>
     <ID>LongMethod:BrowserHandleImpl.kt$BrowserHandleImpl$private fun setupEventListeners()</ID>
     <ID>LongMethod:BrowserHandleImpl.kt$BrowserHandleImpl$private fun setupPopupHandler()</ID>
@@ -1078,7 +1076,7 @@
     <ID>ReturnCount:BrowserFunctions.kt$actual fun isBrowserValid(browser: Any?): Boolean</ID>
     <ID>ReturnCount:BrowserFunctions.kt$actual fun recreateBrowserViewState( browser: Any, window: Any?, ): Any?</ID>
     <ID>ReturnCount:BrowserServiceImpl.kt$BrowserServiceImpl$override fun deleteProfile(profileName: String): Boolean</ID>
-    <ID>ReturnCount:CLICommandHandler.kt$CLICommandHandler$private suspend fun handleLoadWorkspace(configPath: String)</ID>
+    <ID>ReturnCount:CLICommandHandler.kt$CLICommandHandler$private suspend fun handleLoadWorkspace(command: CLICommand.LoadWorkspace)</ID>
     <ID>ReturnCount:CLICommandHandler.kt$CLICommandHandler$private suspend fun handleOpenFile(filePath: String)</ID>
     <ID>ReturnCount:CLICommandHandler.kt$CLICommandHandler$private suspend fun handleOpenFolder(folderPath: String)</ID>
     <ID>ReturnCount:CLIInstaller.kt$CLIInstaller$private fun installHomebrewStyle(): CLIInstallResult</ID>

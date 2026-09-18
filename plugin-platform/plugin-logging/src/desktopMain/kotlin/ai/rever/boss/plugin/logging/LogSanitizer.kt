@@ -274,9 +274,17 @@ object LogSanitizer {
 
     /**
      * Describe a URI safely without exposing sensitive parameters.
-     * Returns the scheme and host only for auth URIs.
+     * Returns the scheme, host and path without query, fragment, port or userinfo.
      *
      * Example: "boss://auth/verify?token=abc" -> "boss://auth/verify (with query params)"
+     *
+     * A reference with no scheme, such as `localhost` or `example.com/a?q=1`, is described without
+     * one (`localhost`, `example.com/a (with query params)`) rather than as `null://...`.
+     *
+     * The description always says something: a host `java.net.URI` will not parse is still named (see
+     * [hostFromRawAuthority]), and a reference that is only delimiters reads `[empty reference]`
+     * rather than an empty string. The userinfo, the port, the query and the fragment are always
+     * dropped, whether or not the parser could read the authority.
      */
     fun describeUri(uri: String?): String {
         if (uri.isNullOrBlank()) return "[empty]"
@@ -286,7 +294,7 @@ object LogSanitizer {
             val hasQuery = !parsed.rawQuery.isNullOrBlank()
             val hasFragment = !parsed.rawFragment.isNullOrBlank()
 
-            val base = "${parsed.scheme}://${parsed.host ?: ""}${parsed.path ?: ""}"
+            val base = describedBase(parsed)
             val suffix =
                 when {
                     hasQuery && hasFragment -> " (with query and fragment)"
@@ -295,12 +303,69 @@ object LogSanitizer {
                     else -> ""
                 }
 
-            base + suffix
+            val described = if (base.isEmpty()) suffix.trimStart() else base + suffix
+
+            // A reference that is only delimiters (`?`, `#`, `?#`) has an empty base, an empty query
+            // and an empty fragment, so every branch above contributes nothing and the caller used to
+            // log `uri=` with no value at all - indistinguishable from a line that logged nothing.
+            // Distinct from the `[empty]` above, which says the input itself was absent or blank.
+            described.ifEmpty { "[empty reference]" }
         } catch (ignored: Exception) {
             // Deliberately unlogged: LogSanitizer runs inside the logging pipeline,
             // so logging from here could recurse. The placeholder marks the failure.
             "[uri-parse-error]"
         }
+    }
+
+    /** `scheme://host/path`; for a reference with no scheme, `//host/path` or just the path. */
+    private fun describedBase(parsed: URI): String {
+        val scheme = parsed.scheme?.let { "$it://" }
+        val host = parsed.host ?: hostFromRawAuthority(parsed.rawAuthority)
+        val authority = host?.let { if (scheme == null) "//$it" else it }
+        return scheme.orEmpty() + authority.orEmpty() + parsed.rawPath.orEmpty()
+    }
+
+    /**
+     * The host of an authority `java.net.URI` declined to parse as one, or null if there is none.
+     *
+     * `URI.getHost()` is null whenever the authority is not a legal RFC 2396 hostname or IP literal,
+     * which covers an underscore (`web_server`, an ordinary intranet or container name) and any
+     * non-ASCII label. [describedBase] read `getHost()` alone, so those URLs were described with the
+     * authority missing entirely: a cookie rejected for `https://my_host.example.com/` was logged as
+     * `https:///`, which names nothing and cannot be told apart from any other such host.
+     *
+     * The raw authority has to be split here rather than read off the parser, because `getRawUserInfo()`
+     * and `getPort()` are null and -1 in exactly the same cases - measured on JDK 17, not assumed.
+     * Both parts are removed, which is what `getHost()` already gives when the parse succeeds, so a
+     * host reaches the log the same way whether or not the parser could read it:
+     *
+     * - Everything up to the LAST `@` is userinfo and is dropped. That is the one part of an authority
+     *   that is routinely a credential (`https://x-access-token:<token>@host/...`), and splitting on
+     *   the first `@` instead would keep the tail of a password that contains one.
+     * - A trailing `:<digits>` is a port and is dropped. Requiring digits keeps a colon that is not a
+     *   port, such as the malformed `x_y.internal:80a`, rather than cutting the name at it.
+     * - An authority that is nothing but userinfo (`//user:pass@/a`) yields null rather than an empty
+     *   host, so the scheme-less branch of [describedBase] does not emit a bare `//`.
+     *
+     * An IPv6 literal is deliberately not a case here: `[::1]`, `[::1]:8080` and even a zone id such
+     * as `[fe80::1%25eth0]` all parse, so `getHost()` answers and this is never reached, and a
+     * malformed one such as `[::1` throws out of `URI` before it. Measured on JDK 17.
+     *
+     * This names a host; it does not validate one. An authority this describes is by definition one
+     * the parser rejected, so the result is the text between the delimiters and nothing more.
+     */
+    private fun hostFromRawAuthority(rawAuthority: String?): String? {
+        if (rawAuthority.isNullOrEmpty()) return null
+
+        val afterUserInfo = rawAuthority.substringAfterLast('@')
+        val portSeparator = afterUserInfo.lastIndexOf(':')
+        val host =
+            if (portSeparator > 0 && afterUserInfo.drop(portSeparator + 1).all { it.isDigit() }) {
+                afterUserInfo.take(portSeparator)
+            } else {
+                afterUserInfo
+            }
+        return host.ifEmpty { null }
     }
 
     // -------------------------------------------------------------------------

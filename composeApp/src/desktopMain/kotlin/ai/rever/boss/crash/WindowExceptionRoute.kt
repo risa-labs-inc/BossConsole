@@ -88,22 +88,37 @@ fun decideWindowExceptionRoute(
  * left every test green — the wiring the test was named for was never asserted.
  *
  * [PluginRenderRecovery.Outcome.Rebuilt] and
- * [PluginRenderRecovery.Outcome.Quarantined] mean the narrowing loop advanced, so
- * that fault should not count toward escalation.
+ * [PluginRenderRecovery.Outcome.Quarantined] advance the narrowing loop, so their
+ * faults are refunded and the caller should repaint. [PluginRenderRecovery.Outcome.Settling]
+ * means no visible state changed. Its fault is refunded only while [policy]'s
+ * burst-wide settle deadline remains open, and it must not trigger a repaint.
  * [PluginRenderRecovery.Outcome.Unexplained] and
  * [PluginRenderRecovery.Outcome.NotPluginRelated] mean it did not, and those must
  * keep accumulating or a corrupt scene never escalates.
  *
- * @return true when the fault was un-counted, which is also the signal that
- *   something visible changed and is worth telling the user about.
+ * @return true only when recovery changed visible state and the caller should
+ *   repaint. Refund and repaint are deliberately separate decisions.
  */
 internal fun noteRecoveryOutcome(
     policy: RenderCrashPolicy,
     outcome: PluginRenderRecovery.Outcome,
-): Boolean {
-    val madeProgress =
-        outcome is PluginRenderRecovery.Outcome.Rebuilt ||
-            outcome is PluginRenderRecovery.Outcome.Quarantined
-    if (madeProgress) policy.noteRecoveryProgress()
-    return madeProgress
-}
+): Boolean =
+    when (outcome) {
+        is PluginRenderRecovery.Outcome.Rebuilt,
+        is PluginRenderRecovery.Outcome.Quarantined,
+        -> {
+            policy.noteRecoveryProgress()
+            true
+        }
+
+        is PluginRenderRecovery.Outcome.Settling -> {
+            policy.noteSettlingFault()
+            false
+        }
+
+        PluginRenderRecovery.Outcome.Unexplained,
+        PluginRenderRecovery.Outcome.NotPluginRelated,
+        -> {
+            false
+        }
+    }

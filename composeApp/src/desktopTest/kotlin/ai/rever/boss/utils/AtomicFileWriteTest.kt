@@ -1,6 +1,9 @@
 package ai.rever.boss.utils
 
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.attribute.PosixFileAttributeView
+import java.nio.file.attribute.PosixFilePermission
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -84,6 +87,41 @@ class AtomicFileWriteTest {
 
         val strays = tempDir.listFiles()?.filter { it.name != target.name }.orEmpty()
         assertTrue(strays.isEmpty(), "unexpected leftovers: ${strays.map { it.name }}")
+    }
+
+    @Test
+    fun `atomicWriteText restricts file permissions to owner only on posix filesystems`() {
+        val target = File(tempDir, "owner-only.json")
+        target.atomicWriteText("sensitive-content")
+
+        assertEquals("sensitive-content", target.readText())
+
+        val path = target.toPath()
+        if (Files.getFileAttributeView(path, PosixFileAttributeView::class.java) == null) {
+            return
+        }
+
+        val expected = setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE)
+        val actual = Files.getPosixFilePermissions(path)
+        assertEquals(expected, actual, "File permissions must be owner-only (0600), got: $actual")
+    }
+
+    @Test
+    fun `atomicWriteText preserves owner only permissions across overwrites`() {
+        val target = File(tempDir, "owner-only-overwrite.json")
+        target.atomicWriteText("initial-content")
+        target.atomicWriteText("updated-content")
+
+        assertEquals("updated-content", target.readText())
+
+        val path = target.toPath()
+        if (Files.getFileAttributeView(path, PosixFileAttributeView::class.java) == null) {
+            return
+        }
+
+        val expected = setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE)
+        val actual = Files.getPosixFilePermissions(path)
+        assertEquals(expected, actual, "File permissions must remain owner-only (0600) on overwrite, got: $actual")
     }
 
     @Test

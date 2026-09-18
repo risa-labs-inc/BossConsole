@@ -110,6 +110,37 @@ class RenderCrashPolicyTest {
     }
 
     @Test
+    fun `settling refunds expire once per continuous burst`() {
+        val clock = FakeClock()
+        val policy = policy(clock, windowMillis = 100L)
+
+        assertTrue(policy.recordFailureAndShouldContain())
+        assertTrue(policy.noteSettlingFault(), "the first queued fault gets settle room")
+        clock.advance(100)
+        assertTrue(policy.recordFailureAndShouldContain())
+        assertTrue(policy.noteSettlingFault(), "the burst deadline is inclusive")
+        clock.advance(1)
+        assertTrue(policy.recordFailureAndShouldContain())
+
+        assertFalse(policy.noteSettlingFault(), "settling must not refund one continuous burst forever")
+        assertTrue(policy.recentFailureCount() == 1, "the expired settling fault must stay counted")
+    }
+
+    @Test
+    fun `settling after a quiet window receives a fresh bounded allowance`() {
+        val clock = FakeClock()
+        val policy = policy(clock, windowMillis = 100L)
+
+        assertTrue(policy.recordFailureAndShouldContain())
+        assertTrue(policy.noteSettlingFault())
+        clock.advance(101)
+        assertTrue(policy.recordFailureAndShouldContain())
+
+        assertTrue(policy.noteSettlingFault(), "a later incident must not inherit an expired settle deadline")
+        assertTrue(policy.recentFailureCount() == 0)
+    }
+
+    @Test
     fun `faults recovery cannot help with still escalate`() {
         // The other half: progress resets the budget, so no progress must not.
         val clock = FakeClock()

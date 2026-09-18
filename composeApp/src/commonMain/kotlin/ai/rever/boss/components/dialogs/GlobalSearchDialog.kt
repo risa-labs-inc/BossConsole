@@ -975,6 +975,43 @@ internal fun listItemIndexFor(
 }
 
 /**
+ * Where each section's rows begin in the result list, in the order [SearchResultsList] draws
+ * them.
+ *
+ * The sectioned view marks a row selected by comparing `section start + local index` against the
+ * selection's result index. The start must therefore be a value fixed BEFORE the `items` block is
+ * registered: that block is a composable lambda the `LazyColumn` runs only once its slot is
+ * composed - after this function's walk has finished - so a running offset mutated by the loop
+ * would be read by reference at row-composition time, holding the list's TOTAL count, and no row
+ * would ever compare equal to the selection. That was the missing highlight: the flat
+ * single-category view passes its index straight in and always lit up, while the sectioned "All"
+ * view - the one double-shift actually opens - never did, and Enter picked a row the user could
+ * not see marked.
+ *
+ * Takes the drawing loop's own grouping, not the list, so there is a single source of truth: a
+ * category that is drawn (present in [byCategory], non-empty) always has a start, and a category
+ * that is not drawn never does. `SearchResultsList` reads the starts with `getValue`, which is
+ * safe by that construction.
+ *
+ * Like [listItemIndexFor], correct only while `getFilteredResults` groups by category ordinal:
+ * the walk mirrors the drawing loop (same enum order, same skips), and the tests pin both halves
+ * - this walk against an already-grouped input, and `getFilteredResults` itself against an
+ * interleaved one.
+ */
+internal fun sectionStartsFor(byCategory: Map<SearchCategory, List<SearchResult>>): Map<SearchCategory, Int> {
+    val starts = LinkedHashMap<SearchCategory, Int>()
+    var offset = 0
+    for (category in SearchCategory.entries) {
+        if (category == SearchCategory.ALL) continue
+        val size = byCategory[category]?.size ?: 0
+        if (size == 0) continue
+        starts[category] = offset
+        offset += size
+    }
+    return starts
+}
+
+/**
  * Search results list with optional section headers.
  */
 @Composable
@@ -986,13 +1023,22 @@ private fun SearchResultsList(
     onResultClick: (SearchResult) -> Unit,
 ) {
     // Group results by category for section display
-    val groupedResults =
+    val groupedResults: Map<SearchCategory, List<SearchResult>> =
         remember(results, showSections) {
             if (showSections) {
                 results.groupBy { it.category }
             } else {
-                mapOf(results.firstOrNull()?.category to results)
+                emptyMap()
             }
+        }
+
+    // Each section's start in the result list, derived from the SAME grouping the loop below draws
+    // and fixed before the loop: the `items` lambdas run after it, and a loop-mutated var
+    // captured by them would read the finished walk's total, never the section's start (see
+    // sectionStartsFor).
+    val sectionStarts =
+        remember(groupedResults, showSections) {
+            if (showSections) sectionStartsFor(groupedResults) else emptyMap()
         }
 
     LazyColumn(
@@ -1002,11 +1048,11 @@ private fun SearchResultsList(
     ) {
         if (showSections) {
             // Show results grouped by category with section headers
-            var globalIndex = 0
             for (category in SearchCategory.entries) {
                 if (category == SearchCategory.ALL) continue
                 val categoryResults = groupedResults[category] ?: continue
                 if (categoryResults.isEmpty()) continue
+                val sectionStart = sectionStarts.getValue(category)
 
                 // Section header
                 item(key = "header-$category") {
@@ -1016,8 +1062,7 @@ private fun SearchResultsList(
                 // Results in this section
                 items(categoryResults.size, key = { "$category-$it" }) { localIndex ->
                     val result = categoryResults[localIndex]
-                    val itemGlobalIndex = globalIndex + localIndex
-                    val isSelected = itemGlobalIndex == selectedIndex
+                    val isSelected = sectionStart + localIndex == selectedIndex
 
                     SearchResultItem(
                         result = result,
@@ -1025,8 +1070,6 @@ private fun SearchResultsList(
                         onClick = { onResultClick(result) },
                     )
                 }
-
-                globalIndex += categoryResults.size
 
                 // Spacer between sections
                 item(key = "spacer-$category") {

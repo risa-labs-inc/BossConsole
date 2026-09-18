@@ -1,0 +1,17 @@
+# Dev integration #935: release checks
+
+These are rollout checks, not completed production verification.
+
+- Verify enabled `system_plugins` rows against the IDs and repository pins in `SystemPluginManifestService.FALLBACK`. IDs must match exactly; repository matching is case-insensitive, with no surrounding whitespace. Unknown or retargeted rows fail closed.
+- Before applying `20260918000000_revoke_client_ciphertext_writes.sql`, audit effective client grants, including PUBLIC and inherited roles. The migration deliberately aborts if protected ciphertext columns remain writable through inherited grants.
+- Verify supported Secret Manager plugin versions create/update secrets through the protected RPCs rather than direct writes to ciphertext columns. This migration affects existing clients too. Future table columns need explicit client grants where appropriate.
+- Verify primary and GitHub fallback Chromium downloads publish identical artifact bytes matching the catalog checksum. A different archive must be rejected, even if its unpacked contents look equivalent.
+- Exercise login under expected shared-egress traffic. The passkey challenge limit is per client IP and isolate; repeated discovery/authentication requests share its budget. Any limiter redesign must preserve the pre-lookup enumeration defense.
+
+Database regressions are already wired into `.github/workflows/build.yml` through `supabase test db`, including `client_ciphertext_write_test.sql` and `passkey_definer_search_path_test.sql`. They are not manual-only tests. Disposable CI success does not verify production grants, plugin versions, or artifact parity.
+
+## Separate follow-up scope
+
+- Persisted MCP rules remain intentionally tool-name-wide, unlike provider-scoped session trust. Changing that requires a policy schema and legacy-rule migration, with matching UI semantics.
+- Shutdown flush currently waits for persistence. A reliable bounded shutdown needs to account for blocking filesystem I/O; a coroutine timeout alone cannot guarantee that a blocked write stops.
+- Snapshot reads reject invalid or escaping process directories. Callers must handle the documented exception.

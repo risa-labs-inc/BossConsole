@@ -5,6 +5,14 @@ import java.io.IOException
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.nio.file.attribute.PosixFileAttributeView
+import java.nio.file.attribute.PosixFilePermission
+
+private val OWNER_ONLY_FILE_PERMISSIONS: Set<PosixFilePermission> =
+    setOf(
+        PosixFilePermission.OWNER_READ,
+        PosixFilePermission.OWNER_WRITE,
+    )
 
 /**
  * Move [temp] onto this file, replacing it if it already exists.
@@ -45,6 +53,9 @@ fun File.atomicMoveFrom(temp: File) {
  * concurrent writers each use their own temp file so bytes can't interleave —
  * last move wins.
  *
+ * On POSIX filesystems, permissions are pinned to owner read/write (0600)
+ * before moving into place so state files do not inherit a permissive umask.
+ *
  * Shared by everything that persists small state files, including the workspace
  * layout written on shutdown; `grep atomicWriteText` for the current set rather
  * than trusting a list here, which has gone stale once already. Callers
@@ -55,6 +66,12 @@ fun File.atomicWriteText(text: String) {
     parentFile?.mkdirs()
     val tmp = File.createTempFile("$name.", ".tmp", parentFile)
     try {
+        if (Files.getFileAttributeView(tmp.toPath(), PosixFileAttributeView::class.java) != null) {
+            // Fail closed if a filesystem advertises POSIX permissions but refuses the
+            // restriction. Publishing the temp file anyway would defeat this helper's security
+            // contract for every state file that relies on it.
+            Files.setPosixFilePermissions(tmp.toPath(), OWNER_ONLY_FILE_PERMISSIONS)
+        }
         tmp.writeText(text)
         atomicMoveFrom(tmp)
     } finally {

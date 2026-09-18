@@ -82,6 +82,13 @@ object MenuActionsHandler {
     private val _browserDevToolsEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
     val browserDevToolsEvents: SharedFlow<String> = _browserDevToolsEvents.asSharedFlow()
 
+    private val _printBrowserEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
+    val printBrowserEvents: SharedFlow<String> = _printBrowserEvents.asSharedFlow()
+
+    fun triggerPrintBrowser(windowId: String) {
+        _printBrowserEvents.tryEmit(windowId)
+    }
+
     private val _zoomInEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
     val zoomInEvents: SharedFlow<String> = _zoomInEvents.asSharedFlow()
 

@@ -16,6 +16,7 @@ import kotlin.test.assertTrue
  */
 class RenderRecoveryToastTest {
     private val quarantined = PluginRenderRecovery.Outcome.Quarantined(setOf("plugin.a"))
+    private val settling = PluginRenderRecovery.Outcome.Settling(setOf("plugin.a"))
     private val rebuilt = PluginRenderRecovery.Outcome.Rebuilt(setOf("plugin.a"))
 
     @Test
@@ -26,6 +27,7 @@ class RenderRecoveryToastTest {
         val outcomes =
             listOf(
                 quarantined,
+                settling,
                 rebuilt,
                 PluginRenderRecovery.Outcome.Unexplained,
                 PluginRenderRecovery.Outcome.NotPluginRelated,
@@ -44,6 +46,18 @@ class RenderRecoveryToastTest {
         assertNotNull(toaster.toastFor(rebuilt, now = 0L))
         assertNull(toaster.toastFor(rebuilt, now = 16L), "the same verdict must not re-toast next frame")
         assertNull(toaster.toastFor(rebuilt, now = 7_999L))
+    }
+
+    @Test
+    fun `settling reuses the quarantine message without another toast`() {
+        val toaster = RenderRecoveryToaster(durationMs = 8_000L)
+
+        assertEquals(
+            RenderRecoveryToaster.messageFor(quarantined),
+            RenderRecoveryToaster.messageFor(settling),
+        )
+        assertNotNull(toaster.toastFor(quarantined, now = 0L))
+        assertNull(toaster.toastFor(settling, now = 16L))
     }
 
     @Test

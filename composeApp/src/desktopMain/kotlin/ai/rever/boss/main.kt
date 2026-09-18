@@ -157,7 +157,7 @@ private fun containRenderFault(
     val outcome = PluginRenderRecovery.onUnattributedRenderException(throwable)
     // Shared with the seam test so both exercise the same pairing — see
     // noteRecoveryOutcome.
-    val madeProgress = noteRecoveryOutcome(policy, outcome)
+    val visibleProgress = noteRecoveryOutcome(policy, outcome)
 
     // Telling the user and un-counting the fault are separate decisions; every
     // attempt to derive one from the other has regressed the other. The toaster
@@ -168,7 +168,7 @@ private fun containRenderFault(
     // The repaint stays on progress only: it is a full sweep of every window, and
     // during a storm it arguably feeds the fault it is responding to. Nothing to
     // repaint for a verdict that changed nothing.
-    if (madeProgress) {
+    if (visibleProgress) {
         Window.getWindows().forEach { it.repaint() }
     }
 }

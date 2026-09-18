@@ -12,6 +12,7 @@ import ai.rever.boss.utils.WindowFocusManager
 import ai.rever.boss.utils.extractFileName
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.LogSanitizer
 import ai.rever.boss.window.Project
 import ai.rever.boss.window.WindowManager
 import kotlinx.coroutines.*
@@ -34,7 +35,9 @@ class CLICommandHandler private constructor() {
     // the command may run unattended, and a queue that dropped it would turn a
     // cold-start request into an unattributed one.
     private val terminalReadinessQueue = ReadinessQueue<CLICommand.OpenTerminal>()
-    private val workspaceReadinessQueue = ReadinessQueue<String>()
+
+    // Whole commands for the same reason: a Space can carry terminal commands.
+    private val workspaceReadinessQueue = ReadinessQueue<CLICommand.LoadWorkspace>()
     private val fileReadinessQueue = ReadinessQueue<String>()
 
     // Service references - set during initialization
@@ -145,10 +148,10 @@ class CLICommandHandler private constructor() {
 
         // Process queued workspace loads
         scope.launch {
-            queuedWorkspaces.forEach { configPath ->
+            queuedWorkspaces.forEach { command ->
                 try {
-                    logger.debug(LogCategory.SYSTEM, "Processing queued workspace", mapOf("path" to configPath))
-                    handleLoadWorkspace(configPath)
+                    logger.debug(LogCategory.SYSTEM, "Processing queued workspace", mapOf("path" to command.configPath))
+                    handleLoadWorkspace(command)
                 } catch (e: Exception) {
                     logger.error(LogCategory.SYSTEM, "Failed to process queued workspace", error = e)
                 }
@@ -177,7 +180,7 @@ class CLICommandHandler private constructor() {
                 }
 
                 is CLICommand.LoadWorkspace -> {
-                    handleLoadWorkspace(command.configPath)
+                    handleLoadWorkspace(command)
                 }
 
                 is CLICommand.OpenFile -> {
@@ -232,7 +235,7 @@ class CLICommandHandler private constructor() {
         // Normalize and validate URL (adds https:// if missing)
         val normalizedUrl = CLISecurityValidator.normalizeAndValidateUrl(url)
         if (normalizedUrl == null) {
-            logger.warn(LogCategory.SYSTEM, "Invalid URL", mapOf("url" to url))
+            logger.warn(LogCategory.SYSTEM, "Invalid URL", mapOf("url" to LogSanitizer.describeUri(url)))
             return
         }
 
@@ -246,10 +249,15 @@ class CLICommandHandler private constructor() {
      *
      * Emits workspace load event via WorkspaceEventBus for BossApp to handle.
      * This ensures workspace loading has access to splitViewState and workspaceManager.
+     *
+     * The event says whether the load needs the operator's confirmation, which is
+     * decided by the command's origin exactly as a terminal command's is. Only the
+     * window can act on it, because only the window parses the file and so only it
+     * knows whether the Space carries any terminal commands at all.
      */
-    private suspend fun handleLoadWorkspace(configPath: String) {
+    private suspend fun handleLoadWorkspace(command: CLICommand.LoadWorkspace) {
         // Validate file exists
-        val file = File(configPath).absoluteFile
+        val file = File(command.configPath).absoluteFile
         if (!file.exists()) {
             logger.warn(LogCategory.SYSTEM, "Workspace config not found", mapOf("path" to file.absolutePath))
             return
@@ -268,7 +276,7 @@ class CLICommandHandler private constructor() {
 
         // Queue workspace if handler not ready (cold start)
         // This ensures workspace loads AFTER Last Session, preventing tab destruction
-        if (!workspaceReadinessQueue.enqueueOrClaimForCaller(file.absolutePath)) {
+        if (!workspaceReadinessQueue.enqueueOrClaimForCaller(command.copy(configPath = file.absolutePath))) {
             logger.debug(LogCategory.SYSTEM, "Workspace handler not ready, queueing", mapOf("path" to file.absolutePath))
             return
         }
@@ -289,14 +297,21 @@ class CLICommandHandler private constructor() {
 
         // Emit workspace load event - BossApp will handle the actual loading
         // This is much simpler than trying to access splitViewState from CLI layer
+        val requiresConfirmation = command.requiresConfirmation
         ai.rever.boss.components.events.WorkspaceEventBus
-            .loadWorkspace(file.absolutePath, sourceWindowId = focusedWindowId)
+            .loadWorkspace(
+                file.absolutePath,
+                sourceWindowId = focusedWindowId,
+                requiresConfirmation = requiresConfirmation,
+            )
         logger.debug(
             LogCategory.SYSTEM,
             "Emitted workspace load event",
             mapOf(
                 "path" to file.absolutePath,
                 "windowId" to focusedWindowId,
+                "origin" to command.origin.name,
+                "requiresConfirmation" to requiresConfirmation,
             ),
         )
     }
@@ -587,6 +602,15 @@ internal fun terminalCommandDisposition(
     }
 
 /**
+ * Whether a Space this load opens must show its terminal commands to the operator before they
+ * run. Decided by who asked, exactly as [terminalCommandDisposition] decides for one command: only
+ * the operator's own `boss` invocation skips the prompt. Whether there is anything to show is the
+ * window's to decide, since only it parses the file.
+ */
+internal val CLICommand.LoadWorkspace.requiresConfirmation: Boolean
+    get() = !origin.isOperatorInitiated
+
+/**
  * Sealed class representing CLI commands.
  */
 sealed class CLICommand {
@@ -594,8 +618,13 @@ sealed class CLICommand {
         val url: String,
     ) : CLICommand()
 
+    /**
+     * @property origin who asked. Defaults to [DeepLinkOrigin.EXTERNAL], as
+     *   [OpenTerminal]'s does, because a Space can carry terminal commands.
+     */
     data class LoadWorkspace(
         val configPath: String,
+        val origin: DeepLinkOrigin = DeepLinkOrigin.EXTERNAL,
     ) : CLICommand()
 
     data class OpenFile(

@@ -27,6 +27,37 @@ import kotlin.test.assertTrue
  * [AWTKeyboardInterceptor.pendingShortcuts] is set directly to arm a known chord instead.
  */
 class ShortcutKeyUpInvocationTest {
+    @Test
+    fun `native print cancels only its own pending release`() {
+        val binding =
+            AWTKeyboardInterceptor.BindingMatch(
+                KeyBinding(actionId = KeymapActions.BROWSER_PRINT, key = "P", modifiers = listOf("Cmd")),
+                KeyStroke("P", listOf("Cmd")),
+            )
+        val pending =
+            AWTKeyboardInterceptor.PendingShortcut(
+                keyCode = KeyEvent.VK_P,
+                windowId = "native-print",
+                hostBinding = binding,
+            )
+        AWTKeyboardInterceptor.pendingShortcuts[KeyEvent.VK_P] = pending
+        AWTKeyboardInterceptor.claimedKeys.add(KeyEvent.VK_P)
+        AWTKeyboardInterceptor.cancelPendingNativePrint("another-window")
+        assertEquals(pending, AWTKeyboardInterceptor.pendingShortcuts[KeyEvent.VK_P])
+        AWTKeyboardInterceptor.cancelPendingNativePrint("native-print")
+        assertNull(AWTKeyboardInterceptor.pendingShortcuts[KeyEvent.VK_P])
+        assertTrue(AWTKeyboardInterceptor.handleKeyReleased(keyEvent(KeyEvent.KEY_RELEASED, KeyEvent.VK_P)))
+        assertFalse(AWTKeyboardInterceptor.claimedKeys.contains(KeyEvent.VK_P))
+    }
+
+    @Test
+    fun `native print does not cancel another action bound to P`() {
+        val pending = pendingFor("native-print", keyCode = KeyEvent.VK_P)
+        AWTKeyboardInterceptor.pendingShortcuts[KeyEvent.VK_P] = pending
+        AWTKeyboardInterceptor.cancelPendingNativePrint("native-print")
+        assertEquals(pending, AWTKeyboardInterceptor.pendingShortcuts[KeyEvent.VK_P])
+    }
+
     private val source = Canvas()
 
     private fun keyEvent(

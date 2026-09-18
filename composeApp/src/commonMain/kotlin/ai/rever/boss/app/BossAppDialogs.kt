@@ -596,6 +596,10 @@ internal fun BossAppDialogs(state: BossAppState) {
                         MenuActionsHandler.triggerCloseTab(windowId)
                     }
 
+                    KeymapActions.BROWSER_PRINT -> {
+                        MenuActionsHandler.triggerPrintBrowser(windowId)
+                    }
+
                     KeymapActions.BROWSER_RELOAD -> {
                         MenuActionsHandler.triggerReloadBrowser(windowId)
                     }
@@ -846,6 +850,9 @@ internal fun BossAppDialogs(state: BossAppState) {
             },
         )
     }
+
+    // The same question for a Space whose terminal tabs carry commands.
+    SpaceLoadPrompt(state)
 
     // Interactive approval dialog for governed MCP tools invoked by an AI agent
     state.pendingMcpApproval?.let { approvalRequest ->
@@ -1263,6 +1270,45 @@ internal fun BossAppDialogs(state: BossAppState) {
 
     // Generic dialog host for plugin dialogs
     GenericDialogHostContent()
+}
+
+@Composable
+private fun SpaceLoadPrompt(state: BossAppState) {
+    val logger = state.logger
+    state.pendingSpaceLoad?.let { pending ->
+        SpaceLoadApprovalDialog(
+            request = pending,
+            onDismiss = {
+                if (state.pendingSpaceLoad === pending) state.pendingSpaceLoad = null
+            },
+            onConfirm = confirm@{
+                // Clear before applying; the dialog also calls onDismiss after onConfirm, and a
+                // stale callback must never apply or dismiss a later request.
+                if (state.pendingSpaceLoad !== pending) return@confirm
+                state.pendingSpaceLoad = null
+                logger.info(
+                    LogCategory.WORKSPACE,
+                    "Operator confirmed an externally requested Space load",
+                    mapOf("windowId" to state.windowId, "commands" to pending.commands.size),
+                )
+                state.coroutineScope.launch {
+                    try {
+                        workspaceManager.loadWorkspace(pending.workspace)
+                        applyWorkspace(pending.workspace, state.splitViewState, state.windowProjectState)
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        logger.warn(
+                            LogCategory.WORKSPACE,
+                            "Confirmed Space load failed",
+                            mapOf("path" to pending.workspacePath),
+                            error = e,
+                        )
+                    }
+                }
+            },
+        )
+    }
 }
 
 @Composable

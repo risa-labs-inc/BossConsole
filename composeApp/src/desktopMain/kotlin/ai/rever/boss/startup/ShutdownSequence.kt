@@ -2,14 +2,18 @@ package ai.rever.boss.startup
 
 import ai.rever.boss.app.LastSessionCoordinator
 import ai.rever.boss.cache.HighQualityFaviconService
+import ai.rever.boss.dashboard.RecentBrowserPagesManager
+import ai.rever.boss.dashboard.RecentFilesManager
 import ai.rever.boss.performance.PerformanceMonitor
 import ai.rever.boss.plugin.PluginStoreSetup
 import ai.rever.boss.plugin.browser.FluckEngine
+import ai.rever.boss.services.auth.UserDataStorage
 import ai.rever.boss.updater.AppUpdateRealtimeService
 import ai.rever.boss.updater.UpdateCoordinator
 import ai.rever.boss.utils.SingleInstanceManager
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.window.AWTKeyboardInterceptor
+import kotlinx.coroutines.runBlocking
 
 /**
  * A named step in the shutdown sequence.
@@ -36,6 +40,18 @@ object ShutdownSequence {
                 // composition, so the window-dispose save never runs: macOS
                 // app-menu Quit / Cmd+Q, ApplicationRestarter's exitProcess paths, SIGTERM.
                 LastSessionCoordinator.instance.saveOnProcessExit()
+            },
+            ShutdownStep("flushing debounced recent-files and user-data saves on exit") {
+                // RecentFilesManager debounces saves by up to 5 seconds; quitting inside
+                // that window dropped the last recorded entry - the gap #795's own body
+                // called out as a separate bug. runBlocking, not a fire-and-forget launch:
+                // this hook thread must not return - and let the process finish exiting -
+                // before both writes are on disk.
+                runBlocking {
+                    RecentFilesManager.flushPendingSaves()
+                    RecentBrowserPagesManager.flushPendingSaves()
+                    UserDataStorage.flushPendingSaves()
+                }
             },
             ShutdownStep("stopping performance monitor") {
                 PerformanceMonitor.stop()

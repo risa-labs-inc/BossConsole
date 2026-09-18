@@ -221,6 +221,16 @@ internal fun BossAppMenuActionEffects(
             }.launchIn(this)
     }
 
+    LaunchedEffect(windowId) {
+        MenuActionsHandler.printBrowserEvents
+            .onEach { eventWindowId ->
+                if (eventWindowId == windowId) {
+                    ai.rever.boss.plugin.browser
+                        .printActiveBrowser(windowId)
+                }
+            }.launchIn(this)
+    }
+
     // Listen for zoom menu actions.
     //
     // These act on the browser ActiveBrowserRegistry names for this window, not on a tab component

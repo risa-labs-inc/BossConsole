@@ -191,6 +191,10 @@ internal class BossAppState(
     // Keep every external request until the operator answers its own prompt.
     val terminalCommandApprovals = TerminalCommandApprovalQueue()
 
+    // A Space an external request asked to load, held until the operator sees the terminal
+    // commands it would start. One at a time: a second arrival is refused, not queued.
+    var pendingSpaceLoad by mutableStateOf<PendingSpaceLoad?>(null)
+
     // An MCP tool execution requested by an AI agent that is suspended waiting
     // for operator approval under an ASK policy.
     var pendingMcpApproval by mutableStateOf<McpApprovalRequest?>(null)
@@ -280,6 +284,21 @@ internal class BossAppState(
 internal class PendingTerminalCommand(
     val command: String,
     val workingDirectory: String?,
+)
+
+/**
+ * A Space load held back for the operator's confirmation.
+ *
+ * BOSS reaches this state when a `boss://workspace` request arrives over a path any program can
+ * drive and the Space carries terminal commands - which applying it would type into a shell, the
+ * same thing a held [PendingTerminalCommand] is held for. [commands] are carried verbatim so the
+ * prompt shows exactly what would run, and [workspace] is the parsed file the confirmation
+ * applies, so what is shown is what loads.
+ */
+internal class PendingSpaceLoad(
+    val workspace: LayoutWorkspace,
+    val workspacePath: String,
+    val commands: List<String>,
 )
 
 /**

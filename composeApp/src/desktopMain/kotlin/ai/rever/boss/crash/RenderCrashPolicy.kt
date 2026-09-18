@@ -37,6 +37,8 @@ class RenderCrashPolicy(
     }
 
     private val recentFailures = ArrayDeque<Long>()
+    private var burstStartedAt: Long? = null
+    private var lastFailureAt: Long? = null
 
     /**
      * Record a render failure and report whether to contain it.
@@ -46,6 +48,11 @@ class RenderCrashPolicy(
     @Synchronized
     fun recordFailureAndShouldContain(): Boolean {
         val timestamp = now()
+        val previousFailureAt = lastFailureAt
+        if (previousFailureAt == null || timestamp - previousFailureAt !in 0..windowMillis) {
+            burstStartedAt = timestamp
+        }
+        lastFailureAt = timestamp
         // Only failures inside the window count, so a healthy app that hits one
         // bad frame an hour never escalates.
         while (recentFailures.isNotEmpty() && timestamp - recentFailures.first() > windowMillis) {
@@ -64,8 +71,9 @@ class RenderCrashPolicy(
      *
      * Narrowing needs room: faults from a repainting subtree arrive ~16ms apart,
      * all inside one window, while the loop spends one fault to rebuild plus one
-     * per suspect. Counting those would escalate and dispose the window before
-     * the culprit was found.
+     * per suspect. Counting actual rebuild or quarantine progress would escalate
+     * and dispose the window before the culprit was found. Settling is handled by
+     * [noteSettlingFault] because it needs a burst-wide bound.
      *
      * It removes exactly that one fault rather than clearing the deque, and the
      * difference matters. Clearing made [Escalate][WindowExceptionRoute.Escalate]
@@ -80,5 +88,31 @@ class RenderCrashPolicy(
     @Synchronized
     fun noteRecoveryProgress() {
         recentFailures.removeLastOrNull()
+    }
+
+    /**
+     * Refund queued work from a just-quarantined subtree while this burst is young.
+     *
+     * A per-suspect refund is not bounded: with enough mounted plugins, one full
+     * narrowing pass takes longer than [windowMillis], so counted `Unexplained`
+     * outcomes age out before the next pass and escalation becomes unreachable.
+     * This deadline is anchored at the first failure in a continuous burst and is
+     * never extended by recovery outcomes. Once it expires, settling faults remain
+     * counted and the ordinary circuit breaker escalates within [maxFailures] more
+     * contained frames. A quiet interval longer than [windowMillis] starts a new
+     * burst and earns a fresh settle allowance.
+     *
+     * @return true when the just-recorded fault was refunded.
+     */
+    @Synchronized
+    fun noteSettlingFault(): Boolean {
+        val failureAt = recentFailures.lastOrNull()
+        val startedAt = burstStartedAt
+        val canRefund =
+            failureAt != null &&
+                startedAt != null &&
+                failureAt - startedAt in 0..windowMillis
+        if (canRefund) recentFailures.removeLast()
+        return canRefund
     }
 }

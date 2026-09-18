@@ -74,7 +74,7 @@ class McpProviderPolicyTest {
     fun `a provider DENY overrides session trust for its tools, the same way a tool DENY does`() {
         val engine = McpPolicyEngine(policyFile = createTempPolicyFile())
 
-        engine.trustForSession("run_command")
+        engine.trustForSession("run_command", "terminal-tab")
         assertEquals(McpPolicyAction.ALLOW, engine.policyFor("run_command", "terminal-tab"))
 
         engine.setProviderPolicy("terminal-tab", McpPolicyAction.DENY)

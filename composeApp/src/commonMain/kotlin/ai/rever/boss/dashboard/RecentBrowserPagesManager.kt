@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -74,6 +75,7 @@ private data class BrowserHistoryEntry(
  * Thread-safe: All file I/O operations run on Dispatchers.IO.
  * Uses StateFlow for reactive UI updates.
  */
+@Suppress("TooManyFunctions") // Visit, dismissal, persistence, and shutdown share one manager state.
 object RecentBrowserPagesManager {
     private val logger = BossLogger.forComponent("RecentBrowserPagesManager")
     private const val MAX_PAGES = 30
@@ -253,12 +255,26 @@ object RecentBrowserPagesManager {
                 if (settingsFile.exists()) {
                     val content = settingsFile.readText()
                     val data = json.decodeFromString<RecentBrowserPagesData>(content)
-                    _recentPages.value = data.pages
+                    // Merged, not assigned: `init` launches this load and `recordPageVisit` can
+                    // land while the read is still in flight - which is exactly why that method
+                    // uses update{}. Assigning here dropped the page the user had just visited
+                    // from the list *and* from the save scheduled for it. Same defect #795 fixed
+                    // for the sibling RecentFilesManager.
+                    val merged =
+                        _recentPages.updateAndGet { recorded ->
+                            mergeRecordedPages(loaded = data.pages, recorded = recorded, max = MAX_PAGES)
+                        }
                     // Intersected with the current promo list: a file written before dismissals
                     // were bounded can hold an entry per page ever removed, and nothing else would
-                    // ever drop them.
-                    _dismissedSuggestions.value = data.dismissedSuggestions.toSet() intersect promoKeys
-                    logger.debug(LogCategory.SYSTEM, "Loaded recent pages", mapOf("count" to data.pages.size))
+                    // ever drop them. Merge rather than assign because removePage and clearAll run
+                    // on the caller thread and can record a dismissal while this read is in flight.
+                    val loadedDismissals = data.dismissedSuggestions.toSet() intersect promoKeys
+                    val mergedDismissals =
+                        _dismissedSuggestions.updateAndGet { recorded ->
+                            mergeDismissedSuggestions(loadedDismissals, recorded, promoKeys)
+                        }
+                    if (merged != data.pages || mergedDismissals != loadedDismissals) scheduleSave()
+                    logger.debug(LogCategory.SYSTEM, "Loaded recent pages", mapOf("count" to merged.size))
                 } else {
                     // Bootstrap from existing browser history if available
                     bootstrapFromBrowserHistory()
@@ -302,7 +318,12 @@ object RecentBrowserPagesManager {
                         }
 
                 if (recentPages.isNotEmpty()) {
-                    _recentPages.value = recentPages
+                    // Merged for the same reason as the load above, and it matters more here:
+                    // this path writes immediately, so an assignment would persist the bootstrap
+                    // over a visit recorded while the history file was being read.
+                    _recentPages.update { recorded ->
+                        mergeRecordedPages(loaded = recentPages, recorded = recorded, max = MAX_PAGES)
+                    }
                     saveImmediately()
                     logger.debug(LogCategory.SYSTEM, "Bootstrapped pages from browser history", mapOf("count" to recentPages.size))
                 }
@@ -328,6 +349,15 @@ object RecentBrowserPagesManager {
                     saveImmediately(target)
                 }
         }
+    }
+
+    /** Flush a scheduled page save before shutdown, including one already entering its write. */
+    suspend fun flushPendingSaves() {
+        val pending = synchronized(saveJobLock) { saveJob.also { saveJob = null } }
+        if (pending == null || pending.isCompleted) return
+        pending.cancel()
+        pending.join()
+        saveImmediately()
     }
 
     /**
@@ -429,7 +459,7 @@ object RecentBrowserPagesManager {
      * [getSuggestions] again, and recording it as dismissed as well only matters if it later
      * turns up as a padding suggestion, which is the same answer the user just gave.
      */
-    fun removePage(url: String) {
+    fun removePage(url: String): Job {
         // Applied on the caller's thread, not inside `scope.launch`. Both updates are in-memory
         // StateFlow writes, and `scheduleSave` launches its own debounced job, so the coroutine
         // bought nothing and cost the user a dispatch before the card disappeared.
@@ -445,7 +475,8 @@ object RecentBrowserPagesManager {
         // Immediately, not debounced: this is a user-initiated dismissal, and losing it to a quit
         // within the 5s window means the card returns and they dismiss it again. `removeMatchingPages`
         // already reasons about exactly this.
-        scope.launch { saveImmediately() }
+        val target = settingsFile
+        return scope.launch { saveImmediately(target) }
     }
 
     /**
@@ -599,4 +630,50 @@ internal fun rankSuggestions(
     }
 
     return suggestions.take(limit)
+}
+
+/**
+ * Combine the pages read from disk with whatever was recorded in memory while that read was in
+ * flight, newest first, capped at [max].
+ *
+ * The load is not an assignment because it is not the only writer: `init` launches it, and
+ * `recordPageVisit` can land first. For a url on both sides the newer `lastVisited` supplies the
+ * title and timestamp, the favicon falls back to the older entry when the newer one has none, and
+ * `visitCount` is **summed** - the in-flight entry counts the visit that raced the load, the
+ * loaded entry counts every visit before it, and `UrlHistoryManager` merges duplicates the same
+ * way. Taking the newer entry wholesale would reset a long-lived page's count to 1.
+ *
+ * Summing means this is not idempotent: merging an output against the same loaded list again
+ * doubles the counts. Safe today because `loadAsync` runs once from `init`; anything that adds a
+ * reload has to reconsider this.
+ */
+internal fun mergeRecordedPages(
+    loaded: List<RecentBrowserPage>,
+    recorded: List<RecentBrowserPage>,
+    max: Int,
+): List<RecentBrowserPage> =
+    (recorded + loaded)
+        .groupBy { it.url }
+        .map { (_, entries) -> entries.reduce(::combineVisits) }
+        .sortedByDescending { it.lastVisited }
+        .take(max)
+
+/** Preserve dismissals recorded while the persisted set was being read, bounded to current promos. */
+internal fun mergeDismissedSuggestions(
+    loaded: Set<String>,
+    recorded: Set<String>,
+    allowed: Set<String>,
+): Set<String> = (recorded + loaded) intersect allowed
+
+/** Fold two entries for the same url into one; see [mergeRecordedPages] for the rules. */
+private fun combineVisits(
+    a: RecentBrowserPage,
+    b: RecentBrowserPage,
+): RecentBrowserPage {
+    val newer = if (a.lastVisited >= b.lastVisited) a else b
+    val older = if (newer === a) b else a
+    return newer.copy(
+        faviconCacheKey = newer.faviconCacheKey ?: older.faviconCacheKey,
+        visitCount = a.visitCount + b.visitCount,
+    )
 }

@@ -282,34 +282,60 @@ class DefaultPlugin(
             }
         }
 
+        private val logger = BossLogger.forComponent("DefaultPlugin")
+
         internal fun deduplicateJars(
             jars: List<File>,
             isProtectedPredicate: (String) -> Boolean = { false },
         ): List<File> =
             jars
                 .filterNot { file ->
-                    DevPluginArtifacts.isDevPluginJar(file) &&
-                        isProtectedPredicate(extractPluginId(file))
+                    val isDev = DevPluginArtifacts.isDevPluginJar(file)
+                    val pluginId = if (isDev) extractPluginId(file) else ""
+                    val shouldDrop = isDev && isProtectedPredicate(pluginId)
+                    if (shouldDrop) {
+                        logger.warn(
+                            LogCategory.SYSTEM,
+                            "Dropped dev JAR claiming protected plugin ID: $pluginId (${file.name})",
+                            mapOf("pluginId" to pluginId, "file" to file.absolutePath),
+                        )
+                    }
+                    shouldDrop
                 }.groupBy { extractPluginId(it) }
                 .mapValues { (pluginId, group) ->
-                    group.maxByOrNull { file ->
-                        val isDev =
-                            DevPluginArtifacts
-                                .isDevPluginJar(file)
-                        val isProtected = isProtectedPredicate(pluginId)
-                        val versionBonus =
-                            when {
-                                isProtected && isDev -> -10_000_000_000_000L
-                                isDev -> 10_000_000_000_000L
-                                else -> 0L
+                    val selected =
+                        group.maxByOrNull { file ->
+                            val isDev =
+                                DevPluginArtifacts
+                                    .isDevPluginJar(file)
+                            val versionBonus =
+                                when {
+                                    isDev -> 10_000_000_000_000L
+                                    else -> 0L
+                                }
+                            versionBonus + file.lastModified()
+                        } ?: group.first()
+
+                    if (group.size > 1) {
+                        for (dropped in group) {
+                            if (dropped != selected) {
+                                logger.info(
+                                    LogCategory.SYSTEM,
+                                    "Deduplicating plugin '$pluginId': " +
+                                        "selected ${selected.name}, dropped ${dropped.name}",
+                                    mapOf(
+                                        "pluginId" to pluginId,
+                                        "selected" to selected.absolutePath,
+                                        "dropped" to dropped.absolutePath,
+                                    ),
+                                )
                             }
-                        versionBonus + file.lastModified()
-                    } ?: group.first()
+                        }
+                    }
+                    selected
                 }.values
                 .toList()
     }
-
-    private val logger = BossLogger.forComponent("DefaultPlugin")
 
     // Lifecycle-aware scope for long-running operations like dynamic panel registration
     // This scope should be cancelled when the plugin is disposed

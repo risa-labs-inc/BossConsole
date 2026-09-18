@@ -62,6 +62,8 @@ data class WindowAppearanceSettings(
      * migration can tell those apart - the information was never recorded.
      */
     val showTopBar: Boolean = false,
+    /** Optional duplicate of the browser address-bar zoom controls. */
+    val showBrowserZoomBadge: Boolean = false,
     /** Whether the status bar at the bottom of the window is on screen. See [showTopBar]. */
     val showBottomBar: Boolean = true,
     /** Whether the left icon strip is on screen. See [showTopBar]. */

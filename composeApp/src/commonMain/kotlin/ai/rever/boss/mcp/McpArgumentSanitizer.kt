@@ -95,9 +95,16 @@ object McpArgumentSanitizer {
             }
         }
 
+    /** Authorization is special: consume generic scheme words before the credential value. */
+    private val authorizationHeader =
+        Regex(
+            """(?i)authorization[ \t]*[:=][ \t]*""" +
+                """(?:[A-Za-z][A-Za-z0-9._~+/-]*[ \t]+){0,3}(?:"[^"]*"|'[^']*'|[^\s&,;}]+)""",
+        )
+
     private val sensitiveAssignment =
         Regex(
-            """(?i)(?:password|token|secret|api[_-]?key|authorization|credential)""" +
+            """(?i)(?:password|token|secret|api[_-]?key|credential)""" +
                 """\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s&,;}]+)""",
         )
     private val bearer = Regex("""(?i)Bearer\s+[^\s"',;}]+""")
@@ -106,5 +113,6 @@ object McpArgumentSanitizer {
         text
             .replace(credentialShapePattern, "[REDACTED]")
             .replace(sensitiveAssignment, "[REDACTED]")
+            .replace(authorizationHeader, "[REDACTED]")
             .replace(bearer, "Bearer [REDACTED]")
 }

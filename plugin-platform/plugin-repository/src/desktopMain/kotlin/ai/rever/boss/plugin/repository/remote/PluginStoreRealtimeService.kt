@@ -2,6 +2,7 @@ package ai.rever.boss.plugin.repository.remote
 
 import ai.rever.boss.plugin.logging.BossLogger
 import ai.rever.boss.plugin.logging.LogCategory
+import ai.rever.boss.plugin.logging.LogSanitizer
 import ai.rever.boss.plugin.repository.PluginInfo
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.logging.LogLevel
@@ -327,13 +328,17 @@ private class StoreSupabaseLogging(
         // log: a RestException carries the PostgREST error body, which can echo column values.
         // sanitizeSupabaseFailure would not help, as it rewrites only SerializationException.
         // The type is the diagnostic half worth keeping; the library's own text is in `message`.
+        //
+        // Library message text is sanitized through LogSanitizer so sensitive payloads
+        // (such as Supabase JWT access tokens embedded in Realtime websocket frames) are redacted.
         val fields =
             mapOf<String, Any?>(
                 "client" to "plugin-store",
                 "tag" to tag,
                 "errorType" to throwable?.let { it::class.simpleName },
             )
-        val text = "[plugin-store] $message"
+        val sanitized = LogSanitizer.sanitizeLogMessage(message)
+        val text = "[plugin-store] $sanitized"
         when (level) {
             LogLevel.ERROR -> logger.error(LogCategory.NETWORK, text, fields)
             LogLevel.WARNING -> logger.warn(LogCategory.NETWORK, text, fields)
