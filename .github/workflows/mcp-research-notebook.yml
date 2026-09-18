@@ -1,0 +1,48 @@
+name: 📓 Research Notebook MCP
+
+# The research-notebook MCP server is a standalone TypeScript package under
+# mcp-servers/ - nothing in the Gradle build touches it, so without this
+# workflow its test suite (the only guard on the metadata extraction, cite-key
+# and export logic) would rot. paths-filtered so it runs only when the server
+# or this file changes.
+on:
+  pull_request:
+    paths:
+      - "mcp-servers/research-notebook/**"
+      - ".github/workflows/mcp-research-notebook.yml"
+  push:
+    branches: [ main, develop, dev ]
+    paths:
+      - "mcp-servers/research-notebook/**"
+      - ".github/workflows/mcp-research-notebook.yml"
+
+jobs:
+  test:
+    name: 🧪 Research Notebook MCP
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: 🟢 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mcp-servers/research-notebook/package-lock.json
+
+      - name: 📦 Install
+        working-directory: mcp-servers/research-notebook
+        run: npm ci
+
+      - name: ✍️ Typecheck
+        working-directory: mcp-servers/research-notebook
+        run: npm run typecheck
+
+      - name: 🧪 Test
+        working-directory: mcp-servers/research-notebook
+        run: npm test
+
+      - name: 🔨 Build
+        working-directory: mcp-servers/research-notebook
+        run: npm run build
