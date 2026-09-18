@@ -38,6 +38,9 @@ actual object RunConfigurationManager {
         Json {
             prettyPrint = true
             ignoreUnknownKeys = true
+            // RunConfiguration.timestamp has a time-varying default. Encoding defaults keeps a
+            // configuration saved in its creation millisecond from decoding later with load time.
+            encodeDefaults = true
         }
 
     /** The trailing " (...)" group of a configuration name, which disambiguation rewrites. */

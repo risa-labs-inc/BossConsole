@@ -43,6 +43,7 @@ class SpotlightCommandCoverageTest {
             KeymapActions.TAB_NEW,
             KeymapActions.TAB_CLOSE,
             KeymapActions.BROWSER_RELOAD,
+            KeymapActions.BROWSER_PRINT,
             KeymapActions.BROWSER_ZOOM_RESET,
             KeymapActions.BROWSER_ZOOM_IN,
             KeymapActions.BROWSER_ZOOM_OUT,

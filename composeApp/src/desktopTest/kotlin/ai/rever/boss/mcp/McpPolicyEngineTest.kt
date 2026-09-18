@@ -60,17 +60,21 @@ class McpPolicyEngineTest {
     }
 
     @Test
-    fun `session trust temporarily allows a mutating tool without disk modification`() {
+    fun `session trust allows only the approved provider's tool and leaves disk untouched`() {
         val file = createTempPolicyFile()
         val engine = McpPolicyEngine(policyFile = file)
 
         assertEquals(McpPolicyAction.ASK, engine.policyFor("k8s_delete"))
 
-        engine.trustForSession("k8s_delete")
-        assertEquals(McpPolicyAction.ALLOW, engine.policyFor("k8s_delete"))
-
-        engine.revokeSessionTrust("k8s_delete")
+        engine.trustForSession("k8s_delete", "terminal-tab")
+        assertEquals(McpPolicyAction.ALLOW, engine.policyFor("k8s_delete", "terminal-tab"))
+        // A same-named tool from a different provider is a different tool: it must still prompt.
+        assertEquals(McpPolicyAction.ASK, engine.policyFor("k8s_delete", "flow-tab"))
+        // With no provider in hand the trust cannot be matched, so it must not apply.
         assertEquals(McpPolicyAction.ASK, engine.policyFor("k8s_delete"))
+
+        engine.revokeSessionTrust("k8s_delete", "terminal-tab")
+        assertEquals(McpPolicyAction.ASK, engine.policyFor("k8s_delete", "terminal-tab"))
 
         // Ensure file was never written
         assertTrue(!file.exists())
@@ -134,11 +138,11 @@ class McpPolicyEngineTest {
         // checks session trust before a non-DENY configured rule, so without also clearing trust
         // here, revoking only the persisted half would leave the call silently still auto-allowed.
         engine.setToolPolicy("run_command", McpPolicyAction.ALLOW)
-        engine.trustForSession("run_command")
-        assertEquals(McpPolicyAction.ALLOW, engine.policyFor("run_command"))
+        engine.trustForSession("run_command", "terminal-tab")
+        assertEquals(McpPolicyAction.ALLOW, engine.policyFor("run_command", "terminal-tab"))
 
         assertTrue(engine.revokePersistedPolicy("run_command"))
-        assertEquals(McpPolicyAction.ASK, engine.policyFor("run_command"))
+        assertEquals(McpPolicyAction.ASK, engine.policyFor("run_command", "terminal-tab"))
     }
 
     @Test
@@ -162,7 +166,7 @@ class McpPolicyEngineTest {
         // Constructed while the path is still absent, so this load sees no fault at all - the
         // write failure below has to be the only thing this test is actually exercising.
         val engine = McpPolicyEngine(policyFile = file, onFault = { reportedFault = it })
-        engine.trustForSession("helm_upgrade")
+        engine.trustForSession("helm_upgrade", "terminal-tab")
 
         // atomicWriteText creates missing parent directories, so the failure has to be at the
         // target itself: turning the policy file's own path into a directory means the atomic
@@ -174,7 +178,7 @@ class McpPolicyEngineTest {
         // Session trust still cleared (in-memory, cannot fail); with no persisted rule and no
         // trust left, the tool falls back to its ordinary mutating default - ASK, not the DENY a
         // stuck PersistedPolicyUnreadable fault would force, which this test deliberately avoids.
-        assertEquals(McpPolicyAction.ASK, engine.policyFor("helm_upgrade"))
+        assertEquals(McpPolicyAction.ASK, engine.policyFor("helm_upgrade", "terminal-tab"))
     }
 
     @Test
@@ -183,13 +187,13 @@ class McpPolicyEngineTest {
         val engine = McpPolicyEngine(policyFile = file)
 
         // Give tool session trust
-        engine.trustForSession("danger_tool")
-        assertEquals(McpPolicyAction.ALLOW, engine.policyFor("danger_tool"))
+        engine.trustForSession("danger_tool", "terminal-tab")
+        assertEquals(McpPolicyAction.ALLOW, engine.policyFor("danger_tool", "terminal-tab"))
 
         // Set explicit rule to DENY
         engine.setToolPolicy("danger_tool", McpPolicyAction.DENY)
 
         // DENY always wins, even when session-trusted
-        assertEquals(McpPolicyAction.DENY, engine.policyFor("danger_tool"))
+        assertEquals(McpPolicyAction.DENY, engine.policyFor("danger_tool", "terminal-tab"))
     }
 }

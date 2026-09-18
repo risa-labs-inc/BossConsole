@@ -153,8 +153,8 @@ object CLISecurityValidator {
      * [ai.rever.boss.utils.DeepLinkOrigin]: only a request the operator made
      * themselves runs without a prompt.
      *
-     * Control characters are rejected because the command is written into a
-     * shell followed by a single Enter — an embedded line break would submit
+     * Control, format, and Unicode line-separator characters are rejected
+     * because the command is written into a shell followed by a single Enter — an embedded line break would submit
      * further lines that nothing ever displayed, so keeping the command to one
      * line is what makes the text shown equal to the text that runs. The NUL
      * byte the previous check looked for is one of them.
@@ -162,5 +162,43 @@ object CLISecurityValidator {
     fun isValidCommand(command: String): Boolean =
         command.isNotBlank() &&
             command.length <= MAX_COMMAND_LENGTH &&
-            command.none { it.isISOControl() }
+            !command.hasHiddenDisplayCharacter()
+}
+
+internal val HIDDEN_DISPLAY_CHARACTERS =
+    setOf(
+        CharCategory.CONTROL,
+        CharCategory.FORMAT,
+        CharCategory.LINE_SEPARATOR,
+        CharCategory.PARAGRAPH_SEPARATOR,
+    )
+
+/** True for characters that can make reviewed one-line text differ from its underlying value. */
+internal fun String.hasHiddenDisplayCharacter(): Boolean {
+    var index = 0
+    var hidden = false
+    while (index < length && !hidden) {
+        val character = this[index]
+        hidden =
+            character.category in HIDDEN_DISPLAY_CHARACTERS ||
+            (index + 1 < length && isSupplementaryFormatCharacter(character, this[index + 1]))
+        index += if (character.isHighSurrogate() && index + 1 < length && this[index + 1].isLowSurrogate()) 2 else 1
+    }
+    return hidden
+}
+
+/** Supplementary-plane `Cf` ranges in the Unicode tables supported by this Kotlin target. */
+internal fun isSupplementaryFormatCharacter(
+    high: Char,
+    low: Char,
+): Boolean {
+    if (!high.isHighSurrogate() || !low.isLowSurrogate()) return false
+    val codePoint = 0x10000 + ((high.code - 0xD800) shl 10) + (low.code - 0xDC00)
+    return codePoint == 0x110BD ||
+        codePoint == 0x110CD ||
+        codePoint in 0x13430..0x1343F ||
+        codePoint in 0x1BCA0..0x1BCA3 ||
+        codePoint in 0x1D173..0x1D17A ||
+        codePoint == 0xE0001 ||
+        codePoint in 0xE0020..0xE007F
 }

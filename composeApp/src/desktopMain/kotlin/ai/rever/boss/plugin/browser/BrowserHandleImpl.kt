@@ -1809,8 +1809,8 @@ internal class BrowserHandleImpl(
      * `elementFromPoint`, or by deferring resolution until a fill is actually chosen - does not
      * need this to be right, and is the direction to go if it ever matters.
      */
-    private fun getFormFieldInfoFromJS(frame: com.teamdev.jxbrowser.frame.Frame): FormFieldInfo? {
-        return try {
+    private fun getFormFieldInfoFromJS(frame: com.teamdev.jxbrowser.frame.Frame): FormFieldInfo? =
+        try {
             val jsonString =
                 frame.executeJavaScript<String?>(
                     """
@@ -1834,69 +1834,11 @@ internal class BrowserHandleImpl(
                     """.trimIndent(),
                 )
 
-            if (jsonString.isNullOrBlank() || jsonString == "null") {
-                return null
-            }
-
-            // Parse JSON manually (simple extraction)
-            val extractValue = { key: String ->
-                val pattern = "\"$key\":\"([^\"]*)\""
-                val regex = Regex(pattern)
-                regex.find(jsonString)?.groupValues?.getOrNull(1) ?: ""
-            }
-
-            val inputType = extractValue("type").ifEmpty { "text" }
-            val fieldName = extractValue("name")
-            val fieldId = extractValue("id")
-            val placeholder = extractValue("placeholder")
-            val value = extractValue("value")
-            val formAction = extractValue("formAction").ifEmpty { null }
-            val autocomplete = extractValue("autocomplete")
-
-            // Determine field type
-            val fieldType =
-                when {
-                    inputType == "password" -> FormFieldType.PASSWORD
-
-                    inputType == "email" -> FormFieldType.EMAIL
-
-                    autocomplete.contains("username", ignoreCase = true) -> FormFieldType.USERNAME
-
-                    autocomplete.contains("email", ignoreCase = true) -> FormFieldType.EMAIL
-
-                    autocomplete.contains("password", ignoreCase = true) -> FormFieldType.PASSWORD
-
-                    fieldName.contains("user", ignoreCase = true) ||
-                        fieldId.contains("user", ignoreCase = true) ||
-                        fieldName.contains("login", ignoreCase = true) ||
-                        fieldId.contains("login", ignoreCase = true) -> FormFieldType.USERNAME
-
-                    fieldName.contains("email", ignoreCase = true) ||
-                        fieldId.contains("email", ignoreCase = true) -> FormFieldType.EMAIL
-
-                    fieldName.contains("pass", ignoreCase = true) ||
-                        fieldId.contains("pass", ignoreCase = true) -> FormFieldType.PASSWORD
-
-                    inputType == "text" -> FormFieldType.TEXT
-
-                    else -> FormFieldType.UNKNOWN
-                }
-
-            FormFieldInfo(
-                fieldType = fieldType,
-                fieldName = fieldName,
-                fieldId = fieldId,
-                fieldPlaceholder = placeholder,
-                fieldValue = value,
-                parentFormAction = formAction,
-                inputType = inputType,
-                autocomplete = autocomplete,
-            )
+            formFieldInfoFrom(jsonString)
         } catch (e: Exception) {
             logger.debug(LogCategory.BROWSER, "Failed to get form field info", mapOf("error" to e.message))
             null
         }
-    }
 
     /**
      * Injects the page-side helpers that outlive a navigation:

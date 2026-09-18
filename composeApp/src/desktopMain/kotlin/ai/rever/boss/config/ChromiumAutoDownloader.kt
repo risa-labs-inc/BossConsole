@@ -454,8 +454,9 @@ object ChromiumAutoDownloader {
 
                     // Integrity check before extracting a native binary we will
                     // execute. Like the app updater, this guards against
-                    // Storage/CDN corruption (hash and URL come from the same
-                    // catalog row); the constructed GitHub URL has no hash.
+                    // Storage/CDN corruption. Both candidates carry the catalog
+                    // hash when lookup provides one; a failed or hashless lookup
+                    // leaves the backup unverified.
                     if (candidate.sha256 != null) {
                         val actualSha = sha256Of(tempFile.toFile())
                         if (!candidate.sha256.equals(actualSha, ignoreCase = true)) {

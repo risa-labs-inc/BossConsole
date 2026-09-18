@@ -10,10 +10,15 @@ import kotlinx.coroutines.flow.asSharedFlow
  *
  * @property workspacePath Path to the workspace file
  * @property sourceWindowId The window that should load the workspace (required for multi-window support)
+ * @property requiresConfirmation True when the request came from somewhere other than the
+ *   operator's own invocation of BOSS (see `DeepLinkOrigin`), so any terminal commands the
+ *   Space carries must be shown to the operator before they reach a shell. Defaults to false
+ *   so a caller that is the operator clicking something stays direct.
  */
 data class WorkspaceLoadEvent(
     val workspacePath: String,
     val sourceWindowId: String,
+    val requiresConfirmation: Boolean = false,
 )
 
 /**
@@ -37,12 +42,14 @@ object WorkspaceEventBus {
      *
      * @param workspacePath Path to the workspace file
      * @param sourceWindowId The window that should load the workspace (required for multi-window support)
+     * @param requiresConfirmation See [WorkspaceLoadEvent.requiresConfirmation]
      */
     suspend fun loadWorkspace(
         workspacePath: String,
         sourceWindowId: String,
+        requiresConfirmation: Boolean = false,
     ) {
-        val event = WorkspaceLoadEvent(workspacePath, sourceWindowId)
+        val event = WorkspaceLoadEvent(workspacePath, sourceWindowId, requiresConfirmation)
         _workspaceLoadEvents.emit(event)
         ipcBridge?.forward("WorkspaceLoadEvent", event, sourceWindowId)
     }

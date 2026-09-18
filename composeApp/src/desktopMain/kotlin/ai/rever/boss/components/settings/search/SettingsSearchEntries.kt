@@ -436,6 +436,8 @@ private fun windowAppearanceEntries() =
         setting("Expand on Hover", "Tab Bar", "vertical tabs", "rail", "collapse", "drawer")
         setting("Pane Tab Strip", "Tab Bar", "vertical tabs", "split", "favicon", "pane", "tabs")
         setting("Only in Split Windows", "Tab Bar", "vertical tabs", "split", "favicon", "pane", "strip")
+        group("Browser Zoom")
+        setting("Show Browser Zoom Badge", "Browser Zoom", "percentage", "reset", "browser", "top bar")
         group("Bars")
         setting("Show Top Bar", "Bars", "chrome", "window")
         setting("Show Bottom Bar", "Bars", "chrome", "window", "status")

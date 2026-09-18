@@ -10,9 +10,13 @@ import ai.rever.boss.utils.logging.LogCategory
  * One place an engine archive can be fetched from, tried in list order.
  *
  * @property sha256 Expected archive hash when the catalog provides one (Supabase
- *   `app_releases` rows do; the constructed GitHub URL doesn't). Like the app
- *   updater, this is an integrity check against Storage/CDN corruption, not
- *   authenticity — hash and URL come from the same catalog row.
+ *   `app_releases` rows do). The constructed GitHub backup URL has no hash of
+ *   its own, so its candidate reuses the hash the same catalog lookup returned
+ *   for that archive — the release pipeline publishes one artifact to both
+ *   sources, so the catalog's hash binds the backup's bytes exactly as it binds
+ *   the primary's. Like the app updater, this is an integrity check against
+ *   Storage/CDN corruption, not authenticity — hash and URL come from the same
+ *   catalog row.
  */
 data class EngineDownloadCandidate(
     val sourceName: String,
@@ -43,6 +47,13 @@ data class EngineVersionListing(
 class ChromiumReleaseResolver(
     private val supabaseSource: UpdateSource,
     private val gitHubSource: UpdateSource,
+    /**
+     * Base of the constructed GitHub backup URLs. Injectable so the end-to-end
+     * fallback-checksum regression test (BossConsole#798 follow-up) can point
+     * the backup at a local HTTP server it controls; production keeps the real
+     * BossConsole-Releases base.
+     */
+    private val gitHubReleasesBase: String = GITHUB_RELEASES_BASE,
 ) {
     private val logger = BossLogger.forComponent("ChromiumReleaseSource")
 
@@ -57,12 +68,21 @@ class ChromiumReleaseResolver(
     ): List<EngineDownloadCandidate> {
         val candidates = mutableListOf<EngineDownloadCandidate>()
 
+        // The catalog's hash for this archive, when the lookup provides one.
+        // Remembered across the try block because the GitHub backup below
+        // fetches the SAME archive of the SAME version and is verified against
+        // it too.
+        var catalogSha256: String? = null
+
         try {
             val asset =
                 supabaseSource
                     .getReleaseByTag("v$version")
                     ?.assets
                     ?.firstOrNull { it.name == archiveName }
+            // Capture the row's hash even when it cannot serve a primary URL:
+            // the backup below can still be verified with it.
+            catalogSha256 = asset?.sha256
             val assetUrl = asset?.browser_download_url
             if (assetUrl != null) {
                 candidates += EngineDownloadCandidate(supabaseSource.name, assetUrl, asset.sha256)
@@ -83,8 +103,21 @@ class ChromiumReleaseResolver(
         candidates +=
             EngineDownloadCandidate(
                 gitHubSource.name,
-                "$GITHUB_RELEASES_BASE/$GITHUB_TAG_PREFIX$version/$archiveName",
-                sha256 = null,
+                "$gitHubReleasesBase/$GITHUB_TAG_PREFIX$version/$archiveName",
+                // The backup runs precisely because the primary source is
+                // already misbehaving, and its archive is extracted and later
+                // EXECUTED as the browser engine — so this is the download that
+                // needs the integrity check most. Building it with
+                // `sha256 = null` (the gap BossConsole#798 recorded in its own
+                // body) meant installFromCandidates extracted whatever the
+                // backup served with no check at all. The catalog's hash binds
+                // these bytes exactly as it binds the primary's (one artifact,
+                // two sources); a genuine build difference between the sources
+                // must now fail loudly and fall through to the next candidate,
+                // never install unverified. When the catalog lookup itself
+                // failed there is no hash to verify with and the backup stays
+                // unverified, exactly as before.
+                sha256 = catalogSha256,
             )
         return candidates
     }

@@ -43,7 +43,38 @@ export interface AuthenticationCredential {
 }
 
 /**
- * Generates an authentication challenge for a user
+ * A syntactically valid challenge response that commits nothing: a fresh
+ * random challenge that is never stored, so /auth/complete can never
+ * verify against it, with an empty allowCredentials list so the client's
+ * credential request fails locally. Used for every pre-auth failure state
+ * (unknown email, no passkeys, lookup error, challenge-store failure) so
+ * those failure states are indistinguishable from each other. An enrolled
+ * account remains distinguishable because legacy non-discoverable passkeys
+ * require their real credential IDs in allowCredentials.
+ */
+function inertChallenge(sessionId?: string) {
+  return {
+    success: true as const,
+    challenge: generateChallenge(),
+    timeout: 60000,
+    rpId: getRpId(),
+    userVerification: 'preferred',
+    allowCredentials: [] as { id: string; type: string; transports: string[] }[],
+    sessionId,
+    error: undefined,
+  }
+}
+
+/**
+ * Generates an authentication challenge for a user.
+ *
+ * Narrows the enumeration oracle tracked by BossConsole#768: unknown email,
+ * known email with no passkeys, lookup error and challenge-store failure all
+ * return the same inert response shape. A real passkey user still receives a
+ * non-empty allowCredentials list and is therefore distinguishable; legacy
+ * non-discoverable credentials cannot authenticate without their real IDs.
+ * Closing that residual oracle requires the discoverable-credential migration
+ * tracked separately in #768. Timing is not equalised by this function.
  */
 export const generateAuthChallenge = withErrorHandler(
   async (supabase: SupabaseClient, email: string, sessionId?: string) => {
@@ -53,11 +84,8 @@ export const generateAuthChallenge = withErrorHandler(
     const userResult = await findUserByEmail(supabase, email)
 
     if (!userResult.success || !userResult.user) {
-      console.error('User not found with email:', email)
-      return {
-        success: false,
-        error: 'User not found'
-      }
+      console.error('User lookup did not resolve to a user')
+      return inertChallenge(sessionId)
     }
 
     const userId = userResult.user.id
@@ -68,19 +96,13 @@ export const generateAuthChallenge = withErrorHandler(
 
     if (!passkeyResult.success) {
       console.error('Error fetching user passkeys:', passkeyResult.error)
-      return {
-        success: false,
-        error: 'Failed to fetch user credentials'
-      }
+      return inertChallenge(sessionId)
     }
 
     const userPasskeys = passkeyResult.passkeys || []
 
     if (userPasskeys.length === 0) {
-      return {
-        success: false,
-        error: 'No passkeys found for user'
-      }
+      return inertChallenge(sessionId)
     }
 
     // Generate and store challenge
@@ -91,10 +113,13 @@ export const generateAuthChallenge = withErrorHandler(
     })
 
     if (!storeResult.success) {
-      return {
-        success: false,
-        error: storeResult.error || 'Failed to store challenge'
-      }
+      console.error('Failed to store challenge:', storeResult.error)
+      // Inert, not a distinguishable failure (review follow-up): a
+      // success:false here is reachable only for an enrolled account (we got
+      // past the passkey lookup), which inverts the oracle - a prober learns
+      // the account is enrolled precisely when the store hiccups. Return the
+      // same inert challenge as the pre-auth failures instead.
+      return inertChallenge(sessionId)
     }
 
     // Build allowed credentials list

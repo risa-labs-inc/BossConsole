@@ -922,12 +922,42 @@ internal fun encodeMcpTools(tools: List<ai.rever.boss.plugin.api.RegisteredMcpTo
         },
     ).toString()
 
-private fun parseToolSchema(schema: String): kotlinx.serialization.json.JsonElement =
-    try {
-        Json.parseToJsonElement(schema)
-    } catch (_: IllegalArgumentException) {
-        JsonPrimitive(schema)
+private const val MAX_CACHED_TOOL_SCHEMAS = 128
+private const val MAX_CACHED_TOOL_SCHEMA_CHARS = 64 * 1024
+private typealias ToolSchemaCacheEntry = MutableMap.MutableEntry<String, kotlinx.serialization.json.JsonElement>
+
+/**
+ * Bounded because schemas are supplied by reloadable plugins and can change on every registration.
+ * IPC callers can only read the registry and cannot add keys. Schemas over 64 KiB bypass retention,
+ * bounding retained source text to roughly 8 MiB plus parsed-tree overhead.
+ */
+private val schemaCache =
+    object : LinkedHashMap<String, kotlinx.serialization.json.JsonElement>(MAX_CACHED_TOOL_SCHEMAS, 0.75f, true) {
+        override fun removeEldestEntry(eldest: ToolSchemaCacheEntry): Boolean = size > MAX_CACHED_TOOL_SCHEMAS
     }
+
+internal fun clearToolSchemaCache() = synchronized(schemaCache) { schemaCache.clear() }
+
+internal fun parseToolSchema(schema: String): kotlinx.serialization.json.JsonElement {
+    fun parse() =
+        try {
+            Json.parseToJsonElement(schema)
+        } catch (_: IllegalArgumentException) {
+            JsonPrimitive(schema)
+        }
+
+    return if (schema.length > MAX_CACHED_TOOL_SCHEMA_CHARS) {
+        parse()
+    } else {
+        val cached = synchronized(schemaCache) { schemaCache[schema] }
+        cached ?: run {
+            val parsed = parse()
+            synchronized(schemaCache) {
+                schemaCache[schema] ?: parsed.also { schemaCache[schema] = it }
+            }
+        }
+    }
+}
 
 internal fun encodeMcpResult(
     toolName: String,

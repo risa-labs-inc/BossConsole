@@ -3,6 +3,11 @@ package ai.rever.boss.plugin.launchpad
 import ai.rever.boss.components.plugin.DefaultPlugin
 import ai.rever.boss.utils.ReloadResult
 import ai.rever.boss.utils.SingleInstanceManager
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.LogEntry
+import ai.rever.boss.utils.logging.LogLevel
+import ai.rever.boss.utils.logging.LogListener
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import java.nio.file.Files
@@ -14,6 +19,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class PluginManifestTest {
@@ -277,7 +283,7 @@ class PluginManifestTest {
             writeSyntheticJar(versionJar, "protected-plugin")
             versionJar.setLastModified(5000L)
 
-            // When isProtectedPredicate is true, dev JAR is penalized so standardJar wins even if older
+            // Protected dev JARs are removed before grouping, regardless of timestamps.
             val deduplicated =
                 DefaultPlugin.deduplicateJars(listOf(standardJar, versionJar)) { pluginId ->
                     pluginId == "protected-plugin"
@@ -309,6 +315,70 @@ class PluginManifestTest {
                 }
             assertTrue(deduplicated.isEmpty(), "Lone dev JAR claiming protected plugin ID must be dropped")
         } finally {
+            DevPluginArtifacts.stagingRootOverride = null
+        }
+    }
+
+    @Test
+    fun `DefaultPlugin deduplicateJars logs diagnostic messages when dropping or superseding JARs`() {
+        val stagingBase = File(tempDir.toFile(), "logging-staging-root")
+        stagingBase.mkdirs()
+        DevPluginArtifacts.stagingRootOverride = stagingBase
+
+        val logs = java.util.concurrent.CopyOnWriteArrayList<LogEntry>()
+        val listener = LogListener { entry -> logs.add(entry) }
+        val previousLevel = BossLogger.globalLevel
+        BossLogger.setGlobalLevel(LogLevel.TRACE)
+        BossLogger.addListener(listener)
+
+        try {
+            val pluginsDir = File(tempDir.toFile(), "logging-plugins-dir")
+            pluginsDir.mkdirs()
+
+            // 1. Test dropping protected dev JAR
+            val protectedDevJar = File(stagingBase, "protected-plugin/v1000/protected-plugin.jar")
+            writeSyntheticJar(protectedDevJar, "protected-plugin")
+
+            val deduplicatedProtected =
+                DefaultPlugin.deduplicateJars(listOf(protectedDevJar)) { id ->
+                    id == "protected-plugin"
+                }
+            assertTrue(deduplicatedProtected.isEmpty())
+
+            val dropWarn =
+                logs.firstOrNull { entry ->
+                    entry.level == LogLevel.WARN &&
+                        entry.category == LogCategory.SYSTEM &&
+                        entry.message.contains("Dropped dev JAR claiming protected plugin ID: protected-plugin")
+                }
+            assertNotNull(dropWarn, "Must log warning when dropping dev JAR claiming protected plugin ID")
+            assertEquals("protected-plugin", dropWarn.data?.get("pluginId"))
+
+            // 2. Test superseding duplicate JAR
+            logs.clear()
+            val standardJar = File(pluginsDir, "sample-plugin.jar")
+            writeSyntheticJar(standardJar, "sample-plugin")
+
+            val devJar = File(stagingBase, "sample-plugin/v1000/sample-plugin.jar")
+            writeSyntheticJar(devJar, "sample-plugin")
+
+            val deduplicatedSample = DefaultPlugin.deduplicateJars(listOf(standardJar, devJar))
+            assertEquals(1, deduplicatedSample.size)
+            assertEquals(devJar.absolutePath, deduplicatedSample.single().absolutePath)
+
+            val dedupInfo =
+                logs.firstOrNull { entry ->
+                    entry.level == LogLevel.INFO &&
+                        entry.category == LogCategory.SYSTEM &&
+                        entry.message.contains("Deduplicating plugin 'sample-plugin'")
+                }
+            assertNotNull(dedupInfo, "Must log info when deduplicating multiple JARs for a plugin")
+            assertEquals("sample-plugin", dedupInfo.data?.get("pluginId"))
+            assertEquals(devJar.absolutePath, dedupInfo.data?.get("selected"))
+            assertEquals(standardJar.absolutePath, dedupInfo.data?.get("dropped"))
+        } finally {
+            BossLogger.removeListener(listener)
+            BossLogger.setGlobalLevel(previousLevel)
             DevPluginArtifacts.stagingRootOverride = null
         }
     }

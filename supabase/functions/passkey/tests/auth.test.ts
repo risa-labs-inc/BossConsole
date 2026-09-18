@@ -42,7 +42,7 @@ Deno.test("generateAuthChallenge - should generate challenge for existing user",
   }
 })
 
-Deno.test("generateAuthChallenge - should return error for non-existent user", async () => {
+Deno.test("generateAuthChallenge - should return an inert challenge for a non-existent user", async () => {
   const mockClient = createMockSupabaseClient()
 
   // Mock user not found via RPC function (returns empty array)
@@ -53,19 +53,22 @@ Deno.test("generateAuthChallenge - should return error for non-existent user", a
 
   const result = await generateAuthChallenge(mockClient as unknown as SupabaseClient, 'nonexistent@example.com')
 
-  assertEquals(result.success, false)
-  if (!result.success) {
-    assertEquals(result.error, 'User not found')
+  // Enumeration-safe (BossConsole#768): unknown email must be
+  // indistinguishable from a genuine challenge by status, shape, or
+  // content - an unstored inert challenge with an empty allow list.
+  assertEquals(result.success, true)
+  if (result.success) {
+    assertExists(result.challenge)
+    assertEquals(result.allowCredentials, [])
   }
 })
 
-Deno.test("generateAuthChallenge - should return error when user has no passkeys", async () => {
+Deno.test("generateAuthChallenge - should return an inert challenge when user has no passkeys", async () => {
   const mockClient = createMockSupabaseClient()
 
   // Mock user found via RPC function
   mockClient.mockResponse('rpc.find_user_by_email', {
-    data: [{ id: 'user-456', email: 'test@example.com' }],
-    error: null
+    data: [{ id: 'user-456', email: 'test@example.com' }], error: null
   }, 'call')
 
   // Mock no passkeys (select operation)
@@ -76,9 +79,12 @@ Deno.test("generateAuthChallenge - should return error when user has no passkeys
 
   const result = await generateAuthChallenge(mockClient as unknown as SupabaseClient, 'test@example.com')
 
-  assertEquals(result.success, false)
-  if (!result.success) {
-    assertEquals(result.error, 'No passkeys found for user')
+  // Enumeration-safe (BossConsole#768): known email without passkeys must
+  // be byte-for-byte indistinguishable from the unknown-email case.
+  assertEquals(result.success, true)
+  if (result.success) {
+    assertExists(result.challenge)
+    assertEquals(result.allowCredentials, [])
   }
 })
 

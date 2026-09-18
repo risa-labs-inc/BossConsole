@@ -545,6 +545,14 @@ fun ApplicationScope.BossWindow(
                 Separator()
 
                 Item(
+                    "Print...",
+                    shortcut = shortcutBridge.getKeyShortcut(KeymapActions.BROWSER_PRINT),
+                    enabled = hasBrowser,
+                    onClick = { MenuActionsHandler.triggerPrintBrowser(windowState.id) },
+                )
+                Separator()
+
+                Item(
                     "Settings",
                     shortcut = shortcutBridge.getKeyShortcut(KeymapActions.SETTINGS_OPEN),
                     onClick = {

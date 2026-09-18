@@ -178,7 +178,32 @@ boss mcp invoke workspace_info --json
 
 ---
 
-### 5. `boss completion <bash|zsh|fish>`
+### 5. `boss mcp ledger <verify|tail|search>`
+
+Reads the local, sanitized MCP operation ledger without requiring a running BOSS process.
+
+```bash
+# Verify retained hash-chain integrity; exits non-zero for broken, incomplete, or unverifiable data
+boss mcp ledger verify
+
+# Show the newest 20 records, or filter the durable history
+boss mcp ledger tail -n 20
+boss mcp ledger search --tool run_command --disposition failed --from 2026-09-01 --limit 50
+
+# Machine-readable output or an explicit ledger path
+boss mcp ledger verify --json
+boss mcp ledger tail --file /path/to/mcp-calls.jsonl --json
+```
+
+The chain detects edits, insertions, reordering, and removals from inside retained history. It is
+not a signature: someone able to rewrite the entire chain can recompute it, and removing only the
+newest tail cannot be distinguished from normal retained history without an external checkpoint.
+An all-legacy ledger from before integrity tracking exits non-zero until BOSS writes one new record
+that anchors the hash chain; the report distinguishes that ordinary upgrade state from tampering.
+
+---
+
+### 6. `boss completion <bash|zsh|fish>`
 
 Generates tab-autocompletion scripts for your shell, completing subcommands and MCP actions (`list`, `describe`, `invoke`):
 

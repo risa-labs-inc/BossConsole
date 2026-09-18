@@ -15,6 +15,7 @@ import ai.rever.boss.components.events.TerminalEventBus
 import ai.rever.boss.components.events.TerminalLinkEventBus
 import ai.rever.boss.components.events.URLEventBus
 import ai.rever.boss.components.events.WorkspaceEventBus
+import ai.rever.boss.components.events.WorkspaceLoadEvent
 import ai.rever.boss.components.plugin.DependentRestartEventBus
 import ai.rever.boss.components.plugin.MissingHandlerPluginEventBus
 import ai.rever.boss.components.plugin.PanelIds
@@ -23,9 +24,13 @@ import ai.rever.boss.components.plugin.claimMissingDependencyForWindow
 import ai.rever.boss.components.plugin.providers.createApplicationEventBus
 import ai.rever.boss.components.plugin.resolveRegisteredPanelId
 import ai.rever.boss.components.window_panel.SplitViewState
+import ai.rever.boss.components.workspaces.LayoutWorkspace
+import ai.rever.boss.components.workspaces.SpaceLoadDisposition
 import ai.rever.boss.components.workspaces.WorkspaceSerializer
 import ai.rever.boss.components.workspaces.applyWorkspace
+import ai.rever.boss.components.workspaces.spaceLoadDisposition
 import ai.rever.boss.components.workspaces.spaceToOpen
+import ai.rever.boss.components.workspaces.terminalCommands
 import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.dashboard.DashboardStatsManager
 import ai.rever.boss.git.GitTerminalService
@@ -610,10 +615,7 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                     if (file.exists() && file.canRead()) {
                         val json = file.readText()
                         val workspace = WorkspaceSerializer.deserialize(json)
-
-                        // Use the same loading pattern as the UI
-                        workspaceManager.loadWorkspace(workspace)
-                        applyWorkspace(workspace, splitViewState, windowProjectState)
+                        loadRequestedSpace(state, event, workspace)
                     }
                 } catch (e: Exception) {
                     logger.warn(
@@ -1190,5 +1192,55 @@ private fun openRegisteredTabType(
         StatusMessageManager.showMessage("Could not open ${info.displayName} here")
     } else {
         tabs.addTab(tabInfo)
+    }
+}
+
+/**
+ * Loads a Space a [WorkspaceLoadEvent] asked for, unless it needs the operator first.
+ *
+ * Applying a Space types its terminal tabs' commands into shells, so a request from outside the
+ * operator's own `boss` invocation that carries any is held for [SpaceLoadPrompt]'s confirmation
+ * rather than applied - the rule `boss://terminal?command=` already follows.
+ */
+private suspend fun loadRequestedSpace(
+    state: BossAppState,
+    event: WorkspaceLoadEvent,
+    workspace: LayoutWorkspace,
+) {
+    val logger = state.logger
+    val commands = workspace.terminalCommands()
+    when (spaceLoadDisposition(commands, event.requiresConfirmation)) {
+        SpaceLoadDisposition.LOAD -> {
+            // Use the same loading pattern as the UI
+            workspaceManager.loadWorkspace(workspace)
+            applyWorkspace(workspace, state.splitViewState, state.windowProjectState)
+        }
+
+        SpaceLoadDisposition.CONFIRM -> {
+            if (state.pendingSpaceLoad == null) {
+                state.pendingSpaceLoad = PendingSpaceLoad(workspace, event.workspacePath, commands)
+                logger.info(
+                    LogCategory.WORKSPACE,
+                    "Holding an externally requested Space load for confirmation",
+                    mapOf("windowId" to state.windowId, "commands" to commands.size),
+                )
+            } else {
+                logger.warn(
+                    LogCategory.WORKSPACE,
+                    "External Space load refused: another is awaiting confirmation",
+                    mapOf("path" to event.workspacePath),
+                )
+                StatusMessageManager.showMessage("Space not loaded: another Space is awaiting confirmation")
+            }
+        }
+
+        SpaceLoadDisposition.REJECT -> {
+            logger.warn(
+                LogCategory.WORKSPACE,
+                "External Space load refused: its terminal commands cannot all be shown for confirmation",
+                mapOf("path" to event.workspacePath, "commands" to commands.size),
+            )
+            StatusMessageManager.showMessage("Space not loaded: its terminal commands cannot be confirmed safely")
+        }
     }
 }

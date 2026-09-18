@@ -2640,6 +2640,11 @@ object FluckEngine {
      * dispatches through [ai.rever.boss.window.MenuActionsHandler] (zoom, N/T/W and
      * Shift+F/Shift+S) must be gated on this value; a new one added later must be too.
      *
+     * Print is a deliberate direct-browser exception: manual macOS testing found Cmd+P
+     * did not open preview through AWT alone. Its callback cancels a pending AWT print
+     * before invoking the page. This is best-effort suppression, not an ordering guarantee
+     * if the AWT release wins the native callback race. Do not copy it for other actions.
+     *
      * [JxBrowserConfig.renderingMode] is a `lazy` val, so this resolves once per process. That is
      * the right granularity: changing the mode needs the engine rebuilt, so it cannot change under
      * a running browser anyway.
@@ -2898,6 +2903,22 @@ object FluckEngine {
 
                 // Intercept main modifier + key shortcuts
                 if (isMainModifierDown && !modifiers.isShiftDown && !modifiers.isAltDown) {
+                    // The native page also receives Cmd+P on macOS without a usable AWT
+                    // accelerator event. Handle it here on every platform, like reload below.
+                    if (keyCode == com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_P &&
+                        usesNativePrintChord(ai.rever.boss.keymap.KeymapSettingsManager.currentSettings.value)
+                    ) {
+                        shortcutWindowId?.let {
+                            ai.rever.boss.window.AWTKeyboardInterceptor
+                                .cancelPendingNativePrint(it)
+                        }
+                        if (!browser.isClosed) {
+                            browser.mainFrame().ifPresent { it.executeJavaScript<Any>(PRINT_BROWSER_SCRIPT) }
+                        }
+                        return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response
+                            .suppress()
+                    }
+
                     // Reload is BROWSER-scoped and this callback already fires for the browser that
                     // received the key, so reload it directly instead of routing through the
                     // focused WINDOW. MenuActionsHandler.triggerReloadBrowser only emits an event

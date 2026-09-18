@@ -1,6 +1,7 @@
 package ai.rever.boss.components.window_panel.components.main_window_panels
 
 import ai.rever.boss.cache.loadHighQualityFavicon
+import ai.rever.boss.components.home.HomeNavigationButton
 import ai.rever.boss.components.model.TabDraggableComponent
 import ai.rever.boss.components.model.TabDropTarget
 import ai.rever.boss.components.overlays.ContextMenuItem
@@ -82,7 +83,8 @@ private const val FAVORITES_PER_ROW = 4
  * constantly, so they are recognised by their favicon long before a title would be read, and a
  * grid of them costs four rows' height instead of twenty. Titles live in the tooltip.
  *
- * **Owned by the bookmarks plugin, not the host.** BOSS has no bookmark store of its own -
+ * Home is a built-in first tile and remains available without the bookmarks plugin.
+ * Saved bookmarks are owned by the bookmarks plugin. BOSS has no bookmark store of its own -
  * `BookmarkAPIAccess` returns null for everything when that plugin is absent - so this section
  * offers to install it rather than rendering an empty grid that could never fill. That offer goes
  * through the same prompt the install-time dependency flow uses, so it arrives with a working
@@ -94,8 +96,8 @@ private const val FAVORITES_PER_ROW = 4
  * |---|---|---|
  * | absent | - | offer to install it |
  * | installed | no | say it is not running, and do NOT offer to install it again |
- * | installed | yes, nothing saved | say how to save one |
- * | installed | yes, saved | the tiles |
+ * | installed | yes, nothing saved | Home tile |
+ * | installed | yes, saved | Home followed by saved tiles |
  *
  * The middle row is not hypothetical: a plugin whose jar fails BinaryCompatibilityValidator is
  * installed, enabled, and disabled at load, so its API is unreachable while every "is it
@@ -167,6 +169,7 @@ fun TabBarFavorites(
     onOpen: (Bookmark) -> Unit,
     onRemove: (Bookmark) -> Unit,
     onInstallPlugin: () -> Unit,
+    homeSelected: Boolean = false,
     trailing: @Composable () -> Unit = {},
     /**
      * The drag system, so a tab can be dropped here to bookmark it.
@@ -219,6 +222,14 @@ fun TabBarFavorites(
                 },
         )
 
+        FavoritesGrid(
+            bookmarks = if (pluginInstalled == true && apiReachable) bookmarks else emptyList(),
+            onOpen = onOpen,
+            onRemove = onRemove,
+            homeSelected = homeSelected,
+            onHome = { windowId?.let { MenuActionsHandler.triggerGoHome(it) } },
+        )
+
         when {
             pluginInstalled == false -> {
                 FavoritesEmptyState(
@@ -240,21 +251,6 @@ fun TabBarFavorites(
                     onAction = {},
                 )
             }
-
-            bookmarks.isEmpty() -> {
-                FavoritesEmptyState(
-                    headline = "No Favorites yet",
-                    // Names the exact menu item, because a hint that only says the feature exists
-                    // leaves someone looking for a control that is two levels into a context menu.
-                    body = "Right-click a tab and choose Bookmark to keep it here",
-                    actionLabel = null,
-                    onAction = {},
-                )
-            }
-
-            else -> {
-                FavoritesGrid(bookmarks = bookmarks, onOpen = onOpen, onRemove = onRemove)
-            }
         }
     }
 }
@@ -265,16 +261,23 @@ private fun FavoritesGrid(
     bookmarks: List<Bookmark>,
     onOpen: (Bookmark) -> Unit,
     onRemove: (Bookmark) -> Unit,
+    homeSelected: Boolean,
+    onHome: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(FAVORITE_TILE_GAP)) {
-        bookmarks.chunked(FAVORITES_PER_ROW).forEach { row ->
+        // Home is a built-in favorite, independent of the optional bookmark store.
+        (listOf<Bookmark?>(null) + bookmarks).chunked(FAVORITES_PER_ROW).forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(FAVORITE_TILE_GAP)) {
                 row.forEach { bookmark ->
-                    FavoriteTile(
-                        bookmark = bookmark,
-                        onOpen = { onOpen(bookmark) },
-                        onRemove = { onRemove(bookmark) },
-                    )
+                    if (bookmark == null) {
+                        HomeNavigationButton(selected = homeSelected, onClick = onHome)
+                    } else {
+                        FavoriteTile(
+                            bookmark = bookmark,
+                            onOpen = { onOpen(bookmark) },
+                            onRemove = { onRemove(bookmark) },
+                        )
+                    }
                 }
             }
         }

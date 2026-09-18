@@ -807,7 +807,7 @@ restart. There is no Settings row and no per-site exclusion.
   bridge. Project paths routinely contain usernames, so this widens *when* a filesystem
   path reaches every installed plugin, not *what* - the same install-time-gating stance
   as the bus above applies. In particular, `boss://` links can originate outside BOSS and
-  every non-terminal deep link currently bypasses `DeepLinkOrigin` confirmation, so an
+  only a deep link that would start a terminal command consults `DeepLinkOrigin`, so an
   externally opened project link can trigger this broadcast without operator confirmation.
   It is recorded here because this paragraph is the canonical list of what a third-party
   plugin can observe.
@@ -961,11 +961,23 @@ URL produces the same input. Entry points therefore tag each link with a
   Also the default for an unstated origin, so a new caller that forgets to say
   gets the cautious handling.
 
-Only `boss://terminal?command=` consults it today: an `OPERATOR_CLI` command runs
-as before, anything else is shown to the operator for confirmation first (the
-`boss` shell shim converts to a `boss://` URL and opens it via the OS, so its
-`terminal -c` still works, with one confirmation). Other hosts - including
-`boss://plugin?id=…&action=…` - are unchanged.
+Two hosts consult it, and both for the same reason - each can type a command
+into a shell:
+
+- `boss://terminal?command=`: an `OPERATOR_CLI` command runs as before, anything
+  else is shown to the operator for confirmation first (the `boss` shell shim
+  converts to a `boss://` URL and opens it via the OS, so its `terminal -c` still
+  works, with one confirmation).
+- `boss://workspace?path=`: a Space's terminal tabs run their `initialCommand`
+  when it is applied, so an `EXTERNAL` load of a Space that carries any is held
+  (`spaceLoadDisposition`) and `SpaceLoadApprovalDialog` lists every command
+  before anything loads. A Space with no terminal commands, and the operator's
+  own `boss workspace`, load as before. The origin rides on
+  `CLICommand.LoadWorkspace` through the cold-start readiness queue to
+  `WorkspaceLoadEvent.requiresConfirmation`, because only the window parses the
+  file and so only it knows whether there is anything to confirm.
+
+Other hosts - including `boss://plugin?id=…&action=…` - are unchanged.
 
 **Single-instance channel**: `SingleInstanceManager` publishes
 `~/.boss/run/single-instance` (owner-only) with the channel endpoint and a token
@@ -2083,7 +2095,13 @@ the provider declares (or defaults to) `readOnly = true`. Known mutations defaul
 a 45-second timeout. Each queued prompt is delivered to exactly one window and
 window teardown denies its owned request. Session trust is process-wide and can
 be cleared using “Revoke MCP session trust” in the bottom bar; restore the bar if
-it is hidden. The approval dialog offers Always Allow and Always Deny, which save
+it is hidden. Session trust is keyed to the exact provider the operator approved (#815): a same-named
+tool from a different provider gets its own ASK instead of inheriting the grant - the tool-name squat.
+McpSessionTrust keeps the (providerId, toolName) identity the engine uses everywhere else: a name-only
+grant would hand an unvetted plugin the approval its sibling earned, and trusting less than the operator
+meant is the fail-closed direction. Revocation stays name-wide as the operator escape hatch:
+revokeSessionTrust(toolName, providerId = null) still clears every provider's trust for that name, and
+over-removing trust fails closed. The approval dialog offers Always Allow and Always Deny, which save
 a tool-wide rule for all agents and arguments across restarts. Saved rules can be
 reviewed and reset from “Persisted MCP policies” in the bottom bar; a reset removes
 the rule and clears that tool's session trust, so the tool uses the configured default
@@ -2210,8 +2228,10 @@ confirms the displayed counts and scope. These are explicit tool-name rules,
 not provider trust: future tools are not automatically granted access.
 `McpPolicyEngine.setSectionPolicies` writes the reviewed section atomically,
 checks every prior rule and tool/provider revocation stamp, refuses provider DENY
-and unreadable policy files, and invalidates queued grants/session trust after a
-successful save. Keep these checks when changing section UI; sequential calls to
+and unreadable policy files, and invalidates queued grants after a
+successful save, dropping session trust only for the (providerId, toolName)
+pairs the write changed (#815); other providers' same-named grants survive.
+Keep these checks when changing section UI; sequential calls to
 `setToolPolicy` would permit partial application and stale overwrites. Individual
 reset controls remain available below the sections.
 
@@ -2274,3 +2294,10 @@ inspects at most 4096 characters; full XML parsing still enforces its own limits
 Dev reload resolves staged JARs with manifest identity validation, matching startup.
 The scaffold wrapper source/hash is recorded in `resources/launcher/README.md`;
 update it with the pinned distribution checksum and scaffold validation together.
+
+### Dev #935 persistence and audit contracts
+
+- MCP ledger hashes detect retained-record edits and broken adjacency, not authenticity: no secret key is used, and complete rewrites or tail truncation are not detectable. Ledger files are owner-only. `boss mcp ledger verify|tail|search` reads local disk; it is not an ungated plugin MCP read surface.
+- `atomicWriteText` pins POSIX files to 0600. The separate `writeModeFile` writer for `env_vars` preserves existing permissions; that rule does not apply to all state writers.
+- Chromium's constructed GitHub backup URL uses the catalog checksum. Primary and backup must contain identical artifact bytes; checksum mismatch fails closed. See `docs/dev-935-release-checklist.md` for deployment checks.
+- Browser print is a direct-native exception to the usual AWT ownership rule after macOS manual verification. Pending AWT cancellation is best-effort, not a cross-thread exactly-once guarantee; do not copy this pattern for destructive actions.

@@ -652,7 +652,9 @@ object BrowserServiceImpl : BrowserService {
                 "Browser created via BrowserService",
                 mapOf(
                     "handleId" to handle.id,
-                    "url" to config.url,
+                    // Scheme, host and path only: a tab's URL can carry an OAuth code, a sign-in token or a
+                    // presigned signature under names maskUriParams does not list, and this line is INFO.
+                    "url" to LogSanitizer.describeUri(config.url),
                     "profile" to (managed?.profileName ?: "default"),
                     "activeBrowsers" to activeBrowsers.size,
                 ),
@@ -666,7 +668,7 @@ object BrowserServiceImpl : BrowserService {
                 logger.warn(
                     LogCategory.BROWSER,
                     "Discarding browser from a recycled engine - retrying",
-                    mapOf("url" to config.url),
+                    mapOf("url" to LogSanitizer.describeUri(config.url)),
                 )
             } else {
                 logger.error(LogCategory.BROWSER, "Failed to create browser", error = e)
@@ -1062,7 +1064,11 @@ object BrowserServiceImpl : BrowserService {
                 logger.warn(
                     LogCategory.BROWSER,
                     "Cookie rejected",
-                    mapOf("name" to c.name, "url" to LogSanitizer.maskUriParams(c.url), "error" to (e.message ?: "unknown")),
+                    mapOf(
+                        "name" to c.name,
+                        "url" to LogSanitizer.describeUri(c.url),
+                        "error" to (e.message ?: "unknown"),
+                    ),
                 )
             }
         }

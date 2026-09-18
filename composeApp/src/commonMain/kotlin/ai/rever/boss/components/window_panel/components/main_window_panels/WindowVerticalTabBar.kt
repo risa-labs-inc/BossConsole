@@ -1,7 +1,6 @@
 package ai.rever.boss.components.window_panel.components.main_window_panels
 
 import ai.rever.boss.components.bars.vertical.VerticalBar
-import ai.rever.boss.components.home.HomeNavigationButton
 import ai.rever.boss.components.home.isHomeTab
 import ai.rever.boss.components.model.TabDraggableComponent
 import ai.rever.boss.components.model.TabDropResult
@@ -564,15 +563,10 @@ private fun ExpandedGroups(
     zoomed: Boolean,
     onExitZoom: () -> Unit,
 ) {
-    val windowId = LocalWindowId.current
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        HomeNavigationButton(
-            selected = lead.state.tabs.isEmpty() || isHomeTab(lead.state.tabs.getOrNull(lead.state.activeIndex)),
-            onClick = { windowId?.let { MenuActionsHandler.triggerGoHome(it) } },
-        )
         WindowTabBarFavorites(
             lead = lead,
             onToggleCollapse = onToggleCollapse,
@@ -639,6 +633,7 @@ private fun WindowTabBarFavorites(
 ) {
     TabBarFavorites(
         bookmarks = lead.state.favorites,
+        homeSelected = lead.state.tabs.isEmpty() || isHomeTab(lead.state.tabs.getOrNull(lead.state.activeIndex)),
         pluginInstalled = lead.state.bookmarksInstalled,
         apiReachable = lead.state.bookmarksApiReachable,
         onOpen = lead.state.openFavorite,

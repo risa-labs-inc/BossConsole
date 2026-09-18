@@ -126,7 +126,7 @@ class ChromiumReleaseSourceTest {
     // ---- download candidates ----
 
     @Test
-    fun `supabase candidate comes first and carries sha256, github backup has none`() =
+    fun `supabase candidate comes first and github backup carries the same catalog sha256`() =
         runBlocking {
             val supabase =
                 FakeSource(
@@ -156,6 +156,35 @@ class ChromiumReleaseSourceTest {
                     "chromium-v9.1.2/boss-chromium-macos-arm64.zip",
                 candidates[1].url,
             )
+            // The backup fetches the same archive of the same version (one
+            // artifact, two sources), so the catalog's hash binds its bytes
+            // too; installFromCandidates discards a backup body that mismatches
+            // it instead of extracting unverified.
+            assertEquals("d17b12664e1b", candidates[1].sha256)
+        }
+
+    @Test
+    fun `catalog row without a hash leaves the backup candidate unverified`() =
+        runBlocking {
+            val supabase =
+                FakeSource(
+                    "supabase",
+                    listOf(
+                        release(
+                            "v9.1.2",
+                            // A row published before the hash column has
+                            // nothing to verify either source against, so the
+                            // backup stays unverified — current behavior, pinned
+                            // here.
+                            asset("boss-chromium-linux-x64.zip", "https://cdn/linux-x64.zip"),
+                        ),
+                    ),
+                )
+            val candidates =
+                ChromiumReleaseResolver(supabase, FakeSource("github"))
+                    .downloadCandidates("9.1.2", "boss-chromium-linux-x64.zip")
+
+            assertNull(candidates[0].sha256)
             assertNull(candidates[1].sha256)
         }
 
@@ -176,6 +205,11 @@ class ChromiumReleaseSourceTest {
                 assertEquals(1, candidates.size)
                 assertEquals("github", candidates[0].sourceName)
                 assertEquals(expectUrl, candidates[0].url)
+                // With no catalog row there is no hash to verify the backup
+                // against, so it stays unverified — current behavior, pinned
+                // (refusing would leave no way to install an engine the
+                // catalog cannot describe).
+                assertNull(candidates[0].sha256)
             }
         }
 

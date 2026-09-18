@@ -60,7 +60,7 @@ object ActiveBrowserRegistry {
     /**
      * Windows where a browser is the surface the user is actually in.
      *
-     * The browser menu items (Back, Forward, Developer Tools, Actual Size, Zoom In, Zoom Out, Reload)
+     * The browser menu items (Back, Forward, Developer Tools, Actual Size, Zoom In, Zoom Out, Reload, Print)
      * must grey out where the chord
      * should not act, and not merely no-op: a Compose MenuBar accelerator fires from anywhere in
      * the window regardless of the binding's ShortcutContext, so an always-enabled item silently
