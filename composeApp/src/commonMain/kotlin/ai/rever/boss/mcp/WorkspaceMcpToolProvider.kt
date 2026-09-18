@@ -607,10 +607,12 @@ object WorkspaceMcpToolProvider : McpToolProvider {
         // be re-entered, so prune entries for windows that no longer exist before growing it.
         pruneClosedWindows()
         val runningIds = workspaceManager.windowWorkspaces.value[targetWindowId].orEmpty()
-        val (space, reused) = resolveBootstrapSpace(targetWindowId, projectPath, runningIds)
+        val shownId = splitViewState.currentWorkspaceId
+        val (space, reused) = resolveBootstrapSpace(targetWindowId, projectPath, runningIds, shownId)
+        val note = skippedStartupCommandsNote(projectPath, shownId)
 
         // Fast path: the window already shows this Space, so the live terminal is left alone.
-        if (splitViewState.currentWorkspaceId == space.id) {
+        if (shownId == space.id) {
             return McpToolResult(
                 buildPathResult(
                     reused = true,
@@ -618,6 +620,7 @@ object WorkspaceMcpToolProvider : McpToolProvider {
                     state = splitViewState,
                     space = space,
                     projectPath = projectPath,
+                    note = note,
                 ),
             )
         }
@@ -641,8 +644,27 @@ object WorkspaceMcpToolProvider : McpToolProvider {
                 state = splitViewState,
                 space = space,
                 projectPath = projectPath,
+                note = note,
             ),
         )
+    }
+
+    /**
+     * The sentence a path-mode reply carries when a saved Space for [projectPath] exists but was
+     * not re-entered because its layout runs terminal startup commands (see [matchExistingSpace]),
+     * so the agent learns why it got a fresh Space rather than the user's. Null when nothing was
+     * skipped; the Space on screen is never "skipped", it is returned without being applied.
+     */
+    private fun skippedStartupCommandsNote(
+        projectPath: String,
+        shownId: String?,
+    ): String? {
+        val skipped =
+            workspaceManager.workspaces.value.firstOrNull {
+                it.projectPath == projectPath && it.id != shownId && it.layout.hasInitialCommands()
+            } ?: return null
+        return "Saved Space '${skipped.name}' (${skipped.id}) for this path runs terminal startup commands and " +
+            "was not re-entered; open it through the workspace UI, or invoke open_terminal with each command."
     }
 
     /**
@@ -654,6 +676,7 @@ object WorkspaceMcpToolProvider : McpToolProvider {
         windowId: String,
         projectPath: String,
         runningIds: Set<String>,
+        shownIdInWindow: String?,
     ): Pair<LayoutWorkspace, Boolean> {
         val existing =
             matchExistingSpace(
@@ -661,6 +684,7 @@ object WorkspaceMcpToolProvider : McpToolProvider {
                 savedSpaces = workspaceManager.workspaces.value,
                 runningIdsInWindow = runningIds,
                 projectPath = projectPath,
+                shownIdInWindow = shownIdInWindow,
             )
         return Pair(
             existing ?: buildBootstrapSpace(projectPath).also { fresh ->
@@ -714,12 +738,14 @@ object WorkspaceMcpToolProvider : McpToolProvider {
      * saved id (BOOTSTRAP_PANEL_ID) does not exist on screen - returning it would hand a
      * caller an id `run_in_panel` cannot address.
      */
+    @Suppress("LongParameterList") // One reply, one field per fact the caller needs; see the KDoc.
     private suspend fun buildPathResult(
         reused: Boolean,
         windowId: String,
         state: SplitViewState,
         space: LayoutWorkspace,
         projectPath: String,
+        note: String? = null,
     ): String {
         val livePanelId =
             withContext(Dispatchers.Main) { state.activePanelIdForWorkspace(space.id) } ?: "main"
@@ -731,6 +757,9 @@ object WorkspaceMcpToolProvider : McpToolProvider {
             put("projectPath", projectPath)
             put("windowId", windowId)
             put("panelId", livePanelId)
+            if (note != null) {
+                put("note", note)
+            }
         }.toString()
     }
 
@@ -1137,17 +1166,27 @@ internal fun buildBootstrapSpace(canonicalPath: String): LayoutWorkspace {
  *    one Space id can be running in two windows until one of them switches away;
  * 4. a Space this tool created earlier even though it is no longer running - reusing the object
  *    keeps its id stable instead of minting a second Space for the same directory.
+ *
+ * A saved Space whose layout carries terminal startup commands is left out of rules 2 and 3:
+ * re-entering it applies the layout, and applying the layout runs the commands, which is exactly
+ * what the id mode refuses to do from an MCP call (the commands were never in the approved
+ * arguments; BossConsole#920). The one exception is the Space the window is showing
+ * ([shownIdInWindow]): the caller returns it as reused without applying anything, so nothing runs.
+ * A remembered bootstrap Space never carries commands ([buildBootstrapSpace]).
  */
 internal fun matchExistingSpace(
     remembered: LayoutWorkspace?,
     savedSpaces: List<LayoutWorkspace>,
     runningIdsInWindow: Set<String>,
     projectPath: String,
-): LayoutWorkspace? =
-    remembered?.takeIf { it.id in runningIdsInWindow }
-        ?: savedSpaces.firstOrNull { it.id in runningIdsInWindow && it.projectPath == projectPath }
-        ?: savedSpaces.firstOrNull { it.projectPath == projectPath }
+    shownIdInWindow: String? = null,
+): LayoutWorkspace? {
+    val reenterable = savedSpaces.filter { it.id == shownIdInWindow || !it.layout.hasInitialCommands() }
+    return remembered?.takeIf { it.id in runningIdsInWindow }
+        ?: reenterable.firstOrNull { it.id in runningIdsInWindow && it.projectPath == projectPath }
+        ?: reenterable.firstOrNull { it.projectPath == projectPath }
         ?: remembered
+}
 
 /** IDs are names in the workspace store, never caller-selected filesystem paths. */
 internal fun isSafeWorkspaceId(id: String): Boolean =

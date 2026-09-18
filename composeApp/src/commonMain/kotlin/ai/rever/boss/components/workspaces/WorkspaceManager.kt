@@ -584,6 +584,11 @@ class WorkspaceManager {
         _workspaces.value = workspaces
     }
 
+    /** The inverse of [registerWorkspace]: drop the list entry for [workspaceId], touching no file. */
+    internal fun unregisterWorkspace(workspaceId: String) {
+        _workspaces.value = _workspaces.value.filterNot { it.id == workspaceId }
+    }
+
     /**
      * Set callback for when a workspace is deleted
      */
