@@ -59,7 +59,14 @@ class WorkspaceMcpToolProviderTest {
         WorkspaceMcpToolProvider.fileManagerProvider = { fileManager }
         WorkspaceMcpToolProvider.windowCreator = {
             windowCreatorCalls++
-            "test-window-window-1"
+            // A real window registers its SplitViewState as it composes; the tools await that.
+            "test-window-window-1".also { id ->
+                if (!SplitViewStateRegistry.isRegistered(id)) {
+                    val state = SplitViewState(stubTabRegistry, id)
+                    createdSplitViewStates.add(state)
+                    SplitViewStateRegistry.register(id, state)
+                }
+            }
         }
         windowCreatorCalls = 0
         WorkspaceMcpToolProvider.splitViewStateResolver = { null }
@@ -285,6 +292,33 @@ class WorkspaceMcpToolProviderTest {
             val loaded = fileManager.loadWorkspace(WorkspaceFileManagerCommon.fileNameForId("custom-auto-ws"))
             assertNotNull(loaded)
             assertEquals("Auto Created", loaded.name)
+        }
+
+    @Test
+    fun `open_workspace is an error, not a silent success, when the window never registers its UI state`() =
+        runBlocking {
+            // A window creator that returns an id nothing ever registers: the cold-start shape
+            // where the window failed to come up within the wait.
+            WorkspaceMcpToolProvider.windowCreator = { "never-registers" }
+            val core = createTestCore()
+
+            val result = core.invoke("open_workspace", """{"workspaceId":"${PredefinedWorkspaces.DUAL_TERMINAL_ID}"}""")
+            assertTrue(result.isError, "nothing was applied, so the call must not report success: ${result.text}")
+            assertTrue(result.text.contains("did not register its UI state"), result.text)
+            assertTrue(result.text.contains(PredefinedWorkspaces.DUAL_TERMINAL_ID), result.text)
+            assertFalse(result.text.contains("file was saved"), "nothing was created for a shipped layout")
+        }
+
+    @Test
+    fun `open_workspace with createIfAbsent says the file was saved when the window never registers`() =
+        runBlocking {
+            WorkspaceMcpToolProvider.windowCreator = { "never-registers" }
+            val core = createTestCore()
+
+            val result = core.invoke("open_workspace", """{"workspaceId":"saved-not-opened","createIfAbsent":true}""")
+            assertTrue(result.isError, result.text)
+            assertTrue(result.text.contains("The new workspace file was saved"), result.text)
+            assertNotNull(fileManager.loadWorkspace(WorkspaceFileManagerCommon.fileNameForId("saved-not-opened")))
         }
 
     @Test
@@ -915,11 +949,13 @@ class WorkspaceMcpToolProviderTest {
             assertFalse(createResult.isError, createResult.text)
             assertNotNull(fileManager.loadWorkspace(WorkspaceFileManagerCommon.fileNameForId("disposable-env")))
 
-            // Nothing is released and nothing is deleted, so the tool says so instead of
-            // reporting a success that would leave the agent thinking the space is gone.
+            // The open above applied the Space to the window, so closing releases it there; the
+            // reply says exactly that and that no file was deleted.
             val closeResult = core.invoke("close_workspace", """{"workspaceId":"disposable-env"}""")
-            assertTrue(closeResult.isError, closeResult.text)
-            assertTrue(closeResult.text.contains("nothing was closed"), closeResult.text)
+            assertFalse(closeResult.isError, closeResult.text)
+            val closeJson = Json.parseToJsonElement(closeResult.text).jsonObject
+            assertTrue(closeJson["releasedHere"]?.jsonPrimitive?.booleanOrNull == true, closeResult.text)
+            assertTrue(closeJson["fileDeleted"]?.jsonPrimitive?.booleanOrNull == false, closeResult.text)
 
             // A user's saved Space whose id merely contains "disposable" survives.
             assertNotNull(fileManager.loadWorkspace(WorkspaceFileManagerCommon.fileNameForId("disposable-env")))

@@ -452,11 +452,10 @@ object WorkspaceMcpToolProvider : McpToolProvider {
                 is TargetWindowResolution.Failure -> return McpToolResult(targetResolution.errorMessage, isError = true)
             }
 
-        val splitViewState = awaitSplitViewState(targetWindowId)
-
         // Locate or create workspace
         var workspace: LayoutWorkspace? = null
         var isShippedTemplate = false
+        var persisted = false
 
         if (!workspacePath.isNullOrBlank()) {
             val file = File(workspacePath)
@@ -504,6 +503,7 @@ object WorkspaceMcpToolProvider : McpToolProvider {
                 workspace = createDefaultWorkspace(newId, wsName, rootPath, openTerminal = openTerminal)
                 // Persist
                 getFileManager().saveWorkspace(workspace)
+                persisted = true
             } else {
                 return McpToolResult(
                     "Workspace '$workspaceId' not found. Specify createIfAbsent=true to create it.",
@@ -522,8 +522,21 @@ object WorkspaceMcpToolProvider : McpToolProvider {
             )
         }
 
+        // Awaited only once there is a workspace to open, so a wrong id is reported at once rather
+        // than after the UI-state wait. A window that never registers is an error, as it is in
+        // path mode: nothing below can run without it, and a "success" that applied nothing would
+        // send the agent on to open_terminal in a window that shows no Space.
+        val splitViewState =
+            awaitSplitViewState(targetWindowId)
+                ?: return McpToolResult(
+                    "Window '$targetWindowId' did not register its UI state in time, so workspace " +
+                        "'${workspace.id}' was not opened; retry." +
+                        if (persisted) " The new workspace file was saved." else "",
+                    isError = true,
+                )
+
         // Idempotency: Reopening an existing workspace does not duplicate it or disturb unrelated windows
-        if (splitViewState != null && splitViewState.currentWorkspaceId == workspace.id) {
+        if (splitViewState.currentWorkspaceId == workspace.id) {
             logger.debug(
                 LogCategory.WORKSPACE,
                 "Workspace already active in target window",
@@ -547,17 +560,21 @@ object WorkspaceMcpToolProvider : McpToolProvider {
         // WorkspaceEventBus collector re-applies every load event aimed at it, so the
         // provider - which is itself the actor here - must not emit one; doing both would
         // apply the layout twice and tear down what the first apply just built.
-        if (splitViewState != null) {
-            switchWindowToSpace(
-                splitViewState,
-                WindowProjectStateRegistry.getOrCreate(targetWindowId),
-                workspace,
-            )
-        }
+        switchWindowToSpace(
+            splitViewState,
+            WindowProjectStateRegistry.getOrCreate(targetWindowId),
+            workspace,
+        )
 
         var terminalInfo: JsonObject? = null
         if (openTerminal) {
-            terminalInfo = doOpenTerminal(targetWindowId, workspace.id, workspace.projectPath, command = null)
+            terminalInfo =
+                doOpenTerminal(targetWindowId, workspace.id, workspace.projectPath, command = null)
+                    ?: return McpToolResult(
+                        "Workspace '${workspace.id}' is open in window '$targetWindowId', but the terminal " +
+                            "tab it asked for could not be opened; call open_terminal to retry.",
+                        isError = true,
+                    )
         }
 
         val resultObj =
