@@ -133,6 +133,16 @@ class McpPolicyEngine(
     ): Long = (revocations[toolName] ?: 0L) + (providerId?.let { providerRevocations[it] } ?: 0L)
 
     /**
+     * The reset counter for a provider rule's own subject.
+     *
+     * [revocationVersion] sums a tool's counter with its provider's, which is right for a tool
+     * invocation but has no tool to name when the subject IS a provider. A caller that captured a
+     * provider stamp before suspending (a plugin pack between approval and its detached write)
+     * needs exactly this number to tell whether the operator reset that provider in between.
+     */
+    internal fun providerRevocationVersion(providerId: String): Long = providerRevocations[providerId] ?: 0L
+
+    /**
      * Final authorization boundary. Session grants and operator resets use the same lock.
      *
      * [providerId] is the tool's contributing provider, so the DENY recheck evaluates the
@@ -476,6 +486,45 @@ class McpPolicyEngine(
                 return@synchronized false
             }
             applyConfig(
+                key = providerId,
+                logKey = "provider",
+                updated = _config.value.copy(providerRules = _config.value.providerRules + (providerId to action)),
+                successMessage = "Updated provider policy: ${action.name}",
+                failureMessage = "Failed to persist MCP provider policy update",
+                faultFor = { k, e -> McpPolicyFault.ProviderPolicyPersistFailed(k, e) },
+            )
+        }
+
+    /**
+     * [setToolPolicyIfAbsent] for a provider rule: write [action] for [providerId] only while that
+     * provider has no rule of its own, checked under the same [lock] the write takes.
+     *
+     * For callers that did not come through an approval prompt for this provider and so must never
+     * replace a choice the operator made, such as a plugin pack. Any existing provider rule, in
+     * either direction, refuses the write. Tool-scoped rules need no check here: they already
+     * outrank provider rules in [policyFor], so adding a provider rule cannot loosen one.
+     *
+     * [expectedRevocation] is the caller's [providerRevocationVersion] stamp, captured before it
+     * suspended. A write whose stamp is stale is refused: the operator reset this provider after
+     * the work was authorized, and a reset removes the rule, so the absent-rule check alone would
+     * wave the detached write straight through. Null for callers that cannot have raced a reset.
+     */
+    fun setProviderPolicyIfAbsent(
+        providerId: String,
+        action: McpPolicyAction,
+        expectedRevocation: Long? = null,
+    ): McpProactivePolicyOutcome =
+        synchronized(lock) {
+            if (_fault.value is McpPolicyFault.PersistedPolicyUnreadable) {
+                return@synchronized McpProactivePolicyOutcome.PolicyUnreadable
+            }
+            if (expectedRevocation != null && providerRevocationVersion(providerId) != expectedRevocation) {
+                return@synchronized McpProactivePolicyOutcome.Refused
+            }
+            if (providerId in _config.value.providerRules) {
+                return@synchronized McpProactivePolicyOutcome.Refused
+            }
+            writeConfig(
                 key = providerId,
                 logKey = "provider",
                 updated = _config.value.copy(providerRules = _config.value.providerRules + (providerId to action)),

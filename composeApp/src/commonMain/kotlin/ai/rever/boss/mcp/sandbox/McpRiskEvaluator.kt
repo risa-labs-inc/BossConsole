@@ -69,6 +69,14 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
                 )
             }
 
+            // Installs code and writes durable MCP policy in one call
+            normalizedName in POLICY_WRITING_TOOLS -> {
+                McpRiskAssessment(
+                    level = McpRiskLevel.HIGH,
+                    reason = "Installs plugins and writes durable MCP policy via '$toolName'",
+                )
+            }
+
             // Read-only / safe tools
             normalizedName in READ_ONLY_TOOLS -> {
                 McpRiskAssessment(
@@ -181,6 +189,24 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
                 "file_delete",
                 "file_write",
                 "project_replace",
+            )
+
+        /**
+         * Tools that install executable code and write durable policy in one approved call.
+         *
+         * HIGH rather than the unclassified default of LOW, and the level is doing real work
+         * here: the gate itself is unchanged (`pack_apply` is mutating by name and by
+         * declaration, so `policyFor` already reaches `defaultMutatingAction`), but the host
+         * requires Review-then-Confirm before a HIGH/CRITICAL tool can be granted a *durable*
+         * ALLOW. Left at LOW, one "Always Allow" - or one "Trust This Plugin" on the pack
+         * plugin - hands any agent the operator's own policy authority, unattended and for
+         * good: `pack_apply` installs plugins from the network and writes ALLOW rules for
+         * arbitrary tools and providers. The parser's pack-tool guard stops a pack from
+         * bootstrapping that; it cannot stop the one-click grant that reaches it directly.
+         */
+        private val POLICY_WRITING_TOOLS =
+            setOf(
+                "pack_apply",
             )
 
         private val READ_ONLY_TOOLS =

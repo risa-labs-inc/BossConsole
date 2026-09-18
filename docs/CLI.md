@@ -26,6 +26,7 @@ You can install or update the CLI symlinks inside BossConsole via **Toolbox → 
 | `boss status` | Checks running BossConsole health and status | `boss status --json` |
 | `boss doctor` | Reports health problems with suggested next steps (exit `2` when degraded) | `boss doctor --json` |
 | `boss mcp <action>` | Discovers and invokes MCP tools | `boss mcp list` |
+| `boss pack <action>` | Plans and applies plugin packs (exit `2` when an apply is partial) | `boss pack plan team.json` |
 | `boss plugin <action>` | Developer CLI: scaffold, validate, and link plugins | `boss plugin init my-tool` |
 | `boss completion <shell>` | Generates shell tab-completion scripts | `boss completion bash > ~/.boss-complete.sh` |
 
@@ -248,6 +249,35 @@ boss plugin link . --json
 ```
 
 ---
+
+## Plugin Packs (`boss pack`)
+
+A plugin pack names the plugins a desk needs and the MCP policy rules that make their tools usable. `boss pack` is a thin client over three host MCP tools, `pack_plan`, `pack_apply` and `pack_status`, so an agent can call the same tools directly and is governed the same way.
+
+```json
+{
+  "pack": "team-backend",
+  "plugins": ["ai.rever.boss.plugin.dynamic.terminaltab", "ai.rever.boss.plugin.dynamic.codebase@1.4.2?"],
+  "allow_tools": ["run_tests"],
+  "ask_providers": ["ai.rever.boss.plugin.dynamic.codebase"]
+}
+```
+
+A plugin entry is `<pluginId>`, `<pluginId>@<exact version>`, and a trailing `?` marks it optional. Rule lists are `allow_tools`, `ask_tools`, `deny_tools`, `allow_providers`, `ask_providers` and `deny_providers`.
+
+```bash
+boss pack plan team.json          # what would change; changes nothing
+boss pack apply team.json --wait  # apply, then report each row
+boss pack status [<job>]          # progress and result of an apply
+```
+
+- **Approval.** `pack_apply` is a mutating tool, so under the default policy BOSS holds it for the operator in the MCP approval dialog. The dialog shows the pack itself: every plugin and every rule. A pack too large to be shown in full is refused. `pack_apply` is classified HIGH risk, because one call installs executable code and writes durable policy, so granting it a *persistent* allow takes the host's Review-then-Confirm step rather than a single click.
+- **Consent covers the dependencies.** `pack_plan` resolves each install's full transitive closure and lists the extra plugin ids in `alsoInstalls`, so approving a pack that names one plugin cannot quietly install several. When the walk could not see the whole closure the row says so (`closureComplete: false`, with `unresolved`, `cyclic` or `truncated`). `pack_apply` installs the closure its own fresh plan resolved and reports which dependencies arrived; it never re-walks the store at install time.
+- **Precedence.** A pack only adds a rule where none exists. It never replaces an operator rule, in either direction, and it cannot set a rule for the pack tools themselves. While the policy file is unreadable, nothing is written. A rule whose tool belongs to a DENYed provider is reported as ineffective rather than added, because writing it would not make the tool callable.
+- **Resets win.** The reset counter for every rule subject is captured when the pack is planned and checked again when the rule is written. If the operator resets that tool or provider between approving the pack and the job running, the write is refused and reported, rather than reinstating what they just cleared.
+- **Installs.** Plugins come from the plugin store through the installers the host already uses, with their manifest and signature checks. A plugin with no version named installs the store's current release together with its dependencies; a pinned version installs that release alone.
+- **Re-applying** does only what the previous apply left undone.
+- **Exit codes** for `apply --wait`: `0` applied or already satisfied, `2` partial, `1` failed or not run.
 
 ## Process Exit Codes & Stream Guarantees
 

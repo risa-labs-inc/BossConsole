@@ -346,6 +346,8 @@ fun main(args: Array<String>) {
     PasskeyPlatformInit.initialize()
     SettingsSearchIndex.registerWithGlobalSearch()
     PluginStoreSetup.initialize()
+    ai.rever.boss.plugin.packs.PluginPacks
+        .registerMcpTools()
 
     startupScope.launch {
         AppUpdateRealtimeService.instance.apply {
