@@ -17,8 +17,13 @@ import java.util.concurrent.ConcurrentHashMap
  * this service handles routing and state management for multi-window
  * browser coordination over IPC.
  */
+@Suppress("TooManyFunctions")
 class BrowserServiceImpl : BrowserServiceGrpcKt.BrowserServiceCoroutineImplBase() {
     private val logger = LoggerFactory.getLogger(BrowserServiceImpl::class.java)
+
+    private val uriUserinfoPattern = Regex("""(?i)\b([a-z][a-z0-9+.-]*://)[^/\s@]+@""")
+
+    internal fun redactUrlUserInfo(text: String): String = text.replace(uriUserinfoPattern, "$1[REDACTED]@")
 
     /** Per-window page state snapshot. */
     private data class PageState(
@@ -33,15 +38,66 @@ class BrowserServiceImpl : BrowserServiceGrpcKt.BrowserServiceCoroutineImplBase(
     private val windowStates = ConcurrentHashMap<String, PageState>()
     private val navigationEvents = MutableSharedFlow<BrowserNavigationEvent>(extraBufferCapacity = 128)
 
+    private fun isProhibitedScheme(url: String): Boolean {
+        val lower = url.lowercase()
+        return lower.startsWith("javascript:") ||
+            lower.startsWith("data:") ||
+            lower.startsWith("vbscript:")
+    }
+
+    private fun validateUrl(
+        windowId: String,
+        url: String,
+        safeUrlForLogging: String,
+    ): String? =
+        when {
+            url.isBlank() -> {
+                "URL must not be blank"
+            }
+
+            isProhibitedScheme(url) -> {
+                logger.warn(
+                    "Refusing navigation to prohibited scheme: windowId={}, url={}",
+                    windowId,
+                    safeUrlForLogging,
+                )
+                "Prohibited URL scheme: javascript: and data: URLs are not allowed"
+            }
+
+            else -> {
+                null
+            }
+        }
+
+    private fun emitNavEvent(
+        windowId: String,
+        url: String,
+        type: NavigationEventType,
+        timestamp: Long,
+    ) {
+        navigationEvents.tryEmit(
+            BrowserNavigationEvent
+                .newBuilder()
+                .setWindowId(windowId)
+                .setUrl(url)
+                .setTitle(url)
+                .setEventType(type)
+                .setTimestamp(timestamp)
+                .build(),
+        )
+    }
+
     override suspend fun navigate(request: NavigateBrowserRequest): NavigateBrowserResponse {
         val url = request.url.trim()
-        logger.info("navigate: windowId={}, url={}", request.windowId, url)
+        val safeUrlForLogging = redactUrlUserInfo(url)
+        logger.info("navigate: windowId={}, url={}", request.windowId, safeUrlForLogging)
 
-        if (url.isBlank()) {
+        val error = validateUrl(request.windowId, url, safeUrlForLogging)
+        if (error != null) {
             return NavigateBrowserResponse
                 .newBuilder()
                 .setSuccess(false)
-                .setErrorMessage("URL must not be blank")
+                .setErrorMessage(error)
                 .build()
         }
 
@@ -52,30 +108,13 @@ class BrowserServiceImpl : BrowserServiceGrpcKt.BrowserServiceCoroutineImplBase(
                 url = url,
                 title = url,
                 canGoBack = prev != null,
+                isLoading = false,
             )
         windowStates[request.windowId] = newState
 
         val ts = System.currentTimeMillis()
-        navigationEvents.tryEmit(
-            BrowserNavigationEvent
-                .newBuilder()
-                .setWindowId(request.windowId)
-                .setUrl(url)
-                .setTitle(url)
-                .setEventType(NavigationEventType.NAVIGATION_EVENT_TYPE_STARTED)
-                .setTimestamp(ts)
-                .build(),
-        )
-        navigationEvents.tryEmit(
-            BrowserNavigationEvent
-                .newBuilder()
-                .setWindowId(request.windowId)
-                .setUrl(url)
-                .setTitle(url)
-                .setEventType(NavigationEventType.NAVIGATION_EVENT_TYPE_COMPLETED)
-                .setTimestamp(ts + 1)
-                .build(),
-        )
+        emitNavEvent(request.windowId, url, NavigationEventType.NAVIGATION_EVENT_TYPE_STARTED, ts)
+        emitNavEvent(request.windowId, url, NavigationEventType.NAVIGATION_EVENT_TYPE_COMPLETED, ts + 1)
 
         return NavigateBrowserResponse
             .newBuilder()
@@ -101,7 +140,7 @@ class BrowserServiceImpl : BrowserServiceGrpcKt.BrowserServiceCoroutineImplBase(
         }
 
     override suspend fun getFavicon(request: GetFaviconRequest): GetFaviconResponse {
-        logger.debug("getFavicon: url={}", request.url)
+        logger.debug("getFavicon: url={}", redactUrlUserInfo(request.url))
         return GetFaviconResponse
             .newBuilder()
             .setFaviconBytes(ByteString.EMPTY)
@@ -155,17 +194,10 @@ class BrowserServiceImpl : BrowserServiceGrpcKt.BrowserServiceCoroutineImplBase(
         logger.debug("reload")
         val state = windowStates.values.firstOrNull()
         if (state != null) {
-            windowStates[state.windowId] = state.copy(isLoading = true)
-            navigationEvents.tryEmit(
-                BrowserNavigationEvent
-                    .newBuilder()
-                    .setWindowId(state.windowId)
-                    .setUrl(state.url)
-                    .setTitle(state.title)
-                    .setEventType(NavigationEventType.NAVIGATION_EVENT_TYPE_STARTED)
-                    .setTimestamp(System.currentTimeMillis())
-                    .build(),
-            )
+            windowStates[state.windowId] = state.copy(isLoading = false)
+            val ts = System.currentTimeMillis()
+            emitNavEvent(state.windowId, state.url, NavigationEventType.NAVIGATION_EVENT_TYPE_STARTED, ts)
+            emitNavEvent(state.windowId, state.url, NavigationEventType.NAVIGATION_EVENT_TYPE_COMPLETED, ts + 1)
         }
         return Empty.getDefaultInstance()
     }
