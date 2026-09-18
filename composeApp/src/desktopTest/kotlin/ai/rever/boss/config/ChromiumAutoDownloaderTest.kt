@@ -277,4 +277,79 @@ class ChromiumAutoDownloaderTest {
             assertEquals("network down", reportedError)
             assertFalse(File(target, "version.txt").exists())
         }
+
+    // ---- atomic install: the previous engine survives a failed reinstall ----
+
+    @Test
+    fun `a failed extraction restores the previous engine instead of leaving none`() =
+        runBlocking {
+            makeExistingTarget("9.1.2")
+
+            val result =
+                ChromiumAutoDownloader.installFromCandidates(
+                    candidates = listOf(candidate("supabase", "https://supabase/a.zip")),
+                    version = "9.2.0",
+                    targetDir = target.toPath(),
+                    staged = false,
+                    onProgress = {},
+                    fetch = { _, dest -> dest.toFile().writeText("partial-zip") },
+                    extract = { _, _ -> throw IllegalStateException("disk full mid-extract") },
+                )
+
+            assertTrue(result.isFailure)
+            // The old engine is intact at the original path - not deleted up front.
+            assertEquals("old-engine", File(target, "payload.bin").readText())
+            assertEquals("9.1.2", File(target, "version.txt").readText())
+            // No leftover swap siblings from the failed attempt.
+            assertFalse(backup.exists())
+            assertFalse(File(root, "boss-chromium.new").exists())
+        }
+
+    @Test
+    fun `a failed verification rolls the swap back to the previous engine`() =
+        runBlocking {
+            makeExistingTarget("9.1.2")
+
+            val result =
+                ChromiumAutoDownloader.installFromCandidates(
+                    candidates = listOf(candidate("supabase", "https://supabase/a.zip")),
+                    version = "9.2.0",
+                    targetDir = target.toPath(),
+                    staged = false,
+                    onProgress = {},
+                    fetch = { _, dest -> dest.toFile().writeText("zip-bytes") },
+                    // "Extract" successfully but omit executable.name - the
+                    // corrupted-archive verification must trigger.
+                    extract = { _, dest -> dest.toFile().mkdirs() },
+                )
+
+            assertTrue(result.isFailure)
+            assertEquals("old-engine", File(target, "payload.bin").readText())
+            assertEquals("9.1.2", File(target, "version.txt").readText())
+            assertFalse(backup.exists())
+        }
+
+    @Test
+    fun `a successful reinstall promotes the new engine and removes the backup`() =
+        runBlocking {
+            makeExistingTarget("9.1.2")
+
+            val result =
+                ChromiumAutoDownloader.installFromCandidates(
+                    candidates = listOf(candidate("supabase", "https://supabase/a.zip")),
+                    version = "9.2.0",
+                    targetDir = target.toPath(),
+                    staged = false,
+                    onProgress = {},
+                    fetch = { _, dest -> dest.toFile().writeText("zip-bytes") },
+                    extract = fakeExtract,
+                )
+
+            assertTrue(result.isSuccess)
+            assertEquals("9.2.0", File(target, "version.txt").readText())
+            // Old engine fully gone, no stray swap siblings.
+            assertEquals("BOSS", File(target, "executable.name").readText())
+            assertFalse(backup.exists())
+            assertFalse(File(root, "boss-chromium.new").exists())
+        }
 }
