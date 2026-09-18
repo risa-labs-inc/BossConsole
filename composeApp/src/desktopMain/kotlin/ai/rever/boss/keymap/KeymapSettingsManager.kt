@@ -8,9 +8,11 @@ import ai.rever.boss.keymap.presets.KeymapPresets
 import ai.rever.boss.keymap.presets.KeymapPresets.claimsChord
 import ai.rever.boss.keymap.presets.KeymapPresets.withoutChordsTakenBy
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.ComponentLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.quarantineCorruptFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -55,39 +57,56 @@ actual object KeymapSettingsManager {
      */
     private fun loadSettingsSync() {
         try {
-            if (settingsFile.exists()) {
-                val content = settingsFile.readText()
-                val loaded = json.decodeFromString<KeymapSettings>(content)
-                logger.debug(LogCategory.SYSTEM, "Loaded keymap settings", mapOf("path" to settingsFile.absolutePath))
+            when (val read = readKeymapFile(settingsFile, json)) {
+                is KeymapFileRead.Loaded -> {
+                    val loaded = read.settings
+                    val path = mapOf("path" to settingsFile.absolutePath)
+                    logger.debug(LogCategory.SYSTEM, "Loaded keymap settings", path)
 
-                // Apply migration to add any new actions from preset
-                val migrated = migrateSettings(loaded)
+                    // Apply migration to add any new actions from preset
+                    val migrated = migrateSettings(loaded)
 
-                // Save if migration made changes
-                if (migrated != loaded) {
+                    // Save if migration made changes
+                    if (migrated != loaded) {
+                        try {
+                            settingsFile.atomicWriteText(json.encodeToString(KeymapSettings.serializer(), migrated))
+                            logger.debug(LogCategory.SYSTEM, "Migrated keymap settings saved")
+                        } catch (e: Exception) {
+                            logger.warn(LogCategory.SYSTEM, "Could not save migrated keymap settings", error = e)
+                        }
+                    }
+
+                    _currentSettings.value = migrated
+                }
+
+                KeymapFileRead.Missing -> {
+                    // First run - create default keymap file
+                    logger.debug(LogCategory.SYSTEM, "No keymap settings file found, creating default")
+                    val defaultSettings = KeymapPresets.getBOSSDefault()
+                    _currentSettings.value = defaultSettings
+
+                    // Save default settings to file
                     try {
-                        val migratedContent = json.encodeToString(KeymapSettings.serializer(), migrated)
-                        settingsFile.writeText(migratedContent)
-                        logger.debug(LogCategory.SYSTEM, "Migrated keymap settings saved")
+                        settingsFile.atomicWriteText(json.encodeToString(KeymapSettings.serializer(), defaultSettings))
+                        logger.debug(LogCategory.SYSTEM, "Created default keymap settings file", mapOf("path" to settingsFile.absolutePath))
                     } catch (e: Exception) {
-                        logger.warn(LogCategory.SYSTEM, "Could not save migrated keymap settings", error = e)
+                        logger.warn(LogCategory.SYSTEM, "Could not write default keymap settings file", error = e)
                     }
                 }
 
-                _currentSettings.value = migrated
-            } else {
-                // First run - create default keymap file
-                logger.debug(LogCategory.SYSTEM, "No keymap settings file found, creating default")
-                val defaultSettings = KeymapPresets.getBOSSDefault()
-                _currentSettings.value = defaultSettings
+                is KeymapFileRead.Corrupt -> {
+                    logger.error(
+                        LogCategory.SYSTEM,
+                        "Keymap settings could not be parsed; the file was set aside and defaults are in use",
+                        mapOf("keptAt" to (read.quarantinedTo ?: settingsFile).absolutePath),
+                        error = read.cause,
+                    )
+                    _currentSettings.value = KeymapPresets.getBOSSDefault()
+                }
 
-                // Save default settings to file
-                try {
-                    val content = json.encodeToString(KeymapSettings.serializer(), defaultSettings)
-                    settingsFile.writeText(content)
-                    logger.debug(LogCategory.SYSTEM, "Created default keymap settings file", mapOf("path" to settingsFile.absolutePath))
-                } catch (e: Exception) {
-                    logger.warn(LogCategory.SYSTEM, "Could not write default keymap settings file", error = e)
+                is KeymapFileRead.Unreadable -> {
+                    logger.error(LogCategory.SYSTEM, "Failed to read keymap settings", error = read.cause)
+                    _currentSettings.value = KeymapPresets.getBOSSDefault()
                 }
             }
         } catch (e: Exception) {
@@ -187,7 +206,7 @@ actual object KeymapSettingsManager {
         withContext(Dispatchers.IO) {
             try {
                 val content = json.encodeToString(KeymapSettings.serializer(), _currentSettings.value)
-                settingsFile.writeText(content)
+                settingsFile.atomicWriteText(content)
                 logger.debug(LogCategory.SYSTEM, "Keymap settings saved")
             } catch (e: Exception) {
                 logger.error(LogCategory.SYSTEM, "Failed to save keymap settings", error = e)
@@ -286,6 +305,59 @@ actual object KeymapSettingsManager {
             }
         }
 }
+
+/**
+ * What reading the keymap settings file produced. Four outcomes, because they call for different
+ * things: only a file that is present and NOT a keymap is set aside.
+ */
+internal sealed interface KeymapFileRead {
+    data class Loaded(
+        val settings: KeymapSettings,
+    ) : KeymapFileRead
+
+    data object Missing : KeymapFileRead
+
+    /** Present but not a keymap. Moved to [quarantinedTo], or null when it could not be moved. */
+    data class Corrupt(
+        val cause: Exception,
+        val quarantinedTo: File?,
+    ) : KeymapFileRead
+
+    /** Could not be read at all, which says nothing about its contents. Left exactly where it is. */
+    data class Unreadable(
+        val cause: Exception,
+    ) : KeymapFileRead
+}
+
+/**
+ * Reads [file] as keymap settings.
+ *
+ * **A file that does not parse is moved aside, not left for the next save to overwrite.** The
+ * manager falls back to defaults in memory, and the first thing that follows is usually a save -
+ * the user touches a shortcut, or picks a preset - which writes those defaults over the only copy of
+ * the user's own keymap. A truncated write is all it takes to get there, and the save this file used
+ * to do (`writeText`, which truncates first) was exactly such a write.
+ *
+ * A read failure is a different thing and is not treated as corruption: a locked or unreadable file
+ * may be perfectly good, and moving it would take a working keymap away over a transient error.
+ */
+internal fun readKeymapFile(
+    file: File,
+    json: Json,
+): KeymapFileRead =
+    if (!file.exists()) {
+        KeymapFileRead.Missing
+    } else {
+        try {
+            KeymapFileRead.Loaded(json.decodeFromString<KeymapSettings>(file.readText()))
+        } catch (e: java.io.IOException) {
+            KeymapFileRead.Unreadable(e)
+        } catch (e: IllegalArgumentException) {
+            // SerializationException is an IllegalArgumentException, and so is what the decoder
+            // throws for a value it cannot represent: every way of "not a keymap".
+            KeymapFileRead.Corrupt(e, file.quarantineCorruptFile())
+        }
+    }
 
 /**
  * The bindings in [loaded] that should gain an alternate chord from [presetShortcuts].
