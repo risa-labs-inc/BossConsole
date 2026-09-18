@@ -32,6 +32,13 @@ object McpArgumentSanitizer {
                 ")",
         )
 
+    private val awsKeyPattern = Regex("""\b(?:AKIA|ASIA)[0-9A-Z]{16}\b""")
+    private val pemPrivateKeyPattern = Regex("""-----BEGIN (?:[A-Z0-9-]+ )?PRIVATE KEY-----""")
+    private val uriUserinfoPattern =
+        Regex("""(?i)\b([a-z][a-z0-9+.-]*://[^/\s:@]+:)(?!//)([^/\s@]+)(@[^\s]+)""")
+    private val curlUserPattern =
+        Regex("""(?i)(?<=\s|^)(-u|--user)\s+([^:\s]+):(?!//)([^\s]+)""")
+
     /** Parse only for audit/approval; malformed input must never reach those surfaces verbatim. */
     @Suppress("TooGenericExceptionCaught") // Invalid nested JSON must not enter the audit surface verbatim.
     fun parseArguments(raw: String): Map<String, Any?> =
@@ -112,7 +119,11 @@ object McpArgumentSanitizer {
     fun sanitizeMessage(text: String): String =
         text
             .replace(credentialShapePattern, "[REDACTED]")
+            .replace(awsKeyPattern, "[REDACTED]")
+            .replace(pemPrivateKeyPattern, "[REDACTED]")
             .replace(sensitiveAssignment, "[REDACTED]")
             .replace(authorizationHeader, "[REDACTED]")
             .replace(bearer, "Bearer [REDACTED]")
+            .replace(uriUserinfoPattern, "$1[REDACTED]$3")
+            .replace(curlUserPattern, "$1 $2:[REDACTED]")
 }
