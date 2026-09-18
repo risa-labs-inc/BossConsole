@@ -330,9 +330,13 @@ object UpdateScriptGenerator {
             # Give extra time for file locks to release
             sleep 2
 
-            # Mount the DMG (using escaped path for security)
+            # Mount the DMG and capture what hdiutil printed (using escaped
+            # path for security). -quiet is gone on purpose: the device table
+            # it suppresses ends with the mount point of the volume this exact
+            # command mounted, which is the only authoritative answer to
+            # "where did this DMG mount" (Issue #922).
             echo "Mounting DMG: $escapedDmgPath"
-            hdiutil attach $escapedDmgPath -nobrowse -quiet
+            MOUNT_OUTPUT=${'$'}(hdiutil attach $escapedDmgPath -nobrowse)
             if [ ${'$'}? -ne 0 ]; then
                 echo "Failed to mount DMG"
                 # Fallback: Open DMG for manual installation (using escaped path)
@@ -340,10 +344,20 @@ object UpdateScriptGenerator {
                 exit 1
             fi
 
-            # Find the mounted volume
-            VOLUME=${'$'}(ls -d /Volumes/BOSS* 2>/dev/null | head -n 1)
-            if [ -z "${'$'}VOLUME" ]; then
-                echo "Could not find mounted BOSS volume"
+            # Find the mounted volume: the last tab-delimited field of the
+            # last line that names a /Volumes path. Tab-delimited, not
+            # whitespace-split, because volume names can contain spaces -
+            # macOS's own "BOSS 1" disambiguation when a volume of the same
+            # name is already mounted. Taken from hdiutil's output because a
+            # glob of /Volumes answers with whichever BOSS-named volume
+            # sorts first - a user's own external "BOSS" drive, or an older
+            # BOSS DMG left mounted - and the updater then installed whatever
+            # app bundle that unrelated volume happened to hold (Issue #922).
+            # A name that even a tab parse cannot carry fails the -d test
+            # below, and the update fails closed instead of guessing.
+            VOLUME=${'$'}(printf '%s\n' "${'$'}MOUNT_OUTPUT" | grep '/Volumes/' | tail -n 1 | awk -F '\t' '{print ${'$'}NF}')
+            if [ -z "${'$'}VOLUME" ] || [ ! -d "${'$'}VOLUME" ]; then
+                echo "Could not identify the volume this DMG mounted at - refusing to guess"
                 # Try to open DMG manually (using escaped path)
                 open $escapedDmgPath
                 exit 1
