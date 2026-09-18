@@ -5,18 +5,19 @@ import ai.rever.boss.utils.logging.LogCategory
 import java.io.File
 import java.io.IOException
 import java.nio.charset.Charset
+import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
 
 private val logger = BossLogger.forComponent("WindowsProtocolHandler")
 private val isWindows = System.getProperty("os.name").lowercase().contains("windows")
 
-/** Root of the per-user protocol registration this file owns. */
-private const val PROTOCOL_KEY = """HKEY_CURRENT_USER\Software\Classes\boss"""
+/** Root of the per-user protocol registration shared with the generated import script. */
+internal const val PROTOCOL_KEY = """HKEY_CURRENT_USER\Software\Classes\boss"""
 
 /** The `shell\open\command` value under it — where the launch command lives. */
 private const val PROTOCOL_COMMAND_KEY = PROTOCOL_KEY + """\shell\open\command"""
 
-/** A wedged `reg.exe` must not hang the uninstall hook. */
+/** A wedged `reg.exe` must not hang startup or the uninstall hook. */
 private const val REG_TIMEOUT_SECONDS = 5L
 
 /**
@@ -128,16 +129,7 @@ object WindowsProtocolHandler {
         }
     }
 
-    /**
-     * Perform the actual registry writes.
-     *
-     * FOLLOW-UP: these still go through `Runtime.getRuntime().exec(String)`, which tokenizes on
-     * whitespace — so a `/d` value containing spaces does not survive, and the *write* path can
-     * produce exactly the malformed registrations the *read* path now goes out of its way not to
-     * touch. Converting to an argv vector changes how that value is quoted, i.e. the
-     * registration itself, so it needs a Windows box to verify. It is the last `exec(String)`
-     * left in this file now that the queries share [queryRootKeyPresent].
-     */
+    /** Perform the registry import that owns the complete `boss:` protocol registration. */
     private fun performRegistration(appPath: String) {
         logger.info(
             LogCategory.SYSTEM,
@@ -145,43 +137,41 @@ object WindowsProtocolHandler {
             mapOf("appPath" to WindowsProtocolCleanup.maskUserPath(appPath)),
         )
 
-        val commands =
-            listOf(
-                // Create protocol key
-                """reg add "$PROTOCOL_KEY" /ve /d "URL:BOSS Protocol" /f""",
-                """reg add "$PROTOCOL_KEY" /v "URL Protocol" /d "" /f""",
-                // Set icon
-                """reg add "$PROTOCOL_KEY\DefaultIcon" /ve /d "$appPath,0" /f""",
-                // Set command to open the app with URL
-                """reg add "$PROTOCOL_COMMAND_KEY" /ve /d "\"$appPath\" \"%1\"" /f""",
-            )
-
-        var successCount = 0
-        commands.forEach { command ->
-            try {
-                val process = Runtime.getRuntime().exec(command)
-                val exitCode = process.waitFor()
-                if (exitCode == 0) {
-                    successCount++
-                } else {
-                    logger.warn(LogCategory.SYSTEM, "Registry command failed", mapOf("exitCode" to exitCode))
+        var scriptFile: File? = null
+        try {
+            val script = WindowsProtocolRegistryScript.buildScript(appPath)
+            scriptFile =
+                File.createTempFile("boss-protocol", ".reg").apply {
+                    // destroyForcibly() is asynchronous, so the child may still hold the
+                    // handle when the best-effort finally delete runs on Windows.
+                    deleteOnExit()
+                    // `reg import` expects a Unicode .reg file. Without the BOM, it can
+                    // misread an otherwise valid path as ANSI instead of rejecting it.
+                    writeBytes(
+                        byteArrayOf(0xFF.toByte(), 0xFE.toByte()) + script.toByteArray(StandardCharsets.UTF_16LE),
+                    )
                 }
-            } catch (e: Exception) {
-                logger.error(LogCategory.SYSTEM, "Failed to execute registry command", error = e)
-            }
-        }
 
-        if (successCount == commands.size) {
-            logger.info(LogCategory.SYSTEM, "Protocol registration successful")
-        } else {
-            logger.warn(
+            val result = runReg("import", scriptFile.absolutePath)
+            if (result?.exitCode == 0) {
+                logger.info(LogCategory.SYSTEM, "Protocol registration successful")
+            } else {
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Could not import the boss:// protocol registration",
+                    mapOf("output" to WindowsProtocolCleanup.maskUserPath(result?.output?.trim().orEmpty())),
+                )
+            }
+        } catch (e: IOException) {
+            logger.error(LogCategory.SYSTEM, "Could not write the boss:// protocol registration script", error = e)
+        } catch (e: SecurityException) {
+            logger.error(
                 LogCategory.SYSTEM,
-                "Protocol registration partial",
-                mapOf(
-                    "successCount" to successCount,
-                    "totalCommands" to commands.size,
-                ),
+                "Not permitted to write the boss:// protocol registration script",
+                error = e,
             )
+        } finally {
+            scriptFile?.delete()
         }
     }
 
@@ -373,7 +363,10 @@ private fun runReg(vararg args: String): RegResult? {
             logger.warn(
                 LogCategory.SYSTEM,
                 "reg.exe timed out",
-                mapOf("args" to args.joinToString(" "), "timeoutSeconds" to REG_TIMEOUT_SECONDS),
+                mapOf(
+                    "args" to WindowsProtocolCleanup.maskUserPath(args.joinToString(" ")),
+                    "timeoutSeconds" to REG_TIMEOUT_SECONDS,
+                ),
             )
             null
         }
@@ -464,7 +457,7 @@ private fun deleteProtocolKey(): WindowsProtocolHandler.UnregisterOutcome {
             logger.warn(
                 LogCategory.SYSTEM,
                 "Failed to remove boss:// protocol registration",
-                mapOf("key" to PROTOCOL_KEY, "output" to result.output.trim()),
+                mapOf("key" to PROTOCOL_KEY, "output" to WindowsProtocolCleanup.maskUserPath(result.output.trim())),
             )
             WindowsProtocolHandler.UnregisterOutcome.FAILED
         }
