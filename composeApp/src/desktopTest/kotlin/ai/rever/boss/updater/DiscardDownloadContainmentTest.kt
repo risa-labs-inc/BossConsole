@@ -1,5 +1,6 @@
 package ai.rever.boss.updater
 
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import java.nio.file.Files
@@ -62,7 +63,13 @@ class DiscardDownloadContainmentTest {
         val dir = createRestrictedDir(defaultStagingDir())
         val link = File(dir, "link-to-victim.dmg")
         link.delete()
-        Files.createSymbolicLink(link.toPath(), victim.toPath())
+        try {
+            Files.createSymbolicLink(link.toPath(), victim.toPath())
+        } catch (e: UnsupportedOperationException) {
+            assumeTrue(false, "Filesystem does not support symlinks: ${e.message}")
+        } catch (e: java.io.IOException) {
+            assumeTrue(false, "Could not create a symlink (Windows needs privileges): ${e.message}")
+        }
 
         service.discardDownload(link.absolutePath)
 
