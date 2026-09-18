@@ -3,6 +3,7 @@ package ai.rever.boss.components.dialogs
 import ai.rever.boss.mcp.McpApprovalRequest
 import ai.rever.boss.mcp.McpArgumentSanitizer
 import ai.rever.boss.mcp.McpMutatingToolCatalog
+import ai.rever.boss.mcp.secrets.SecretDescriptor
 import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.background
@@ -203,6 +204,14 @@ fun McpApprovalDialog(
                     }
                 }
 
+                // What the tool would be handed from the vault. Metadata only - the request
+                // carries descriptors, never values - and it sits ABOVE the risk line because it is
+                // the one fact this dialog exists to put in front of the operator for such a call.
+                if (request.secretRefs.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    SecretReferencesSection(request.secretRefs)
+                }
+
                 request.riskAssessment?.let { assessment ->
                     Spacer(modifier = Modifier.height(10.dp))
                     Text(
@@ -227,24 +236,26 @@ fun McpApprovalDialog(
                 // tool the plugin contributes, not just this one, and persisted across restarts),
                 // so it should take a deliberate reach rather than sit next to "Approve Once"
                 // where a fast click could land on it by mistake.
-                Spacer(modifier = Modifier.height(10.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = "Trusts every tool from \"${request.providerId}\", across restarts.",
-                        fontSize = 10.sp,
-                        color = colors.textSecondary,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    TextButton(
-                        onClick = { onApprove(false, false, true) },
-                        colors = ButtonDefaults.textButtonColors(contentColor = colors.warn),
+                if (request.secretRefs.isEmpty()) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("Trust This Plugin", fontSize = 11.sp)
+                        Text(
+                            text = "Trusts every tool from \"${request.providerId}\", across restarts.",
+                            fontSize = 10.sp,
+                            color = colors.textSecondary,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        TextButton(
+                            onClick = { onApprove(false, false, true) },
+                            colors = ButtonDefaults.textButtonColors(contentColor = colors.warn),
+                        ) {
+                            Text("Trust This Plugin", fontSize = 11.sp)
+                        }
                     }
                 }
 
@@ -294,13 +305,14 @@ fun McpApprovalDialog(
                         Text("Always Deny", fontSize = 11.sp)
                     }
 
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    TextButton(
-                        onClick = { onApprove(false, true, false) },
-                        colors = ButtonDefaults.textButtonColors(contentColor = colors.warn),
-                    ) {
-                        Text("Always Allow", fontSize = 11.sp)
+                    if (request.secretRefs.isEmpty()) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        TextButton(
+                            onClick = { onApprove(false, true, false) },
+                            colors = ButtonDefaults.textButtonColors(contentColor = colors.warn),
+                        ) {
+                            Text("Always Allow", fontSize = 11.sp)
+                        }
                     }
                 }
 
@@ -353,5 +365,51 @@ fun McpApprovalDialog(
                 }
             }
         }
+    }
+}
+
+/**
+ * The secrets a call would deliver, one row each, and the one sentence about scope that keeps
+ * secret-bearing call asks again regardless of existing tool policy (see `McpSecretPolicyAction`).
+ */
+@Composable
+internal fun SecretReferencesSection(secretRefs: List<SecretDescriptor>) {
+    val colors = BossTheme.colors
+    Column(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .background(colors.raised, RoundedCornerShape(4.dp))
+                .border(1.dp, colors.alert, RoundedCornerShape(4.dp))
+                .padding(8.dp),
+    ) {
+        Text(
+            text =
+                if (secretRefs.size == 1) {
+                    "This call receives 1 secret:"
+                } else {
+                    "This call receives ${secretRefs.size} secrets:"
+                },
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            color = colors.alert,
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        secretRefs.forEach { descriptor ->
+            Text(
+                text = descriptor.display,
+                fontSize = 12.sp,
+                fontFamily = FontFamily.Monospace,
+                color = colors.textPrimary,
+            )
+        }
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text =
+                "The value goes to the tool, never to the agent. " +
+                    "Secret-bearing calls ask every time and cannot create a durable allow rule.",
+            fontSize = 11.sp,
+            color = colors.textSecondary,
+        )
     }
 }

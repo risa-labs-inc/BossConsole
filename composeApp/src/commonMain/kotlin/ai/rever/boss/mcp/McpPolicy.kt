@@ -51,6 +51,39 @@ enum class McpApprovalDisposition {
      * fault) but the durable grant does not exist. See [McpPolicyFault.ProviderPolicyPersistFailed].
      */
     PROVIDER_TRUST_PERSIST_FAILED,
+
+    /**
+     * The call carried a secret reference it may not have: the user lacks `secret.read`, the
+     * host has `secretBearingCalls = DENY` or `secretReferencesEnabled = false`, or the secret is
+     * an AI provider key the plugin itself refuses to reveal. Decided before any vault read and
+     * before any prompt; the handler never ran. See `ai.rever.boss.mcp.secrets`.
+     */
+    SECRET_FORBIDDEN,
+
+    /**
+     * The call carried a secret reference the host could not resolve: malformed, an unknown id,
+     * a field the secret does not have, or a vault read that failed. All-or-nothing: one such
+     * reference withholds the whole call, and the handler never sees a partially substituted
+     * argument. Decided before any prompt.
+     */
+    SECRET_UNRESOLVED,
+}
+
+/**
+ * What the host does with a call that carries `{{secret:...}}` references.
+ *
+ * Two members on purpose. There is no ALLOW: a secret-bearing call always reaches an operator,
+ * above session trust and above any tool-wide or provider-wide ALLOW, so the primitive cannot be
+ * configured into silently delivering credentials. An operator who wants fewer prompts is asking
+ * for a per-(tool, secret) grant with its own review and revocation surface - a separate design,
+ * not a switch here.
+ */
+enum class McpSecretPolicyAction {
+    /** Prompt every time, showing which secrets and fields the tool would receive. The default. */
+    ASK,
+
+    /** Refuse every secret-bearing call before any vault read. */
+    DENY,
 }
 
 /**
@@ -71,6 +104,21 @@ data class McpToolPolicyConfig(
      * either direction. See [ai.rever.boss.mcp.McpPolicyEngine.policyFor] for the full precedence.
      */
     val providerRules: Map<String, McpPolicyAction> = emptyMap(),
+    /**
+     * Whether `{{secret:<id>}}` references in tool arguments are resolved at all. Off, a
+     * secret-bearing call is refused (never passed through with its placeholders intact, which
+     * would leave the agent believing a credential was delivered). A rollback switch, not a
+     * bypass: nothing here makes such a call run silently.
+     */
+    val secretReferencesEnabled: Boolean = true,
+    /** See [McpSecretPolicyAction]. */
+    val secretBearingCalls: McpSecretPolicyAction = McpSecretPolicyAction.ASK,
+    /**
+     * Whether resolved values are removed from a tool's result text before it returns to the
+     * agent. Defense in depth against a handler that echoes its input; the non-disclosure
+     * guarantee holds without it (see `ai.rever.boss.mcp.secrets.McpResultScrubber`).
+     */
+    val resultScrubbingEnabled: Boolean = true,
 )
 
 /**

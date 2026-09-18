@@ -1,6 +1,8 @@
 package ai.rever.boss.mcp
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
@@ -23,6 +25,12 @@ data class McpOperationRecord(
     val isError: Boolean,
     val sanitizedArgs: Map<String, String>,
     val errorSnippet: String? = null,
+    /**
+     * The secret references the call carried, as `<id>.<field>` - what the tool was allowed to
+     * receive, never what it received. Empty for every call without references, and absent from
+     * records written before this field existed, which decode with the default.
+     */
+    val secretRefs: List<String> = emptyList(),
     /**
      * SHA-256 over [parentHash] and this record's [canonicalFormForHashing], so a record edited
      * after the fact no longer agrees with the chain that follows it.
@@ -72,4 +80,7 @@ internal fun McpOperationRecord.canonicalFormForHashing(): String =
             buildJsonObject { sanitizedArgs.toSortedMap().forEach { (key, value) -> put(key, value) } },
         )
         put("errorSnippet", errorSnippet)
+        if (secretRefs.isNotEmpty()) {
+            put("secretRefs", JsonArray(secretRefs.map(::JsonPrimitive)))
+        }
     }.toString()

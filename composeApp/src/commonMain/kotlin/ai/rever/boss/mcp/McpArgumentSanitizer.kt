@@ -102,10 +102,24 @@ object McpArgumentSanitizer {
                 """(?:[A-Za-z][A-Za-z0-9._~+/-]*[ \t]+){0,3}(?:"[^"]*"|'[^']*'|[^\s&,;}]+)""",
         )
 
+    /**
+     * Two guards keep a secret REFERENCE (`{{secret:<id>}}`) legible, because it is inert by
+     * construction - it names a vault entry and carries no value - and a ledger showing
+     * `{{[REDACTED]}}` or `TOKEN=[REDACTED]}}` where the agent wrote a reference would hide the
+     * one fact that record exists to show: which secret the call was allowed to receive.
+     * - The lookbehind: `secret:` is itself an assignment prefix, and a reference is exactly that
+     *   shape, so a reference is not treated as a `secret: value` assignment.
+     * - The lookahead: `TOKEN={{secret:<id>}}` is a `token=` assignment whose VALUE is a
+     *   reference; the value is kept. Nothing real starts with `{{secret:`.
+     * See `ai.rever.boss.mcp.secrets`.
+     */
+    private const val validSecretReference =
+        """\{\{secret:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}""" +
+            """(?:\.(?:password|username|notes))?\}\}"""
     private val sensitiveAssignment =
         Regex(
-            """(?i)(?:password|token|secret|api[_-]?key|credential)""" +
-                """\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s&,;}]+)""",
+            """(?i)(?:(?:password|token|api[_-]?key|credential)|(?<!\{\{)secret)""" +
+                """\s*[:=]\s*(?!$validSecretReference(?:[\s&,;}]|$))(?:"[^"]*"|'[^']*'|[^\s&,;}]+)""",
         )
     private val bearer = Regex("""(?i)Bearer\s+[^\s"',;}]+""")
 
