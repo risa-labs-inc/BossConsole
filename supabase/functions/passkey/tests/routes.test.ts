@@ -13,7 +13,8 @@ import type { PasskeyContext } from "../types/context.ts"
 import auth from "../routes/auth.ts"
 import register from "../routes/register.ts"
 import management from "../routes/management.ts"
-import { createMockSupabaseClient, type MockSupabaseClient } from "./helpers/mocks.ts"
+import mobile from "../routes/mobile.ts"
+import { createMockSupabaseClient, mockChallenge, type MockSupabaseClient } from "./helpers/mocks.ts"
 import { TEST_ORIGIN } from "./helpers/webauthn.ts"
 
 function buildApp(mockClient: MockSupabaseClient) {
@@ -26,6 +27,7 @@ function buildApp(mockClient: MockSupabaseClient) {
   app.route("/auth", auth)
   app.route("/register", register)
   app.route("/manage", management)
+  app.route("/", mobile)
   return app
 }
 
@@ -438,4 +440,37 @@ Deno.test("POST /manage/list - unexpected route exceptions return a generic 500"
   } finally {
     Deno.env.get = originalEnvGet
   }
+})
+
+Deno.test("GET /auth/mobile - an unbound direct-login challenge cannot acquire a session", async () => {
+  const client = createMockSupabaseClient()
+  client.mockResponse('passkey_challenges', {
+    data: { ...mockChallenge, session_id: null },
+    error: null
+  }, 'select')
+
+  const app = buildApp(client)
+  const response = await app.request(
+    '/auth/mobile?challenge=mock-challenge-base64&email=user%40example.com&sessionId=attacker&credentialId=credential-abc'
+  )
+
+  assertEquals(response.status, 400)
+  assertEquals(client.getQueryHistory().some(query => query.operation === 'update'), false)
+  assertEquals(client.getQueryHistory().some(query => query.table === 'user_passkeys'), false)
+})
+
+Deno.test("GET /register/mobile - an unbound challenge cannot acquire a session", async () => {
+  const client = createMockSupabaseClient()
+  client.mockResponse('passkey_challenges', {
+    data: { ...mockChallenge, type: 'registration', session_id: null },
+    error: null
+  }, 'select')
+
+  const app = buildApp(client)
+  const response = await app.request(
+    '/register/mobile?challenge=mock-challenge-base64&email=user%40example.com&sessionId=attacker'
+  )
+
+  assertEquals(response.status, 400)
+  assertEquals(client.getQueryHistory().some(query => query.operation === 'update'), false)
 })

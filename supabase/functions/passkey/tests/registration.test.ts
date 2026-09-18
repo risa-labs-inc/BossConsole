@@ -73,6 +73,11 @@ Deno.test("generateRegistrationChallenge - should accept and return sessionId fo
     assertEquals(result.sessionId, sessionId)
     assertExists(result.challenge)
   }
+  // The public mobile page only verifies the persisted binding. Returning the
+  // session without storing it would leave a legitimate browser flow unusable.
+  const insert = mockClient.getQueryHistory().find(query => query.table === 'passkey_challenges' && query.operation === 'insert')
+  assertExists(insert)
+  assertEquals((insert.params.data as { session_id?: string }).session_id, sessionId)
 })
 
 Deno.test("generateRegistrationChallenge - should work without sessionId for same-device flows", async () => {

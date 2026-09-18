@@ -24,20 +24,23 @@ object SupabasePasskeyService {
         userId: String,
         displayName: String,
         authenticatorSelection: AuthenticatorSelectionCriteria?,
+        sessionId: String? = null,
     ): Result<PasskeyChallenge> {
         // Validate input parameters
-        PasskeyRegistrationHandler
-            .validateRegistrationRequest(userId, displayName)
-            .onFailure { return Result.failure(it) }
-
-        PasskeyRegistrationHandler
-            .validateAuthenticatorSelection(authenticatorSelection)
-            .onFailure { return Result.failure(it) }
+        val validation =
+            PasskeyRegistrationHandler
+                .validateRegistrationRequest(userId, displayName)
+                .fold(
+                    onSuccess = { PasskeyRegistrationHandler.validateAuthenticatorSelection(authenticatorSelection) },
+                    onFailure = { Result.failure(it) },
+                )
+        validation.onFailure { return Result.failure(it) }
 
         return PasskeyRegistrationHandler.requestChallenge(
             userId = userId,
             displayName = displayName,
             authenticatorSelection = authenticatorSelection,
+            sessionId = sessionId,
         )
     }
 
