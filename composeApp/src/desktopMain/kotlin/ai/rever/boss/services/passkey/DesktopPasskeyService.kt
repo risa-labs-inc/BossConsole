@@ -60,6 +60,7 @@ class DesktopPasskeyService : PasskeyService {
         displayName: String,
         challenge: ByteArray,
         rpId: String,
+        sessionId: String,
     ): Result<PasskeyRegistration> =
         withContext(Dispatchers.Main) {
             try {
@@ -69,7 +70,6 @@ class DesktopPasskeyService : PasskeyService {
                 logger.info(LogCategory.PASSKEY, "Starting WebAuthn registration via browser")
 
                 // Build server WebAuthn registration URL using RESTful endpoint
-                val sessionId = UUID.randomUUID().toString()
                 val baseUrl = getSupabaseFunctionUrl()
                 val registrationUrl =
                     "$baseUrl/passkey/register/mobile?" +

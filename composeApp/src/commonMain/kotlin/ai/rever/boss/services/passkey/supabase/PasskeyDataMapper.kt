@@ -41,12 +41,14 @@ internal object PasskeyDataMapper {
         displayName: String,
         challenge: String,
         authenticatorSelection: AuthenticatorSelectionCriteria?,
+        sessionId: String? = null,
     ): PasskeyRegistrationRequest =
         PasskeyRegistrationRequest(
             userId = userId,
             displayName = displayName,
             challenge = challenge,
             authenticatorSelection = authenticatorSelection,
+            sessionId = sessionId,
         )
 
     /**

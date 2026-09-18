@@ -39,6 +39,14 @@ export const generateMobileRegistrationPage = withErrorHandler(
       }
     }
 
+    // The page is public. A session supplied in its URL must only confirm the
+    // session bound when the challenge was issued; it must never establish one.
+    // In particular, a direct-login challenge has no session and cannot be
+    // turned into a cross-device token handoff by opening a crafted page URL.
+    if (!challengeData.session_id || challengeData.session_id !== sessionId) {
+      return { success: false, error: 'Invalid registration session' }
+    }
+
     // Get userId from the challenge data - it was stored when the challenge was created
     const userId = challengeData.user_id
     if (!userId) {
@@ -50,15 +58,6 @@ export const generateMobileRegistrationPage = withErrorHandler(
     }
 
     console.log('✅ Found userId from challenge:', maskUserId(userId))
-
-    // Update challenge with session info
-    await supabase
-      .from('passkey_challenges')
-      .update({
-        session_id: sessionId,
-        status: 'in_progress'
-      })
-      .eq('challenge', challenge)
 
     console.log('✅ Mobile registration page ready for user:', maskUserId(userId))
 
@@ -108,6 +107,10 @@ export const generateMobileAuthenticationPage = withErrorHandler(
       }
     }
 
+    if (!challengeData.session_id || challengeData.session_id !== sessionId) {
+      return { success: false, error: 'Invalid authentication session' }
+    }
+
     // Get userId from the challenge data - it was stored when the challenge was created
     const userId = challengeData.user_id
     if (!userId) {
@@ -139,15 +142,6 @@ export const generateMobileAuthenticationPage = withErrorHandler(
         error: 'Authentication credential not found'
       }
     }
-
-    // Update challenge with session info
-    await supabase
-      .from('passkey_challenges')
-      .update({
-        session_id: sessionId,
-        status: 'in_progress'
-      })
-      .eq('challenge', challenge)
 
     console.log('✅ Mobile authentication page ready for user:', maskUserId(userId))
 

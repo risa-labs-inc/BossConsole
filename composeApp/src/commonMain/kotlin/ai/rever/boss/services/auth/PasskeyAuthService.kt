@@ -71,6 +71,10 @@ internal object PasskeyAuthService {
                     "BOSS User ${currentUser.id.take(8)}"
                 }
 
+            // Bind the browser session when the challenge is created. The public
+            // mobile page must not be able to choose or change that binding.
+            val sessionId = UUID.randomUUID().toString()
+
             // Step 1: Request registration challenge from Supabase without forcing authenticator type
             // Let the browser/platform choose the best available method
             val challengeResult =
@@ -78,6 +82,7 @@ internal object PasskeyAuthService {
                     userId = currentUser.id,
                     displayName = displayName,
                     authenticatorSelection = null, // Let browser decide
+                    sessionId = sessionId,
                 )
 
             if (challengeResult.isFailure) {
@@ -93,6 +98,7 @@ internal object PasskeyAuthService {
                     displayName = displayName,
                     challenge = Base64.getUrlDecoder().decode(challenge.challenge),
                     rpId = challenge.rpId,
+                    sessionId = sessionId,
                 )
 
             if (registrationResult.isFailure) {

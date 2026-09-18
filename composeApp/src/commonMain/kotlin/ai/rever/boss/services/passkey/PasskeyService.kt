@@ -24,6 +24,7 @@ interface PasskeyService {
      * @param displayName Human-readable name for the user
      * @param challenge Server-provided challenge bytes
      * @param rpId Relying party identifier (domain)
+     * @param sessionId Session bound to the challenge when it was issued
      * @return Registration result with credential data
      */
     suspend fun registerPasskey(
@@ -31,6 +32,7 @@ interface PasskeyService {
         displayName: String,
         challenge: ByteArray,
         rpId: String = "api.risaboss.com",
+        sessionId: String,
     ): Result<PasskeyRegistration>
 
     /**
