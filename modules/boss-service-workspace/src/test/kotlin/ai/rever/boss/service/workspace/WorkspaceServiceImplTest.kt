@@ -7,9 +7,11 @@ import ai.rever.boss.ipc.proto.services.SaveWorkspaceRequest
 import io.grpc.Status
 import io.grpc.StatusRuntimeException
 import kotlinx.coroutines.runBlocking
+import org.junit.Assume
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import java.io.IOException
 import java.nio.file.Files
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -240,7 +242,18 @@ class WorkspaceServiceImplTest {
                     it.writeText("""{"id":"linked","name":"Outside"}""")
                 }
             val link = root.resolve("linked.json").toPath()
-            Files.createSymbolicLink(link, outside.toPath())
+            try {
+                Files.createSymbolicLink(link, outside.toPath())
+            } catch (_: UnsupportedOperationException) {
+                Assume.assumeTrue("This filesystem does not support symbolic links", false)
+                return@runBlocking
+            } catch (e: IOException) {
+                // A real fixture failure on POSIX must surface rather than silently skip;
+                // on Windows without Developer Mode / SeCreateSymbolicLinkPrivilege, skip.
+                if (!System.getProperty("os.name").startsWith("Windows")) throw e
+                Assume.assumeTrue("Symbolic link creation is not permitted on this Windows host", false)
+                return@runBlocking
+            }
             val service = WorkspaceServiceImpl(root)
             assertEquals(0, service.getWorkspaces(Empty.getDefaultInstance()).workspacesCount)
             assertStatus(Status.Code.FAILED_PRECONDITION) {
