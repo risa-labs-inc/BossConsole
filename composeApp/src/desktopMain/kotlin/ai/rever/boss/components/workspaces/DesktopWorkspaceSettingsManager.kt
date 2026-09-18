@@ -1,13 +1,16 @@
 package ai.rever.boss.components.workspaces
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.renameAsideCorrupt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 
 /**
@@ -16,7 +19,13 @@ import kotlinx.serialization.json.Json
  */
 actual object WorkspaceSettingsManager {
     private val logger = BossLogger.forComponent("WorkspaceSettingsManager")
-    private val settingsFile = BossDirectories.resolve("workspace-settings.json")
+
+    /**
+     * `internal` (not `private`) only so [reloadForTesting] can write a fixture straight at the
+     * path this object reads - `user.home` is already redirected to a fresh per-test-task
+     * directory (see AGENTS.md), so this needs no further redirection of its own.
+     */
+    internal val settingsFile = BossDirectories.resolve("workspace-settings.json")
     private val json =
         Json {
             prettyPrint = true
@@ -40,6 +49,14 @@ actual object WorkspaceSettingsManager {
         // who picked something else, or "none". One small JSON file, read once.
         loadSettingsSync()
     }
+
+    /**
+     * Re-run [loadSettingsSync] against whatever is currently at [settingsFile]. Production code
+     * never calls this - the object loads once, at [init] - it exists so a test can write a
+     * fixture to [settingsFile] and observe the load path (including the corrupt-file self-heal)
+     * without depending on class-load timing.
+     */
+    internal fun reloadForTesting() = loadSettingsSync()
 
     private fun loadSettingsSync() {
         try {
@@ -75,14 +92,28 @@ actual object WorkspaceSettingsManager {
             } else {
                 logger.debug(LogCategory.SYSTEM, "Stamped workspace settings version")
             }
+        } catch (e: SerializationException) {
+            // The file exists but its content is corrupt. Left alone, `getDefaultWorkspace()`
+            // would re-read and re-fail against the same bytes on every future launch, while the
+            // in-memory default silently stood in for it with nothing written back to disk. Move
+            // the bad file aside and persist a fresh default immediately so this launch heals.
+            logger.error(LogCategory.SYSTEM, "Workspace settings file is corrupt, resetting to defaults", error = e)
+            if (!settingsFile.renameAsideCorrupt()) {
+                logger.warn(LogCategory.SYSTEM, "Could not move the corrupt workspace settings file aside")
+            }
+            val defaultSettings = WorkspaceSettings(settingsVersion = WorkspaceSettings.CURRENT_SETTINGS_VERSION)
+            _currentSettings.value = defaultSettings
+            writeSettings(defaultSettings)
         } catch (e: Exception) {
+            // Not a decode failure - the file itself may be fine, so it is left untouched and
+            // only the in-memory state falls back to the seeded default.
             logger.warn(LogCategory.SYSTEM, "Error loading settings", error = e)
         }
     }
 
     private fun writeSettings(settings: WorkspaceSettings) {
         try {
-            settingsFile.writeText(json.encodeToString(WorkspaceSettings.serializer(), settings))
+            settingsFile.atomicWriteText(json.encodeToString(WorkspaceSettings.serializer(), settings))
             logger.debug(LogCategory.SYSTEM, "Settings saved")
         } catch (e: Exception) {
             logger.warn(LogCategory.SYSTEM, "Error saving settings", error = e)
