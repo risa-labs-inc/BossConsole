@@ -24,13 +24,101 @@ class EditorServiceImpl : EditorServiceGrpcKt.EditorServiceCoroutineImplBase() {
     /** path → isDirty: tracks files opened in this session */
     private val openFiles = ConcurrentHashMap<String, Boolean>()
 
-    /** Paths that must not be accessed via IPC — mirrors FileSystemServiceImpl policy. */
-    private val BLOCKED_PATH_PREFIXES = listOf("/etc", "/sys", "/proc")
+    /**
+     * The one root saves and opens are confined to (BossConsole#885): the user's home
+     * directory. A confinement root instead of a blocklist covers every platform's
+     * danger zones in one rule - Windows system paths (`C:\Windows\...`), POSIX system
+     * paths (`/etc`, `/sys`, `/proc`), drive roots, and any path that is simply not
+     * the user's. The old POSIX-only prefix blocklist let all Windows system paths
+     * through.
+     */
+    private val confinementRoot: File by lazy {
+        File(System.getProperty("user.home")).canonicalFile
+    }
 
-    private fun validatePath(path: String) {
+    /**
+     * Validates [path] after canonicalization (BossConsole#885): the old check ran on
+     * RAW string - `..` in the literal and a POSIX-only prefix list - so a symlink
+     * inside the allowed root pointing at a blocked target sailed through, and Windows
+     * system paths were never covered. Canonicalize FIRST so the checks see what the
+     * filesystem will actually resolve; then confine to [confinementRoot] so escapes
+     * (link or otherwise) are refused by the one rule that matters.
+     */
+    private fun validatePath(path: String): File {
         require(!path.contains("..")) { "Path traversal sequences ('..') are not allowed: $path" }
-        BLOCKED_PATH_PREFIXES.forEach { prefix ->
-            require(!path.startsWith(prefix)) { "Access to system path '$prefix' is not allowed: $path" }
+        // toRealPath, not canonicalFile: on Windows (and for symlinks generally),
+        // File.canonicalFile can return the LINK's own path without resolving the
+        // link, so a symlink inside the home pointing at an outside target passed
+        // the gate (BossConsole#885). toRealPath() resolves the link chain to the
+        // actual filesystem location, which is what the confinement check must see.
+        //
+        // The path may not exist yet (a save creating a new file): the caller
+        // creates the parent directory BEFORE this check for exactly that case
+        // (saveFile's atomicWrite mkdirs first, openFile requires existence), so
+        // toRealPath on the existing parent plus the file name is always resolvable
+        // and resolves every link in the chain that matters.
+        val real = File(path).toPath()
+        // Resolve the FULL path when it exists (openFile; the save-new-file case
+        // falls to the parent below). This is what catches a symlink FILE
+        // inside the home pointing at an outside target: toRealPath follows the
+        // link to its actual location.
+        val resolved =
+            try {
+                real.toRealPath().toFile()
+            } catch (_: java.nio.file.NoSuchFileException) {
+                // New-file save: resolve the existing parent (the caller mkdirs
+                // first), then re-append the file name. The parent's links
+                // resolve; the not-yet-existing file name has no link to follow.
+                val parent = real.parent ?: throw IllegalArgumentException("Path has no parent directory: $path")
+                val resolvedParent =
+                    try {
+                        parent.toRealPath().toFile()
+                    } catch (_: java.nio.file.NoSuchFileException) {
+                        throw IllegalArgumentException("Parent directory does not exist: $path")
+                    }
+                real.fileName?.let { File(resolvedParent, it.toString()) } ?: resolvedParent
+            }
+        val root = confinementRoot.absolutePath + File.separator
+        require(
+            resolved.absolutePath.startsWith(root) || resolved.absolutePath == confinementRoot.absolutePath,
+        ) { "Access denied: path outside the user's home directory: $path" }
+        return resolved
+    }
+
+    /**
+     * Atomic save (BossConsole#885): content streams into a unique sibling temp file
+     * which is then moved atomically over the target. A crash or disk-full mid-save
+     * leaves the previous complete version - the house `atomicWriteText` shape,
+     * re-implemented locally because the helper lives in composeApp and this module
+     * is a standalone kernel service. `File.renameTo` is deliberately not used: its
+     * behavior when the destination exists is platform-dependent in exactly the way
+     * that hid the favicon-cache bug on Windows.
+     */
+    private fun atomicWrite(
+        target: File,
+        content: String,
+    ) {
+        target.parentFile?.mkdirs()
+        val tmp = File.createTempFile(target.name + ".", ".part", target.parentFile)
+        try {
+            tmp.writeText(content, Charsets.UTF_8)
+            java.nio.file.Files.move(
+                tmp.toPath(),
+                target.toPath(),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+            )
+        } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
+            java.nio.file
+                .Files
+                .move(
+                    tmp.toPath(),
+                    target.toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                )
+        } finally {
+            // No-op when the move took it away; cleans up on failure paths.
+            if (tmp.exists()) tmp.delete()
         }
     }
 
@@ -48,8 +136,7 @@ class EditorServiceImpl : EditorServiceGrpcKt.EditorServiceCoroutineImplBase() {
     override suspend fun openFile(request: OpenFileRequest): OpenFileResponse =
         withContext(Dispatchers.IO) {
             logger.info("openFile: path={}", request.path)
-            validatePath(request.path)
-            val file = File(request.path)
+            val file = validatePath(request.path)
             if (!file.exists() || !file.isFile) {
                 return@withContext OpenFileResponse
                     .newBuilder()
@@ -79,11 +166,12 @@ class EditorServiceImpl : EditorServiceGrpcKt.EditorServiceCoroutineImplBase() {
     override suspend fun saveFile(request: SaveFileRequest): Empty =
         withContext(Dispatchers.IO) {
             logger.info("saveFile: path={}", request.path)
-            validatePath(request.path)
+            // Create the parent BEFORE validating: a save may target a new file,
+            // and validatePath resolves the existing parent (see its KDoc).
+            File(request.path).parentFile?.mkdirs()
+            val file = validatePath(request.path)
             try {
-                val file = File(request.path)
-                file.parentFile?.mkdirs()
-                file.writeText(request.content, Charsets.UTF_8)
+                atomicWrite(file, request.content)
                 openFiles[request.path] = false
             } catch (e: Exception) {
                 logger.error("saveFile failed for {}: {}", request.path, e.message)
@@ -106,8 +194,7 @@ class EditorServiceImpl : EditorServiceGrpcKt.EditorServiceCoroutineImplBase() {
     override suspend fun detectMainFunctions(request: DetectMainRequest): DetectMainResponse =
         withContext(Dispatchers.IO) {
             logger.info("detectMainFunctions: path={}", request.path)
-            validatePath(request.path)
-            val file = File(request.path)
+            val file = validatePath(request.path)
             if (!file.exists() || !file.isFile) return@withContext DetectMainResponse.newBuilder().build()
 
             val functions = mutableListOf<MainFunctionInfo>()

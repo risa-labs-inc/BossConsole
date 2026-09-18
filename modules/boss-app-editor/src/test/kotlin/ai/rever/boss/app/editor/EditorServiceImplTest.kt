@@ -16,6 +16,24 @@ import kotlin.test.assertTrue
  * consolidation fixes, not just a refactor with no observable effect.
  */
 class EditorServiceImplTest {
+    private val savedHome = System.getProperty("user.home")
+
+    @kotlin.test.BeforeTest
+    fun setUp() {
+        // EditorServiceImpl confines all paths to the user's home since #885; the
+        // OS temp dir is outside the real home (not a prefix on any of the
+        // three CI platforms), and this suite's fixtures live in the OS temp
+        // dir - so redirect the home AT the OS temp dir: the confinement rule
+        // then covers exactly where these tests create their files. No
+        // build-level isolation exists for this module.
+        System.setProperty("user.home", System.getProperty("java.io.tmpdir"))
+    }
+
+    @kotlin.test.AfterTest
+    fun tearDown() {
+        if (savedHome != null) System.setProperty("user.home", savedHome)
+    }
+
     private val service = EditorServiceImpl()
 
     @Test
