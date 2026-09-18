@@ -13,7 +13,8 @@ import type { PasskeyContext } from "../types/context.ts"
 import auth from "../routes/auth.ts"
 import register from "../routes/register.ts"
 import management from "../routes/management.ts"
-import { createMockSupabaseClient, type MockSupabaseClient } from "./helpers/mocks.ts"
+import mobile from "../routes/mobile.ts"
+import { createMockSupabaseClient, mockChallenge, mockPasskey, type MockSupabaseClient } from "./helpers/mocks.ts"
 import { TEST_ORIGIN } from "./helpers/webauthn.ts"
 
 function buildApp(mockClient: MockSupabaseClient) {
@@ -26,6 +27,7 @@ function buildApp(mockClient: MockSupabaseClient) {
   app.route("/auth", auth)
   app.route("/register", register)
   app.route("/manage", management)
+  app.route("/", mobile) // Mobile pages live at /register/mobile and /auth/mobile
   return app
 }
 
@@ -438,4 +440,71 @@ Deno.test("POST /manage/list - unexpected route exceptions return a generic 500"
   } finally {
     Deno.env.get = originalEnvGet
   }
+})
+
+// ============================================================================
+// Mobile page session binding (#924): the public mobile pages must not let a
+// URL-supplied session id rebind a challenge that is already bound to the
+// session that started the ceremony.
+// ============================================================================
+
+Deno.test("GET /auth/mobile - an attacker's session id cannot take over the victim's ceremony", async () => {
+  const mockClient = createMockSupabaseClient()
+  const app = buildApp(mockClient)
+
+  // The victim's desktop bound the challenge to its session when the ceremony
+  // started; the attacker replays the public page URL with their own session
+  mockClient.mockResponse('passkey_challenges', {
+    data: {
+      ...mockChallenge,
+      type: 'authentication',
+      session_id: 'session-victim',
+      expires_at: new Date(Date.now() + 60000).toISOString()
+    },
+    error: null
+  }, 'select')
+
+  const response = await app.request(
+    '/auth/mobile?challenge=mock-challenge-base64&email=test@example.com&sessionId=session-attacker&credentialId=credential-abc',
+    { method: 'GET' }
+  )
+
+  assertEquals(response.status, 400)
+  const body = await response.text()
+  assertEquals(body.includes('Challenge is already bound to another session'), true)
+
+  // No write ran, so the row keeps the victim's binding and the completed
+  // ceremony's tokens can only reach the victim's session
+  assertEquals(
+    mockClient.getQueryHistory().some(h => h.operation === 'update'),
+    false
+  )
+})
+
+Deno.test("GET /auth/mobile - the bound session still gets the page, unauthenticated", async () => {
+  const mockClient = createMockSupabaseClient()
+  const app = buildApp(mockClient)
+
+  mockClient.mockResponse('passkey_challenges', {
+    data: {
+      ...mockChallenge,
+      type: 'authentication',
+      session_id: 'session-victim',
+      expires_at: new Date(Date.now() + 60000).toISOString()
+    },
+    error: null
+  }, 'select')
+
+  mockClient.mockResponse('user_passkeys', {
+    data: mockPasskey,
+    error: null
+  }, 'select')
+
+  const response = await app.request(
+    '/auth/mobile?challenge=mock-challenge-base64&email=test@example.com&sessionId=session-victim&credentialId=credential-abc',
+    { method: 'GET' }
+  )
+
+  assertEquals(response.status, 200)
+  assertEquals(response.headers.get('content-type')?.includes('text/html'), true)
 })

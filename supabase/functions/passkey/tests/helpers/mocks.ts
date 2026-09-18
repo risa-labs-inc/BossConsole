@@ -31,6 +31,7 @@ export interface MockQueryBuilder extends Promise<MockSupabaseResponse> {
   update: (data: unknown) => MockQueryBuilder
   delete: () => MockQueryBuilder
   eq: (column: string, value: unknown) => MockQueryBuilder
+  is: (column: string, value: unknown) => MockQueryBuilder
   gt: (column: string, value: unknown) => MockQueryBuilder
   lt: (column: string, value: unknown) => MockQueryBuilder
   not: (column: string, operator: string, value: unknown) => MockQueryBuilder
@@ -315,6 +316,16 @@ export class MockSupabaseClient {
         return builder
       },
       eq: (column: string, value: unknown) => {
+        if (!currentParams.eq) {
+          currentParams.eq = []
+        }
+        currentParams.eq.push({ column, value })
+        return builder
+      },
+      is: (column: string, value: unknown) => {
+        // PostgREST spells the null comparison `is.null`. Record it like an
+        // `eq` filter so filter-matched rows behave identically for the
+        // compare-and-set queries the challenge session binding relies on.
         if (!currentParams.eq) {
           currentParams.eq = []
         }
