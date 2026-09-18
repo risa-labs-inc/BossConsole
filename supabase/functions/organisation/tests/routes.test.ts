@@ -912,3 +912,118 @@ Deno.test("a missing session secret fails closed with a 503", async () => {
 function stripNonce(html: string): string {
   return html.replace(/nonce="[A-Za-z0-9_-]+"/g, 'nonce="N"')
 }
+
+// ---------------------------------------------------------------------------
+// Sec-Fetch-Mode: the harvested-nonce gate, on a real POST
+//
+// csrfField() renders the nonce into the page HTML, so same-origin script
+// (Swagger UI, a CDN script) can fetch the admin page, parse the nonce out of
+// it and post it back. Those posts arrive with Sec-Fetch-Mode: cors; a real
+// form submission arrives with navigate. The gate between the two is the only
+// thing a harvester cannot fake.
+// ---------------------------------------------------------------------------
+
+Deno.test("a script-driven post with a HARVESTED valid nonce is refused", async () => {
+  const { stub, restore } = setup()
+  try {
+    // The attack from the issue: every other check passes - same origin,
+    // session-bound nonce harvested from the rendered HTML - and only the
+    // browser-set fetch mode gives it away.
+    const headers = formHeaders(await sessionCookie())
+    headers.set("sec-fetch-mode", "cors")
+
+    const before = stub.calls.length
+    const response = await app.request(`${BASE}/o/${FIXTURE.slug}/admin/settings`, {
+      method: "POST",
+      headers,
+      body: new URLSearchParams({ [CSRF_FIELD]: CSRF, name: "Renamed" }),
+    })
+
+    assertEquals(response.status, 403)
+    // The gate must run BEFORE the admin probe, so nothing at all was called.
+    assertEquals(stub.calls.length, before)
+  } finally {
+    restore()
+  }
+})
+
+Deno.test("a real form post with Sec-Fetch-Mode: navigate and a valid nonce is accepted", async () => {
+  const { stub, restore } = setup()
+  try {
+    stub.responses.set("update_organisation_settings", { success: true })
+    const headers = formHeaders(await sessionCookie())
+    headers.set("sec-fetch-mode", "navigate")
+
+    const response = await app.request(`${BASE}/o/${FIXTURE.slug}/admin/settings`, {
+      method: "POST",
+      headers,
+      body: new URLSearchParams({
+        [CSRF_FIELD]: CSRF,
+        name: "Renamed",
+        visibility: "public",
+      }),
+    })
+
+    assertEquals(response.status, 303)
+    assertEquals(
+      response.headers.get("location"),
+      "/functions/v1/organisation/o/acme/admin?ok=settings_saved",
+    )
+    assert(stub.calls.find((c) => c.fn === "update_organisation_settings"))
+  } finally {
+    restore()
+  }
+})
+
+Deno.test("a client with no Sec-Fetch headers is governed by the nonce alone", async () => {
+  // curl, CLI integrations, this test suite: no Sec-Fetch-* at all. They do not
+  // suddenly break - the mode gate only applies when the header is present,
+  // and the existing checks decide exactly as before.
+  const { stub, restore } = setup()
+  try {
+    stub.responses.set("update_organisation_settings", { success: true })
+    const headers = new Headers({
+      "content-type": "application/x-www-form-urlencoded",
+      "host": "api.risaboss.com",
+      "origin": "https://api.risaboss.com",
+      "x-forwarded-proto": "https",
+      cookie: await sessionCookie(),
+    })
+
+    const response = await app.request(`${BASE}/o/${FIXTURE.slug}/admin/settings`, {
+      method: "POST",
+      headers,
+      body: new URLSearchParams({ [CSRF_FIELD]: CSRF, name: "Renamed" }),
+    })
+
+    assertEquals(response.status, 303)
+    assert(stub.calls.find((c) => c.fn === "update_organisation_settings"))
+  } finally {
+    restore()
+  }
+})
+
+Deno.test("an invalid nonce is refused on every fetch-mode branch", async () => {
+  // Defense in depth: the Sec-Fetch-Mode gate ADDS a check, the nonce check
+  // stays exactly as strict as it was. Whichever branch runs, a wrong nonce
+  // never slips through.
+  const { stub, restore } = setup()
+  try {
+    for (const mode of ["cors", "navigate", null]) {
+      const headers = formHeaders(await sessionCookie())
+      if (mode) headers.set("sec-fetch-mode", mode)
+
+      const before = stub.calls.length
+      const response = await app.request(`${BASE}/o/${FIXTURE.slug}/admin/settings`, {
+        method: "POST",
+        headers,
+        body: new URLSearchParams({ [CSRF_FIELD]: "harvested-but-wrong", name: "Renamed" }),
+      })
+
+      assertEquals(response.status, 403, `sec-fetch-mode: ${mode}`)
+      assertEquals(stub.calls.length, before, `sec-fetch-mode: ${mode}`)
+    }
+  } finally {
+    restore()
+  }
+})
