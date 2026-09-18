@@ -145,6 +145,28 @@ object WorkspaceFileManagerCommon {
     private fun sanitize(value: String): String = value.replace(Regex("[^a-zA-Z0-9.-]"), "_")
 
     /**
+     * The record files that live in the workspaces directory without being Spaces: the
+     * session-set store and the Space-theme store - exactly the files [WorkspaceManager]'s
+     * directory scan skips by name (see `LAST_SESSION_SET_FILE` / `SPACE_THEMES_FILE`).
+     *
+     * **One list for both sides of the boundary.** The scan skips these because they are not
+     * Spaces; every write that reaches the directory on a caller-chosen name must refuse the
+     * same files, or a workspace tool can be aimed at the host's own persisted records: an id
+     * whose [fileNameForId] lands here does not save a Space, it overwrites the store. A
+     * `Space_Themes.json` written through a workspace tool silently wipes every Space's theme
+     * assignment, and a `Last_Session_Set.json` that is not a session-set record makes the
+     * next launch's session restore wrong or absent (#926). Keeping the scan's skips on this
+     * list too means neither side can drift from the other.
+     */
+    val reservedDocumentFileNames: Set<String> = setOf(LAST_SESSION_SET_FILE, SPACE_THEMES_FILE)
+
+    /**
+     * Whether [fileName] is one of the reserved record files (see [reservedDocumentFileNames]) -
+     * the gate a caller-chosen name passes before anything is written.
+     */
+    fun isReservedDocumentFileName(fileName: String): Boolean = fileName in reservedDocumentFileNames
+
+    /**
      * Extract workspace name from filename
      */
     fun extractWorkspaceName(fileName: String): String = fileName.removeSuffix(".json").replace("_", " ")

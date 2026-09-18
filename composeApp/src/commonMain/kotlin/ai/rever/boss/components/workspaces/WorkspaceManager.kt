@@ -290,13 +290,12 @@ class WorkspaceManager {
                         fileManager.listWorkspaces()
                     }
                 savedWorkspaces.forEach { fileInfo ->
-                    // The session-set record lives in this directory and is not a Space. The scan
-                    // is "every *.json", so without this it is deserialized as one on every
-                    // launch, fails, and logs a warning for ever. See LAST_SESSION_SET_FILE.
-                    if (fileInfo.fileName == LAST_SESSION_SET_FILE) return@forEach
-                    // And the Space-to-theme record, beside it and not a Space either. See
-                    // SPACE_THEMES_FILE.
-                    if (fileInfo.fileName == SPACE_THEMES_FILE) return@forEach
+                    // The reserved record files live in this directory and are not Spaces - the
+                    // session-set store and the Space-theme store. The scan is "every *.json",
+                    // so without this each is deserialized as a Space on every launch, fails,
+                    // and logs a warning for ever. The list lives in WorkspaceFileManagerCommon,
+                    // shared with the write-side guard, so the two cannot drift apart (#926).
+                    if (WorkspaceFileManagerCommon.isReservedDocumentFileName(fileInfo.fileName)) return@forEach
                     val workspace =
                         withContext(Dispatchers.IO) {
                             fileManager.loadWorkspace(fileInfo.fileName)
