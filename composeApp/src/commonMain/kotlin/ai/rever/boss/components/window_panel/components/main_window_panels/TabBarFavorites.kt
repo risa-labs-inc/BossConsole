@@ -2,6 +2,8 @@ package ai.rever.boss.components.window_panel.components.main_window_panels
 
 import ai.rever.boss.cache.loadHighQualityFavicon
 import ai.rever.boss.components.home.HomeNavigationButton
+import ai.rever.boss.components.home.LocalPanelRegistry
+import ai.rever.boss.components.home.RoomsNavigationButton
 import ai.rever.boss.components.model.TabDraggableComponent
 import ai.rever.boss.components.model.TabDropTarget
 import ai.rever.boss.components.overlays.ContextMenuItem
@@ -266,11 +268,21 @@ private fun FavoritesGrid(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(FAVORITE_TILE_GAP)) {
         // Home is a built-in favorite, independent of the optional bookmark store.
-        (listOf<Bookmark?>(null) + bookmarks).chunked(FAVORITES_PER_ROW).forEach { row ->
+        val roomsInstalled =
+            LocalPanelRegistry.current?.getAllPanels()?.any {
+                it.id.panelId == "rooms"
+            } == true
+        val destinations = if (roomsInstalled) 2 else 1
+        val tiles = List<Bookmark?>(destinations) { null } + bookmarks
+        tiles.chunked(FAVORITES_PER_ROW).forEachIndexed { rowIndex, row ->
             Row(horizontalArrangement = Arrangement.spacedBy(FAVORITE_TILE_GAP)) {
-                row.forEach { bookmark ->
+                row.forEachIndexed { columnIndex, bookmark ->
                     if (bookmark == null) {
-                        HomeNavigationButton(selected = homeSelected, onClick = onHome)
+                        if (rowIndex == 0 && columnIndex == 0) {
+                            HomeNavigationButton(selected = homeSelected, onClick = onHome)
+                        } else {
+                            RoomsNavigationButton()
+                        }
                     } else {
                         FavoriteTile(
                             bookmark = bookmark,

@@ -1,5 +1,6 @@
 package ai.rever.boss.components.model
 
+import ai.rever.boss.components.home.isRoomsPanel
 import ai.rever.boss.components.plugin.PanelIds
 import ai.rever.boss.components.sidebar.SidebarVisibilitySettings
 import ai.rever.boss.components.window_panel.SplitOrientation
@@ -286,8 +287,10 @@ class BossDraggableComponent(
         hidden: Set<String>,
     ): List<SidebarItem> {
         val items = itemsBySlot[slot] ?: return emptyList()
-        if (hidden.isEmpty()) return items
-        return items.filter { it.id !in hidden }
+        return items.filter {
+            it.id !in hidden &&
+                !isRoomsPanel(it.id)
+        }
     }
 
     /**

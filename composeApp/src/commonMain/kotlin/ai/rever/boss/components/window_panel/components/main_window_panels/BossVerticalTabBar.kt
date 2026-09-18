@@ -4,6 +4,7 @@ import ai.rever.boss.components.bars.getPanelScrollbarConfig
 import ai.rever.boss.components.bars.lazyListScrollbar
 import ai.rever.boss.components.dividers.SDivider
 import ai.rever.boss.components.home.HomeNavigationButton
+import ai.rever.boss.components.home.RoomsNavigationButton
 import ai.rever.boss.components.home.isHomeTab
 import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.components.overlays.HoverTooltipBox
@@ -203,6 +204,7 @@ fun BossTabRail(
             compact = true,
             onClick = { windowId?.let { MenuActionsHandler.triggerGoHome(it) } },
         )
+        RoomsNavigationButton(compact = true)
         Spacer(Modifier.height(4.dp))
         Box(Modifier.fillMaxWidth(0.6f).height(1.dp).background(colors.line))
         Spacer(Modifier.height(6.dp))
