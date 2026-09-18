@@ -60,6 +60,10 @@ import ai.rever.boss.plugin.api.UrlHistoryProvider
 import ai.rever.boss.plugin.api.UserManagementProvider
 import ai.rever.boss.plugin.api.WorkspaceDataProvider
 import ai.rever.boss.plugin.api.ZoomSettingsProvider
+import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.PluginFileSystemSecurity
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.plugin.browser.BrowserService
 import com.arkivanov.decompose.ComponentContext
 import kotlinx.coroutines.CoroutineScope
@@ -589,10 +593,39 @@ class TrackingPluginContext(
  * manifest identity registered by the host, rather than a per-call argument. This
  * scopes the supported API only: in-process plugins can still access JVM/filesystem
  * facilities, so this wrapper is not a security sandbox.
+ *
+ * Also initializes plugin filesystem security when storage is first created for this plugin.
  */
 private class ScopedPluginStorageFactory(
     private val ownPluginId: String,
     private val delegate: PluginStorageFactory,
 ) : PluginStorageFactory {
-    override fun createStorage(pluginId: String): PluginStorageProvider = delegate.createStorage(ownPluginId)
+    private var securityInitialized = false
+
+    override fun createStorage(pluginId: String): PluginStorageProvider {
+        // Initialize filesystem security on first storage creation for this plugin
+        if (!securityInitialized) {
+            initializePluginSecurity()
+            securityInitialized = true
+        }
+        return delegate.createStorage(ownPluginId)
+    }
+
+    private fun initializePluginSecurity() {
+        try {
+            val pluginStorageDir = BossDirectories.resolve("plugin-data/$ownPluginId")
+            PluginFileSystemSecurity.initializeDefaultRoots(
+                pluginStorageDir = pluginStorageDir,
+                currentProjectDir = null, // TODO: Wire in current project when available
+            )
+        } catch (e: Exception) {
+            // Log but don't fail - security initialization is best-effort
+            BossLogger.forComponent("ScopedPluginStorageFactory").warn(
+                LogCategory.FILE,
+                "Failed to initialize plugin filesystem security",
+                mapOf("pluginId" to ownPluginId),
+                e,
+            )
+        }
+    }
 }
