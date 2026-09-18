@@ -452,6 +452,11 @@ object LogSanitizer {
                 """eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*""" +
                 "|(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{8,}" +
                 "|(?:sk|pk)[-_][A-Za-z0-9_-]{8,}" +
+                // Supabase's current keys, which replaced the legacy JWT anon and service_role
+                // pair: opaque strings the JWT branch above cannot match. `sb_secret_` is the
+                // service_role replacement and bypasses row-level security. The two prefixes are
+                // named rather than accepting any `sb_`, so an ordinary identifier is not masked.
+                "|sb_(?:publishable|secret)_[A-Za-z0-9_-]{8,}" +
                 ")",
         )
 

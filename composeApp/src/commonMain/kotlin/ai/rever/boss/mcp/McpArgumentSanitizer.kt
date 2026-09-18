@@ -22,13 +22,21 @@ object McpArgumentSanitizer {
     private val sensitiveKeyWords =
         setOf("token", "password", "secret", "api_key", "apikey", "key", "credential")
 
-    /** Same credential shapes [LogSanitizer] recognizes: a JWT, a GitHub token, or a vendor sk_/pk_ key. */
+    /**
+     * Same credential shapes [LogSanitizer] recognizes: a JWT, a GitHub token, a vendor sk_/pk_
+     * key, or a Supabase `sb_publishable_`/`sb_secret_` key.
+     *
+     * This is a copy, and `McpArgumentSanitizerCredentialShapeTest` pins it against the original:
+     * an operator approving a tool call and a reader of the log must be shown the same redactions,
+     * and the two files are far enough apart that widening one alone is the likely mistake.
+     */
     private val credentialShapePattern =
         Regex(
             "(?<![A-Za-z0-9_.])(?:" +
                 """eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*""" +
                 "|(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{8,}" +
                 "|(?:sk|pk)[-_][A-Za-z0-9_-]{8,}" +
+                "|sb_(?:publishable|secret)_[A-Za-z0-9_-]{8,}" +
                 ")",
         )
 
