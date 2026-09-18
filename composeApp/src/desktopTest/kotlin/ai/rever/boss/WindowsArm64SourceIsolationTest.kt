@@ -50,6 +50,8 @@ class WindowsArm64SourceIsolationTest {
         listOf(
             "/kernel/",
             "/plugin/remote/",
+            "/plugin/OopPluginDisableLifecycleTest.kt",
+            "/plugin/OutOfProcessPluginSpawnerLifecycleTest.kt",
             "/plugin/IpcCompatibilityTest.kt",
             "/plugin/PluginStoreSetupIpcGateTest.kt",
             "/plugin/PluginStateDeltaTest.kt",

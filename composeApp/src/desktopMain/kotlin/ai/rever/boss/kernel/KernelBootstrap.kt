@@ -456,13 +456,10 @@ class KernelBootstrap(
                     val process = registry.getProcess(id)
                     if (process != null) {
                         if (force) process.destroyForcibly() else process.destroy()
-                        // Don't unregister — for a SERVICE/APP/ORCHESTRATOR the process monitor
-                        // will detect the exit and trigger auto-respawn if
-                        // restartPolicy == ON_FAILURE.
-                        //
-                        // PLUGIN is the exception: it is not health-supervised, so nothing
-                        // respawns it despite its config also saying ON_FAILURE, and the global
-                        // monitor prunes the dead entry instead.
+                        // Don't unregister here. SERVICE/APP/ORCHESTRATOR exits are handled by the
+                        // global monitor, which may auto-respawn when restartPolicy == ON_FAILURE.
+                        // PLUGIN exits are supervised per window by PluginProcessMonitor, while the
+                        // global monitor only prunes their dead registry entries.
                         true
                     } else {
                         false

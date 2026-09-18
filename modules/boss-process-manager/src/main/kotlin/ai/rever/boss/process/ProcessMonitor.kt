@@ -60,13 +60,11 @@ class ProcessMonitor(
     /**
      * Start the global monitor that watches for new/removed processes.
      *
-     * [ProcessType.PLUGIN] is not health-supervised here. Plugin health is `PluginProcessMonitor`'s
-     * responsibility on the host side - note that it is written but **not yet wired up**, so today
-     * a crashed out-of-process plugin gets no restart and no in-process fallback from anywhere.
-     * Supervising plugins from here is still the wrong answer to that: a plugin the operator
-     * disables exits on purpose, which would read as a crash and come back through the kernel's
-     * respawn path. Plugins are registered regardless, because the registry is what the shutdown
-     * hook reaps.
+     * [ProcessType.PLUGIN] is not health-supervised here. Plugin health is supervised per window
+     * by `PluginProcessMonitor`, which owns the operator-aware restart and fallback lifecycle.
+     * Supervising plugins globally here would race that owner and could restart a plugin that the
+     * operator deliberately disabled. Plugins remain registered because the registry is what the
+     * shutdown hook reaps.
      *
      * Dead plugins are instead *pruned*. Only a deliberate terminate unregisters one, so a plugin
      * that died on its own would otherwise sit in the registry for the rest of the session, with

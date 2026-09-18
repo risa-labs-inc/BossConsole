@@ -12,6 +12,8 @@ class IpcVersionTest {
         assertEquals("1.2.0", IpcVersion.CURRENT)
         assertTrue(IpcVersion.isCompatible("1.2.0", "1.1.0") is IpcVersion.CompatResult.Incompatible)
         assertEquals(IpcVersion.CompatResult.Compatible, IpcVersion.isCompatible("1.1.0", "1.2.0"))
+        assertTrue(IpcVersion.isCompatible("1.1.0", "1.0.0") is IpcVersion.CompatResult.Incompatible)
+        assertEquals(IpcVersion.CompatResult.Compatible, IpcVersion.isCompatible("1.0.0", "1.1.0"))
     }
 
     @Test
