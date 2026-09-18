@@ -6,11 +6,17 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
 import java.io.File
+import java.nio.file.FileSystems
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.nio.file.attribute.PosixFilePermissions
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -20,7 +26,9 @@ import java.util.concurrent.ConcurrentHashMap
  * In-memory map is the runtime source of truth; disk is loaded once at
  * startup and written synchronously on every mutation.
  */
-class SettingsServiceImpl : SettingsServiceGrpcKt.SettingsServiceCoroutineImplBase() {
+class SettingsServiceImpl(
+    private val storageFile: File = File(System.getProperty("user.home"), ".boss/settings.json"),
+) : SettingsServiceGrpcKt.SettingsServiceCoroutineImplBase() {
     private val logger = LoggerFactory.getLogger(SettingsServiceImpl::class.java)
 
     @Serializable
@@ -36,12 +44,15 @@ class SettingsServiceImpl : SettingsServiceGrpcKt.SettingsServiceCoroutineImplBa
             ignoreUnknownKeys = true
             prettyPrint = true
         }
-    private val settingsFile =
-        File(System.getProperty("user.home"), ".boss/settings.json")
-            .also { it.parentFile.mkdirs() }
+
+    private val settingsFile: File =
+        storageFile.also {
+            it.parentFile?.mkdirs()
+        }
 
     private val settings = ConcurrentHashMap<String, SettingValue>()
     private val changes = MutableSharedFlow<SettingValue>(extraBufferCapacity = 64)
+    internal val mutations = Mutex()
 
     init {
         loadFromDisk()
@@ -87,9 +98,41 @@ class SettingsServiceImpl : SettingsServiceGrpcKt.SettingsServiceCoroutineImplBa
                         updatedAt = sv.updatedAt,
                     )
                 }
-            settingsFile.writeText(json.encodeToString(list))
+            val parent = settingsFile.parentFile ?: return
+            if (!parent.exists()) parent.mkdirs()
+
+            val tempFile = File.createTempFile(".${settingsFile.name}", ".tmp", parent)
+            try {
+                setOwnerOnlyPermissions(tempFile)
+                tempFile.writeText(json.encodeToString(list))
+                Files.move(
+                    tempFile.toPath(),
+                    settingsFile.toPath(),
+                    StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING,
+                )
+            } catch (e: Exception) {
+                tempFile.delete()
+                throw e
+            }
         } catch (e: Exception) {
             logger.warn("Failed to persist settings: {}", e.message)
+        }
+    }
+
+    private fun setOwnerOnlyPermissions(file: File) {
+        try {
+            if (FileSystems.getDefault().supportedFileAttributeViews().contains("posix")) {
+                Files.setPosixFilePermissions(file.toPath(), PosixFilePermissions.fromString("rw-------"))
+            } else {
+                file.setReadable(false, false)
+                file.setReadable(true, true)
+                file.setWritable(false, false)
+                file.setWritable(true, true)
+                file.setExecutable(false, false)
+            }
+        } catch (_: Exception) {
+            // Best effort on non-POSIX platforms
         }
     }
 
@@ -108,20 +151,22 @@ class SettingsServiceImpl : SettingsServiceGrpcKt.SettingsServiceCoroutineImplBa
 
     override suspend fun setSetting(request: SetSettingRequest): SettingValue =
         withContext(Dispatchers.IO) {
-            logger.debug("setSetting: namespace={}, key={}", request.namespace, request.key)
-            val value =
-                SettingValue
-                    .newBuilder()
-                    .setKey(request.key)
-                    .setValue(request.value)
-                    .setFound(true)
-                    .setNamespace(request.namespace)
-                    .setUpdatedAt(System.currentTimeMillis())
-                    .build()
-            settings[storageKey(request.namespace, request.key)] = value
-            saveToDisk()
-            changes.tryEmit(value)
-            value
+            mutations.withLock {
+                logger.debug("setSetting: namespace={}, key={}", request.namespace, request.key)
+                val value =
+                    SettingValue
+                        .newBuilder()
+                        .setKey(request.key)
+                        .setValue(request.value)
+                        .setFound(true)
+                        .setNamespace(request.namespace)
+                        .setUpdatedAt(System.currentTimeMillis())
+                        .build()
+                settings[storageKey(request.namespace, request.key)] = value
+                saveToDisk()
+                changes.tryEmit(value)
+                value
+            }
         }
 
     override fun watchSetting(request: GetSettingRequest): Flow<SettingValue> =

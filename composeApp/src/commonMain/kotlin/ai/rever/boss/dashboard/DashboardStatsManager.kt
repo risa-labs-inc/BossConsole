@@ -1,6 +1,7 @@
 package ai.rever.boss.dashboard
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CoroutineScope
@@ -119,7 +120,7 @@ object DashboardStatsManager {
             try {
                 settingsFile.parentFile?.mkdirs()
                 val content = json.encodeToString(DashboardStats.serializer(), _stats.value)
-                settingsFile.writeText(content)
+                settingsFile.atomicWriteText(content)
             } catch (e: Exception) {
                 dashboardStatsLogger.warn(LogCategory.SYSTEM, "Error saving stats", error = e)
             }
