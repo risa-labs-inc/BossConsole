@@ -107,15 +107,6 @@ class McpRiskEvaluatorTest {
             "chmod -r 777 /srv/app",
         )
     private val benignCommands = listOf("ls -la", "git status", "pwd", "echo hello")
-    private val knownLowRiskMutatingTools =
-        setOf(
-            "open_workspace",
-            "workspace_open",
-            "create_workspace",
-            "workspace_create",
-            "close_workspace",
-            "workspace_close",
-        )
 
     /** Map and raw JSON stay in sync for either representation read by `McpToolArgs.string`. */
     @Suppress("MaxLineLength")
@@ -306,13 +297,13 @@ class McpRiskEvaluatorTest {
     }
 
     @Test
-    fun `the mutating catalog and risk evaluator mismatch stays explicit`() {
+    fun `every mutating catalog tool rates at least HIGH in the risk evaluator`() {
         val mismatches =
             McpMutatingToolCatalog.KNOWN_MUTATING_TOOLS.filterTo(mutableSetOf()) { name ->
                 evaluator.evaluateRisk(name, emptyArgs).level < McpRiskLevel.HIGH
             }
 
-        assertEquals(knownLowRiskMutatingTools, mismatches)
+        assertTrue(mismatches.isEmpty(), "mutating catalog tools rated below HIGH: $mismatches")
     }
 
     // ---------------------------------------------------------------------

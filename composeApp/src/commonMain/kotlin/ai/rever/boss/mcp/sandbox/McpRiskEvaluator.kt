@@ -30,6 +30,14 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
                 evaluateShellCommand(normalizedName, args)
             }
 
+            // Workspace lifecycle mutations
+            normalizedName in WORKSPACE_MUTATION_TOOLS -> {
+                McpRiskAssessment(
+                    level = McpRiskLevel.HIGH,
+                    reason = "Workspace lifecycle mutation '$toolName'",
+                )
+            }
+
             // Secrets access
             normalizedName == "secret_get" -> {
                 McpRiskAssessment(
@@ -139,6 +147,20 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
                 "terminal_open",
             )
 
+        // The workspace provider's lifecycle tools are family siblings of the terminal
+        // tools above: they mutate the workspace catalog (opening windows, persisting or
+        // deleting workspace state) but take no `command` argument, so unlike the shell
+        // tools they carry a flat HIGH instead of a command-inspection floor.
+        private val WORKSPACE_MUTATION_TOOLS =
+            setOf(
+                "open_workspace",
+                "workspace_open",
+                "create_workspace",
+                "workspace_create",
+                "close_workspace",
+                "workspace_close",
+            )
+
         private val SECRET_MANAGEMENT_TOOLS =
             setOf(
                 "secret_create",
@@ -197,6 +219,9 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
                 "plugins_list",
                 "list_tabs",
                 "read_scrollback",
+                // The workspace provider's listing tools are pure reads.
+                "list_workspaces",
+                "workspace_list",
             )
     }
 }
