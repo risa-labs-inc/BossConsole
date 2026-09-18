@@ -627,6 +627,15 @@ object LogSanitizer {
      * reason: it is the one pass that must see the *original* text, since its
      * whole job is removing a colon before [filePathPattern] can trip on it
      * (BossConsole#109). Running it any later would be too late by definition.
+     *
+     * [redactUrlUserInfo] runs next, and for the same reason. A URL's userinfo
+     * sits before the host, so [filePathPattern] reaches `//alice` first and
+     * leaves `http:[PATH]:pass@10.0.0.5:3128` - the password still in the line.
+     * It has to see the authority intact, so it goes ahead of the locations and
+     * behind the query pass, which does not touch an authority. Only the
+     * credential is removed; what survives is masked as a location as before.
+     * BossConsole#640 closed this for [maskUriParams] and recorded the free-text
+     * path as a separate change.
      */
     private fun redactLocationsAndCredentials(text: String): String {
         val withMaskedQueryParams =
@@ -642,7 +651,7 @@ object LogSanitizer {
             }
 
         val withoutLocations =
-            withMaskedQueryParams
+            redactUrlUserInfo(withMaskedQueryParams)
                 .replace(filePathPattern, "[PATH]")
                 .replace(urlPattern, "[URL]")
                 .replace(emailPattern, "[EMAIL]")
