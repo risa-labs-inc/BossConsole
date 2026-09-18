@@ -18,6 +18,9 @@ Deno.test("generateMobileRegistrationPage - should generate valid registration p
   mockClient.mockResponse('passkey_challenges', {
     data: {
       ...mockChallenge,
+      // Bound to the session the page load carries - the realistic QR-flow
+      // shape now that a page load can only agree with the row's binding.
+      session_id: 'session-123',
       type: 'registration',
       expires_at: new Date(Date.now() + 60000).toISOString()
     },
@@ -143,6 +146,9 @@ Deno.test("generateMobileRegistrationPage - should update challenge status to in
   mockClient.mockResponse('passkey_challenges', {
     data: {
       ...mockChallenge,
+      // Bound to the session the page load carries - the realistic QR-flow
+      // shape now that a page load can only agree with the row's binding.
+      session_id: 'session-123',
       type: 'registration',
       expires_at: new Date(Date.now() + 60000).toISOString()
     },
@@ -189,6 +195,9 @@ Deno.test("generateMobileAuthenticationPage - should generate valid authenticati
   mockClient.mockResponse('passkey_challenges', {
     data: {
       ...mockChallenge,
+      // Bound to the session the page load carries - see the registration
+      // tests above.
+      session_id: 'session-123',
       type: 'authentication',
       expires_at: new Date(Date.now() + 60000).toISOString()
     },
@@ -321,6 +330,9 @@ Deno.test("generateMobileAuthenticationPage - should reject non-existent credent
   mockClient.mockResponse('passkey_challenges', {
     data: {
       ...mockChallenge,
+      // Bound to the session the page load carries - see the registration
+      // tests above.
+      session_id: 'session-123',
       type: 'authentication',
       expires_at: new Date(Date.now() + 60000).toISOString()
     },
@@ -362,6 +374,9 @@ Deno.test("generateMobileAuthenticationPage - should reject inactive credential"
   mockClient.mockResponse('passkey_challenges', {
     data: {
       ...mockChallenge,
+      // Bound to the session the page load carries - see the registration
+      // tests above.
+      session_id: 'session-123',
       type: 'authentication',
       expires_at: new Date(Date.now() + 60000).toISOString()
     },
@@ -403,6 +418,9 @@ Deno.test("generateMobileAuthenticationPage - should update challenge status to 
   mockClient.mockResponse('passkey_challenges', {
     data: {
       ...mockChallenge,
+      // Bound to the session the page load carries - see the registration
+      // tests above.
+      session_id: 'session-123',
       type: 'authentication',
       expires_at: new Date(Date.now() + 60000).toISOString()
     },
@@ -451,6 +469,9 @@ Deno.test("generateMobileAuthenticationPage - should return credential metadata"
   mockClient.mockResponse('passkey_challenges', {
     data: {
       ...mockChallenge,
+      // Bound to the session the page load carries - see the registration
+      // tests above.
+      session_id: 'session-123',
       type: 'authentication',
       expires_at: new Date(Date.now() + 60000).toISOString()
     },
