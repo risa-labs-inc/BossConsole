@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -84,7 +85,7 @@ actual object GitService {
     actual val stashList: StateFlow<List<GitStashInfo>> = _stashList.asStateFlow()
 
     private var currentProjectPath: String? = null
-    private var refreshJob: Job? = null
+    private val refreshMutex = Mutex()
 
     // How many git commands are in flight OR waiting on [gitCommandLock], and
     // the boolean view of it. The lock is process-wide, so a slow index-write
@@ -103,47 +104,46 @@ actual object GitService {
     }
 
     actual suspend fun refresh(projectPath: String) =
-        withContext(Dispatchers.IO) {
-            // Cancel any pending refresh
-            refreshJob?.cancel()
+        refreshMutex.withLock {
+            withContext(Dispatchers.IO) {
+                currentProjectPath = projectPath
+                _isLoading.value = true
+                _lastError.value = null
 
-            currentProjectPath = projectPath
-            _isLoading.value = true
-            _lastError.value = null
+                try {
+                    if (!_isGitAvailable.value) {
+                        _isGitRepository.value = false
+                        _currentBranch.value = null
+                        _localBranches.value = emptyList()
+                        _remoteBranches.value = emptyList()
+                        return@withContext
+                    }
 
-            try {
-                if (!_isGitAvailable.value) {
-                    _isGitRepository.value = false
-                    _currentBranch.value = null
-                    _localBranches.value = emptyList()
-                    _remoteBranches.value = emptyList()
-                    return@withContext
+                    // Check if directory is a git repository
+                    val isRepo = isGitRepo(projectPath)
+                    _isGitRepository.value = isRepo
+
+                    if (!isRepo) {
+                        _currentBranch.value = null
+                        _localBranches.value = emptyList()
+                        _remoteBranches.value = emptyList()
+                        return@withContext
+                    }
+
+                    // Get current branch (or short SHA for detached HEAD)
+                    _currentBranch.value = getCurrentBranchName(projectPath)
+
+                    // Get local branches
+                    _localBranches.value = getLocalBranchList(projectPath)
+
+                    // Get remote branches
+                    _remoteBranches.value = getRemoteBranchList(projectPath)
+                } catch (e: Exception) {
+                    _lastError.value = e.message
+                    logger.warn(LogCategory.SYSTEM, "Error refreshing git state", error = e)
+                } finally {
+                    _isLoading.value = false
                 }
-
-                // Check if directory is a git repository
-                val isRepo = isGitRepo(projectPath)
-                _isGitRepository.value = isRepo
-
-                if (!isRepo) {
-                    _currentBranch.value = null
-                    _localBranches.value = emptyList()
-                    _remoteBranches.value = emptyList()
-                    return@withContext
-                }
-
-                // Get current branch (or short SHA for detached HEAD)
-                _currentBranch.value = getCurrentBranchName(projectPath)
-
-                // Get local branches
-                _localBranches.value = getLocalBranchList(projectPath)
-
-                // Get remote branches
-                _remoteBranches.value = getRemoteBranchList(projectPath)
-            } catch (e: Exception) {
-                _lastError.value = e.message
-                logger.warn(LogCategory.SYSTEM, "Error refreshing git state", error = e)
-            } finally {
-                _isLoading.value = false
             }
         }
 
@@ -398,17 +398,20 @@ actual object GitService {
         }
 
     actual fun clear() {
-        refreshJob?.cancel()
-        currentProjectPath = null
-        _currentBranch.value = null
-        _isGitRepository.value = false
-        _localBranches.value = emptyList()
-        _remoteBranches.value = emptyList()
-        _lastError.value = null
-        _isLoading.value = false
-        _fileStatus.value = emptyList()
-        _commitLog.value = emptyList()
-        _stashList.value = emptyList()
+        runBlocking {
+            refreshMutex.withLock {
+                currentProjectPath = null
+                _currentBranch.value = null
+                _isGitRepository.value = false
+                _localBranches.value = emptyList()
+                _remoteBranches.value = emptyList()
+                _lastError.value = null
+                _isLoading.value = false
+                _fileStatus.value = emptyList()
+                _commitLog.value = emptyList()
+                _stashList.value = emptyList()
+            }
+        }
     }
 
     actual fun getCurrentProjectPath(): String? = currentProjectPath
