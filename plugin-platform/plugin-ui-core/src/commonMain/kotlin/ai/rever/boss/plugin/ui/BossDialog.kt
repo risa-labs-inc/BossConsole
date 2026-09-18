@@ -576,6 +576,9 @@ internal fun anchorRectInDp(
     sizePx: IntSize,
     density: Float,
 ): IntRect {
+    // Offset.isValid() (Compose) guards against the Unspecified/NaN offset a detached or
+    // not-yet-placed layout reports: Offset.Unspecified is (NaN, NaN), and isValid() is false
+    // whenever either component is NaN.
     if (density <= 0f || !positionPx.isValid()) return IntRect.Zero
     val left = (positionPx.x / density).roundToInt()
     val top = (positionPx.y / density).roundToInt()
@@ -586,9 +589,6 @@ internal fun anchorRectInDp(
         bottom = top + (sizePx.height / density).roundToInt(),
     )
 }
-
-/** Guards against the Unspecified/NaN offset a detached or not-yet-placed layout reports. */
-private fun Offset.isValid(): Boolean = !x.isNaN() && !y.isNaN()
 
 /**
  * Where a [BossPopup] places itself on the heavyweight path.
