@@ -109,8 +109,42 @@ object McpArgumentSanitizer {
         )
     private val bearer = Regex("""(?i)Bearer\s+[^\s"',;}]+""")
 
+    /**
+     * A credential handed to a command-line client as basic auth, `curl -u admin:hunter2` or
+     * `--user admin:hunter2`. The value has no sensitive key, is not an assignment and has no
+     * vendor prefix, so nothing above sees it. The value must carry the `user:password` colon:
+     * `-u` is also `git push -u origin` and `python -u`, and an operator has to be able to read
+     * those. A URL after `-u` (`redis-cli -u redis://...`) is not basic auth either: its userinfo
+     * was redacted by the pass before this one and its host must stay readable.
+     */
+    private val basicAuthFlag =
+        Regex(
+            """(?<![A-Za-z0-9_-])(-u|--user)(?:[ \t]+|=)(?!["']?[A-Za-z][A-Za-z0-9+.-]*://)""" +
+                """(?:"[^"]*:[^"]*"|'[^']*:[^']*'|[^\s&,;}"']+:[^\s&,;}"']*)""",
+        )
+
+    /**
+     * Shapes the issue measured leaking that the vendor-prefix rule above does not cover: an AWS
+     * access key id (`AKIA` or `ASIA` plus 16 upper-case alphanumerics, the documented format) and
+     * a PEM private-key block, whose base64 body follows the BEGIN line.
+     */
+    private val awsAccessKeyId = Regex("""(?<![A-Z0-9])(?:AKIA|ASIA)[A-Z0-9]{16}(?![A-Z0-9])""")
+    private val pemPrivateKey =
+        Regex("""-----BEGIN [A-Z ]*PRIVATE KEY-----[A-Za-z0-9+/=\s]*(?:-----END [A-Z ]*PRIVATE KEY-----)?""")
+
+    /**
+     * Ordered so each rule sees the text the ones before it produced. The URI userinfo pass runs
+     * first: `postgres://admin:hunter2@host` is the commonest way a real credential reaches a
+     * terminal command, and it is neither an assignment nor a known shape. #640 added the helper
+     * for the logging path; the MCP path is where the same value reaches the approval dialog and
+     * the ledger on disk (#886).
+     */
     fun sanitizeMessage(text: String): String =
-        text
+        LogSanitizer
+            .redactUrlUserInfo(text)
+            .replace(pemPrivateKey, "[REDACTED]")
+            .replace(awsAccessKeyId, "[REDACTED]")
+            .replace(basicAuthFlag, "$1 [REDACTED]")
             .replace(credentialShapePattern, "[REDACTED]")
             .replace(sensitiveAssignment, "[REDACTED]")
             .replace(authorizationHeader, "[REDACTED]")
