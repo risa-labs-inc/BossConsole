@@ -19,7 +19,7 @@ import java.util.jar.JarFile
  * would surface as crashes during first UI render.
  */
 object BinaryCompatibilityValidator {
-    private val logger = BossLogger.forComponent("BinaryCompatibilityValidator")
+    internal val logger = BossLogger.forComponent("BinaryCompatibilityValidator")
 
     data class ValidationResult(
         val isCompatible: Boolean,
@@ -149,95 +149,87 @@ object BinaryCompatibilityValidator {
         )
     }
 
-    private fun verifyReference(
+    internal fun verifyReference(
         ref: ConstantPoolParser.MemberRef,
         classLoader: ClassLoader,
         sourceClass: String,
         errors: MutableList<String>,
     ) {
-        // Skip references to the plugin's own classes (they're already loaded above)
-        // and primitive/array types
-        if (ref.ownerClassName.startsWith("[") || ref.ownerClassName.isEmpty()) return
+        val ownerClass = resolveOwnerClass(ref, classLoader, sourceClass, errors) ?: return
+        if (!ref.ownerClassName.startsWith("ai.rever.boss.plugin.")) return
 
-        val ownerClass =
-            try {
-                Class.forName(ref.ownerClassName, false, classLoader)
-            } catch (e: LinkageError) {
-                errors.add("$sourceClass -> ${ref.ownerClassName}: ${e.javaClass.simpleName} - ${e.message}")
-                return
-            } catch (e: ClassNotFoundException) {
-                // Only flag missing classes from the shared API packages, not JDK/Kotlin stdlib.
-                //
-                // `ai.rever.boss.plugin.runtime.*` classes live only on OOP plugin
-                // child-JVM classpaths (via boss-microkernel-runtime's fatJar), not
-                // on the host. OOP-aware plugins legitimately reference these from
-                // their main class so the child runtime can find them reflectively.
-                // Treat references into that package as soft — the host doesn't
-                // need to resolve them — but log so a later debug session can
-                // find the trail if the plugin actually does fail at child-JVM load.
-                if (isSoftFailReference(ref.ownerClassName)) {
-                    logger.debug(
-                        LogCategory.SYSTEM,
-                        "Soft-skipping runtime-package ref",
-                        mapOf(
-                            "sourceClass" to sourceClass,
-                            "ref" to ref.ownerClassName,
-                            "error" to e.toString(),
-                        ),
-                    )
-                } else if (ref.ownerClassName.startsWith("ai.rever.boss.plugin.")) {
-                    errors.add("$sourceClass -> ${ref.ownerClassName}: class not found")
-                }
-                return
-            }
-
-        // Only enforce member-level binary compatibility for the actual
-        // plugin<->host CONTRACT (ai.rever.boss.plugin.*). References into
-        // bundled third-party libraries (io.ktor, kotlinx.*, io.modelcontextprotocol,
-        // …) are the plugin's own concern: a plugin bundles its own copy, and the
-        // only ones resolved here against the HOST are parent-first shared libs
-        // (e.g. kotlinx-serialization), whose version can legitimately drift from
-        // what the plugin's bundled deps were compiled against. A signature
-        // mismatch there is NOT a contract violation and must not disable the
-        // whole plugin — it degrades at the actual call site at runtime (handled
-        // by the plugin's own error handling), if that path is ever hit. Class
-        // resolution above is already scoped this way; mirror it for members.
-        if (!ref.ownerClassName.startsWith("ai.rever.boss.plugin.")) {
-            return
-        }
-
-        // Verify the specific member exists
         when (ref.type) {
             ConstantPoolParser.RefType.METHOD,
             ConstantPoolParser.RefType.INTERFACE_METHOD,
             -> {
                 if (ref.name == "<init>") {
-                    // Constructor — verify parameter types match
-                    val paramTypes = ref.parseParameterTypes(classLoader) ?: return
-                    try {
-                        ownerClass.getDeclaredConstructor(*paramTypes)
-                    } catch (_: NoSuchMethodException) {
-                        errors.add("$sourceClass -> ${ref.ownerClassName}.<init>(${ref.descriptor}): constructor not found")
-                    }
-                } else if (ref.name != "<clinit>") {
-                    // Regular method — check name + parameter types
-                    val paramTypes = ref.parseParameterTypes(classLoader) ?: return
-                    if (!hasMethod(ownerClass, ref.name, paramTypes)) {
-                        errors.add("$sourceClass -> ${ref.ownerClassName}.${ref.name}(${ref.descriptor}): method not found")
-                    }
+                    verifyConstructor(ref, ownerClass, classLoader, sourceClass, errors)
+                } else {
+                    verifyMethod(ref, ownerClass, classLoader, sourceClass, errors)
                 }
             }
 
             ConstantPoolParser.RefType.FIELD -> {
-                if (!hasField(ownerClass, ref.name)) {
-                    errors.add(
-                        "$sourceClass -> ${ref.ownerClassName}.${ref.name}: field not found" +
-                            hintFor(ref.name),
-                    )
-                }
+                verifyField(ref, ownerClass, sourceClass, errors)
             }
         }
     }
+
+    internal fun extractCandidateMethods(
+        clazz: Class<*>,
+        methodName: String,
+    ): List<String> =
+        try {
+            val candidates =
+                (clazz.methods.asSequence() + clazz.declaredMethods.asSequence())
+                    .filter { it.name == methodName }
+                    .mapNotNull { method ->
+                        try {
+                            val params = method.parameterTypes.joinToString(",") { it.simpleName }
+                            "${method.name}($params): ${method.returnType.simpleName}"
+                        } catch (_: LinkageError) {
+                            null
+                        } catch (_: RuntimeException) {
+                            null
+                        }
+                    }.distinct()
+                    .toList()
+            if (candidates.size > 8) {
+                candidates.take(8) + "... (${candidates.size - 8} more)"
+            } else {
+                candidates
+            }
+        } catch (_: LinkageError) {
+            emptyList()
+        } catch (_: RuntimeException) {
+            emptyList()
+        }
+
+    internal fun extractCandidateConstructors(clazz: Class<*>): List<String> =
+        try {
+            val candidates =
+                clazz.declaredConstructors
+                    .asSequence()
+                    .mapNotNull { ctor ->
+                        try {
+                            "<init>(${ctor.parameterTypes.joinToString(",") { it.simpleName }})"
+                        } catch (_: LinkageError) {
+                            null
+                        } catch (_: RuntimeException) {
+                            null
+                        }
+                    }.distinct()
+                    .toList()
+            if (candidates.size > 8) {
+                candidates.take(8) + "... (${candidates.size - 8} more)"
+            } else {
+                candidates
+            }
+        } catch (_: LinkageError) {
+            emptyList()
+        } catch (_: RuntimeException) {
+            emptyList()
+        }
 
     /**
      * `ai.rever.boss.plugin.runtime.*` classes ship in the OOP plugin
@@ -302,28 +294,98 @@ object BinaryCompatibilityValidator {
         }
     }
 
-    /** Check the class and its superclasses for the field. */
-    private fun hasField(
+    sealed interface FieldResolutionResult {
+        data class Found(
+            val field: java.lang.reflect.Field,
+        ) : FieldResolutionResult
+
+        data class TypeMismatch(
+            val actualDescriptor: String,
+        ) : FieldResolutionResult
+
+        data object NotFound : FieldResolutionResult
+    }
+
+    /** Find a field matching both name and descriptor per JVMS §5.4.3.2. */
+    internal fun findFieldExact(
         clazz: Class<*>,
         name: String,
-    ): Boolean {
-        return try {
-            clazz.getField(name)
-            true
-        } catch (_: NoSuchFieldException) {
-            var current: Class<*>? = clazz
-            while (current != null) {
-                try {
-                    current.getDeclaredField(name)
-                    return true
-                } catch (_: NoSuchFieldException) {
-                    // continue
-                }
-                current = current.superclass
+        descriptor: String,
+    ): java.lang.reflect.Field? {
+        for (field in clazz.declaredFields) {
+            if (field.name == name && (descriptor.isEmpty() || typeDescriptor(field.type) == descriptor)) {
+                return field
             }
-            false
         }
+        for (iface in clazz.interfaces) {
+            val found = findFieldExact(iface, name, descriptor)
+            if (found != null) return found
+        }
+        val superclass = clazz.superclass
+        if (superclass != null) {
+            val found = findFieldExact(superclass, name, descriptor)
+            if (found != null) return found
+        }
+        return null
     }
+
+    /** Find any field matching name only across class, interfaces, and superclasses. */
+    internal fun findFieldNameOnly(
+        clazz: Class<*>,
+        name: String,
+    ): java.lang.reflect.Field? {
+        for (field in clazz.declaredFields) {
+            if (field.name == name) return field
+        }
+        for (iface in clazz.interfaces) {
+            val found = findFieldNameOnly(iface, name)
+            if (found != null) return found
+        }
+        val superclass = clazz.superclass
+        if (superclass != null) {
+            val found = findFieldNameOnly(superclass, name)
+            if (found != null) return found
+        }
+        return null
+    }
+
+    /**
+     * Resolves a field reference according to JVMS §5.4.3.2:
+     * 1. Search for exact (name, descriptor) match in clazz, its superinterfaces, then superclasses.
+     * 2. If missing, search for name-only match to diagnose field type mismatch.
+     * 3. Otherwise, report NotFound.
+     */
+    internal fun resolveField(
+        clazz: Class<*>,
+        name: String,
+        descriptor: String,
+    ): FieldResolutionResult {
+        val exact = findFieldExact(clazz, name, descriptor)
+        if (exact != null) {
+            return FieldResolutionResult.Found(exact)
+        }
+        val nameMatch = findFieldNameOnly(clazz, name)
+        if (nameMatch != null) {
+            return FieldResolutionResult.TypeMismatch(typeDescriptor(nameMatch.type))
+        }
+        return FieldResolutionResult.NotFound
+    }
+
+    /** Computes standard JVM type descriptor for a Class. */
+    internal fun typeDescriptor(clazz: Class<*>): String =
+        when {
+            clazz == java.lang.Byte.TYPE -> "B"
+            clazz == java.lang.Character.TYPE -> "C"
+            clazz == java.lang.Double.TYPE -> "D"
+            clazz == java.lang.Float.TYPE -> "F"
+            clazz == java.lang.Integer.TYPE -> "I"
+            clazz == java.lang.Long.TYPE -> "J"
+            clazz == java.lang.Short.TYPE -> "S"
+            clazz == java.lang.Boolean.TYPE -> "Z"
+            clazz == java.lang.Void.TYPE -> "V"
+            clazz.isArray -> "[${typeDescriptor(clazz.componentType)}"
+            else -> "L${clazz.name.replace('.', '/')};"
+        }
 
     /**
      * Extra context for field names whose absence has a known, non-obvious cause.
@@ -349,6 +411,131 @@ object BinaryCompatibilityValidator {
         } else {
             ""
         }
+}
+
+private val logger get() = BinaryCompatibilityValidator.logger
+
+private fun resolveOwnerClass(
+    ref: ConstantPoolParser.MemberRef,
+    classLoader: ClassLoader,
+    sourceClass: String,
+    errors: MutableList<String>,
+): Class<*>? {
+    if (ref.ownerClassName.startsWith("[") || ref.ownerClassName.isEmpty()) return null
+
+    return try {
+        Class.forName(ref.ownerClassName, false, classLoader)
+    } catch (e: LinkageError) {
+        errors.add("$sourceClass -> ${ref.ownerClassName}: ${e.javaClass.simpleName} - ${e.message}")
+        null
+    } catch (e: ClassNotFoundException) {
+        handleClassNotFound(ref, sourceClass, e, errors)
+        null
+    }
+}
+
+private fun handleClassNotFound(
+    ref: ConstantPoolParser.MemberRef,
+    sourceClass: String,
+    exception: ClassNotFoundException,
+    errors: MutableList<String>,
+) {
+    if (BinaryCompatibilityValidator.isSoftFailReference(ref.ownerClassName)) {
+        logger.debug(
+            LogCategory.SYSTEM,
+            "Soft-skipping runtime-package ref",
+            mapOf(
+                "sourceClass" to sourceClass,
+                "ref" to ref.ownerClassName,
+                "error" to exception.toString(),
+            ),
+        )
+    } else if (ref.ownerClassName.startsWith("ai.rever.boss.plugin.")) {
+        errors.add("$sourceClass -> ${ref.ownerClassName}: class not found")
+    }
+}
+
+@Suppress("SpreadOperator")
+private fun verifyConstructor(
+    ref: ConstantPoolParser.MemberRef,
+    ownerClass: Class<*>,
+    classLoader: ClassLoader,
+    sourceClass: String,
+    errors: MutableList<String>,
+) {
+    val paramTypes = ref.parseParameterTypes(classLoader) ?: return
+    val constructorExists =
+        try {
+            ownerClass.getDeclaredConstructor(*paramTypes)
+            true
+        } catch (_: NoSuchMethodException) {
+            false
+        }
+    if (!constructorExists) {
+        val available = BinaryCompatibilityValidator.extractCandidateConstructors(ownerClass)
+        val candidatesSuffix =
+            if (available.isNotEmpty()) {
+                ", available constructors: [${available.joinToString("; ")}]"
+            } else {
+                ""
+            }
+        errors.add(
+            "$sourceClass -> ${ref.ownerClassName}.<init>${ref.descriptor}: constructor not found" +
+                candidatesSuffix,
+        )
+    }
+}
+
+private fun verifyMethod(
+    ref: ConstantPoolParser.MemberRef,
+    ownerClass: Class<*>,
+    classLoader: ClassLoader,
+    sourceClass: String,
+    errors: MutableList<String>,
+) {
+    if (ref.name == "<clinit>") return
+    val paramTypes = ref.parseParameterTypes(classLoader) ?: return
+    if (!BinaryCompatibilityValidator.hasMethod(ownerClass, ref.name, paramTypes)) {
+        val available = BinaryCompatibilityValidator.extractCandidateMethods(ownerClass, ref.name)
+        val candidatesSuffix =
+            if (available.isNotEmpty()) {
+                ", available candidates: [${available.joinToString("; ")}]"
+            } else {
+                ""
+            }
+        errors.add(
+            "$sourceClass -> ${ref.ownerClassName}.${ref.name}${ref.descriptor}: method not found" +
+                candidatesSuffix,
+        )
+    }
+}
+
+private fun verifyField(
+    ref: ConstantPoolParser.MemberRef,
+    ownerClass: Class<*>,
+    sourceClass: String,
+    errors: MutableList<String>,
+) {
+    when (val result = BinaryCompatibilityValidator.resolveField(ownerClass, ref.name, ref.descriptor)) {
+        is BinaryCompatibilityValidator.FieldResolutionResult.Found -> {
+            // Valid resolution per JVMS §5.4.3.2
+        }
+
+        is BinaryCompatibilityValidator.FieldResolutionResult.TypeMismatch -> {
+            errors.add(
+                "$sourceClass -> ${ref.ownerClassName}.${ref.name}:${ref.descriptor}: field type mismatch " +
+                    "(expected ${ref.descriptor}, found ${result.actualDescriptor})" +
+                    BinaryCompatibilityValidator.hintFor(ref.name),
+            )
+        }
+
+        is BinaryCompatibilityValidator.FieldResolutionResult.NotFound -> {
+            errors.add(
+                "$sourceClass -> ${ref.ownerClassName}.${ref.name}:${ref.descriptor}: field not found" +
+                    BinaryCompatibilityValidator.hintFor(ref.name),
+            )
+        }
+    }
 }
 
 /**

@@ -3,13 +3,15 @@
   <ManuallySuppressedIssues/>
   <CurrentIssues>
     <ID>CyclomaticComplexMethod:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$fun validate( classLoader: ClassLoader, jarPath: String, ): ValidationResult</ID>
-    <ID>CyclomaticComplexMethod:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$private fun verifyReference( ref: ConstantPoolParser.MemberRef, classLoader: ClassLoader, sourceClass: String, errors: MutableList&lt;String&gt;, )</ID>
     <ID>CyclomaticComplexMethod:BinaryCompatibilityValidator.kt$ConstantPoolParser$fun extractReferences(classBytes: ByteArray): List&lt;MemberRef&gt;</ID>
     <ID>CyclomaticComplexMethod:BinaryCompatibilityValidator.kt$ConstantPoolParser$fun parseDescriptorParams( descriptor: String, classLoader: ClassLoader, ): Array&lt;Class&lt;*&gt;&gt;</ID>
     <ID>CyclomaticComplexMethod:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$override suspend fun loadPlugin(jarPath: String): Result&lt;LoadedPlugin&gt;</ID>
+    <ID>EmptyFunctionBlock:BinaryCompatibilityValidatorTest.kt$BinaryCompatibilityValidatorTest.HolderWithBrokenMethod${}</ID>
+    <ID>EmptyFunctionBlock:BinaryCompatibilityValidatorTest.kt$BinaryCompatibilityValidatorTest.OverloadHolder${}</ID>
     <ID>EmptyFunctionBlock:ForceUnloadTest.kt$LockedFixturePlugin${}</ID>
     <ID>ExplicitGarbageCollectionCall:ClassLoaderGCWatcher.kt$ClassLoaderGCWatcher$gc()</ID>
     <ID>ExplicitGarbageCollectionCall:ClassLoaderGCWatcher.kt$ClassLoaderGCWatcher$runFinalization()</ID>
+    <ID>FunctionOnlyReturningConstant:BinaryCompatibilityValidatorTest.kt$BinaryCompatibilityValidatorTest.ValidFixturePlugin$fun doSomething(): String</ID>
     <ID>LongMethod:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$fun validate( classLoader: ClassLoader, jarPath: String, ): ValidationResult</ID>
     <ID>LongMethod:BinaryCompatibilityValidator.kt$ConstantPoolParser$fun extractReferences(classBytes: ByteArray): List&lt;MemberRef&gt;</ID>
     <ID>LongMethod:BinaryCompatibilityValidator.kt$ConstantPoolParser$fun parseDescriptorParams( descriptor: String, classLoader: ClassLoader, ): Array&lt;Class&lt;*&gt;&gt;</ID>
@@ -17,10 +19,11 @@
     <ID>LongMethod:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$override suspend fun unloadPlugin( pluginId: String, waitForGC: Boolean, force: Boolean, ): Result&lt;Unit&gt;</ID>
     <ID>LongMethod:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$suspend fun loadBundledPlugins(bundledDir: java.io.File): List&lt;LoadedPlugin&gt;</ID>
     <ID>LoopWithTooManyJumpStatements:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$for</ID>
-    <ID>MaxLineLength:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$errors.add("$sourceClass -&gt; ${ref.ownerClassName}.${ref.name}(${ref.descriptor}): method not found")</ID>
-    <ID>MaxLineLength:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$errors.add("$sourceClass -&gt; ${ref.ownerClassName}.&lt;init&gt;(${ref.descriptor}): constructor not found")</ID>
     <ID>MaxLineLength:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$internal</ID>
     <ID>MaxLineLength:BinaryCompatibilityValidator.kt$ConstantPoolParser$*</ID>
+    <ID>MaxLineLength:BinaryCompatibilityValidatorTest.kt$BinaryCompatibilityValidatorTest$error.startsWith("com.example.caller.MyPlugin -&gt; ${DummyTarget::class.java.name}.&lt;init&gt;(Ljava/lang/String;)V: constructor not found")</ID>
+    <ID>MaxLineLength:BinaryCompatibilityValidatorTest.kt$BinaryCompatibilityValidatorTest$error.startsWith("com.example.caller.MyPlugin -&gt; ${DummyTarget::class.java.name}.execute(I)Z: method not found")</ID>
+    <ID>MaxLineLength:BinaryCompatibilityValidatorTest.kt$BinaryCompatibilityValidatorTest$error.startsWith("com.example.caller.MyPlugin -&gt; ${DummyTarget::class.java.name}.nonExistentField:Ljava/lang/String;: field not found")</ID>
     <ID>MaxLineLength:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$"Plugin has no store signature - allowing for now, will be rejected once signature enforcement is enabled"</ID>
     <ID>MaxLineLength:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$"Plugin requires API version ${manifest.apiVersion}, but current version is ${PluginManifestConstants.CURRENT_API_VERSION}"</ID>
     <ID>MaxLineLength:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$"Plugin requires BOSS version $minBossVersion or later, but current version is $currentVersion"</ID>
@@ -29,8 +32,10 @@
     <ID>MaxLineLength:PluginSignatureEnforcement.kt$PluginSignatureEnforcement$"Unrecognized plugin-signature enforcement flag value - flag IGNORED, falling back to default (enforcement ${if (DEFAULT) "ON" else "OFF"})"</ID>
     <ID>NestedBlockDepth:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$fun validate( classLoader: ClassLoader, jarPath: String, ): ValidationResult</ID>
     <ID>NestedBlockDepth:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$override suspend fun unloadPlugin( pluginId: String, waitForGC: Boolean, force: Boolean, ): Result&lt;Unit&gt;</ID>
+    <ID>ReturnCount:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$internal fun findFieldExact( clazz: Class&lt;*&gt;, name: String, descriptor: String, ): java.lang.reflect.Field?</ID>
+    <ID>ReturnCount:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$internal fun findFieldNameOnly( clazz: Class&lt;*&gt;, name: String, ): java.lang.reflect.Field?</ID>
     <ID>ReturnCount:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$internal fun hasMethod( clazz: Class&lt;*&gt;, name: String, paramTypes: Array&lt;Class&lt;*&gt;&gt;, ): Boolean</ID>
-    <ID>ReturnCount:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$private fun verifyReference( ref: ConstantPoolParser.MemberRef, classLoader: ClassLoader, sourceClass: String, errors: MutableList&lt;String&gt;, )</ID>
+    <ID>ReturnCount:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$internal fun resolveField( clazz: Class&lt;*&gt;, name: String, descriptor: String, ): FieldResolutionResult</ID>
     <ID>ReturnCount:BinaryCompatibilityValidator.kt$ConstantPoolParser$fun extractReferences(classBytes: ByteArray): List&lt;MemberRef&gt;</ID>
     <ID>ReturnCount:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$override suspend fun unloadPlugin( pluginId: String, waitForGC: Boolean, force: Boolean, ): Result&lt;Unit&gt;</ID>
     <ID>ReturnCount:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$private fun isBossVersionCompatible( requiredVersion: String, currentVersion: String, ): Boolean</ID>
@@ -39,7 +44,6 @@
     <ID>ReturnCount:PluginClassLoaderManager.kt$PluginClassLoaderManager$fun initializeApiLayer(pluginDir: File): ApiClassLoader</ID>
     <ID>ReturnCount:PluginManifestReader.kt$PluginManifestReader$private fun isCompatibleApiVersion(requiredVersion: String): Boolean</ID>
     <ID>ReturnCount:PluginSignatureVerifier.kt$PluginSignatureVerifier$fun verifySignedMessage( message: String, signatureBase64: String, ): SignatureVerificationResult</ID>
-    <ID>SpreadOperator:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$(*paramTypes)</ID>
     <ID>SpreadOperator:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$(name, *paramTypes)</ID>
     <ID>ThrowsCount:PluginManifestReader.kt$PluginManifestReader$fun readFromJar(jarPath: String): PluginManifest</ID>
     <ID>TooGenericExceptionCaught:ApiClassLoader.kt$ApiClassLoader.Companion$e: Exception</ID>
@@ -49,7 +53,18 @@
     <ID>TooGenericExceptionCaught:PluginClassLoaderManager.kt$PluginClassLoaderManager$e: Exception</ID>
     <ID>TooGenericExceptionCaught:PluginManifestReader.kt$PluginManifestReader$e: Exception</ID>
     <ID>TooGenericExceptionCaught:PluginSignatureVerifier.kt$PluginSignatureVerifier$e: Exception</ID>
+    <ID>TooManyFunctions:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator</ID>
     <ID>TooManyFunctions:DynamicPluginLoader.kt$DynamicPluginLoaderImpl : DynamicPluginLoader</ID>
     <ID>TooManyFunctions:PluginClassLoaderManager.kt$PluginClassLoaderManager</ID>
+    <ID>UnusedParameter:BinaryCompatibilityValidatorTest.kt$BinaryCompatibilityValidatorTest.HolderWithBrokenMethod$p: UnresolvableParamType</ID>
+    <ID>UnusedParameter:BinaryCompatibilityValidatorTest.kt$BinaryCompatibilityValidatorTest.OverloadHolder$a: Boolean</ID>
+    <ID>UnusedParameter:BinaryCompatibilityValidatorTest.kt$BinaryCompatibilityValidatorTest.OverloadHolder$a: Byte</ID>
+    <ID>UnusedParameter:BinaryCompatibilityValidatorTest.kt$BinaryCompatibilityValidatorTest.OverloadHolder$a: Double</ID>
+    <ID>UnusedParameter:BinaryCompatibilityValidatorTest.kt$BinaryCompatibilityValidatorTest.OverloadHolder$a: Float</ID>
+    <ID>UnusedParameter:BinaryCompatibilityValidatorTest.kt$BinaryCompatibilityValidatorTest.OverloadHolder$a: Int</ID>
+    <ID>UnusedParameter:BinaryCompatibilityValidatorTest.kt$BinaryCompatibilityValidatorTest.OverloadHolder$a: Long</ID>
+    <ID>UnusedParameter:BinaryCompatibilityValidatorTest.kt$BinaryCompatibilityValidatorTest.OverloadHolder$a: Short</ID>
+    <ID>UnusedParameter:BinaryCompatibilityValidatorTest.kt$BinaryCompatibilityValidatorTest.OverloadHolder$a: String</ID>
+    <ID>UnusedParameter:BinaryCompatibilityValidatorTest.kt$BinaryCompatibilityValidatorTest.OverloadHolder$b: Int</ID>
   </CurrentIssues>
 </SmellBaseline>
