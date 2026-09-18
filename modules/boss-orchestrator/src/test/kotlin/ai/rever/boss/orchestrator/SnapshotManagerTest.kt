@@ -119,4 +119,26 @@ class SnapshotManagerTest {
         assertTrue(info.sizeBytes > 0)
         assertTrue(info.timestamp > 0)
     }
+
+    @Test
+    fun `save with path traversal processId throws IllegalArgumentException`() {
+        val badId = "../traversal-proc"
+        kotlin.test.assertFailsWith<IllegalArgumentException> {
+            manager.save(badId, "data".toByteArray())
+        }
+    }
+
+    @Test
+    fun `loadLatest with invalid processId throws IllegalArgumentException`() {
+        kotlin.test.assertFailsWith<IllegalArgumentException> {
+            manager.loadLatest("../../etc/passwd")
+        }
+    }
+
+    @Test
+    fun `listSnapshots with blank processId throws IllegalArgumentException`() {
+        kotlin.test.assertFailsWith<IllegalArgumentException> {
+            manager.listSnapshots("   ")
+        }
+    }
 }
