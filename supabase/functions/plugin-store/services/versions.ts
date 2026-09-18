@@ -3,6 +3,33 @@ import type { PluginVersion, PluginDependency } from "../types/plugin.ts"
 import { signVersionAnchor } from "../utils/signing.ts"
 
 /**
+ * The sha256 placeholder `createVersion` writes until the JAR has been uploaded
+ * and hashed. `finalizeVersion` is the only thing that replaces it.
+ */
+export const PENDING_SHA256 = 'pending'
+
+/**
+ * Does this version row describe real, downloadable bytes?
+ *
+ * `createVersion` inserts the row BEFORE the artifact exists — sha256 is this
+ * placeholder and jar_size is 0 — yet published_at already reads as now() (the
+ * DDL default). An unfinalized row therefore outranks the last good version in
+ * any published_at-ordered query, which is #912: "download latest" resolved to
+ * a jar key that did not exist yet (or to stale bytes a failed attempt left
+ * under that key, mis-anchored under the new version's signature).
+ *
+ * Both facts are written and replaced together, so one predicate covers the
+ * state. Consumers split cleanly:
+ *   - read paths (getLatestVersion, getVersion, getPluginVersions) must skip
+ *     unfinalized rows — there is nothing to download;
+ *   - publish paths (finalizeVersion, versionExists, getVersionById) must
+ *     still see them, or an interrupted publish could never be repaired.
+ */
+export function isFinalizedVersionRow(row: { sha256?: unknown, jar_size?: unknown }): boolean {
+  return row.sha256 !== PENDING_SHA256 && Number(row.jar_size) > 0
+}
+
+/**
  * Get all versions of a plugin
  */
 export async function getPluginVersions(
@@ -19,7 +46,14 @@ export async function getPluginVersions(
     throw new Error(`Failed to get versions: ${error.message}`)
   }
 
-  return (data || []).map((row: Record<string, unknown>) => ({
+  // The RPC orders by published_at DESC, so an unfinalized row — inserted with
+  // published_at = now() (DDL default) while its JAR does not exist yet — would
+  // lead this list. It is dropped here (#912): a version with no bytes is not a
+  // version a user can download, and showing it advertises the very row that
+  // breaks `download latest`.
+  return (data || [])
+    .filter((row: Record<string, unknown>) => isFinalizedVersionRow(row))
+    .map((row: Record<string, unknown>) => ({
     id: row.id as string,
     pluginId: pluginId,
     version: row.version as string,
@@ -38,6 +72,29 @@ export async function getPluginVersions(
 
 /**
  * Get the latest version of a plugin
+ *
+ * THE #912 FIX. The naive shape was `.eq('plugin_id', …).order('published_at',
+ * {ascending: false}).limit(1).single()` — a plain "newest row wins". But
+ * createVersion inserts the row BEFORE the artifact exists, with sha256
+ * 'pending', jar_size 0, and published_at already now() (DDL default). In that
+ * shape the phantom row was *guaranteed* to outrank the last good version: it
+ * is newer by construction and there is no state where it is not the newest
+ * row until finalize replaces its hash. So every "download latest" resolved to
+ * it — sha256 'pending' (every re-verifying host fails), a jar key that 404s,
+ * or worse, stale bytes a previous failed finalize left under that exact key,
+ * now served under the NEW version's signature anchor.
+ *
+ * The row is not removed — finalize still needs it, and its
+ * UNIQUE(plugin_id, version) squat is the repair trail. It is excluded from the
+ * query, so `.limit(1).single()` answers with the newest FINALIZED version
+ * instead. A plugin whose every version is unfinalized has no latest — null,
+ * which the download routes render as their existing "No versions available"
+ * 404.
+ *
+ * The filter is the query-side mirror of isFinalizedVersionRow() and must stay
+ * in sync with it: sha256 <> 'pending' AND jar_size > 0. Both facts are set
+ * together by finalizeVersion, so either alone is enough in practice; the pair
+ * is belt and braces against a half-written finalize (size written, hash not).
  */
 export async function getLatestVersion(
   supabase: SupabaseClient,
@@ -47,6 +104,8 @@ export async function getLatestVersion(
     .from('plugin_versions')
     .select('*')
     .eq('plugin_id', pluginUuid)
+    .neq('sha256', PENDING_SHA256)
+    .gt('jar_size', 0)
     .order('published_at', { ascending: false })
     .limit(1)
     .single()
@@ -76,6 +135,17 @@ export async function getLatestVersion(
 
 /**
  * Get a specific version by plugin UUID and version string
+ *
+ * The download-by-version route's resolver (#912). An unfinalized row must be
+ * indistinguishable from a nonexistent one here: there are no bytes behind it,
+ * so serving its jar_path hands the client a 404 download URL — or stale bytes
+ * a previous failed attempt left under that key — and its 'pending' sha256
+ * fails every host that re-verifies. A pinned download is a cache of a version
+ * the user already saw; an unfinalized row never appeared anywhere, so nobody
+ * can legitimately hold its name.
+ *
+ * getVersionById deliberately does NOT filter — finalize needs to find the row
+ * to repair it (see finalizeVersion).
  */
 export async function getVersion(
   supabase: SupabaseClient,
@@ -87,6 +157,8 @@ export async function getVersion(
     .select('*')
     .eq('plugin_id', pluginUuid)
     .eq('version', version)
+    .neq('sha256', PENDING_SHA256)
+    .gt('jar_size', 0)
     .single()
 
   if (error) {
@@ -173,7 +245,7 @@ export async function createVersion(
       min_api_version: minApiVersion,
       dependencies,
       jar_path: jarPath,
-      sha256: 'pending', // Will be updated after upload
+      sha256: PENDING_SHA256, // Will be updated after upload (finalizeVersion)
       jar_size: 0
     })
     .select('id')
@@ -192,6 +264,13 @@ export async function createVersion(
 
 /**
  * Finalize a version after JAR upload
+ *
+ * A finalize-time guard (#912): the whole fix rests on "finalized" meaning
+ * `sha256 <> 'pending' AND jar_size > 0`. Accepting the placeholder (or a
+ * non-positive size) here would write a row that every read path — rightly —
+ * refuses to serve, while its UNIQUE(plugin_id, version) row squats the version
+ * so the owner can never retry it: a permanently invisible, unrepairable
+ * version. Refuse instead, leaving the row pending and the retry open.
  */
 export async function finalizeVersion(
   supabase: SupabaseClient,
@@ -201,6 +280,13 @@ export async function finalizeVersion(
   pluginId: string,
   version: string
 ): Promise<void> {
+  if (typeof sha256 !== 'string' || sha256.length === 0 || sha256 === PENDING_SHA256) {
+    throw new Error('Refusing to finalize: sha256 must be the real digest of the uploaded JAR, not the pending placeholder')
+  }
+  if (!Number.isFinite(jarSize) || jarSize <= 0) {
+    throw new Error(`Refusing to finalize: jar_size must be positive, got ${jarSize}`)
+  }
+
   // Sign the canonical anchor pluginId|version|sha256 — binding identity and
   // version, not just the digest, so store-signed artifacts aren't mutually
   // substitutable. Null (no signing key configured) leaves the version
