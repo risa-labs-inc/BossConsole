@@ -7,10 +7,13 @@ import ai.rever.boss.ipc.proto.services.SaveWorkspaceRequest
 import io.grpc.Status
 import io.grpc.StatusRuntimeException
 import kotlinx.coroutines.runBlocking
+import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import java.io.IOException
 import java.nio.file.Files
+import java.nio.file.Path
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
@@ -235,6 +238,7 @@ class WorkspaceServiceImplTest {
     fun rejectsSymlinkedRecordsWithoutTouchingTheirTargets() =
         runBlocking {
             val root = temporary.newFolder("workspaces")
+            assumeSymlinksSupported(root.toPath())
             val outside =
                 temporary.newFile("outside.json").also {
                     it.writeText("""{"id":"linked","name":"Outside"}""")
@@ -259,5 +263,26 @@ class WorkspaceServiceImplTest {
     ) {
         val failure = assertFailsWith<StatusRuntimeException> { action() }
         assertEquals(code, failure.status.code)
+    }
+
+    private fun assumeSymlinksSupported(root: Path) {
+        val probe = root.resolve("symlink-support-probe")
+        try {
+            // The target need not exist. A dangling target avoids leaving a directory cycle
+            // behind if cleanup itself fails after the privilege probe succeeds.
+            Files.createSymbolicLink(probe, root.resolve("symlink-probe-target"))
+        } catch (_: UnsupportedOperationException) {
+            assumeTrue("This filesystem does not support symbolic links", false)
+            return
+        } catch (e: IOException) {
+            // Standard Windows users need Developer Mode or SeCreateSymbolicLinkPrivilege.
+            // On POSIX, an IOException indicates a real fixture/environment failure that this
+            // security-sensitive test must surface rather than silently skip.
+            if (!System.getProperty("os.name").startsWith("Windows")) throw e
+            assumeTrue("Symbolic link creation is not permitted on this Windows host", false)
+            return
+        }
+        // Do not misclassify a cleanup failure as lack of symlink support.
+        Files.delete(probe)
     }
 }

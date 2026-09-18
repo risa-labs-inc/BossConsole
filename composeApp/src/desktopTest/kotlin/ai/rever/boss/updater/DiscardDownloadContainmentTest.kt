@@ -1,8 +1,11 @@
 package ai.rever.boss.updater
 
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
+import java.io.IOException
 import java.nio.file.Files
+import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -60,6 +63,7 @@ class DiscardDownloadContainmentTest {
     fun `a symlink inside staging pointing out is refused`() {
         val victim = File(outside, "important.txt").apply { writeText("not an update") }
         val dir = createRestrictedDir(defaultStagingDir())
+        assumeSymlinksSupported(dir.toPath())
         val link = File(dir, "link-to-victim.dmg")
         link.delete()
         Files.createSymbolicLink(link.toPath(), victim.toPath())
@@ -87,5 +91,26 @@ class DiscardDownloadContainmentTest {
         // Absence is the postcondition, so a path that is already gone is success
         // rather than something to report.
         service.discardDownload(File(defaultStagingDir(), "never-existed.dmg").absolutePath)
+    }
+
+    private fun assumeSymlinksSupported(root: Path) {
+        val probe = root.resolve("symlink-support-probe")
+        try {
+            // The target need not exist. A dangling target avoids leaving a directory cycle
+            // behind if cleanup itself fails after the privilege probe succeeds.
+            Files.createSymbolicLink(probe, root.resolve("symlink-probe-target"))
+        } catch (_: UnsupportedOperationException) {
+            assumeTrue(false, "This filesystem does not support symbolic links")
+            return
+        } catch (e: IOException) {
+            // Standard Windows users need Developer Mode or SeCreateSymbolicLinkPrivilege.
+            // On POSIX, an IOException indicates a real fixture/environment failure that this
+            // security-sensitive test must surface rather than silently skip.
+            if (!System.getProperty("os.name").startsWith("Windows")) throw e
+            assumeTrue(false, "Symbolic link creation is not permitted on this Windows host")
+            return
+        }
+        // Do not misclassify a cleanup failure as lack of symlink support.
+        Files.delete(probe)
     }
 }

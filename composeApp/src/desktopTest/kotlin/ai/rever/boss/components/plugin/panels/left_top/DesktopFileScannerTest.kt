@@ -1,9 +1,12 @@
 package ai.rever.boss.components.plugin.panels.left_top
 
 import kotlinx.coroutines.runBlocking
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import java.io.File
+import java.io.IOException
 import java.nio.file.Files
+import java.nio.file.Path
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -67,6 +70,7 @@ class DesktopFileScannerTest {
         val real = tempDir()
         File(real, "file.txt").writeText("hi")
         val linkDir = tempDir()
+        assumeSymlinksSupported(linkDir.toPath())
         val link = File(linkDir, "link")
         Files.createSymbolicLink(link.toPath(), real.toPath())
         assertTrue(directoryHasChildren(link.absolutePath))
@@ -154,5 +158,26 @@ class DesktopFileScannerTest {
         val onlySkipped = tempDir()
         File(onlySkipped, "build").mkdir()
         assertFalse(directoryHasChildren(onlySkipped.absolutePath, showHidden = true))
+    }
+
+    private fun assumeSymlinksSupported(root: Path) {
+        val probe = root.resolve("symlink-support-probe")
+        try {
+            // The target need not exist. A dangling target avoids leaving a directory cycle
+            // behind if cleanup itself fails after the privilege probe succeeds.
+            Files.createSymbolicLink(probe, root.resolve("symlink-probe-target"))
+        } catch (_: UnsupportedOperationException) {
+            assumeTrue(false, "This filesystem does not support symbolic links")
+            return
+        } catch (e: IOException) {
+            // Standard Windows users need Developer Mode or SeCreateSymbolicLinkPrivilege.
+            // On POSIX, an IOException indicates a real fixture/environment failure rather than
+            // a missing privilege, so surface it instead of silently skipping.
+            if (!System.getProperty("os.name").startsWith("Windows")) throw e
+            assumeTrue(false, "Symbolic link creation is not permitted on this Windows host")
+            return
+        }
+        // Do not misclassify a cleanup failure as lack of symlink support.
+        Files.delete(probe)
     }
 }
