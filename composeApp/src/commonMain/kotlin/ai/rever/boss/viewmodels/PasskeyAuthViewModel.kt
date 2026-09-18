@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancel
 
 /**
  * Passkey authentication view model handling WebAuthn flows
@@ -21,6 +22,7 @@ import kotlinx.coroutines.launch
 class PasskeyAuthViewModel {
     private val logger = BossLogger.forComponent("PasskeyAuthViewModel")
     private val viewModelScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    internal val scopeForTesting get() = viewModelScope
 
     // Store authentication job reference for cancellation
     private var authJob: Job? = null
@@ -247,5 +249,12 @@ class PasskeyAuthViewModel {
         _showCrossDeviceQR.value = false
         _crossDeviceQRUrl.value = null
         _crossDeviceChallenge.value = null
+    }
+
+    /**
+     * Cancel the view model scope when the view model is no longer needed
+     */
+    fun dispose() {
+        viewModelScope.cancel()
     }
 }
