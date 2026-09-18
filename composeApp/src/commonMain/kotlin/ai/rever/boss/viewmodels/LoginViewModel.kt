@@ -6,6 +6,7 @@ import ai.rever.boss.viewmodels.auth.AuthOptionsManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
@@ -14,9 +15,10 @@ import kotlinx.coroutines.flow.stateIn
  * Facade pattern coordinating multiple authentication component ViewModels
  * Responsible for: orchestrating login flows, exposing unified state
  */
-class LoginViewModel {
-    private val viewModelScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
-
+class LoginViewModel(
+    // Default preserves production behavior; injectable so a test can assert the scope is cancelled.
+    private val viewModelScope: CoroutineScope = CoroutineScope(Dispatchers.Main + SupervisorJob()),
+) {
     // Component ViewModels
     private val coreLoginViewModel = CoreLoginViewModel()
     val passkeyAuthViewModel = PasskeyAuthViewModel()
@@ -97,5 +99,17 @@ class LoginViewModel {
      */
     fun setMagicLinkVerificationError(errorMessage: String) {
         coreLoginViewModel.setMagicLinkVerificationError(errorMessage)
+    }
+
+    /**
+     * Release this view-model and its components. Cancels every child scope and this facade's own
+     * scope so no authentication work (and no onSuccess callback that navigates) can outlive the
+     * auth screen. Call from the owning composable's onDispose.
+     */
+    fun dispose() {
+        coreLoginViewModel.dispose()
+        passkeyAuthViewModel.dispose()
+        authOptionsManager.dispose()
+        viewModelScope.cancel()
     }
 }
