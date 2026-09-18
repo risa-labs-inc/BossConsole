@@ -49,6 +49,9 @@ internal data class McpLedgerQuery(
     val toMillis: Long? = null,
 )
 
+/** An exception's message as the operator's terminal may safely see it; it can quote ledger content. */
+private fun reasonOf(e: Exception): String = TerminalText.safe(e.message.orEmpty())
+
 /**
  * The read side of the durable MCP operation ledger, for `boss mcp ledger verify|tail|search`.
  *
@@ -87,9 +90,10 @@ internal object McpLedgerCli {
                 requireLedger(ledgerFile)
                 McpOperationLedger(ledgerFile = ledgerFile).verifyChain()
             } catch (e: McpLedgerReadException) {
-                return McpLedgerOutcome.Failed("Error: ${e.message}")
+                return McpLedgerOutcome.Failed("Error: ${reasonOf(e)}")
             } catch (e: Exception) {
-                return McpLedgerOutcome.Failed("Error: cannot read ${ledgerFile.absolutePath}: ${e.message}")
+                val where = TerminalText.safe(ledgerFile.absolutePath)
+                return McpLedgerOutcome.Failed("Error: cannot read $where: ${reasonOf(e)}")
             }
         val text =
             if (json) {
@@ -125,9 +129,9 @@ internal object McpLedgerCli {
                 },
             )
         } catch (e: McpLedgerReadException) {
-            McpLedgerOutcome.Failed("Error: ${e.message}")
+            McpLedgerOutcome.Failed("Error: ${reasonOf(e)}")
         } catch (e: Exception) {
-            McpLedgerOutcome.Failed("Error: cannot read the MCP operation ledger: ${e.message}")
+            McpLedgerOutcome.Failed("Error: cannot read the MCP operation ledger: ${reasonOf(e)}")
         }
 
     /** Matching records newest first, capped at [limit], with the total number of matches. */
@@ -150,9 +154,9 @@ internal object McpLedgerCli {
                 },
             )
         } catch (e: McpLedgerReadException) {
-            McpLedgerOutcome.Failed("Error: ${e.message}")
+            McpLedgerOutcome.Failed("Error: ${reasonOf(e)}")
         } catch (e: Exception) {
-            McpLedgerOutcome.Failed("Error: cannot read the MCP operation ledger: ${e.message}")
+            McpLedgerOutcome.Failed("Error: cannot read the MCP operation ledger: ${reasonOf(e)}")
         }
 
     /**
@@ -236,13 +240,17 @@ internal object McpLedgerFormat {
     /** ISO-8601 in UTC, so a timestamp in a report cannot be misread as local time. */
     fun timestamp(epochMillis: Long): String = Instant.ofEpochMilli(epochMillis).toString()
 
+    /** [text] made safe to print; see [TerminalText.safe]. */
+    fun terminalSafe(text: String): String = TerminalText.safe(text)
+
     fun verification(
         ledgerFile: File,
         verification: McpLedgerVerification,
     ): String =
         buildString {
-            appendLine("Ledger:  ${ledgerFile.absolutePath}")
-            appendLine("Files:   ${verification.files.size} (${verification.files.joinToString(", ")})")
+            appendLine("Ledger:  ${terminalSafe(ledgerFile.absolutePath)}")
+            val files = verification.files.joinToString(", ") { terminalSafe(it) }
+            appendLine("Files:   ${verification.files.size} ($files)")
             appendLine(
                 "Records: ${verification.totalRecords} " +
                     "(${verification.chainedRecords} chained, " +
@@ -252,21 +260,23 @@ internal object McpLedgerFormat {
             if (broken != null) {
                 appendLine(
                     "Chain:   BROKEN - first break at record ${broken.recordIndex} " +
-                        "of ${verification.totalRecords}, ${broken.fileName} line ${broken.lineNumber}",
+                        "of ${verification.totalRecords}, ${terminalSafe(broken.fileName)} line ${broken.lineNumber}",
                 )
-                appendLine("         ${broken.recordId} at ${timestamp(broken.timestamp)}")
+                appendLine("         ${terminalSafe(broken.recordId)} at ${timestamp(broken.timestamp)}")
                 appendLine("         reason:   ${reasonText(broken.reason)}")
-                appendLine("         expected ${broken.expectedHash}")
-                appendLine("         found    ${broken.foundHash}")
+                appendLine("         expected ${terminalSafe(broken.expectedHash)}")
+                appendLine("         found    ${terminalSafe(broken.foundHash)}")
             } else if (verification.coverageGaps.isNotEmpty()) {
+                val gaps = verification.coverageGaps.joinToString(", ") { terminalSafe(it) }
                 appendLine(
-                    "Chain:   INCOMPLETE - ${verification.coverageGaps.joinToString(", ")} missing, " +
+                    "Chain:   INCOMPLETE - $gaps missing, " +
                         "so the chain could not be followed across that gap",
                 )
             } else if (verification.verdict == "intact") {
+                val oldest = verification.oldestVerifiableFile?.let(::terminalSafe)
                 appendLine(
                     "Chain:   intact - oldest verifiable record is " +
-                        "${verification.oldestVerifiableFile} line ${verification.oldestVerifiableLine}",
+                        "$oldest line ${verification.oldestVerifiableLine}",
                 )
             } else {
                 val explanation =
@@ -306,7 +316,7 @@ internal object McpLedgerFormat {
         if (entries.isEmpty()) {
             return if (totalMatches == 0) "No matching ledger records." else "No records to show."
         }
-        val toolWidth = entries.maxOf { it.record.toolName.length }.coerceAtMost(40)
+        val toolWidth = entries.maxOf { terminalSafe(it.record.toolName).length }.coerceAtMost(40)
         val policyWidth = entries.maxOf { policyOf(it.record).length }
         val body =
             entries.joinToString("\n") { entry ->
@@ -314,7 +324,7 @@ internal object McpLedgerFormat {
                 buildString {
                     append(timestamp(record.timestamp))
                     append("  ")
-                    append(record.toolName.padEnd(toolWidth))
+                    append(terminalSafe(record.toolName).padEnd(toolWidth))
                     append("  ")
                     append(policyOf(record).padEnd(policyWidth))
                     append("  ")
@@ -322,8 +332,8 @@ internal object McpLedgerFormat {
                     append("ms  ")
                     append(if (record.isError) "error" else "ok   ")
                     append("  hash ")
-                    append(record.hash?.take(12) ?: "unverifiable")
-                    record.errorSnippet?.let { append("\n    error: ").append(it) }
+                    append(record.hash?.take(12)?.let(::terminalSafe) ?: "unverifiable")
+                    record.errorSnippet?.let { append("\n    error: ").append(terminalSafe(it)) }
                 }
             }
         val footer =
