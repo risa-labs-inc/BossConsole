@@ -32,6 +32,17 @@ public final class TerminalTestProcess {
                 System.out.flush();
                 System.in.read();
             }
+            case "drain-stdin" -> {
+                // Mirrors sort/grep/cat: reads until EOF rather than until a newline, so it
+                // can only exit once stdin is actually closed - never on input content alone.
+                System.out.println("ready");
+                System.out.flush();
+                java.io.ByteArrayOutputStream collected = new java.io.ByteArrayOutputStream();
+                byte[] buf = new byte[4096];
+                int n;
+                while ((n = System.in.read(buf)) != -1) collected.write(buf, 0, n);
+                System.out.print("drained:" + collected.size());
+            }
             case "flood" -> {
                 String chunk = "x".repeat(4096);
                 for (int i = 0; i < 400; i++) System.out.print(chunk);

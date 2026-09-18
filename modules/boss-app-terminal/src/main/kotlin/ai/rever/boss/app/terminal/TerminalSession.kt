@@ -28,6 +28,8 @@ internal class TerminalSession(
     @Volatile var active = true
         private set
 
+    @Volatile private var stdinClosed = false
+
     fun startPump(onStopped: () -> Unit) {
         Thread({
             val input = process.inputStream
@@ -88,12 +90,20 @@ internal class TerminalSession(
             throw Status.RESOURCE_EXHAUSTED.withDescription("Terminal input is busy").asRuntimeException()
         }
         try {
-            if (!active || !process.isAlive) {
-                throw Status.FAILED_PRECONDITION.withDescription("Terminal has exited").asRuntimeException()
-            }
+            requireWritable()
             writeInput(bytes)
         } finally {
             inputLock.unlock()
+        }
+    }
+
+    /** Call while holding [inputLock]. Split out of [send] to keep its own throw count down. */
+    private fun requireWritable() {
+        if (!active || !process.isAlive) {
+            throw Status.FAILED_PRECONDITION.withDescription("Terminal has exited").asRuntimeException()
+        }
+        if (stdinClosed) {
+            throw Status.FAILED_PRECONDITION.withDescription("Terminal input has been closed").asRuntimeException()
         }
     }
 
@@ -103,6 +113,32 @@ internal class TerminalSession(
             process.outputStream.flush()
         } catch (_: IOException) {
             throw Status.FAILED_PRECONDITION.withDescription("Terminal input pipe is closed").asRuntimeException()
+        }
+    }
+
+    /**
+     * Deliver EOF on stdin without touching the process otherwise - the one thing [terminate]
+     * cannot be asked to do, since it forcibly kills the child rather than letting it notice
+     * input has ended. A stdin-consuming one-shot command (`sort`, `grep`, `cat` with no args, a
+     * pipeline ending in one of those) blocks on read() forever without this: nothing else in
+     * this class ever closes the write end, so the process can never reach the exit chunk
+     * [CreateSessionRequest]'s `run_command` schema advertises.
+     *
+     * Idempotent and safe after exit: a second call, or one after the process has already died,
+     * finds the stream already closed (or closing it is a no-op) rather than throwing.
+     */
+    fun closeStdin() {
+        inputLock.lock()
+        try {
+            if (stdinClosed) return
+            stdinClosed = true
+            try {
+                process.outputStream.close()
+            } catch (_: IOException) {
+                // Already broken (process gone, pipe torn) - EOF is the state we wanted anyway.
+            }
+        } finally {
+            inputLock.unlock()
         }
     }
 

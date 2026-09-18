@@ -35,6 +35,9 @@ object IpcVersion {
      * Current IPC contract version of this host build.
      *
      * History:
+     * - 1.3.0 - additive `TerminalService.CloseInput` RPC delivers stdin EOF to a session
+     *   without terminating it, so a stdin-consuming one-shot command (sort, grep, cat with
+     *   no args, ...) can exit and its `run_command` exit chunk can actually be produced.
      * - 1.2.0 - remote UI diffs distinguish removed properties from explicit
      *   empty-string values through additive NodeUpdated field 4.
      * - 1.1.0 - authenticated transport and credential-required JVM APIs.
@@ -50,7 +53,7 @@ object IpcVersion {
      *   issue #743 for the rollback rationale (terminal-tab pivoted to
      *   in-process in PR #742).
      */
-    const val CURRENT: String = "1.2.0"
+    const val CURRENT: String = "1.3.0"
 
     /**
      * Parse a semver string into (major, minor, patch). Trailing

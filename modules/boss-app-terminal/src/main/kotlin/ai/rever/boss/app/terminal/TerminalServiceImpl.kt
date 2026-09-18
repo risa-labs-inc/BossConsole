@@ -16,6 +16,7 @@ import java.io.IOException
 import java.util.concurrent.Semaphore
 
 /** ProcessBuilder terminals with bounded active work, replay history, and completed-session retention. */
+@Suppress("TooManyFunctions") // One function per RPC the gRPC service base class declares.
 class TerminalServiceImpl(
     activeLimit: Int = 16,
     private val historyLimit: Int = 64,
@@ -132,6 +133,12 @@ class TerminalServiceImpl(
                 throw Status.INVALID_ARGUMENT.withDescription("Terminal input exceeds 64 KiB").asRuntimeException()
             }
             session(request.sessionId).send(request.data.toByteArray())
+            Empty.getDefaultInstance()
+        }
+
+    override suspend fun closeInput(request: CloseInputRequest): Empty =
+        withContext(Dispatchers.IO) {
+            session(request.sessionId).closeStdin()
             Empty.getDefaultInstance()
         }
 
