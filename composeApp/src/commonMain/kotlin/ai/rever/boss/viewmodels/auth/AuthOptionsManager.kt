@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancel
 
 /**
  * Authentication options manager handling user existence checks and option coordination
@@ -19,6 +20,7 @@ import kotlinx.coroutines.launch
 class AuthOptionsManager {
     private val logger = BossLogger.forComponent("AuthOptionsManager")
     private val viewModelScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    internal val scopeForTesting get() = viewModelScope
 
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
@@ -89,6 +91,13 @@ class AuthOptionsManager {
                 },
             )
         }
+    }
+
+    /**
+     * Cancel the view model scope when the view model is no longer needed
+     */
+    fun dispose() {
+        viewModelScope.cancel()
     }
 }
 

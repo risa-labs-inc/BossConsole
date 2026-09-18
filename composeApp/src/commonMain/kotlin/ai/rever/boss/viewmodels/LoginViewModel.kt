@@ -9,6 +9,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.cancel
 
 /**
  * Facade pattern coordinating multiple authentication component ViewModels
@@ -18,9 +19,12 @@ class LoginViewModel {
     private val viewModelScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     // Component ViewModels
-    private val coreLoginViewModel = CoreLoginViewModel()
-    val passkeyAuthViewModel = PasskeyAuthViewModel()
-    val authOptionsManager = AuthOptionsManager()
+    internal val coreLoginViewModel = CoreLoginViewModel()
+    internal val passkeyAuthViewModel = PasskeyAuthViewModel()
+    internal val authOptionsManager = AuthOptionsManager()
+
+    // Test access
+    internal val scopeForTesting get() = viewModelScope
 
     // Exposed state flows that delegate to appropriate component ViewModels
 
@@ -97,5 +101,15 @@ class LoginViewModel {
      */
     fun setMagicLinkVerificationError(errorMessage: String) {
         coreLoginViewModel.setMagicLinkVerificationError(errorMessage)
+    }
+
+    /**
+     * Clean up all coroutine scopes to prevent memory leaks
+     */
+    fun dispose() {
+        coreLoginViewModel.dispose()
+        passkeyAuthViewModel.dispose()
+        authOptionsManager.dispose()
+        viewModelScope.cancel()
     }
 }

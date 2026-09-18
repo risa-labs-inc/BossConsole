@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancel
 
 /**
  * Core login view model handling passwordless authentication flows
@@ -21,6 +22,7 @@ import kotlinx.coroutines.launch
 class CoreLoginViewModel {
     private val logger = BossLogger.forComponent("CoreLoginViewModel")
     private val viewModelScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    internal val scopeForTesting get() = viewModelScope
 
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
@@ -75,5 +77,12 @@ class CoreLoginViewModel {
     fun setMagicLinkVerificationError(errorMessage: String) {
         logger.debug(LogCategory.AUTH, "Setting magic link verification error", mapOf("error" to errorMessage))
         _errorMessage.value = errorMessage
+    }
+
+    /**
+     * Cancel the view model scope when the view model is no longer needed
+     */
+    fun dispose() {
+        viewModelScope.cancel()
     }
 }
