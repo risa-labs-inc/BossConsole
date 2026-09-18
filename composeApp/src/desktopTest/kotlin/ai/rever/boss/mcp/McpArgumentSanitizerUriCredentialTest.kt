@@ -17,6 +17,7 @@ import kotlin.test.assertTrue
  * appends them to disk, so a surviving credential is written out in plaintext.
  */
 class McpArgumentSanitizerUriCredentialTest {
+    @Suppress("MaxLineLength")
     private fun command(command: String): String = assertNotNull(McpArgumentSanitizer.sanitize(mapOf("command" to command))["command"])
 
     @Test
