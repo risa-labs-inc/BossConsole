@@ -145,6 +145,25 @@ object WorkspaceFileManagerCommon {
     private fun sanitize(value: String): String = value.replace(Regex("[^a-zA-Z0-9.-]"), "_")
 
     /**
+     * Whether [fileName] names a file directly inside the workspace directory: one path component,
+     * no separator of either platform, not `.` or `..`, no NUL. Every file this manager reads,
+     * writes or deletes is named by such a name, and [getWorkspaceFilePath] refuses anything else,
+     * so a name that reaches it from outside (an MCP argument, a hand-edited file) cannot climb out
+     * of the directory. A refusal is deliberately not "sanitize and continue": a caller that built a
+     * name with a separator in it has a bug, and quietly mapping it onto some other file would hide
+     * that.
+     *
+     * The rule is lexical because Windows resolves `..` lexically too: `dir\missing\..\x.json`
+     * reaches `dir\x.json` there even though `missing` does not exist, so an existence check on the
+     * joined path is not a defence.
+     */
+    fun isBareFileName(fileName: String): Boolean =
+        fileName.isNotEmpty() &&
+            fileName != "." &&
+            fileName != ".." &&
+            fileName.none { it == '/' || it == '\\' || it.code == 0 }
+
+    /**
      * Extract workspace name from filename
      */
     fun extractWorkspaceName(fileName: String): String = fileName.removeSuffix(".json").replace("_", " ")

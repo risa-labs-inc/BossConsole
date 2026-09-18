@@ -8,6 +8,7 @@ import ai.rever.boss.components.workspaces.LayoutWorkspace
 import ai.rever.boss.components.workspaces.PredefinedWorkspaces
 import ai.rever.boss.components.workspaces.WorkspaceFileManager
 import ai.rever.boss.components.workspaces.WorkspaceFileManagerCommon
+import ai.rever.boss.components.workspaces.WorkspaceSerializer
 import ai.rever.boss.components.workspaces.extractCurrentWorkspace
 import ai.rever.boss.plugin.api.McpToolResult
 import ai.rever.boss.plugin.api.TabComponentWithUI
@@ -611,6 +612,69 @@ class WorkspaceMcpToolProviderTest {
             val json = Json.parseToJsonElement(closeResult.text).jsonObject
             assertTrue(json["fileDeleted"]?.jsonPrimitive?.booleanOrNull == true)
             assertTrue(fileManager.loadWorkspace(WorkspaceFileManagerCommon.fileNameForId(wsId)) == null)
+        }
+
+    @Test
+    fun `close_workspace derives the file to delete from the id, never from a path in it`() =
+        runBlocking {
+            val core = createTestCore()
+            // A sibling of the workspace directory, which is where ~/.boss/*.json sits relative
+            // to ~/Documents/BOSS/workspaces in production. On Windows the joined path
+            // dir\workspace-disposable-\..\victim.json resolves lexically, missing component
+            // or not; the assertion holds on every platform because the id never becomes a path.
+            val victim = File(workspaceDir.parentFile, "victim-${workspaceDir.name}.json")
+            victim.writeText("{}")
+            try {
+                val traversal = "${WorkspaceMcpToolProvider.DISPOSABLE_ID_PREFIX}/../${victim.name}"
+                assertEquals(
+                    "${WorkspaceMcpToolProvider.DISPOSABLE_ID_PREFIX}_.._${victim.name}",
+                    WorkspaceMcpToolProvider.workspaceFileNameFor(traversal),
+                )
+                val result = core.invoke("close_workspace", """{"workspaceId":"$traversal"}""")
+                assertTrue(result.isError, result.text)
+                assertTrue(victim.exists(), "a workspace id must never reach a path outside the workspace directory")
+            } finally {
+                victim.delete()
+            }
+        }
+
+    @Test
+    fun `the file manager refuses a name that is not a bare file name`() =
+        runBlocking {
+            val victim = File(workspaceDir.parentFile, "victim-${workspaceDir.name}.json")
+            victim.writeText(WorkspaceSerializer.serialize(savedSpaceFixture("victim", workspaceDir.absolutePath)))
+            try {
+                assertFalse(fileManager.deleteWorkspace("../${victim.name}"))
+                assertTrue(victim.exists(), "deleteWorkspace must not follow a relative path out of the directory")
+                assertNull(fileManager.loadWorkspace("../${victim.name}"))
+                assertNull(fileManager.loadDocument("../${victim.name}"))
+                assertFalse(fileManager.writeDocumentBlocking("../${victim.name}", "{}"))
+                val escaping = savedSpaceFixture("x", workspaceDir.absolutePath)
+                assertNull(fileManager.saveWorkspace(escaping, "../escaped.json"))
+                assertFalse(File(workspaceDir.parentFile, "escaped.json").exists())
+                assertEquals(
+                    WorkspaceSerializer.serialize(savedSpaceFixture("victim", workspaceDir.absolutePath)),
+                    victim.readText(),
+                    "the file outside the directory is untouched",
+                )
+            } finally {
+                victim.delete()
+            }
+        }
+
+    @Test
+    fun `open_workspace cannot read a workspace file outside the workspace directory by id`() =
+        runBlocking {
+            val core = createTestCore()
+            val outside = File(workspaceDir.parentFile, "outside-${workspaceDir.name}.json")
+            outside.writeText(WorkspaceSerializer.serialize(savedSpaceFixture("Outside", workspaceDir.absolutePath)))
+            try {
+                val result = core.invoke("open_workspace", """{"workspaceId":"../${outside.name}"}""")
+                assertTrue(result.isError, result.text)
+                assertFalse(result.text.contains("\"workspaceName\":\"Outside\""), result.text)
+            } finally {
+                outside.delete()
+            }
         }
 
     @Test

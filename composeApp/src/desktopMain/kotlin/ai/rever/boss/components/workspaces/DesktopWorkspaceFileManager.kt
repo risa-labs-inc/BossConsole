@@ -156,7 +156,15 @@ actual class WorkspaceFileManager actual constructor(
             }
         }
 
-    actual fun getWorkspaceFilePath(fileName: String): String = Paths.get(workspaceDirectory, fileName).toString()
+    actual fun getWorkspaceFilePath(fileName: String): String {
+        // Every read, write and delete above builds its path here, and each of them catches and
+        // logs, so a refused name surfaces as "not found" / "not saved" with a warning rather than
+        // as a file outside the directory.
+        require(WorkspaceFileManagerCommon.isBareFileName(fileName)) {
+            "Workspace file names are bare names inside the workspace directory, got '$fileName'"
+        }
+        return Paths.get(workspaceDirectory, fileName).toString()
+    }
 
     actual fun writeDocumentBlocking(
         fileName: String,
