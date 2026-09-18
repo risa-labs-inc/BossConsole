@@ -806,9 +806,12 @@ restart. There is no Settings row and no per-site exclusion.
   startup restore, the top bar picker, the CLI, deep links and the KERNEL-mode gRPC
   bridge. Project paths routinely contain usernames, so this widens *when* a filesystem
   path reaches every installed plugin, not *what* - the same install-time-gating stance
-  as the bus above applies. In particular, `boss://` links can originate outside BOSS and
-  only a deep link that would start a terminal command consults `DeepLinkOrigin`, so an
-  externally opened project link can trigger this broadcast without operator confirmation.
+  as the bus above applies. In particular, `boss://` links can originate outside BOSS.
+  `boss://plugin` action links are refused unless they come from the operator's own
+  `boss` invocation (`pluginActionDisposition`), and an external `boss://workspace`
+  load is held for confirmation (`spaceLoadDisposition`), but every other deep link -
+  including an externally opened project link - still triggers this broadcast without
+  operator confirmation.
   It is recorded here because this paragraph is the canonical list of what a third-party
   plugin can observe.
 - **`PluginContext.projectSearchProvider` is the first UNGATED WRITE surface.**
@@ -961,8 +964,7 @@ URL produces the same input. Entry points therefore tag each link with a
   Also the default for an unstated origin, so a new caller that forgets to say
   gets the cautious handling.
 
-Two hosts consult it, and both for the same reason - each can type a command
-into a shell:
+Three hosts consult it now, each for what it can do without the operator meaning it:
 
 - `boss://terminal?command=`: an `OPERATOR_CLI` command runs as before, anything
   else is shown to the operator for confirmation first (the `boss` shell shim
@@ -976,8 +978,14 @@ into a shell:
   `CLICommand.LoadWorkspace` through the cold-start readiness queue to
   `WorkspaceLoadEvent.requiresConfirmation`, because only the window parses the
   file and so only it knows whether there is anything to confirm.
+- `boss://plugin?id=…&action=…`: an action's effect is whatever its registered
+  handler does with the link's params, so a link from anywhere but the operator's
+  own `boss` invocation is refused before any handler sees it
+  (`pluginActionDisposition`) - a prompt could not show what the operator would
+  actually be approving. A `boss://plugin?id=…` panel-open link is a read-only UI
+  change and is not gated.
 
-Other hosts - including `boss://plugin?id=…&action=…` - are unchanged.
+Other hosts are unchanged.
 
 **Single-instance channel**: `SingleInstanceManager` publishes
 `~/.boss/run/single-instance` (owner-only) with the channel endpoint and a token

@@ -36,6 +36,9 @@ import kotlin.test.assertTrue
  * caller that presents no token being listened to, a descriptor nothing answers
  * on stopping the app from starting, and a token reaching a log line.
  */
+// One cohesive channel-contract suite: the cases share the in-class temp-dir
+// runtime wiring, and splitting the class would duplicate that setup.
+@Suppress("LargeClass")
 class SingleInstanceChannelTest {
     @TempDir
     lateinit var tempDir: Path
@@ -257,15 +260,38 @@ class SingleInstanceChannelTest {
                     ): Boolean = action == "ping"
                 },
             )
+        // The default label is EXTERNAL, which the origin gate now refuses
+        // before any handler sees it; the verdict-plumbing cases below simulate
+        // the CLI forwarding its own link, which arrives labelled OPERATOR_CLI.
         try {
-            assertTrue(SingleInstanceManager.sendToExistingInstance("boss://plugin?id=$handlerId&action=ping"))
-            assertFalse(SingleInstanceManager.sendToExistingInstance("boss://plugin?id=$handlerId&action=unknown"))
+            assertTrue(
+                SingleInstanceManager.sendToExistingInstance(
+                    "boss://plugin?id=$handlerId&action=ping",
+                    DeepLinkOrigin.OPERATOR_CLI,
+                ),
+            )
+            assertFalse(
+                SingleInstanceManager.sendToExistingInstance(
+                    "boss://plugin?id=$handlerId&action=unknown",
+                    DeepLinkOrigin.OPERATOR_CLI,
+                ),
+            )
+            // The same action link forwarded with the default external label is
+            // refused by the receiving instance and reports not-handled.
+            assertFalse(
+                SingleInstanceManager.sendToExistingInstance("boss://plugin?id=$handlerId&action=ping"),
+            )
         } finally {
             ai.rever.boss.components.plugin.registries.DeepLinkActionRegistryImpl
                 .unregister(handlerId)
         }
 
-        assertFalse(SingleInstanceManager.sendToExistingInstance("boss://plugin?id=no-such-handler&action=ping"))
+        assertFalse(
+            SingleInstanceManager.sendToExistingInstance(
+                "boss://plugin?id=no-such-handler&action=ping",
+                DeepLinkOrigin.OPERATOR_CLI,
+            ),
+        )
 
         // A plugin link that just opens a panel (no action) is unaffected: still
         // reported as acknowledged, exactly like before this change.
@@ -275,8 +301,13 @@ class SingleInstanceChannelTest {
     @Test
     fun `a plugin action without a usable id is refused`() {
         assertTrue(SingleInstanceManager.acquireLock())
-        assertFalse(SingleInstanceManager.sendToExistingInstance("boss://plugin?action=ping"))
-        assertFalse(SingleInstanceManager.sendToExistingInstance("boss://plugin?id=&action=ping"))
+        // OPERATOR_CLI so the origin gate stays open and the id check is what refuses.
+        assertFalse(
+            SingleInstanceManager.sendToExistingInstance("boss://plugin?action=ping", DeepLinkOrigin.OPERATOR_CLI),
+        )
+        assertFalse(
+            SingleInstanceManager.sendToExistingInstance("boss://plugin?id=&action=ping", DeepLinkOrigin.OPERATOR_CLI),
+        )
     }
 
     @Test
@@ -308,7 +339,13 @@ class SingleInstanceChannelTest {
         }
         try {
             assertTrue(entered.await(5, java.util.concurrent.TimeUnit.SECONDS))
-            assertFalse(SingleInstanceManager.sendToExistingInstance("boss://plugin?id=$handlerId&action=run"))
+            // OPERATOR_CLI so the timeout, not the origin gate, is what must drop this.
+            assertFalse(
+                SingleInstanceManager.sendToExistingInstance(
+                    "boss://plugin?id=$handlerId&action=run",
+                    DeepLinkOrigin.OPERATOR_CLI,
+                ),
+            )
         } finally {
             release.countDown()
             // Drain the queued dispatch before inspecting its observable side effect.

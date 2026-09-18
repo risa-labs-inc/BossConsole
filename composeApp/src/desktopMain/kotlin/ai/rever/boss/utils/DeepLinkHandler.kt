@@ -119,6 +119,36 @@ internal fun targetWindowIdFor(
     resolveWindowId: () -> String?,
 ): String? = if (host.resolvesWindowAtDispatch) resolveWindowId() else null
 
+/** What BOSS does with a `boss://plugin?id=…&action=…` request. */
+internal enum class PluginActionDisposition {
+    /** Hand the action to its registered handler. */
+    RUN,
+
+    /** Do nothing at all. */
+    REJECT,
+}
+
+/**
+ * Decides what happens to a plugin action link, from who asked for it.
+ *
+ * A plugin action's effect is whatever its handler chooses to do with the
+ * link's params, so — unlike `boss://terminal`, whose exact command text a
+ * prompt can show in full — there is nothing BOSS could put in front of the
+ * operator that would make a confirm button meaningful. An action therefore
+ * runs only when [origin] says the operator ran `boss` themselves, and
+ * anything OS- or web-delivered is refused here, centrally, before a handler
+ * sees it: the safety of the route no longer rests on its least-careful
+ * handler. In-app callers dispatch through
+ * [ai.rever.boss.components.plugin.registries.DeepLinkActionRegistryImpl]
+ * directly and are unaffected.
+ */
+internal fun pluginActionDisposition(origin: DeepLinkOrigin): PluginActionDisposition =
+    if (origin.isOperatorInitiated) {
+        PluginActionDisposition.RUN
+    } else {
+        PluginActionDisposition.REJECT
+    }
+
 actual object DeepLinkHandler {
     private val _deepLinkFlow = MutableStateFlow<String?>(null)
     actual val deepLinkFlow: StateFlow<String?> = _deepLinkFlow
@@ -348,9 +378,10 @@ actual object DeepLinkHandler {
     /**
      * Processes a link whose [origin] the caller can vouch for.
      *
-     * [origin] reaches the handlers that need it (currently `boss://terminal`)
-     * because no later stage can tell an operator's request apart from one some
-     * other program asked the OS to open.
+     * [origin] reaches the handlers that need it (currently `boss://terminal`
+     * and `boss://plugin` action links) because no later stage can tell an
+     * operator's request apart from one some other program asked the OS to
+     * open.
      *
      * @return a [Deferred] resolving to whether the link was actually acted on,
      *   for the one route that can answer that question today
@@ -418,7 +449,7 @@ actual object DeepLinkHandler {
             DeepLinkHost.FILE -> handleFileLink(uri)
             DeepLinkHost.TERMINAL -> handleTerminalLink(uri, origin)
             DeepLinkHost.FOLDER -> handleFolderLink(uri, targetWindowId)
-            DeepLinkHost.PLUGIN -> return handlePluginLink(uri, targetWindowId)
+            DeepLinkHost.PLUGIN -> return handlePluginLink(uri, targetWindowId, origin)
             DeepLinkHost.SPLIT -> handleSplitLink(uri, targetWindowId)
         }
         return null
@@ -570,18 +601,26 @@ actual object DeepLinkHandler {
      * [targetWindowId] is already resolved by [processDeepLink]; the panel event
      * and the action dispatch are emitted on the UI thread.
      *
+     * An action link is also decided by [origin], centrally, through
+     * [pluginActionDisposition]: a plugin action's effect is whatever its
+     * handler does with the link's params, so a link that did not come from the
+     * operator's own `boss` invocation is refused here instead of silently
+     * dispatched. Opening a panel is a read-only UI change and is not gated.
+     *
      * @return for an action link, a [Deferred] resolving to
      *   [ai.rever.boss.components.plugin.registries.DeepLinkActionRegistryImpl.dispatch]'s
      *   own verdict (false for an unregistered handler id, a handler that
      *   declines the action, or one that throws — that function never lets an
-     *   exception escape). Null for a panel-open link, which stays fire-and-forget. An action
+     *   exception escape), and false when the origin gate refuses the link.
+     *   Null for a panel-open link, which stays fire-and-forget. An action
      *   without a usable id is rejected with a false verdict.
      */
     private fun handlePluginLink(
         uri: String,
         targetWindowId: String?,
+        origin: DeepLinkOrigin,
     ): Deferred<Boolean>? {
-        logger.debug(LogCategory.UI, "Handling plugin link")
+        logger.debug(LogCategory.UI, "Handling plugin link", mapOf("origin" to origin.name))
 
         val params = parseQueryParams(uri)
         val panelIdStr = params["id"]?.urlDecode()
@@ -593,11 +632,25 @@ actual object DeepLinkHandler {
 
         // Action links dispatch to the plugin's DeepLinkActionHandler and do
         // NOT fall through to opening a panel — the two are distinct verbs
-        // sharing the `plugin` scheme. Unhandled actions just log (registry
-        // warns); external input, so handlers own validation.
+        // sharing the `plugin` scheme. External input: the origin gate decides
+        // whether the link may dispatch at all, and a handler that runs still
+        // owns validating its own params.
         val action = params["action"]?.urlDecode()
         return if (action != null) {
-            dispatchPluginAction(panelIdStr, action, params)
+            when (pluginActionDisposition(origin)) {
+                PluginActionDisposition.RUN -> {
+                    dispatchPluginAction(panelIdStr, action, params)
+                }
+
+                PluginActionDisposition.REJECT -> {
+                    logger.warn(
+                        LogCategory.UI,
+                        "Refused a plugin action link from outside the operator's own invocation",
+                        mapOf("panelId" to panelIdStr, "action" to action),
+                    )
+                    CompletableDeferred(false)
+                }
+            }
         } else {
             openPluginPanel(panelIdStr, targetWindowId)
             null

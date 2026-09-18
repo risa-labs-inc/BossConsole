@@ -141,23 +141,42 @@ class DeepLinkRoutingTest {
             },
         )
         try {
-            val handled = awaitPluginActionVerdict("boss://plugin?id=$handlerId&action=ping")
+            // The origin gate refuses action links that did not come from the
+            // operator's own invocation, so the registry-verdict cases run as
+            // OPERATOR_CLI: the registry's answer is what this test is about.
+            val handled =
+                awaitPluginActionVerdict("boss://plugin?id=$handlerId&action=ping", DeepLinkOrigin.OPERATOR_CLI)
             assertTrue(handled, "a registered handler that returns true must be reported as handled")
 
-            val declined = awaitPluginActionVerdict("boss://plugin?id=$handlerId&action=unknown")
+            val declined =
+                awaitPluginActionVerdict("boss://plugin?id=$handlerId&action=unknown", DeepLinkOrigin.OPERATOR_CLI)
             assertFalse(declined, "a registered handler that declines the action must be reported as not handled")
-            assertFalse(awaitPluginActionVerdict("boss://plugin?id=$handlerId&action=throw"))
+            assertFalse(
+                awaitPluginActionVerdict("boss://plugin?id=$handlerId&action=throw", DeepLinkOrigin.OPERATOR_CLI),
+            )
+
+            // The same action link an OS or web page can send is refused before
+            // the registered handler sees it, and reports not-handled to
+            // whoever awaited it.
+            assertFalse(
+                awaitPluginActionVerdict("boss://plugin?id=$handlerId&action=ping", DeepLinkOrigin.EXTERNAL),
+                "an external action link must not be reported as handled",
+            )
         } finally {
             DeepLinkActionRegistryImpl.unregister(handlerId)
         }
 
-        val noHandler = awaitPluginActionVerdict("boss://plugin?id=no-such-handler&action=ping")
+        val noHandler =
+            awaitPluginActionVerdict("boss://plugin?id=no-such-handler&action=ping", DeepLinkOrigin.OPERATOR_CLI)
         assertFalse(noHandler, "an unregistered handler id must be reported as not handled, never a blind success")
     }
 
-    private fun awaitPluginActionVerdict(uri: String): Boolean =
+    private fun awaitPluginActionVerdict(
+        uri: String,
+        origin: DeepLinkOrigin,
+    ): Boolean =
         runBlocking {
-            requireNotNull(DeepLinkHandler.processDeepLink(uri, DeepLinkOrigin.EXTERNAL)).await()
+            requireNotNull(DeepLinkHandler.processDeepLink(uri, origin)).await()
         }
 
     @Test
