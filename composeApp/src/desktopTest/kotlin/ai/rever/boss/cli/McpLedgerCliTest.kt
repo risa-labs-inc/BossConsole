@@ -24,6 +24,12 @@ import kotlin.test.assertTrue
  * covered by the argument conventions `BossMcpCliTest` already exercises.
  */
 class McpLedgerCliTest {
+    private val esc = 27.toChar()
+    private val bel = 7.toChar()
+    private val csi = 0x9b.toChar()
+    private val del = 0x7f.toChar()
+    private val rlo = 0x202e.toChar()
+
     private val tempFiles = mutableListOf<File>()
 
     private fun createTempLedgerFile(): File {
@@ -296,6 +302,93 @@ class McpLedgerCliTest {
         val failure = failureMessage(McpLedgerCli.verify(file.absolutePath, json = false))
         assertTrue(failure.contains("BROKEN"), "a break must be reported as a failure: $failure")
         assertTrue(failure.contains("record 1 of 2"), "the break must be located: $failure")
+    }
+
+    private fun recordWithError(
+        ledger: McpOperationLedger,
+        toolName: String,
+        errorSnippet: String,
+    ) {
+        ledger.record(
+            toolName = toolName,
+            providerId = "provider",
+            policyApplied = McpPolicyAction.ALLOW,
+            approvalDisposition = McpApprovalDisposition.AUTO_ALLOWED,
+            durationMs = 7L,
+            isError = true,
+            errorSnippet = errorSnippet,
+            rawArgs = emptyMap(),
+        )
+    }
+
+    private fun assertNoTerminalControl(text: String) {
+        val offenders = text.filter { (it.code < 0x20 && it != '\n') || it.code == 0x7f || it.code in 0x80..0x9f }
+        val codes = offenders.map { it.code }
+        assertTrue(offenders.isEmpty(), "control characters would reach the operator's terminal: $codes")
+    }
+
+    /**
+     * The ledger is an audit trail, and `tail`/`search` are how an operator reads it. An error
+     * snippet is text a tool produced, so a newline in it used to start a second, perfectly
+     * formatted "record" line that was never written by the ledger - a forged audit row in the
+     * one view an operator trusts - and an ESC sequence in it reached the terminal unfiltered.
+     */
+    @Test
+    fun `tail cannot be made to print a forged record row or a terminal escape sequence`() {
+        val file = createTempLedgerFile()
+        val ledger = McpOperationLedger(ledgerFile = file)
+        val forgedRow = "2099-01-01T00:00:00Z  approved_tool  ALLOW/AUTO_ALLOWED       1ms  ok     hash 000000000000"
+        recordWithError(ledger, "read_file", "denied\n$forgedRow$esc[2J$esc]0;pwned$bel")
+
+        val text = okText(McpLedgerCli.tail(file.absolutePath, lines = 10, query = McpLedgerQuery(), json = false))
+
+        assertNoTerminalControl(text)
+        assertTrue(text.lines().none { it.startsWith("2099-") }, "a forged row must not start its own line:\n$text")
+        assertTrue(text.contains("\\u001b"), "the escape must stay visible to the operator, not vanish:\n$text")
+        assertEquals(1, text.lines().count { it.startsWith("    error: ") }, "one record, one error line:\n$text")
+    }
+
+    @Test
+    fun `tail neutralises control and direction-override characters in a tool name`() {
+        val file = createTempLedgerFile()
+        val ledger = McpOperationLedger(ledgerFile = file)
+        record(ledger, "safe$esc[31m${rlo}tool")
+
+        val text = okText(McpLedgerCli.tail(file.absolutePath, lines = 10, query = McpLedgerQuery(), json = false))
+
+        assertNoTerminalControl(text)
+        assertTrue(text.none { it == rlo }, "a bidi override can visually reorder the tool name:\n$text")
+    }
+
+    @Test
+    fun `terminalSafe leaves ordinary text alone and escapes only what could act on a terminal`() {
+        val ordinary = "read_file: café 日本語 🚀 (path=/tmp/a b) [ok]"
+        assertEquals(ordinary, McpLedgerFormat.terminalSafe(ordinary))
+
+        assertEquals("a\\nb\\tc\\r", McpLedgerFormat.terminalSafe("a\nb\tc\r"))
+        assertEquals("\\u001b[2J", McpLedgerFormat.terminalSafe("$esc[2J"))
+        assertEquals("\\u009b31m", McpLedgerFormat.terminalSafe("${csi}31m"), "the C1 CSI is one-byte ESC[")
+        assertEquals("\\u007f", McpLedgerFormat.terminalSafe("$del"))
+        assertEquals("\\u202e", McpLedgerFormat.terminalSafe("$rlo"))
+    }
+
+    @Test
+    fun `verify neutralises control characters read back from a tampered ledger`() {
+        val file = createTempLedgerFile()
+        val ledger = McpOperationLedger(ledgerFile = file)
+        record(ledger, "tool_1")
+        record(ledger, "tool_2")
+
+        // The break report prints the record id straight out of the file it just found altered,
+        // which is exactly the file an attacker who altered it controls.
+        val lines = file.readLines().toMutableList()
+        lines[0] = Regex("\"id\":\"([^\"]+)\"").replace(lines[0]) { "\"id\":\"${it.groupValues[1]}\\u001b[2J\\n\"" }
+        file.writeText(lines.joinToString("\n") + "\n")
+
+        val failure = failureMessage(McpLedgerCli.verify(file.absolutePath, json = false))
+
+        assertTrue(failure.contains("BROKEN"), failure)
+        assertNoTerminalControl(failure)
     }
 
     @Test

@@ -126,7 +126,7 @@ private fun JsonObject.uncheckedAreas(): List<String> = areaNames("unchecked")
 private fun JsonObject.partialAreas(): List<String> = areaNames("partial")
 
 private fun JsonObject.areaNames(key: String): List<String> =
-    (get(key) as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+    (get(key) as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.map(TerminalText::safe)
 
 /** A field on one line. Fault messages can contain line breaks, and the report prints one line per item. */
 private fun JsonObject.text(key: String): String? =
@@ -136,5 +136,6 @@ private fun JsonObject.text(key: String): String? =
         ?.map(String::trim)
         ?.filter(String::isNotEmpty)
         ?.joinToString(" ")
+        ?.let(TerminalText::safe)
 
 private fun problemCount(count: Int): String = if (count == 1) "1 problem" else "$count problems"
