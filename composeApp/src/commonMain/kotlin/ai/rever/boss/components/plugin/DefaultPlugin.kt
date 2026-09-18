@@ -98,6 +98,8 @@ import ai.rever.boss.plugin.sandbox.health.PluginHealthSummary
 import ai.rever.boss.plugin.sandbox.notification.BossPluginNotificationService
 import ai.rever.boss.plugin.sandbox.notification.PluginSandboxNotificationListener
 import ai.rever.boss.plugin.sandbox.notification.PluginToastState
+import ai.rever.boss.plugin.sandbox.notification.ToastMessage
+import ai.rever.boss.plugin.sandbox.notification.ToastType
 import ai.rever.boss.plugin.ui.BossThemes
 import ai.rever.boss.plugin.ui.ContextMenuItemData
 import ai.rever.boss.search.ContentSearchService
@@ -1155,6 +1157,78 @@ class DefaultPlugin(
         }
     }
 
+    @Suppress("LongMethod")
+    private fun startCompanionNavigationCollector() {
+        val splitView = splitViewState
+        val workspaces = workspaceManager
+        val ownWindowId = _windowId
+        if (splitView == null || workspaces == null || ownWindowId == null) return
+
+        pluginScope.launch {
+            ai.rever.boss.components.events.CompanionNavigationBus.events
+                .collect { event ->
+                    if (event.windowId != ownWindowId) return@collect
+
+                    val location = splitView.findTabLocation(event.tabId)
+                    if (location == null) {
+                        logger.debug(
+                            LogCategory.SYSTEM,
+                            "Companion requested a tab this window does not have",
+                            mapOf("tabId" to event.tabId),
+                        )
+                        pluginToastState.show(
+                            ToastMessage(
+                                type = ToastType.ERROR,
+                                title = "Companion navigation unavailable",
+                                message = "The requested terminal or tab is no longer open.",
+                            ),
+                        )
+                    } else if (location.workspaceId == splitView.currentWorkspaceId) {
+                        splitView.selectTabInPanel(event.tabId, location.panel.id)
+                        ai.rever.boss.utils.WindowFocusManager
+                            .focusWindow(ownWindowId)
+                    } else {
+                        val leaving = workspaces.currentWorkspace.value
+                        splitView.selectTabAnywhere(event.tabId)
+                        if (splitView.switchToLiveWorkspace(
+                                location.workspaceId,
+                                leaving?.name.orEmpty(),
+                            )
+                        ) {
+                            val target =
+                                workspaces.workspaces.value.firstOrNull {
+                                    it.id == location.workspaceId
+                                }
+                                    ?: splitView
+                                        .collectAllActiveTabs(workspaces, ownWindowId)
+                                        .firstOrNull {
+                                            it.workspaceId == location.workspaceId
+                                        }?.let { tab ->
+                                            ai.rever.boss.plugin.workspace.LayoutWorkspace(
+                                                id = location.workspaceId,
+                                                name = tab.workspaceName,
+                                                description = "",
+                                                layout =
+                                                    ai.rever.boss.plugin.workspace
+                                                        .SplitConfig
+                                                        .SinglePanel(
+                                                            ai.rever.boss.plugin.workspace
+                                                                .PanelConfig(
+                                                                    id = "main",
+                                                                    tabs = emptyList(),
+                                                                ),
+                                                        ),
+                                            )
+                                        }
+                            target?.let { workspaces.loadWorkspace(it) }
+                        }
+                        ai.rever.boss.utils.WindowFocusManager
+                            .focusWindow(ownWindowId)
+                    }
+                }
+        }
+    }
+
     init {
         logger.info(LogCategory.SYSTEM, "Initializing DefaultPlugin with sandboxed contexts")
 
@@ -1164,6 +1238,7 @@ class DefaultPlugin(
         // the adapter was never built, nobody collected, and the pop-out's Back-to-tab button
         // silently degraded to raising the window.
         startPopOutReturnCollector()
+        startCompanionNavigationCollector()
 
         // ============================================================
         // REGISTER PLUGIN LOADER DELEGATE

@@ -64,6 +64,7 @@ expect object RunnerTerminalService {
         config: RunConfiguration,
         windowId: String,
         onTerminalCreated: (String) -> Unit = {},
+        processId: String? = null,
     ): String
 
     /**
@@ -90,6 +91,7 @@ expect object RunnerTerminalService {
         config: RunConfiguration,
         windowId: String,
         onTerminalCreated: (String) -> Unit = {},
+        processId: String? = null,
     ): String
 
     /**

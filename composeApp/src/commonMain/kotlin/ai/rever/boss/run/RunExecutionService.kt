@@ -38,6 +38,11 @@ expect object RunExecutionService {
      *
      * @param processId The process ID to stop
      */
+    suspend fun rerun(
+        config: RunConfiguration,
+        windowId: String,
+    ): RunningProcess?
+
     suspend fun stop(processId: String)
 
     /**

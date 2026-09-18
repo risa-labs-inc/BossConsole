@@ -1,5 +1,6 @@
 package ai.rever.boss.app
 
+import ai.rever.boss.companion.CompanionCoordinator
 import ai.rever.boss.components.plugin.DefaultPlugin
 import ai.rever.boss.components.plugin.PluginUpdateRegistry
 import ai.rever.boss.components.plugin.currentPluginHealth
@@ -32,6 +33,7 @@ import ai.rever.boss.performance.BrowserTabInfo
 import ai.rever.boss.performance.EditorTabResourceInfo
 import ai.rever.boss.performance.PerformanceState
 import ai.rever.boss.performance.TerminalInfo
+import ai.rever.boss.plugin.api.ApplicationEventBusRegistry
 import ai.rever.boss.plugin.api.Panel.Companion.bottom
 import ai.rever.boss.plugin.api.Panel.Companion.left
 import ai.rever.boss.plugin.api.Panel.Companion.right
@@ -615,6 +617,21 @@ internal fun BossAppStartupEffects(state: BossAppState) {
     // check (previously each new window restarted the loop and re-fired a check).
     LaunchedEffect(Unit) {
         startUpdaterForApp(logger)
+    }
+
+    LaunchedEffect(state.currentDefaultPlugin) {
+        state.currentDefaultPlugin ?: return@LaunchedEffect
+
+        val applicationEventBus =
+            ApplicationEventBusRegistry.bus ?: return@LaunchedEffect
+
+        CompanionCoordinator.initialize(
+            applicationEvents =
+                applicationEventBus.eventsOfType(
+                    ai.rever.boss.plugin.api.CustomPluginEvent::class.java,
+                ),
+        )
+        CompanionCoordinator.instance.value?.ensureStarted()
     }
 
     // Check and auto-update CLI version on startup
