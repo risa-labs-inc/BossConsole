@@ -10,6 +10,12 @@ option java_multiple_files = true;
 service TerminalService {
   rpc CreateSession(CreateSessionRequest) returns (CreateSessionResponse);
   rpc SendInput(SendInputRequest) returns (boss.ipc.v1.Empty);
+  // Closes the session's stdin (delivers EOF to the child), without terminating the process.
+  // A stdin-consuming one-shot command (sort, grep, cat with no args, ...) blocks forever waiting
+  // for more input otherwise: nothing else in this service ever closes that pipe, so the process
+  // can never reach the exit chunk CreateSession/run_command's schema advertises. Idempotent - a
+  // second call, or a call after the session has already exited, is a no-op.
+  rpc CloseInput(CloseInputRequest) returns (boss.ipc.v1.Empty);
   rpc StreamOutput(StreamOutputRequest) returns (stream TerminalOutputChunk);
   rpc Resize(ResizeRequest) returns (boss.ipc.v1.Empty);
   rpc CloseSession(CloseSessionRequest) returns (boss.ipc.v1.Empty);
@@ -82,6 +88,10 @@ message CreateSessionResponse {
 message SendInputRequest {
   string session_id = 1;
   bytes data = 2;
+}
+
+message CloseInputRequest {
+  string session_id = 1;
 }
 
 message StreamOutputRequest {
