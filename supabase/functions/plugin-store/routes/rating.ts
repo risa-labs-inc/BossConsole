@@ -278,6 +278,18 @@ rating.openapi(deleteRatingRoute, async (ctx) => {
 // GET /:pluginId/ratings - Get all ratings for a plugin
 // ============================================================================
 
+// Mirrors the /search route's cap (SearchPluginsRequestSchema.pageSize). Unbounded, a single
+// request could ask PostgREST for a massive range - defeating the cap this repo already
+// established as correct for catalogue routes - and every row returned carries a raw
+// auth.users UUID, so a large page also scales how many rater identities one call exposes.
+const RATINGS_PAGE_SIZE_MAX = 100
+
+// Ratings paginate a single plugin's own review list, not the whole catalogue - there is no
+// legitimate reason to ask for a page far past any real plugin's rating count. Bounding it closes
+// the "page=1e9" deep-offset scan the pageSize cap alone does not: 100,000 pages at the max page
+// size is 10,000,000 rows, already far beyond anything a real plugin will ever accumulate.
+const RATINGS_PAGE_MAX = 100_000
+
 const getPluginRatingsRoute = createRoute({
   method: 'get',
   path: '/{pluginId}/ratings',
@@ -289,8 +301,8 @@ const getPluginRatingsRoute = createRoute({
       pluginId: z.string()
     }),
     query: z.object({
-      page: z.string().optional().default('1').transform(Number),
-      pageSize: z.string().optional().default('20').transform(Number)
+      page: z.string().optional().default('1'),
+      pageSize: z.string().optional().default('20')
     })
   },
   responses: {
@@ -309,6 +321,14 @@ const getPluginRatingsRoute = createRoute({
             page: z.number(),
             pageSize: z.number()
           })
+        }
+      }
+    },
+    400: {
+      description: 'Invalid page or pageSize',
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
         }
       }
     },
@@ -335,7 +355,18 @@ rating.openapi(getPluginRatingsRoute, async (ctx) => {
   try {
     const supabase = ctx.get("supabase")
     const { pluginId } = ctx.req.valid('param')
-    const { page, pageSize } = ctx.req.valid('query')
+    const { page: rawPage, pageSize: rawPageSize } = ctx.req.valid('query')
+
+    // Parsed and bounds-checked here, not via a schema `.transform(Number)`, so an out-of-range
+    // or non-integer value gets this route's own fixed error envelope rather than whatever a
+    // library-default validation-failure response happens to shape itself as.
+    const page = Number(rawPage)
+    const pageSize = Number(rawPageSize)
+    const pageValid = Number.isInteger(page) && page >= 1 && page <= RATINGS_PAGE_MAX
+    const pageSizeValid = Number.isInteger(pageSize) && pageSize >= 1 && pageSize <= RATINGS_PAGE_SIZE_MAX
+    if (!pageValid || !pageSizeValid) {
+      return ctx.json({ error: 'page must be an integer from 1 to 100000, pageSize from 1 to 100' }, 400)
+    }
 
     // Get plugin
     const plugin = await getPlugin(supabase, pluginId)
