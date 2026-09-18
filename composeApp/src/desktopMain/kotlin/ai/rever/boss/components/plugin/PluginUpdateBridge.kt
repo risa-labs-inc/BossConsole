@@ -9,6 +9,7 @@ import ai.rever.boss.plugin.api.PluginState
 import ai.rever.boss.plugin.api.PluginUnloadIntent
 import ai.rever.boss.plugin.api.TransferKind
 import ai.rever.boss.plugin.api.TransferPhase
+import ai.rever.boss.plugin.loader.PluginManifestReader
 import ai.rever.boss.plugin.loader.PluginSignatureSidecar
 import ai.rever.boss.plugin.readDeferredPluginManifest
 import ai.rever.boss.plugin.updater.UpdateInfo
@@ -167,7 +168,7 @@ actual object PluginUpdateBridge {
                     pluginId = pluginId,
                     downloadPath = targetPath,
                     unloadPlugin = { id ->
-                        if (deferHotReload) Result.success(Unit) else manager.uninstallPlugin(id, force = true).map { }
+                        vetUpdateAndUnload(id, targetPath, deferHotReload, manager)
                     },
                     loadPlugin = { path ->
                         activateUpdate(pluginId, path, manager, deferHotReload)
@@ -344,5 +345,30 @@ actual object PluginUpdateBridge {
             )
         }
         runCatching { PluginSignatureSidecar.delete(jar.absolutePath) }
+    }
+}
+
+internal suspend fun vetUpdateAndUnload(
+    pluginId: String,
+    targetPath: String,
+    deferHotReload: Boolean,
+    manager: DynamicPluginManager,
+): Result<Unit> {
+    val declared = runCatching { PluginManifestReader.readFromJar(targetPath) }.getOrNull()
+    val declaredId = declared?.pluginId
+    if (declaredId != pluginId || declaredId in PluginDependencyResolution.NOT_USER_INSTALLABLE) {
+        BossLogger.forComponent("PluginUpdateBridge").warn(
+            LogCategory.SYSTEM,
+            "Refusing an update jar that declares a different plugin",
+            mapOf("expected" to pluginId, "declared" to (declaredId ?: "unreadable")),
+        )
+        return Result.failure(
+            Exception("The update copy did not install as $pluginId. The store entry may be wrong."),
+        )
+    }
+    return if (deferHotReload) {
+        Result.success(Unit)
+    } else {
+        manager.uninstallPlugin(pluginId, force = true).map { }
     }
 }
