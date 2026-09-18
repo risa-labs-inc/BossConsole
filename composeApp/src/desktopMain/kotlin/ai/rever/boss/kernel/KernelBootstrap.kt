@@ -17,6 +17,7 @@ import ai.rever.boss.kernel.services.*
 import ai.rever.boss.kernel.ui.RemoteUiPlacement
 import ai.rever.boss.kernel.ui.RemoteUiSurfaceRegistry
 import ai.rever.boss.plugin.api.*
+import ai.rever.boss.process.HeartbeatWatch
 import ai.rever.boss.process.ManagedProcess
 import ai.rever.boss.process.ProcessConfig
 import ai.rever.boss.process.ProcessFailure
@@ -273,6 +274,21 @@ private fun notifyOperator(
         .report("$processId needs attention: $summary", source = processId)
 }
 
+/**
+ * Where BOSS keeps its data, as `KernelBootstrap.spawnServices` derives it.
+ *
+ * Derived once and shared with the respawn path, so a replacement's BOSS_DATA_DIR is what the
+ * original spawn computed rather than a value inherited from the stored config's snapshot.
+ */
+private val bossDataDir: String by lazy {
+    System.getenv("BOSS_DATA_DIR")
+        ?: try {
+            ai.rever.boss.plugin.pathutils.BossDirectories.rootDir.absolutePath
+        } catch (_: Exception) {
+            "${System.getProperty("user.home")}/.boss"
+        }
+}
+
 /** What the kernel does about a crashed child once the orchestrator has had its say. */
 internal sealed interface Recovery {
     /** Bring it back as configured. Also the answer when there is no advice to act on. */
@@ -429,7 +445,6 @@ class KernelBootstrap(
         processRegistry = registry
         processSpawner = spawner
         processTokenRegistry = tokenRegistry
-        processMonitor = ProcessMonitor(registry, scope)
 
         // Register JVM shutdown hook to kill child processes on exit/crash
         Runtime.getRuntime().addShutdownHook(
@@ -471,6 +486,12 @@ class KernelBootstrap(
             )
         eventBusService = EventBusServiceImpl()
         stateService = StateServiceImpl()
+
+        // The monitor is built after the kernel service because its heartbeat supervision is
+        // wired to it: an alive-but-wedged child (BossConsole#921) is detectable only through
+        // the beats the service records, so a monitor without that view would supervise
+        // liveness only - the exact gap this closes.
+        processMonitor = ProcessMonitor(registry, scope, heartbeatWatch(kernelService!!))
 
         // Start gRPC server.
         //
@@ -521,6 +542,30 @@ class KernelBootstrap(
 
         logger.info("KERNEL mode initialized. IPC server at: {}", kernelAddress)
     }
+
+    /**
+     * The monitor's view of the kernel's heartbeat bookkeeping.
+     *
+     * The gate on [KernelServiceImpl.getLastHeartbeat] is what makes the sweep safe to run
+     * against every tracked child: a process with no recorded beat never registered - it is
+     * still starting up, or not an IPC child at all - and must not be read as wedged.
+     * [KernelServiceImpl.isHeartbeatTimedOut] cannot say that on its own; it reports a missing
+     * beat as a timeout.
+     */
+    private fun heartbeatWatch(service: KernelServiceImpl): HeartbeatWatch =
+        object : HeartbeatWatch {
+            override fun isHeartbeatTimedOut(
+                processId: String,
+                thresholdMs: Long,
+            ): Boolean {
+                if (service.getLastHeartbeat(processId) == null) return false
+                return service.isHeartbeatTimedOut(processId, thresholdMs)
+            }
+
+            override fun forget(processId: String) {
+                service.clearHeartbeat(processId)
+            }
+        }
 
     /**
      * Decide what to do about a crashed child, and do it.
@@ -629,8 +674,25 @@ class KernelBootstrap(
         val process = respawnCandidate(registry, processId) ?: return
         val restartCount = registry.getRestartCount(processId)
 
+        // The stored config is a snapshot of the first spawn, and until now nothing but the JVM
+        // args was ever overridden - so a respawn replayed whatever environment that snapshot
+        // captured, including one-shot repair state like BOSS_AI_REPAIR and the
+        // AI_REPAIR_API_KEY the operator has since turned off or rotated. The environment is
+        // re-derived instead (BossConsole#921), so a replacement gets exactly what a fresh
+        // spawn would give it today: BOSS_DATA_DIR for every service, plus - for the
+        // orchestrator alone - the repair environment re-read from current settings.
+        val baseEnv = mapOf("BOSS_DATA_DIR" to bossDataDir)
+        val repairEnv =
+            if (processId == ORCHESTRATOR_PROCESS_ID) {
+                SelfHealingSettingsManager.orchestratorEnvironment()
+            } else {
+                emptyMap()
+            }
         val config =
-            if (jvmArgsOverride != null) process.config.copy(jvmArgs = jvmArgsOverride) else process.config
+            process.config.copy(
+                environment = baseEnv + repairEnv,
+                jvmArgs = jvmArgsOverride ?: process.config.jvmArgs,
+            )
         logger.info(
             "Respawning process {} (attempt {}/{}{})",
             processId,
@@ -660,14 +722,6 @@ class KernelBootstrap(
      *   ./gradlew :boss-orchestrator:fatJar :boss-service-auth:fatJar
      */
     private fun spawnServices(spawner: ProcessSpawner) {
-        val bossDataDir =
-            System.getenv("BOSS_DATA_DIR")
-                ?: try {
-                    ai.rever.boss.plugin.pathutils.BossDirectories.rootDir.absolutePath
-                } catch (_: Exception) {
-                    "${System.getProperty("user.home")}/.boss"
-                }
-
         val orchestratorJar = resolveServiceJar(bossDataDir, "boss-orchestrator-all.jar")
         val authJar = resolveServiceJar(bossDataDir, "boss-service-auth-all.jar")
 

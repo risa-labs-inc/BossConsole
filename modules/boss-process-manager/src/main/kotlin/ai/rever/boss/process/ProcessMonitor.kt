@@ -26,6 +26,16 @@ import java.util.concurrent.ConcurrentHashMap
 class ProcessMonitor(
     private val registry: ProcessRegistry,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
+    /**
+     * The kernel's heartbeat bookkeeping, or null when there is none to consult.
+     *
+     * Liveness alone cannot see a child that is alive but wedged - deadlocked, event loop
+     * stalled, IPC reader dead - because none of those end the process. With a watch, the
+     * per-process check below kills such a child and reports [FailureReason.HEARTBEAT_TIMEOUT]
+     * for the existing failure path to recover from; without one, supervision stays
+     * liveness-only, which is the old behaviour.
+     */
+    private val heartbeatWatch: HeartbeatWatch? = null,
 ) {
     private val logger = LoggerFactory.getLogger(ProcessMonitor::class.java)
 
@@ -127,6 +137,10 @@ class ProcessMonitor(
                 ?.config
                 ?.heartbeatIntervalMs ?: 5_000
 
+        // A missed beat is a blip; HEARTBEAT_TIMEOUT_INTERVALS of silence from a live child is
+        // its heartbeat loop no longer running, which no liveness check can detect.
+        val heartbeatTimeoutMs = checkIntervalMs * HEARTBEAT_TIMEOUT_INTERVALS
+
         while (currentCoroutineContext().isActive) {
             val process = registry.getProcess(processId) ?: break
 
@@ -160,11 +174,69 @@ class ProcessMonitor(
                 break
             }
 
+            // Alive is not healthy. A wedged child keeps its process slot and stalls everything
+            // waiting on it, and only the kernel's heartbeat record can tell it from a healthy
+            // one - the check the self-healing design wrote but never wired up. No watch
+            // injected, no check: a registry with no heartbeat source keeps the old
+            // liveness-only behaviour.
+            val watch = heartbeatWatch
+            if (watch != null && watch.isHeartbeatTimedOut(processId, heartbeatTimeoutMs)) {
+                killWedged(watch, process, heartbeatTimeoutMs)
+                break
+            }
+
             delay(checkIntervalMs)
         }
     }
 
+    /**
+     * Tear down a child that is alive but has stopped heartbeating, and report it as such.
+     *
+     * The beat is forgotten before the kill: it belongs to the dying generation, and left
+     * behind it would let the replacement this failure respawns be judged - and killed - for
+     * a beat it never sent. destroyForcibly rather than destroy, because a child wedged enough
+     * to be here cannot honour a graceful shutdown; that unresponsiveness is the whole reason
+     * it is being killed.
+     */
+    private suspend fun killWedged(
+        watch: HeartbeatWatch,
+        process: ManagedProcess,
+        heartbeatTimeoutMs: Long,
+    ) {
+        val processId = process.config.processId
+        logger.warn(
+            "Process {} (pid={}) is alive but has not heartbeaten for over {}ms - killing it as wedged",
+            processId,
+            process.pid,
+            heartbeatTimeoutMs,
+        )
+
+        watch.forget(processId)
+        process.updateState(ProcessState.PROCESS_STATE_CRASHED)
+        runCatching { process.destroyForcibly() }
+            .onFailure {
+                logger.warn("Failed to kill wedged process {}: {}", processId, it.message)
+            }
+
+        _failures.emit(
+            ProcessFailure(
+                processId = processId,
+                reason = FailureReason.HEARTBEAT_TIMEOUT,
+                errorMessage = "Alive but no heartbeat for over $heartbeatTimeoutMs ms (wedged)",
+                timestamp = System.currentTimeMillis(),
+            ),
+        )
+    }
+
     companion object {
+        /**
+         * How many heartbeat intervals of silence from an otherwise-alive child before it is
+         * declared wedged. Children send a beat every `heartbeatIntervalMs`, so this bounds the
+         * stall at three beats: long enough that one missed beat or a long GC pause is not read
+         * as a wedge, short enough that recovery starts while the operator is still watching.
+         */
+        const val HEARTBEAT_TIMEOUT_INTERVALS = 3L
+
         /**
          * Calculate exponential backoff delay for restarts.
          * Ported from existing PluginSandboxManagerImpl.calculateBackoff().
@@ -179,6 +251,35 @@ class ProcessMonitor(
             return delay.coerceAtMost(maxMs)
         }
     }
+}
+
+/**
+ * The kernel's heartbeat bookkeeping, as [ProcessMonitor] needs it.
+ *
+ * Behind an interface so this module stays independent of where beats are recorded: the
+ * kernel's `KernelServiceImpl` tracks them as children connect, and hands its adapter to the
+ * monitor at construction. No watch means liveness-only supervision.
+ */
+interface HeartbeatWatch {
+    /**
+     * Whether [processId] has been silent for longer than [thresholdMs].
+     *
+     * A process with no recorded beat at all is *not* timed out: it is either still starting
+     * up or not an IPC child, and killing either would turn the sweep into a hazard no
+     * liveness evidence could justify.
+     */
+    fun isHeartbeatTimedOut(
+        processId: String,
+        thresholdMs: Long,
+    ): Boolean
+
+    /**
+     * Forget [processId]'s recorded beat.
+     *
+     * Called as a wedged child is torn down, so the replacement the failure respawns is judged
+     * on its own beats rather than its predecessor's last one.
+     */
+    fun forget(processId: String)
 }
 
 data class ProcessFailure(

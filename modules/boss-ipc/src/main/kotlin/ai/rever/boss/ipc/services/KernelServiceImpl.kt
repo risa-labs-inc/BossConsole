@@ -190,6 +190,19 @@ class KernelServiceImpl(
     }
 
     /**
+     * Forget the heartbeat recorded for a process.
+     *
+     * Called as the kernel tears down a wedged child: the entry belongs to the dying
+     * generation, and left behind it would let the replacement the failure respawns be judged -
+     * and killed - for a beat it never sent. [isHeartbeatTimedOut] reports a missing beat as a
+     * timeout, so the heartbeat sweep must gate on [getLastHeartbeat] being non-null before
+     * consulting it.
+     */
+    fun clearHeartbeat(processId: String) {
+        lastHeartbeats.remove(processId)
+    }
+
+    /**
      * Get count of registered processes.
      */
     val registeredCount: Int get() = registeredProcesses.size
