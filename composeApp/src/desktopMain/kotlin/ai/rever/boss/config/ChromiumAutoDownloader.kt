@@ -118,11 +118,47 @@ object ChromiumAutoDownloader {
     }
 
     // Directory params are injectable for tests.
+
+    /**
+     * Startup recovery for an interrupted direct-path swap (#910 follow-up):
+     * a hard kill between "move target aside" and "promote .new" leaves no
+     * engine at target while the only copy sits in the .old backup, and a
+     * crashed extraction leaves a .new sibling nothing else ever reclaims.
+     * Both are handled here, BEFORE anything consults isChromiumInstalled or
+     * starts a re-download.
+     */
+    private fun recoverInterruptedEngineSwap(
+        target: File,
+        backup: File,
+    ) {
+        if (!target.exists() && backup.exists()) {
+            if (backup.renameTo(target)) {
+                logger.info(
+                    LogCategory.BROWSER,
+                    "Restored the engine from the interrupted-swap backup",
+                    mapOf("backup" to backup.toString()),
+                )
+            } else {
+                logger.warn(
+                    LogCategory.BROWSER,
+                    "Found an interrupted-swap backup but could not restore it",
+                    mapOf("backup" to backup.toString()),
+                )
+            }
+        }
+        val interruptedExtract = File(target.parentFile, target.name + ".new")
+        if (interruptedExtract.exists()) {
+            interruptedExtract.deleteRecursively()
+            logger.info(LogCategory.BROWSER, "Discarded interrupted engine extraction sibling")
+        }
+    }
+
     internal fun promotePendingInstall(
         pending: File,
         target: File,
         backup: File,
     ) {
+        recoverInterruptedEngineSwap(target, backup)
         if (!pending.exists()) return
 
         try {
@@ -485,13 +521,10 @@ object ChromiumAutoDownloader {
                     // Update status to extracting
                     onProgress(DownloadProgress(0, 0, isExtracting = true))
 
-                    // Delete existing directory if present
-                    if (targetDir.toFile().exists()) {
-                        targetDir.toFile().deleteRecursively()
-                    }
-
-                    // Extract
-                    extract(tempFile, targetDir)
+                    // Atomic install: never delete the only working engine up
+                    // front; extract to a sibling and swap via a backup dir with
+                    // rollback on any failure (atomicEngineSwap).
+                    atomicEngineSwap(tempFile, extract, targetDir)
 
                     // Verify extraction produced executable.name
                     val executableNameFile = targetDir.resolve("executable.name").toFile()
@@ -611,6 +644,79 @@ object ChromiumAutoDownloader {
     }
 
     /**
+     * Extract [archive] into a fresh sibling of [targetDir] and swap it into
+     * place atomically (#910): the current engine is moved to a `.old` backup,
+     * restored on any failure (extract, promote, or verification), and deleted
+     * only after the new install is verified. A failure must leave the app
+     * with a working engine, never none.
+     */
+    private fun atomicEngineSwap(
+        archive: Path,
+        extract: (Path, Path) -> Unit,
+        targetDir: Path,
+    ) {
+        val backupDir = targetDir.parent.resolve(targetDir.fileName.toString() + ".old")
+        val extractDir = targetDir.parent.resolve(targetDir.fileName.toString() + ".new")
+        if (backupDir.toFile().exists()) backupDir.toFile().deleteRecursively()
+        if (extractDir.toFile().exists()) extractDir.toFile().deleteRecursively()
+        if (targetDir.toFile().exists() && !targetDir.toFile().renameTo(backupDir.toFile())) {
+            throw IllegalStateException("Could not move the current engine aside for an atomic replace " + targetDir)
+        }
+        try {
+            extract(archive, extractDir)
+            promoteAndVerify(extractDir, targetDir)
+        } catch (e: Exception) {
+            // Any failure after the engine was moved aside must put it back.
+            restoreEngine(backupDir, targetDir, "swap")
+            throw e
+        }
+        backupDir.toFile().deleteRecursively()
+    }
+
+    /**
+     * Move the freshly extracted install into place and verify it; throws on
+     * any failure so the caller's catch restores the previous engine.
+     */
+    private fun promoteAndVerify(
+        extractDir: Path,
+        targetDir: Path,
+    ) {
+        if (!extractDir.toFile().renameTo(targetDir.toFile())) {
+            throw promoteFailure(targetDir)
+        }
+        if (!targetDir.resolve("executable.name").toFile().exists()) {
+            // Verification failed: clear the unverified install so the backup
+            // can take its place.
+            targetDir.toFile().deleteRecursively()
+            throw verificationFailure()
+        }
+    }
+
+    /** Move the backup engine back to [targetDir] after a failed swap step. */
+    private fun restoreEngine(
+        backupDir: Path,
+        targetDir: Path,
+        stage: String,
+    ) {
+        if (backupDir.toFile().exists() && !backupDir.toFile().renameTo(targetDir.toFile())) {
+            logger.warn(
+                LogCategory.BROWSER,
+                "Could not restore the previous engine after a failed " + stage,
+                mapOf("backup" to backupDir.toString()),
+            )
+        }
+    }
+
+    private fun verificationFailure(): IllegalStateException =
+        IllegalStateException(
+            "Extraction completed but executable.name not found. " +
+                "The downloaded archive may be corrupted.",
+        )
+
+    private fun promoteFailure(targetDir: Path): IllegalStateException =
+        IllegalStateException("Could not move the extracted engine into place " + targetDir)
+
+    /**
      * Extract a zip file to a target directory.
      * On macOS, uses native `ditto` to preserve symlinks, resource forks,
      * and code signatures. Java's ZipInputStream breaks macOS framework
@@ -646,12 +752,10 @@ object ChromiumAutoDownloader {
         val output = process.inputStream.bufferedReader().readText()
         val exitCode = process.waitFor()
         if (exitCode != 0) {
-            logger.warn(
-                LogCategory.BROWSER,
-                "ditto extraction failed, falling back to Java",
-                mapOf("exitCode" to exitCode, "output" to output),
+            throw IllegalStateException(
+                "ditto extraction failed (exitCode=$exitCode); refusing the Java fallback " +
+                    "because it breaks macOS framework symlinks: $output",
             )
-            extractWithJava(zipPath, targetDir)
         }
     }
 
