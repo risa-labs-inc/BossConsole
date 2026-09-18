@@ -107,12 +107,34 @@ object McpArgumentSanitizer {
             """(?i)(?:password|token|secret|api[_-]?key|credential)""" +
                 """\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s&,;}]+)""",
         )
+
+    /**
+     * `curl -u user:secret` / `--user user:secret`: the credential follows a flag, not a key.
+     *
+     * `(?!//)` is load-bearing. `redis-cli -u` takes a URL, not `user:pass`, so without it
+     * `-u redis://cache.example.invalid:6379` matches with `redis` as the user and `//cache.internal:6379`
+     * as the secret, and a line carrying no credential at all is blanked. A URL passed this way is
+     * left to [LogSanitizer.redactUrlUserInfo], which masks it only when there is userinfo to mask.
+     */
+    private val basicAuthFlag =
+        Regex("""(?i)(--user|-u)([ \t]+)[^\s:/@]+:(?!//)[^\s]+""")
+
     private val bearer = Regex("""(?i)Bearer\s+[^\s"',;}]+""")
 
+    /**
+     * URI userinfo is redacted by [LogSanitizer.redactUrlUserInfo], the helper merged for the
+     * logging path in #640, rather than by a rule of this object's own. A second implementation
+     * would be a second dialect of URI parsing to keep in step, and this one already handles what
+     * a regex here got wrong: the authority ends at the first `/`, `?` or `#`, and the LAST `@` in
+     * it is the delimiter, so a password containing an `@` (`user:p@ss@host`) is removed whole
+     * instead of leaving its tail behind.
+     */
     fun sanitizeMessage(text: String): String =
-        text
+        LogSanitizer
+            .redactUrlUserInfo(text)
             .replace(credentialShapePattern, "[REDACTED]")
             .replace(sensitiveAssignment, "[REDACTED]")
             .replace(authorizationHeader, "[REDACTED]")
             .replace(bearer, "Bearer [REDACTED]")
+            .replace(basicAuthFlag, "$1$2[REDACTED]")
 }
