@@ -85,4 +85,25 @@ class AtomicFileWriteTest {
         val strays = tempDir.listFiles()?.filter { it.name != target.name }.orEmpty()
         assertTrue(strays.isEmpty(), "unexpected leftovers: ${strays.map { it.name }}")
     }
+
+    @Test
+    fun `renameAsideCorrupt preserves the bad file under a distinct name and empties the original path`() {
+        val target = File(tempDir, "settings.json").apply { writeText("{ not valid json") }
+
+        assertTrue(target.renameAsideCorrupt())
+
+        assertFalse(target.exists(), "the original path must be free for a fresh write")
+        val survivors = tempDir.listFiles().orEmpty().toList()
+        assertEquals(1, survivors.size, "the corrupt bytes must not simply vanish")
+        val corrupt = survivors.single()
+        assertTrue(corrupt.name.startsWith("settings.json.corrupt-"), "unexpected name: ${corrupt.name}")
+        assertEquals("{ not valid json", corrupt.readText(), "content must survive the rename untouched")
+    }
+
+    @Test
+    fun `renameAsideCorrupt reports failure rather than throwing when there is nothing to rename`() {
+        val target = File(tempDir, "missing.json")
+
+        assertFalse(target.renameAsideCorrupt())
+    }
 }

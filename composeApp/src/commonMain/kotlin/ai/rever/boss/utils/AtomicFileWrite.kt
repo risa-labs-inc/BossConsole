@@ -62,3 +62,19 @@ fun File.atomicWriteText(text: String) {
         tmp.delete()
     }
 }
+
+/**
+ * Rename this file aside with a timestamp suffix, so a settings file that fails to *decode*
+ * (as opposed to fresh state simply not existing yet) is preserved for inspection rather than
+ * re-read - and re-failed - on every future launch.
+ *
+ * Call this only once the content is known to be corrupt (a decode/deserialization failure), not
+ * for an ordinary read/IO error: a transient permission or disk fault says nothing about whether
+ * the bytes on disk are good, and renaming a possibly-fine file away would be data loss the read
+ * failure alone does not justify.
+ *
+ * Best-effort: a failed rename (another process holding the file, a read-only volume) is reported
+ * via the return value rather than thrown, because the caller's own fallback - fresh defaults,
+ * written back with [atomicWriteText] - is what actually keeps the app usable either way.
+ */
+fun File.renameAsideCorrupt(): Boolean = renameTo(File(parentFile, "$name.corrupt-${System.currentTimeMillis()}"))

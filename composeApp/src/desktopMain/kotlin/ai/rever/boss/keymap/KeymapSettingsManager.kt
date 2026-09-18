@@ -8,14 +8,17 @@ import ai.rever.boss.keymap.presets.KeymapPresets
 import ai.rever.boss.keymap.presets.KeymapPresets.claimsChord
 import ai.rever.boss.keymap.presets.KeymapPresets.withoutChordsTakenBy
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.ComponentLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.renameAsideCorrupt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import java.io.File
 
@@ -30,7 +33,13 @@ import java.io.File
  */
 actual object KeymapSettingsManager {
     private val logger = BossLogger.forComponent("KeymapSettingsManager")
-    private val settingsFile = BossDirectories.resolve("keymap-settings.json")
+
+    /**
+     * `internal` (not `private`) only so [reloadForTesting] can write a fixture straight at the
+     * path this object reads - `user.home` is already redirected to a fresh per-test-task
+     * directory (see AGENTS.md), so this needs no further redirection of its own.
+     */
+    internal val settingsFile = BossDirectories.resolve("keymap-settings.json")
     private val json =
         Json {
             prettyPrint = true
@@ -49,50 +58,71 @@ actual object KeymapSettingsManager {
     }
 
     /**
+     * Re-run [loadSettingsSync] against whatever is currently at [settingsFile]. Production code
+     * never calls this - the object loads once, at [init] - it exists so a test can write a
+     * fixture to [settingsFile] and observe the load path (including the corrupt-file self-heal)
+     * without depending on class-load timing.
+     */
+    internal fun reloadForTesting() = loadSettingsSync()
+
+    /**
      * Load settings synchronously on startup.
      * If file doesn't exist, uses default keymap.
      * Applies migration to add any new actions from presets.
      */
     private fun loadSettingsSync() {
+        if (!settingsFile.exists()) {
+            // First run - create default keymap file
+            logger.debug(LogCategory.SYSTEM, "No keymap settings file found, creating default")
+            val defaultSettings = KeymapPresets.getBOSSDefault()
+            _currentSettings.value = defaultSettings
+            writeSettingsFile(defaultSettings, "Created default keymap settings file")
+            return
+        }
+
         try {
-            if (settingsFile.exists()) {
-                val content = settingsFile.readText()
-                val loaded = json.decodeFromString<KeymapSettings>(content)
-                logger.debug(LogCategory.SYSTEM, "Loaded keymap settings", mapOf("path" to settingsFile.absolutePath))
+            val content = settingsFile.readText()
+            val loaded = json.decodeFromString<KeymapSettings>(content)
+            logger.debug(LogCategory.SYSTEM, "Loaded keymap settings", mapOf("path" to settingsFile.absolutePath))
 
-                // Apply migration to add any new actions from preset
-                val migrated = migrateSettings(loaded)
+            // Apply migration to add any new actions from preset
+            val migrated = migrateSettings(loaded)
 
-                // Save if migration made changes
-                if (migrated != loaded) {
-                    try {
-                        val migratedContent = json.encodeToString(KeymapSettings.serializer(), migrated)
-                        settingsFile.writeText(migratedContent)
-                        logger.debug(LogCategory.SYSTEM, "Migrated keymap settings saved")
-                    } catch (e: Exception) {
-                        logger.warn(LogCategory.SYSTEM, "Could not save migrated keymap settings", error = e)
-                    }
-                }
-
-                _currentSettings.value = migrated
-            } else {
-                // First run - create default keymap file
-                logger.debug(LogCategory.SYSTEM, "No keymap settings file found, creating default")
-                val defaultSettings = KeymapPresets.getBOSSDefault()
-                _currentSettings.value = defaultSettings
-
-                // Save default settings to file
-                try {
-                    val content = json.encodeToString(KeymapSettings.serializer(), defaultSettings)
-                    settingsFile.writeText(content)
-                    logger.debug(LogCategory.SYSTEM, "Created default keymap settings file", mapOf("path" to settingsFile.absolutePath))
-                } catch (e: Exception) {
-                    logger.warn(LogCategory.SYSTEM, "Could not write default keymap settings file", error = e)
-                }
+            // Save if migration made changes
+            if (migrated != loaded) {
+                writeSettingsFile(migrated, "Migrated keymap settings saved")
             }
+
+            _currentSettings.value = migrated
+        } catch (e: SerializationException) {
+            // The file exists but its content is corrupt (torn write, hand-edit gone wrong). Left
+            // alone, every future launch re-reads the same bytes and fails the same way, forever.
+            // Move it aside so it can still be inspected, and self-heal with a fresh default.
+            logger.error(LogCategory.SYSTEM, "Keymap settings file is corrupt, resetting to defaults", error = e)
+            if (!settingsFile.renameAsideCorrupt()) {
+                logger.warn(LogCategory.SYSTEM, "Could not move the corrupt keymap settings file aside")
+            }
+            val defaultSettings = KeymapPresets.getBOSSDefault()
+            _currentSettings.value = defaultSettings
+            writeSettingsFile(defaultSettings, "Wrote fresh default keymap settings after corruption")
         } catch (e: Exception) {
+            // Not a decode failure (e.g. a transient read error) - the file itself may be fine, so
+            // it is left untouched and only the in-memory state falls back to defaults.
             logger.error(LogCategory.SYSTEM, "Failed to load keymap settings, using defaults", error = e)
             _currentSettings.value = KeymapPresets.getBOSSDefault()
+        }
+    }
+
+    private fun writeSettingsFile(
+        settings: KeymapSettings,
+        successMessage: String,
+    ) {
+        try {
+            val content = json.encodeToString(KeymapSettings.serializer(), settings)
+            settingsFile.atomicWriteText(content)
+            logger.debug(LogCategory.SYSTEM, successMessage, mapOf("path" to settingsFile.absolutePath))
+        } catch (e: Exception) {
+            logger.warn(LogCategory.SYSTEM, "Could not write keymap settings file", error = e)
         }
     }
 
@@ -185,13 +215,7 @@ actual object KeymapSettingsManager {
      */
     actual suspend fun saveSettings() =
         withContext(Dispatchers.IO) {
-            try {
-                val content = json.encodeToString(KeymapSettings.serializer(), _currentSettings.value)
-                settingsFile.writeText(content)
-                logger.debug(LogCategory.SYSTEM, "Keymap settings saved")
-            } catch (e: Exception) {
-                logger.error(LogCategory.SYSTEM, "Failed to save keymap settings", error = e)
-            }
+            writeSettingsFile(_currentSettings.value, "Keymap settings saved")
         }
 
     /**
