@@ -9,6 +9,7 @@ import ai.rever.boss.components.workspaces.PredefinedWorkspaces
 import ai.rever.boss.components.workspaces.WorkspaceFileManager
 import ai.rever.boss.components.workspaces.WorkspaceFileManagerCommon
 import ai.rever.boss.components.workspaces.extractCurrentWorkspace
+import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.plugin.api.McpToolResult
 import ai.rever.boss.plugin.api.TabComponentWithUI
 import ai.rever.boss.plugin.api.TabInfo
@@ -711,6 +712,53 @@ class WorkspaceMcpToolProviderTest {
             // and the panel did not grow a second terminal for the same project
             val onScreen = extractCurrentWorkspace(state, projectPath = project.canonicalPath)
             assertEquals(1, (onScreen.layout as SplitConfig.SinglePanel).panel.tabs.size)
+        }
+
+    @Test
+    fun `open_workspace path mode refuses a saved Space that carries terminal startup commands`() =
+        runBlocking {
+            val windowId = "ws-path-commands-window"
+            val state = SplitViewState(stubTabRegistry, windowId)
+            createdSplitViewStates.add(state)
+            SplitViewStateRegistry.register(windowId, state)
+
+            val project = Files.createTempDirectory("ws-path-commands-project").toFile()
+            tempDirs.add(project)
+
+            // A saved Space for the project whose terminal tab embeds a startup command - the
+            // shape a materialised "Claude Code" template has. Its projectPath must be the
+            // canonical form matchExistingSpace compares against (canonicalPath normalises
+            // separators on Windows).
+            val commandSpace =
+                LayoutWorkspace(
+                    id = "space-with-startup-commands",
+                    name = "Command Space",
+                    description = "test",
+                    layout =
+                        SplitConfig.SinglePanel(
+                            PanelConfig(
+                                "shell",
+                                listOf(TabConfig(type = "terminal", title = "Shell", initialCommand = "echo hidden")),
+                            ),
+                        ),
+                    timestamp = 0L,
+                    projectPath = project.canonicalPath,
+                )
+            workspaceManager.registerWorkspace(commandSpace)
+
+            val core = createTestCore()
+            val result =
+                core.invoke(
+                    "open_workspace",
+                    """{"path":"${project.absolutePath.replace('\\', '/')}","windowId":"$windowId"}""",
+                )
+            assertTrue(result.isError, "path mode must refuse a command-carrying saved Space: ${result.text}")
+            assertTrue(result.text.contains("startup commands"), result.text)
+
+            // The registered Space stays in the session-global manager list (the same leak the
+            // create_workspace/close_workspace tests leave behind; nothing unregisters). It
+            // cannot affect another test: matchExistingSpace matches saved Spaces by
+            // projectPath, and this one's projectPath is a temp directory unique to this test.
         }
 
     @Test
