@@ -195,6 +195,10 @@ internal class BossAppState(
     // commands it would start. One at a time: a second arrival is refused, not queued.
     var pendingSpaceLoad by mutableStateOf<PendingSpaceLoad?>(null)
 
+    // The same holding pattern for `boss://plugin?id=…&action=…`: a link the OS
+    // will accept from any program cannot dispatch into a plugin unattended.
+    val pluginActionApprovals = PluginActionApprovalQueue()
+
     // An MCP tool execution requested by an AI agent that is suspended waiting
     // for operator approval under an ASK policy.
     var pendingMcpApproval by mutableStateOf<McpApprovalRequest?>(null)

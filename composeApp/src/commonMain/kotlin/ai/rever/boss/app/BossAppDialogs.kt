@@ -35,6 +35,7 @@ import ai.rever.boss.components.plugin.PluginUpdateAlreadyInProgressException
 import ai.rever.boss.components.plugin.PluginUpdateBridge
 import ai.rever.boss.components.plugin.openTopOfMindQuickSwitcher
 import ai.rever.boss.components.plugin.providers.GenericDialogHostContent
+import ai.rever.boss.components.plugin.registries.DeepLinkActionRegistryImpl
 import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
 import ai.rever.boss.components.registery.PanelComponentStoreRegistry
 import ai.rever.boss.components.registery.TabTypeId
@@ -853,6 +854,29 @@ internal fun BossAppDialogs(state: BossAppState) {
 
     // The same question for a Space whose terminal tabs carry commands.
     SpaceLoadPrompt(state)
+
+    // A plugin action that reached BOSS from outside the operator's own `boss`
+    // invocation. Nothing has been dispatched yet: this prompt is the only path
+    // from such a link to the plugin's registered handler.
+    state.pluginActionApprovals.current?.let { pending ->
+        PluginActionApprovalDialog(
+            request = pending,
+            pendingCount = state.pluginActionApprovals.size,
+            onDismiss = { state.pluginActionApprovals.consume(pending) },
+            onConfirm = confirm@{
+                // Consume before dispatch; the dialog also calls onDismiss after onConfirm.
+                // A stale callback must never dispatch or dismiss the next request.
+                if (!state.pluginActionApprovals.consume(pending)) return@confirm
+                logger.info(
+                    LogCategory.SYSTEM,
+                    "Operator confirmed an externally requested plugin action",
+                    mapOf("windowId" to windowId, "handlerId" to pending.handlerId, "action" to pending.action),
+                )
+                val handled = DeepLinkActionRegistryImpl.dispatch(pending.handlerId, pending.action, pending.params)
+                if (!handled) StatusMessageManager.showMessage("Plugin action was not handled")
+            },
+        )
+    }
 
     // Interactive approval dialog for governed MCP tools invoked by an AI agent
     state.pendingMcpApproval?.let { approvalRequest ->

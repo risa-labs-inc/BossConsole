@@ -2,6 +2,7 @@ package ai.rever.boss.utils
 
 import ai.rever.boss.cli.CLISecurityValidator
 import ai.rever.boss.components.events.PanelEventBus
+import ai.rever.boss.components.events.PluginActionEventBus
 import ai.rever.boss.components.plugin.PanelIds
 import ai.rever.boss.components.plugin.panels.left_top.ProjectState
 import ai.rever.boss.plugin.api.PanelId
@@ -348,9 +349,10 @@ actual object DeepLinkHandler {
     /**
      * Processes a link whose [origin] the caller can vouch for.
      *
-     * [origin] reaches the handlers that need it (currently `boss://terminal`)
-     * because no later stage can tell an operator's request apart from one some
-     * other program asked the OS to open.
+     * [origin] reaches the handlers that need it - `boss://terminal?command=`,
+     * `boss://workspace` and `boss://plugin?id=…&action=…` - because no later
+     * stage can tell an operator's request apart from one some other program
+     * asked the OS to open.
      *
      * @return a [Deferred] resolving to whether the link was actually acted on,
      *   for the one route that can answer that question today
@@ -418,7 +420,7 @@ actual object DeepLinkHandler {
             DeepLinkHost.FILE -> handleFileLink(uri)
             DeepLinkHost.TERMINAL -> handleTerminalLink(uri, origin)
             DeepLinkHost.FOLDER -> handleFolderLink(uri, targetWindowId)
-            DeepLinkHost.PLUGIN -> return handlePluginLink(uri, targetWindowId)
+            DeepLinkHost.PLUGIN -> return handlePluginLink(uri, targetWindowId, origin)
             DeepLinkHost.SPLIT -> handleSplitLink(uri, targetWindowId)
         }
         return null
@@ -570,18 +572,27 @@ actual object DeepLinkHandler {
      * [targetWindowId] is already resolved by [processDeepLink]; the panel event
      * and the action dispatch are emitted on the UI thread.
      *
-     * @return for an action link, a [Deferred] resolving to
+     * [origin] decides whether an action dispatches at all. The `boss://` scheme
+     * is registered with the OS, so an action link is not evidence the operator
+     * asked for anything; see [pluginActionDisposition].
+     *
+     * @return for an action link the operator's own invocation delivered, a
+     *   [Deferred] resolving to
      *   [ai.rever.boss.components.plugin.registries.DeepLinkActionRegistryImpl.dispatch]'s
      *   own verdict (false for an unregistered handler id, a handler that
      *   declines the action, or one that throws — that function never lets an
-     *   exception escape). Null for a panel-open link, which stays fire-and-forget. An action
-     *   without a usable id is rejected with a false verdict.
+     *   exception escape). Null for a panel-open link, which stays fire-and-forget,
+     *   and null for an action held for confirmation: nothing has been dispatched,
+     *   so there is no verdict yet, which is the same "queued" answer
+     *   `boss://terminal` already gives a command it holds. An action without a
+     *   usable id, or one refused outright, is rejected with a false verdict.
      */
     private fun handlePluginLink(
         uri: String,
         targetWindowId: String?,
+        origin: DeepLinkOrigin,
     ): Deferred<Boolean>? {
-        logger.debug(LogCategory.UI, "Handling plugin link")
+        logger.debug(LogCategory.UI, "Handling plugin link", mapOf("origin" to origin.name))
 
         val params = parseQueryParams(uri)
         val panelIdStr = params["id"]?.urlDecode()
@@ -594,30 +605,110 @@ actual object DeepLinkHandler {
         // Action links dispatch to the plugin's DeepLinkActionHandler and do
         // NOT fall through to opening a panel — the two are distinct verbs
         // sharing the `plugin` scheme. Unhandled actions just log (registry
-        // warns); external input, so handlers own validation.
+        // warns); handlers still own validation of the values they accept.
         val action = params["action"]?.urlDecode()
         return if (action != null) {
-            dispatchPluginAction(panelIdStr, action, params)
+            dispatchPluginAction(panelIdStr, action, params, origin, targetWindowId)
         } else {
             openPluginPanel(panelIdStr, targetWindowId)
             null
         }
     }
 
-    /** Runs a `boss://plugin?id=…&action=…` link's action and hands back its real outcome. */
+    /**
+     * Runs a `boss://plugin?id=…&action=…` link's action, holds it for the
+     * operator, or refuses it — see [pluginActionDisposition].
+     *
+     * @return the handler's real outcome for a dispatched action, false for a
+     *   refused one, and null for one held for confirmation (nothing ran, so
+     *   there is no outcome to report yet).
+     */
     private fun dispatchPluginAction(
         handlerId: String,
         action: String,
         params: Map<String, String>,
-    ): Deferred<Boolean> {
+        origin: DeepLinkOrigin,
+        targetWindowId: String?,
+    ): Deferred<Boolean>? {
         val actionParams =
             params
                 .filterKeys { it != "id" && it != "action" }
                 .mapValues { (_, value) -> value.urlDecode() }
-        return scope.async(Dispatchers.Main) {
-            ai.rever.boss.components.plugin.registries.DeepLinkActionRegistryImpl
-                .dispatch(handlerId, action, actionParams)
+        return when (pluginActionDisposition(handlerId, action, actionParams.keys, origin)) {
+            PluginActionDisposition.RUN -> {
+                scope.async(Dispatchers.Main) {
+                    ai.rever.boss.components.plugin.registries.DeepLinkActionRegistryImpl
+                        .dispatch(handlerId, action, actionParams)
+                }
+            }
+
+            PluginActionDisposition.CONFIRM -> {
+                holdPluginActionForConfirmation(handlerId, action, actionParams, targetWindowId)
+            }
+
+            PluginActionDisposition.REJECT -> {
+                logger.warn(
+                    LogCategory.UI,
+                    "Plugin action refused before it could run",
+                    mapOf(
+                        "origin" to origin.name,
+                        "actionLength" to action.length,
+                        "paramKeyCount" to actionParams.size,
+                    ),
+                )
+                CompletableDeferred(false)
+            }
         }
+    }
+
+    /**
+     * Puts an externally delivered action in front of the operator instead of
+     * running it. Returns null — the "queued" answer, because the outcome is not
+     * knowable until they decide, and the single-instance caller's deadline is
+     * far shorter than a person.
+     *
+     * **A null [targetWindowId] holds the action rather than refusing it**, which
+     * is the difference between this and [openPluginPanel]'s early return. The
+     * cold-start path — the OS launching BOSS with a `boss://plugin` link in
+     * `argv`, which `CliBootstrap.dispatchPostLock` processes before
+     * `application {}` has built a window — resolves no window at all, and it is
+     * the *ordinary* way one of these links arrives, not an edge case. Refusing
+     * there meant the operator was never asked about precisely the request this
+     * gate exists to ask about. [PluginActionEventBus] retains it until a window
+     * opens and claims it; nothing runs in the meantime, and nothing can run
+     * without a confirmation, so this holds the security property exactly.
+     *
+     * Retaining before returning is also why [PluginActionEventBus.requestConfirmation]
+     * is not a suspending emit: this function may only answer "queued" for a request
+     * that is genuinely recorded. A full registry is reported as a refusal instead.
+     */
+    private fun holdPluginActionForConfirmation(
+        handlerId: String,
+        action: String,
+        actionParams: Map<String, String>,
+        targetWindowId: String?,
+    ): Deferred<Boolean>? {
+        val retained = PluginActionEventBus.requestConfirmation(handlerId, action, actionParams, targetWindowId)
+        if (!retained) {
+            logger.warn(
+                LogCategory.UI,
+                "External plugin action refused: too many are already awaiting confirmation",
+                mapOf("handlerId" to handlerId),
+            )
+            return CompletableDeferred(false)
+        }
+        logger.info(
+            LogCategory.UI,
+            "Holding an external plugin action for operator confirmation",
+            mapOf(
+                "handlerId" to handlerId,
+                "action" to action,
+                // Distinguishes the cold-start hold from the ordinary one in the log,
+                // because the two differ in when the prompt can possibly appear.
+                "hasWindow" to (targetWindowId != null),
+            ),
+        )
+        return null
     }
 
     /** Opens a `boss://plugin?id=…` link's panel. Fire-and-forget: nothing awaits this today. */
