@@ -20,6 +20,28 @@ import java.util.concurrent.ConcurrentHashMap
 class BrowserServiceImpl : BrowserServiceGrpcKt.BrowserServiceCoroutineImplBase() {
     private val logger = LoggerFactory.getLogger(BrowserServiceImpl::class.java)
 
+    /**
+     * Navigation schemes this service accepts. `javascript:` executes script in
+     * the page context without any approval surface, and `data:` can smuggle
+     * payloads - neither may be navigated to (#911). Everything outside this
+     * set is refused before any state is touched.
+     */
+    private val allowedSchemes = setOf("http", "https", "file", "ftp", "about")
+
+    /** Redact URI userinfo before logging so `user:pass@host` never hits the log file (#640 shape). */
+    internal fun redactUrlForLog(url: String): String {
+        val schemeEnd = url.indexOf("://")
+        val authorityEnd =
+            if (schemeEnd < 0) -1 else url.indexOf('/', schemeEnd + 3)
+        val authority =
+            if (schemeEnd < 0) "" else url.substring(schemeEnd + 3, if (authorityEnd < 0) url.length else authorityEnd)
+        val atSign = authority.lastIndexOf('@')
+        return when {
+            schemeEnd < 0 || atSign <= 0 -> url
+            else -> url.substring(0, schemeEnd + 3) + "***@" + url.substring(schemeEnd + 3 + atSign + 1)
+        }
+    }
+
     /** Per-window page state snapshot. */
     private data class PageState(
         val windowId: String,
@@ -35,15 +57,21 @@ class BrowserServiceImpl : BrowserServiceGrpcKt.BrowserServiceCoroutineImplBase(
 
     override suspend fun navigate(request: NavigateBrowserRequest): NavigateBrowserResponse {
         val url = request.url.trim()
-        logger.info("navigate: windowId={}, url={}", request.windowId, url)
 
-        if (url.isBlank()) {
+        // Scheme gate FIRST (#911): `javascript:` executes script in the page
+        // context with no approval surface; `data:` smuggles payloads. A
+        // refused URL must not reach ANY log line - only its scheme does -
+        // so the gate runs before the INFO log that would otherwise echo the
+        // payload verbatim (the exact leak the issue reports).
+        navigationRefusal(url, request.windowId)?.let { refusal ->
             return NavigateBrowserResponse
                 .newBuilder()
                 .setSuccess(false)
-                .setErrorMessage("URL must not be blank")
+                .setErrorMessage(refusal)
                 .build()
         }
+
+        logger.info("navigate: windowId={}, url={}", request.windowId, redactUrlForLog(url))
 
         val prev = windowStates[request.windowId]
         val newState =
@@ -85,6 +113,33 @@ class BrowserServiceImpl : BrowserServiceGrpcKt.BrowserServiceCoroutineImplBase(
             .build()
     }
 
+    /**
+     * The (#911) navigation guard: returns the refusal message for blank or
+     * unsupported-scheme URLs (`javascript:` executes script in the page
+     * context with no approval surface; `data:` smuggles payloads), or null
+     * when the URL may navigate.
+     */
+    private fun navigationRefusal(
+        url: String,
+        windowId: String,
+    ): String? {
+        val scheme = url.substringBefore("://", "").lowercase()
+        return when {
+            url.isBlank() -> {
+                "URL must not be blank"
+            }
+
+            scheme !in allowedSchemes -> {
+                logger.warn("navigate: refused scheme={}, windowId={}", scheme.ifBlank { "none" }, windowId)
+                "Refused navigation: unsupported URL scheme '$scheme'"
+            }
+
+            else -> {
+                null
+            }
+        }
+    }
+
     override suspend fun executeJS(request: ExecuteJSRequest): ExecuteJSResponse {
         logger.debug("executeJS: windowId={}, scriptLen={}", request.windowId, request.script.length)
         // JS execution requires JxBrowser which runs in the composeApp process.
@@ -101,7 +156,7 @@ class BrowserServiceImpl : BrowserServiceGrpcKt.BrowserServiceCoroutineImplBase(
         }
 
     override suspend fun getFavicon(request: GetFaviconRequest): GetFaviconResponse {
-        logger.debug("getFavicon: url={}", request.url)
+        logger.debug("getFavicon: url={}", redactUrlForLog(request.url))
         return GetFaviconResponse
             .newBuilder()
             .setFaviconBytes(ByteString.EMPTY)
@@ -156,6 +211,7 @@ class BrowserServiceImpl : BrowserServiceGrpcKt.BrowserServiceCoroutineImplBase(
         val state = windowStates.values.firstOrNull()
         if (state != null) {
             windowStates[state.windowId] = state.copy(isLoading = true)
+            val ts = System.currentTimeMillis()
             navigationEvents.tryEmit(
                 BrowserNavigationEvent
                     .newBuilder()
@@ -163,9 +219,23 @@ class BrowserServiceImpl : BrowserServiceGrpcKt.BrowserServiceCoroutineImplBase(
                     .setUrl(state.url)
                     .setTitle(state.title)
                     .setEventType(NavigationEventType.NAVIGATION_EVENT_TYPE_STARTED)
-                    .setTimestamp(System.currentTimeMillis())
+                    .setTimestamp(ts)
                     .build(),
             )
+            // The reload is bookkeeping-only in this service (the composeApp
+            // engine owns the real reload), so complete the cycle here instead
+            // of leaving the window stuck reporting `loading` forever (#911).
+            navigationEvents.tryEmit(
+                BrowserNavigationEvent
+                    .newBuilder()
+                    .setWindowId(state.windowId)
+                    .setUrl(state.url)
+                    .setTitle(state.title)
+                    .setEventType(NavigationEventType.NAVIGATION_EVENT_TYPE_COMPLETED)
+                    .setTimestamp(ts + 1)
+                    .build(),
+            )
+            windowStates[state.windowId] = state.copy(isLoading = false)
         }
         return Empty.getDefaultInstance()
     }
