@@ -526,10 +526,10 @@ publish.openapi(finalizeVersionRoute, async (ctx) => {
       computedSha256 = hashed.sha256
       observedBytes = hashed.totalBytes
     } catch (e) {
-      console.error(`finalize hash recompute FAILED after ${Date.now() - hashStartMs}ms: version=${body.versionId}`)
+      console.error(`finalize hash recompute FAILED after ${Date.now() - hashStartMs}ms: version=${body.versionId}`, e)
       return ctx.json({
         success: false,
-        error: `Failed to compute JAR hash: ${(e as Error).message}`
+        error: 'Failed to compute JAR hash'
       }, 502)
     }
     // Telemetry for the re-stream cost: finalize latency scales with JAR
@@ -563,9 +563,10 @@ publish.openapi(finalizeVersionRoute, async (ctx) => {
         }, 400)
       }
     } catch (e) {
+      console.error('Error reading JAR manifest for identity check:', e)
       return ctx.json({
         success: false,
-        error: `Failed to read JAR manifest for identity check: ${(e as Error).message}`
+        error: 'Failed to read JAR manifest for identity check'
       }, 502)
     }
 
@@ -955,9 +956,10 @@ publish.openapi(publishFromGitHubMetadataRoute, async (ctx) => {
     try {
       repoIsPrivate = await fetchRepoIsPrivate(parsed.owner, parsed.repo)
     } catch (e) {
+      console.error('Error determining repository visibility:', e)
       return ctx.json({
         success: false,
-        error: `Could not determine repository visibility: ${(e as Error).message}`
+        error: 'Could not determine repository visibility'
       }, 502)
     }
     if (repoIsPrivate) {
@@ -998,9 +1000,10 @@ publish.openapi(publishFromGitHubMetadataRoute, async (ctx) => {
       const extracted = await extractManifestFromRemoteJar(jarAsset.browser_download_url)
       manifest = extracted.manifest
     } catch (e) {
+      console.error('Error extracting manifest from JAR:', e)
       return ctx.json({
         success: false,
-        error: `Failed to extract manifest from JAR: ${(e as Error).message}`
+        error: 'Failed to extract manifest from JAR'
       }, 400)
     }
 
@@ -1015,9 +1018,10 @@ publish.openapi(publishFromGitHubMetadataRoute, async (ctx) => {
       computedSha256 = hashed.sha256
       totalBytes = hashed.totalBytes
     } catch (e) {
+      console.error('Error computing JAR hash:', e)
       return ctx.json({
         success: false,
-        error: `Failed to compute JAR hash: ${(e as Error).message}`
+        error: 'Failed to compute JAR hash'
       }, 502)
     }
 

@@ -54,15 +54,17 @@ export async function storeChallenge(
       .select()
 
     if (error) {
+      // The driver's text stays on the log line; the response an unauthenticated
+      // /auth/challenge caller sees is this fixed message.
       console.error('Database error storing challenge:', error)
-      return { success: false, error: error.message }
+      return { success: false, error: 'Failed to store challenge' }
     }
 
     console.log('Challenge stored successfully')
     return { success: true, data }
   } catch (error) {
     console.error('Exception storing challenge:', error)
-    return { success: false, error: (error as Error).message }
+    return { success: false, error: 'Failed to store challenge' }
   }
 }
 

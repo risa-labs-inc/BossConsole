@@ -372,7 +372,7 @@ export const completeAuthentication = withErrorHandler(
         console.error('❌ Failed to store completed authentication:', storeResult.error)
         return {
           success: false,
-          error: `Failed to store authentication result: ${storeResult.error || 'Unknown error'}`
+          error: 'Failed to store authentication result'
         }
       }
 
