@@ -289,12 +289,12 @@ console.log('\nnormal focus transitions');
   eq('accessor returns null when no field is focused', p.window.__BOSS_GET_FOCUSED_FIELD(), null);
 }
 
-console.log('\nDEFECT: the script has no re-injection guard');
+console.log('\nre-injection into one document installs one set of listeners');
 // The host re-runs injectPageHelpers on every main-frame NavigationFinished, and for a
-// single-page app that is a route change WITHIN one document - so the same document accrues
-// another pair of capture-phase listeners per route, permanently. The sibling collector
-// guards exactly this case with its own started-flag; this script has no equivalent.
-// Follow-up: guard the script the way BrowserInteractionScript guards its own.
+// single-page app that is a route change WITHIN one document - so without a guard the same
+// document accrues another pair of capture-phase listeners per route, permanently. The
+// sibling collector guards exactly this case with its own started-flag, and this script
+// now carries the equivalent.
 {
   const p = newPage();
   p.run(inject);
@@ -302,29 +302,29 @@ console.log('\nDEFECT: the script has no re-injection guard');
   p.run(inject);
   const afterSecond = p.listeners.length;
   eq('listeners after one injection', afterFirst, 2);
-  eq('listeners after a second injection into the same document', afterSecond, 4);
+  eq('listeners after a second injection into the same document', afterSecond, 2);
   check(
-    'the sibling collector does guard this, so the omission is not house style',
+    'the sibling collector guards this the same way, so the shape is house style',
     collectorHasReinjectionGuard(),
   );
 
+  // A second injection must not re-arm the accessor onto a stale reference either.
   const input = p.el('input', { type: 'text', name: 'mrn' });
-  p.logs.length = 0;
   p.fire('focusin', input);
-  eq('one focus now logs once per injection', p.logs.length, 2);
+  check('the retained field still tracks focus after a re-injection', p.window.__BOSS_FOCUSED_FIELD === input);
 }
 
-console.log('\nDEFECT: every focus is narrated into the page console');
-// This deliberately logs a field's name or id on every focus for the life of the document.
-// The collector's exception-suppression contract is a different concern from deliberate logging.
-// Follow-up: drop the per-focus log.
+console.log('\nthe page console is not narrated with field identity');
+// Logging a field's name or id on every focus put the user's form identity into a surface
+// the page itself can read back, for the life of the document, and multiplied it by every
+// re-injection. Injection is silent too: one line per navigation said nothing a caller needed.
 {
   const p = newPage();
-  p.run(inject);
   p.logs.length = 0;
+  p.run(inject);
+  eq('injecting the script logs nothing', p.logs.length, 0);
   p.fire('focusin', p.el('input', { type: 'password', name: 'pwd' }));
-  eq('a single focus logs', p.logs.length, 1);
-  eq('and carries the field type and name', p.logs[0], ['[BOSS] Field focused:', 'password', 'pwd']);
+  eq('and focusing a password field logs nothing', p.logs.length, 0);
 }
 
 console.log('\nwhat the page-reachable accessor returns');
@@ -367,9 +367,9 @@ console.log('\nwhat the page-reachable accessor returns');
 
 console.log('\nnull-safety of the focusout handler');
 // document.activeElement is nullable per spec (a detached document, or teardown between the
-// blur and the 500ms timer). The handler dereferences .tagName on it unguarded, so the
-// deferred clear throws and __BOSS_FOCUSED_FIELD keeps pointing at the blurred field.
-// Follow-up: guard the dereference.
+// blur and the 500ms timer). Dereferencing .tagName on it unguarded threw out of the deferred
+// clear, which left __BOSS_FOCUSED_FIELD pointing at the blurred field - the one case the
+// clear exists for. A null activeElement means focus went nowhere, so the field is cleared.
 {
   const p = newPage();
   p.run(inject);
@@ -378,11 +378,11 @@ console.log('\nnull-safety of the focusout handler');
   p.fire('focusout', input);
   p.document.activeElement = null;
 
-  // A second blur queues another independent timer task. Both must run even if the first throws.
+  // A second blur queues another independent timer task. Both must run without throwing.
   p.fire('focusout', input);
   const errors = p.runTimers();
-  eq('each null-activeElement timer reports its own failure', errors.length, 2);
-  check('so the blurred field is still referenced afterwards', p.window.__BOSS_FOCUSED_FIELD === input);
+  eq('no null-activeElement timer fails', errors.length, 0);
+  check('and the blurred field is released', p.window.__BOSS_FOCUSED_FIELD === null);
 }
 
 console.log('\nthe enumeration script returns rows');
