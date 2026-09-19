@@ -114,7 +114,7 @@ const body = { model: "boss-test", messages: [{ role: "user", content: "private 
 
 Deno.test("all inference and catalog access requires AI-scoped authentication", async () => {
   const f = await fixture()
-  for (const path of ["v1/provider", "v1/models", "v1/usage", "v1/chat/completions"]) {
+  for (const path of ["v1/models", "v1/usage", "v1/chat/completions"]) {
     assertEquals((await f.handler(new Request(`https://api.example/boss-ai/${path}`))).status, 401)
   }
   for (const token of ["boss-session", f.token.slice(0, -5) + "wrong"]) {
@@ -392,67 +392,4 @@ Deno.test("stream cancellation retains usage and does not attempt to write to a 
   await reader.cancel()
   assertEquals(f.calls.filter((call) => call.name === "boss_ai_settle").length, 1)
   assertEquals(f.calls.at(-1)?.params.p_tokens, null)
-})
-
-Deno.test("provider publishes discovery metadata without vault or upstream access", async () => {
-  const f = await fixture()
-  const response = await f.handler(
-    new Request("https://api.example/boss-ai/v1/provider", {
-      headers: { Authorization: `Bearer ${f.token}` },
-    }),
-  )
-  assertEquals(response.status, 200)
-  assertEquals(response.headers.get("cache-control"), "no-store")
-  assertEquals(await response.json(), {
-    schema: "boss-managed-provider-v1",
-    name: "BOSS AI",
-    brokerId: "boss-ai",
-    baseUrl: "https://api.risaboss.com/functions/v1/boss-ai/v1",
-    defaultForNewUsers: true,
-  })
-  assertEquals(f.calls.length, 0)
-  assertEquals(f.requests.length, 0)
-})
-
-Deno.test("RPC tickets exchange for AI tokens without a BOSS session", async () => {
-  const ticket = "a".repeat(64)
-  let consumed = false
-  let calls = 0
-  const handler = createHandler({
-    sessionUser: () => {
-      throw new Error("Must not access BOSS session")
-    },
-    secret: () => secret,
-    fetch: () => {
-      throw new Error("Must not call upstream")
-    },
-    rpc: async (name, params) => {
-      calls++
-      assertEquals(name, "boss_ai_consume_exchange_ticket")
-      assertEquals(params, { p_ticket: ticket })
-      if (consumed) return null
-      consumed = true
-      return "00000000-0000-0000-0000-000000000001"
-    },
-  })
-  const exchange = (value: string) =>
-    handler(
-      new Request("https://api.example/boss-ai/auth/exchange", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ticket: value }),
-      }),
-    )
-  assertEquals((await exchange("invalid")).status, 401)
-  assertEquals(calls, 0)
-  const response = await exchange(ticket)
-  assertEquals(response.status, 200)
-  const token = (await response.json()).access_token
-  const metadata = await handler(
-    new Request("https://api.example/boss-ai/v1/provider", {
-      headers: { Authorization: `Bearer ${token}` },
-    }),
-  )
-  assertEquals(metadata.status, 200)
-  assertEquals((await exchange(ticket)).status, 401)
 })

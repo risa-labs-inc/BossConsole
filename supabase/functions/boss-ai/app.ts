@@ -51,38 +51,14 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         /^\/boss-ai(?=\/|$)/,
         "",
       )
-      const key = signingKey(deps.secret("BOSS_AI_SIGNING_SECRET"))
-      if (request.method === "POST" && path === "/auth/exchange") {
-        const input = await readJson(request.body, 1024)
-        if (typeof input.ticket !== "string" || !/^[a-f0-9]{64}$/.test(input.ticket)) {
-          throw new HttpError(401, "unauthorized", "Request a new BOSS AI sign-in ticket.")
-        }
-        const user = await deps.rpc("boss_ai_consume_exchange_ticket", { p_ticket: input.ticket })
-        if (typeof user !== "string" || !user) {
-          throw new HttpError(401, "unauthorized", "Request a new BOSS AI sign-in ticket.")
-        }
-        return json(await mintToken(user, key), 200, requestId)
-      }
       const token = bearer(request)
+      const key = signingKey(deps.secret("BOSS_AI_SIGNING_SECRET"))
       if (request.method === "POST" && path === "/auth/token") {
         const user = await deps.sessionUser(token)
         if (!user) throw new HttpError(401, "unauthorized", "Sign in to BOSS to use AI.")
         return json(await mintToken(user, key), 200, requestId)
       }
       const user = await verifyToken(token, key)
-      if (request.method === "GET" && path === "/v1/provider") {
-        return json(
-          {
-            schema: "boss-managed-provider-v1",
-            name: "BOSS AI",
-            brokerId: "boss-ai",
-            baseUrl: "https://api.risaboss.com/functions/v1/boss-ai/v1",
-            defaultForNewUsers: true,
-          },
-          200,
-          requestId,
-        )
-      }
       if (request.method === "GET" && (path === "/v1/models" || path === "/v1/usage")) {
         phase = "catalog"
         const data = await deps.rpc("boss_ai_catalog", { p_user_id: user })
