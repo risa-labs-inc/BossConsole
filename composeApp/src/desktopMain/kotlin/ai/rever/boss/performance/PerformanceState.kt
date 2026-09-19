@@ -18,6 +18,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
 /** The plugin that draws the Performance panel the status-bar indicator opens. */
@@ -43,7 +44,13 @@ private const val HOST_ID = "ai.rever.boss.host"
 // of a class about performance state - not one chosen by a lint threshold.
 actual object PerformanceState {
     private val logger = BossLogger.forComponent("PerformanceState")
-    private val scope = CoroutineScope(Dispatchers.Main)
+
+    // SupervisorJob, matching DefaultPlugin.pluginScope. With a plain Job, one throw inside
+    // openPerformancePanel or togglePerformancePanel - the install-prompt path in
+    // offerToInstallPanel, or the panel event itself - cancelled the scope, and every later click
+    // on the indicator was a silent no-op until restart: precisely the "unclickable indicator"
+    // that offerToInstallPanel's own contract rules out (#1092).
+    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     /**
      * Order 15, matching what the plugin declares in its own `PerformanceInfo`.
