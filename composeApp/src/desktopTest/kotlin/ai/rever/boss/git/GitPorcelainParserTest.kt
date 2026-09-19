@@ -295,6 +295,52 @@ class GitPorcelainParserTest {
         assertEquals("old dir/a file.txt", status.originalPath)
     }
 
+    @Test
+    fun `staged rename whose new path contains an arrow keeps the full new path`() {
+        // porcelain v1 does not C-quote plain-ASCII paths, so a file literally
+        // named "a -> b -> c" is emitted with the same arrow git uses between
+        // ORIG and PATH. The split must stop at the first arrow (limit = 2) or
+        // the parsed path is only the chunk between the first two arrows - a
+        // path that matches nothing when the panel hands it back as a pathspec.
+        val status = GitService.parseStatusLine("R  old -> a -> b -> c")
+        assertNotNull(status)
+        assertEquals("a -> b -> c", status.path)
+        assertEquals("old", status.originalPath)
+        assertEquals(GitFileStatusType.RENAMED, status.indexStatus)
+        assertNull(status.workTreeStatus)
+        assertTrue(status.isStaged)
+        assertFalse(status.isUnstaged)
+    }
+
+    @Test
+    fun `unstaged rename whose new path contains an arrow keeps the full new path`() {
+        // The worktree column carries the same shape: everything after the
+        // first arrow is the new path, whatever arrows it itself contains.
+        val status = GitService.parseStatusLine(" R old -> a -> b -> c")
+        assertNotNull(status)
+        assertEquals("a -> b -> c", status.path)
+        assertEquals("old", status.originalPath)
+        assertEquals(GitFileStatusType.RENAMED, status.workTreeStatus)
+        assertNull(status.indexStatus)
+        assertTrue(status.isUnstaged)
+        assertFalse(status.isStaged)
+    }
+
+    @Test
+    fun `single-arrow rename and arrow-free lines parse unchanged`() {
+        // The limit only governs extra arrows: the classic one-arrow rename
+        // and plain status lines must keep parsing exactly as they always did.
+        val renamed = GitService.parseStatusLine("R  old -> new")
+        assertNotNull(renamed)
+        assertEquals("new", renamed.path)
+        assertEquals("old", renamed.originalPath)
+
+        val plain = GitService.parseStatusLine(" M src/Main.kt")
+        assertNotNull(plain)
+        assertEquals("src/Main.kt", plain.path)
+        assertNull(plain.originalPath)
+    }
+
     // ==================== parseStatusLine: merge conflicts ====================
 
     @Test
