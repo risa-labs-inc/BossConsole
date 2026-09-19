@@ -93,7 +93,10 @@ object WorkspacePlaceholders {
         currentFile: String? = null,
         quoteProjectPath: Boolean = false,
     ): String {
-        var result = content
+        // Normalize BEFORE placeholder substitution. Placeholder values, especially
+        // Windows project paths, may legitimately contain " && " and must not be
+        // interpreted as command separators.
+        var result = CommandProcessor.normalizeCommand(content)
 
         // One reading of "is there a project" for all three project placeholders. They used to
         // disagree about a blank path: {projectPath} treated it as absent, while the two below
@@ -101,7 +104,7 @@ object WorkspacePlaceholders {
         // itself.
         //
         // Reachable only by a direct caller. Every production caller resolves first, because
-        // it needs the same directory for a tab's workingDirectory, so with no project
+        // it needs the same directory for a tab's `workingDirectory`, so with no project
         // selected all three see ~/BossProjects and take the has-a-project branch: the git
         // lookup runs in the projects folder and finds no remote, and the session lookup
         // misses. That is what the old code did with the home directory too. What this buys is
@@ -141,11 +144,11 @@ object WorkspacePlaceholders {
         // Replace Claude continue flag based on session existence. Guarded too:
         // checkClaudeSessionExists lists ~/.claude/projects/<encoded>.
         if (result.contains(CLAUDE_CONTINUE_FLAG_PLACEHOLDER)) {
-            result = result.replace(CLAUDE_CONTINUE_FLAG_PLACEHOLDER, getClaudeContinueFlag(selectedProject))
+            result = result.replace(
+                CLAUDE_CONTINUE_FLAG_PLACEHOLDER,
+                getClaudeContinueFlag(selectedProject),
+            )
         }
-
-        // Normalize command separators for current platform (MUST be last step)
-        result = CommandProcessor.normalizeCommand(result)
 
         return result
     }
@@ -177,7 +180,11 @@ object WorkspacePlaceholders {
             // Convert SSH URL to HTTPS if needed
             convertGitUrlToWebUrl(url)
         } catch (e: Exception) {
-            logger.debug(LogCategory.SYSTEM, "Error getting git remote", mapOf("error" to e.toString()))
+            logger.debug(
+                LogCategory.SYSTEM,
+                "Error getting git remote",
+                mapOf("error" to e.toString()),
+            )
             "https://google.com"
         }
     }
@@ -228,7 +235,11 @@ object WorkspacePlaceholders {
                     file.length() > 0
             } ?: false
         } catch (e: Exception) {
-            logger.debug(LogCategory.SYSTEM, "Error checking Claude session", mapOf("error" to e.toString()))
+            logger.debug(
+                LogCategory.SYSTEM,
+                "Error checking Claude session",
+                mapOf("error" to e.toString()),
+            )
             false
         }
     }
