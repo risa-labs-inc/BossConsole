@@ -3,10 +3,13 @@ package ai.rever.boss.app.editor
 import ai.rever.boss.ipc.proto.Empty
 import ai.rever.boss.ipc.proto.services.*
 import ai.rever.boss.plugin.language.LanguageIds
+import io.grpc.Status
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 import java.io.File
+import java.nio.file.InvalidPathException
+import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -14,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * Provides real file I/O using the host filesystem:
  * - OpenFile: reads file from disk, detects language by extension
- * - SaveFile: writes content back to disk
+ * - SaveFile: writes content back to disk and reports IO failures on the wire
  * - DetectMainFunctions: regex-based scan for entry points across multiple languages
  * - GetTokens / NavigateToDefinition: require PSI (in composeApp) — return empty
  */
@@ -27,10 +30,32 @@ class EditorServiceImpl : EditorServiceGrpcKt.EditorServiceCoroutineImplBase() {
     /** Paths that must not be accessed via IPC — mirrors FileSystemServiceImpl policy. */
     private val BLOCKED_PATH_PREFIXES = listOf("/etc", "/sys", "/proc")
 
+    private fun invalidPath(message: String): Nothing {
+        val status = Status.INVALID_ARGUMENT.withDescription(message)
+        throw status.asRuntimeException()
+    }
+
+    /**
+     * Rejects paths this service must not touch, mirroring the house pattern
+     * (FileSystemPathPolicy): gRPC INVALID_ARGUMENT instead of require(), whose
+     * IllegalArgumentException surfaced as UNKNOWN to callers (BossConsole#1157).
+     */
     private fun validatePath(path: String) {
-        require(!path.contains("..")) { "Path traversal sequences ('..') are not allowed: $path" }
+        try {
+            Path.of(path)
+        } catch (e: InvalidPathException) {
+            throw Status.INVALID_ARGUMENT
+                .withDescription("Invalid filesystem path")
+                .withCause(e)
+                .asRuntimeException()
+        }
+        if (path.contains("..")) {
+            invalidPath("Path traversal sequences ('..') are not allowed: $path")
+        }
         BLOCKED_PATH_PREFIXES.forEach { prefix ->
-            require(!path.startsWith(prefix)) { "Access to system path '$prefix' is not allowed: $path" }
+            if (path.startsWith(prefix)) {
+                invalidPath("Access to system path '$prefix' is not allowed: $path")
+            }
         }
     }
 
@@ -76,7 +101,7 @@ class EditorServiceImpl : EditorServiceGrpcKt.EditorServiceCoroutineImplBase() {
             }
         }
 
-    override suspend fun saveFile(request: SaveFileRequest): Empty =
+    override suspend fun saveFile(request: SaveFileRequest): SaveFileResponse =
         withContext(Dispatchers.IO) {
             logger.info("saveFile: path={}", request.path)
             validatePath(request.path)
@@ -84,11 +109,22 @@ class EditorServiceImpl : EditorServiceGrpcKt.EditorServiceCoroutineImplBase() {
                 val file = File(request.path)
                 file.parentFile?.mkdirs()
                 file.writeText(request.content, Charsets.UTF_8)
-                openFiles[request.path] = false
             } catch (e: Exception) {
-                logger.error("saveFile failed for {}: {}", request.path, e.message)
+                // An unwritable target, failed mkdirs or permission denial must be visible on
+                // the wire - never swallowed into a success-shaped response (BossConsole#1157).
+                val message = e.message ?: "Write failed for ${request.path}"
+                logger.error("saveFile failed for {}: {}", request.path, message)
+                return@withContext SaveFileResponse
+                    .newBuilder()
+                    .setSuccess(false)
+                    .setErrorMessage(message)
+                    .build()
             }
-            Empty.getDefaultInstance()
+            openFiles[request.path] = false
+            SaveFileResponse
+                .newBuilder()
+                .setSuccess(true)
+                .build()
         }
 
     override suspend fun getTokens(request: GetTokensRequest): GetTokensResponse {
