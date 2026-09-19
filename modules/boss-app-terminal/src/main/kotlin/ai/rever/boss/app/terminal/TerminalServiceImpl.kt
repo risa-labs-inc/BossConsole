@@ -47,14 +47,29 @@ class TerminalServiceImpl(
                             .asRuntimeException()
                     }
                     currentCoroutineContext().ensureActive()
-                    // Shutdown cannot overlook an admitted launch between process creation and registration.
+                    
+                    // Reserve active slot under lock first
                     synchronized(lock) {
                         reserveSlot()
                         admitted = true
-                        val launched = TerminalSession.launch(request, ownerInstance)
-                        session = launched
+                    }
+                    
+                    // Spawn process OUTSIDE the lock to prevent blocking other RPCs
+                    val launched = TerminalSession.launch(request, ownerInstance)
+                    session = launched
+                    
+                    // Shutdown cannot overlook an admitted launch between process creation and registration.
+                    synchronized(lock) {
+                        if (closed) {
+                            // Service closed while we were spawning. We must abort.
+                            launched.terminate()
+                            throw Status.UNAVAILABLE.withDescription("Terminal service is closed").asRuntimeException()
+                        }
                         retain(launched)
-                        launched.startPump { activeSlots.release() }
+                        launched.startPump { 
+                            synchronized(lock) { sessions.remove(launched.id) }
+                            activeSlots.release() 
+                        }
                         pumping = true
                         logger.info("Created terminal session: {}", launched.id)
                         CreateSessionResponse
@@ -166,10 +181,18 @@ class TerminalServiceImpl(
     }
 
     override suspend fun closeSession(request: CloseSessionRequest): Empty {
-        val session = session(request.sessionId)
-        if (session.active) session.terminate() else synchronized(lock) { sessions.remove(session.id) }
+        val session = synchronized(lock) { sessions.remove(request.sessionId) }
+            ?: throw Status.NOT_FOUND.withDescription("Terminal session not found").asRuntimeException()
+        IpcCall.requireOwner(session.ownerInstance)
+        if (session.active) session.terminate()
         return Empty.getDefaultInstance()
     }
+
+    override suspend fun closeInput(request: CloseInputRequest): Empty =
+        withContext(Dispatchers.IO) {
+            session(request.sessionId).closeInput()
+            Empty.getDefaultInstance()
+        }
 
     override suspend fun listSessions(request: Empty): ListSessionsResponse {
         val caller = IpcCall.current()

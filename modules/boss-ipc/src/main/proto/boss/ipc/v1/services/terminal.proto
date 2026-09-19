@@ -13,6 +13,7 @@ service TerminalService {
   rpc StreamOutput(StreamOutputRequest) returns (stream TerminalOutputChunk);
   rpc Resize(ResizeRequest) returns (boss.ipc.v1.Empty);
   rpc CloseSession(CloseSessionRequest) returns (boss.ipc.v1.Empty);
+  rpc CloseInput(CloseInputRequest) returns (boss.ipc.v1.Empty);
   rpc ListSessions(boss.ipc.v1.Empty) returns (ListSessionsResponse);
 
   // ---- Rendering RPCs (reserved scaffolding) ----
@@ -103,6 +104,10 @@ message ResizeRequest {
 }
 
 message CloseSessionRequest {
+  string session_id = 1;
+}
+
+message CloseInputRequest {
   string session_id = 1;
 }
 

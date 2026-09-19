@@ -23,7 +23,7 @@ internal class TerminalSession(
 ) {
     val createdAt = System.currentTimeMillis()
     val output = TerminalOutputBuffer()
-    private val inputLock = ReentrantLock()
+    private val inputMutex = kotlinx.coroutines.sync.Mutex()
 
     @Volatile var active = true
         private set
@@ -83,26 +83,47 @@ internal class TerminalSession(
         }, "terminal-output-$id").apply { isDaemon = true }.start()
     }
 
-    fun send(bytes: ByteArray) {
-        if (!inputLock.tryLock()) {
+    suspend fun send(bytes: ByteArray) {
+        if (!inputMutex.tryLock()) {
             throw Status.RESOURCE_EXHAUSTED.withDescription("Terminal input is busy").asRuntimeException()
         }
         try {
             if (!active || !process.isAlive) {
                 throw Status.FAILED_PRECONDITION.withDescription("Terminal has exited").asRuntimeException()
             }
-            writeInput(bytes)
+            try {
+                kotlinx.coroutines.withTimeout(2000L) {
+                    kotlinx.coroutines.runInterruptible(kotlinx.coroutines.Dispatchers.IO) {
+                        if (!process.isAlive) throw IOException("Process died")
+                        process.outputStream.write(bytes)
+                        process.outputStream.flush()
+                    }
+                }
+            } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
+                // Bound hit. Close on failure to unwedge the blocked IO thread, then throw.
+                try { process.outputStream.close() } catch (_: IOException) {}
+                throw Status.DEADLINE_EXCEEDED.withDescription("Terminal input write timed out").asRuntimeException()
+            } catch (_: IOException) {
+                throw Status.FAILED_PRECONDITION.withDescription("Terminal input pipe is closed").asRuntimeException()
+            }
         } finally {
-            inputLock.unlock()
+            inputMutex.unlock()
         }
     }
 
-    private fun writeInput(bytes: ByteArray) {
+    suspend fun closeInput() {
+        if (!inputMutex.tryLock()) {
+            throw Status.RESOURCE_EXHAUSTED.withDescription("Terminal input is busy").asRuntimeException()
+        }
         try {
-            process.outputStream.write(bytes)
-            process.outputStream.flush()
-        } catch (_: IOException) {
-            throw Status.FAILED_PRECONDITION.withDescription("Terminal input pipe is closed").asRuntimeException()
+            if (!active || !process.isAlive) return
+            try {
+                process.outputStream.close()
+            } catch (_: IOException) {
+                // Pipe may already be broken
+            }
+        } finally {
+            inputMutex.unlock()
         }
     }
 
