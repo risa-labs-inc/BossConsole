@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -123,6 +124,74 @@ class PluginUpdateCancellationTest {
             }
 
             assertTrue(loaded, "the load must still run, or the plugin is gone with nothing in its place")
+        }
+
+    @Test
+    fun `a rejected downloaded candidate does not unload or load the existing plugin`() =
+        runTest {
+            val mgr = manager(SucceedingRepository(candidate()))
+            mgr.checkForUpdates(mapOf(pluginId to "1.0.0"))
+            val installingEvents = mutableListOf<String>()
+            val completedEvents = mutableListOf<String>()
+            val failures = mutableListOf<String>()
+            mgr.addListener(
+                object : UpdateListener {
+                    override fun onUpdateInstalling(pluginId: String) {
+                        installingEvents += pluginId
+                    }
+
+                    override fun onUpdateCompleted(
+                        pluginId: String,
+                        newVersion: String,
+                    ) {
+                        completedEvents += "$pluginId@$newVersion"
+                    }
+
+                    override fun onUpdateFailed(
+                        pluginId: String,
+                        error: String,
+                    ) {
+                        failures += "$pluginId:$error"
+                    }
+                },
+            )
+
+            var validationCalled = false
+            var unloadCalled = false
+            var loadCalled = false
+            var installingCalled = false
+
+            val result =
+                mgr.updatePlugin(
+                    pluginId = pluginId,
+                    downloadPath = "/tmp/does-not-matter.jar",
+                    unloadPlugin = {
+                        unloadCalled = true
+                        Result.success(Unit)
+                    },
+                    loadPlugin = {
+                        loadCalled = true
+                        Result.success(Unit)
+                    },
+                    onInstalling = {
+                        installingCalled = true
+                    },
+                    validateDownloadedPlugin = { candidatePluginId, downloadedPath ->
+                        validationCalled = true
+                        assertEquals(pluginId, candidatePluginId)
+                        assertEquals("/tmp/does-not-matter.jar", downloadedPath)
+                        Result.failure(IllegalStateException("candidate rejected"))
+                    },
+                )
+
+            assertTrue(result.isFailure, "a rejected candidate must fail the update")
+            assertTrue(validationCalled, "the downloaded candidate must be vetted before swap")
+            assertFalse(unloadCalled, "the running plugin must remain loaded when validation fails")
+            assertFalse(loadCalled, "a rejected candidate must not be loaded")
+            assertFalse(installingCalled, "the caller must not be told that the non-cancellable swap began")
+            assertTrue(installingEvents.isEmpty(), "listener install events must not fire before validation passes")
+            assertTrue(completedEvents.isEmpty(), "a rejected candidate must not be reported as installed")
+            assertTrue(failures.isNotEmpty(), "validation failure must be reported through the update lifecycle")
         }
 
     @Test

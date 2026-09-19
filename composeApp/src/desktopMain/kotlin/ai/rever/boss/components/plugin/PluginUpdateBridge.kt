@@ -9,6 +9,7 @@ import ai.rever.boss.plugin.api.PluginState
 import ai.rever.boss.plugin.api.PluginUnloadIntent
 import ai.rever.boss.plugin.api.TransferKind
 import ai.rever.boss.plugin.api.TransferPhase
+import ai.rever.boss.plugin.loader.PluginManifestReader
 import ai.rever.boss.plugin.loader.PluginSignatureSidecar
 import ai.rever.boss.plugin.readDeferredPluginManifest
 import ai.rever.boss.plugin.updater.UpdateInfo
@@ -177,6 +178,7 @@ actual object PluginUpdateBridge {
                         swapStarted = true
                         DownloadCenter.phase(pluginId, TransferPhase.INSTALLING)
                     },
+                    validateDownloadedPlugin = ::validateDownloadedUpdateCandidate,
                 )
             } catch (e: CancellationException) {
                 discardIfUnswapped(swapStarted, targetFile)
@@ -222,6 +224,47 @@ actual object PluginUpdateBridge {
                 }
             }
         }
+
+    internal fun validateDownloadedUpdateCandidate(
+        pluginId: String,
+        downloadedPath: String,
+    ): Result<Unit> {
+        val manifest =
+            runCatching { PluginManifestReader.readFromJar(downloadedPath) }
+                .getOrElse { error ->
+                    logger.warn(
+                        LogCategory.SYSTEM,
+                        "Refusing a plugin update with an unreadable manifest",
+                        mapOf("pluginId" to pluginId),
+                        error = error,
+                    )
+                    return Result.failure(
+                        IllegalStateException("Downloaded update does not contain a readable plugin manifest.", error),
+                    )
+                }
+        val declaredId = manifest.pluginId
+        if (declaredId in PluginDependencyResolution.NOT_USER_INSTALLABLE) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Refusing a plugin update that declares a host-managed plugin",
+                mapOf("expected" to pluginId, "declared" to declaredId),
+            )
+            return Result.failure(
+                IllegalStateException("Downloaded update declares a host-managed plugin and cannot be installed here."),
+            )
+        }
+        if (declaredId != pluginId) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Refusing a plugin update that declares a different plugin",
+                mapOf("expected" to pluginId, "declared" to declaredId),
+            )
+            return Result.failure(
+                IllegalStateException("Downloaded update did not declare $pluginId. The store entry may be wrong."),
+            )
+        }
+        return Result.success(Unit)
+    }
 
     /**
      * Records [jarPath] as [pluginId]'s installed jar without touching the running instance, and
