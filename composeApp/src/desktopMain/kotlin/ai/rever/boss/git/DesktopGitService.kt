@@ -2233,6 +2233,57 @@ actual object GitService {
     internal fun cloneProgressLogMessage(line: String) = "Clone progress: ${LogSanitizer.redactUrlUserInfo(line)}"
 
     /**
+     * [cloneRepository] is the only arg-taking command in this service whose
+     * argument is a URL rather than a ref, so it gets the same service-layer
+     * guard as [isSafeRefName] (see the checkout-guard doctrine above
+     * [createBranch]): the clone dialog's prefix filter is a property of one
+     * caller, not of this service.
+     *
+     * Allow-list, fail-closed: the four URL forms the clone dialog accepts
+     * (https://, http://, ssh://, git@host:path) plus explicit local paths,
+     * which the clone lifecycle tests and the retry flow clone from. Refused:
+     * option-shaped values (a leading `-`: `--upload-pack=<cmd>` is honored
+     * by git on local clones), remote-helper URLs (`ext::sh -c <cmd>` is a
+     * clone "URL" that git executes), any other scheme (`file://`, `git://`,
+     * `ftp://`), and blank strings.
+     *
+     * Like [isSafeRefName] this is ARGV safety, and the `--` end-of-options
+     * separator in [buildCloneCommand] stays even for allowed URLs: the
+     * positional repositoryUrl and targetDirectory can never be re-read as
+     * git options by a future edit here.
+     */
+    internal fun isSafeCloneUrl(repositoryUrl: String): Boolean {
+        // Fail-closed on option-shaped values (a leading `-`, e.g. `--upload-pack=<cmd>`
+        // which git honors on local clones) and blank strings: neither can reach the
+        // allow-list below.
+        if (repositoryUrl.isBlank() || repositoryUrl.startsWith("-")) return false
+        // The allow-list: the four URL forms the clone dialog accepts, or an explicit
+        // local path, which the clone lifecycle tests and retry flow clone from.
+        // Everything else is refused fail-closed: remote-helper URLs (`ext::sh -c <cmd>`
+        // is a clone "URL" that git executes) and any other scheme (`file://`, `git://`).
+        val isDialogUrlForm = CLONE_URL_PREFIXES.any { repositoryUrl.startsWith(it) }
+        // A local path is the only other allowed form. It is not a URL scheme (no
+        // `://`) and not a remote-helper invocation: a helper URL is
+        // `<transport>::<address>`, so `::` before the first `/` marks a helper
+        // invocation, never a path.
+        val isLocalPath =
+            !repositoryUrl.contains("://") && !repositoryUrl.substringBefore('/').contains("::")
+        return isDialogUrlForm || isLocalPath
+    }
+
+    private val CLONE_URL_PREFIXES = listOf("https://", "http://", "ssh://", "git@")
+
+    /**
+     * The exact argv handed to git for a clone. The `--` end-of-options
+     * separator keeps both positionals after it out of git's option parser,
+     * even for a value that begins with `-`.
+     */
+    internal fun buildCloneCommand(
+        repositoryUrl: String,
+        targetDirectory: String,
+    ): List<String> = listOf("git", "clone", "--progress", "--", repositoryUrl, targetDirectory)
+
+    /**
      * Clone a Git repository to the specified directory.
      * Executes git clone with progress output and streams updates via callback.
      * Includes a 10-minute timeout to prevent indefinite hangs.
@@ -2262,6 +2313,14 @@ actual object GitService {
         onProgress: (String) -> Unit,
     ): GitOperationResult =
         withContext(Dispatchers.IO) {
+            // Validated like every other arg-taking command in this file (see the
+            // checkout-guard doctrine above createBranch): the clone dialog's prefix
+            // filter is a property of one caller, not of this service. Refused
+            // before git is spawned or any directory is created.
+            if (!isSafeCloneUrl(repositoryUrl)) {
+                return@withContext GitError("Refused an unsafe clone URL")
+            }
+
             logger.info(
                 LogCategory.GENERAL,
                 "Starting git clone",
@@ -2315,17 +2374,15 @@ actual object GitService {
                 // Execute git clone with progress and a cancellable 10-minute timeout
                 runCatching { onProgress("Initializing clone...") }
 
+                // The `--` inside buildCloneCommand keeps both positionals out of
+                // git's option parser, even for values the allow-list accepted.
+                val cloneCommand = buildCloneCommand(repositoryUrl, targetDirectory)
                 val process =
-                    ProcessBuilder(
-                        "git",
-                        "clone",
-                        "--progress",
-                        repositoryUrl,
-                        targetDirectory,
-                    ).apply {
-                        // Inherit parent process environment for SSH/git credentials
-                        environment().putAll(System.getenv())
-                    }.redirectErrorStream(true) // Merge stderr into stdout for progress
+                    ProcessBuilder(cloneCommand)
+                        .apply {
+                            // Inherit parent process environment for SSH/git credentials
+                            environment().putAll(System.getenv())
+                        }.redirectErrorStream(true) // Merge stderr into stdout for progress
                         .start()
 
                 val exitCode =
