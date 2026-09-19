@@ -1,6 +1,7 @@
 package ai.rever.boss.components.plugin.panels.left_top
 
 import ai.rever.boss.plugin.api.FileNodeData
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.extractFileName
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -144,7 +145,7 @@ object ProjectState {
                 val json =
                     kotlinx.serialization.json.Json
                         .encodeToString(_recentProjects.value)
-                file.writeText(json)
+                file.atomicWriteText(json)
             } catch (e: Exception) {
                 logger.warn(LogCategory.FILE, "Failed to save recent projects", error = e)
             }

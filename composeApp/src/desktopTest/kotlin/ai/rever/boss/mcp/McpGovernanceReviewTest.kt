@@ -69,6 +69,51 @@ class McpGovernanceReviewTest {
     }
 
     @Test
+    fun `URI userinfo credentials, curl user flags, AWS keys, and PEM keys are redacted`() {
+        // Postgres URI authority password
+        val pg = McpArgumentSanitizer.sanitizeMessage("psql postgres://admin:hunter2@prod-db.example.invalid/app")
+        assertEquals("psql postgres://admin:[REDACTED]@prod-db.example.invalid/app", pg)
+
+        // MongoDB URI authority password
+        val mongo =
+            McpArgumentSanitizer.sanitizeMessage(
+                "mongosh mongodb+srv://svc:S3cr3tP%40ss@cluster.example.invalid/db",
+            )
+        assertEquals("mongosh mongodb+srv://svc:[REDACTED]@cluster.example.invalid/db", mongo)
+
+        // Redis URI authority password
+        val redis =
+            McpArgumentSanitizer.sanitizeMessage(
+                "redis-cli -u redis://default:r3disPass@cache.example.invalid:6379",
+            )
+        assertEquals("redis-cli -u redis://default:[REDACTED]@cache.example.invalid:6379", redis)
+
+        // Plain Redis URI without password must be left untouched
+        val redisPlain =
+            McpArgumentSanitizer.sanitizeMessage("redis-cli -u redis://cache.example.invalid:6379")
+        assertEquals("redis-cli -u redis://cache.example.invalid:6379", redisPlain)
+
+        // Git HTTPS userinfo password
+        val git =
+            McpArgumentSanitizer.sanitizeMessage(
+                "git clone https://user:hunter2@git.example.invalid/org/private.git",
+            )
+        assertEquals("git clone https://user:[REDACTED]@git.example.invalid/org/private.git", git)
+
+        // curl -u credentials
+        val curl = McpArgumentSanitizer.sanitizeMessage("curl -u admin:hunter2 https://api.example.invalid/health")
+        assertEquals("curl -u admin:[REDACTED] https://api.example.invalid/health", curl)
+
+        // AWS Access Key ID
+        val aws = McpArgumentSanitizer.sanitizeMessage("aws configure set key AKIAIOSFODNN7EXAMPLE")
+        assertEquals("aws configure set key [REDACTED]", aws)
+
+        // PEM Private Key
+        val pem = McpArgumentSanitizer.sanitizeMessage("echo '-----BEGIN RSA PRIVATE KEY-----MIIEowIBAAKCAQEA'")
+        assertEquals("echo '[REDACTED]MIIEowIBAAKCAQEA'", pem)
+    }
+
+    @Test
     fun `fault notifier never runs during construction or breaks enforcement`() {
         val directory = Files.createTempDirectory("mcp-policy-review").toFile()
         try {
