@@ -58,11 +58,16 @@ export function withTestEnv(): () => void {
     secret: Deno.env.get("ORG_SESSION_SECRET"),
     prev: Deno.env.get("ORG_SESSION_SECRET_PREV"),
     base: Deno.env.get("ORG_PUBLIC_BASE_PATH"),
+    baseUrl: Deno.env.get("ORG_PUBLIC_BASE_URL"),
   }
 
   Deno.env.set("ORG_SESSION_SECRET", TEST_SECRET)
   Deno.env.delete("ORG_SESSION_SECRET_PREV")
   Deno.env.set("ORG_PUBLIC_BASE_PATH", "/functions/v1/organisation")
+  // The configured origin absolute invite links are minted from -- the one
+  // source publicBaseUrl trusts. Tests of the UNCONFIGURED behaviour delete it
+  // again inside the test; the teardown puts back whatever was here first.
+  Deno.env.set("ORG_PUBLIC_BASE_URL", "https://boss.example")
 
   return () => {
     if (previous.secret === undefined) Deno.env.delete("ORG_SESSION_SECRET")
@@ -71,6 +76,8 @@ export function withTestEnv(): () => void {
     else Deno.env.set("ORG_SESSION_SECRET_PREV", previous.prev)
     if (previous.base === undefined) Deno.env.delete("ORG_PUBLIC_BASE_PATH")
     else Deno.env.set("ORG_PUBLIC_BASE_PATH", previous.base)
+    if (previous.baseUrl === undefined) Deno.env.delete("ORG_PUBLIC_BASE_URL")
+    else Deno.env.set("ORG_PUBLIC_BASE_URL", previous.baseUrl)
   }
 }
 

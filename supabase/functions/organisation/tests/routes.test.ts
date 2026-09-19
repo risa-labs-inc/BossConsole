@@ -830,6 +830,104 @@ Deno.test("an out-of-range expiry is refused before the RPC", async () => {
 })
 
 // ---------------------------------------------------------------------------
+// The invite link's authority
+// ---------------------------------------------------------------------------
+
+Deno.test("an unset ORG_PUBLIC_BASE_URL never mints a host from client headers", async () => {
+  const { stub, restore } = setup()
+  try {
+    // The exact deployment the issue describes: no configured public origin,
+    // so the OLD builder fell back to X-Forwarded-Host/Host -- headers the
+    // client can set wherever the edge does not overwrite them.
+    Deno.env.delete("ORG_PUBLIC_BASE_URL")
+    stub.responses.set("create_organisation_invite", {
+      success: true,
+      token: "boss_inv_abcdefghijklmnopqrstuvwxyz0123456789ABCD",
+      token_prefix: "boss_inv_abcdefg",
+      expires_at: "2026-09-01T00:00:00Z",
+      max_uses: null,
+    })
+
+    const headers = formHeaders(await sessionCookie())
+    // The old builder PREFERRED x-forwarded-host over host, so this is the
+    // exact header a poisoner sends. The CSRF gate is unaffected: it checks
+    // Origin against the host header, and both still say api.risaboss.com --
+    // which is precisely why the poisoned header sailed through to the URL.
+    headers.set("x-forwarded-host", "attacker.example")
+
+    const response = await app.request(`${BASE}/o/${FIXTURE.slug}/admin/invites/create`, {
+      method: "POST",
+      headers,
+      body: new URLSearchParams({ [CSRF_FIELD]: CSRF, expires_in_hours: "168" }),
+    })
+
+    assertEquals(response.status, 200)
+    const body = await response.text()
+
+    // THE assertion of the fix: a credential-bearing URL must not carry an
+    // authority the CLIENT chose. The one-time join token would otherwise be
+    // handed to attacker.example on a plate.
+    assertEquals(
+      body.includes("attacker.example"),
+      false,
+      "the poisoned host must not appear anywhere in the response",
+    )
+
+    // And the link that IS rendered carries no host at all: the relative
+    // publicBasePath. It still works pasted into the origin the admin is
+    // reading, and it cannot be pointed at anyone else's.
+    assertEquals(
+      body.includes(`value="/functions/v1/organisation/join/boss_inv_abcdefghijklmnopqrstuvwxyz0123456789ABCD"`),
+      true,
+      "the unset-env invite link must be the relative path",
+    )
+    assertEquals(/value="https?:\/\//.test(body), false, "no absolute link may be minted without ORG_PUBLIC_BASE_URL")
+  } finally {
+    restore()
+  }
+})
+
+Deno.test("a configured ORG_PUBLIC_BASE_URL supplies the host, ignoring client headers", async () => {
+  const { stub, restore } = setup()
+  try {
+    // withTestEnv configures https://boss.example; set it explicitly so this
+    // test says what it means even if the helper's value ever changes.
+    Deno.env.set("ORG_PUBLIC_BASE_URL", "https://boss.example")
+    stub.responses.set("create_organisation_invite", {
+      success: true,
+      token: "boss_inv_abcdefghijklmnopqrstuvwxyz0123456789ABCD",
+      token_prefix: "boss_inv_abcdefg",
+      expires_at: "2026-09-01T00:00:00Z",
+      max_uses: null,
+    })
+
+    const headers = formHeaders(await sessionCookie())
+    headers.set("x-forwarded-host", "attacker.example")
+
+    const response = await app.request(`${BASE}/o/${FIXTURE.slug}/admin/invites/create`, {
+      method: "POST",
+      headers,
+      body: new URLSearchParams({ [CSRF_FIELD]: CSRF, expires_in_hours: "168" }),
+    })
+
+    assertEquals(response.status, 200)
+    const body = await response.text()
+    assertEquals(
+      body.includes("attacker.example"),
+      false,
+      "a configured base must not be overridden by client headers",
+    )
+    assertEquals(
+      body.includes(`value="https://boss.example/functions/v1/organisation/join/boss_inv_abcdefghijklmnopqrstuvwxyz0123456789ABCD"`),
+      true,
+      "the invite link must use the configured base, unchanged",
+    )
+  } finally {
+    restore()
+  }
+})
+
+// ---------------------------------------------------------------------------
 // The invite landing page
 // ---------------------------------------------------------------------------
 
