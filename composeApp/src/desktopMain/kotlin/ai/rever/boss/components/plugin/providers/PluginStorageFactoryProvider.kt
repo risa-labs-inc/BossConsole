@@ -3,17 +3,24 @@ package ai.rever.boss.components.plugin.providers
 import ai.rever.boss.plugin.api.PluginStorageFactory
 import ai.rever.boss.plugin.api.PluginStorageProvider
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.StringWriter
 import java.util.Properties
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.coroutines.coroutineContext
 
 /**
  * Desktop implementation of PluginStorageFactory factory.
@@ -49,9 +56,14 @@ class PluginStorageFactoryImpl private constructor() : PluginStorageFactory {
 /**
  * Desktop implementation of PluginStorageProvider.
  * Stores data in ~/.boss/plugin-data/{pluginId}/storage.properties
+ *
+ * All mutations are serialized through [commitMutex]. A mutation is first
+ * applied to an isolated snapshot, persisted atomically, and only then
+ * published to the in-memory cache and change flow.
  */
 class PluginStorageProviderImpl(
     private val pluginId: String,
+    private val storageFileOverride: File? = null,
 ) : PluginStorageProvider {
     companion object {
         private val logger = BossLogger.forComponent("PluginStorage")
@@ -66,11 +78,22 @@ class PluginStorageProviderImpl(
     }
 
     private val storageFile: File by lazy {
-        File(storageDir, "storage.properties")
-    }
+    storageFileOverride ?: File(storageDir, "storage.properties")
+}
 
-    // In-memory cache
+    // Last successfully committed in-memory state.
     private val cache = ConcurrentHashMap<String, String>()
+
+    /**
+     * Serializes the complete read-modify-persist-publish transaction.
+     *
+     * The mutex is intentionally held until the disk commit and cache
+     * publication are both complete, so concurrent mutations cannot
+     * overwrite each other's snapshots.
+     */
+    private val commitMutex = Mutex()
+
+    internal fun commitMutexForTest(): Mutex = commitMutex
 
     // Change notification
     private val _changes = MutableSharedFlow<String>(extraBufferCapacity = 64)
@@ -88,9 +111,11 @@ class PluginStorageProviderImpl(
         key: String,
         value: String,
     ) {
-        cache[key] = value
-        saveToDisk()
-        _changes.tryEmit(key)
+        commit(
+            changedKey = key,
+        ) { candidate ->
+            candidate[key] = value
+        }
     }
 
     override suspend fun getString(
@@ -170,17 +195,21 @@ class PluginStorageProviderImpl(
     override suspend fun contains(key: String): Boolean = cache.containsKey(key)
 
     override suspend fun remove(key: String) {
-        cache.remove(key)
-        saveToDisk()
-        _changes.tryEmit(key)
+        commit(
+            changedKey = key,
+        ) { candidate ->
+            candidate.remove(key)
+        }
     }
 
     override suspend fun getAllKeys(): Set<String> = cache.keys.toSet()
 
     override suspend fun clear() {
-        cache.clear()
-        saveToDisk()
-        _changes.tryEmit("*")
+        commit(
+            changedKey = "*",
+        ) { candidate ->
+            candidate.clear()
+        }
     }
 
     override fun observeString(key: String): Flow<String?> =
@@ -196,16 +225,83 @@ class PluginStorageProviderImpl(
 
     override fun observeChanges(): Flow<String> = _changes.asSharedFlow()
 
-    // ============ Disk Operations ============
+    // ============ Transaction / Disk Operations ============
+
+    /**
+     * Performs one complete storage mutation transaction:
+     *
+     * 1. Wait for the provider mutation lock.
+     * 2. Create a snapshot of the last committed cache.
+     * 3. Apply the requested mutation to the snapshot.
+     * 4. Persist the snapshot using an atomic sibling temp file.
+     * 5. Publish the snapshot to the in-memory cache.
+     * 6. Emit the change notification.
+     *
+     * Cancellation is allowed while waiting for the mutex. Once the actual
+     * commit begins, the disk write and cache publication run under
+     * [NonCancellable] so the committed disk and memory states cannot diverge.
+     */
+    private suspend fun commit(
+        changedKey: String,
+        mutation: (MutableMap<String, String>) -> Unit,
+    ) {
+        commitMutex.withLock {
+            // Cancellation while waiting for the mutex must not mutate storage.
+            coroutineContext.ensureActive()
+
+            val candidate = cache.toMutableMap()
+            mutation(candidate)
+
+            withContext(Dispatchers.IO + NonCancellable) {
+                // Persist first. If this throws, the existing cache remains
+                // unchanged and no notification is emitted.
+                saveSnapshotToDisk(candidate)
+
+                // The disk commit succeeded, so publish the same committed
+                // snapshot to memory.
+                cache.clear()
+                cache.putAll(candidate)
+
+                // Notify observers only after both disk and cache commit.
+                _changes.tryEmit(changedKey)
+            }
+        }
+    }
+
+    /**
+     * Serializes a snapshot using the existing java.util.Properties format
+     * and atomically replaces the storage file.
+     */
+    private fun saveSnapshotToDisk(snapshot: Map<String, String>) {
+        val properties = Properties()
+
+        snapshot.forEach { (key, value) ->
+            properties[key] = value
+        }
+
+        val writer = StringWriter()
+        properties.store(
+            writer,
+            "Plugin storage for $pluginId",
+        )
+
+        storageFile.parentFile?.mkdirs()
+        storageFile.atomicWriteText(writer.toString())
+    }
 
     private fun loadFromDisk() {
         try {
             if (storageFile.exists()) {
                 val properties = Properties()
-                storageFile.inputStream().use { properties.load(it) }
+
+                storageFile.inputStream().use { input ->
+                    properties.load(input)
+                }
+
                 properties.forEach { key, value ->
                     cache[key.toString()] = value.toString()
                 }
+
                 logger.debug(
                     LogCategory.SYSTEM,
                     "Loaded plugin storage",
@@ -224,29 +320,6 @@ class PluginStorageProviderImpl(
                 ),
                 e,
             )
-        }
-    }
-
-    private suspend fun saveToDisk() {
-        withContext(Dispatchers.IO) {
-            try {
-                val properties = Properties()
-                cache.forEach { (key, value) ->
-                    properties[key] = value
-                }
-                storageFile.outputStream().use {
-                    properties.store(it, "Plugin storage for $pluginId")
-                }
-            } catch (e: Exception) {
-                logger.error(
-                    LogCategory.SYSTEM,
-                    "Failed to save plugin storage",
-                    mapOf(
-                        "pluginId" to pluginId,
-                    ),
-                    e,
-                )
-            }
         }
     }
 }
