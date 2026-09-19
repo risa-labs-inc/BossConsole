@@ -3,9 +3,12 @@ package ai.rever.boss.mcp
 import ai.rever.boss.cli.CLISecurityValidator
 import ai.rever.boss.components.window_panel.SplitViewState
 import ai.rever.boss.components.window_panel.SplitViewStateRegistry
+import ai.rever.boss.components.workspaces.LAST_SESSION_ID
+import ai.rever.boss.components.workspaces.LAST_SESSION_SET_FILE
 import ai.rever.boss.components.workspaces.LayoutWorkspace
 import ai.rever.boss.components.workspaces.PanelConfig
 import ai.rever.boss.components.workspaces.PredefinedWorkspaces
+import ai.rever.boss.components.workspaces.SPACE_THEMES_FILE
 import ai.rever.boss.components.workspaces.TabConfig
 import ai.rever.boss.components.workspaces.WorkspaceFileManager
 import ai.rever.boss.components.workspaces.WorkspaceFileManagerCommon
@@ -496,6 +499,17 @@ object WorkspaceMcpToolProvider : McpToolProvider {
                     return McpToolResult(
                         "'$newId' is a reserved slot (a shipped layout or the last-session " +
                             "autosave record), not a workspace id. Pass a different workspaceId.",
+                        isError = true,
+                    )
+                }
+                // And the ids whose FILE would be one of the store's reserved records (#926):
+                // the load scan skips those names, so a save that lands on one never appears
+                // in the Space list while it destroys the record it replaced.
+                reservedWorkspaceStoreFileName(newId)?.let { reserved ->
+                    return McpToolResult(
+                        "'$newId' would save over '$reserved', a reserved workspace-store " +
+                            "record (Space themes or a last-session record), destroying it. " +
+                            "Pass a different workspaceId.",
                         isError = true,
                     )
                 }
@@ -1152,6 +1166,57 @@ internal fun matchExistingSpace(
 /** IDs are names in the workspace store, never caller-selected filesystem paths. */
 internal fun isSafeWorkspaceId(id: String): Boolean =
     id.isNotBlank() && id != "." && ".." !in id && id.none { it == '/' || it == '\\' || it == ':' || it.isISOControl() }
+
+/**
+ * The single-Space session record in the name a pre-[WorkspaceFileManagerCommon.fileNameForId]
+ * install wrote it under - the name `RecoveredSpacesRoundTripTest`'s fixture carries, so real
+ * disks hold it. No constant exists for it because the running code reaches the file only
+ * through `WorkspaceManager.loadedFileNames`; this gate needs it directly because it sits in
+ * the same directory the MCP create path writes into - and on a case-insensitive filesystem it
+ * IS the file [WorkspaceFileManagerCommon.fileNameForId] of [LAST_SESSION_ID] resolves to.
+ */
+private const val LEGACY_LAST_SESSION_FILE = "Last_Session.json"
+
+/**
+ * The reserved workspace-store file that saving a Space with caller-chosen id [id] would
+ * overwrite, or null when [id] is an ordinary Space id (#926).
+ *
+ * `WorkspaceManager`'s load scan deliberately skips [LAST_SESSION_SET_FILE] and
+ * [SPACE_THEMES_FILE] by name: they are records that live beside the Spaces without being one.
+ * Those records therefore never deserialize as a Space, so an open_workspace with
+ * `createIfAbsent` and a matching id falls through every lookup into the CREATE branch and
+ * saves `<id>.json` straight over the theme store or the session record - silently, because
+ * the file was never in the Space list to begin with. The session-set record breaks session
+ * restore on the next launch; the themes record wipes every Space theme assignment. The two
+ * single-Space record names are in the set for the same reason from the other direction: they
+ * DO parse as Spaces, but on a case-insensitive filesystem (NTFS, default APFS) a caller-chosen
+ * id differing only in case or underscores-dashes resolves to the record's file anyway.
+ *
+ * The file name is derived with the SAME [WorkspaceFileManagerCommon.fileNameForId] the save
+ * uses, so no id slips past on a technicality: every id that writes a reserved file is caught,
+ * and ids that merely RESEMBLE one (`Space__Themes`, with its double underscore) pass. The
+ * caller's own `.json` suffix is stripped first, because the load path treats a suffixed id as
+ * that file name and the save gate answers the same question rather than the accidental
+ * `<id>.json.json` the raw id would produce. Comparison is case-insensitive for the filesystem
+ * reason above; on a case-SENSITIVE filesystem that makes the gate stricter than the collision,
+ * which is the safe side to err on.
+ *
+ * Extend this set - and the scan's skips - together: a new reserved record is a name collision
+ * here exactly when it is a skip there.
+ */
+internal fun reservedWorkspaceStoreFileName(id: String): String? {
+    val stem = id.removeSuffix(".json")
+    if (stem.isEmpty()) return null
+    val fileName = WorkspaceFileManagerCommon.fileNameForId(stem)
+    val reserved =
+        listOf(
+            LAST_SESSION_SET_FILE,
+            SPACE_THEMES_FILE,
+            LEGACY_LAST_SESSION_FILE,
+            WorkspaceFileManagerCommon.fileNameForId(LAST_SESSION_ID),
+        )
+    return reserved.firstOrNull { it.equals(fileName, ignoreCase = true) }
+}
 
 internal fun SplitConfig.hasInitialCommands(): Boolean =
     when (this) {
