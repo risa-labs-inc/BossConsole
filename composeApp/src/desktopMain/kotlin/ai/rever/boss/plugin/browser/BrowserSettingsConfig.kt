@@ -1,5 +1,6 @@
 package ai.rever.boss.plugin.browser
 
+import ai.rever.boss.plugin.pathutils.BossDirectories
 import androidx.compose.runtime.compositionLocalOf
 import java.awt.Window
 
@@ -8,6 +9,11 @@ object BrowserSettings {
     var userAgent: String? = null
     var customUserAgent: String? = null
     var currentProfile: String = "browser-profile"
+        set(value) {
+            if (BossDirectories.isValidProfileIdentifier(value)) {
+                field = value
+            }
+        }
     val availableProfiles = mutableListOf("browser-profile")
 
     // Browser initialization retry settings (configurable via Settings)

@@ -158,6 +158,7 @@ class ProcessLogLimitsTest {
     }
 
     @Test
+    @Suppress("SwallowedException")
     fun `replacing the process directory cannot redirect later rotation`() {
         val logs = Files.createDirectory(root.resolve("logs"))
         val outside = Files.createDirectory(root.resolve("outside"))
@@ -165,7 +166,12 @@ class ProcessLogLimitsTest {
         ProcessLogDirectory.open(logs, "child").use { directory ->
             val moved = logs.resolve("moved")
             Files.move(directory.path, moved)
-            Files.createSymbolicLink(directory.path, outside)
+            try {
+                Files.createSymbolicLink(directory.path, outside)
+            } catch (e: java.nio.file.FileSystemException) {
+                // Windows without Developer Mode / admin privilege cannot create symbolic links
+                return
+            }
             RotatingProcessLog(directory, "stdout", maximumBytes = 32, fileCount = 3).use { writer ->
                 val bytes = "rotation".repeat(40).toByteArray()
                 writer.append(bytes, bytes.size)
@@ -178,9 +184,16 @@ class ProcessLogLimitsTest {
     }
 
     @Test
+    @Suppress("SwallowedException")
     fun `linked log roots and ancestors are refused before outside writes`() {
         val outside = Files.createDirectory(root.resolve("outside"))
-        val linked = Files.createSymbolicLink(root.resolve("linked"), outside)
+        val linked =
+            try {
+                Files.createSymbolicLink(root.resolve("linked"), outside)
+            } catch (e: java.nio.file.FileSystemException) {
+                // Windows without Developer Mode / admin privilege cannot create symbolic links
+                return
+            }
         assertFailsWith<IOException> { ProcessLogDirectory.open(linked, "child") }
         assertFailsWith<IOException> { ProcessLogDirectory.open(linked.resolve("logs"), "child") }
         assertEquals(0L, Files.list(outside).use { it.count() })

@@ -82,7 +82,7 @@ object BrowserSettingsManager {
                 // Apply loaded settings
                 BrowserSettings.userAgent = settings.userAgent
                 BrowserSettings.customUserAgent = settings.customUserAgent
-                BrowserSettings.currentProfile = settings.currentProfile
+
                 // Validate retry/recovery settings to prevent invalid values from manual file editing
                 BrowserSettings.maxInitRetries = settings.maxInitRetries.coerceIn(1, 10)
                 BrowserSettings.maxRecoveryAttempts = settings.maxRecoveryAttempts.coerceIn(1, 10)
@@ -94,11 +94,24 @@ object BrowserSettingsManager {
                 BrowserSettings.showShareButton = settings.showShareButton
                 BrowserSettings.warnForExecutables = settings.warnForExecutables
 
-                // Update available profiles if we have more
-                if (settings.availableProfiles.isNotEmpty()) {
-                    BrowserSettings.availableProfiles.clear()
-                    BrowserSettings.availableProfiles.addAll(settings.availableProfiles)
-                }
+                // Validate profiles to prevent path traversal from corrupted or manual file editing
+                val validAvailable =
+                    settings.availableProfiles
+                        .filter { BossDirectories.isValidProfileIdentifier(it) }
+                        .distinct()
+                val safeAvailable = if (validAvailable.isNotEmpty()) validAvailable else listOf("browser-profile")
+
+                BrowserSettings.availableProfiles.clear()
+                BrowserSettings.availableProfiles.addAll(safeAvailable)
+
+                val rawCurrent = settings.currentProfile
+                val safeCurrent =
+                    if (BossDirectories.isValidProfileIdentifier(rawCurrent) && rawCurrent in safeAvailable) {
+                        rawCurrent
+                    } else {
+                        safeAvailable.first()
+                    }
+                BrowserSettings.currentProfile = safeCurrent
             }
         } catch (e: Exception) {
             logger.warn(LogCategory.BROWSER, "Failed to load browser settings", error = e)

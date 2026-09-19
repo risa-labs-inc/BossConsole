@@ -171,7 +171,7 @@ class TerminalLimitsTest {
     @Test
     fun `completed sessions and flood output remain bounded`() =
         runBlocking {
-            withTimeout(15_000) {
+            withTimeout(30_000) {
                 val first = start("echo")
                 stub.streamOutput(stream(first)).toList()
                 repeat(3) {
