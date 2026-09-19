@@ -119,6 +119,25 @@ class FaviconCacheTest {
     }
 
     @Test
+    fun `the default retention window resolves to a cutoff 30 days in the past`() {
+        val now = 1_700_000_000_000L
+        assertEquals(now - 30L * 86_400_000L, staleCutoffMillis(now, 30))
+    }
+
+    @Test
+    fun `a large retention window does not overflow into a future cutoff`() {
+        // The bug: daysOld * 24 * 60 * 60 was computed as Int and wrapped, so a big window
+        // produced a cutoff in the FUTURE (now - negative), which deletes the whole cache.
+        val now = 1_700_000_000_000L
+        val daysOld = 100_000
+
+        val cutoff = staleCutoffMillis(now, daysOld)
+
+        assertEquals(now - daysOld.toLong() * 86_400_000L, cutoff)
+        assertTrue(cutoff < now, "the cutoff must stay in the past for any positive retention window")
+    }
+
+    @Test
     fun `different URLs get different keys`() {
         val first = FaviconCache.saveFavicon(URL, smallIcon(RED), dir)
         val second = FaviconCache.saveFavicon("https://other.example/", smallIcon(BLUE), dir)

@@ -14,6 +14,22 @@ import java.io.File
 import java.security.MessageDigest
 import javax.imageio.ImageIO
 
+/** Milliseconds in a day, as a [Long] so the day -> ms conversion never overflows. */
+internal const val MILLIS_PER_DAY = 86_400_000L
+
+/**
+ * The instant before which a favicon cache file counts as stale.
+ *
+ * The multiplication is done in [Long] (via [MILLIS_PER_DAY]) so a large [daysOld] cannot overflow:
+ * the earlier `daysOld * 24 * 60 * 60 * 1000L` form evaluated `daysOld * 24 * 60 * 60` as [Int]
+ * first and wrapped for a large retention window, yielding a bogus - often negative - cutoff that
+ * either mass-deleted the cache or never deleted anything.
+ */
+internal fun staleCutoffMillis(
+    now: Long,
+    daysOld: Int,
+): Long = now - daysOld * MILLIS_PER_DAY
+
 /**
  * File-based cache for browser tab favicons.
  * Stores favicons as PNG files in the application's cache directory.
@@ -185,7 +201,7 @@ object FaviconCache {
      */
     fun cleanupStaleEntries(daysOld: Int = 30) {
         try {
-            val cutoffTime = System.currentTimeMillis() - (daysOld * 24 * 60 * 60 * 1000L)
+            val cutoffTime = staleCutoffMillis(System.currentTimeMillis(), daysOld)
             var removedCount = 0
 
             cacheDir.listFiles()?.forEach { file ->
