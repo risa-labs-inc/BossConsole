@@ -6,6 +6,7 @@ import ai.rever.boss.viewmodels.auth.AuthOptionsManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
@@ -97,5 +98,12 @@ class LoginViewModel {
      */
     fun setMagicLinkVerificationError(errorMessage: String) {
         coreLoginViewModel.setMagicLinkVerificationError(errorMessage)
+    }
+
+    fun dispose() {
+        coreLoginViewModel.dispose()
+        passkeyAuthViewModel.dispose()
+        authOptionsManager.dispose()
+        viewModelScope.cancel()
     }
 }

@@ -57,7 +57,7 @@ internal fun primaryModifierPressed(
 ): Boolean =
     when {
         !hasCmd && !hasCtrl -> !metaDown && !controlDown
-        isMacOS -> (hasCmd && metaDown) || (hasCtrl && controlDown)
+        isMacOS -> hasCmd == metaDown && hasCtrl == controlDown
         else -> controlDown
     }
 

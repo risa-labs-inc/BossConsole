@@ -56,6 +56,17 @@ class PrimaryModifierRuleTest {
         assertFalse(pressed(hasCtrl = true, metaDown = true, isMacOS = true))
     }
 
+    @Test
+    fun `on macOS an unrequested primary modifier rejects the chord`() {
+        assertFalse(pressed(hasCmd = true, metaDown = true, controlDown = true, isMacOS = true))
+        assertFalse(pressed(hasCtrl = true, metaDown = true, controlDown = true, isMacOS = true))
+    }
+
+    @Test
+    fun `on macOS a chord can explicitly require both primary modifiers`() {
+        assertTrue(pressed(hasCmd = true, hasCtrl = true, metaDown = true, controlDown = true, isMacOS = true))
+    }
+
     // ---------------------------------------------------------------------
     // Windows and Linux: both spellings are the Control key.
     // ---------------------------------------------------------------------

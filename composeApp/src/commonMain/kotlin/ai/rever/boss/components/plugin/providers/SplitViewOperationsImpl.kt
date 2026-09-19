@@ -14,8 +14,11 @@ import ai.rever.boss.utils.DeepLinkHandler
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.window.WindowProjectStateRegistry
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 /**
@@ -25,11 +28,12 @@ import kotlinx.coroutines.launch
 class SplitViewOperationsImpl(
     private val splitViewState: SplitViewState,
     private val windowId: String,
-) : SplitViewOperations {
+    mainDispatcher: CoroutineDispatcher = Dispatchers.Main,
+) : SplitViewOperations, DisposableProvider {
     private val logger = BossLogger.forComponent("SplitViewOperationsImpl")
 
     // Coroutine scope for launching background operations
-    private val scope = CoroutineScope(Dispatchers.Main)
+    private val scope = CoroutineScope(mainDispatcher + SupervisorJob())
 
     override fun openUrlInActivePanel(
         url: String,
@@ -237,6 +241,10 @@ class SplitViewOperationsImpl(
             }
             splitViewState.openUrlInActivePanel(url, title, forceNewTab = true)
         }
+    }
+
+    override fun dispose() {
+        scope.cancel()
     }
 }
 

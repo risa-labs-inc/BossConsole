@@ -661,9 +661,10 @@ class DefaultPlugin(
     }
 
     // File system data provider for codebase plugin
-    override val fileSystemDataProvider: FileSystemDataProvider by lazy {
+    private val fileSystemDataProviderDelegate = lazy {
         FileSystemDataProviderImpl()
     }
+    override val fileSystemDataProvider: FileSystemDataProvider by fileSystemDataProviderDelegate
 
     // Workspace data provider for plugins that manage workspaces
     override val workspaceDataProvider: WorkspaceDataProvider? by lazy {
@@ -795,13 +796,14 @@ class DefaultPlugin(
     }
 
     // Split view operations for plugins that need tab/panel operations
-    override val splitViewOperations: SplitViewOperations? by lazy {
+    private val splitViewOperationsDelegate = lazy {
         if (splitViewState != null && _windowId != null) {
             SplitViewOperationsImpl(splitViewState, _windowId)
         } else {
             null
         }
     }
+    override val splitViewOperations: SplitViewOperations? by splitViewOperationsDelegate
 
     // Active tabs provider for topofmind plugin
     override val activeTabsProvider: ActiveTabsProvider? by lazy {
@@ -1236,6 +1238,12 @@ class DefaultPlugin(
         }
         if (projectDataProviderDelegate.isInitialized()) {
             (projectDataProvider as? DisposableProvider)?.dispose()
+        }
+        if (fileSystemDataProviderDelegate.isInitialized()) {
+            (fileSystemDataProvider as? DisposableProvider)?.dispose()
+        }
+        if (splitViewOperationsDelegate.isInitialized()) {
+            (splitViewOperations as? DisposableProvider)?.dispose()
         }
         pluginScope.cancel()
     }
