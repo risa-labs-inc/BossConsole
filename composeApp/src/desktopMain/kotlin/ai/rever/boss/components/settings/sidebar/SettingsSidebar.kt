@@ -133,6 +133,11 @@ enum class SettingsSection(
         description = "Process mode, microkernel, and self-healing settings",
         icon = Icons.Outlined.Science,
     ),
+    GETTING_STARTED(
+        displayName = "Getting Started",
+        description = "Reopen the first-run welcome guide",
+        icon = Icons.Outlined.PlayArrow,
+    ),
     ;
 
     companion object {

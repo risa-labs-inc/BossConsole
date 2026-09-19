@@ -807,4 +807,13 @@ object MenuActionsHandler {
     fun triggerShowPluginWizard(windowId: String) {
         _showPluginWizardEvents.tryEmit(windowId)
     }
+
+    // ========== Getting Started Events ==========
+
+    private val _reopenGettingStartedEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 10)
+    val reopenGettingStartedEvents: SharedFlow<Unit> = _reopenGettingStartedEvents.asSharedFlow()
+
+    suspend fun triggerReopenGettingStarted() {
+        _reopenGettingStartedEvents.emit(Unit)
+    }
 }

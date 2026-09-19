@@ -22,9 +22,11 @@ import ai.rever.boss.components.workspaces.extractCurrentWorkspace
 import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.focusmode.FocusModeSettingsManager
 import ai.rever.boss.plugin.browser.ActiveBrowserRegistry
+import ai.rever.boss.plugin.browser.BrowserHandle
 import ai.rever.boss.plugin.tab.terminal.TerminalTabInfo
 import ai.rever.boss.plugin.tab.terminal.TerminalTabType
 import ai.rever.boss.project.DefaultWorkingDirectory
+import ai.rever.boss.services.auth.UserDataStorage
 import ai.rever.boss.topofmind.TabTreeState
 import ai.rever.boss.window.MenuActionsHandler
 import ai.rever.boss.window.WindowAppearanceSettings
@@ -614,6 +616,17 @@ internal fun BossAppMenuActionEffects(
                     val count = result.getOrElse { 0 }
                     StatusMessageManager.showMessage("Reloaded $count plugin(s)")
                 }
+            }.launchIn(this)
+    }
+
+    // Handle reopen getting started events
+    LaunchedEffect(windowId) {
+        MenuActionsHandler.reopenGettingStartedEvents
+            .onEach {
+                coroutineScope.launch(Dispatchers.IO) {
+                    UserDataStorage.setFirstSessionBannerDismissed(false)
+                }
+                state.showFirstSessionBanner = true
             }.launchIn(this)
     }
 
