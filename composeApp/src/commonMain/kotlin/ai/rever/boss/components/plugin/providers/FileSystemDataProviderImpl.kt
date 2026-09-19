@@ -8,8 +8,11 @@ import ai.rever.boss.plugin.api.FileSystemDataProvider
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.utils.revealInFileManager
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
@@ -19,10 +22,28 @@ import ai.rever.boss.components.plugin.panels.left_top.scanDirectoryWithDepth as
 /**
  * Implementation of FileSystemDataProvider that wraps platform-specific file operations.
  * This allows plugins to access file system without direct platform coupling.
+ *
+ * Built per window ([DefaultPlugin]'s `fileSystemDataProviderDelegate`), and [openFile] launches
+ * into [ioScope], so the scope has to end with the window: [dispose] cancels it, the same way
+ * [ProjectDataProviderImpl] ends its collector (BossConsole#520, #1088).
  */
-class FileSystemDataProviderImpl : FileSystemDataProvider {
+class FileSystemDataProviderImpl(
+    // Injectable purely for tests: Dispatchers.Unconfined keeps a test-launched openFile
+    // synchronous and local, so the test can observe the emit without a real IO thread.
+    dispatcher: CoroutineDispatcher = Dispatchers.IO,
+) : FileSystemDataProvider,
+    DisposableProvider {
     private val logger = BossLogger.forComponent("FileSystemDataProvider")
-    private val ioScope = CoroutineScope(Dispatchers.IO)
+
+    // SupervisorJob, matching DefaultPlugin.pluginScope and ProjectDataProviderImpl. With a plain
+    // Job, one openFile whose FileEventBus.openFile threw (the recent-files callback, the emit,
+    // the IPC forward) cancelled the scope, and every later openFile from this window became a
+    // silent no-op for the rest of the session.
+    private val ioScope = CoroutineScope(dispatcher + SupervisorJob())
+
+    override fun dispose() {
+        ioScope.cancel()
+    }
 
     override suspend fun scanDirectory(path: String): FileNodeData? =
         kotlinx.coroutines.withContext(Dispatchers.IO) {
