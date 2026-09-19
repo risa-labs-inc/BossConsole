@@ -83,6 +83,10 @@ class MasteryExecutor(
                 send(MasteryProgress.Completed(finalOutput, System.currentTimeMillis() - startTime))
             } catch (e: NodeExecutionException) {
                 send(MasteryProgress.Failed(e.message ?: "Node execution failed", e.nodeId))
+            } catch (e: IllegalArgumentException) {
+                // Defensive backstop: a structurally invalid DAG (cycle, dangling node
+                // references) fails the execution with a verdict, never killing the stream.
+                send(MasteryProgress.Failed("Invalid mastery definition: ${e.message}", ""))
             }
         }
 
