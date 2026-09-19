@@ -1173,6 +1173,14 @@ internal fun BossAppDialogs(state: BossAppState) {
                             .handleSidebarItemClick(item)
                     }
             },
+            onOpenTerminal = {
+                state.draggablePanelComponent
+                    .toolboxSidebarItem()
+                    ?.let { item ->
+                        state.draggablePanelComponent
+                            .handleSidebarItemClick(item)
+                    }
+            },
             onDismiss = {
                 state.showFirstSessionBanner = false
                 state.coroutineScope.launch(Dispatchers.IO) {

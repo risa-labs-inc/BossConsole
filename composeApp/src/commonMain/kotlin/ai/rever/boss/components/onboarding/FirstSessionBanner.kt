@@ -47,6 +47,7 @@ import java.net.URI
 internal fun FirstSessionBanner(
     onOpenWorkspace: () -> Unit,
     onOpenToolbox: () -> Unit,
+    onOpenTerminal: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val clipboardManager = LocalClipboardManager.current
@@ -56,12 +57,17 @@ internal fun FirstSessionBanner(
     BossDialog(
         onDismissRequest = {},
     ) {
-        Column(
-            modifier = Modifier
-                .width(680.dp)
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+        Surface(
+            shape = MaterialTheme.shapes.large,
+            color = MaterialTheme.colors.surface,
+            elevation = 24.dp
         ) {
+            Column(
+                modifier = Modifier
+                    .width(780.dp)
+                    .padding(32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
             if (agentWizardStep >= 1) {
                 LinearProgressIndicator(
                     progress = agentWizardStep / 4f,
@@ -208,22 +214,22 @@ internal fun FirstSessionBanner(
                     Text("Which agent CLI do you have installed?", style = MaterialTheme.typography.body1)
                     Spacer(modifier = Modifier.height(12.dp))
                     
-                    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         OutlinedButton(
                             onClick = { selectedAgent = "claude"; agentWizardStep = 2 },
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.weight(1f)
                         ) {
                             Text("Claude Code")
                         }
                         OutlinedButton(
                             onClick = { selectedAgent = "gemini"; agentWizardStep = 2 },
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.weight(1f)
                         ) {
                             Text("Gemini CLI")
                         }
                         OutlinedButton(
                             onClick = { selectedAgent = "codex"; agentWizardStep = 2 },
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.weight(1f)
                         ) {
                             Text("Codex / OpenCode")
                         }
@@ -272,13 +278,13 @@ internal fun FirstSessionBanner(
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
                         shape = MaterialTheme.shapes.medium,
-                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.08f)
+                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.15f)
                     ) {
                         Row(
                             modifier = Modifier.padding(12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(addCmd, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.body2)
+                            Text(addCmd, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.body2, color = MaterialTheme.colors.onSurface)
                             Spacer(modifier = Modifier.weight(1f))
                             IconButton(onClick = { clipboardManager.setText(AnnotatedString(addCmd)) }) {
                                 Icon(Icons.Default.ContentCopy, contentDescription = "Copy")
@@ -300,13 +306,13 @@ internal fun FirstSessionBanner(
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
                         shape = MaterialTheme.shapes.medium,
-                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.08f)
+                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.15f)
                     ) {
                         Row(
                             modifier = Modifier.padding(12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(launchCmd, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.body2)
+                            Text(launchCmd, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.body2, color = MaterialTheme.colors.onSurface)
                             Spacer(modifier = Modifier.weight(1f))
                             IconButton(onClick = { clipboardManager.setText(AnnotatedString(launchCmd)) }) {
                                 Icon(Icons.Default.ContentCopy, contentDescription = "Copy")
@@ -321,8 +327,20 @@ internal fun FirstSessionBanner(
                         color = MaterialTheme.colors.primary.copy(alpha = 0.1f)
                     ) {
                         Row(modifier = Modifier.padding(12.dp)) {
-                            Text("💡 Use the BOSS Terminal Tab to run these commands — it's already open in your workspace.", style = MaterialTheme.typography.body2)
+                            Text(
+                                "💡 Tip: Copy the command, click below to open the Toolbox, find Terminal Tab there, and run it. Then come back and click 'I ran it'.",
+                                style = MaterialTheme.typography.body2,
+                                color = MaterialTheme.colors.onSurface
+                            )
                         }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    TextButton(
+                        onClick = { onOpenTerminal() },
+                        modifier = Modifier.align(Alignment.Start)
+                    ) {
+                        Text("Open Toolbox (find Terminal there) →")
                     }
                     
                     Spacer(modifier = Modifier.height(16.dp))
@@ -356,13 +374,13 @@ internal fun FirstSessionBanner(
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
                         shape = MaterialTheme.shapes.medium,
-                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.08f)
+                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.15f)
                     ) {
                         Row(
                             modifier = Modifier.padding(12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(askCmd, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.body2)
+                            Text(askCmd, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.body2, color = MaterialTheme.colors.onSurface)
                             Spacer(modifier = Modifier.weight(1f))
                             IconButton(onClick = { clipboardManager.setText(AnnotatedString(askCmd)) }) {
                                 Icon(Icons.Default.ContentCopy, contentDescription = "Copy")
@@ -432,13 +450,13 @@ internal fun FirstSessionBanner(
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
                         shape = MaterialTheme.shapes.medium,
-                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.08f)
+                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.15f)
                     ) {
                         Row(
                             modifier = Modifier.padding(12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(tryCmd, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.body2)
+                            Text(tryCmd, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.body2, color = MaterialTheme.colors.onSurface)
                             Spacer(modifier = Modifier.weight(1f))
                             IconButton(onClick = { clipboardManager.setText(AnnotatedString(tryCmd)) }) {
                                 Icon(Icons.Default.ContentCopy, contentDescription = "Copy")
@@ -470,4 +488,5 @@ internal fun FirstSessionBanner(
             }
         }
     }
+}
 }
