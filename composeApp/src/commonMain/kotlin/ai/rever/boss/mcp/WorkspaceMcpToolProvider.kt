@@ -505,12 +505,22 @@ object WorkspaceMcpToolProvider : McpToolProvider {
             )
         workspaceManager.setSpaceTheme(materialised.id, workspaceManager.themeIdFor(template.id))
         workspaceManager.loadWorkspace(materialised)
-        // Persist synchronously (saveWorkspaceBlocking), not through saveCurrentWorkspace's
-        // scope.launch: this handler TELLS the agent the Space is "saved and re-enterable",
-        // so the write must have landed before the response claims it. The manager's async
-        // save stays for the UI paths; here the blocking write is the honest contract, and
-        // loadWorkspace still feeds the in-memory list the same way.
-        getFileManager().saveWorkspaceBlocking(materialised, null)
+        // Persist synchronously: this handler TELLS the agent the Space is "saved and
+        // re-enterable", so the file must have landed before the response claims it. The
+        // comment on the previous version claimed "loadWorkspace still feeds the in-memory
+        // list the same way"; it does NOT - `loadWorkspace` only touches `_currentWorkspace`,
+        // so the materialised Space was invisible in the picker until the next launch. The
+        // fileManager shortcut is right for the bytes (we need them on disk, not on a coroutine
+        // the response races past); the picker list is added synchronously by addWorkspaceToList
+        // after the file write returns. Same pair, no scope.launch, no half-saved Space.
+        val savedPath = getFileManager().saveWorkspaceBlocking(materialised, null)
+        if (savedPath == null) {
+            return McpToolResult(
+                "Could not save the materialised Space to disk; the file write failed.",
+                isError = true,
+            )
+        }
+        workspaceManager.addWorkspaceToList(materialised)
         switchWindowToSpace(
             splitViewState,
             WindowProjectStateRegistry.getOrCreate(target.windowId),

@@ -5,6 +5,7 @@ import ai.rever.boss.components.window_panel.SplitViewStateRegistry
 import ai.rever.boss.components.workspaces.PredefinedWorkspaces
 import ai.rever.boss.components.workspaces.WorkspaceFileManager
 import ai.rever.boss.components.workspaces.WorkspaceFileManagerCommon
+import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.plugin.api.McpToolResult
 import ai.rever.boss.plugin.api.TabRegistry
 import kotlinx.coroutines.runBlocking
@@ -152,13 +153,27 @@ class ApplyTemplateToolTest {
                 // the Space from the file manager this test wired in.
                 val idMatch = Regex("id: ([a-z-]+\\d+)").find(result.text)
                 assertTrue(idMatch != null, "response carries the new Space's id: ${result.text}")
+                val materialisedId = idMatch!!.groupValues[1]
                 val saved =
-                    WorkspaceFileManagerCommon.fileNameForId(idMatch!!.groupValues[1])
+                    WorkspaceFileManagerCommon.fileNameForId(materialisedId)
                 val reloaded = fileManager.loadWorkspace(saved)
                 assertTrue(reloaded != null, "the Space is persisted for re-entry")
                 assertTrue(
                     reloaded!!.name == "Dual Terminal (my-project)",
                     "the persisted Space keeps the materialised name",
+                )
+
+                // The picker-list half: the manager's workspaces StateFlow holds the materialised
+                // Space keyed by its id. Without this, the file write alone would leave the Space
+                // invisible in the picker until the next launch (a plain saveWorkspaceBlocking
+                // call only touches the file, not `_workspaces`). The response says "saved and
+                // re-enterable" - re-enterable means the picker lists it now, not on relaunch.
+                val inList =
+                    workspaceManager.workspaces.value.any { it.id == materialisedId }
+                assertTrue(
+                    inList,
+                    "the materialised Space is in the manager's workspaces list: " +
+                        "${workspaceManager.workspaces.value.map { it.id }}",
                 )
             } finally {
                 state.dispose()
