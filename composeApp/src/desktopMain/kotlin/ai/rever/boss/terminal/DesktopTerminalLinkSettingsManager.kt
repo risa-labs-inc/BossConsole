@@ -1,6 +1,7 @@
 package ai.rever.boss.terminal
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.loadSettingsWithBackup
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CoroutineScope
@@ -56,16 +57,31 @@ actual object TerminalLinkSettingsManager {
             try {
                 settingsFile.parentFile?.mkdirs()
 
-                if (settingsFile.exists()) {
-                    val content = settingsFile.readText()
-                    val settings = json.decodeFromString<TerminalLinkSettings>(content)
-                    _currentSettings.value = settings
-                    logger.debug(LogCategory.TERMINAL, "Loaded settings")
-                } else {
-                    // Create default settings file
-                    val content = json.encodeToString(TerminalLinkSettings.serializer(), _currentSettings.value)
-                    settingsFile.writeText(content)
-                    logger.debug(LogCategory.TERMINAL, "Created default settings file")
+                val loaded =
+                    settingsFile.loadSettingsWithBackup(
+                        decode = { json.decodeFromString<TerminalLinkSettings>(it) },
+                        onCorruptPrimary = { e ->
+                            logger.warn(LogCategory.TERMINAL, "Corrupt settings, attempting backup restore", error = e)
+                        },
+                        onRestoredFromBackup = { logger.info(LogCategory.TERMINAL, "Restored settings from backup") },
+                    )
+                when {
+                    loaded != null -> {
+                        _currentSettings.value = loaded
+                        logger.debug(LogCategory.TERMINAL, "Loaded settings")
+                    }
+
+                    // File present but neither it nor its backup decoded: keep the defaults already set.
+                    settingsFile.exists() -> {
+                        logger.warn(LogCategory.TERMINAL, "Settings and backup unreadable, using defaults")
+                    }
+
+                    else -> {
+                        // Create default settings file
+                        val content = json.encodeToString(TerminalLinkSettings.serializer(), _currentSettings.value)
+                        settingsFile.writeText(content)
+                        logger.debug(LogCategory.TERMINAL, "Created default settings file")
+                    }
                 }
             } catch (e: Exception) {
                 logger.warn(LogCategory.TERMINAL, "Error loading settings", error = e)

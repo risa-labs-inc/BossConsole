@@ -1,6 +1,7 @@
 package ai.rever.boss.focusmode
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.loadSettingsWithBackup
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.Dispatchers
@@ -52,27 +53,50 @@ actual object FocusModeSettingsManager {
      */
     private fun loadSettingsSync() {
         try {
-            if (settingsFile.exists()) {
-                val content = settingsFile.readText()
-                // Merge against the platform defaults rather than plain-decoding: a file written
-                // before the per-edge switches existed has no opinion about them, and the class
-                // defaults would hide both sidebars on Windows with no way to reveal them.
-                val settings = FocusModeSettings.decodeWithDefaults(content, platformDefaults)
-                _currentSettings.value = settings
-                logger.debug(LogCategory.SYSTEM, "Loaded settings", mapOf("path" to settingsFile.absolutePath))
-            } else {
-                // First run - create default settings file
-                logger.debug(LogCategory.SYSTEM, "No settings file found, using defaults")
-                val defaultSettings = platformDefaults
-                _currentSettings.value = defaultSettings
+            // Merge against the platform defaults rather than plain-decoding: a file written
+            // before the per-edge switches existed has no opinion about them, and the class
+            // defaults would hide both sidebars on Windows with no way to reveal them. A genuinely
+            // unparseable file falls back to the .bak before defaults.
+            val loaded =
+                settingsFile.loadSettingsWithBackup(
+                    decode = { FocusModeSettings.decodeWithDefaults(it, platformDefaults) },
+                    onCorruptPrimary = { e ->
+                        logger.warn(LogCategory.SYSTEM, "Corrupt focus-mode settings, trying backup", error = e)
+                    },
+                    onRestoredFromBackup = {
+                        logger.info(LogCategory.SYSTEM, "Restored focus-mode settings from backup")
+                    },
+                )
+            when {
+                loaded != null -> {
+                    _currentSettings.value = loaded
+                    logger.debug(LogCategory.SYSTEM, "Loaded settings", mapOf("path" to settingsFile.absolutePath))
+                }
 
-                // Save default settings to file
-                try {
-                    val content = json.encodeToString(FocusModeSettings.serializer(), defaultSettings)
-                    settingsFile.writeText(content)
-                    logger.debug(LogCategory.SYSTEM, "Created default settings file", mapOf("path" to settingsFile.absolutePath))
-                } catch (e: Exception) {
-                    logger.warn(LogCategory.SYSTEM, "Could not write default settings file", error = e)
+                // File present but neither it nor its backup decoded: keep platform defaults.
+                settingsFile.exists() -> {
+                    logger.warn(LogCategory.SYSTEM, "Focus-mode settings and backup unreadable, using defaults")
+                    _currentSettings.value = platformDefaults
+                }
+
+                else -> {
+                    // First run - create default settings file
+                    logger.debug(LogCategory.SYSTEM, "No settings file found, using defaults")
+                    val defaultSettings = platformDefaults
+                    _currentSettings.value = defaultSettings
+
+                    // Save default settings to file
+                    try {
+                        val content = json.encodeToString(FocusModeSettings.serializer(), defaultSettings)
+                        settingsFile.writeText(content)
+                        logger.debug(
+                            LogCategory.SYSTEM,
+                            "Created default settings file",
+                            mapOf("path" to settingsFile.absolutePath),
+                        )
+                    } catch (e: Exception) {
+                        logger.warn(LogCategory.SYSTEM, "Could not write default settings file", error = e)
+                    }
                 }
             }
         } catch (e: Exception) {

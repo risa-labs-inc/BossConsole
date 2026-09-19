@@ -3,6 +3,7 @@ package ai.rever.boss.run
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.plugin.run.MAX_RERUN_DELAY_MS
 import ai.rever.boss.plugin.run.MIN_RERUN_DELAY_MS
+import ai.rever.boss.utils.loadSettingsWithBackup
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CoroutineScope
@@ -58,16 +59,33 @@ actual object RunnerSettingsManager {
             try {
                 settingsFile.parentFile?.mkdirs()
 
-                if (settingsFile.exists()) {
-                    val content = settingsFile.readText()
-                    val settings = json.decodeFromString<RunnerSettings>(content)
-                    _currentSettings.value = settings
-                    logger.debug(LogCategory.SYSTEM, "Loaded settings")
-                } else {
-                    // Create default settings file
-                    val content = json.encodeToString(RunnerSettings.serializer(), _currentSettings.value)
-                    settingsFile.writeText(content)
-                    logger.debug(LogCategory.SYSTEM, "Created default settings file")
+                val loaded =
+                    settingsFile.loadSettingsWithBackup(
+                        decode = { json.decodeFromString<RunnerSettings>(it) },
+                        onCorruptPrimary = { e ->
+                            logger.warn(LogCategory.SYSTEM, "Corrupt runner settings, trying backup", error = e)
+                        },
+                        onRestoredFromBackup = {
+                            logger.info(LogCategory.SYSTEM, "Restored runner settings from backup")
+                        },
+                    )
+                when {
+                    loaded != null -> {
+                        _currentSettings.value = loaded
+                        logger.debug(LogCategory.SYSTEM, "Loaded settings")
+                    }
+
+                    // File present but neither it nor its backup decoded: keep the defaults already set.
+                    settingsFile.exists() -> {
+                        logger.warn(LogCategory.SYSTEM, "Runner settings and backup unreadable, using defaults")
+                    }
+
+                    else -> {
+                        // Create default settings file
+                        val content = json.encodeToString(RunnerSettings.serializer(), _currentSettings.value)
+                        settingsFile.writeText(content)
+                        logger.debug(LogCategory.SYSTEM, "Created default settings file")
+                    }
                 }
             } catch (e: Exception) {
                 logger.warn(LogCategory.SYSTEM, "Error loading settings", error = e)

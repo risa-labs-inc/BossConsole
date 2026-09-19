@@ -1,6 +1,7 @@
 package ai.rever.boss.performance
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.loadSettingsWithBackup
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.Dispatchers
@@ -38,14 +39,19 @@ actual object PerformanceSettingsManager {
 
     private fun loadSettingsSync() {
         try {
-            if (settingsFile.exists()) {
-                val content = settingsFile.readText()
-                val settings = json.decodeFromString<PerformanceSettings>(content)
-                // Validate loaded settings to handle potentially corrupted files
-                _currentSettings.value = settings.validated()
-            } else {
-                _currentSettings.value = PerformanceSettings()
-            }
+            // validated() is part of decode so an out-of-range field is repaired rather than treated
+            // as corruption; a genuinely unparseable file falls back to the .bak before defaults.
+            val loaded =
+                settingsFile.loadSettingsWithBackup(
+                    decode = { json.decodeFromString<PerformanceSettings>(it).validated() },
+                    onCorruptPrimary = { e ->
+                        logger.warn(LogCategory.SYSTEM, "Corrupt performance settings, trying backup", error = e)
+                    },
+                    onRestoredFromBackup = {
+                        logger.info(LogCategory.SYSTEM, "Restored performance settings from backup")
+                    },
+                )
+            _currentSettings.value = loaded ?: PerformanceSettings()
         } catch (e: Exception) {
             logger.warn(LogCategory.SYSTEM, "Failed to load performance settings - using defaults", error = e)
             _currentSettings.value = PerformanceSettings()
