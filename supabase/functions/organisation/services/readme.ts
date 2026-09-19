@@ -15,6 +15,43 @@
 /** Bytes of README we will show. Enough for a real one, bounded so a page cannot be made enormous. */
 const MAX_BYTES = 64 * 1024
 
+/**
+ * How many bytes are pulled off the wire at most. A character is at most four bytes in UTF-8, so
+ * this always covers [MAX_BYTES] characters; anything past it would only be thrown away.
+ */
+const MAX_WIRE_BYTES = MAX_BYTES * 4
+
+/**
+ * Read the body up to [MAX_WIRE_BYTES] and stop. `response.text()` buffers whatever the origin
+ * sends, and the truncation below only happens after the memory is spent. The reader is cancelled
+ * at the cap, so at most one chunk over it is ever resident.
+ */
+async function readTextCapped(response: Response): Promise<{ text: string; cutShort: boolean }> {
+  if (!response.body) return { text: "", cutShort: false }
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let text = ""
+  let total = 0
+  let cutShort = false
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      total += value.byteLength
+      if (total > MAX_WIRE_BYTES) {
+        cutShort = true
+        await reader.cancel().catch(() => {})
+        break
+      }
+      text += decoder.decode(value, { stream: true })
+    }
+    text += decoder.decode()
+  } finally {
+    reader.releaseLock()
+  }
+  return { text, cutShort }
+}
+
 /** One attempt, short. The page renders without a README rather than waiting on GitHub. */
 const TIMEOUT_MS = 4000
 
@@ -133,12 +170,12 @@ export async function fetchReadme(homepageUrl: string | null | undefined): Promi
     )
     if (!response.ok) return remember(key, null)
 
-    const text = await response.text()
+    const { text, cutShort } = await readTextCapped(response)
     if (text.trim().length === 0) return remember(key, null)
 
     // Truncated by CHARACTERS after the fact rather than by a Range header: a byte range can cut a
     // multi-byte character in half, and the marker below is more honest than a mojibake tail.
-    if (text.length > MAX_BYTES) {
+    if (cutShort || text.length > MAX_BYTES) {
       return remember(key, text.slice(0, MAX_BYTES) + "\n\n[truncated]")
     }
     return remember(key, text)
