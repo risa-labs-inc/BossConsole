@@ -49,16 +49,19 @@ class TerminalOwnershipTest {
     }
 
     @Test
-    fun `unrecognized caller cannot start a process and an authorized caller can`() =
+    fun `only the host can start a process`() =
         runBlocking {
             withTimeout(15_000) {
                 val unauthorized = client("0".repeat(64))
                 val request = request("sentinel")
                 refused(Status.Code.UNAUTHENTICATED) { unauthorized.createSession(request) }
                 assertFalse(Files.exists(root.resolve("sentinel")))
-                val owner = caller("owner")
-                assertEquals(0, owner.listSessions(Empty.getDefaultInstance()).sessionsCount)
-                val created = owner.createSession(request)
+                val process = caller("plugin")
+                refused(Status.Code.PERMISSION_DENIED) { process.createSession(request) }
+                assertFalse(Files.exists(root.resolve("sentinel")))
+                val host = caller("host", ProcessAuthority.HOST)
+                assertEquals(0, host.listSessions(Empty.getDefaultInstance()).sessionsCount)
+                val created = host.createSession(request)
                 assertTrue(created.success)
                 // File creation becomes visible before the child finishes writing its readiness marker.
                 val sentinel = root.resolve("sentinel")
@@ -70,16 +73,15 @@ class TerminalOwnershipTest {
         }
 
     @Test
-    fun `owners cannot list read write resize or close another terminal while the host can administer it`() =
+    fun `process callers cannot list read write resize or close a host terminal`() =
         runBlocking {
             withTimeout(15_000) {
-                val alpha = caller("alpha")
-                val beta = caller("beta")
                 val host = caller("host", ProcessAuthority.HOST)
-                val id = alpha.createSession(request("wait")).sessionId
-                assertEquals(0, beta.listSessions(Empty.getDefaultInstance()).sessionsCount)
+                val process = caller("plugin")
+                val id = host.createSession(request("wait")).sessionId
+                assertEquals(0, process.listSessions(Empty.getDefaultInstance()).sessionsCount)
                 refused(Status.Code.PERMISSION_DENIED) {
-                    beta.sendInput(
+                    process.sendInput(
                         SendInputRequest
                             .newBuilder()
                             .setSessionId(id)
@@ -87,9 +89,9 @@ class TerminalOwnershipTest {
                             .build(),
                     )
                 }
-                refused(Status.Code.PERMISSION_DENIED) { beta.streamOutput(stream(id)).toList() }
+                refused(Status.Code.PERMISSION_DENIED) { process.streamOutput(stream(id)).toList() }
                 refused(Status.Code.PERMISSION_DENIED) {
-                    beta.resize(
+                    process.resize(
                         ResizeRequest
                             .newBuilder()
                             .setSessionId(id)
@@ -98,37 +100,36 @@ class TerminalOwnershipTest {
                             .build(),
                     )
                 }
-                refused(Status.Code.PERMISSION_DENIED) { beta.closeSession(close(id)) }
+                refused(Status.Code.PERMISSION_DENIED) { process.closeSession(close(id)) }
                 assertTrue(
-                    alpha
+                    host
                         .listSessions(Empty.getDefaultInstance())
                         .sessionsList
                         .single()
                         .isAlive,
                 )
-                val betaSession = beta.createSession(request("echo")).sessionId
-                assertOwnedOutput(beta, betaSession)
-                val betaSessions = beta.listSessions(Empty.getDefaultInstance()).sessionsList
-                assertEquals(listOf(betaSession), betaSessions.map { it.sessionId })
-                assertEquals(2, host.listSessions(Empty.getDefaultInstance()).sessionsCount)
+                assertOwnedOutput(host, id)
                 closeAndRemoveHistory(host, id)
-                assertEquals(0, alpha.listSessions(Empty.getDefaultInstance()).sessionsCount)
+                assertEquals(0, host.listSessions(Empty.getDefaultInstance()).sessionsCount)
             }
         }
 
     @Test
-    fun `reusing a process id cannot acquire the previous instances terminal`() =
+    fun `rotating the host token revokes the old caller without orphaning its terminal`() =
         runBlocking {
             withTimeout(15_000) {
-                val original = caller("same-id")
+                val original = caller("host", ProcessAuthority.HOST)
                 val id = original.createSession(request("wait")).sessionId
-                val replacement = caller("same-id")
+                val replacement = caller("host", ProcessAuthority.HOST)
                 refused(Status.Code.UNAUTHENTICATED) { original.listSessions(Empty.getDefaultInstance()) }
+                val survivingIds =
+                    replacement
+                        .listSessions(Empty.getDefaultInstance())
+                        .sessionsList
+                        .map { it.sessionId }
+                assertEquals(listOf(id), survivingIds)
+                closeAndRemoveHistory(replacement, id)
                 assertEquals(0, replacement.listSessions(Empty.getDefaultInstance()).sessionsCount)
-                refused(Status.Code.PERMISSION_DENIED) { replacement.streamOutput(stream(id)).toList() }
-                val host = caller("host", ProcessAuthority.HOST)
-                closeAndRemoveHistory(host, id)
-                assertEquals(0, host.listSessions(Empty.getDefaultInstance()).sessionsCount)
             }
         }
 

@@ -4,6 +4,7 @@ import ai.rever.boss.ipc.BossIpcClient
 import ai.rever.boss.ipc.BossIpcServer
 import ai.rever.boss.ipc.auth.IpcClientCredentials
 import ai.rever.boss.ipc.auth.IpcTlsIdentity
+import ai.rever.boss.ipc.auth.ProcessAuthority
 import ai.rever.boss.ipc.auth.ProcessIdentityInterceptor
 import ai.rever.boss.ipc.auth.ProcessTokenRegistry
 import ai.rever.boss.ipc.proto.Empty
@@ -59,7 +60,7 @@ class TerminalLimitsTest {
     private val service = TerminalServiceImpl(activeLimit = 1, historyLimit = 2)
     private val registry = ProcessTokenRegistry()
     private val tls = IpcTlsIdentity.create()
-    private val token = registry.issue("limits")
+    private val token = registry.issue("limits", ProcessAuthority.HOST)
     private val server = BossIpcServer("tcp://127.0.0.1:0", registry, tls).addService(service).start()
     private val client =
         BossIpcClient("tcp://127.0.0.1:${server.port}", IpcClientCredentials(tls.certificateBase64, token))

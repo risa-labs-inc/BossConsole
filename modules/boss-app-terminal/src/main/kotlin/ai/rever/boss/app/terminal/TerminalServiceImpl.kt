@@ -33,7 +33,7 @@ class TerminalServiceImpl(
     }
 
     override suspend fun createSession(request: CreateSessionRequest): CreateSessionResponse {
-        val ownerInstance = IpcCall.current().instanceId
+        val ownerInstance = IpcCall.requireHost().instanceId
         var session: TerminalSession? = null
         var admitted = false
         var pumping = false
