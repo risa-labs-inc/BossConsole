@@ -428,6 +428,12 @@ internal fun CompleteStepContent(
                 modifier = Modifier.padding(horizontal = 32.dp),
             )
         }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        WizardNote(
+            text = "💡 You can reopen this guide anytime from Settings → Getting Started"
+        )
     }
 }
 
