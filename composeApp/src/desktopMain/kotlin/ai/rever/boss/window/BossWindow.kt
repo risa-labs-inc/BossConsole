@@ -1524,3 +1524,4 @@ internal fun requestTerminalWelcomeWizard(
 fun BossWindowState.updateTitle(newTitle: String) {
     this.title = newTitle
 }
+// Trigger CI
