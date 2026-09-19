@@ -118,6 +118,30 @@ class MasteryServiceConditionTest {
             assertEquals("quarantine", events.last().completed.outputMap["deleted"])
         }
 
+    @Test
+    fun `NodeSkipped survives the proto round trip with node id and reason intact`() =
+        runBlocking {
+            val resolver =
+                RecordingResolver(
+                    mapOf(
+                        "plugin-a/scan" to mapOf("scan_clean" to "false"),
+                        "plugin-b/delete" to mapOf("deleted" to "quarantine"),
+                    ),
+                )
+            val service = MasteryServiceImpl(MasteryExecutor(resolver))
+            service.createMastery(conditionalDefinition("scan_clean == true"))
+            val events = service.executeMastery(execute()).toList()
+
+            val skipped = events.filter { it.hasNodeSkipped() }.map { it.nodeSkipped }
+            assertEquals(listOf("delete"), skipped.map { it.nodeId })
+            assertEquals(
+                "condition 'scan_clean == true' evaluated false",
+                skipped.single().reason,
+            )
+            assertTrue(events.last().hasCompleted())
+            assertEquals("completed", service.getMasteryStatus(execution(events)).state)
+        }
+
     private fun execute() = ExecuteMasteryRequest.newBuilder().setMasteryId("guarded").build()
 
     private fun execution(events: List<MasteryProgress>) =

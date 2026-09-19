@@ -313,4 +313,127 @@ class MasteryExecutorConditionTest {
             val started = events.filterIsInstance<MasteryProgress.NodeStarted>().map { it.nodeId }
             assertEquals(setOf("scan", "audit", "archive"), started.toSet())
         }
+
+    @Test
+    fun `a skipped node emits NodeSkipped with the reason and the run still completes`() =
+        runBlocking {
+            val resolver =
+                RecordingResolver(
+                    mapOf(
+                        "plugin-a/scan" to mapOf("scan_clean" to "false"),
+                        "plugin-b/delete" to mapOf("deleted" to "quarantine"),
+                    ),
+                )
+            val events =
+                MasteryExecutor(resolver)
+                    .execute(guardedMastery("scan_clean == true"), emptyMap())
+                    .toList()
+
+            val skipped = events.filterIsInstance<MasteryProgress.NodeSkipped>()
+            assertEquals(listOf("delete"), skipped.map { it.nodeId })
+            assertEquals(
+                "condition 'scan_clean == true' evaluated false",
+                skipped.single().reason,
+            )
+            assertEquals(
+                listOf("scan"),
+                events.filterIsInstance<MasteryProgress.NodeStarted>().map { it.nodeId },
+            )
+            val completed = assertIs<MasteryProgress.Completed>(events.last())
+            assertFalse("deleted" in completed.output)
+        }
+
+    @Test
+    fun `a followed edge emits no NodeSkipped`() =
+        runBlocking {
+            val resolver =
+                RecordingResolver(
+                    mapOf(
+                        "plugin-a/scan" to mapOf("scan_clean" to "true"),
+                        "plugin-b/delete" to mapOf("deleted" to "quarantine"),
+                    ),
+                )
+            val events =
+                MasteryExecutor(resolver)
+                    .execute(guardedMastery("scan_clean == true"), emptyMap())
+                    .toList()
+
+            assertTrue(events.filterIsInstance<MasteryProgress.NodeSkipped>().isEmpty())
+            assertEquals(
+                listOf("scan", "delete"),
+                events.filterIsInstance<MasteryProgress.NodeStarted>().map { it.nodeId },
+            )
+        }
+
+    @Test
+    fun `a malformed condition emits NodeSkipped with the malformed reason`() =
+        runBlocking {
+            val resolver =
+                RecordingResolver(
+                    mapOf(
+                        "plugin-a/scan" to mapOf("scan_clean" to "true"),
+                        "plugin-b/delete" to mapOf("deleted" to "quarantine"),
+                    ),
+                )
+            val events =
+                MasteryExecutor(resolver)
+                    .execute(guardedMastery("scan_clean == true && confirmed == true"), emptyMap())
+                    .toList()
+
+            val skipped = events.filterIsInstance<MasteryProgress.NodeSkipped>()
+            assertEquals(listOf("delete"), skipped.map { it.nodeId })
+            assertEquals(
+                "Malformed condition 'scan_clean == true && confirmed == true' (failing closed; " +
+                    "supported forms: 'true', 'false', 'key', 'key == literal', 'key != literal')",
+                skipped.single().reason,
+            )
+            val completed = assertIs<MasteryProgress.Completed>(events.last())
+            assertFalse("deleted" in completed.output)
+        }
+
+    @Test
+    fun `a node skipped by propagation also emits NodeSkipped`() =
+        runBlocking {
+            val resolver =
+                RecordingResolver(
+                    mapOf(
+                        "plugin-a/scan" to mapOf("scan_clean" to "false"),
+                        "plugin-b/clean" to mapOf("cleaned" to "yes"),
+                        "plugin-c/report" to mapOf("report" to "done"),
+                    ),
+                )
+            val mastery =
+                MasteryDefinition(
+                    id = "chained-skip",
+                    name = "Chained Skip",
+                    description = "",
+                    nodes =
+                        listOf(
+                            MasteryNode("scan", "plugin-a", "scan"),
+                            MasteryNode("clean", "plugin-b", "clean"),
+                            MasteryNode("report", "plugin-c", "report"),
+                        ),
+                    edges =
+                        listOf(
+                            MasteryEdge(
+                                "scan",
+                                "clean",
+                                "scan_clean",
+                                "cleanliness",
+                                "scan_clean == true",
+                            ),
+                            MasteryEdge("clean", "report", "cleaned", "summary"),
+                        ),
+                )
+            val events = MasteryExecutor(resolver).execute(mastery, emptyMap()).toList()
+
+            val skipped = events.filterIsInstance<MasteryProgress.NodeSkipped>()
+            assertEquals(setOf("clean", "report"), skipped.map { it.nodeId }.toSet())
+            assertEquals(
+                "source node 'clean' produced no output (it was skipped)",
+                skipped.single { it.nodeId == "report" }.reason,
+            )
+            val completed = assertIs<MasteryProgress.Completed>(events.last())
+            assertTrue(completed.output.isEmpty())
+        }
 }

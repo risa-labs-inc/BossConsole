@@ -19,6 +19,10 @@ package ai.rever.boss.mastery
  *   double-quoted string; quotes are never part of the compared value, and
  *   the operator must be whitespace-separated from its operands.
  *
+ * A bare-key condition reading an output key literally named `true` or
+ * `false` is interpreted as the boolean literal; the `key == "true"`
+ * comparison form is the unambiguous way to compare against those strings.
+ *
  * ## Fail-closed semantics
  *
  * A null or blank condition is unconditional (always followed — the
