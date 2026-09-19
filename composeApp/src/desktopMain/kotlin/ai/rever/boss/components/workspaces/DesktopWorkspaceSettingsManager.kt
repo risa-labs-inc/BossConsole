@@ -9,6 +9,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import java.io.File
+import ai.rever.boss.utils.atomicWriteText
 
 /**
  * Desktop implementation of WorkspaceSettingsManager.
@@ -23,6 +25,8 @@ actual object WorkspaceSettingsManager {
             ignoreUnknownKeys = true
             encodeDefaults = true
         }
+
+    private val writeLock = Any()
 
     // Seeded at the CURRENT version, so 0 means exactly one thing: a key absent from a
     // file on disk. An in-memory default carrying 0 would re-arm the 0 -> 1 migration
@@ -77,15 +81,33 @@ actual object WorkspaceSettingsManager {
             }
         } catch (e: Exception) {
             logger.warn(LogCategory.SYSTEM, "Error loading settings", error = e)
+            try {
+                if (settingsFile.exists()) {
+                    val timestamp = System.currentTimeMillis()
+                    val corruptedFile = File(settingsFile.absolutePath + ".corrupted." + timestamp)
+                    val renamed = settingsFile.renameTo(corruptedFile)
+                    if (!renamed) {
+                        settingsFile.copyTo(corruptedFile, overwrite = true)
+                        settingsFile.delete()
+                    }
+                    logger.info(LogCategory.SYSTEM, "Renamed corrupted workspace settings aside to ${corruptedFile.name}")
+                }
+            } catch (backupErr: Exception) {
+                logger.warn(LogCategory.SYSTEM, "Could not back up corrupted workspace settings", error = backupErr)
+                settingsFile.delete()
+            }
+            writeSettings(_currentSettings.value)
         }
     }
 
     private fun writeSettings(settings: WorkspaceSettings) {
-        try {
-            settingsFile.writeText(json.encodeToString(WorkspaceSettings.serializer(), settings))
-            logger.debug(LogCategory.SYSTEM, "Settings saved")
-        } catch (e: Exception) {
-            logger.warn(LogCategory.SYSTEM, "Error saving settings", error = e)
+        synchronized(writeLock) {
+            try {
+                settingsFile.atomicWriteText(json.encodeToString(WorkspaceSettings.serializer(), settings))
+                logger.debug(LogCategory.SYSTEM, "Settings saved")
+            } catch (e: Exception) {
+                logger.warn(LogCategory.SYSTEM, "Error saving settings", error = e)
+            }
         }
     }
 

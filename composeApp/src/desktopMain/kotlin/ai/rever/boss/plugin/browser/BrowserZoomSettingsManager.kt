@@ -5,10 +5,10 @@ import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
+import ai.rever.boss.utils.atomicWriteText
 
 /**
  * Per-domain zoom settings for a website.
@@ -44,6 +44,7 @@ object BrowserZoomSettingsManager {
             ignoreUnknownKeys = true
         }
 
+    private val writeLock = Any()
     private var settings = BrowserZoomSettingsData()
 
     init {
@@ -102,7 +103,23 @@ object BrowserZoomSettingsManager {
             }
         } catch (e: Exception) {
             logger.warn(LogCategory.BROWSER, "Error loading zoom settings", error = e)
+            try {
+                if (settingsFile.exists()) {
+                    val timestamp = System.currentTimeMillis()
+                    val corruptedFile = File(settingsFile.absolutePath + ".corrupted." + timestamp)
+                    val renamed = settingsFile.renameTo(corruptedFile)
+                    if (!renamed) {
+                        settingsFile.copyTo(corruptedFile, overwrite = true)
+                        settingsFile.delete()
+                    }
+                    logger.info(LogCategory.BROWSER, "Renamed corrupted zoom settings aside to ${corruptedFile.name}")
+                }
+            } catch (backupErr: Exception) {
+                logger.warn(LogCategory.BROWSER, "Could not back up corrupted zoom settings", error = backupErr)
+                settingsFile.delete()
+            }
             settings = BrowserZoomSettingsData()
+            saveSettingsSync()
         }
     }
 
@@ -111,11 +128,13 @@ object BrowserZoomSettingsManager {
      */
     suspend fun saveSettings() {
         withContext(Dispatchers.IO) {
-            try {
-                settingsFile.parentFile?.mkdirs()
-                settingsFile.writeText(json.encodeToString(settings))
-            } catch (e: Exception) {
-                logger.warn(LogCategory.BROWSER, "Error saving zoom settings", error = e)
+            synchronized(writeLock) {
+                try {
+                    settingsFile.parentFile?.mkdirs()
+                    settingsFile.atomicWriteText(json.encodeToString(settings))
+                } catch (e: Exception) {
+                    logger.warn(LogCategory.BROWSER, "Error saving zoom settings", error = e)
+                }
             }
         }
     }
@@ -124,11 +143,13 @@ object BrowserZoomSettingsManager {
      * Save settings synchronously (for use in non-coroutine contexts).
      */
     fun saveSettingsSync() {
-        try {
-            settingsFile.parentFile?.mkdirs()
-            settingsFile.writeText(json.encodeToString(settings))
-        } catch (e: Exception) {
-            logger.warn(LogCategory.BROWSER, "Error saving zoom settings (sync)", error = e)
+        synchronized(writeLock) {
+            try {
+                settingsFile.parentFile?.mkdirs()
+                settingsFile.atomicWriteText(json.encodeToString(settings))
+            } catch (e: Exception) {
+                logger.warn(LogCategory.BROWSER, "Error saving zoom settings (sync)", error = e)
+            }
         }
     }
 
