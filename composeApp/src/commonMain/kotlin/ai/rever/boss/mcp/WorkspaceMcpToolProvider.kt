@@ -1,6 +1,7 @@
 package ai.rever.boss.mcp
 
 import ai.rever.boss.cli.CLISecurityValidator
+import ai.rever.boss.components.window_panel.SplitNode
 import ai.rever.boss.components.window_panel.SplitViewState
 import ai.rever.boss.components.window_panel.SplitViewStateRegistry
 import ai.rever.boss.components.workspaces.LayoutWorkspace
@@ -77,6 +78,9 @@ object WorkspaceMcpToolProvider : McpToolProvider {
 
     /** Panel id of the terminal panel the bootstrap Space builds. */
     const val BOOTSTRAP_PANEL_ID = "panel-open-workspace"
+
+    /** The read-only panel discovery tool; its bare name, exposed to clients as `mcp__boss__list_panels`. */
+    internal const val LIST_PANELS_TOOL = "list_panels"
 
     /** Id prefix of disposable workspaces minted by this tool; only these may be file-deleted. */
     internal const val DISPOSABLE_ID_PREFIX = "workspace-disposable-"
@@ -186,6 +190,7 @@ object WorkspaceMcpToolProvider : McpToolProvider {
         listOf(
             createListWorkspacesTool("list_workspaces"),
             createListWorkspacesTool("workspace_list"),
+            createListPanelsTool(),
             createOpenWorkspaceTool("open_workspace"),
             createOpenWorkspaceTool("workspace_open"),
             createCreateWorkspaceTool("create_workspace"),
@@ -210,6 +215,35 @@ object WorkspaceMcpToolProvider : McpToolProvider {
                 }
                 """.trimIndent(),
             handler = McpToolHandler { args -> handleListWorkspaces(args) },
+        )
+
+    private fun createListPanelsTool(): McpToolDefinition =
+        McpToolDefinition(
+            name = LIST_PANELS_TOOL,
+            description =
+                "Discovers open panels, tab titles, panel IDs, and layout positions across the active or " +
+                    "specified workspace. Use this to find target panel IDs before calling run_in_panel. " +
+                    "Panel IDs are scoped to their workspace; those of a workspace that is running but not " +
+                    "on screen (onScreen=false) may not resolve until that workspace is opened.",
+            inputSchema =
+                """
+                {
+                    "type": "object",
+                    "properties": {
+                        "workspaceId": {
+                            "type": "string",
+                            "description": "Optional workspace ID to inspect. Defaults to the active workspace if omitted."
+                        },
+                        "windowId": {
+                            "type": "string",
+                            "description": "Optional window ID. Required only to pick a window when several are open and workspaceId is omitted."
+                        }
+                    },
+                    "additionalProperties": false
+                }
+                """.trimIndent(),
+            handler = McpToolHandler { args -> handleListPanels(args) },
+            readOnly = true,
         )
 
     private fun createOpenWorkspaceTool(name: String): McpToolDefinition =
@@ -395,6 +429,188 @@ object WorkspaceMcpToolProvider : McpToolProvider {
 
         return McpToolResult(response.toString())
     }
+
+    /**
+     * Read-only view of the panels one workspace is running: ids, what each pane is called, its
+     * tabs, which pane is active, and the split tree they sit in.
+     *
+     * Targeting follows list_workspaces' read-only rule - it never creates a window. An explicit
+     * workspaceId is looked up across every open window (a window runs several workspaces at once,
+     * see [SplitViewState.liveWorkspaceIds]); an omitted one means the workspace on screen in the
+     * only open window. Nothing running to describe is an empty panel list, not an error; the one
+     * error is ambiguity, since guessing a window would describe panels the caller did not ask for.
+     */
+    @Suppress("ReturnCount")
+    private suspend fun handleListPanels(args: McpToolArgs): McpToolResult {
+        val requestedWorkspaceId = args.string("workspaceId")?.takeIf { it.isNotBlank() }
+        val requestedWindowId = args.string("windowId")?.takeIf { it.isNotBlank() }
+        if (requestedWorkspaceId != null && !isSafeWorkspaceId(requestedWorkspaceId)) {
+            return McpToolResult("Invalid workspaceId: expected an identifier, not a path", isError = true)
+        }
+
+        val windows: Map<String, SplitViewState> =
+            if (requestedWindowId != null) {
+                val state =
+                    splitViewStateResolver?.invoke(requestedWindowId)
+                        ?: SplitViewStateRegistry.getState(requestedWindowId)
+                        ?: return McpToolResult(
+                            "Target window '$requestedWindowId' is not registered or has been closed. " +
+                                "Open windows: ${openWindowIds()}",
+                            isError = true,
+                        )
+                mapOf(requestedWindowId to state)
+            } else {
+                SplitViewStateRegistry.getAllStates()
+            }
+
+        if (requestedWorkspaceId == null && windows.size > 1) {
+            return McpToolResult(
+                "Multiple windows are open (${windows.keys.joinToString(", ")}). " +
+                    "Pass 'windowId' or 'workspaceId' to choose which panels to list.",
+                isError = true,
+            )
+        }
+
+        val payload =
+            withContext(Dispatchers.Main) {
+                val target =
+                    windows.entries.firstOrNull { (_, state) ->
+                        val workspaceId = requestedWorkspaceId ?: state.currentWorkspaceId
+                        workspaceId != null && workspaceId in state.liveWorkspaceIds
+                    }
+                if (target == null) {
+                    emptyPanelsPayload(requestedWorkspaceId ?: windows.values.singleOrNull()?.currentWorkspaceId)
+                } else {
+                    val workspaceId = requireNotNull(requestedWorkspaceId ?: target.value.currentWorkspaceId)
+                    describePanels(target.key, target.value, workspaceId)
+                }
+            }
+        return McpToolResult(payload.toString())
+    }
+
+    private fun openWindowIds(): String =
+        SplitViewStateRegistry
+            .getAllStates()
+            .keys
+            .joinToString(", ")
+            .ifEmpty { "(none)" }
+
+    /** The reply when there is nothing running to describe: success, and an empty panel list. */
+    private fun emptyPanelsPayload(workspaceId: String?): JsonObject =
+        buildJsonObject {
+            put("success", true)
+            put("workspaceId", workspaceId)
+            put("running", false)
+            put("panels", JsonArray(emptyList()))
+        }
+
+    /**
+     * Describe [workspaceId] as [state] is running it. Reads Compose and Decompose state, so the
+     * caller runs it on Main.
+     *
+     * Pane positions come from [SplitViewState.collectAllActiveTabs], whose `splitPosition` is the
+     * name the window's vertical tab bar prints on that pane's header - so an agent and the user
+     * call a pane the same thing. It is null for a lone pane, where there is nothing to tell apart.
+     */
+    private fun describePanels(
+        windowId: String,
+        state: SplitViewState,
+        workspaceId: String,
+    ): JsonObject {
+        val panels = state.panelsInWorkspace(workspaceId)
+        val activePanelId = state.activePanelIdForWorkspace(workspaceId)
+        val activeTabs = state.collectAllActiveTabs(workspaceManager, windowId).filter { it.workspaceId == workspaceId }
+        val positions = activeTabs.associate { it.panelId to it.splitPosition }
+        val workspaceName =
+            activeTabs.firstOrNull()?.workspaceName
+                ?: workspaceManager.workspaces.value
+                    .firstOrNull { it.id == workspaceId }
+                    ?.name
+        val root = state.runningWorkspaces().firstOrNull { it.workspaceId == workspaceId }?.rootNode
+
+        return buildJsonObject {
+            put("success", true)
+            put("windowId", windowId)
+            put("workspaceId", workspaceId)
+            put("workspaceName", workspaceName)
+            put("running", true)
+            put("onScreen", state.currentWorkspaceId == workspaceId)
+            put("activePanelId", activePanelId)
+            if (root != null) {
+                put("layout", layoutJson(root))
+            }
+            put(
+                "panels",
+                buildJsonArray {
+                    panels.forEach { panel ->
+                        add(panelJson(panel, positions[panel.id], isActive = panel.id == activePanelId))
+                    }
+                },
+            )
+        }
+    }
+
+    private fun panelJson(
+        panel: SplitNode.Panel,
+        position: String?,
+        isActive: Boolean,
+    ): JsonObject {
+        val tabsState = panel.tabsComponent.tabsState.value
+        val activeTab = tabsState.activeTab
+        return buildJsonObject {
+            put("panelId", panel.id)
+            put("position", position)
+            put("isActive", isActive)
+            put("kind", activeTab?.let { panelKind(it.typeId.typeId) } ?: "empty")
+            put("activeTabId", activeTab?.id)
+            put("tabCount", tabsState.tabs.size)
+            put(
+                "tabs",
+                buildJsonArray {
+                    tabsState.tabs.forEachIndexed { index, tab ->
+                        add(
+                            buildJsonObject {
+                                put("id", tab.id)
+                                put("title", tab.title)
+                                put("type", tab.typeId.typeId)
+                                put("isActive", index == tabsState.activeIndex)
+                            },
+                        )
+                    }
+                },
+            )
+        }
+    }
+
+    /** A tab type id in the words an agent looks for; the browser registers itself as "fluck". */
+    private fun panelKind(typeId: String): String = if (typeId == "fluck") "browser" else typeId
+
+    /** The split tree as nested JSON: which panes sit beside or above which. */
+    private fun layoutJson(node: SplitNode): JsonObject =
+        when (node) {
+            is SplitNode.Panel -> {
+                buildJsonObject {
+                    put("type", "panel")
+                    put("panelId", node.id)
+                }
+            }
+
+            is SplitNode.VerticalSplit -> {
+                buildJsonObject {
+                    put("type", "vertical")
+                    put("left", layoutJson(node.left))
+                    put("right", layoutJson(node.right))
+                }
+            }
+
+            is SplitNode.HorizontalSplit -> {
+                buildJsonObject {
+                    put("type", "horizontal")
+                    put("top", layoutJson(node.top))
+                    put("bottom", layoutJson(node.bottom))
+                }
+            }
+        }
 
     @Suppress("CyclomaticComplexMethod", "LongMethod", "ReturnCount")
     private suspend fun handleOpenWorkspace(args: McpToolArgs): McpToolResult {

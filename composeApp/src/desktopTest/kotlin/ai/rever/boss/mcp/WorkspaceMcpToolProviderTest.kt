@@ -166,6 +166,7 @@ class WorkspaceMcpToolProviderTest {
         val tools = WorkspaceMcpToolProvider.tools().map { it.name }.toSet()
         assertTrue(tools.contains("list_workspaces"))
         assertTrue(tools.contains("workspace_list"))
+        assertTrue(tools.contains("list_panels"))
         assertTrue(tools.contains("open_workspace"))
         assertTrue(tools.contains("workspace_open"))
         assertTrue(tools.contains("create_workspace"))
@@ -923,6 +924,164 @@ class WorkspaceMcpToolProviderTest {
 
             // A user's saved Space whose id merely contains "disposable" survives.
             assertNotNull(fileManager.loadWorkspace(WorkspaceFileManagerCommon.fileNameForId("disposable-env")))
+        }
+
+    // ------------------------------------------------------------------
+    // list_panels
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `list_panels is a registered read-only tool with an object schema`() {
+        val tool = WorkspaceMcpToolProvider.tools().single { it.name == "list_panels" }
+        assertTrue(tool.readOnly, "list_panels must declare readOnly")
+        assertFalse(McpMutatingToolCatalog.isMutating(tool.name, declaredReadOnly = tool.readOnly))
+
+        val schema = Json.parseToJsonElement(tool.inputSchema).jsonObject
+        assertEquals("object", schema["type"]?.jsonPrimitive?.content)
+        assertEquals(false, schema["additionalProperties"]?.jsonPrimitive?.booleanOrNull)
+        val properties = schema["properties"]!!.jsonObject
+        assertEquals("string", properties["workspaceId"]!!.jsonObject["type"]?.jsonPrimitive?.content)
+
+        val registeredNames =
+            McpToolRegistryImpl.allTools.value
+                .map { it.definition.name }
+                .toSet()
+        assertTrue(registeredNames.contains("list_panels"))
+    }
+
+    @Test
+    fun `list_panels with no window open returns an empty list without creating one`() =
+        runBlocking {
+            val result = createTestCore().invoke("list_panels", "{}")
+            assertFalse(result.isError, result.text)
+
+            val json = Json.parseToJsonElement(result.text).jsonObject
+            assertTrue(json["success"]?.jsonPrimitive?.booleanOrNull == true)
+            assertEquals(false, json["running"]?.jsonPrimitive?.booleanOrNull)
+            assertTrue(json["panels"]!!.jsonArray.isEmpty())
+            assertEquals(0, windowCreatorCalls, "list_panels must not create a window")
+        }
+
+    @Test
+    fun `list_panels defaults to the workspace on screen and returns live panel ids`() =
+        runBlocking {
+            val windowId = "list-panels-window"
+            val state = SplitViewState(stubTabRegistry, windowId)
+            createdSplitViewStates.add(state)
+            SplitViewStateRegistry.register(windowId, state)
+
+            val core = createTestCore()
+            val open =
+                core.invoke(
+                    "open_workspace",
+                    """{"workspaceId":"${PredefinedWorkspaces.DUAL_TERMINAL_ID}","windowId":"$windowId"}""",
+                )
+            assertFalse(open.isError, open.text)
+
+            val result = core.invoke("list_panels", "{}")
+            assertFalse(result.isError, result.text)
+            val json = Json.parseToJsonElement(result.text).jsonObject
+            assertEquals(windowId, json["windowId"]?.jsonPrimitive?.content)
+            assertEquals(PredefinedWorkspaces.DUAL_TERMINAL_ID, json["workspaceId"]?.jsonPrimitive?.content)
+            assertEquals(true, json["onScreen"]?.jsonPrimitive?.booleanOrNull)
+            assertEquals("vertical", json["layout"]!!.jsonObject["type"]?.jsonPrimitive?.content)
+
+            val panels = json["panels"]!!.jsonArray.map { it.jsonObject }
+            assertEquals(2, panels.size, result.text)
+            // Every id addresses a panel in the live tree - the property run_in_panel depends on.
+            panels.forEach { panel ->
+                assertNotNull(state.getPanel(panel["panelId"]!!.jsonPrimitive.content), result.text)
+                assertEquals("terminal", panel["kind"]?.jsonPrimitive?.content)
+                assertTrue(panel["tabs"]!!.jsonArray.isNotEmpty())
+            }
+            assertEquals(1, panels.count { it["isActive"]?.jsonPrimitive?.booleanOrNull == true })
+            assertEquals(
+                state.activePanelIdForWorkspace(PredefinedWorkspaces.DUAL_TERMINAL_ID),
+                json["activePanelId"]?.jsonPrimitive?.content,
+            )
+            // Two panes, so each has a position, and no two are called the same thing.
+            val positions = panels.map { it["position"]?.jsonPrimitive?.content }
+            assertTrue(positions.all { it != null }, "$positions")
+            assertEquals(positions.size, positions.toSet().size, "$positions")
+        }
+
+    @Test
+    fun `list_panels with a workspaceId describes a running workspace that is not on screen`() =
+        runBlocking {
+            val windowId = "list-panels-preserved-window"
+            val state = SplitViewState(stubTabRegistry, windowId)
+            createdSplitViewStates.add(state)
+            SplitViewStateRegistry.register(windowId, state)
+
+            val core = createTestCore()
+            val openDual =
+                core.invoke(
+                    "open_workspace",
+                    """{"workspaceId":"${PredefinedWorkspaces.DUAL_TERMINAL_ID}","windowId":"$windowId"}""",
+                )
+            assertFalse(openDual.isError, openDual.text)
+            // Switching to a second Space keeps Dual Terminal running behind it.
+            val project = Files.createTempDirectory("list-panels-project").toFile()
+            tempDirs.add(project)
+            val openPath =
+                core.invoke(
+                    "open_workspace",
+                    """{"path":"${project.absolutePath.replace('\\', '/')}","windowId":"$windowId"}""",
+                )
+            assertFalse(openPath.isError, openPath.text)
+
+            val result =
+                core.invoke("list_panels", """{"workspaceId":"${PredefinedWorkspaces.DUAL_TERMINAL_ID}"}""")
+            assertFalse(result.isError, result.text)
+            val json = Json.parseToJsonElement(result.text).jsonObject
+            assertEquals(PredefinedWorkspaces.DUAL_TERMINAL_ID, json["workspaceId"]?.jsonPrimitive?.content)
+            assertEquals(false, json["onScreen"]?.jsonPrimitive?.booleanOrNull)
+            val positions =
+                json["panels"]!!.jsonArray.map { it.jsonObject["position"]?.jsonPrimitive?.content }
+            assertEquals(listOf("Left", "Right"), positions, result.text)
+
+            // The default is still the workspace on screen, which is the one just opened.
+            val onScreen = Json.parseToJsonElement(core.invoke("list_panels", "{}").text).jsonObject
+            assertEquals(state.currentWorkspaceId, onScreen["workspaceId"]?.jsonPrimitive?.content)
+            assertEquals(1, onScreen["panels"]!!.jsonArray.size)
+        }
+
+    @Test
+    fun `list_panels for a workspace that is not running returns an empty list`() =
+        runBlocking {
+            val windowId = "list-panels-idle-window"
+            val state = SplitViewState(stubTabRegistry, windowId)
+            createdSplitViewStates.add(state)
+            SplitViewStateRegistry.register(windowId, state)
+
+            val result = createTestCore().invoke("list_panels", """{"workspaceId":"no-such-space"}""")
+            assertFalse(result.isError, result.text)
+            val json = Json.parseToJsonElement(result.text).jsonObject
+            assertEquals("no-such-space", json["workspaceId"]?.jsonPrimitive?.content)
+            assertEquals(false, json["running"]?.jsonPrimitive?.booleanOrNull)
+            assertTrue(json["panels"]!!.jsonArray.isEmpty())
+        }
+
+    @Test
+    fun `list_panels refuses to guess between several windows`() =
+        runBlocking {
+            listOf("list-panels-multi-1", "list-panels-multi-2").forEach { id ->
+                val state = SplitViewState(TabRegistry(), id)
+                createdSplitViewStates.add(state)
+                SplitViewStateRegistry.register(id, state)
+            }
+            val core = createTestCore()
+
+            val ambiguous = core.invoke("list_panels", "{}")
+            assertTrue(ambiguous.isError)
+            assertTrue(ambiguous.text.contains("Multiple windows are open"), ambiguous.text)
+
+            val explicit = core.invoke("list_panels", """{"windowId":"list-panels-multi-1"}""")
+            assertFalse(explicit.isError, explicit.text)
+
+            val unknown = core.invoke("list_panels", """{"windowId":"no-such-window"}""")
+            assertTrue(unknown.isError)
+            assertTrue(unknown.text.contains("not registered"), unknown.text)
         }
 
     private fun savedSpaceFixture(
