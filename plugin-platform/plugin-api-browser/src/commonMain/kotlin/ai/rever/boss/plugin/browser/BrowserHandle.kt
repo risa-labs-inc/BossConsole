@@ -244,6 +244,24 @@ interface BrowserHandle {
     val hasPendingBrowserCall: Boolean get() = false
 
     /**
+     * Suspend until [hasPendingBrowserCall] reads false, or until [timeoutMs] elapses. Returns
+     * whether it observed the handle idle.
+     *
+     * The waiting form of [hasPendingBrowserCall], for teardown code that would otherwise poll it
+     * by hand. Same weakness, and for the same reason: work can be admitted the instant after the
+     * read, so a true result is not a lock and a false one is not proof that anything is still
+     * running. Use it to defer a teardown or to record why one went ahead regardless.
+     *
+     * Not a substitute for [dispose], which remains the correct call: the host stops admission and
+     * drains its own workers before native close, independently of this. Nothing here can interrupt
+     * a call already inside the browser, which has no interruption point.
+     *
+     * Default true for implementations without tracked workers, matching
+     * [hasPendingBrowserCall]'s default of false.
+     */
+    suspend fun awaitBrowserCallsQuiescent(timeoutMs: Long = 2_000L): Boolean = true
+
+    /**
      * Get the current URL.
      *
      * @return The current URL, or empty string if invalid

@@ -9,6 +9,7 @@ import kotlinx.coroutines.ExecutorCoroutineDispatcher
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -251,4 +252,41 @@ internal class BoundedBrowserCall(
          */
         const val DEFAULT_TIMEOUT_MS = 10_000L
     }
+}
+
+/**
+ * Wait until [hasPending] reports nothing outstanding, or until [timeoutMs] elapses.
+ *
+ * The "await" half of BossConsole#300. A snapshot read answers "is anything in there right now";
+ * a teardown path wants "tell me when there is not", and polling that snapshot in a loop is what
+ * every caller would otherwise write for itself.
+ *
+ * **Polled rather than signalled, deliberately.** `DrainingBrowserExecutor.awaitDrained` is a
+ * termination signal: it completes from `terminated()`, so it answers only after `shutdown()` and
+ * never for a live handle that is merely busy. Building a second, edge-triggered signal for the
+ * live case would also promise more than the underlying count can deliver, since that count is
+ * documented as a snapshot that admission and completion race. A poll makes the weakness visible
+ * instead of hiding it behind a signal that looks authoritative.
+ *
+ * Returns true when it observed nothing outstanding, false when the deadline passed first. False
+ * is not "still running" with any certainty, and true is not a lock: work can be admitted the
+ * instant after either read. It is enough to defer a teardown or to log why one went ahead anyway,
+ * which is what the issue asks for. Nothing here can interrupt a call already inside the native
+ * layer, because that call has no interruption point.
+ *
+ * Cancellation propagates: the wait is [delay], so a caller that gives up stops waiting at once.
+ */
+internal suspend fun awaitQuiescent(
+    timeoutMs: Long,
+    pollMs: Long,
+    hasPending: () -> Boolean,
+): Boolean {
+    // Answer without suspending when there is nothing to wait for, so the common teardown path
+    // neither dispatches nor sleeps a single poll interval.
+    if (!hasPending()) return true
+    val interval = pollMs.coerceAtLeast(1)
+    return withTimeoutOrNull(timeoutMs) {
+        while (hasPending()) delay(interval)
+        true
+    } ?: false
 }
