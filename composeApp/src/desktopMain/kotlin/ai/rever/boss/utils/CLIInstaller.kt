@@ -346,35 +346,101 @@ actual object CLIInstaller {
     }
 
     /**
-     * Update Windows PATH environment variable
+     * Merge the bin directory into the user-scope PATH (#1058): appended once,
+     * never duplicated, and never mixing system-scope entries into user scope.
      */
-    private fun updateWindowsPath(binPath: String): Boolean {
-        return try {
-            // Use setx command to update user PATH
-            val currentPath = System.getenv("PATH") ?: ""
+    internal fun mergeUserPath(
+        currentUserScopePath: String,
+        binPath: String,
+    ): String {
+        val existing = currentUserScopePath.trim()
+        val normalizedBin = normalizePathEntry(binPath)
+        val entries = existing.split(';').map(::normalizePathEntry).filter { it.isNotEmpty() }
+        return when {
+            entries.isEmpty() -> normalizedBin
+            entries.any { it.equals(normalizedBin, ignoreCase = true) } -> existing
+            else -> (entries + normalizedBin).joinToString(";")
+        }
+    }
 
-            // Check if already in PATH
-            if (currentPath.contains(binPath)) {
-                return true
-            }
+    private fun normalizePathEntry(entry: String): String = entry.trim().trimEnd('\\')
 
-            // Use setx to add to PATH
+    /**
+     * Read the USER-scope Path (not the merged system+user view) so we never
+     * copy system entries into user scope, and never write a value setx would
+     * silently truncate at 1024 characters.
+     */
+    private fun readUserScopePath(): String? =
+        runCatching {
             val process =
                 ProcessBuilder(
-                    "cmd",
-                    "/c",
-                    "setx",
-                    "PATH",
-                    "$binPath;%PATH%",
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    "[Environment]::GetEnvironmentVariable('Path', 'User')",
                 ).start()
+            val finished = process.waitFor(15, java.util.concurrent.TimeUnit.SECONDS)
+            when {
+                !finished -> {
+                    process.destroyForcibly()
+                    null
+                }
 
-            process.waitFor()
-            process.exitValue() == 0
+                process.exitValue() != 0 -> {
+                    null
+                }
+
+                else -> {
+                    process
+                        .inputStream
+                        .bufferedReader()
+                        .readText()
+                        .trim()
+                        .ifEmpty { null }
+                }
+            }
+        }.getOrNull()
+
+    /**
+     * Write the user-scope Path via .NET (no 1024-char setx truncation, keeps
+     * REG_EXPAND_SZ semantics). Returns false on failure - never a silent
+     * partial write reported as success.
+     */
+    private fun writeUserScopePath(merged: String): Boolean =
+        runCatching {
+            val process =
+                ProcessBuilder(
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    "[Environment]::SetEnvironmentVariable(" +
+                        "'Path', [Environment]::GetEnvironmentVariable('BOSS_MERGED_USER_PATH'), 'User')",
+                ).apply { environment()["BOSS_MERGED_USER_PATH"] = merged }.start()
+            process.waitFor(15, java.util.concurrent.TimeUnit.SECONDS) && process.exitValue() == 0
+        }.getOrDefault(false)
+
+    /**
+     * Update the user-scope PATH environment variable (#1058): the old
+     * `setx PATH "%bin%;%PATH%"` wrote the combined system+user PATH into
+     * user scope and silently truncated at 1024 chars (exit code 0).
+     */
+    private fun updateWindowsPath(binPath: String): Boolean =
+        try {
+            val userScopePath = readUserScopePath()
+            when {
+                userScopePath == null -> {
+                    false
+                }
+
+                else -> {
+                    val merged = mergeUserPath(userScopePath, binPath)
+                    merged == userScopePath.trim() || writeUserScopePath(merged)
+                }
+            }
         } catch (e: Exception) {
             logger.warn(LogCategory.SYSTEM, "Failed to update Windows PATH", error = e)
             false
         }
-    }
 
     private data class ShellConfigResult(
         val success: Boolean,
