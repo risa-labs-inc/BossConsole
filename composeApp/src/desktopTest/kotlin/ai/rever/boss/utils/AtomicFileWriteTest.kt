@@ -11,6 +11,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -198,5 +200,45 @@ class AtomicFileWriteTest {
             Regex("writer-\\d+-round-\\d+").matches(published),
             "expected one writer's whole snapshot, got torn bytes: <$published>",
         )
+    }
+
+    @Test
+    fun `backupCorrupt creates timestamped backup and removes original file`() {
+        val target = File(tempDir, "broken-settings.json")
+        target.writeText("{ invalid json }")
+
+        val backup = target.backupCorrupt()
+
+        assertNotNull(backup)
+        assertFalse(target.exists(), "Original file should have been moved")
+        assertTrue(backup.exists(), "Backup file should exist")
+        assertTrue(backup.name.startsWith("broken-settings.json.corrupt-"))
+        assertEquals("{ invalid json }", backup.readText())
+    }
+
+    @Test
+    fun `backupCorrupt returns null when target does not exist or is empty`() {
+        val missing = File(tempDir, "does-not-exist.json")
+        assertNull(missing.backupCorrupt())
+
+        val empty = File(tempDir, "empty.json").apply { writeText("") }
+        assertNull(empty.backupCorrupt())
+    }
+
+    @Test
+    fun `backupCorrupt handles filename collisions within same millisecond`() {
+        val target = File(tempDir, "collision-settings.json")
+        target.writeText("first-broken")
+        val backup1 = target.backupCorrupt()
+        assertNotNull(backup1)
+
+        target.writeText("second-broken")
+        val backup2 = target.backupCorrupt()
+        assertNotNull(backup2)
+
+        assertTrue(backup1.exists())
+        assertTrue(backup2.exists())
+        assertEquals("first-broken", backup1.readText())
+        assertEquals("second-broken", backup2.readText())
     }
 }

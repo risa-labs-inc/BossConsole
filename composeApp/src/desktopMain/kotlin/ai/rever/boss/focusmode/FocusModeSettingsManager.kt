@@ -1,8 +1,11 @@
 package ai.rever.boss.focusmode
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
+import ai.rever.boss.utils.backupCorrupt
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -69,13 +72,16 @@ actual object FocusModeSettingsManager {
                 // Save default settings to file
                 try {
                     val content = json.encodeToString(FocusModeSettings.serializer(), defaultSettings)
-                    settingsFile.writeText(content)
+                    settingsFile.atomicWriteText(content)
                     logger.debug(LogCategory.SYSTEM, "Created default settings file", mapOf("path" to settingsFile.absolutePath))
                 } catch (e: Exception) {
                     logger.warn(LogCategory.SYSTEM, "Could not write default settings file", error = e)
                 }
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
+            settingsFile.backupCorrupt(logger, LogCategory.SYSTEM, e)
             logger.warn(LogCategory.SYSTEM, "Failed to load settings, falling back to defaults", error = e)
             _currentSettings.value = platformDefaults
         }
@@ -88,7 +94,7 @@ actual object FocusModeSettingsManager {
         withContext(Dispatchers.IO) {
             try {
                 val content = json.encodeToString(FocusModeSettings.serializer(), _currentSettings.value)
-                settingsFile.writeText(content)
+                settingsFile.atomicWriteText(content)
                 logger.debug(LogCategory.SYSTEM, "Settings saved", mapOf("path" to settingsFile.absolutePath))
             } catch (e: Exception) {
                 logger.warn(LogCategory.SYSTEM, "Failed to save settings", error = e)

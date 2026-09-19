@@ -1,5 +1,7 @@
 package ai.rever.boss.html
 
+import ai.rever.boss.utils.atomicWriteText
+import ai.rever.boss.utils.backupCorrupt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -40,7 +42,7 @@ internal class HtmlFileSettingsStore(
                 if (settings != null) state.value = settings
                 try {
                     file.parentFile?.mkdirs()
-                    file.writeText(json.encodeToString(HtmlFileSettings.serializer(), state.value))
+                    file.atomicWriteText(json.encodeToString(HtmlFileSettings.serializer(), state.value))
                 } catch (e: IOException) {
                     onFailure(e)
                 } catch (e: SecurityException) {
@@ -54,10 +56,12 @@ internal class HtmlFileSettingsStore(
         try {
             if (file.exists()) state.value = json.decodeFromString<HtmlFileSettings>(file.readText())
         } catch (e: IOException) {
+            file.backupCorrupt(error = e)
             onFailure(e)
         } catch (e: SecurityException) {
             onFailure(e)
         } catch (e: IllegalArgumentException) {
+            file.backupCorrupt(error = e)
             onFailure(e)
         }
         loaded = true

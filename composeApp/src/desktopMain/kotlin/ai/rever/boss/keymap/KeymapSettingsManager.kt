@@ -9,9 +9,11 @@ import ai.rever.boss.keymap.presets.KeymapPresets.claimsChord
 import ai.rever.boss.keymap.presets.KeymapPresets.withoutChordsTakenBy
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.atomicWriteText
+import ai.rever.boss.utils.backupCorrupt
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.ComponentLogger
 import ai.rever.boss.utils.logging.LogCategory
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -104,7 +106,10 @@ actual object KeymapSettingsManager {
                     logger.warn(LogCategory.SYSTEM, "Could not write default keymap settings file", error = e)
                 }
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
+            settingsFile.backupCorrupt(logger, LogCategory.SYSTEM, e)
             logger.error(LogCategory.SYSTEM, "Failed to load keymap settings, using defaults", error = e)
             _currentSettings.value = KeymapPresets.getBOSSDefault()
         }

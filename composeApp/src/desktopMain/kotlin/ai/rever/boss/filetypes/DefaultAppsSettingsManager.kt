@@ -1,8 +1,11 @@
 package ai.rever.boss.filetypes
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
+import ai.rever.boss.utils.backupCorrupt
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -105,7 +108,10 @@ internal object DefaultAppsSettingsManager {
                 "Loaded default-apps settings",
                 mapOf("promptShown" to _settings.value.promptShown),
             )
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
+            settingsFile.backupCorrupt(logger, LogCategory.SYSTEM, e)
             // Defaults, which means the prompt may be offered again. Better than
             // the alternative failure direction: a corrupt file that silently
             // suppressed the offer forever would leave no way to discover the
@@ -150,7 +156,7 @@ internal object DefaultAppsSettingsManager {
         withContext(Dispatchers.IO) {
             try {
                 settingsFile.parentFile?.mkdirs()
-                settingsFile.writeText(json.encodeToString(DefaultAppsSettings.serializer(), _settings.value))
+                settingsFile.atomicWriteText(json.encodeToString(DefaultAppsSettings.serializer(), _settings.value))
             } catch (e: Exception) {
                 // Logged, not surfaced: the decision has already taken effect in
                 // this session, and the only consequence of a failed write is

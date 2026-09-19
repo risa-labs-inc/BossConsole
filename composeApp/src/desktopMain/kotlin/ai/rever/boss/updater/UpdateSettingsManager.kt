@@ -1,8 +1,11 @@
 package ai.rever.boss.updater
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
+import ai.rever.boss.utils.backupCorrupt
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -140,7 +143,10 @@ actual object UpdateSettingsManager {
             } else {
                 logger.debug(LogCategory.SYSTEM, "No saved update settings found, using defaults")
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
+            settingsFile.backupCorrupt(logger, LogCategory.SYSTEM, e)
             logger.warn(LogCategory.SYSTEM, "Failed to load update settings", error = e)
             // Continue with defaults
         }
@@ -164,7 +170,7 @@ actual object UpdateSettingsManager {
                         )
 
                     val content = json.encodeToString(UpdateSettingsData.serializer(), settings)
-                    settingsFile.writeText(content)
+                    settingsFile.atomicWriteText(content)
 
                     logger.debug(
                         LogCategory.SYSTEM,
