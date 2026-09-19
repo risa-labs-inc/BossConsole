@@ -366,8 +366,18 @@ jobs:
           echo "ℹ️  docs/release-notes/v${VERSION}.md not on origin/main yet; keeping GitHub release body"
         fi
 
+        # Read floors from the artifact's tag, never the workflow checkout. A
+        # historical re-sync must not assign today's requirements to an old build.
+        MINIMUM_OS_FILE=""
+        git rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}" >/dev/null
+        if git cat-file -e "refs/tags/$RELEASE_TAG:gradle/minimum-os-versions.properties" 2>/dev/null; then
+          MINIMUM_OS_FILE="$RUNNER_TEMP/release-minimum-os.properties"
+          git show "refs/tags/$RELEASE_TAG:gradle/minimum-os-versions.properties" > "$MINIMUM_OS_FILE"
+        fi
+
         echo "📤 Publishing BOSS $VERSION (channel=$CHANNEL) to Supabase bucket '$BUCKET'"
-        bash scripts/publish-supabase-release.sh boss "$VERSION" "$CHANNEL" release-assets "$BUCKET"
+        bash scripts/publish-supabase-release.sh \
+          boss "$VERSION" "$CHANNEL" release-assets "$BUCKET" "$MINIMUM_OS_FILE"
 
     - name: Update public repository README
       env:

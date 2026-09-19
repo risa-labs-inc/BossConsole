@@ -923,6 +923,25 @@ does not exist on Central. `all` is safe - workspace-types publishes first. Boss
 durable guard: diffing public members against the api jar `plugin-api-core` already downloads,
 covering all eight duplicated packages rather than this one field.
 
+## Release OS floors have one source of truth
+
+`gradle/minimum-os-versions.properties` defines the minimum OS version for each packaged BOSS
+release. The Compose packaging configuration and `sync-release.yml` both consume this file, so do
+not duplicate a floor in Gradle or a workflow. Keep keys lowercase and limited to `macos`,
+`windows`, and `linux`; values contain one to three numeric components. Use `key=value` syntax only; `macos` is required
+by Gradle configuration. Only the macOS floor is currently published. Windows values must use
+the JVM OS version, not the marketing version (Windows 11 can report 10.0); do not publish
+a Windows build floor until a build-aware detector exists. Linux values describe the kernel,
+not the distro or glibc, and suffixed kernel releases currently fail open.
+
+The Supabase publisher stores these floors in `app_releases.min_os`. Updater selection must filter
+incompatible releases before choosing the highest version, including automatic checks, the version
+picker, and direct version details. Missing or malformed catalog metadata remains fail-open for
+legacy rows; installer bundle inspection is the final authority and must remain in place.
+
+Run `scripts/test/test-minimum-os.sh` after changing the catalog or publisher, and keep its workflow
+gate beside the other release-contract tests in `build.yml`.
+
 ## Build and Deployment
 
 **GitHub Actions**: `build.yml` (multi-platform tests), `release.yml` (signed builds)
