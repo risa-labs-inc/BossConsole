@@ -4,12 +4,25 @@ import { signVersionAnchor } from "../utils/signing.ts"
 
 /**
  * Get all versions of a plugin
+ *
+ * These rows carry jar_path and sha256 (the reason the migration gates them),
+ * so the detail page passes the viewer here exactly as it does for the plugin
+ * row itself: the service-role client makes the no-viewer variant answer for
+ * auth.uid() = NULL, hiding an organisation's own plugins from its members
+ * (issue #852).
  */
 export async function getPluginVersions(
   supabase: SupabaseClient,
-  pluginId: string
+  pluginId: string,
+  /** Who is asking, or null for an anonymous lookup. Mirrors listPlugins. */
+  viewerId: string | null = null
 ): Promise<PluginVersion[]> {
-  const { data, error } = await supabase
+  const { data, error } = viewerId
+    ? await supabase.rpc('get_plugin_versions_for_viewer', {
+      p_plugin_id: pluginId,
+      p_viewer_id: viewerId
+    })
+    : await supabase
     .rpc('get_plugin_versions', {
       p_plugin_id: pluginId
     })
