@@ -451,6 +451,14 @@ internal class McpToolRegistryCore(
      */
     private val _providers = MutableStateFlow<Map<String, List<McpToolDefinition>>>(emptyMap())
 
+    /**
+     * The providers whose tools may run commands their arguments do not show, by provider id
+     * (see [McpStoredCommandSource]). Written under [mutationLock] with [_providers]; read
+     * lock-free on every invocation.
+     */
+    @Volatile
+    private var storedCommandSources: Map<String, McpStoredCommandSource> = emptyMap()
+
     private val _all = MutableStateFlow<List<RegisteredMcpTool>>(emptyList())
     val allTools: StateFlow<List<RegisteredMcpTool>> = _all.asStateFlow()
 
@@ -525,6 +533,12 @@ internal class McpToolRegistryCore(
                 )
             }
             _providers.update { it + (provider.providerId to defs) }
+            storedCommandSources =
+                if (provider is McpStoredCommandSource) {
+                    storedCommandSources + (provider.providerId to provider)
+                } else {
+                    storedCommandSources - provider.providerId
+                }
             recompute()
         }
         logger.info(
@@ -538,6 +552,7 @@ internal class McpToolRegistryCore(
         synchronized(mutationLock) {
             if (!_providers.value.containsKey(providerId)) return@synchronized
             _providers.update { it - providerId }
+            storedCommandSources = storedCommandSources - providerId
             recompute()
             logger.info(
                 LogCategory.SYSTEM,
@@ -739,7 +754,8 @@ internal class McpToolRegistryCore(
     /** Mirrors host RBAC. The rule itself is [mcpToolPermitted], which is where it is tested. */
     private fun permitted(def: McpToolDefinition): Boolean = mcpToolPermitted(def, isAdmin, permissions)
 
-    @Suppress("LongMethod") // Keep authorization and execution inside the same cancellation audit boundary.
+    // Keep authorization and execution inside the same cancellation audit boundary.
+    @Suppress("LongMethod", "CyclomaticComplexMethod")
     suspend fun invoke(
         toolName: String,
         arguments: String,
@@ -747,19 +763,31 @@ internal class McpToolRegistryCore(
         val tool =
             _tools.value.firstOrNull { it.definition.name == toolName }
                 ?: return McpToolResult("Unknown or disabled MCP tool: $toolName", isError = true)
-        val args = parseArgs(arguments)
+        val source = storedCommandSources[tool.providerId]
+        // The approval key is the registry's to set and nobody else's: whatever the agent sent
+        // under it is dropped before the source, the policy, the prompt or the handler see it.
+        val args = parseArgs(arguments).let { if (source != null) it.withoutApprovedStoredCommands() else it }
         val revocation = policyEngine.revocationVersion(toolName, tool.providerId)
         // The definition's own readOnly declaration rides along on every policy consult for
         // this invocation: a tool that declared side effects classifies as mutating whatever
         // its name says (#804), so it gets the mutating default - ASK under the factory
         // config - rather than being auto-allowed for avoiding the catalog's name patterns.
-        val policy = policyEngine.policyFor(toolName, tool.providerId, tool.definition.readOnly)
+        val toolPolicy = policyEngine.policyFor(toolName, tool.providerId, tool.definition.readOnly)
         val startTime = System.nanoTime()
+        // Before the audit boundary: nothing here runs the tool, and a source that cannot answer
+        // is a refusal recorded like any other. A DENY-ed tool is never asked, so a source is
+        // consulted only for a call that could otherwise run.
+        val stored = previewStoredCommands(source, tool, args, toolPolicy)
+        // Commands the arguments do not show are approved by an operator who has read them, and
+        // by nobody else: not a tool ALLOW rule, not session trust, not provider trust.
+        val policy = stored.effectivePolicy(toolPolicy)
         var disposition = McpApprovalDisposition.AUTO_ALLOWED
         var result: McpToolResult? = null
         var executionStarted = false
         try {
-            val authorization = authorizeInvocation(tool, args, policy, revocation)
+            val authorization =
+                stored.refusal?.let { McpApprovalDisposition.POLICY_DENIED to it }
+                    ?: authorizeInvocation(tool, args, policy, revocation, stored.commands)
             disposition = authorization.first
             val denial = authorization.second
             result =
@@ -775,7 +803,7 @@ internal class McpToolRegistryCore(
 
                     else -> {
                         executionStarted = true
-                        executeAuthorized(tool, args)
+                        executeAuthorized(tool, args.withApprovedStoredCommands(stored.commands))
                     }
                 }
             return requireNotNull(result)
@@ -796,7 +824,10 @@ internal class McpToolRegistryCore(
                     approvalDisposition = disposition,
                     durationMs = (System.nanoTime() - startTime) / 1_000_000L,
                     isError = result?.isError ?: true,
-                    rawArgs = McpArgumentSanitizer.parseArguments(args.raw),
+                    // The arguments as the agent wrote them (minus a forged approval key), plus
+                    // the stored commands the operator was shown, under the key the handler
+                    // received them by, so the record says what was approved.
+                    rawArgs = McpArgumentSanitizer.parseArguments(args.raw) + stored.ledgerEntry(),
                     errorSnippet =
                         when {
                             result == null -> "Execution cancelled by caller"
@@ -810,6 +841,66 @@ internal class McpToolRegistryCore(
 
     private fun isAvailable(tool: RegisteredMcpTool): Boolean =
         _tools.value.any { it.providerId == tool.providerId && it.definition === tool.definition }
+
+    /** What a [McpStoredCommandSource] says this call would run, or why the call cannot proceed. */
+    private class StoredCommandsPreview(
+        val commands: List<String>,
+        val refusal: String? = null,
+    ) {
+        fun ledgerEntry(): Map<String, Any?> {
+            if (commands.isEmpty()) return emptyMap()
+            return mapOf(APPROVED_STORED_COMMANDS_KEY to commands)
+        }
+
+        /** ASK whatever the tool's rule or trust says, unless the tool is denied outright. */
+        fun effectivePolicy(toolPolicy: McpPolicyAction): McpPolicyAction =
+            if (commands.isNotEmpty() && toolPolicy != McpPolicyAction.DENY) McpPolicyAction.ASK else toolPolicy
+
+        companion object {
+            val NONE = StoredCommandsPreview(emptyList())
+        }
+    }
+
+    /**
+     * Ask the tool's [McpStoredCommandSource], if it has one, what this call would run beyond
+     * its arguments. Off the caller's dispatcher: a source reads operator-saved files. A source
+     * that throws, or names more than [MAX_STORED_COMMANDS_PER_CALL] commands, refuses the call
+     * before any prompt; an operator cannot approve what the host could not enumerate.
+     */
+    // A source that fails for any reason refuses the call; nothing else may run it.
+    @Suppress("TooGenericExceptionCaught", "ReturnCount")
+    private suspend fun previewStoredCommands(
+        source: McpStoredCommandSource?,
+        tool: RegisteredMcpTool,
+        args: McpToolArgs,
+        toolPolicy: McpPolicyAction,
+    ): StoredCommandsPreview {
+        if (source == null || toolPolicy == McpPolicyAction.DENY) return StoredCommandsPreview.NONE
+        val commands =
+            try {
+                withContext(Dispatchers.IO) { source.storedCommandsFor(tool.definition.name, args) }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (t: Throwable) {
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "MCP stored-command source failed; refusing the call",
+                    mapOf("tool" to tool.definition.name, "error" to (t.message ?: t::class.simpleName)),
+                )
+                return StoredCommandsPreview(
+                    emptyList(),
+                    "The host could not determine which stored commands this call would run; the call was not run",
+                )
+            }
+        if (commands.size > MAX_STORED_COMMANDS_PER_CALL) {
+            return StoredCommandsPreview(
+                emptyList(),
+                "This call would run ${commands.size} stored commands; at most $MAX_STORED_COMMANDS_PER_CALL " +
+                    "can be shown for approval. Open the Space through the workspace UI instead.",
+            )
+        }
+        return StoredCommandsPreview(commands)
+    }
 
     private suspend fun confirmApproval(
         tool: RegisteredMcpTool,
@@ -872,7 +963,14 @@ internal class McpToolRegistryCore(
         tool: RegisteredMcpTool,
         decision: McpApprovalDecision.Approved,
         revocation: Long,
+        promptedForStoredCommands: Boolean,
     ): Pair<McpApprovalDisposition, String?> {
+        // The prompt was raised for the commands, so the durable answers, which would cover
+        // every later call of this tool or this provider, commands or not, are taken as this
+        // one approval. Session trust for the tool is harmless: it never covers commands.
+        if (promptedForStoredCommands && (decision.trustProvider || decision.persistPolicy)) {
+            return McpApprovalDisposition.APPROVED_ONCE to null
+        }
         if (decision.trustProvider) {
             val toolName = tool.definition.name
             // Same pre-check validateApproval does for the per-tool path: a revoke or DENY
@@ -954,6 +1052,7 @@ internal class McpToolRegistryCore(
         args: McpToolArgs,
         policy: McpPolicyAction,
         revocation: Long,
+        storedCommands: List<String>,
     ): Pair<McpApprovalDisposition, String?> =
         when (policy) {
             McpPolicyAction.DENY -> {
@@ -971,12 +1070,14 @@ internal class McpToolRegistryCore(
                             tool.definition.name,
                             tool.providerId,
                             McpArgumentSanitizer.parseArguments(args.raw),
-                            riskAssessment = DefaultMcpRiskEvaluator().evaluateRisk(tool.definition.name, args),
+                            riskAssessment =
+                                DefaultMcpRiskEvaluator().evaluateRisk(tool.definition.name, args, storedCommands),
                             declaredReadOnly = tool.definition.readOnly,
+                            storedCommands = storedCommands,
                         )
                 ) {
                     is McpApprovalDecision.Approved -> {
-                        approvedAuthorization(tool, decision, revocation)
+                        approvedAuthorization(tool, decision, revocation, storedCommands.isNotEmpty())
                     }
 
                     is McpApprovalDecision.Denied -> {
@@ -1175,40 +1276,53 @@ internal class McpToolRegistryCore(
     }
 
     /** Parse a JSON-object arguments string into a typed [McpToolArgs] of scalars. */
-    private fun parseArgs(arguments: String): McpToolArgs {
-        val map: Map<String, Any?> =
-            try {
-                (json.parseToJsonElement(arguments) as? JsonObject)
-                    ?.mapValues { (_, el) -> scalarOf(el) }
-                    ?: emptyMap()
-            } catch (t: Throwable) {
-                logger.debug(
-                    LogCategory.SYSTEM,
-                    "MCP tool arguments are not a JSON object - using empty args",
-                    mapOf("error" to t.toString()),
-                )
-                emptyMap()
-            }
-        return McpToolArgs(map, arguments.ifBlank { "{}" })
-    }
+    private fun parseArgs(arguments: String): McpToolArgs = parseMcpToolArgs(arguments)
+}
 
-    /** Convert a JSON element to a Kotlin scalar; nested objects/arrays become their raw JSON. */
-    private fun scalarOf(el: JsonElement): Any? =
-        when {
-            el is JsonNull -> {
-                null
-            }
+private val argsJson = Json { ignoreUnknownKeys = true }
+private val argsLogger by lazy { BossLogger.forComponent("McpToolRegistry") }
 
-            el is JsonPrimitive -> {
-                if (el.isString) {
-                    el.content
-                } else {
-                    el.booleanOrNull ?: el.longOrNull ?: el.doubleOrNull ?: el.content
-                }
-            }
+/**
+ * The one way a raw argument string becomes the [McpToolArgs] a handler receives.
+ *
+ * File-level rather than a method of the core so the stored-command pre-pass can rebuild
+ * arguments from a rewritten tree through exactly the same rule - the scalar map and the raw
+ * JSON a handler might parse itself are then two views of one tree and cannot disagree.
+ */
+@Suppress("TooGenericExceptionCaught") // Anything a malformed argument string throws means "no scalars", not a crash.
+internal fun parseMcpToolArgs(arguments: String): McpToolArgs {
+    val map: Map<String, Any?> =
+        try {
+            (argsJson.parseToJsonElement(arguments) as? JsonObject)
+                ?.mapValues { (_, el) -> scalarOf(el) }
+                ?: emptyMap()
+        } catch (t: Throwable) {
+            argsLogger.debug(
+                LogCategory.SYSTEM,
+                "MCP tool arguments are not a JSON object - using empty args",
+                mapOf("error" to t.toString()),
+            )
+            emptyMap()
+        }
+    return McpToolArgs(map, arguments.ifBlank { "{}" })
+}
 
-            else -> {
-                el.toString()
+/** Convert a JSON element to a Kotlin scalar; nested objects/arrays become their raw JSON. */
+private fun scalarOf(el: JsonElement): Any? =
+    when {
+        el is JsonNull -> {
+            null
+        }
+
+        el is JsonPrimitive -> {
+            if (el.isString) {
+                el.content
+            } else {
+                el.booleanOrNull ?: el.longOrNull ?: el.doubleOrNull ?: el.content
             }
         }
-}
+
+        else -> {
+            el.toString()
+        }
+    }

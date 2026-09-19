@@ -2147,6 +2147,21 @@ on `open_terminal` therefore runs later invocations unconfirmed, i.e. as strong 
 unconfirmed external deep link; the command still passes the shape check and the shell
 risk evaluation (HIGH, CRITICAL for destructive patterns) on every call.
 
+A saved Space's terminal tabs can carry an `initialCommand` each, typed into a shell the
+moment the Space is applied, and `open_workspace(workspaceId = x)` names the file and shows
+none of them. Approving that call is not approving what `x.json` says to run, so the provider
+used to refuse such Spaces outright. It now implements `McpStoredCommandSource` (host-internal,
+not plugin API): before the prompt the registry asks it what the call would run, shows the
+commands in the approval dialog, escalates the risk to the worst of them, and asks even where
+the tool or provider is ALLOW-ed or session-trusted; durable answers to that prompt are taken
+as one approval, since the prompt was raised for the commands and not the tool. After approval
+the registry hands the same list back to the handler under `approvedStartupCommands`, which it
+strips from every incoming call first, so the handler treats the key as the registry's word
+and nobody else's; a Space whose commands changed between the prompt and the open is refused.
+A source that throws refuses the call, and more than `MAX_STORED_COMMANDS_PER_CALL` commands
+are refused before any prompt. Path mode (#920) is unchanged: it does not re-enter a saved
+Space carrying commands. Shipped templates are exempt, as before: their commands are BOSS's own.
+
 ## Process log authority and lifetime
 
 Process logs are host-owned infrastructure, not an OS sandbox. Log setup fails closed

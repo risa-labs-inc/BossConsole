@@ -3,6 +3,7 @@ package ai.rever.boss.components.dialogs
 import ai.rever.boss.mcp.McpApprovalRequest
 import ai.rever.boss.mcp.McpArgumentSanitizer
 import ai.rever.boss.mcp.McpMutatingToolCatalog
+import ai.rever.boss.plugin.ui.BossColorScheme
 import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.background
@@ -203,6 +204,10 @@ fun McpApprovalDialog(
                     }
                 }
 
+                if (request.storedCommands.isNotEmpty()) {
+                    StoredCommandsSection(request.storedCommands, colors)
+                }
+
                 request.riskAssessment?.let { assessment ->
                     Spacer(modifier = Modifier.height(10.dp))
                     Text(
@@ -352,6 +357,47 @@ fun McpApprovalDialog(
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * The commands this call would run that its arguments do not show: a saved Space's terminal
+ * startup commands, read from the Space file the arguments only name. Listed in full, one per
+ * line, above the buttons, because approving the call is approving these; the arguments box
+ * above shows an id, and an id is not a command.
+ */
+@Composable
+private fun StoredCommandsSection(
+    commands: List<String>,
+    colors: BossColorScheme,
+) {
+    Spacer(modifier = Modifier.height(10.dp))
+    Text(
+        text =
+            "This Space will run ${commands.size} stored startup command(s) in its terminals, " +
+                "not shown in the arguments:",
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Medium,
+        color = colors.alert,
+    )
+    Spacer(modifier = Modifier.height(4.dp))
+    Column(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .heightIn(max = 120.dp)
+                .verticalScroll(rememberScrollState())
+                .background(colors.raised, RoundedCornerShape(4.dp))
+                .padding(8.dp),
+    ) {
+        commands.forEach { command ->
+            Text(
+                text = "$ $command",
+                fontSize = 12.sp,
+                fontFamily = FontFamily.Monospace,
+                color = colors.textPrimary,
+            )
         }
     }
 }

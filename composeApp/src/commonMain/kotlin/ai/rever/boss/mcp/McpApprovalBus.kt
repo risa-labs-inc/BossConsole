@@ -64,6 +64,13 @@ data class McpApprovalRequest(
      * when the request was raised, which leaves the name-only catalog to label it.
      */
     val declaredReadOnly: Boolean? = null,
+    /**
+     * Shell commands this call would run that [arguments] do not show, because the arguments
+     * only name where they are stored (a saved Space's terminal startup commands; see
+     * [McpStoredCommandSource]). Already sanitized like [arguments]. Non-empty means the prompt
+     * was raised for these whatever the tool's policy says, and approving it approves them.
+     */
+    val storedCommands: List<String> = emptyList(),
     val requestedAt: Long = System.currentTimeMillis(),
     val deferred: CompletableDeferred<McpApprovalDecision> = CompletableDeferred(),
 )
@@ -104,6 +111,7 @@ open class McpApprovalBus(
         timeoutMs: Long = defaultTimeoutMs,
         riskAssessment: McpRiskAssessment? = null,
         declaredReadOnly: Boolean? = null,
+        storedCommands: List<String> = emptyList(),
     ): McpApprovalDecision {
         val request =
             McpApprovalRequest(
@@ -113,6 +121,7 @@ open class McpApprovalBus(
                 timeoutMs = timeoutMs,
                 riskAssessment = riskAssessment,
                 declaredReadOnly = declaredReadOnly,
+                storedCommands = storedCommands.map { McpArgumentSanitizer.sanitizeMessage(it) },
             )
 
         synchronized(lock) {

@@ -18,6 +18,35 @@ fun interface McpRiskEvaluator {
  * Does not use an LLM and does not log sensitive arguments or secrets.
  */
 class DefaultMcpRiskEvaluator : McpRiskEvaluator {
+    /**
+     * [evaluateRisk] for a call that would also run [storedCommands] the arguments do not show
+     * (see [ai.rever.boss.mcp.McpStoredCommandSource]). Each stored command is judged as the
+     * shell command it is, and the call takes the worst of them and of its own assessment, so a
+     * Space whose terminal runs `rm -rf` prompts as CRITICAL however mild `open_workspace` is.
+     */
+    fun evaluateRisk(
+        toolName: String,
+        args: McpToolArgs,
+        storedCommands: List<String>,
+    ): McpRiskAssessment {
+        val own = evaluateRisk(toolName, args)
+        val worst =
+            storedCommands
+                .map { evaluateShellCommand("stored startup command", McpToolArgs(mapOf("command" to it), "{}")) }
+                .maxByOrNull { it.level }
+        if (worst == null || worst.level <= own.level) return own
+        val why =
+            if (worst.level == McpRiskLevel.CRITICAL) {
+                "one contains a potentially destructive command pattern"
+            } else {
+                "arbitrary shell execution"
+            }
+        return McpRiskAssessment(
+            level = worst.level,
+            reason = "Runs ${storedCommands.size} stored startup command(s) the arguments do not show; $why",
+        )
+    }
+
     override fun evaluateRisk(
         toolName: String,
         args: McpToolArgs,
