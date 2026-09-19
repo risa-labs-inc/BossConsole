@@ -376,6 +376,24 @@ class OrchestratorServiceImplTest {
             assertTrue(refused.reason.contains("service-editor-2"), refused.reason)
         }
 
+    // ---- restart actions carry the settings the engine selected ----
+
+    @Test
+    fun `a tuned restart action carries its JVM overrides`() =
+        runTest(hostContext) {
+            var requestedArgs: List<String>? = null
+            val service =
+                OrchestratorServiceImpl(
+                    repairEngine = engine { _, args -> requestedArgs = args },
+                )
+
+            val action = service.reportFailure(report("p-tuned", RepairStrategy.REPAIR_STRATEGY_RESTART_TUNED))
+
+            assertEquals(listOf("-Xmx512m"), requestedArgs)
+            assertTrue(action.hasRestart())
+            assertEquals(listOf("-Xmx512m"), action.restart.jvmArgsOverrideList)
+        }
+
     // ---- the reset-state action carries the snapshot it points at ----
 
     @Test

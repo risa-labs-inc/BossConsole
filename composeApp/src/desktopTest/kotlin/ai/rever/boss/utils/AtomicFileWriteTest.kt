@@ -75,6 +75,15 @@ class AtomicFileWriteTest {
     }
 
     @Test
+    fun `atomicWriteText supports a one-character file name`() {
+        val target = File(tempDir, "x")
+
+        target.atomicWriteText("value")
+
+        assertEquals("value", target.readText())
+    }
+
+    @Test
     fun `atomicWriteText leaves no temp files behind`() {
         // The temp file is a sibling of the target, so a leak would accumulate in the real cache
         // and config directories rather than in the OS temp dir.
