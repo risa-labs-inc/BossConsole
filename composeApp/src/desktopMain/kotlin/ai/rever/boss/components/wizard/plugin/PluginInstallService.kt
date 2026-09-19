@@ -7,6 +7,7 @@ import ai.rever.boss.plugin.PluginPersistence
 import ai.rever.boss.plugin.PluginStoreSetup
 import ai.rever.boss.plugin.api.PluginManifest
 import ai.rever.boss.plugin.api.PluginState
+import ai.rever.boss.plugin.launchpad.DevPluginArtifacts
 import ai.rever.boss.plugin.repository.PluginWithSource
 import ai.rever.boss.utils.atomicMoveFrom
 import ai.rever.boss.utils.logging.BossLogger
@@ -587,25 +588,13 @@ class PluginInstallService(
     /**
      * Extract plugin manifest from a JAR file.
      */
-    private fun extractManifestFromJar(jarPath: String): PluginManifest? {
-        return try {
-            val jarFile = JarFile(File(jarPath))
-            jarFile.use { jar ->
-                val manifestEntry = jar.getJarEntry("META-INF/boss-plugin/plugin.json")
-                if (manifestEntry == null) {
-                    logger.debug(
-                        LogCategory.SYSTEM,
-                        "No plugin manifest found in JAR",
-                        mapOf(
-                            "jarPath" to jarPath,
-                        ),
-                    )
-                    return null
+    private fun extractManifestFromJar(jarPath: String): PluginManifest? =
+        try {
+            JarFile(File(jarPath)).use { jar ->
+                readManifestContent(jar, jarPath)?.let { manifestJson ->
+                    val json = Json { ignoreUnknownKeys = true }
+                    json.decodeFromString<PluginManifest>(manifestJson)
                 }
-
-                val manifestJson = jar.getInputStream(manifestEntry).bufferedReader().readText()
-                val json = Json { ignoreUnknownKeys = true }
-                json.decodeFromString<PluginManifest>(manifestJson)
             }
         } catch (e: Exception) {
             logger.warn(
@@ -618,6 +607,29 @@ class PluginInstallService(
             )
             null
         }
+
+    private fun readManifestContent(
+        jar: JarFile,
+        jarPath: String,
+    ): String? {
+        val manifestEntry = jar.getJarEntry("META-INF/boss-plugin/plugin.json")
+        if (manifestEntry == null) {
+            logger.debug(
+                LogCategory.SYSTEM,
+                "No plugin manifest found in JAR",
+                mapOf("jarPath" to jarPath),
+            )
+            return null
+        }
+        val manifestJson = DevPluginArtifacts.readBoundedUtf8String(jar.getInputStream(manifestEntry))
+        if (manifestJson == null) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Plugin manifest entry too large or unreadable",
+                mapOf("jarPath" to jarPath),
+            )
+        }
+        return manifestJson
     }
 
     /**

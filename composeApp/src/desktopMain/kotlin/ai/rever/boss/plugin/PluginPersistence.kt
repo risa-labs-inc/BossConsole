@@ -1,5 +1,6 @@
 package ai.rever.boss.plugin
 
+import ai.rever.boss.plugin.launchpad.DevPluginArtifacts
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.serialization.Serializable
@@ -133,8 +134,19 @@ object PluginPersistence {
             val jarFile = java.util.jar.JarFile(File(jarPath))
             val entry = jarFile.getJarEntry("META-INF/boss-plugin/plugin.json")
             if (entry != null) {
-                val content = jarFile.getInputStream(entry).bufferedReader().readText()
+                // Bounded read - the existing call inflated the whole entry as a String. A
+                // hostile/corrupt installed JAR can OOM startup if the entry expands past the
+                // shared 512 KiB cap, so route through the launchpad's bounded primitive.
+                val content = DevPluginArtifacts.readBoundedUtf8String(jarFile.getInputStream(entry))
                 jarFile.close()
+                if (content == null) {
+                    logger.debug(
+                        LogCategory.SYSTEM,
+                        "Plugin manifest too large or unreadable while extracting version",
+                        mapOf("jarPath" to jarPath),
+                    )
+                    return null
+                }
                 // Simple JSON extraction — avoid pulling in full parser for this
                 val versionMatch = Regex(""""version"\s*:\s*"([^"]+)"""").find(content)
                 versionMatch?.groupValues?.get(1)
