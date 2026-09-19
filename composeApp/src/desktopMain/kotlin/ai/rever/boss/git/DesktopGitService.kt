@@ -518,6 +518,13 @@ actual object GitService {
         )
     }
 
+    /**
+     * Maps one `git status --porcelain=v1` status char to its [GitFileStatusType].
+     * 'T' (typechange: regular file <-> symlink) yields MODIFIED - the same answer
+     * [statusTypeFromCode] gives the identical code in `git diff --name-status`,
+     * so a typechanged path keeps one spelling across both parsers instead of the
+     * porcelain row vanishing from both the staged and the unstaged lists (#1169).
+     */
     internal fun parseStatusChar(c: Char): GitFileStatusType? =
         when (c) {
             'M' -> GitFileStatusType.MODIFIED
@@ -525,6 +532,7 @@ actual object GitService {
             'D' -> GitFileStatusType.DELETED
             'R' -> GitFileStatusType.RENAMED
             'C' -> GitFileStatusType.COPIED
+            'T' -> GitFileStatusType.MODIFIED
             '?' -> GitFileStatusType.UNTRACKED
             '!' -> GitFileStatusType.IGNORED
             'U' -> GitFileStatusType.UNMERGED
@@ -1483,7 +1491,11 @@ actual object GitService {
         return list
     }
 
-    private fun statusTypeFromCode(code: String): GitFileStatusTypeData? =
+    // `git diff --name-status` code -> status type. Kept in lock-step with
+    // [parseStatusChar]: a code one parser models, the other must answer with
+    // the same type (#1169). internal, like the porcelain parsers, so tests
+    // can feed it raw codes and pin that parity.
+    internal fun statusTypeFromCode(code: String): GitFileStatusTypeData? =
         when (code.firstOrNull()) {
             'M' -> GitFileStatusTypeData.MODIFIED
             'A' -> GitFileStatusTypeData.ADDED
