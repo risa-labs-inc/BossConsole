@@ -1,6 +1,7 @@
 package ai.rever.boss.plugin.browser
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.Dispatchers
@@ -36,6 +37,8 @@ data class BrowserZoomSettingsData(
  * so users can have different zoom levels for different websites.
  */
 object BrowserZoomSettingsManager {
+    /** Serializes the two save entry points against each other (#925). */
+    private val saveLock = Any()
     private val logger = BossLogger.forComponent("BrowserZoomSettingsManager")
     private val settingsFile = BossDirectories.resolve("browser-zoom-settings.json")
     private val json =
@@ -94,14 +97,19 @@ object BrowserZoomSettingsManager {
     /**
      * Load settings from disk.
      */
-    private fun loadSettings() {
+    internal fun loadSettings() {
         try {
             if (settingsFile.exists()) {
                 val content = settingsFile.readText()
                 settings = json.decodeFromString<BrowserZoomSettingsData>(content)
             }
         } catch (e: Exception) {
+            // Self-heal instead of silent data loss (#925): a corrupt file is
+            // renamed aside so the fault is diagnosable AND does not re-fail
+            // every launch, and the previous per-domain zoom levels are lost
+            // only when no backup survives - not on any decode hiccup.
             logger.warn(LogCategory.BROWSER, "Error loading zoom settings", error = e)
+            moveCorruptSettingsAside(settingsFile)
             settings = BrowserZoomSettingsData()
         }
     }
@@ -113,7 +121,9 @@ object BrowserZoomSettingsManager {
         withContext(Dispatchers.IO) {
             try {
                 settingsFile.parentFile?.mkdirs()
-                settingsFile.writeText(json.encodeToString(settings))
+                synchronized(saveLock) {
+                    settingsFile.atomicWriteText(json.encodeToString(settings))
+                }
             } catch (e: Exception) {
                 logger.warn(LogCategory.BROWSER, "Error saving zoom settings", error = e)
             }
@@ -126,7 +136,9 @@ object BrowserZoomSettingsManager {
     fun saveSettingsSync() {
         try {
             settingsFile.parentFile?.mkdirs()
-            settingsFile.writeText(json.encodeToString(settings))
+            synchronized(saveLock) {
+                settingsFile.atomicWriteText(json.encodeToString(settings))
+            }
         } catch (e: Exception) {
             logger.warn(LogCategory.BROWSER, "Error saving zoom settings (sync)", error = e)
         }
@@ -181,5 +193,23 @@ object BrowserZoomSettingsManager {
      */
     fun clearAllSettings() {
         settings = BrowserZoomSettingsData()
+    }
+}
+
+/**
+ * Renames a corrupt settings file to `<name>.corrupt.<millis>` beside its
+ * live path (#925): the fault stays diagnosable, the live name is freed for
+ * a fresh write on the next save, and the next launch does not re-read and
+ * re-fail the same bytes. Pure file operation - unit-testable standalone.
+ */
+internal fun moveCorruptSettingsAside(
+    file: File,
+    now: () -> Long = { System.currentTimeMillis() },
+) {
+    // Deliberately quiet: the caller already logged the decode failure; this
+    // is the recovery step, and its own failure must not mask the original.
+    runCatching {
+        val aside = File(file.absolutePath + ".corrupt." + now())
+        file.renameTo(aside)
     }
 }
