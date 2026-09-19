@@ -1,5 +1,6 @@
 package ai.rever.boss.mcp
 
+import ai.rever.boss.mcp.colony.ColonyLedgerAttribution
 import ai.rever.boss.plugin.logging.LogSanitizer
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -65,6 +66,11 @@ class McpOperationLedger(
     /**
      * Record a tool execution, rejection, or timeout.
      * Never throws - I/O failures are logged without disrupting tool return.
+     *
+     * A BOSS Colony call additionally carries the negotiation thread and message it belongs to.
+     * That attribution is derived here from the sanitized arguments rather than accepted from the
+     * caller, so every colony call is attributed by construction, including the rejections and
+     * timeouts this method records from the same call site, and no caller can forget to do it.
      */
     @Suppress("LongParameterList") // One complete audit record, matching the persisted schema.
     fun record(
@@ -79,6 +85,10 @@ class McpOperationLedger(
     ): McpOperationRecord {
         val sanitized = sanitizeArguments(rawArgs)
         val sanitizedErrorSnippet = errorSnippet?.let { McpArgumentSanitizer.sanitizeMessage(it).take(4096) }
+        // Derived from the same sanitized map that gets persisted, so the thread a record claims is
+        // exactly the thread a reader reconstructs from the file: there is no second copy of the
+        // arguments for the two to disagree about.
+        val colony = ColonyLedgerAttribution.from(toolName, sanitized)
         val draft =
             McpOperationRecord(
                 id = UUID.randomUUID().toString(),
@@ -90,6 +100,8 @@ class McpOperationLedger(
                 durationMs = durationMs,
                 isError = isError,
                 sanitizedArgs = sanitized,
+                colonyThreadId = colony?.threadId,
+                colonyMessageId = colony?.messageId,
                 errorSnippet = sanitizedErrorSnippet,
             )
 

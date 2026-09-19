@@ -22,6 +22,23 @@ data class McpOperationRecord(
     val durationMs: Long,
     val isError: Boolean,
     val sanitizedArgs: Map<String, String>,
+    /**
+     * The BOSS Colony negotiation thread this call belongs to, or `null` when the call is not a
+     * colony negotiation.
+     *
+     * Stored rather than derived at read time, so a record always lands in the thread it was
+     * written into even if a reader would derive a different id. `null` for every non-colony call,
+     * and for a colony call that named no thread - see `ColonyLedgerAttribution.from`, which
+     * refuses to group those under a blank id rather than merging every malformed call into one.
+     */
+    val colonyThreadId: String? = null,
+    /**
+     * The Colony message this call created, or `null` when it created none.
+     *
+     * Derived from the call itself (`ColonyProtocol.messageIdFor`), so a retried call names the
+     * same message and replaying the ledger cannot invent a second one for one request.
+     */
+    val colonyMessageId: String? = null,
     val errorSnippet: String? = null,
     /**
      * SHA-256 over [parentHash] and this record's [canonicalFormForHashing], so a record edited
@@ -56,6 +73,13 @@ data class McpOperationRecord(
  * would silently change every historical hash the day someone set `encodeDefaults = true`. Here
  * keys are emitted in a fixed order, map keys are sorted, and an absent snippet is written as an
  * explicit `null`, so a record's canonical form depends on the record and nothing else.
+ *
+ * Every field except [McpOperationRecord.hash] and [McpOperationRecord.parentHash] is covered here,
+ * and `McpLedgerChainTest` pins that by deriving the expected key set from the serializer
+ * descriptor rather than from a hand-kept list. The consequence worth knowing: adding a field here
+ * changes the canonical form of records already on disk, so a ledger written by an older build
+ * reports its retained records as *altered* rather than as *unverifiable*. That is the price of
+ * covering a new field, and it is why a field is added here only when the audit trail needs it.
  */
 internal fun McpOperationRecord.canonicalFormForHashing(): String =
     buildJsonObject {
@@ -71,5 +95,7 @@ internal fun McpOperationRecord.canonicalFormForHashing(): String =
             "sanitizedArgs",
             buildJsonObject { sanitizedArgs.toSortedMap().forEach { (key, value) -> put(key, value) } },
         )
+        put("colonyThreadId", colonyThreadId)
+        put("colonyMessageId", colonyMessageId)
         put("errorSnippet", errorSnippet)
     }.toString()
