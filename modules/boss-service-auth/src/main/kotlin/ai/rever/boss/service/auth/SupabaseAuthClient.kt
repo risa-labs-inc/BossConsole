@@ -206,6 +206,11 @@ class SupabaseAuthClient(
             client.auth.currentSessionOrNull()
                 ?: return AuthResult.Failure("No session available after auth operation")
         val user = session.user
+        val claims =
+            accessTokenClaims(session.accessToken) ?: run {
+                logger.warn("Could not read role claims from the access token; granting no admin status or permissions")
+                AccessTokenClaims.NONE
+            }
         return AuthResult.Success(
             userId = user?.id ?: "",
             email = user?.email ?: fallbackEmail ?: "",
@@ -215,11 +220,8 @@ class SupabaseAuthClient(
                     ?.get("full_name")
                     ?.jsonPrimitive
                     ?.contentOrNull ?: "",
-            isAdmin =
-                isAdminClaim(session.accessToken) ?: run {
-                    logger.warn("Could not read role claims from the access token; treating the user as not an admin")
-                    false
-                },
+            isAdmin = claims.isAdmin,
+            permissions = claims.permissions,
             sessionToken = session.accessToken,
             sessionCreatedAt = System.currentTimeMillis() / 1000,
         )
@@ -260,6 +262,7 @@ sealed class AuthResult {
         val email: String,
         val displayName: String,
         val isAdmin: Boolean,
+        val permissions: Set<String>,
         val sessionToken: String,
         val sessionCreatedAt: Long,
     ) : AuthResult()
