@@ -1,5 +1,6 @@
 package ai.rever.boss.plugin
 
+import ai.rever.boss.plugin.loader.PluginManifestReader
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.serialization.Serializable
@@ -130,17 +131,16 @@ object PluginPersistence {
      */
     private fun extractVersionFromJar(jarPath: String): String? =
         try {
-            val jarFile = java.util.jar.JarFile(File(jarPath))
-            val entry = jarFile.getJarEntry("META-INF/boss-plugin/plugin.json")
-            if (entry != null) {
-                val content = jarFile.getInputStream(entry).bufferedReader().readText()
-                jarFile.close()
-                // Simple JSON extraction — avoid pulling in full parser for this
-                val versionMatch = Regex(""""version"\s*:\s*"([^"]+)"""").find(content)
-                versionMatch?.groupValues?.get(1)
-            } else {
-                jarFile.close()
-                null
+            java.util.jar.JarFile(File(jarPath)).use { jarFile ->
+                val entry = jarFile.getJarEntry("META-INF/boss-plugin/plugin.json")
+                if (entry != null) {
+                    val content = PluginManifestReader.readManifestContent(jarFile, entry)
+                    // Simple JSON extraction — avoid pulling in full parser for this
+                    val versionMatch = Regex(""""version"\s*:\s*"([^"]+)"""").find(content)
+                    versionMatch?.groupValues?.get(1)
+                } else {
+                    null
+                }
             }
         } catch (e: Exception) {
             logger.debug(
