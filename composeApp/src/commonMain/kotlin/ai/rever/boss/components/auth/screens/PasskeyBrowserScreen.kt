@@ -42,23 +42,15 @@ fun PasskeyBrowserScreen(
 
     passkeyBrowserLogger.debug(LogCategory.AUTH, "Displaying WebAuthn page", mapOf("url" to LogSanitizer.maskUriParams(url)))
 
-    // Monitor for deep link callbacks indicating success
-    val deepLink by DeepLinkHandler.deepLinkFlow.collectAsState()
-    LaunchedEffect(deepLink) {
-        val link = deepLink
-        if (link != null && (
-                link.contains("auth/verify") ||
-                    link.contains("passkey/registered") ||
-                    link.contains("passkey/authenticated")
-            )
-        ) {
-            passkeyBrowserLogger.info(LogCategory.AUTH, "Deep link received, operation successful")
+    // Monitor for passkey session events indicating success
+    val sessionEvent by ai.rever.boss.services.auth.PasskeySessionEventHandler.sessionEvents.collectAsState()
+    LaunchedEffect(sessionEvent) {
+        val event = sessionEvent
+        if (event != null && event.sessionId == sessionId) {
+            passkeyBrowserLogger.info(LogCategory.AUTH, "Passkey session event received, operation successful")
 
             // Add small delay for visual feedback
             delay(500)
-
-            // Clear the deep link
-            DeepLinkHandler.clearDeepLink()
 
             // Trigger success callback
             onSuccess()

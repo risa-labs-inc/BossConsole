@@ -3,6 +3,7 @@ package ai.rever.boss.services.auth
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * PasskeySessionEventHandler - Handles passkey session completion events from deep links
@@ -19,12 +20,14 @@ object PasskeySessionEventHandler {
      * Passkey session event types
      */
     sealed class PasskeySessionEvent {
+        abstract val sessionId: String
+
         data class RegistrationCompleted(
-            val sessionId: String,
+            override val sessionId: String,
         ) : PasskeySessionEvent()
 
         data class AuthenticationCompleted(
-            val sessionId: String,
+            override val sessionId: String,
         ) : PasskeySessionEvent()
     }
 
@@ -32,6 +35,7 @@ object PasskeySessionEventHandler {
      * Flow of passkey session events
      */
     private val _sessionEvents = MutableStateFlow<PasskeySessionEvent?>(null)
+    val sessionEvents = _sessionEvents.asStateFlow()
 
     /**
      * Map of active sessions being tracked
