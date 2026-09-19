@@ -74,8 +74,8 @@ class SubstituteProjectPathTest {
      * path was empty - landing on `~/.claude/projects/` itself.
      *
      * Asserted through `{gitRemoteUrl}` and `{claudeContinueFlag}` only. `{projectPath}` is
-     * left out on purpose: its no-project answer is `DefaultWorkingDirectory.ensureDefaultDirectory()`, which
-     * would create `~/BossProjects` on the machine running this.
+     * left out on purpose: its no-project answer is `DefaultWorkingDirectory.ensureDefaultDirectory()`,
+     * which would create `~/BossProjects` on the machine running this.
      *
      * This is the direct-caller path. Every production caller resolves before calling, so with
      * no project selected they all pass `~/BossProjects` and take the has-a-project branch -
@@ -96,5 +96,29 @@ class SubstituteProjectPathTest {
                 "projectPath=${absent.orEmpty().ifEmpty { "<blank>" }}",
             )
         }
+    }
+
+    /**
+     * Regression test for issue #1181.
+     *
+     * The command separator " && " should be normalized before the project path
+     * is substituted. Otherwise a literal " && " inside a Windows project path
+     * would also be normalized and corrupted.
+     */
+    @Test
+    fun preservesAndInsideWindowsProjectPath() {
+        val projectPath = """C:\Work && Projects\demo"""
+        val separator = CommandProcessor.normalizeCommand(" && ")
+
+        val result = WorkspacePlaceholders.processPlaceholders(
+            "cd {projectPath} && claude",
+            projectPath,
+            quoteProjectPath = true,
+        )
+
+        assertEquals(
+            "cd ${CommandProcessor.quotePath(projectPath)}${separator}claude",
+            result,
+        )
     }
 }
