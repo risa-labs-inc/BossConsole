@@ -1,3 +1,5 @@
+@file:Suppress("TooManyFunctions") // Status-bar items and their dialogs are one cohesive file.
+
 package ai.rever.boss.components.bars.horizontal
 
 import ai.rever.boss.components.bars.ChromeBar
@@ -9,6 +11,7 @@ import ai.rever.boss.components.dialogs.McpActivityLogDialog
 import ai.rever.boss.components.dialogs.McpPolicyManagerDialog
 import ai.rever.boss.components.dialogs.McpProviderTrustDialog
 import ai.rever.boss.components.dialogs.McpToolIdentity
+import ai.rever.boss.components.dialogs.RlmQueryTreeDialog
 import ai.rever.boss.components.events.PanelEventBus
 import ai.rever.boss.components.overlays.HoverTooltipBox
 import ai.rever.boss.components.overlays.TooltipPlacement
@@ -21,6 +24,8 @@ import ai.rever.boss.layout.BossChrome
 import ai.rever.boss.mcp.McpPolicyAction
 import ai.rever.boss.mcp.McpToolPolicyConfig
 import ai.rever.boss.mcp.McpToolRegistryImpl
+import ai.rever.boss.mcp.rlm.RlmToolProvider
+import ai.rever.boss.mcp.rlm.summary
 import ai.rever.boss.performance.PerformanceState
 import ai.rever.boss.plugin.api.PanelId
 import ai.rever.boss.plugin.api.RegisteredMcpTool
@@ -276,6 +281,11 @@ fun BossRightBottomBar() {
     // opening the rotated MCP ledger file in a text editor.
     McpActivityStatusItem()
 
+    // RLM telemetry, next to the MCP line it shares a subject with: a recursive query is the one
+    // thing that makes a single agent action appear as many ledger entries, so "what was that
+    // burst of codebase_read calls?" is answered here rather than by reading the ledger.
+    RlmStatusItem()
+
     // Status message (temporary messages like "Space Saved")
     val statusMessage by StatusMessageManager.currentMessage.collectAsState()
     statusMessage?.let { message ->
@@ -474,9 +484,10 @@ private fun McpActivityStatusItem() {
             "MCP: no activity yet"
         }
     val statusColor = if (lastOp?.isError == true) BossTheme.colors.alert else BossTheme.colors.textSecondary
-    McpActivityStatusText(
+    StatusLineText(
         text = statusText,
         color = statusColor,
+        label = "Open the MCP activity log",
         onClick = { showActivityLog = true },
     )
     if (showActivityLog) {
@@ -493,17 +504,47 @@ private fun McpActivityStatusItem() {
 }
 
 /**
+ * RLM telemetry: how many delegate calls this session's recursive codebase queries have made, how
+ * deep they went, and whether any hit a bound.
+ *
+ * Hidden until the first query, exactly like [McpActivityStatusItem] - "has anything used RLM
+ * yet?" is answered by the absence, and a permanent row for a surface an operator may never use is
+ * noise in a bar that already carries MCP policy, MCP activity and status messages.
+ */
+@Composable
+private fun RlmStatusItem() {
+    val runs by RlmToolProvider.runLog.runs.collectAsState()
+    var showTrees by remember { mutableStateOf(false) }
+    if (runs.isEmpty() && !showTrees) return
+    val latest = runs.firstOrNull()
+    StatusLineText(
+        text = if (latest != null) "RLM: ${latest.summary()}" else "RLM: no queries yet",
+        color = if (latest?.root?.isError == true) BossTheme.colors.alert else BossTheme.colors.textSecondary,
+        label = "Open the RLM query trees",
+        onClick = { showTrees = true },
+    )
+    if (showTrees) {
+        RlmQueryTreeDialog(runs = runs, onDismiss = { showTrees = false })
+    }
+}
+
+/**
  * The clickable status line's own affordance: a hand cursor on hover, a tooltip naming what the
  * click does, and [Role.Button] semantics for assistive tech - a bare clickable [Text] next to
  * [androidx.compose.material.TextButton]s that do look pressable had none of the three.
+ *
+ * [label] became a parameter rather than the constant it used to be once a second row used this:
+ * the RLM row would otherwise have opened with the tooltip "Open the MCP activity log" and a
+ * matching accessibility label, telling a screen-reader user the wrong destination.
  */
 @Composable
-private fun McpActivityStatusText(
+private fun StatusLineText(
     text: String,
     color: Color,
+    label: String,
     onClick: () -> Unit,
 ) {
-    HoverTooltipBox(text = "Open the MCP activity log", placement = TooltipPlacement.TOP) {
+    HoverTooltipBox(text = label, placement = TooltipPlacement.TOP) {
         Text(
             text = text,
             color = color,
@@ -513,7 +554,7 @@ private fun McpActivityStatusText(
             modifier =
                 Modifier
                     .pointerHoverIcon(PointerIcon.Hand)
-                    .clickable(onClickLabel = "Open the MCP activity log", onClick = onClick)
+                    .clickable(onClickLabel = label, onClick = onClick)
                     .padding(horizontal = 6.dp, vertical = 2.dp)
                     .semantics { role = Role.Button },
         )
