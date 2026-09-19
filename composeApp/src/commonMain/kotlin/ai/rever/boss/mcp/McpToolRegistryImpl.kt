@@ -768,7 +768,7 @@ internal class McpToolRegistryCore(
                         McpToolResult(denial, isError = true)
                     }
 
-                    !confirmApproval(tool, revocation, disposition) || !isAvailable(tool) -> {
+                    !beginDispatch(tool, revocation, disposition) -> {
                         disposition = McpApprovalDisposition.POLICY_DENIED
                         McpToolResult("MCP tool access revoked while awaiting approval", isError = true)
                     }
@@ -811,21 +811,32 @@ internal class McpToolRegistryCore(
     private fun isAvailable(tool: RegisteredMcpTool): Boolean =
         _tools.value.any { it.providerId == tool.providerId && it.definition === tool.definition }
 
-    private suspend fun confirmApproval(
+    /**
+     * Take the dispatch claim for a call that has already been authorized.
+     *
+     * Deliberately a plain function rather than a `suspend` one, and deliberately not wrapped
+     * in `withContext`. This is the last policy decision an invocation makes, and the whole
+     * point of [McpPolicyEngine.beginDispatch] is that the re-validation and the dispatch are
+     * one atomic step: a suspension point here - the `Dispatchers.IO` hop this used to make,
+     * or a `withContext` added later "for consistency" with the persist paths - puts a
+     * resumption between the check and the act, and a reset landing in that window lets an
+     * authorized call that had not started executing run anyway. Nothing on this path touches
+     * the disk, so there is no I/O reason to hop. The paths that do write still hop: see
+     * [validateApproval] and [approvedAuthorization].
+     */
+    private fun beginDispatch(
         tool: RegisteredMcpTool,
         revocation: Long,
         disposition: McpApprovalDisposition,
     ): Boolean =
-        withContext(Dispatchers.IO) {
-            isAvailable(tool) &&
-                policyEngine.confirmInvocation(
-                    tool.definition.name,
-                    revocation,
-                    grantSessionTrust = disposition.grantsSessionTrust,
-                    providerId = tool.providerId,
-                    declaredReadOnly = tool.definition.readOnly,
-                )
-        }
+        isAvailable(tool) &&
+            policyEngine.beginDispatch(
+                tool.definition.name,
+                revocation,
+                grantSessionTrust = disposition.grantsSessionTrust,
+                providerId = tool.providerId,
+                declaredReadOnly = tool.definition.readOnly,
+            )
 
     /** Recheck access before saving a queued ALLOW; resets invalidate older answers under the policy lock. */
     @Suppress("ReturnCount") // Ordered denial, access revocation, persistence and write-failure outcomes.

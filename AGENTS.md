@@ -2110,8 +2110,12 @@ A failed reset keeps the previous durable rule visible and clears the selected s
 trust; it does not promise ASK if a saved ALLOW remains. Failed approval writes record
 POLICY_PERSIST_FAILED and withhold the current execution. A queued approval cannot
 replace a newer DENY or reset: each reset invalidates older authorizations before their
-final approval boundary, including queued once/session/persistent grants. Calls already
-authorized to execute are not cancelled. Reset remains host UI only, not an MCP tool.
+dispatch claim, including queued once/session/persistent grants. The claim is taken under
+the policy lock as the last thing an invocation does before its handler runs, so a reset
+that reaches the lock first leaves an authorized call that had not started executing with
+nothing to run on - it never starts. A reset that reaches it second has arrived after
+dispatch and does not cancel the call, because a tool stopped mid-execution can leave a
+partial write behind. Reset remains host UI only, not an MCP tool.
 “Trust This Plugin” persists a provider-wide ALLOW covering every tool that provider
 contributes - weaker than an explicit tool-specific rule, reviewed and reset from
 “Trusted plugins” in the bottom bar rather than “Persisted MCP policies”. The same

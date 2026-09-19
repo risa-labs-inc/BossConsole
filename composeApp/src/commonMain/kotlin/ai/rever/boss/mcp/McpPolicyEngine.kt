@@ -133,7 +133,26 @@ class McpPolicyEngine(
     ): Long = (revocations[toolName] ?: 0L) + (providerId?.let { providerRevocations[it] } ?: 0L)
 
     /**
-     * Final authorization boundary. Session grants and operator resets use the same lock.
+     * Claim dispatch for one invocation that has already been authorized, re-validating the
+     * policy at the seam the call actually executes from. Session grants and operator resets
+     * use the same lock.
+     *
+     * A `true` answer is not a permission slip the caller may act on later: it *is* the
+     * dispatch. The claim is taken under [lock], so it is the instant the invocation became
+     * in-flight, and the caller must keep it adjacent to the tool handler. Every suspension
+     * point left between this call and that handler is a window in which a reset lands with
+     * the call already past this boundary and it runs anyway, which is the gap this call
+     * exists to remove ([McpToolRegistryCore.invoke] takes it as the last thing it does before
+     * executing, with no `withContext` and no `await` in between).
+     *
+     * [lock] is what makes the seam atomic: [revokePersistedPolicy] and
+     * [revokeProviderPolicy] bump the epoch under the same lock, so a reset and a claim cannot
+     * interleave. Whichever reaches the lock first decides the outcome. A claim that wins
+     * dispatches the call and is never cancelled afterwards, because a tool stopped
+     * mid-execution can leave a partial write behind: a reset withdraws the authorization for
+     * calls that have not started, it does not reach into the ones that have. A claim that
+     * loses reads a stale [expectedRevocation] and is refused, which is the whole point: a call
+     * that was authorized before the reset but had not started executing never starts.
      *
      * [providerId] is the tool's contributing provider, so the DENY recheck evaluates the
      * same provider-aware policy the initial lookup did - a provider-wide DENY must hold at
@@ -142,7 +161,7 @@ class McpPolicyEngine(
      * classify the tool exactly as the initial lookup did, or the two ends of one invocation
      * could disagree about whether the default that applies is the mutating one.
      */
-    internal fun confirmInvocation(
+    internal fun beginDispatch(
         toolName: String,
         expectedRevocation: Long,
         grantSessionTrust: Boolean,
@@ -570,7 +589,7 @@ class McpPolicyEngine(
                     faultFor = { k, e -> McpPolicyFault.PolicyPersistFailed(k, e) },
                 )
             // Publish last: a caller observing this version must also see the reset policy.
-            // Calls that captured the previous version cannot pass the locked approval guard.
+            // Calls that captured the previous version cannot pass the locked dispatch claim.
             revocations[toolName] = revocationVersion(toolName) + 1
             saved
         }

@@ -25,12 +25,12 @@ class McpSessionTrustScopingTest {
     }
 
     @Test
-    fun `confirmInvocation grants trust only to the provider that was approved`() {
+    fun `beginDispatch grants trust only to the provider that was approved`() {
         val engine = McpPolicyEngine(policyFile = null)
         val revocation = engine.revocationVersion("run_command", "terminal-tab")
 
         assertTrue(
-            engine.confirmInvocation(
+            engine.beginDispatch(
                 "run_command",
                 revocation,
                 grantSessionTrust = true,
@@ -44,11 +44,11 @@ class McpSessionTrustScopingTest {
     }
 
     @Test
-    fun `confirmInvocation without a provider in hand runs once but grants no name-only trust`() {
+    fun `beginDispatch without a provider in hand runs once but grants no name-only trust`() {
         val engine = McpPolicyEngine(policyFile = null)
         val revocation = engine.revocationVersion("run_command")
 
-        assertTrue(engine.confirmInvocation("run_command", revocation, grantSessionTrust = true))
+        assertTrue(engine.beginDispatch("run_command", revocation, grantSessionTrust = true))
 
         assertTrue(engine.sessionTrustedTools.value.isEmpty())
         assertEquals(McpPolicyAction.ASK, engine.policyFor("run_command"))

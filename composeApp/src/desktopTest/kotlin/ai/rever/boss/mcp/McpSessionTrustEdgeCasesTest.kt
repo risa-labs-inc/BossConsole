@@ -27,7 +27,7 @@ class McpSessionTrustEdgeCasesTest {
         // Window 1: the operator approves terminal-tab's run_command and trusts it for the session.
         val revocation = engine.revocationVersion("run_command", "terminal-tab")
         assertTrue(
-            engine.confirmInvocation("run_command", revocation, grantSessionTrust = true, providerId = "terminal-tab"),
+            engine.beginDispatch("run_command", revocation, grantSessionTrust = true, providerId = "terminal-tab"),
         )
 
         // Window 2 is a different surface of the same session showing a plugin with the SAME
@@ -37,9 +37,9 @@ class McpSessionTrustEdgeCasesTest {
         assertEquals(McpPolicyAction.ALLOW, engine.policyFor("run_command", "terminal-tab"))
 
         // Window 2's already-approved call also passes the final boundary on that same grant -
-        // confirmInvocation re-authorizes a decided call; it is not a second prompt decision.
+        // beginDispatch re-authorizes a decided call; it is not a second prompt decision.
         assertTrue(
-            engine.confirmInvocation(
+            engine.beginDispatch(
                 "run_command",
                 engine.revocationVersion("run_command", "terminal-tab"),
                 grantSessionTrust = false,
@@ -179,7 +179,7 @@ class McpSessionTrustEdgeCasesTest {
         // The final authorization boundary agrees - a queued approval cannot smuggle the
         // trusted call past a DENY saved after the approval was captured.
         assertFalse(
-            engine.confirmInvocation(
+            engine.beginDispatch(
                 "run_command",
                 engine.revocationVersion("run_command", "terminal-tab"),
                 grantSessionTrust = true,

@@ -22,7 +22,7 @@ class McpProviderRevocationTest {
         val other = engine.revocationVersion("k8s_delete", "other")
         assertTrue(engine.revokeProviderPolicy("p"))
 
-        assertFalse(engine.confirmInvocation("run_command", captured, true, providerId = "p"))
+        assertFalse(engine.beginDispatch("run_command", captured, true, providerId = "p"))
         assertFalse(
             engine.setToolPolicy(
                 "run_command",
@@ -42,9 +42,9 @@ class McpProviderRevocationTest {
         // No trust was granted on this path; nothing may leak in from the refused writes above.
         assertTrue(engine.sessionTrustedTools.value.isEmpty())
         assertFalse("p" in engine.config.value.providerRules)
-        assertTrue(engine.confirmInvocation("k8s_delete", other, false, providerId = "other"))
+        assertTrue(engine.beginDispatch("k8s_delete", other, false, providerId = "other"))
         assertTrue(
-            engine.confirmInvocation(
+            engine.beginDispatch(
                 "run_command",
                 engine.revocationVersion("run_command", "p"),
                 false,
