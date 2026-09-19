@@ -48,6 +48,13 @@ jobs:
       - name: Headless CLI launcher tests
         run: bash scripts/test/test-headless-cli.sh
 
+      - name: 🧪 boss.bat :urlencode injection regression (#1057)
+        # The shipped Windows CLI shim interpolated the CLI argument into a
+        # single-quoted PowerShell string; one quote in any argument executed
+        # attacker PowerShell. Source-shape checks run everywhere; the live
+        # probes need cmd.exe and skip where it is absent.
+        run: pwsh -NoProfile -File scripts/test/test-boss-bat-urlencode.ps1
+
       - name: 🧪 Release publish — TUS slice tests
         # Guards the byte-accurate chunk slicing in the release publish path
         # (regressed twice: #877 misaligned resume, and the SIGPIPE status bug).
