@@ -22,7 +22,11 @@ service MasteryService {
   // Get the status of a running or completed mastery execution
   rpc GetMasteryStatus(MasteryExecutionId) returns (MasteryStatus);
 
-  // AI-assisted: generate a mastery definition from a natural language task description
+  // AI-assisted: generate a mastery definition from a natural language task description.
+  // NOT IMPLEMENTED YET: this rpc replies UNIMPLEMENTED until the AI-assisted generator ships.
+  // Round-trip instead: author a MasteryDefinition (seed its description from your task),
+  // persist it with CreateMastery, and pass the id CreateMastery returns to ExecuteMastery,
+  // which only resolves ids that CreateMastery has persisted.
   rpc GenerateMastery(GenerateMasteryRequest) returns (MasteryDefinition);
 
   // List all saved mastery definitions
