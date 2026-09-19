@@ -375,7 +375,16 @@ private fun KProgress.toProto(executionId: String): PProgress {
     return b.build()
 }
 
-/** Validates one definition's encoded size, node count, retry count and timeout bounds. */
+/**
+ * Validates one definition's encoded size, node count, retry count and timeout bounds.
+ *
+ * Edge `condition` (and the equally unevaluated `outputKey`/`inputKey` pair) are rejected
+ * rather than accepted-and-ignored: the executor resolves dependencies purely
+ * topologically and never evaluates edge expressions, so a definition carrying a
+ * condition would run its guarded nodes unconditionally (#1060). Refusing the
+ * definition keeps the schema's documented contract honest until an expression
+ * language actually exists.
+ */
 private fun validateDefinition(request: PMasteryDef) {
     validateArgument(request.id.length <= 200 && request.name.length <= 512 && request.author.length <= 512) {
         "Mastery identifiers or summary fields exceed the size limit"
@@ -386,6 +395,11 @@ private fun validateDefinition(request: PMasteryDef) {
     }
     validateArgument(request.nodesList.all { it.maxRetries in 0..5 && it.timeoutMs in 0..300_000 }) {
         "Mastery nodes support at most 5 retries and a 5-minute timeout"
+    }
+    validateArgument(request.edgesList.none { it.condition.isNotBlank() }) {
+        "Mastery edge conditions are not supported yet: the executor does not evaluate " +
+            "them, so a conditioned edge would run its target node unconditionally. " +
+            "Remove the condition or split the workflow (#1060)"
     }
 }
 
