@@ -1,6 +1,7 @@
 package ai.rever.boss.startup
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CoroutineScope
@@ -12,7 +13,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
-import java.io.File
 
 /**
  * Desktop implementation of StartupSettingsManager.
@@ -20,6 +20,12 @@ import java.io.File
  *
  * Settings are loaded asynchronously on Dispatchers.IO to avoid blocking the main thread.
  * Default settings are provided immediately via StateFlow.
+ *
+ * Because that load is asynchronous, a change can land while it is still in flight - the
+ * settings screen writes before the first disk read returns. The load is fenced by
+ * [mutationEpoch]: it publishes its disk snapshot only while nothing has mutated the
+ * in-memory state since the read started, so a stale snapshot is dropped rather than
+ * clobbering the newer change. Last write wins, in memory and on disk.
  */
 actual object StartupSettingsManager {
     private val logger = BossLogger.forComponent("StartupSettingsManager")
@@ -33,6 +39,18 @@ actual object StartupSettingsManager {
 
     // Coroutine scope for async operations - uses SupervisorJob so failures don't cancel other operations
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    /**
+     * Orders the async load against mutations. [mutationEpoch] is bumped and the new value
+     * published inside this lock as one step, and the load's epoch check and its own publish
+     * run under the same lock. That closes the window where a load checks the epoch, finds
+     * it unchanged, and then overwrites a mutation that lands between the check and the
+     * assignment: the two steps order completely, and the later one wins.
+     */
+    private val stateLock = Any()
+
+    /** Bumped before every in-memory mutation; guarded by [stateLock]. */
+    private var mutationEpoch = 0L
 
     // Default settings provided immediately, updated async when file is loaded
     private val _currentSettings = MutableStateFlow(StartupSettings())
@@ -51,21 +69,27 @@ actual object StartupSettingsManager {
      */
     private suspend fun loadSettingsAsync() =
         withContext(Dispatchers.IO) {
+            // Fence the read: every updateSettings that runs while it is in flight bumps
+            // [mutationEpoch], which makes the snapshot this load ends up holding stale.
+            // A stale snapshot is discarded by applyLoadedIfUnchanged below instead of
+            // being published over the newer change the mutation already made.
+            val epochAtStart = currentMutationEpoch()
             try {
                 settingsFile.parentFile?.mkdirs()
 
                 if (settingsFile.exists()) {
                     val content = settingsFile.readText()
                     val settings = json.decodeFromString<StartupSettings>(content)
-                    _currentSettings.value = settings
+                    applyLoadedIfUnchanged(settings, epochAtStart)
                     logger.debug(LogCategory.SYSTEM, "Loaded settings")
                 } else {
                     // Create default settings file
-                    val content = json.encodeToString(StartupSettings.serializer(), _currentSettings.value)
-                    settingsFile.writeText(content)
+                    createDefaultFile(epochAtStart)
                     logger.debug(LogCategory.SYSTEM, "Created default settings file")
                 }
-            } catch (e: Exception) {
+            } catch (
+                @Suppress("TooGenericExceptionCaught") e: Exception,
+            ) {
                 logger.warn(LogCategory.SYSTEM, "Error loading settings", error = e)
                 // Keep default settings on error
             }
@@ -83,9 +107,15 @@ actual object StartupSettingsManager {
         withContext(Dispatchers.IO) {
             try {
                 val content = json.encodeToString(StartupSettings.serializer(), _currentSettings.value)
-                settingsFile.writeText(content)
+                // Temp sibling + atomic move, the same pattern as every other settings file
+                // here: a crash mid-write leaves at most a stray temp, never a truncated
+                // startup-settings.json that the next launch would parse as a fresh install,
+                // and concurrent writers cannot interleave their bytes.
+                settingsFile.atomicWriteText(content)
                 logger.debug(LogCategory.SYSTEM, "Settings saved")
-            } catch (e: Exception) {
+            } catch (
+                @Suppress("TooGenericExceptionCaught") e: Exception,
+            ) {
                 logger.warn(LogCategory.SYSTEM, "Error saving settings", error = e)
             }
         }
@@ -94,8 +124,60 @@ actual object StartupSettingsManager {
      * Update settings and persist.
      */
     actual suspend fun updateSettings(settings: StartupSettings) {
-        _currentSettings.value = settings
+        synchronized(stateLock) {
+            // Bumped and published as one step under [stateLock]: a load fenced on an older
+            // epoch cannot then publish over this value, however the threads interleave.
+            mutationEpoch++
+            _currentSettings.value = settings
+        }
         saveSettings()
+    }
+
+    /**
+     * The mutation epoch right now. [loadSettingsAsync] snapshots this before touching the
+     * disk and hands it to [applyLoadedIfUnchanged]; internal so a test can reproduce a load
+     * racing a mutation without having to win that race for real.
+     */
+    internal fun currentMutationEpoch(): Long = synchronized(stateLock) { mutationEpoch }
+
+    /**
+     * Publish the disk snapshot [settings] only while nothing has mutated the in-memory
+     * state since the load that read it started ([epochAtStart]). A load that raced a
+     * mutation is dropped as stale: the mutation is the later write, and it wins.
+     *
+     * Internal for the same reason as [currentMutationEpoch].
+     */
+    internal fun applyLoadedIfUnchanged(
+        settings: StartupSettings,
+        epochAtStart: Long,
+    ) {
+        synchronized(stateLock) {
+            if (mutationEpoch == epochAtStart) {
+                _currentSettings.value = settings
+            } else {
+                logger.debug(LogCategory.SYSTEM, "Discarded a settings load that raced a newer change")
+            }
+        }
+    }
+
+    /**
+     * Write the initial default settings file when none exists yet. Skipped when a mutation
+     * already ran: every [updateSettings] persists its own value, so the file exists and
+     * holds something newer than any default this could write - overwriting it would be the
+     * same clobber the load fence prevents, one level down, on disk.
+     *
+     * The write happens under [stateLock] so a concurrent [updateSettings] cannot slip
+     * between the epoch check and the move and then have its own persist overwritten by the
+     * defaults landing last.
+     */
+    private fun createDefaultFile(epochAtStart: Long) {
+        synchronized(stateLock) {
+            if (mutationEpoch != epochAtStart) {
+                return
+            }
+            val content = json.encodeToString(StartupSettings.serializer(), _currentSettings.value)
+            settingsFile.atomicWriteText(content)
+        }
     }
 
     /**
