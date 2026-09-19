@@ -16,9 +16,30 @@ import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+
+/**
+ * The scope the status-bar indicator's open and toggle run on (#1092).
+ *
+ * Both halves are needed. With a plain `Job`, one throw in the install-prompt path or the panel
+ * event cancelled the parent, and every later click on the indicator was a silent no-op until
+ * restart - exactly the "unclickable indicator" `offerToInstallPanel` rules out.
+ * `SupervisorJob` keeps the scope alive, but an unhandled failure would still reach
+ * `CrashHandler`'s default handler, which writes a crash report and raises the crash dialog for
+ * a click that failed to open a panel. [onFailure] logs it instead.
+ *
+ * No disposal: [PerformanceState] is a process-wide object, so this scope lives as long as the
+ * app, and nothing outlives it to leak.
+ */
+internal fun panelActionScope(
+    dispatcher: CoroutineDispatcher,
+    onFailure: (Throwable) -> Unit,
+): CoroutineScope = CoroutineScope(dispatcher + SupervisorJob() + CoroutineExceptionHandler { _, e -> onFailure(e) })
 
 /** The plugin that draws the Performance panel the status-bar indicator opens. */
 internal const val PERFORMANCE_PLUGIN_ID = "ai.rever.boss.plugin.dynamic.performance"
@@ -43,7 +64,11 @@ private const val HOST_ID = "ai.rever.boss.host"
 // of a class about performance state - not one chosen by a lint threshold.
 actual object PerformanceState {
     private val logger = BossLogger.forComponent("PerformanceState")
-    private val scope = CoroutineScope(Dispatchers.Main)
+
+    private val scope =
+        panelActionScope(Dispatchers.Main) { error ->
+            logger.warn(LogCategory.UI, "Performance panel action failed", error = error)
+        }
 
     /**
      * Order 15, matching what the plugin declares in its own `PerformanceInfo`.
