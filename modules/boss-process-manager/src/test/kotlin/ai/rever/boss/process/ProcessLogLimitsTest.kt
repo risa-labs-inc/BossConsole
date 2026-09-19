@@ -23,6 +23,28 @@ class ProcessLogLimitsTest {
         root.toFile().deleteRecursively()
     }
 
+    private fun createTestLink(link: Path, target: Path): Path {
+        if (System.getProperty("os.name").startsWith("Windows")) {
+            val script =
+                "\$ErrorActionPreference='Stop'; " +
+                    "New-Item -ItemType Junction -Path \$env:NATIVE_TEST_LINK " +
+                    "-Target \$env:NATIVE_TEST_TARGET | Out-Null"
+            val builder = ProcessBuilder("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
+            builder.environment()["NATIVE_TEST_LINK"] = link.toString()
+            builder.environment()["NATIVE_TEST_TARGET"] = target.toString()
+            val process = builder.start()
+            try {
+                assertTrue(process.waitFor(60, TimeUnit.SECONDS), "Junction fixture creation timed out")
+                assertEquals(0, process.exitValue(), process.errorStream.bufferedReader().readText())
+            } finally {
+                process.destroyForcibly()
+            }
+            return link
+        } else {
+            return Files.createSymbolicLink(link, target)
+        }
+    }
+
     @Test
     fun `empty directory obstruction is replaced without recursive deletion`() {
         Files.createDirectories(root.resolve("obstructed/stdout.log"))
@@ -127,11 +149,15 @@ class ProcessLogLimitsTest {
 
     @Test
     fun `rotation never appends through a preexisting log link`() {
-        if (System.getProperty("os.name").startsWith("Windows")) return
         val target = Files.writeString(root.resolve("sentinel"), "untouched")
         val safeDirectory = ProcessLogDirectory.open(root.resolve("logs"), "child")
         val directory = safeDirectory.path
-        Files.createSymbolicLink(directory.resolve("stdout.log"), target)
+        try {
+            Files.createSymbolicLink(directory.resolve("stdout.log"), target)
+        } catch (e: IOException) {
+            if (!System.getProperty("os.name").startsWith("Windows")) throw e
+            org.junit.Assume.assumeTrue("Symbolic link creation is not permitted on this Windows host", false)
+        }
         safeDirectory.use { safe ->
             RotatingProcessLog(safe, "stdout", maximumBytes = 32, fileCount = 3).use { log ->
                 val bytes = "data".repeat(40).toByteArray()
@@ -149,24 +175,22 @@ class ProcessLogLimitsTest {
 
     @Test
     fun `linked process directory is refused without modifying its target`() {
-        if (System.getProperty("os.name").startsWith("Windows")) return
         val logs = Files.createDirectory(root.resolve("logs"))
         val target = Files.createDirectory(root.resolve("sentinel"))
-        Files.createSymbolicLink(logs.resolve("child"), target)
+        createTestLink(logs.resolve("child"), target)
         assertFailsWith<IOException> { ProcessLogStreams.acquire(logs, "child") }
         assertEquals(0L, Files.list(target).use { it.count() })
     }
 
     @Test
     fun `replacing the process directory cannot redirect later rotation`() {
-        if (System.getProperty("os.name").startsWith("Windows")) return
         val logs = Files.createDirectory(root.resolve("logs"))
         val outside = Files.createDirectory(root.resolve("outside"))
         val sentinel = Files.writeString(outside.resolve("stdout.log"), "untouched")
         ProcessLogDirectory.open(logs, "child").use { directory ->
             val moved = logs.resolve("moved")
             Files.move(directory.path, moved)
-            Files.createSymbolicLink(directory.path, outside)
+            createTestLink(directory.path, outside)
             RotatingProcessLog(directory, "stdout", maximumBytes = 32, fileCount = 3).use { writer ->
                 val bytes = "rotation".repeat(40).toByteArray()
                 writer.append(bytes, bytes.size)
@@ -180,9 +204,8 @@ class ProcessLogLimitsTest {
 
     @Test
     fun `linked log roots and ancestors are refused before outside writes`() {
-        if (System.getProperty("os.name").startsWith("Windows")) return
         val outside = Files.createDirectory(root.resolve("outside"))
-        val linked = Files.createSymbolicLink(root.resolve("linked"), outside)
+        val linked = createTestLink(root.resolve("linked"), outside)
         assertFailsWith<IOException> { ProcessLogDirectory.open(linked, "child") }
         assertFailsWith<IOException> { ProcessLogDirectory.open(linked.resolve("logs"), "child") }
         assertEquals(0L, Files.list(outside).use { it.count() })
