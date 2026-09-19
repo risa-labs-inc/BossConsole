@@ -7,6 +7,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -79,6 +80,55 @@ class LayoutWatcherWriteTest {
         const val NOW = 1_788_000_000_500
     }
 
+    // ==================== an empty layout is not written over a session ====================
+
+    /**
+     * The morning bug. A tab-owning plugin was disabled after the laptop woke, the window went
+     * empty on its own, and the watcher's next write put `"tabs": []` on top of a full session -
+     * which is what turned a recoverable window into a lost one.
+     */
+    @Test
+    fun `the watcher does not write a record with no tabs`() {
+        val disk = disk()
+        val emptied = live.copy(layout = SplitConfig.SinglePanel(PanelConfig(id = "main", tabs = emptyList())))
+
+        disk.applyWrite(lastSessionOnDisk)
+        val write = layoutWatcherWrite(current = null, live = emptied, now = NOW)
+
+        assertNull(write.record, "an empty layout is not a record worth writing")
+
+        write.record?.let { disk.applyWrite(it) }
+
+        assertEquals(
+            lastSessionOnDisk,
+            disk[LAST_SESSION_ID],
+            "an empty layout must not overwrite the session it is standing in for",
+        )
+    }
+
+    /** The in-memory copy still follows the window, so a plugin's Save reads what is on screen. */
+    @Test
+    fun `an empty layout is still the current workspace in memory`() {
+        val emptied = live.copy(layout = SplitConfig.SinglePanel(PanelConfig(id = "main", tabs = emptyList())))
+
+        val write = layoutWatcherWrite(current = null, live = emptied, now = NOW)
+
+        assertEquals(emptied.layout, write.current.layout)
+    }
+
+    /** A tab anywhere in a nested split still yields a record, so a split window is not read as empty. */
+    @Test
+    fun `a tab in either half of a split still produces a record`() {
+        val empty = SplitConfig.SinglePanel(PanelConfig(id = "l", tabs = emptyList()))
+        val occupied = layout("one")
+
+        fun recordFor(split: SplitConfig) = layoutWatcherWrite(null, live.copy(layout = split), NOW).record
+
+        assertNull(recordFor(SplitConfig.VerticalSplit(empty, empty)))
+        assertNotNull(recordFor(SplitConfig.VerticalSplit(empty, occupied)))
+        assertNotNull(recordFor(SplitConfig.HorizontalSplit(occupied, empty)))
+    }
+
     // ==================== the headline: a named Space stays unsaved ====================
 
     /**
@@ -91,7 +141,7 @@ class LayoutWatcherWriteTest {
         val disk = disk()
         val write = layoutWatcherWrite(current = fooOnDisk, live = live, now = NOW)
 
-        disk.applyWrite(write.record)
+        disk.applyWrite(assertNotNull(write.record))
 
         assertEquals(
             fooOnDisk,
@@ -124,7 +174,7 @@ class LayoutWatcherWriteTest {
         // stable under repetition, which is what "until the user presses save" means.
         val disk = disk()
         repeat(5) { interval ->
-            disk.applyWrite(layoutWatcherWrite(fooOnDisk, live, NOW + interval).record)
+            disk.applyWrite(assertNotNull(layoutWatcherWrite(fooOnDisk, live, NOW + interval).record))
             assertTrue(isUnsaved(live, disk[fooOnDisk.id]), "still unsaved after ${interval + 1} intervals")
         }
     }
@@ -139,7 +189,7 @@ class LayoutWatcherWriteTest {
     fun `the watcher refreshes the Last Session record while the user works in a named Space`() {
         val disk = disk()
 
-        disk.applyWrite(layoutWatcherWrite(fooOnDisk, live, NOW).record)
+        disk.applyWrite(assertNotNull(layoutWatcherWrite(fooOnDisk, live, NOW).record))
 
         val record = assertNotNull(disk[LAST_SESSION_ID])
         assertEquals(live.layout, record.layout, "the recovery record holds the layout on screen")
@@ -154,7 +204,7 @@ class LayoutWatcherWriteTest {
         val disk = disk()
         assertEquals(layout("stale"), disk[LAST_SESSION_ID]?.layout)
 
-        disk.applyWrite(layoutWatcherWrite(fooOnDisk, live, NOW).record)
+        disk.applyWrite(assertNotNull(layoutWatcherWrite(fooOnDisk, live, NOW).record))
 
         assertEquals(live.layout, disk[LAST_SESSION_ID]?.layout)
     }
@@ -201,10 +251,10 @@ class LayoutWatcherWriteTest {
     @Test
     fun `the record is Last Session whichever Space is on screen`() {
         listOf(null, fooOnDisk, lastSessionOnDisk).forEach { current ->
-            val write = layoutWatcherWrite(current, live, NOW)
-            assertEquals(LAST_SESSION_ID, write.record.id, "for current = ${current?.name}")
-            assertEquals(LAST_SESSION_NAME, write.record.name)
-            assertEquals(live.layout, write.record.layout)
+            val record = assertNotNull(layoutWatcherWrite(current, live, NOW).record)
+            assertEquals(LAST_SESSION_ID, record.id, "for current = ${current?.name}")
+            assertEquals(LAST_SESSION_NAME, record.name)
+            assertEquals(live.layout, record.layout)
         }
     }
 }
