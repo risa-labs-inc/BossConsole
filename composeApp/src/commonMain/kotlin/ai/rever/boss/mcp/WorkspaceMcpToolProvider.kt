@@ -229,7 +229,7 @@ object WorkspaceMcpToolProvider : McpToolProvider {
                     "properties": {
                         "path": { "type": "string", "description": "Absolute path of an existing project directory to open as a new Space with its first terminal. A leading ~ is expanded; relative paths are refused." },
                         "workspaceId": { "type": "string", "description": "ID of the workspace to open" },
-                        "workspacePath": { "type": "string", "description": "Path to workspace JSON file" },
+                        "workspacePath": { "type": "string", "description": "Path to a workspace JSON file inside the workspaces directory" },
                         "name": { "type": "string", "description": "Name if creating workspace" },
                         "projectPath": { "type": "string", "description": "Project root directory" },
                         "windowId": { "type": "string", "description": "Target window ID" },
@@ -415,6 +415,24 @@ object WorkspaceMcpToolProvider : McpToolProvider {
         if (!workspacePath.isNullOrBlank() && !CLISecurityValidator.isValidOpenTargetPath(workspacePath)) {
             return McpToolResult("Invalid workspace path (security check failed)", isError = true)
         }
+        // That check is the editor-open contract - any file the user picks. A Space file goes
+        // further: it is parsed and APPLIED as the window's live layout, so the reachable set
+        // is the workspace store, the same directory the workspaceId mode loads from and this
+        // app itself writes. A workspacePath that resolves outside it - `..` traversal, an
+        // absolute path elsewhere, a symlink pointing out - is refused before the file is
+        // probed, read, or parsed. Fails closed (#896).
+        var canonicalWorkspacePath: String? = null
+        if (!workspacePath.isNullOrBlank()) {
+            val containment =
+                checkWorkspacePathContainment(
+                    rawPath = workspacePath,
+                    workspaceDirectory = getFileManager().getDefaultWorkspaceDirectory(),
+                )
+            if (containment.canonicalPath == null) {
+                return McpToolResult(containment.error ?: "Invalid workspace path", isError = true)
+            }
+            canonicalWorkspacePath = containment.canonicalPath
+        }
         // projectPath ends up as a terminal working directory, the same destination the
         // `path` mode serves, so it gets the same gate: absolute, security-checked, and an
         // existing directory.
@@ -458,8 +476,8 @@ object WorkspaceMcpToolProvider : McpToolProvider {
         var workspace: LayoutWorkspace? = null
         var isShippedTemplate = false
 
-        if (!workspacePath.isNullOrBlank()) {
-            val file = File(workspacePath)
+        if (canonicalWorkspacePath != null) {
+            val file = File(canonicalWorkspacePath)
             if (file.exists() && file.canRead()) {
                 val content = withContext(Dispatchers.IO) { file.readText() }
                 workspace = runCatching { WorkspaceSerializer.deserialize(content) }.getOrNull()
@@ -1091,6 +1109,89 @@ private suspend fun checkProjectPath(rawPath: String): ProjectPathCheck {
     }
     val canonical = withContext(Dispatchers.IO) { canonicalizeOrNull(expandedPath) }
     return ProjectPathCheck(canonical, "Path is not an existing directory: $rawPath".takeIf { canonical == null })
+}
+
+/**
+ * The outcome of containing a `workspacePath` open_workspace argument to the workspace store:
+ * [canonicalPath] is the path the call may go on to read - the caller's path, canonicalised,
+ * so the file checked is the file read - or [error] is the user-facing refusal. At most one of
+ * the two is set, and every failure mode (a path the filesystem cannot represent, traversal,
+ * an absolute path elsewhere, a symlink out of the store, the store directory itself) is a
+ * refusal: the gate fails closed.
+ */
+internal data class WorkspacePathCheck(
+    val canonicalPath: String?,
+    val error: String?,
+)
+
+/**
+ * Resolves [path] to its real on-disk location, symlinks included. File.canonicalFile resolves
+ * links on Linux and macOS but NOT on Windows, where it only normalises spelling and leaves
+ * reparse points (symlinks, junctions) alone - so a link inside the store pointing out slipped
+ * containment precisely on Windows CI. Path.toRealPath resolves links on every OS (realpath on
+ * Unix, GetFinalPathNameByHandle on Windows) and canonicalises 8.3 short names and separators.
+ * A path that does not exist yet cannot be real-pathed: its containment (a Space file about to
+ * be created via createIfAbsent, a `..` chain over a not-yet-created directory) is decided by
+ * where it would land, so it falls back to lexical canonicalisation. Fails closed: an
+ * unparseable or otherwise unresolvable path returns null and the caller refuses.
+ */
+private fun realPathOrNull(path: String): File? =
+    try {
+        File(path).toPath().toRealPath().toFile()
+    } catch (_: java.nio.file.NoSuchFileException) {
+        try {
+            File(path).canonicalFile
+        } catch (_: java.io.IOException) {
+            null
+        } catch (_: SecurityException) {
+            null
+        }
+    } catch (_: java.io.IOException) {
+        null
+    } catch (_: java.nio.file.InvalidPathException) {
+        null
+    } catch (_: SecurityException) {
+        null
+    }
+
+/**
+ * Containment for the workspacePath mode of open_workspace (#896): the file the mode names is
+ * not merely opened, it is parsed and applied as the window's live Space layout, so the
+ * reachable set is the workspace store [workspaceDirectory] - the same directory the
+ * workspaceId mode loads from and this app itself writes - not any readable file on disk.
+ *
+ * Both sides are resolved to their real on-disk location first, so `..` that stays inside the
+ * store is legal while `..` that escapes is not, and a symlink inside the store pointing out
+ * resolves outside and is refused - [realPathOrNull] follows symlinks on every OS, unlike
+ * File.canonicalFile on Windows. [rawPath] need not exist: containment decides only whether the
+ * call may go on to probe and read it.
+ */
+internal suspend fun checkWorkspacePathContainment(
+    rawPath: String,
+    workspaceDirectory: String,
+): WorkspacePathCheck {
+    val resolved =
+        withContext(Dispatchers.IO) {
+            val storeRoot = realPathOrNull(workspaceDirectory)
+            val requested = realPathOrNull(rawPath)
+            if (storeRoot == null || requested == null) null else Pair(storeRoot, requested)
+        }
+    val (storeRoot, requested) =
+        resolved ?: return WorkspacePathCheck(null, "Invalid workspace path (security check failed)")
+    // Path.startsWith is component-wise: a sibling named to share the store's prefix is not
+    // inside it, and the store directory itself is not a Space file inside the store.
+    val contained = requested != storeRoot && requested.toPath().startsWith(storeRoot.toPath())
+    return if (contained) {
+        WorkspacePathCheck(requested.path, null)
+    } else {
+        WorkspacePathCheck(
+            null,
+            "Refusing to open '$rawPath' as a Space: it resolves to " +
+                "${requested.path}, which is not a file inside the workspaces directory " +
+                "(${storeRoot.path}) - the only directory open_workspace loads and applies " +
+                "Space layouts from. Copy the file there and open it by its path or workspaceId.",
+        )
+    }
 }
 
 /**
