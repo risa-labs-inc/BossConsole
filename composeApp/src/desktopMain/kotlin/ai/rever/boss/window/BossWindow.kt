@@ -308,6 +308,7 @@ fun ApplicationScope.BossWindow(
 
         // State for the password/bookmark import dialog
         var showImportDialog by remember { mutableStateOf(false) }
+        var showTaskManagerDialog by remember { mutableStateOf(false) }
 
         // Sync isMaximized state with actual window state (handles OS maximize controls)
         DisposableEffect(window) {
@@ -933,6 +934,15 @@ fun ApplicationScope.BossWindow(
 
                 Separator()
 
+                Separator()
+
+                Item(
+                    "Task Manager",
+                    onClick = { showTaskManagerDialog = true },
+                )
+
+                Separator()
+
                 Item(
                     "Bring All to Front",
                     onClick = {
@@ -1110,6 +1120,12 @@ fun ApplicationScope.BossWindow(
             }
 
             // CLI Installation Dialog
+            if (showTaskManagerDialog) {
+                ai.rever.boss.components.dialogs.BossTaskManagerDialog(
+                    onDismiss = { showTaskManagerDialog = false }
+                )
+            }
+
             if (showCLIInstallDialog) {
                 CLIInstallationDialog(
                     onDismiss = {
