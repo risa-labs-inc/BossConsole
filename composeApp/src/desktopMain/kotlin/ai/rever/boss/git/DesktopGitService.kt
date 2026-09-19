@@ -176,6 +176,15 @@ actual object GitService {
                     } else {
                         branchName
                     }
+                // The STRIPPED name is what git receives, and it has not been
+                // through the gate above: `origin/-f` is a legal ref as a whole,
+                // but it strips to `-f`, which checkout would read as a FLAG -
+                // `git checkout -f --` discards every uncommitted modification
+                // in the tree, planted by anyone who can push a branch name.
+                // Gate the name that will actually run.
+                if (!isSafeRefName(localName)) {
+                    return@withContext GitError("Refused an unsafe ref: branch")
+                }
                 // `--` terminates the revision list: without it `checkout <name>`
                 // on a name that is also a path checks OUT THE PATH, discarding
                 // that file's uncommitted changes.
