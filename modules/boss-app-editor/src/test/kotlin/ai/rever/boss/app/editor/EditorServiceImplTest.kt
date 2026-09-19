@@ -1,11 +1,17 @@
 package ai.rever.boss.app.editor
 
 import ai.rever.boss.ipc.proto.services.OpenFileRequest
+import ai.rever.boss.ipc.proto.services.SaveFileRequest
 import ai.rever.boss.plugin.language.LanguageIds
+import io.grpc.Status
+import io.grpc.StatusRuntimeException
 import kotlinx.coroutines.runBlocking
+import java.io.File
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
@@ -121,4 +127,105 @@ class EditorServiceImplTest {
     fun `extension lookup is case-insensitive`() {
         assertEquals("kotlin", service.detectLanguage("KT"))
     }
+
+    /**
+     * BossConsole#1157: the previous saveFile caught Exception, returned Empty regardless,
+     * and the manifest declared a `success` boolean the RPC could never produce. The fix:
+     * a `SaveFileResponse { success, error_message }`, exception handling in the success
+     * path (no swallowed failures), and Status.INVALID_ARGUMENT on path rejection.
+     */
+    @Test
+    fun `saveFile on a writable target reports success and persists the content`() =
+        runBlocking {
+            val dir = Files.createTempDirectory("boss-savefile-").toFile()
+            val target = File(dir, "out.txt")
+            try {
+                val response =
+                    service.saveFile(
+                        SaveFileRequest
+                            .newBuilder()
+                            .setPath(target.absolutePath)
+                            .setContent("hello\n")
+                            .build(),
+                    )
+                assertTrue(response.success, response.errorMessage)
+                assertEquals("", response.errorMessage)
+                assertEquals("hello\n", target.readText())
+            } finally {
+                dir.deleteRecursively()
+            }
+        }
+
+    @Test
+    fun `saveFile on an unwritable target reports failure with the OS error, not a silent Empty`() =
+        runBlocking {
+            // Targeting a child of an EXISTING FILE (not a directory) is the portable way to
+            // make writeText fail across platforms: the mkdirs call inside saveFile silently
+            // does NOT create a sibling under a non-directory, so the write fails with
+            // ENOTDIR (POSIX) / ERROR_DIRECTORY (Windows). Either way, saveFile must
+            // surface the failure rather than returning an Empty-shaped success.
+            // dir.setWritable(false, false) was tried first; it is not portable on Windows
+            // because admin or elevated contexts and certain filesystem ACLs ignore the
+            // request and let writes succeed anyway. Writing under a non-directory parent
+            // is portable because no POSIX/Windows conformance mode lets open(O_WRONLY |
+            // O_CREAT) succeed when the immediate parent is not a directory.
+            val tempDir = Files.createTempDirectory("boss-savefile-fail-").toFile()
+            val existingFile = File(tempDir, "a-file")
+            existingFile.writeText("not a directory\n")
+            val target = File(existingFile, "out.txt")
+            try {
+                val response =
+                    service.saveFile(
+                        SaveFileRequest
+                            .newBuilder()
+                            .setPath(target.absolutePath)
+                            .setContent("hello\n")
+                            .build(),
+                    )
+                assertFalse(response.success, "writing under a non-directory parent must surface as failure")
+                assertNotNull(response.errorMessage, "the OS error message must reach the wire")
+                assertFalse(
+                    target.exists(),
+                    "the file must not have been created by a hidden write",
+                )
+            } finally {
+                tempDir.deleteRecursively()
+            }
+        }
+
+    @Test
+    fun `saveFile on a path-traversal payload raises INVALID_ARGUMENT, not IllegalArgumentException`() =
+        runBlocking {
+            try {
+                service.saveFile(
+                    SaveFileRequest
+                        .newBuilder()
+                        .setPath("/tmp/../etc/passwd")
+                        .setContent("hello\n")
+                        .build(),
+                )
+            } catch (e: StatusRuntimeException) {
+                assertEquals(Status.Code.INVALID_ARGUMENT, e.status.code)
+                return@runBlocking
+            }
+            kotlin.test.fail("Expected StatusRuntimeException with INVALID_ARGUMENT for path traversal")
+        }
+
+    @Test
+    fun `saveFile on a system path raises INVALID_ARGUMENT`() =
+        runBlocking {
+            try {
+                service.saveFile(
+                    SaveFileRequest
+                        .newBuilder()
+                        .setPath("/etc/hosts")
+                        .setContent("hello\n")
+                        .build(),
+                )
+            } catch (e: StatusRuntimeException) {
+                assertEquals(Status.Code.INVALID_ARGUMENT, e.status.code)
+                return@runBlocking
+            }
+            kotlin.test.fail("Expected StatusRuntimeException with INVALID_ARGUMENT for /etc path")
+        }
 }
