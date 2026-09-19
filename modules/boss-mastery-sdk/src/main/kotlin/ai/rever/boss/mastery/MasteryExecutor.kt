@@ -18,6 +18,8 @@ import java.util.concurrent.atomic.AtomicLong
  * Executes mastery nodes in topological order with:
  * - Parallel execution within each level
  * - Data passing between nodes via [MasteryEdge] and [MasteryNode.inputMapping]
+ * - Conditional edges: an edge is followed only when its [MasteryEdge.condition]
+ *   holds against the source node's output map (see [MasteryEdgeCondition])
  * - Per-node retry logic with linear backoff
  * - Real-time progress events emitted via [Flow]
  */
@@ -28,6 +30,14 @@ class MasteryExecutor(
 
     /**
      * Execute a mastery definition, streaming progress events.
+     *
+     * A node joins its level only when at least one incoming edge is
+     * followed — its source produced output and its [MasteryEdge.condition]
+     * (if any) evaluated true against that output. Nodes whose incoming
+     * edges are all blocked are skipped, reported on the stream as
+     * [MasteryProgress.NodeSkipped] and logged at WARN, which in turn
+     * blocks their downstream edges; nodes without incoming edges and blank
+     * or null conditions keep the previous unconditional behaviour.
      *
      * @param mastery The mastery DAG to execute
      * @param input   Initial key-value input (available to nodes as "INPUT.key")
@@ -63,9 +73,17 @@ class MasteryExecutor(
                 for (level in levels) {
                     // All nodes in a level are independent — execute in parallel
                     val snapshot = nodeOutputs.toMap()
+
+                    // A node joins its level only when at least one incoming edge
+                    // is followed; skips are reported as NodeSkipped and logged at
+                    // WARN so a guard that fires (or a malformed condition that
+                    // fails closed) is visible, not silent.
+                    val admitted = admit(level, mastery.edges, snapshot) { send(it) }
+                    if (admitted.isEmpty()) continue
+
                     val levelResults: List<Pair<String, Map<String, String>>> =
                         coroutineScope {
-                            level
+                            admitted
                                 .map { node ->
                                     async {
                                         executeNode(node, snapshot, outputBudget, slots) { progress ->
@@ -219,6 +237,75 @@ class MasteryExecutor(
             }.associate { it.key to it.value }
     }
 
+    /**
+     * The nodes of [level] that may execute now, in [level] order; a node is
+     * admitted only when at least one incoming edge is followed (see
+     * [skipReason]). Each skipped node is reported through [emit] as
+     * [MasteryProgress.NodeSkipped] carrying the same human-readable reason
+     * written to the WARN log, so an execution watcher sees why a node did
+     * not run instead of a silently missing NodeStarted.
+     */
+    private suspend fun admit(
+        level: List<MasteryNode>,
+        edges: List<MasteryEdge>,
+        nodeOutputs: Map<String, Map<String, String>>,
+        emit: suspend (MasteryProgress) -> Unit,
+    ): List<MasteryNode> {
+        val admitted = mutableListOf<MasteryNode>()
+        for (node in level) {
+            val reason = skipReason(node, edges, nodeOutputs)
+            if (reason == null) {
+                admitted += node
+            } else {
+                logger.warn("Node '{}' skipped: {}", node.id, reason)
+                emit(MasteryProgress.NodeSkipped(node.id, reason))
+            }
+        }
+        return admitted
+    }
+
+    /**
+     * Why [node] may not join the current level, or null when it may.
+     *
+     * A node with no incoming edges is unconditional (pre-existing behaviour).
+     * Otherwise it runs only when at least one incoming edge is followed: the
+     * edge's source produced output — the virtual INPUT node always has — and
+     * its condition, evaluated against that output, holds. Because a skipped
+     * node never records output, a guard also skips everything reachable from
+     * it through its remaining edges. Malformed conditions fail closed
+     * ([MasteryEdgeCondition]).
+     */
+    private fun skipReason(
+        node: MasteryNode,
+        edges: List<MasteryEdge>,
+        nodeOutputs: Map<String, Map<String, String>>,
+    ): String? {
+        val verdicts = edges.filter { it.toNode == node.id }.map { edgeVerdict(it, nodeOutputs) }
+        val blocked = verdicts.filterIsInstance<MasteryEdgeCondition.Blocked>()
+        return when {
+            verdicts.isEmpty() -> null
+            blocked.size < verdicts.size -> null
+            else -> blocked.joinToString("; ") { it.reason }
+        }
+    }
+
+    /** Whether [edge] may be followed given the node outputs recorded so far. */
+    private fun edgeVerdict(
+        edge: MasteryEdge,
+        nodeOutputs: Map<String, Map<String, String>>,
+    ): MasteryEdgeCondition.Result =
+        when (val sourceOutput = nodeOutputs[edge.fromNode]) {
+            null -> {
+                MasteryEdgeCondition.Blocked(
+                    "source node '${edge.fromNode}' produced no output (it was skipped)",
+                )
+            }
+
+            else -> {
+                MasteryEdgeCondition.evaluate(edge.condition, sourceOutput)
+            }
+        }
+
     private class NodeExecutionException(
         val nodeId: String,
         message: String,
@@ -248,6 +335,16 @@ sealed class MasteryProgress {
         val nodeId: String,
         val error: String,
         val willRetry: Boolean,
+    ) : MasteryProgress()
+
+    /**
+     * A node did not execute: every incoming edge was blocked — a guard
+     * fired or a malformed condition failed closed. [reason] is the same
+     * human-readable string the executor logs at WARN.
+     */
+    data class NodeSkipped(
+        val nodeId: String,
+        val reason: String,
     ) : MasteryProgress()
 
     data class Completed(

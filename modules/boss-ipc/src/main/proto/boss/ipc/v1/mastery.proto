@@ -95,6 +95,7 @@ message MasteryProgress {
     NodeFailed node_failed = 6;
     MasteryCompleted completed = 7;
     MasteryFailed failed = 8;
+    NodeSkipped node_skipped = 9;
   }
 }
 
@@ -122,6 +123,14 @@ message NodeFailed {
   string error_message = 2;
   int32 retry_attempt = 3;
   bool will_retry = 4;
+}
+
+// A node was skipped: every incoming edge was blocked (a guard fired or a
+// malformed condition failed closed). reason is the same human-readable
+// string the executor logs at WARN.
+message NodeSkipped {
+  string node_id = 1;
+  string reason = 2;
 }
 
 message MasteryCompleted {

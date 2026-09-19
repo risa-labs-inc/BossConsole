@@ -41,6 +41,20 @@ data class MasteryEdge(
     val toNode: String,
     val outputKey: String,
     val inputKey: String,
-    /** Optional expression that must be true for this edge to be followed. */
+    /**
+     * Optional expression that must be true for this edge to be followed.
+     *
+     * Evaluated by [MasteryExecutor] against the source node's output map (the
+     * mastery input for the virtual `INPUT` node) with the bounded grammar of
+     * [MasteryEdgeCondition]: `true`, `false`, a bare `key` (truthiness), or
+     * `key == literal` / `key != literal`. A bare-key condition reading an
+     * output key literally named `true` or `false` is interpreted as the
+     * boolean literal; the `key == "true"` comparison form is the
+     * unambiguous way to compare against those strings. Null or blank
+     * conditions are unconditional. A malformed expression — or one that
+     * cannot be established, such as a comparison against a key with no
+     * output value — fails closed: the edge is not followed and the
+     * dependent node is skipped rather than running unconditionally.
+     */
     val condition: String? = null,
 )
