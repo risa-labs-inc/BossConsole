@@ -19,6 +19,8 @@ import java.util.jar.JarFile
  * would surface as crashes during first UI render.
  */
 object BinaryCompatibilityValidator {
+    /** Classes the host has a contract with; everything else in a plugin JAR is its own runtime. */
+    private const val OWN_CLASS_PREFIX = "ai.rever.boss.plugin."
     private val logger = BossLogger.forComponent("BinaryCompatibilityValidator")
 
     data class ValidationResult(
@@ -41,18 +43,84 @@ object BinaryCompatibilityValidator {
     ): ValidationResult {
         val errors = mutableListOf<String>()
 
-        val classEntries =
+        // Names for every class, bytes for only the ones actually validated.
+        //
+        // Both were read together before, so the host held a JAR's entire uncompressed class
+        // content at once and used a sliver of it. Measured on shipped plugins:
+        // boss-plugin-terminal-tab 2.5.74 is 9,469 classes, 40.4MB read to validate 0.50MB;
+        // fluck-browser 1.2.29 is 10.3MB read for 2.69MB. A JarEntry is metadata, so carrying
+        // those costs nothing and the names below still cover the whole JAR.
+        //
+        // It also makes this honour the rule stated further down. A bundled third-party class
+        // "must not disable the plugin", but reading one that failed threw into the catch below,
+        // which returns isCompatible=false - and the caller refuses the load on that. Bytes for
+        // those classes are now never read, so they cannot fail a plugin that does not depend on
+        // them.
+        val validated =
             try {
                 JarFile(jarPath).use { jar ->
-                    jar
-                        .entries()
-                        .asSequence()
-                        .filter { it.name.endsWith(".class") && !it.name.startsWith("META-INF/") }
-                        .map { entry ->
-                            val className = entry.name.removeSuffix(".class").replace('/', '.')
+                    val classEntries =
+                        jar
+                            .entries()
+                            .asSequence()
+                            .filter { it.name.endsWith(".class") && !it.name.startsWith("META-INF/") }
+                            .map { entry ->
+                                entry.name.removeSuffix(".class").replace('/', '.') to entry
+                            }.toList()
+
+                    // Collect all class names in this JAR — references between them are
+                    // self-consistent (compiled together) and don't need cross-validation.
+                    val jarClassNames = classEntries.mapTo(mutableSetOf()) { it.first }
+
+                    for ((className, entry) in classEntries) {
+                        // Only validate the plugin's OWN classes (ai.rever.boss.plugin.*)
+                        // against the host. Bundled third-party classes (ktor, mcp-sdk,
+                        // kotlin-logging, …) are the plugin's self-contained runtime; their
+                        // internal linkage is not a host-contract concern and must not
+                        // disable the plugin. In particular, libraries ship OPTIONAL adapter
+                        // classes for backends the host doesn't bundle — e.g. kotlin-logging's
+                        // io.github.oshai.kotlinlogging.logback.internal.LogbackLogEvent
+                        // references ch.qos.logback.* which isn't present, so merely LOADING
+                        // that (never-used) class throws NoClassDefFoundError. Skipping
+                        // third-party classes here mirrors the member-ref scoping below.
+                        if (!className.startsWith(OWN_CLASS_PREFIX)) continue
+
+                        // First, ensure the class itself can be loaded
+                        try {
+                            Class.forName(className, false, classLoader)
+                        } catch (e: LinkageError) {
+                            errors.add("$className: ${e.javaClass.simpleName} - ${e.message}")
+                            continue
+                        } catch (e: ClassNotFoundException) {
+                            errors.add("$className: ClassNotFoundException - ${e.message}")
+                            continue
+                        }
+
+                        // Read and parse constant pool, and verify all symbolic references
+                        try {
                             val bytes = jar.getInputStream(entry).use { it.readBytes() }
-                            className to bytes
-                        }.toList()
+                            for (ref in ConstantPoolParser.extractReferences(bytes)) {
+                                // Skip references to classes within the same JAR — they were
+                                // compiled together and are guaranteed to be consistent.
+                                if (ref.ownerClassName in jarClassNames) continue
+                                verifyReference(ref, classLoader, className, errors)
+                            }
+                        } catch (e: Exception) {
+                            // Unreadable or malformed class file — not a compatibility issue
+                            // per se, skip. Reading moved inside this clause deliberately: a
+                            // class this cannot read is exactly as informative as one it cannot
+                            // parse, and neither is grounds to refuse the whole plugin.
+                            logger.debug(
+                                LogCategory.SYSTEM,
+                                "Failed to read or parse constant pool",
+                                mapOf(
+                                    "className" to className,
+                                    "error" to (e.message ?: "unknown"),
+                                ),
+                            )
+                        }
+                    }
+                    classEntries.size
                 }
             } catch (e: Exception) {
                 logger.error(
@@ -72,56 +140,6 @@ object BinaryCompatibilityValidator {
                 )
             }
 
-        // Collect all class names in this JAR — references between them are
-        // self-consistent (compiled together) and don't need cross-validation.
-        val jarClassNames = classEntries.map { it.first }.toSet()
-
-        for ((className, bytes) in classEntries) {
-            // Only validate the plugin's OWN classes (ai.rever.boss.plugin.*)
-            // against the host. Bundled third-party classes (ktor, mcp-sdk,
-            // kotlin-logging, …) are the plugin's self-contained runtime; their
-            // internal linkage is not a host-contract concern and must not
-            // disable the plugin. In particular, libraries ship OPTIONAL adapter
-            // classes for backends the host doesn't bundle — e.g. kotlin-logging's
-            // io.github.oshai.kotlinlogging.logback.internal.LogbackLogEvent
-            // references ch.qos.logback.* which isn't present, so merely LOADING
-            // that (never-used) class throws NoClassDefFoundError. Skipping
-            // third-party classes here mirrors the member-ref scoping below.
-            if (!className.startsWith("ai.rever.boss.plugin.")) continue
-
-            // First, ensure the class itself can be loaded
-            try {
-                Class.forName(className, false, classLoader)
-            } catch (e: LinkageError) {
-                errors.add("$className: ${e.javaClass.simpleName} - ${e.message}")
-                continue
-            } catch (e: ClassNotFoundException) {
-                errors.add("$className: ClassNotFoundException - ${e.message}")
-                continue
-            }
-
-            // Parse constant pool and verify all symbolic references
-            try {
-                val refs = ConstantPoolParser.extractReferences(bytes)
-                for (ref in refs) {
-                    // Skip references to classes within the same JAR — they were
-                    // compiled together and are guaranteed to be consistent.
-                    if (ref.ownerClassName in jarClassNames) continue
-                    verifyReference(ref, classLoader, className, errors)
-                }
-            } catch (e: Exception) {
-                // Malformed class file — not a compatibility issue per se, skip
-                logger.debug(
-                    LogCategory.SYSTEM,
-                    "Failed to parse constant pool",
-                    mapOf(
-                        "className" to className,
-                        "error" to (e.message ?: "unknown"),
-                    ),
-                )
-            }
-        }
-
         if (errors.isNotEmpty()) {
             logger.warn(
                 LogCategory.SYSTEM,
@@ -138,7 +156,7 @@ object BinaryCompatibilityValidator {
                 "Binary compatibility validation passed",
                 mapOf(
                     "jarPath" to jarPath,
-                    "classCount" to classEntries.size,
+                    "classCount" to validated,
                 ),
             )
         }
