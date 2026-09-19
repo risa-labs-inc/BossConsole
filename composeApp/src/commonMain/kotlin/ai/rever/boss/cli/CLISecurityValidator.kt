@@ -133,6 +133,107 @@ object CLISecurityValidator {
         return true
     }
 
+    private val RESTRICTED_POSIX_ROOTS =
+        listOf(
+            "/etc",
+            "/sys",
+            "/proc",
+            "/root",
+            "/dev",
+            "/boot",
+            "/bin",
+            "/sbin",
+            "/usr/bin",
+            "/usr/sbin",
+        )
+
+    private val RESTRICTED_WINDOWS_DIRECTORIES =
+        listOf(
+            "windows",
+            "winnt",
+            "program files",
+            "program files (x86)",
+            "system volume information",
+            "recovery",
+        )
+
+    /**
+     * Normalizes a path string by converting backslashes to forward slashes,
+     * stripping duplicate separators, and resolving `.` and `..` segments purely
+     * in memory without filesystem dependencies.
+     */
+    private fun resolveSegments(
+        segments: List<String>,
+        isAbsolute: Boolean,
+    ): List<String> {
+        val resolved = mutableListOf<String>()
+        for (segment in segments) {
+            if (segment.isEmpty() || segment == ".") continue
+            if (segment == "..") {
+                if (resolved.isNotEmpty() && resolved.last() != "..") {
+                    resolved.removeAt(resolved.size - 1)
+                } else if (!isAbsolute) {
+                    resolved.add("..")
+                }
+            } else {
+                resolved.add(segment)
+            }
+        }
+        return resolved
+    }
+
+    /**
+     * Normalizes a path string by converting backslashes to forward slashes,
+     * stripping duplicate separators, and resolving `.` and `..` segments purely
+     * in memory without filesystem dependencies.
+     */
+    fun normalizePath(path: String): String {
+        val trimmed = path.trim()
+        if (trimmed.isEmpty()) return ""
+
+        val isWindowsDrive = trimmed.length >= 2 && trimmed[1] == ':' && trimmed[0].isLetter()
+        val prefix = if (isWindowsDrive) trimmed.substring(0, 2).uppercase() else ""
+        val remainder = if (isWindowsDrive) trimmed.substring(2) else trimmed
+        val isAbsolute = remainder.startsWith('/') || remainder.startsWith('\\')
+
+        val segments = remainder.split('/', '\\')
+        val resolved = resolveSegments(segments, isAbsolute)
+        val joined = resolved.joinToString("/")
+
+        return when {
+            prefix.isNotEmpty() -> if (isAbsolute) "$prefix/$joined" else "$prefix$joined"
+            isAbsolute -> "/$joined"
+            else -> joined
+        }
+    }
+
+    /**
+     * Checks whether [path] targets a restricted operating system directory or
+     * root path that should never be accessed or opened as a workspace.
+     */
+    fun isRestrictedSystemPath(path: String): Boolean {
+        val normalized = normalizePath(path)
+        if (normalized.isEmpty()) return false
+
+        val isRoot = normalized == "/" || (normalized.length == 3 && normalized.endsWith(":/"))
+        val lower = normalized.lowercase()
+        val isPosixRestricted =
+            RESTRICTED_POSIX_ROOTS.any { root ->
+                lower == root || lower.startsWith("$root/")
+            }
+        val isWindowsRestricted =
+            if (lower.length >= 3 && lower[1] == ':' && lower[2] == '/') {
+                val afterDrive = lower.substring(3)
+                RESTRICTED_WINDOWS_DIRECTORIES.any { winDir ->
+                    afterDrive == winDir || afterDrive.startsWith("$winDir/")
+                }
+            } else {
+                false
+            }
+
+        return isRoot || isPosixRestricted || isWindowsRestricted
+    }
+
     /**
      * Longest terminal command BOSS will type into a shell — well past anything
      * a person writes by hand, and a bound on what a caller can make the app
