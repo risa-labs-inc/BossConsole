@@ -141,6 +141,96 @@ A failed newest dev build falls back to the installed store build on startup, no
 
 ---
 
+### 4. `boss plugin inspect [<path>]`
+Reads a plugin's manifest and prints what it declares: identity, API requirements, permissions, MCP tools, and entrypoint. Useful before linking a third-party plugin, for a quick local sanity check after editing `plugin.json`, and in scripts that gate on what a plugin asks for.
+
+Read-only: `boss plugin inspect` never touches the host, the plugin loader, or the filesystem beyond reading the manifest. It accepts the same inputs as `boss plugin link` - a directory containing `plugin.json` or `src/main/resources/META-INF/boss-plugin/plugin.json`, or a packaged `.jar`/`.zip` whose manifest lives at `META-INF/boss-plugin/plugin.json`. It does NOT resolve into `build/libs` the way `boss plugin link` does, because the question is "what does the source say?", not "what will run?".
+
+```bash
+# Inspect the current directory's manifest
+boss plugin inspect
+
+# Inspect a packaged JAR
+boss plugin inspect build/libs/my-plugin-0.1.0.jar
+
+# Inspect a third-party plugin you are considering installing
+boss plugin inspect ~/Downloads/some-plugin.jar
+
+# Machine-readable JSON output for scripting
+boss plugin inspect build/libs/my-plugin-0.1.0.jar --json
+```
+
+#### Human-Readable Output Example
+```
+Plugin: Demo Plugin
+  ID:          com.example.demo
+  Display:     Demo Plugin
+  Version:     1.2.3
+  API:         1.0.88
+  Entrypoint:  com.example.demo.DemoPlugin
+  Author:      Demo Author
+  License:     Apache-2.0
+  Description:
+    Demo plugin that exercises every manifest field.
+
+Permissions (3):
+  - network
+  - terminal
+  - secret.read (unrecognised)
+
+MCP Tools (2):
+  - mcp__demo__echo
+    Echoes its argument.
+  - mcp__demo__admin_tool [admin]
+    Administers the demo.
+
+Source:
+  Archive:     /path/to/demo-1.2.3.jar
+  Size:        4096 bytes
+  Entries:     5
+```
+
+`systemPlugin: true` and `canUnload: false` are flagged with a `[flag]` marker only when they deviate from the defaults - a manifest that sets them to their defaults prints nothing extra. Unknown permissions are flagged with `(unrecognised)` so a typo (`secert.read`) does not silently grant permission to do nothing.
+
+#### JSON Output Example
+```json
+{
+  "status": "ok",
+  "pluginId": "com.example.demo",
+  "displayName": "Demo Plugin",
+  "version": "1.2.3",
+  "apiVersion": "1.0.88",
+  "mainClass": "com.example.demo.DemoPlugin",
+  "author": "Demo Author",
+  "license": "Apache-2.0",
+  "description": "Demo plugin that exercises every manifest field.",
+  "manifestVersion": 1,
+  "systemPlugin": false,
+  "canUnload": true,
+  "permissions": [
+    { "id": "network", "recognised": true, "category": "NETWORK" },
+    { "id": "terminal", "recognised": true, "category": "TERMINAL" },
+    { "id": "secret.read", "recognised": false }
+  ],
+  "mcpTools": [
+    { "name": "mcp__demo__echo", "description": "Echoes its argument.", "adminOnly": false },
+    { "name": "mcp__demo__admin_tool", "description": "Administers the demo.", "adminOnly": true }
+  ],
+  "source": {
+    "type": "archive",
+    "archivePath": "/path/to/demo-1.2.3.jar",
+    "archiveSizeBytes": 4096,
+    "entryCount": 5
+  }
+}
+```
+
+Exit code: `0` on success, `1` if the target path is missing, malformed, or carries an unreadable manifest. The command never modifies anything, so a non-zero exit is purely diagnostic.
+
+---
+
+---
+
 ## Project Templates
 
 | Template | Primary Use Case | Default Permissions | MCP Tools |
