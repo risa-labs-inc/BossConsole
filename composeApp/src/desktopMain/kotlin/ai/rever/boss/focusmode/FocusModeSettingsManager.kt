@@ -7,6 +7,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -37,6 +39,9 @@ actual object FocusModeSettingsManager {
 
     private val _currentSettings = MutableStateFlow(platformDefaults)
     actual val currentSettings: StateFlow<FocusModeSettings> = _currentSettings.asStateFlow()
+
+    // Serializes writes so two overlapping saves cannot race each other into a torn or stale file.
+    private val saveMutex = Mutex()
 
     init {
         // Ensure directory exists
@@ -86,12 +91,15 @@ actual object FocusModeSettingsManager {
      */
     actual suspend fun saveSettings() =
         withContext(Dispatchers.IO) {
-            try {
-                val content = json.encodeToString(FocusModeSettings.serializer(), _currentSettings.value)
-                settingsFile.writeText(content)
-                logger.debug(LogCategory.SYSTEM, "Settings saved", mapOf("path" to settingsFile.absolutePath))
-            } catch (e: Exception) {
-                logger.warn(LogCategory.SYSTEM, "Failed to save settings", error = e)
+            saveMutex.withLock {
+                try {
+                    // Encode inside the lock so the last writer persists the freshest state.
+                    val content = json.encodeToString(FocusModeSettings.serializer(), _currentSettings.value)
+                    settingsFile.writeText(content)
+                    logger.debug(LogCategory.SYSTEM, "Settings saved", mapOf("path" to settingsFile.absolutePath))
+                } catch (e: Exception) {
+                    logger.warn(LogCategory.SYSTEM, "Failed to save settings", error = e)
+                }
             }
         }
 

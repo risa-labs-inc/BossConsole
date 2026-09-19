@@ -7,6 +7,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -31,6 +33,9 @@ actual object PerformanceSettingsManager {
     private val _currentSettings = MutableStateFlow(PerformanceSettings())
     actual val currentSettings: StateFlow<PerformanceSettings> = _currentSettings.asStateFlow()
 
+    // Serializes writes so two overlapping saves cannot race each other into a torn or stale file.
+    private val saveMutex = Mutex()
+
     init {
         settingsFile.parentFile?.mkdirs()
         loadSettingsSync()
@@ -54,16 +59,19 @@ actual object PerformanceSettingsManager {
 
     actual suspend fun saveSettings() =
         withContext(Dispatchers.IO) {
-            try {
-                val content = json.encodeToString(PerformanceSettings.serializer(), _currentSettings.value)
-                settingsFile.writeText(content)
-            } catch (e: Exception) {
-                // Settings save failed - not critical, will use in-memory settings
-                logger.warn(
-                    LogCategory.SYSTEM,
-                    "Failed to persist performance settings - keeping in-memory only",
-                    error = e,
-                )
+            saveMutex.withLock {
+                try {
+                    // Encode inside the lock so the last writer persists the freshest state.
+                    val content = json.encodeToString(PerformanceSettings.serializer(), _currentSettings.value)
+                    settingsFile.writeText(content)
+                } catch (e: Exception) {
+                    // Settings save failed - not critical, will use in-memory settings
+                    logger.warn(
+                        LogCategory.SYSTEM,
+                        "Failed to persist performance settings - keeping in-memory only",
+                        error = e,
+                    )
+                }
             }
         }
 
