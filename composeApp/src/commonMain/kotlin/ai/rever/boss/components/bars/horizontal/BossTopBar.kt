@@ -605,7 +605,12 @@ fun BossDraggableComponent.BossTopLeftBar(
                     isLoading = isGitLoading,
                     onCheckout = { branchName ->
                         scope.launch {
-                            val result = GitService.checkout(branchName, windowId = windowId)
+                            val result =
+                                GitService.checkout(
+                                    branchName,
+                                    windowId = windowId,
+                                    projectPathOverride = windowProjectPath,
+                                )
                             when (result) {
                                 is GitSuccess -> gitSuccessMessage = "Switched to '$branchName'"
                                 is GitError -> gitErrorMessage = result.message

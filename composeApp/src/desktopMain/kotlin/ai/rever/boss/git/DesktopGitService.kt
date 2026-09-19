@@ -176,6 +176,14 @@ actual object GitService {
                     } else {
                         branchName
                     }
+                // The stripped name is attacker-influenced (a remote branch
+                // literally named `-f` strips to `-f`, and `git checkout -f --`
+                // force-discards uncommitted work). The full ref passed the
+                // isSafeRefName gate, but the post-strip name must pass it too
+                // before it can reach the command line.
+                if (!isSafeRefName(localName)) {
+                    return@withContext GitError("Refused an unsafe ref: branch")
+                }
                 // `--` terminates the revision list: without it `checkout <name>`
                 // on a name that is also a path checks OUT THE PATH, discarding
                 // that file's uncommitted changes.
