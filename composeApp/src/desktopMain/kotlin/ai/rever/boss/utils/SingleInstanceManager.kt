@@ -52,6 +52,7 @@ private const val KEY_VERSION = "version"
 private const val KEY_TRANSPORT = "transport"
 private const val KEY_ENDPOINT = "endpoint"
 private const val KEY_TOKEN = "token"
+internal const val KEY_PID = "pid"
 
 /** Wire protocol marker, first field of every request line. */
 internal const val PROTOCOL_VERSION = "boss-si-1"
@@ -184,6 +185,7 @@ internal data class InstanceDescriptor(
     val transport: SingleInstanceTransport,
     val endpoint: String,
     val token: String,
+    val pid: Long? = null,
 ) {
     fun encode(): String =
         buildString {
@@ -191,9 +193,17 @@ internal data class InstanceDescriptor(
             appendLine("$KEY_TRANSPORT=${transport.name}")
             appendLine("$KEY_ENDPOINT=$endpoint")
             appendLine("$KEY_TOKEN=$token")
+            if (pid != null) {
+                appendLine("$KEY_PID=$pid")
+            }
         }
 
-    override fun toString(): String = "InstanceDescriptor(transport=$transport, endpoint=$endpoint, token=<redacted>)"
+    override fun toString(): String =
+        "InstanceDescriptor(" +
+            "transport=$transport, " +
+            "endpoint=$endpoint, " +
+            "token=<redacted>, " +
+            "pid=$pid)"
 }
 
 /**
@@ -214,13 +224,23 @@ internal fun parseInstanceDescriptor(text: String): InstanceDescriptor? {
     val transport = SingleInstanceTransport.entries.firstOrNull { it.name == fields[KEY_TRANSPORT] }
     val endpoint = fields[KEY_ENDPOINT]?.takeIf { it.isNotBlank() }
     val token = fields[KEY_TOKEN]?.takeIf { it.length >= TOKEN_HEX_LENGTH }
+    val pid = fields[KEY_PID]?.toLongOrNull()
 
     return if (transport != null && endpoint != null && token != null) {
-        InstanceDescriptor(transport, endpoint, token)
+        InstanceDescriptor(transport, endpoint, token, pid)
     } else {
         null
     }
 }
+
+/**
+ * Checks whether the OS process with [pid] is currently alive.
+ * Returns false if the process does not exist, has exited, or cannot be queried.
+ */
+internal fun isProcessAlive(pid: Long): Boolean =
+    runCatching {
+        ProcessHandle.of(pid).map { it.isAlive }.orElse(false)
+    }.getOrDefault(false)
 
 /**
  * One request read off the channel.
@@ -396,7 +416,7 @@ internal fun isForwardableUrl(url: String?): Boolean =
  * Linux — the descriptor holds the channel token, and the endpoint it names is
  * where a forward (including the auth callback) gets delivered.
  */
-private object SingleInstanceFiles {
+internal object SingleInstanceFiles {
     private const val RUNTIME_DIR_NAME = "run"
     private const val DESCRIPTOR_FILE_NAME = "single-instance"
     private const val SOCKET_FILE_NAME = "single-instance.sock"
@@ -562,7 +582,13 @@ private object SingleInstanceWire {
             val channel = ServerSocketChannel.open(StandardProtocolFamily.UNIX)
             channel.bind(UnixDomainSocketAddress.of(path))
             SingleInstanceFiles.restrictToOwner(path, ownerOnlyFilePermissions)
-            channel to InstanceDescriptor(SingleInstanceTransport.UNIX, path.toString(), token)
+            channel to
+                InstanceDescriptor(
+                    transport = SingleInstanceTransport.UNIX,
+                    endpoint = path.toString(),
+                    token = token,
+                    pid = ProcessHandle.current().pid(),
+                )
         } catch (e: UnsupportedOperationException) {
             logger.debug(
                 LogCategory.SYSTEM,
@@ -586,7 +612,13 @@ private object SingleInstanceWire {
             try {
                 val channel = ServerSocketChannel.open()
                 channel.bind(InetSocketAddress(InetAddress.getLoopbackAddress(), port), TCP_BACKLOG)
-                return channel to InstanceDescriptor(SingleInstanceTransport.TCP, port.toString(), token)
+                return channel to
+                    InstanceDescriptor(
+                        transport = SingleInstanceTransport.TCP,
+                        endpoint = port.toString(),
+                        token = token,
+                        pid = ProcessHandle.current().pid(),
+                    )
             } catch (e: IOException) {
                 logger.trace(
                     LogCategory.SYSTEM,
@@ -1098,10 +1130,11 @@ object SingleInstanceManager {
      * Check whether another instance of BOSS is already running, by asking it.
      * Does not take ownership - use [acquireLock] for that.
      */
-    fun isAnotherInstanceRunning(): Boolean {
-        val descriptor = SingleInstanceFiles.read() ?: return false
-        return SingleInstanceWire.respondsToPing(descriptor)
-    }
+    fun isAnotherInstanceRunning(): Boolean =
+        SingleInstanceFiles.read()?.let { existing ->
+            (existing.pid == null || isProcessAlive(existing.pid)) &&
+                SingleInstanceWire.respondsToPing(existing)
+        } ?: false
 
     /**
      * Try to become the single instance.
@@ -1114,13 +1147,25 @@ object SingleInstanceManager {
         SingleInstanceFiles.prepare()
 
         val existing = SingleInstanceFiles.read()
-        if (existing != null && SingleInstanceWire.respondsToPing(existing)) {
-            logger.info(LogCategory.SYSTEM, "Another instance is answering on the single-instance channel")
-            return false
-        }
         if (existing != null) {
-            // Nothing answers, so this descriptor outlived its process.
-            logger.debug(LogCategory.SYSTEM, "Reclaiming a single-instance descriptor nothing answers on")
+            // A dead PID proves the descriptor is stale, so skip the potentially slow ping.
+            // A live PID does not prove this is the BossConsole instance because PIDs can be
+            // reused; the channel-token ping remains the authoritative ownership check.
+            val isDeadPid = existing.pid != null && !isProcessAlive(existing.pid)
+            if (!isDeadPid && SingleInstanceWire.respondsToPing(existing)) {
+                logger.info(LogCategory.SYSTEM, "Another instance is answering on the single-instance channel")
+                return false
+            }
+            if (isDeadPid) {
+                logger.debug(
+                    LogCategory.SYSTEM,
+                    "Reclaiming stale single-instance descriptor from dead process",
+                    mapOf("pid" to existing.pid),
+                )
+            } else {
+                // Nothing answers, so this descriptor outlived its process.
+                logger.debug(LogCategory.SYSTEM, "Reclaiming a single-instance descriptor nothing answers on")
+            }
         }
 
         return startServer()
@@ -1564,7 +1609,9 @@ object SingleInstanceManager {
                     message,
                     timeoutMs = timeoutMs.toLong(),
                     maxResponseBytes = MAX_RESPONSE_BYTES,
-                ) ?: return if (SingleInstanceWire.respondsToPing(target)) {
+                ) ?: return if (target.pid != null && !isProcessAlive(target.pid)) {
+                    ReloadResult.HostOffline("BossConsole is offline (PID ${target.pid} is not running)")
+                } else if (SingleInstanceWire.respondsToPing(target)) {
                     ReloadResult.TimedOut(
                         "BossConsole is running but did not confirm the reload within $timeoutMs ms; " +
                             "it may still be reloading",
