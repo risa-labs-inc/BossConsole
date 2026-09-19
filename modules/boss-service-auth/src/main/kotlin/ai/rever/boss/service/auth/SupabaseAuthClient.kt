@@ -216,11 +216,10 @@ class SupabaseAuthClient(
                     ?.jsonPrimitive
                     ?.contentOrNull ?: "",
             isAdmin =
-                user
-                    ?.userMetadata
-                    ?.get("is_admin")
-                    ?.jsonPrimitive
-                    ?.contentOrNull == "true",
+                isAdminClaim(session.accessToken) ?: run {
+                    logger.warn("Could not read role claims from the access token; treating the user as not an admin")
+                    false
+                },
             sessionToken = session.accessToken,
             sessionCreatedAt = System.currentTimeMillis() / 1000,
         )
