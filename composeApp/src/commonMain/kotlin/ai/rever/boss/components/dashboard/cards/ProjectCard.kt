@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.Locale
 
 /**
  * Card displaying a recent project.
@@ -159,17 +160,21 @@ fun ProjectCard(
 /**
  * Format timestamp as relative time (e.g., "2h ago", "Yesterday").
  */
-private fun formatRelativeTime(timestamp: Long): String {
+internal fun formatRelativeTime(
+    timestamp: Long,
+    now: Long = System.currentTimeMillis(),
+): String {
     if (timestamp == 0L) return "Never"
 
-    val now = System.currentTimeMillis()
     val diff = now - timestamp
 
+    // The absolute-date branch uses Locale.getDefault() explicitly, matching the rest of the
+    // codebase's date formatters rather than the bare SimpleDateFormat constructor.
     return when {
         diff < 60_000 -> "Just now"
         diff < 3600_000 -> "${diff / 60_000}m ago"
         diff < 86400_000 -> "${diff / 3600_000}h ago"
         diff < 172800_000 -> "Yesterday"
-        else -> SimpleDateFormat("MMM d").format(Date(timestamp))
+        else -> SimpleDateFormat("MMM d", Locale.getDefault()).format(Date(timestamp))
     }
 }
