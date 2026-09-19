@@ -16,6 +16,7 @@ import kotlinx.serialization.json.Json
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * The hosts that have served this user a page at least once, remembered across restarts.
@@ -43,6 +44,12 @@ object ResolvedHostsStore {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val saveLock = Mutex()
     private val json = Json { ignoreUnknownKeys = true }
+
+    /** Handed out in call order so a later snapshot always carries a higher number than an earlier one. */
+    private val writeSeq = AtomicLong(0)
+
+    /** The sequence of the snapshot last written to disk. Read and written only under [saveLock]. */
+    private var lastWrittenSeq = 0L
 
     init {
         load()
@@ -75,30 +82,54 @@ object ResolvedHostsStore {
         if (hosts.add(host.lowercase())) {
             // Bind the destination and the contents now rather than inside the coroutine:
             // the write is what must land, and reading either one later would let an
-            // unrelated change in between decide where it goes or what it says.
-            save(storeFile, hosts.toList().sorted())
+            // unrelated change in between decide where it goes or what it says. The sequence
+            // is taken here too, in call order, so a stale snapshot cannot overwrite a newer
+            // one if the coroutines are dispatched out of order.
+            save(storeFile, hosts.toList().sorted(), writeSeq.incrementAndGet())
         }
     }
 
     private fun save(
         target: File,
         snapshot: List<String>,
+        seq: Long,
     ) {
         scope.launch {
             withContext(Dispatchers.IO) {
-                saveLock.withLock {
-                    try {
-                        target.atomicWriteText(json.encodeToString(snapshot))
-                    } catch (e: IOException) {
-                        logger.warn(LogCategory.BROWSER, "Failed to save resolved hosts", error = e)
-                    }
-                }
+                writeGuarded(target, snapshot, seq)
             }
         }
     }
 
-    /** Drop everything. Used by tests. */
+    /**
+     * Writes [snapshot] to [target] unless a newer snapshot has already landed.
+     *
+     * The [saveLock] serializes writes, but not their order against snapshot recency: two
+     * coroutines can be dispatched out of call order, so the earlier (smaller) snapshot could
+     * otherwise acquire the lock last and overwrite the newer one on disk. Refusing any [seq]
+     * below [lastWrittenSeq] makes the final on-disk state reflect the newest snapshot regardless
+     * of dispatch order. `internal` so the ordering guard can be tested without racing coroutines.
+     */
+    internal suspend fun writeGuarded(
+        target: File,
+        snapshot: List<String>,
+        seq: Long,
+    ) {
+        saveLock.withLock {
+            if (seq < lastWrittenSeq) return
+            try {
+                target.atomicWriteText(json.encodeToString(snapshot))
+                lastWrittenSeq = seq
+            } catch (e: IOException) {
+                logger.warn(LogCategory.BROWSER, "Failed to save resolved hosts", error = e)
+            }
+        }
+    }
+
+    /** Drop everything, sequence counters included so a test starts from a known state. Used by tests. */
     internal fun clear() {
         hosts.clear()
+        writeSeq.set(0)
+        lastWrittenSeq = 0
     }
 }
