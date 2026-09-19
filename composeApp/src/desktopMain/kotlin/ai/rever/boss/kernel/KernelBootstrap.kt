@@ -5,6 +5,9 @@ import ai.rever.boss.ipc.BossIpcServer
 import ai.rever.boss.ipc.IpcAddressResolver
 import ai.rever.boss.ipc.auth.IpcTlsIdentity
 import ai.rever.boss.ipc.auth.ProcessTokenRegistry
+import ai.rever.boss.ipc.proto.CapabilityServiceGrpcKt
+import ai.rever.boss.ipc.proto.InvokeCapabilityRequest
+import ai.rever.boss.ipc.proto.InvokeCapabilityResponse
 import ai.rever.boss.ipc.proto.OrchestratorServiceGrpcKt
 import ai.rever.boss.ipc.proto.ProcessFailureReport
 import ai.rever.boss.ipc.proto.ProcessState
@@ -468,6 +471,9 @@ class KernelBootstrap(
                         false
                     }
                 },
+                onCapabilityInvocation = { request ->
+                    invokeRegisteredCapability(registry, request)
+                },
             )
         eventBusService = EventBusServiceImpl()
         stateService = StateServiceImpl()
@@ -520,6 +526,38 @@ class KernelBootstrap(
         instance = this
 
         logger.info("KERNEL mode initialized. IPC server at: {}", kernelAddress)
+    }
+
+    /**
+     * Broker a capability invocation for a child process, through the registry this
+     * kernel actually populates (#1061): the spawner registers every child and
+     * RegisterProcess completes each manifest, so this is the only place a plugin id
+     * can resolve to a live process. The per-child local registries the mastery
+     * orchestrator once built were never populated, so every mastery execution
+     * failed "Process not found".
+     */
+    private suspend fun invokeRegisteredCapability(
+        registry: ProcessRegistry,
+        request: InvokeCapabilityRequest,
+    ): InvokeCapabilityResponse {
+        val process = registry.getProcess(request.pluginId)
+        val ipcClient = process?.ipcClient
+        if (ipcClient != null) {
+            return CapabilityServiceGrpcKt
+                .CapabilityServiceCoroutineStub(ipcClient.channel)
+                .invokeCapability(request)
+        }
+        val reason =
+            if (process == null) {
+                "Process not found: ${request.pluginId}"
+            } else {
+                "No IPC client for process: ${request.pluginId}"
+            }
+        return InvokeCapabilityResponse
+            .newBuilder()
+            .setSuccess(false)
+            .setErrorMessage(reason)
+            .build()
     }
 
     /**

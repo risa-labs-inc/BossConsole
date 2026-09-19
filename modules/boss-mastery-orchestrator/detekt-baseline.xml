@@ -5,10 +5,6 @@
     <ID>LongMethod:MasteryServiceImpl.kt$private fun KProgress.toProto(executionId: String): PProgress</ID>
     <ID>MaxLineLength:MasteryOrchestratorMain.kt$"boss-mastery-orchestrator/src/main/kotlin/ai/rever/boss/mastery/orchestrator/MasteryOrchestratorMain.kt"</ID>
     <ID>MaxLineLength:MasteryOrchestratorMain.kt$"boss-mastery-orchestrator/src/main/kotlin/ai/rever/boss/mastery/orchestrator/MasteryServiceImpl.kt"</ID>
-    <ID>MaxLineLength:MasteryOrchestratorMain.kt$"boss-mastery-orchestrator/src/main/kotlin/ai/rever/boss/mastery/orchestrator/ProcessRegistryCapabilityResolver.kt"</ID>
-    <ID>TooGenericExceptionThrown:ProcessRegistryCapabilityResolver.kt$ProcessRegistryCapabilityResolver$throw RuntimeException("Capability invocation failed: ${response.errorMessage}")</ID>
-    <ID>UseCheckOrError:ProcessRegistryCapabilityResolver.kt$ProcessRegistryCapabilityResolver$throw IllegalStateException("No IPC client for process: $pluginId")</ID>
-    <ID>UseCheckOrError:ProcessRegistryCapabilityResolver.kt$ProcessRegistryCapabilityResolver$throw IllegalStateException("Process not found: $pluginId")</ID>
     <ID>WildcardImport:MasteryOrchestratorMain.kt$import ai.rever.boss.ipc.proto.*</ID>
   </CurrentIssues>
 </SmellBaseline>
