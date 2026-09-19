@@ -28,6 +28,7 @@ import java.io.BufferedReader
 import java.io.File
 import java.io.IOException
 import java.io.InputStreamReader
+import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -307,28 +308,66 @@ actual object GitService {
                 val repoUrl = parseRemoteUrl(remoteUrl) ?: return@withContext null
 
                 // Construct the PR creation URL based on the platform
-                when {
-                    repoUrl.contains("github.com") -> {
-                        // GitHub: https://github.com/owner/repo/compare/branch?expand=1
-                        "$repoUrl/compare/$branch?expand=1"
-                    }
-
-                    repoUrl.contains("gitlab.com") || repoUrl.contains("gitlab") -> {
-                        // GitLab: https://gitlab.com/owner/repo/-/merge_requests/new?merge_request[source_branch]=branch
-                        "$repoUrl/-/merge_requests/new?merge_request[source_branch]=$branch"
-                    }
-
-                    repoUrl.contains("bitbucket.org") -> {
-                        // Bitbucket: https://bitbucket.org/owner/repo/pull-requests/new?source=branch
-                        "$repoUrl/pull-requests/new?source=$branch"
-                    }
-
-                    else -> {
-                        null
-                    }
-                }
+                buildCreatePRUrl(repoUrl, branch)
             } catch (e: Exception) {
                 logger.warn(LogCategory.SYSTEM, "Error getting PR URL", error = e)
+                null
+            }
+        }
+
+    /**
+     * Percent-encodes [branch] for interpolation into a URL *path*.
+     *
+     * [URLEncoder] already escapes every reserved byte, but it follows query-string
+     * rules and emits `+` for spaces, which a URL path would keep as a literal `+`.
+     * Each `/`-separated segment of the branch is therefore encoded separately and
+     * `+` is rewritten to `%20`, while `/` itself stays the path separator so branch
+     * names like `feature/login` keep their canonical compare URLs.
+     */
+    private fun encodeBranchForPath(branch: String): String =
+        branch.split("/").joinToString("/") { segment ->
+            URLEncoder.encode(segment, Charsets.UTF_8).replace("+", "%20")
+        }
+
+    /**
+     * Builds the PR/compare creation URL for the provider matched by [repoUrl],
+     * percent-encoding [branch] before interpolation.
+     *
+     * Git refnames may legally contain `#`, `&`, `%`, quotes and non-ASCII, all of
+     * which corrupt a URL when interpolated raw: `#` starts the fragment (the
+     * browser then opens the compare page for a truncated branch), `&` spawns
+     * phantom query parameters, and non-ASCII makes the URL invalid. Encoding is
+     * position-aware:
+     * - GitHub places the branch in the URL *path* -> [encodeBranchForPath].
+     * - GitLab and Bitbucket place the branch in the *query string*, where
+     *   application/x-www-form-urlencoded rules apply -> [URLEncoder.encode].
+     *
+     * Returns null when the provider is not recognized.
+     */
+    internal fun buildCreatePRUrl(
+        repoUrl: String,
+        branch: String,
+    ): String? =
+        when {
+            repoUrl.contains("github.com") -> {
+                // GitHub: .../compare/<branch>?expand=1
+                val encodedBranch = encodeBranchForPath(branch)
+                "$repoUrl/compare/$encodedBranch?expand=1"
+            }
+
+            repoUrl.contains("gitlab.com") || repoUrl.contains("gitlab") -> {
+                // GitLab: .../-/merge_requests/new?merge_request[source_branch]=<branch>
+                val encodedBranch = URLEncoder.encode(branch, Charsets.UTF_8)
+                "$repoUrl/-/merge_requests/new?merge_request[source_branch]=$encodedBranch"
+            }
+
+            repoUrl.contains("bitbucket.org") -> {
+                // Bitbucket: .../pull-requests/new?source=<branch>
+                val encodedBranch = URLEncoder.encode(branch, Charsets.UTF_8)
+                "$repoUrl/pull-requests/new?source=$encodedBranch"
+            }
+
+            else -> {
                 null
             }
         }
