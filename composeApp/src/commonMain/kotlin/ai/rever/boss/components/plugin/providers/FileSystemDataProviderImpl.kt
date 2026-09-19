@@ -14,7 +14,44 @@ import kotlinx.coroutines.launch
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.LinkOption
 import ai.rever.boss.components.plugin.panels.left_top.scanDirectoryWithDepth as platformScanDirectoryWithDepth
+
+/**
+ * Delete a path below [homeDirectory] without permitting the home root itself or following
+ * directory symlinks encountered during recursion.
+ *
+ * Canonical paths enforce the containment boundary. Deletion deliberately uses the original path
+ * with NIO's default no-follow walk so a nested link is removed as an entry, never traversed into.
+ */
+internal fun deleteUserPath(
+    file: File,
+    homeDirectory: File,
+): Result<Unit> =
+    runCatching {
+        val canonicalFile = file.canonicalFile.toPath()
+        val canonicalHome = homeDirectory.canonicalFile.toPath()
+        if (canonicalFile == canonicalHome) {
+            throw SecurityException("Access denied: refusing to delete the user home directory")
+        }
+        if (!canonicalFile.startsWith(canonicalHome)) {
+            throw SecurityException("Access denied: file path outside user directory")
+        }
+
+        val target = file.toPath().toAbsolutePath().normalize()
+        val deleted =
+            if (Files.isDirectory(target, LinkOption.NOFOLLOW_LINKS)) {
+                Files.walk(target).use { paths ->
+                    paths.sorted(Comparator.reverseOrder()).forEach { Files.delete(it) }
+                }
+                true
+            } else {
+                Files.deleteIfExists(target)
+            }
+
+        check(deleted) { "Failed to delete (file may not exist or is locked): $file" }
+    }
 
 /**
  * Implementation of FileSystemDataProvider that wraps platform-specific file operations.
@@ -163,39 +200,13 @@ class FileSystemDataProviderImpl : FileSystemDataProvider {
         }
     }
 
-    override suspend fun delete(path: String): Result<Unit> {
-        return kotlinx.coroutines.withContext(Dispatchers.IO) {
-            try {
-                val file = java.io.File(path)
-
-                // Security: Validate path is within user's home directory (prevent path traversal)
-                val canonicalFile = file.canonicalFile
-                val homeDir = File(System.getProperty("user.home")).canonicalFile
-                if (!canonicalFile.absolutePath.startsWith(homeDir.absolutePath + File.separator) &&
-                    canonicalFile.absolutePath != homeDir.absolutePath
-                ) {
-                    return@withContext Result.failure(SecurityException("Access denied: file path outside user directory"))
-                }
-
-                // Note: We don't check exists() first to avoid race conditions.
-                // delete() and deleteRecursively() handle non-existent files gracefully.
-                val deleted =
-                    if (file.isDirectory) {
-                        file.deleteRecursively()
-                    } else {
-                        file.delete()
-                    }
-
-                if (deleted) {
-                    Result.success(Unit)
-                } else {
-                    Result.failure(IllegalStateException("Failed to delete (file may not exist or is locked): $path"))
-                }
-            } catch (e: Exception) {
-                Result.failure(e)
-            }
+    override suspend fun delete(path: String): Result<Unit> =
+        kotlinx.coroutines.withContext(Dispatchers.IO) {
+            deleteUserPath(
+                file = File(path),
+                homeDirectory = File(System.getProperty("user.home")),
+            )
         }
-    }
 
     override suspend fun rename(
         path: String,
