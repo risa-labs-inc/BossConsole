@@ -40,8 +40,12 @@ object CliBootstrap {
      * execute without booting the GUI.
      */
     fun isHeadlessCli(args: Array<String>): Boolean {
-        val firstNonFlag = args.firstOrNull { !it.startsWith("-") }?.lowercase()
-        return firstNonFlag in setOf("status", "doctor", "mcp", "completion", "plugin") ||
+        val nonFlags = args.filter { !it.startsWith("-") }.map { it.lowercase() }
+        val first = nonFlags.firstOrNull()
+        if (first == "workspace" && nonFlags.getOrNull(1) == "switch") {
+            return true
+        }
+        return first in setOf("status", "doctor", "mcp", "completion", "plugin") ||
             (args.isNotEmpty() && args.all { it in setOf("-h", "--help") })
     }
 

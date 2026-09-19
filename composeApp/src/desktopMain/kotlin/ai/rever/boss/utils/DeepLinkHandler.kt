@@ -753,22 +753,51 @@ actual object DeepLinkHandler {
     ) {
         logger.debug(LogCategory.WORKSPACE, "Handling workspace link", mapOf("origin" to origin.name))
 
-        val cliCommand = workspaceLinkCommand(uri, origin)
-        if (cliCommand == null) {
-            logger.warn(LogCategory.WORKSPACE, "Missing 'path' parameter in workspace deep link")
-            return
+        val params = parseQueryParams(uri)
+        val action = params["action"]?.urlDecode()?.lowercase()
+
+        if (action == "switch") {
+            val name = params["name"]?.urlDecode()
+
+            if (name.isNullOrBlank()) {
+                logger.warn(
+                    LogCategory.WORKSPACE,
+                    "Missing 'name' parameter in workspace switch deep link",
+                )
+            } else {
+                ai.rever.boss.cli.CLICommandHandler
+                    .getInstance()
+                    .queueCommand(
+                        ai.rever.boss.cli.CLICommand
+                            .SwitchWorkspace(name),
+                    )
+
+                logger.info(
+                    LogCategory.WORKSPACE,
+                    "Workspace switch queued via deep link",
+                    mapOf("name" to name, "origin" to origin.name),
+                )
+            }
+        } else {
+            val cliCommand = workspaceLinkCommand(uri, origin)
+
+            if (cliCommand == null) {
+                logger.warn(
+                    LogCategory.WORKSPACE,
+                    "Missing 'path' parameter in workspace deep link",
+                )
+            } else {
+                ai.rever.boss.cli.CLICommandHandler
+                    .getInstance()
+                    .queueCommand(cliCommand)
+
+                logger.info(
+                    LogCategory.WORKSPACE,
+                    "Workspace command queued",
+                    mapOf("path" to cliCommand.configPath, "origin" to origin.name),
+                )
+            }
         }
-
-        // Queue command via CLI handler
-        ai.rever.boss.cli.CLICommandHandler
-            .getInstance()
-            .queueCommand(cliCommand)
-
-        logger.info(
-            LogCategory.WORKSPACE,
-            "Workspace command queued",
-            mapOf("path" to cliCommand.configPath, "origin" to origin.name),
-        )
     }
 
     /** The load a `boss://workspace` link asks for, carrying [origin]; null without a `path`. */

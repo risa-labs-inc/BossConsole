@@ -1,5 +1,6 @@
 package ai.rever.boss.cli
 
+import ai.rever.boss.mcp.ToolTelemetryStats
 import ai.rever.boss.utils.DeepLinkHandler
 import ai.rever.boss.utils.DeepLinkOrigin
 import ai.rever.boss.utils.MAX_ARGUMENT_BYTES
@@ -21,10 +22,14 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import java.io.ByteArrayOutputStream
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
@@ -68,19 +73,50 @@ class BossUrlCommand : CliktCommand(name = "url") {
 }
 
 /**
- * Loads workspace configuration.
- * Usage: boss workspace myworkspace.json
+ * Loads workspace configuration or switches workspace.
+ * Usage:
+ *   boss workspace <config.json>
+ *   boss workspace switch <name>
  */
 class BossWorkspaceCommand : CliktCommand(name = "workspace") {
-    override fun help(context: Context) = "Loads a workspace configuration"
+    override fun help(context: Context) = "Loads or manages workspaces"
 
-    val configPath by argument(help = "Path to workspace config file")
+    val configPath by argument(help = "Path to workspace config file").optional()
 
     override fun run() {
-        // Convert to deep link
-        val encodedPath = URLEncoder.encode(configPath, "UTF-8")
-        val deepLink = "boss://workspace?path=$encodedPath"
-        DeepLinkHandler.processDeepLink(deepLink, DeepLinkOrigin.OPERATOR_CLI)
+        if (currentContext.invokedSubcommand != null) return
+        val path = configPath
+        if (path != null) {
+            // Convert to deep link
+            val encodedPath = URLEncoder.encode(path, "UTF-8")
+            val deepLink = "boss://workspace?path=$encodedPath"
+            DeepLinkHandler.processDeepLink(deepLink, DeepLinkOrigin.OPERATOR_CLI)
+        } else {
+            echo(getFormattedHelp())
+        }
+    }
+}
+
+/**
+ * Switches the active workspace tab by name or ID.
+ * Usage: boss workspace switch <name>
+ */
+class BossWorkspaceSwitchCommand : CliktCommand(name = "switch") {
+    override fun help(context: Context) = "Switches active workspace to <name>"
+
+    val name by argument(help = "Name or ID of workspace to switch to")
+
+    override fun run() {
+        val result = SingleInstanceManager.switchWorkspace(name)
+        result.fold(
+            onSuccess = { msg ->
+                echo(msg)
+            },
+            onFailure = { error ->
+                echo("Error: ${error.message}", err = true)
+                throw ProgramResult(1)
+            },
+        )
     }
 }
 
@@ -143,21 +179,31 @@ class BossTerminalCommand : CliktCommand(name = "terminal") {
 }
 
 /**
- * Queries running BOSS Console status (memory, active project, version).
+ * Queries running BOSS Console status (memory, active project, version, tool telemetry).
  * Usage:
  *   boss status
  *   boss status --json
+ *   boss status --tools
+ *   boss status --tools --json
  */
 class BossStatusCommand : CliktCommand(name = "status") {
     override fun help(context: Context) = "Queries status and health of the running BOSS Console instance"
 
     val json by option("--json", help = "Output status as JSON").flag(default = false)
+    val tools by option("--tools", help = "Output MCP tool execution telemetry and performance statistics")
+        .flag(default = false)
 
     override fun run() {
         val result = SingleInstanceManager.queryStatus()
         result.fold(
             onSuccess = { rawJson ->
-                if (json) {
+                if (tools) {
+                    if (json) {
+                        echo(formatToolsJson(rawJson))
+                    } else {
+                        echo(formatToolsTable(rawJson))
+                    }
+                } else if (json) {
                     echo(rawJson)
                 } else {
                     echo(formatHumanStatus(rawJson))
@@ -169,6 +215,134 @@ class BossStatusCommand : CliktCommand(name = "status") {
             },
         )
     }
+
+    private fun formatToolsJson(rawJson: String): String =
+        try {
+            val element = Json.parseToJsonElement(rawJson).jsonObject
+            val toolsElement = element["tools"] ?: buildJsonObject { put("tools", buildJsonArray {}) }
+            toolsElement.toString()
+        } catch (_: Exception) {
+            rawJson
+        }
+
+    private fun formatToolsTable(rawJson: String): String =
+        buildString {
+            appendLine("MCP Tool Execution Statistics")
+            appendLine("-----------------------------")
+            val rows =
+                try {
+                    parseToolStatusRows(rawJson)
+                } catch (_: Exception) {
+                    appendLine("Error parsing MCP tool telemetry from status response.")
+                    return@buildString
+                }
+
+            if (rows.isEmpty()) {
+                appendLine("No MCP tool invocations recorded yet.")
+                return@buildString
+            }
+
+            renderToolRows(this, rows)
+        }
+
+    private fun parseToolStatusRows(rawJson: String): List<ToolStatusRow> {
+        val element = Json.parseToJsonElement(rawJson).jsonObject
+        val toolsArray = extractToolsArray(element)
+        return try {
+            val typedStats = Json.decodeFromJsonElement<List<ToolTelemetryStats>>(toolsArray)
+            typedStats.map { stat ->
+                ToolStatusRow(
+                    tool = stat.tool,
+                    calls = stat.totalInvocations.toString(),
+                    errors = stat.totalErrors.toString(),
+                    errorPct = "${stat.errorPercentage}%",
+                    p50 = stat.p50Ms.toString(),
+                    p99 = stat.p99Ms.toString(),
+                )
+            }
+        } catch (_: Exception) {
+            toolsArray.mapNotNull { item ->
+                (item as? JsonObject)?.let { extractToolRow(it) }
+            }
+        }
+    }
+
+    private fun extractToolsArray(element: JsonObject): JsonArray =
+        when (val t = element["tools"]) {
+            is JsonArray -> t
+            is JsonObject -> t["tools"]?.jsonArray ?: JsonArray(emptyList())
+            else -> JsonArray(emptyList())
+        }
+
+    private fun extractToolRow(obj: JsonObject): ToolStatusRow? {
+        val name =
+            obj["tool"]?.jsonPrimitive?.contentOrNull
+                ?: obj["toolName"]?.jsonPrimitive?.contentOrNull
+                ?: return null
+        val calls =
+            obj["totalInvocations"]?.jsonPrimitive?.contentOrNull
+                ?: obj["invocations"]?.jsonPrimitive?.contentOrNull ?: "0"
+        val errors =
+            obj["totalErrors"]?.jsonPrimitive?.contentOrNull
+                ?: obj["errors"]?.jsonPrimitive?.contentOrNull ?: "0"
+        val errPct = obj["errorPercentage"]?.jsonPrimitive?.contentOrNull ?: "0.0"
+        val p50 =
+            obj["p50Ms"]?.jsonPrimitive?.contentOrNull
+                ?: obj["p50"]?.jsonPrimitive?.contentOrNull ?: "0"
+        val p99 =
+            obj["p99Ms"]?.jsonPrimitive?.contentOrNull
+                ?: obj["p99"]?.jsonPrimitive?.contentOrNull ?: "0"
+        return ToolStatusRow(
+            tool = name,
+            calls = calls,
+            errors = errors,
+            errorPct = "$errPct%",
+            p50 = p50,
+            p99 = p99,
+        )
+    }
+
+    private fun renderToolRows(
+        builder: StringBuilder,
+        rows: List<ToolStatusRow>,
+    ) {
+        val toolColWidth = rows.maxOf { it.tool.length }.coerceAtLeast(4).coerceAtMost(50)
+        val callsColWidth = rows.maxOf { it.calls.length }.coerceAtLeast(5)
+        val errorsColWidth = rows.maxOf { it.errors.length }.coerceAtLeast(6)
+        val pctColWidth = rows.maxOf { it.errorPct.length }.coerceAtLeast(7)
+        val p50ColWidth = rows.maxOf { it.p50.length }.coerceAtLeast(8)
+        val p99ColWidth = rows.maxOf { it.p99.length }.coerceAtLeast(8)
+
+        val header =
+            "TOOL".padEnd(toolColWidth) + "  " +
+                "CALLS".padStart(callsColWidth) + "  " +
+                "ERRORS".padStart(errorsColWidth) + "  " +
+                "ERROR %".padStart(pctColWidth) + "  " +
+                "P50 (ms)".padStart(p50ColWidth) + "  " +
+                "P99 (ms)".padStart(p99ColWidth)
+        builder.appendLine(header)
+        builder.appendLine("-".repeat(header.length))
+
+        for (row in rows) {
+            builder.appendLine(
+                row.tool.padEnd(toolColWidth) + "  " +
+                    row.calls.padStart(callsColWidth) + "  " +
+                    row.errors.padStart(errorsColWidth) + "  " +
+                    row.errorPct.padStart(pctColWidth) + "  " +
+                    row.p50.padStart(p50ColWidth) + "  " +
+                    row.p99.padStart(p99ColWidth),
+            )
+        }
+    }
+
+    private data class ToolStatusRow(
+        val tool: String,
+        val calls: String,
+        val errors: String,
+        val errorPct: String,
+        val p50: String,
+        val p99: String,
+    )
 
     private fun formatHumanStatus(rawJson: String): String =
         buildString {
@@ -247,6 +421,7 @@ class BossMcpCommand : CliktCommand(name = "mcp") {
     val ledgerTo by option("--to", help = "Only records at or before this time (epoch ms, date, or ISO-8601)")
 
     override fun run() {
+        if (currentContext.invokedSubcommand != null) return
         when (val act = action?.lowercase()) {
             null, "list" -> {
                 handleList()
@@ -622,6 +797,130 @@ class BossMcpCommand : CliktCommand(name = "mcp") {
 }
 
 /**
+ * Invokes an MCP tool in the running BOSS Console harness.
+ * Usage: boss mcp call <tool> [args]
+ */
+class BossMcpCallCommand : CliktCommand(name = "call") {
+    override fun help(context: Context) = "Invokes an MCP tool in the running BOSS Console"
+
+    val tool by argument(help = "Tool name to invoke")
+    val positionalArgs by argument(name = "args", help = "JSON arguments string for the tool").optional()
+    val args by option("-a", "--args", help = "JSON arguments string for the tool")
+    val stdin by option("--stdin", help = "Read JSON arguments from standard input").flag(default = false)
+    val timeout by option(
+        "-t",
+        "--timeout",
+        help = "Client wait in seconds (1-60; server execution limit: 30 seconds)",
+    ).default("35")
+    val raw by option(
+        "-r",
+        "--raw",
+        help = "Emit only the raw unescaped content (ideal for shell scripts and piping)",
+    ).flag(default = false)
+    val json by option("--json", help = "Output response in raw JSON format").flag(default = false)
+
+    override fun run() {
+        val argumentsJson =
+            when {
+                stdin -> readStdinArgs()
+                positionalArgs != null -> positionalArgs!!
+                args != null -> args!!
+                else -> "{}"
+            }
+        validateArgumentsJson(argumentsJson)
+
+        val timeoutSeconds = timeout.toLongOrNull()
+        if (timeoutSeconds == null || timeoutSeconds !in 1L..60L) {
+            echo("Error: Timeout must be an integer between 1 and 60 seconds.", err = true)
+            throw ProgramResult(1)
+        }
+        val timeoutMs = timeoutSeconds * 1000L
+        val result = SingleInstanceManager.invokeMcpTool(tool, argumentsJson, timeoutMs = timeoutMs)
+        result.fold(
+            onSuccess = { responseJson ->
+                handleInvokeResponse(responseJson)
+            },
+            onFailure = { error ->
+                echo("Error: ${error.message}", err = true)
+                throw ProgramResult(1)
+            },
+        )
+    }
+
+    private fun readStdinArgs(): String {
+        val stream = System.`in`
+        return ByteArrayOutputStream().use { buffer ->
+            val chunk = ByteArray(4096)
+            var totalRead = 0
+            while (true) {
+                val toRead = minOf(chunk.size, MAX_ARGUMENT_BYTES - totalRead + 1)
+                val read = stream.read(chunk, 0, toRead)
+                if (read == -1) break
+                buffer.write(chunk, 0, read)
+                totalRead += read
+                if (totalRead > MAX_ARGUMENT_BYTES) {
+                    val limitKb = MAX_ARGUMENT_BYTES / 1024
+                    echo("Error: Standard input arguments exceeded maximum size of $limitKb KB", err = true)
+                    throw ProgramResult(1)
+                }
+            }
+            val content = buffer.toString(StandardCharsets.UTF_8).trim()
+            content.ifEmpty { "{}" }
+        }
+    }
+
+    private fun validateArgumentsJson(argumentsJson: String) {
+        val errorMessage =
+            try {
+                val parsed = Json.parseToJsonElement(argumentsJson)
+
+                if (parsed !is JsonObject) {
+                    "Error: Tool arguments must be a JSON object (e.g. '{\"key\":\"value\"}')."
+                } else {
+                    null
+                }
+            } catch (e: kotlinx.serialization.SerializationException) {
+                "Error: Malformed JSON arguments: ${e.message ?: "Invalid JSON syntax"}"
+            } catch (e: IllegalArgumentException) {
+                "Error: Malformed JSON arguments: ${e.message ?: "Invalid JSON syntax"}"
+            }
+
+        if (errorMessage != null) {
+            echo(errorMessage, err = true)
+            throw ProgramResult(1)
+        }
+    }
+
+    private fun handleInvokeResponse(responseJson: String) {
+        try {
+            val element = Json.parseToJsonElement(responseJson).jsonObject
+            val isError = element["isError"]?.jsonPrimitive?.booleanOrNull ?: false
+            val content = element["content"]?.jsonPrimitive?.contentOrNull ?: responseJson
+
+            if (isError) {
+                if (json) {
+                    echo(responseJson, err = true)
+                } else {
+                    echo(content, err = true)
+                }
+                throw ProgramResult(1)
+            } else {
+                if (json && !raw) {
+                    echo(responseJson)
+                } else {
+                    echo(content)
+                }
+            }
+        } catch (e: ProgramResult) {
+            throw e
+        } catch (_: Exception) {
+            echo("Error: Malformed MCP invocation response from BOSS.", err = true)
+            throw ProgramResult(1)
+        }
+    }
+}
+
+/**
  * Generates shell tab-completion scripts (bash, zsh, fish).
  * Usage: boss completion <bash|zsh|fish>
  */
@@ -661,13 +960,17 @@ class BossPluginCommand : CliktCommand(name = "plugin") {
 fun createBossCLI(): BossCommand =
     BossCommand().subcommands(
         BossUrlCommand(),
-        BossWorkspaceCommand(),
+        BossWorkspaceCommand().subcommands(
+            BossWorkspaceSwitchCommand(),
+        ),
         BossFileCommand(),
         BossFolderCommand(),
         BossTerminalCommand(),
         BossStatusCommand(),
         BossDoctorCommand(),
-        BossMcpCommand(),
+        BossMcpCommand().subcommands(
+            BossMcpCallCommand(),
+        ),
         BossCompletionCommand(),
         BossPluginCommand().subcommands(
             BossPluginInitCommand(),

@@ -31,6 +31,7 @@ import java.util.UUID
  * in tool resolution; unpermitted or unregistered tool calls are blocked before reaching
  * policy checks and the operation ledger.
  */
+@Suppress("TooManyFunctions")
 class McpOperationLedger(
     private val ledgerFile: File? = null,
     private val maxFileSizeBytes: Long = 10L * 1024 * 1024, // 10 MB
@@ -62,11 +63,35 @@ class McpOperationLedger(
     private val _totalErrors = MutableStateFlow(0L)
     val totalErrors: StateFlow<Long> = _totalErrors.asStateFlow()
 
+    private val listenersLock = Any()
+
+    @Volatile
+    private var activeListeners: List<(McpOperationRecord) -> Unit> = emptyList()
+
+    /**
+     * Subscribe to ledger operations as they are recorded.
+     * Listeners are dispatched safely without locking on the hot path.
+     */
+    fun addListener(listener: (McpOperationRecord) -> Unit) {
+        synchronized(listenersLock) {
+            activeListeners = activeListeners + listener
+        }
+    }
+
+    /**
+     * Unsubscribe a previously registered listener.
+     */
+    fun removeListener(listener: (McpOperationRecord) -> Unit) {
+        synchronized(listenersLock) {
+            activeListeners = activeListeners - listener
+        }
+    }
+
     /**
      * Record a tool execution, rejection, or timeout.
      * Never throws - I/O failures are logged without disrupting tool return.
      */
-    @Suppress("LongParameterList") // One complete audit record, matching the persisted schema.
+    @Suppress("LongParameterList", "TooGenericExceptionCaught") // One complete audit record, safe dispatch.
     fun record(
         toolName: String,
         providerId: String,
@@ -106,6 +131,22 @@ class McpOperationLedger(
             _totalCalls.update { it + 1 }
             if (isError) {
                 _totalErrors.update { it + 1 }
+            }
+
+            // 3. Dispatch to listeners (e.g. McpTelemetryService) without holding listener lock or allocating list
+            val currentListeners = activeListeners
+            if (currentListeners.isNotEmpty()) {
+                for (listener in currentListeners) {
+                    try {
+                        listener(record)
+                    } catch (t: Throwable) {
+                        logger.warn(
+                            LogCategory.SYSTEM,
+                            "McpOperationLedger listener threw exception",
+                            mapOf("error" to (t.message ?: t::class.simpleName.orEmpty())),
+                        )
+                    }
+                }
             }
 
             record

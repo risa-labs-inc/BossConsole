@@ -111,6 +111,8 @@ object McpToolRegistryImpl : McpToolRegistry {
             ledgerFile = BossDirectories.resolve("mcp-calls.jsonl"),
         )
 
+    val telemetryService = McpTelemetryService(ledger = ledger)
+
     private val core =
         McpToolRegistryCore(
             disabledFile = BossDirectories.resolve("mcp-disabled-tools.json"),
@@ -125,6 +127,7 @@ object McpToolRegistryImpl : McpToolRegistry {
 
     init {
         registerProvider(WorkspaceMcpToolProvider)
+        registerProvider(telemetryService)
     }
 
     override val allTools: StateFlow<List<RegisteredMcpTool>> get() = core.allTools

@@ -630,6 +630,39 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
             }.launchIn(this)
     }
 
+    // Listen for workspace switch events from CLI / IPC
+    // Filter by sourceWindowId for multi-window support
+    LaunchedEffect(splitViewState, workspaceManager, windowId) {
+        WorkspaceEventBus.workspaceSwitchEvents
+            .filter { event -> event.sourceWindowId == windowId }
+            .onEach { event ->
+                try {
+                    val target =
+                        workspaceManager.workspaces.value.find {
+                            it.name.equals(event.workspaceName, ignoreCase = true) ||
+                                it.id.equals(event.workspaceName, ignoreCase = true)
+                        }
+                    if (target != null) {
+                        workspaceManager.loadWorkspace(target)
+                        applyWorkspace(target, splitViewState, state.windowProjectState)
+                    } else {
+                        logger.warn(
+                            LogCategory.WORKSPACE,
+                            "Workspace not found for switch",
+                            mapOf("target" to event.workspaceName, "windowId" to windowId),
+                        )
+                    }
+                } catch (e: Exception) {
+                    logger.warn(
+                        LogCategory.WORKSPACE,
+                        "Workspace switch failed",
+                        mapOf("target" to event.workspaceName),
+                        error = e,
+                    )
+                }
+            }.launchIn(this)
+    }
+
     // Listen for panel open events (e.g., from CLI folder command)
     // Issue #506: Filter by window to prevent panel opening in all windows
     LaunchedEffect(state.draggablePanelComponent, state.panelRegistry, windowId) {

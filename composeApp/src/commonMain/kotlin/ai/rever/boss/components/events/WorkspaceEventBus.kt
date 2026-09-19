@@ -22,6 +22,17 @@ data class WorkspaceLoadEvent(
 )
 
 /**
+ * Event emitted when a workspace tab should be switched.
+ *
+ * @property workspaceName Name or ID of the workspace tab to switch to
+ * @property sourceWindowId The window that should switch workspace
+ */
+data class WorkspaceSwitchEvent(
+    val workspaceName: String,
+    val sourceWindowId: String,
+)
+
+/**
  * Event bus for workspace-related events.
  *
  * Issue #506: Added sourceWindowId for multi-window support.
@@ -36,6 +47,13 @@ object WorkspaceEventBus {
             extraBufferCapacity = 10, // Buffer up to 10 events if collector not ready yet
         )
     val workspaceLoadEvents: SharedFlow<WorkspaceLoadEvent> = _workspaceLoadEvents.asSharedFlow()
+
+    private val _workspaceSwitchEvents =
+        MutableSharedFlow<WorkspaceSwitchEvent>(
+            replay = 0,
+            extraBufferCapacity = 10,
+        )
+    val workspaceSwitchEvents: SharedFlow<WorkspaceSwitchEvent> = _workspaceSwitchEvents.asSharedFlow()
 
     /**
      * Emit a workspace load event.
@@ -52,5 +70,20 @@ object WorkspaceEventBus {
         val event = WorkspaceLoadEvent(workspacePath, sourceWindowId, requiresConfirmation)
         _workspaceLoadEvents.emit(event)
         ipcBridge?.forward("WorkspaceLoadEvent", event, sourceWindowId)
+    }
+
+    /**
+     * Emit a workspace switch event.
+     *
+     * @param workspaceName Name or ID of the workspace
+     * @param sourceWindowId The window that should switch workspace
+     */
+    suspend fun switchWorkspace(
+        workspaceName: String,
+        sourceWindowId: String,
+    ) {
+        val event = WorkspaceSwitchEvent(workspaceName, sourceWindowId)
+        _workspaceSwitchEvents.emit(event)
+        ipcBridge?.forward("WorkspaceSwitchEvent", event, sourceWindowId)
     }
 }

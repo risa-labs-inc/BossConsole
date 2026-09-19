@@ -373,6 +373,10 @@ fun main(args: Array<String>) {
             true
         }
     }
+    SingleInstanceManager.attachTelemetryProvider {
+        ai.rever.boss.mcp.McpToolRegistryImpl.telemetryService
+            .toJsonElement()
+    }
     GlobalLogCapture.start()
     ResourceModeConfig.publishToPlugins()
 

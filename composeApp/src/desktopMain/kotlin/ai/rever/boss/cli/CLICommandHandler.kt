@@ -46,6 +46,27 @@ class CLICommandHandler private constructor() {
 
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
+    private fun dispatchCommand(command: CLICommand) {
+        if (initializationQueue.enqueueOrClaimForCaller(command)) {
+            scope.launch {
+                executeCommand(command)
+            }
+        } else {
+            logger.debug(LogCategory.SYSTEM, "Queued command", mapOf("command" to command.toString()))
+        }
+    }
+
+    /**
+     * Command processor hook, primarily for testing.
+     * Defaults to the real async dispatch. Swap around a test to observe
+     * commands without requiring real services or coroutines.
+     */
+    var commandProcessor: (CLICommand) -> Unit = ::dispatchCommand
+
+    fun processCommand(command: CLICommand) {
+        commandProcessor(command)
+    }
+
     companion object {
         @Volatile
         private var instance: CLICommandHandler? = null
@@ -80,13 +101,7 @@ class CLICommandHandler private constructor() {
      * Otherwise, queues for later execution.
      */
     fun queueCommand(command: CLICommand) {
-        if (initializationQueue.enqueueOrClaimForCaller(command)) {
-            scope.launch {
-                executeCommand(command)
-            }
-        } else {
-            logger.debug(LogCategory.SYSTEM, "Queued command", mapOf("command" to command.toString()))
-        }
+        commandProcessor(command)
     }
 
     /**
@@ -221,6 +236,10 @@ class CLICommandHandler private constructor() {
                             ),
                         )
                     }
+                }
+
+                is CLICommand.SwitchWorkspace -> {
+                    handleSwitchWorkspace(command)
                 }
             }
         } catch (e: Exception) {
@@ -522,6 +541,35 @@ class CLICommandHandler private constructor() {
             }
         }
     }
+
+    /**
+     * Switches active workspace tab.
+     */
+    private suspend fun handleSwitchWorkspace(command: CLICommand.SwitchWorkspace) {
+        val focusedWindowId = WindowFocusManager.resolveActionableWindowId()
+        if (focusedWindowId == null) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "No usable window registered, cannot switch workspace",
+                mapOf("workspace" to command.workspaceName),
+            )
+            return
+        }
+
+        ai.rever.boss.components.events.WorkspaceEventBus.switchWorkspace(
+            workspaceName = command.workspaceName,
+            sourceWindowId = focusedWindowId,
+        )
+        logger.debug(
+            LogCategory.SYSTEM,
+            "Emitted workspace switch event",
+            mapOf(
+                "workspace" to command.workspaceName,
+                "windowId" to focusedWindowId,
+                "origin" to command.origin.name,
+            ),
+        )
+    }
 }
 
 /**
@@ -645,5 +693,10 @@ sealed class CLICommand {
     data class OpenTerminal(
         val command: String?,
         val origin: DeepLinkOrigin = DeepLinkOrigin.EXTERNAL,
+    ) : CLICommand()
+
+    data class SwitchWorkspace(
+        val workspaceName: String,
+        val origin: DeepLinkOrigin = DeepLinkOrigin.OPERATOR_CLI,
     ) : CLICommand()
 }

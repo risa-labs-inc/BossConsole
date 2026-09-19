@@ -430,4 +430,98 @@ class BossMcpCliTest {
         assertTrue(errContent.toString().contains("Error: Unsupported shell 'powershell'"))
         assertEquals("", outContent.toString().trim(), "stdout must remain clean")
     }
+
+    @Test
+    fun `status --tools formats tool telemetry as tabular output`() {
+        SingleInstanceManager.statusProviderOverride = {
+            """
+            {
+                "running": true,
+                "version": "1.0.0",
+                "tools": {
+                    "tools": [
+                        {
+                            "tool": "mcp__boss__list_workspaces",
+                            "totalInvocations": 12,
+                            "totalErrors": 0,
+                            "errorPercentage": 0.0,
+                            "p50Ms": 15,
+                            "p99Ms": 45,
+                            "windowSize": 12
+                        },
+                        {
+                            "tool": "mcp__boss__open_terminal",
+                            "totalInvocations": 5,
+                            "totalErrors": 1,
+                            "errorPercentage": 20.0,
+                            "p50Ms": 120,
+                            "p99Ms": 350,
+                            "windowSize": 5
+                        }
+                    ]
+                }
+            }
+            """.trimIndent()
+        }
+        assertTrue(SingleInstanceManager.acquireLock())
+        val cli = createBossCLI()
+        val outContent = ByteArrayOutputStream()
+        System.setOut(PrintStream(outContent))
+        cli.parse(listOf("status", "--tools"))
+
+        val output = outContent.toString()
+        assertTrue(output.contains("MCP Tool Execution Statistics"))
+        assertTrue(output.contains("mcp__boss__list_workspaces"))
+        assertTrue(output.contains("mcp__boss__open_terminal"))
+        assertTrue(output.contains("120"))
+        assertTrue(output.contains("20.0%"))
+    }
+
+    @Test
+    fun `status --tools --json emits tool telemetry as structured JSON`() {
+        val jsonPayload =
+            """
+            {
+                "running": true,
+                "tools": {
+                    "tools": [
+                        {
+                            "tool": "test_tool",
+                            "totalInvocations": 4,
+                            "totalErrors": 0,
+                            "errorPercentage": 0.0,
+                            "p50Ms": 10,
+                            "p99Ms": 20,
+                            "windowSize": 4
+                        }
+                    ]
+                }
+            }
+            """.trimIndent()
+        SingleInstanceManager.statusProviderOverride = { jsonPayload }
+        assertTrue(SingleInstanceManager.acquireLock())
+        val cli = createBossCLI()
+        val outContent = ByteArrayOutputStream()
+        System.setOut(PrintStream(outContent))
+        cli.parse(listOf("status", "--tools", "--json"))
+
+        val output = outContent.toString().trim()
+        assertTrue(output.contains("test_tool"))
+        assertTrue(output.contains("totalInvocations"))
+    }
+
+    @Test
+    fun `status --tools with empty tool telemetry outputs empty note`() {
+        SingleInstanceManager.statusProviderOverride = {
+            """{"running": true, "tools": {"tools": []}}"""
+        }
+        assertTrue(SingleInstanceManager.acquireLock())
+        val cli = createBossCLI()
+        val outContent = ByteArrayOutputStream()
+        System.setOut(PrintStream(outContent))
+        cli.parse(listOf("status", "--tools"))
+
+        val output = outContent.toString()
+        assertTrue(output.contains("No MCP tool invocations recorded yet."))
+    }
 }
