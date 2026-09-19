@@ -97,4 +97,46 @@ class SubstituteProjectPathTest {
             )
         }
     }
+
+    @Test
+    fun projectPathContainingAmpersandsSurvivesSubstitutionAndNormalization() {
+        val ampersandPath =
+            if (ai.rever.boss.run.ShellUtils.isWindows) {
+                """C:\Users\foo\A && B\proj"""
+            } else {
+                "/Users/foo/A && B/proj"
+            }
+        val quotedAmpersand = CommandProcessor.quotePath(ampersandPath)
+        val expected =
+            if (ai.rever.boss.run.ShellUtils.isWindows) {
+                "cd $quotedAmpersand; claude"
+            } else {
+                "cd $quotedAmpersand && claude"
+            }
+        assertEquals(
+            expected,
+            WorkspacePlaceholders.processPlaceholders(
+                "cd {projectPath} && claude",
+                ampersandPath,
+                quoteProjectPath = true,
+            ),
+        )
+    }
+
+    @Test
+    fun normalizeCommandPreservesAmpersandsInsideQuotedStrings() {
+        if (!ai.rever.boss.run.ShellUtils.isWindows) return
+        assertEquals(
+            "cd 'C:\\A && B'; echo '1 && 2'",
+            CommandProcessor.normalizeCommand("cd 'C:\\A && B' && echo '1 && 2'"),
+        )
+        assertEquals(
+            "echo \"A && B\"; dir",
+            CommandProcessor.normalizeCommand("echo \"A && B\" && dir"),
+        )
+        assertEquals(
+            "cmd1&&cmd2",
+            CommandProcessor.normalizeCommand("cmd1&&cmd2"),
+        )
+    }
 }

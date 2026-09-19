@@ -93,7 +93,9 @@ object WorkspacePlaceholders {
         currentFile: String? = null,
         quoteProjectPath: Boolean = false,
     ): String {
-        var result = content
+        // Normalize command separators for current platform on the template before value
+        // substitutions so that injected paths, files, or URLs containing " && " are not corrupted.
+        var result = CommandProcessor.normalizeCommand(content)
 
         // One reading of "is there a project" for all three project placeholders. They used to
         // disagree about a blank path: {projectPath} treated it as absent, while the two below
@@ -143,9 +145,6 @@ object WorkspacePlaceholders {
         if (result.contains(CLAUDE_CONTINUE_FLAG_PLACEHOLDER)) {
             result = result.replace(CLAUDE_CONTINUE_FLAG_PLACEHOLDER, getClaudeContinueFlag(selectedProject))
         }
-
-        // Normalize command separators for current platform (MUST be last step)
-        result = CommandProcessor.normalizeCommand(result)
 
         return result
     }
