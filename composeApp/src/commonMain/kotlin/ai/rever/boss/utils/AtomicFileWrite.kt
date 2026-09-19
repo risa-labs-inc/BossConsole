@@ -1,5 +1,8 @@
 package ai.rever.boss.utils
 
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.ComponentLogger
+import ai.rever.boss.utils.logging.LogCategory
 import java.io.File
 import java.io.IOException
 import java.nio.file.AtomicMoveNotSupportedException
@@ -77,5 +80,71 @@ fun File.atomicWriteText(text: String) {
     } finally {
         // No-op when the move took it away; cleans up on failure paths.
         tmp.delete()
+    }
+}
+
+private fun File.canQuarantine(): Boolean = exists() && !isDirectory && length() > 0L
+
+/**
+ * Back up this file to a sibling `<name>.corrupt-<timestamp>` if it exists.
+ *
+ * Used when a settings or configuration file fails to deserialize. Preserves the user's
+ * damaged configuration for diagnosis and recovery, while clearing the path so that
+ * subsequent atomic saves can write clean defaults without silently destroying the old data.
+ *
+ * @return The backup file if the move succeeded, or null if this file did not exist or move failed.
+ */
+fun File.backupCorrupt(
+    logger: ComponentLogger? = null,
+    category: LogCategory = LogCategory.SYSTEM,
+    error: Throwable? = null,
+): File? {
+    val parent = parentFile?.takeIf { canQuarantine() } ?: return null
+
+    return try {
+        val timestamp = System.currentTimeMillis()
+        var candidate = File(parent, "$name.corrupt-$timestamp")
+        var counter = 1
+        while (candidate.exists()) {
+            candidate = File(parent, "$name.corrupt-$timestamp-$counter")
+            counter++
+        }
+
+        try {
+            Files.move(toPath(), candidate.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        } catch (_: IOException) {
+            // Fallback for Windows file locks / sharing violations: copy then delete
+            copyTo(candidate, overwrite = true)
+            delete()
+        }
+
+        val activeLogger = logger ?: BossLogger.forComponent("FilePersistence")
+        activeLogger.warn(
+            category,
+            "Quarantined corrupt settings file to ${candidate.name} (error: ${error?.message ?: "unknown"})",
+            mapOf(
+                "original" to absolutePath,
+                "backup" to candidate.absolutePath,
+                "size" to candidate.length(),
+            ),
+            error = error,
+        )
+        candidate
+    } catch (e: IOException) {
+        val activeLogger = logger ?: BossLogger.forComponent("FilePersistence")
+        activeLogger.error(
+            category,
+            "Failed to quarantine corrupt settings file $name",
+            error = e,
+        )
+        null
+    } catch (e: SecurityException) {
+        val activeLogger = logger ?: BossLogger.forComponent("FilePersistence")
+        activeLogger.error(
+            category,
+            "Failed to quarantine corrupt settings file $name",
+            error = e,
+        )
+        null
     }
 }

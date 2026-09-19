@@ -1,8 +1,11 @@
 package ai.rever.boss.config
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
+import ai.rever.boss.utils.backupCorrupt
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -71,7 +74,7 @@ object ResourceModeSettings {
             val next = transform(current())
             runCatching {
                 settingsFile.parentFile?.mkdirs()
-                settingsFile.writeText(encode(next))
+                settingsFile.atomicWriteText(encode(next))
                 state.value = next
             }.onFailure { e ->
                 logger.warn(
@@ -83,14 +86,27 @@ object ResourceModeSettings {
         }
     }
 
-    // readText inside the runCatching, not outside it: current()'s contract is "defaults when the
+    // readText inside the try-catch: current()'s contract is "defaults when the
     // file is absent OR unreadable", and an existing-but-unreadable file throws an IOException
-    // that would escape the `by lazy` and take startup's publishToPlugins() with it.
-    private fun load(): ResourceModeSettingsData =
-        runCatching { if (settingsFile.exists()) settingsFile.readText() else null }
-            .getOrNull()
-            ?.let { decode(it) }
-            ?: ResourceModeSettingsData()
+    // or SerializationException, which is quarantined so it doesn't break startup's publishToPlugins().
+    @Suppress("TooGenericExceptionCaught")
+    private fun load(): ResourceModeSettingsData {
+        if (!settingsFile.exists()) return ResourceModeSettingsData()
+        return try {
+            val content = settingsFile.readText()
+            json.decodeFromString(serializer, content)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            settingsFile.backupCorrupt(logger, LogCategory.SYSTEM, e)
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Could not read resource-mode settings - using defaults",
+                mapOf("error" to (e.message ?: "unknown")),
+            )
+            ResourceModeSettingsData()
+        }
+    }
 
     /**
      * Parses the settings document, falling back to defaults rather than throwing.

@@ -1,8 +1,11 @@
 package ai.rever.boss.components.workspaces
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
+import ai.rever.boss.utils.backupCorrupt
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -75,14 +78,17 @@ actual object WorkspaceSettingsManager {
             } else {
                 logger.debug(LogCategory.SYSTEM, "Stamped workspace settings version")
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
+            settingsFile.backupCorrupt(logger, LogCategory.SYSTEM, e)
             logger.warn(LogCategory.SYSTEM, "Error loading settings", error = e)
         }
     }
 
     private fun writeSettings(settings: WorkspaceSettings) {
         try {
-            settingsFile.writeText(json.encodeToString(WorkspaceSettings.serializer(), settings))
+            settingsFile.atomicWriteText(json.encodeToString(WorkspaceSettings.serializer(), settings))
             logger.debug(LogCategory.SYSTEM, "Settings saved")
         } catch (e: Exception) {
             logger.warn(LogCategory.SYSTEM, "Error saving settings", error = e)

@@ -3,8 +3,11 @@ package ai.rever.boss.window
 import ai.rever.boss.layout.ChromeDensity
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.SystemUtils
+import ai.rever.boss.utils.atomicWriteText
+import ai.rever.boss.utils.backupCorrupt
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -72,7 +75,9 @@ actual object WindowAppearanceSettingsManager {
                     // Written back immediately, so the step is not re-applied on every launch -
                     // and so a value the user changes afterwards is never overwritten by it.
                     runCatching {
-                        settingsFile.writeText(json.encodeToString(WindowAppearanceSettings.serializer(), migrated))
+                        settingsFile.atomicWriteText(
+                            json.encodeToString(WindowAppearanceSettings.serializer(), migrated),
+                        )
                     }.onFailure { e ->
                         logger.warn(LogCategory.SYSTEM, "Could not write migrated settings", error = e)
                     }
@@ -86,13 +91,16 @@ actual object WindowAppearanceSettingsManager {
                 // Save default settings to file
                 try {
                     val content = json.encodeToString(WindowAppearanceSettings.serializer(), defaults)
-                    settingsFile.writeText(content)
+                    settingsFile.atomicWriteText(content)
                     logger.debug(LogCategory.SYSTEM, "Created default settings", mapOf("path" to settingsFile.absolutePath))
                 } catch (e: Exception) {
                     logger.warn(LogCategory.SYSTEM, "Could not write default settings file", error = e)
                 }
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
+            settingsFile.backupCorrupt(logger, LogCategory.SYSTEM, e)
             logger.warn(LogCategory.SYSTEM, "Failed to load settings", error = e)
             // An unreadable existing file is not a fresh install. Do not apply a screen profile.
             _currentSettings.value = defaultWindowAppearanceSettings(isMacOs = SystemUtils.isMacOS)
@@ -106,7 +114,7 @@ actual object WindowAppearanceSettingsManager {
         withContext(Dispatchers.IO) {
             try {
                 val content = json.encodeToString(WindowAppearanceSettings.serializer(), _currentSettings.value)
-                settingsFile.writeText(content)
+                settingsFile.atomicWriteText(content)
                 logger.debug(LogCategory.SYSTEM, "Settings saved", mapOf("path" to settingsFile.absolutePath))
             } catch (e: Exception) {
                 logger.warn(LogCategory.SYSTEM, "Failed to save settings", error = e)

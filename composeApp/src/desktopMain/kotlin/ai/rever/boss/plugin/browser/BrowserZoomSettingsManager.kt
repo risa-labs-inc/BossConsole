@@ -1,8 +1,11 @@
 package ai.rever.boss.plugin.browser
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
+import ai.rever.boss.utils.backupCorrupt
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -100,7 +103,10 @@ object BrowserZoomSettingsManager {
                 val content = settingsFile.readText()
                 settings = json.decodeFromString<BrowserZoomSettingsData>(content)
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
+            settingsFile.backupCorrupt(logger, LogCategory.BROWSER, e)
             logger.warn(LogCategory.BROWSER, "Error loading zoom settings", error = e)
             settings = BrowserZoomSettingsData()
         }
@@ -113,7 +119,7 @@ object BrowserZoomSettingsManager {
         withContext(Dispatchers.IO) {
             try {
                 settingsFile.parentFile?.mkdirs()
-                settingsFile.writeText(json.encodeToString(settings))
+                settingsFile.atomicWriteText(json.encodeToString(settings))
             } catch (e: Exception) {
                 logger.warn(LogCategory.BROWSER, "Error saving zoom settings", error = e)
             }
@@ -126,7 +132,7 @@ object BrowserZoomSettingsManager {
     fun saveSettingsSync() {
         try {
             settingsFile.parentFile?.mkdirs()
-            settingsFile.writeText(json.encodeToString(settings))
+            settingsFile.atomicWriteText(json.encodeToString(settings))
         } catch (e: Exception) {
             logger.warn(LogCategory.BROWSER, "Error saving zoom settings (sync)", error = e)
         }

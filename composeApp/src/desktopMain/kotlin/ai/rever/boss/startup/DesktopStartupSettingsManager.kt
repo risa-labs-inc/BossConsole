@@ -1,8 +1,11 @@
 package ai.rever.boss.startup
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
+import ai.rever.boss.utils.backupCorrupt
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -62,10 +65,13 @@ actual object StartupSettingsManager {
                 } else {
                     // Create default settings file
                     val content = json.encodeToString(StartupSettings.serializer(), _currentSettings.value)
-                    settingsFile.writeText(content)
+                    settingsFile.atomicWriteText(content)
                     logger.debug(LogCategory.SYSTEM, "Created default settings file")
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
+                settingsFile.backupCorrupt(logger, LogCategory.SYSTEM, e)
                 logger.warn(LogCategory.SYSTEM, "Error loading settings", error = e)
                 // Keep default settings on error
             }
@@ -83,7 +89,7 @@ actual object StartupSettingsManager {
         withContext(Dispatchers.IO) {
             try {
                 val content = json.encodeToString(StartupSettings.serializer(), _currentSettings.value)
-                settingsFile.writeText(content)
+                settingsFile.atomicWriteText(content)
                 logger.debug(LogCategory.SYSTEM, "Settings saved")
             } catch (e: Exception) {
                 logger.warn(LogCategory.SYSTEM, "Error saving settings", error = e)

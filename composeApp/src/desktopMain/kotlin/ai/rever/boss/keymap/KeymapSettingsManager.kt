@@ -8,9 +8,12 @@ import ai.rever.boss.keymap.presets.KeymapPresets
 import ai.rever.boss.keymap.presets.KeymapPresets.claimsChord
 import ai.rever.boss.keymap.presets.KeymapPresets.withoutChordsTakenBy
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
+import ai.rever.boss.utils.backupCorrupt
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.ComponentLogger
 import ai.rever.boss.utils.logging.LogCategory
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -67,7 +70,7 @@ actual object KeymapSettingsManager {
                 if (migrated != loaded) {
                     try {
                         val migratedContent = json.encodeToString(KeymapSettings.serializer(), migrated)
-                        settingsFile.writeText(migratedContent)
+                        settingsFile.atomicWriteText(migratedContent)
                         logger.debug(LogCategory.SYSTEM, "Migrated keymap settings saved")
                     } catch (e: Exception) {
                         logger.warn(LogCategory.SYSTEM, "Could not save migrated keymap settings", error = e)
@@ -84,13 +87,16 @@ actual object KeymapSettingsManager {
                 // Save default settings to file
                 try {
                     val content = json.encodeToString(KeymapSettings.serializer(), defaultSettings)
-                    settingsFile.writeText(content)
+                    settingsFile.atomicWriteText(content)
                     logger.debug(LogCategory.SYSTEM, "Created default keymap settings file", mapOf("path" to settingsFile.absolutePath))
                 } catch (e: Exception) {
                     logger.warn(LogCategory.SYSTEM, "Could not write default keymap settings file", error = e)
                 }
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
+            settingsFile.backupCorrupt(logger, LogCategory.SYSTEM, e)
             logger.error(LogCategory.SYSTEM, "Failed to load keymap settings, using defaults", error = e)
             _currentSettings.value = KeymapPresets.getBOSSDefault()
         }
@@ -187,7 +193,7 @@ actual object KeymapSettingsManager {
         withContext(Dispatchers.IO) {
             try {
                 val content = json.encodeToString(KeymapSettings.serializer(), _currentSettings.value)
-                settingsFile.writeText(content)
+                settingsFile.atomicWriteText(content)
                 logger.debug(LogCategory.SYSTEM, "Keymap settings saved")
             } catch (e: Exception) {
                 logger.error(LogCategory.SYSTEM, "Failed to save keymap settings", error = e)

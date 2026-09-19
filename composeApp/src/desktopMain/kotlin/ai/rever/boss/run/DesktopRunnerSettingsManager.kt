@@ -3,8 +3,11 @@ package ai.rever.boss.run
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.plugin.run.MAX_RERUN_DELAY_MS
 import ai.rever.boss.plugin.run.MIN_RERUN_DELAY_MS
+import ai.rever.boss.utils.atomicWriteText
+import ai.rever.boss.utils.backupCorrupt
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -66,10 +69,13 @@ actual object RunnerSettingsManager {
                 } else {
                     // Create default settings file
                     val content = json.encodeToString(RunnerSettings.serializer(), _currentSettings.value)
-                    settingsFile.writeText(content)
+                    settingsFile.atomicWriteText(content)
                     logger.debug(LogCategory.SYSTEM, "Created default settings file")
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
+                settingsFile.backupCorrupt(logger, LogCategory.SYSTEM, e)
                 logger.warn(LogCategory.SYSTEM, "Error loading settings", error = e)
                 // Keep default settings on error
             }
@@ -82,7 +88,7 @@ actual object RunnerSettingsManager {
         withContext(Dispatchers.IO) {
             try {
                 val content = json.encodeToString(RunnerSettings.serializer(), _currentSettings.value)
-                settingsFile.writeText(content)
+                settingsFile.atomicWriteText(content)
                 logger.debug(LogCategory.SYSTEM, "Settings saved")
             } catch (e: Exception) {
                 logger.warn(LogCategory.SYSTEM, "Error saving settings", error = e)
