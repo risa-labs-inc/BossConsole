@@ -13,6 +13,9 @@ import ai.rever.boss.components.workspaces.WorkspaceSerializer
 import ai.rever.boss.components.workspaces.applyWorkspace
 import ai.rever.boss.components.workspaces.awaitTabTypes
 import ai.rever.boss.components.workspaces.isSpaceSlot
+import ai.rever.boss.components.workspaces.materialiseTemplateForProject
+import ai.rever.boss.components.workspaces.requiresProject
+import ai.rever.boss.components.workspaces.savedSpaceNames
 import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.dashboard.DashboardStatsManager
 import ai.rever.boss.plugin.api.McpToolArgs
@@ -194,6 +197,8 @@ object WorkspaceMcpToolProvider : McpToolProvider {
             createOpenTerminalTool("terminal_open"),
             createCloseWorkspaceTool("close_workspace"),
             createCloseWorkspaceTool("workspace_close"),
+            createApplyTemplateTool("apply_template"),
+            createApplyTemplateTool("workspace_apply_template"),
         )
 
     private fun createListWorkspacesTool(name: String): McpToolDefinition =
@@ -394,6 +399,149 @@ object WorkspaceMcpToolProvider : McpToolProvider {
             }
 
         return McpToolResult(response.toString())
+    }
+
+    /**
+     * Materialise a shipped template against a project and open it as a live Space.
+     *
+     * This is the agent-side half of the Space picker's Templates section: until now an agent
+     * could SEE a template via list_workspaces (isTemplate=true) but the only way to open one
+     * was to tell the human "go click Templates". The handler is the same materialise-and-apply
+     * flow the picker uses - [materialiseTemplateForProject] for substitution and theme
+     * inheritance, then the preserve/load/apply switch [switchWindowToSpace] runs - so the
+     * Space that lands is byte-identical to what the same click in the UI builds.
+     */
+    private fun createApplyTemplateTool(name: String): McpToolDefinition =
+        McpToolDefinition(
+            name = name,
+            description =
+                "Materialise a built-in workspace template against a project and open it as a live " +
+                    "Space: the same thing as picking the template from the Space picker's Templates " +
+                    "section. Templates parameterise their tabs (terminals cd into the project, " +
+                    "editors open project files), so the result is a concrete Space with real paths, " +
+                    "saved for re-entry and applied to the window. Find template ids via " +
+                    "list_workspaces (entries with isTemplate=true).",
+            inputSchema =
+                """
+                {
+                    "type": "object",
+                    "properties": {
+                        "templateId": {
+                            "type": "string",
+                            "description": "Id of the built-in template to materialise, e.g. " +
+                                "workspace-project-studio, workspace-claude-code, workspace-code-review"
+                        },
+                        "projectPath": {
+                            "type": "string",
+                            "description": "Absolute path of the project directory the template " +
+                                "placeholders resolve against; ~ is expanded, relative paths are refused"
+                        },
+                        "windowId": {
+                            "type": "string",
+                            "description": "Optional target window; omitted means the single open window"
+                        }
+                    },
+                    "required": ["templateId", "projectPath"]
+                }
+                """.trimIndent(),
+            handler = McpToolHandler { args -> handleApplyTemplate(args) },
+            readOnly = false,
+        )
+
+    @Suppress("CyclomaticComplexMethod", "LongMethod", "ReturnCount")
+    internal suspend fun handleApplyTemplate(args: McpToolArgs): McpToolResult {
+        val templateId = args.string("templateId")
+        if (templateId.isNullOrBlank()) {
+            return McpToolResult("templateId is required: the built-in template to materialise", isError = true)
+        }
+        val template =
+            PredefinedWorkspaces.allWorkspaces.firstOrNull { it.id == templateId }
+                ?: return McpToolResult(
+                    "Unknown templateId '$templateId'. Call list_workspaces and use an id with " +
+                        "isTemplate=true (e.g. ${PredefinedWorkspaces.CLAUDE_CODE_ID}).",
+                    isError = true,
+                )
+        if (!template.requiresProject()) {
+            return McpToolResult(
+                "'${template.name}' carries no placeholders, so there is nothing to materialise - " +
+                    "open it directly with open_workspace (workspaceId=${template.id}).",
+                isError = true,
+            )
+        }
+
+        val rawProjectPath = args.string("projectPath")
+        if (rawProjectPath.isNullOrBlank()) {
+            return McpToolResult(
+                "projectPath is required: '${template.name}' builds its tabs from the project",
+                isError = true,
+            )
+        }
+        val projectCheck = checkProjectPath(rawProjectPath)
+        if (projectCheck.canonicalPath == null) {
+            return McpToolResult(projectCheck.error ?: "Invalid project path", isError = true)
+        }
+        val projectPath = projectCheck.canonicalPath
+
+        val target = resolveTargetWindow(args.string("windowId"))
+        if (target !is TargetWindowResolution.Success) {
+            val failure = target as TargetWindowResolution.Failure
+            return McpToolResult(failure.errorMessage, isError = true)
+        }
+        val splitViewState =
+            awaitSplitViewState(target.windowId)
+                ?: return McpToolResult(
+                    "Window '${target.windowId}' did not register its UI state in time; retry.",
+                    isError = true,
+                )
+
+        // The picker's materialise-and-save flow, verbatim: substitution, theme inheritance
+        // (resolved, so a re-themed template passes the user's theme on), then save so the
+        // Space exists from the moment its tabs do.
+        val materialised =
+            materialiseTemplateForProject(
+                template,
+                projectPath,
+                savedSpaceNames(workspaceManager.workspaces.value),
+            )
+        workspaceManager.setSpaceTheme(materialised.id, workspaceManager.themeIdFor(template.id))
+        workspaceManager.loadWorkspace(materialised)
+        // Persist synchronously: this handler TELLS the agent the Space is "saved and
+        // re-enterable", so the file must have landed before the response claims it. The
+        // comment on the previous version claimed "loadWorkspace still feeds the in-memory
+        // list the same way"; it does NOT - `loadWorkspace` only touches `_currentWorkspace`,
+        // so the materialised Space was invisible in the picker until the next launch. The
+        // fileManager shortcut is right for the bytes (we need them on disk, not on a coroutine
+        // the response races past); the picker list is added synchronously by addWorkspaceToList
+        // after the file write returns. Same pair, no scope.launch, no half-saved Space.
+        val savedPath = getFileManager().saveWorkspaceBlocking(materialised, null)
+        if (savedPath == null) {
+            return McpToolResult(
+                "Could not save the materialised Space to disk; the file write failed.",
+                isError = true,
+            )
+        }
+        workspaceManager.addWorkspaceToList(materialised)
+        switchWindowToSpace(
+            splitViewState,
+            WindowProjectStateRegistry.getOrCreate(target.windowId),
+            materialised,
+        )
+
+        logger.info(
+            LogCategory.WORKSPACE,
+            "Materialized template into a workspace via MCP",
+            mapOf(
+                "template" to template.id,
+                "workspace" to materialised.name,
+                "id" to materialised.id,
+                "projectPath" to projectPath,
+            ),
+        )
+        return McpToolResult(
+            "Created and opened Space \"" + materialised.name + "\" (id: " + materialised.id + ") from " +
+                "template '" + template.name + "' in window " + target.windowId + ". The Space is saved and " +
+                "re-enterable; terminal tools can attach to its panels.",
+        )
     }
 
     @Suppress("CyclomaticComplexMethod", "LongMethod", "ReturnCount")

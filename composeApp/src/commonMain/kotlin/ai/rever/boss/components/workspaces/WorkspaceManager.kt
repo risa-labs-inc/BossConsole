@@ -413,6 +413,29 @@ class WorkspaceManager {
     }
 
     /**
+     * Add [workspace] to [workspaces] synchronously, keyed by id. No file is written and
+     * [_currentWorkspace] is not touched - the caller has already chosen the id, written the
+     * file at it and (when the caller is the MCP `apply_template` tool) made it the current Space
+     * via `loadWorkspace`.
+     *
+     * For the gap between "file is on disk" and "file is on disk AND the picker lists the Space":
+     * a caller that uses `fileManager.saveWorkspaceBlocking` to honour a synchronous contract
+     * gets the bytes for free, but bypasses [saveCurrentWorkspace]'s in-memory update because
+     * that one runs inside `scope.launch`. This is the synchronised half of that pair, on its
+     * own so it stays out of the UI paths where the async update is right.
+     */
+    fun addWorkspaceToList(workspace: LayoutWorkspace) {
+        val workspaces = _workspaces.value.toMutableList()
+        val existingIndex = workspaces.indexOfFirst { it.id == workspace.id }
+        if (existingIndex >= 0) {
+            workspaces[existingIndex] = workspace
+        } else {
+            workspaces.add(workspace)
+        }
+        _workspaces.value = workspaces
+    }
+
+    /**
      * Write [record] as the Last Session file, and refresh the list entry for it.
      *
      * The layout watcher's only write. Deliberately does NOT touch [currentWorkspace]: while the
