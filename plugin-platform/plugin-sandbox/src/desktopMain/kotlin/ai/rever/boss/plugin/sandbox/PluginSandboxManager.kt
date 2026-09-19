@@ -222,7 +222,11 @@ class PluginSandboxManagerImpl(
 
     /**
      * Add a listener for plugin lifecycle events.
-     * Uses weak references to prevent memory leaks.
+     *
+     * Held by [WeakReference] only, to prevent memory leaks: the caller must keep its own strong
+     * reference (a field, as `DynamicPluginManager` and `DefaultPlugin` do) for as long as it
+     * wants events. A listener nothing else refers to is collected at the next GC and silently
+     * dropped by [notifyListeners].
      */
     fun addListener(listener: PluginSandboxListener) {
         cleanupDeadListeners()
