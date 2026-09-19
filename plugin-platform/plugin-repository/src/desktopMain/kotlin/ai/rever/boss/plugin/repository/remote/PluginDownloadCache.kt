@@ -3,6 +3,11 @@ package ai.rever.boss.plugin.repository.remote
 import ai.rever.boss.plugin.logging.BossLogger
 import ai.rever.boss.plugin.logging.LogCategory
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -20,6 +25,9 @@ import kotlin.io.path.name
 /** Local, hash-verified cache. Exact IDs and versions are addressed by SHA-256 keys. */
 class PluginDownloadCache(
     cacheDir: File = BossDirectories.resolve("plugin-cache"),
+    // Injectable purely for tests: Dispatchers.Unconfined runs the construction-time sweep
+    // synchronously so a test can assert on it without waiting on an IO thread.
+    sweepDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
     private val logger = BossLogger.forComponent("PluginDownloadCache")
 
@@ -32,6 +40,23 @@ class PluginDownloadCache(
         }
     private val root: Path get() = location.getOrThrow().first
     private val rootIdentity: Any? get() = location.getOrThrow().second
+
+    // Off-thread home for the construction-time sweep: this cache is built from
+    // PluginStoreSetup.initialize() on the main thread at startup, and a walk of the whole
+    // cache tree has no business there. SupervisorJob so a failed sweep cannot poison the scope.
+    private val sweepScope = CoroutineScope(sweepDispatcher + SupervisorJob())
+
+    init {
+        // The only age-based eviction this cache has, and nothing else calls it: without this
+        // every version ever downloaded stays on disk. Once per process, at construction, off
+        // the constructing thread. The sweep goes through entries() and so inherits checkRoot();
+        // a failure is logged and swallowed for the same reason `location` retains its own - an
+        // unusable cache must not prevent repository construction.
+        sweepScope.launch {
+            runCatching { cleanOldEntries() }
+                .onFailure { logger.warn(LogCategory.SYSTEM, "Skipped plugin cache expiry at startup", error = it) }
+        }
+    }
 
     @Serializable
     private data class CacheMetadata(
