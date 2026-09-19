@@ -3,8 +3,10 @@ package ai.rever.boss.components.workspaces
 import ai.rever.boss.components.buttons.BossActionButton
 import ai.rever.boss.components.icons.SpaceIcon
 import ai.rever.boss.components.overlays.ContextMenuItem
+import ai.rever.boss.components.window_panel.SplitViewStateRegistry
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.plugin.workspace.SplitConfig.SinglePanel
+import ai.rever.boss.window.LocalWindowId
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Circle
@@ -88,6 +90,8 @@ fun WorkspaceButton(
      */
     unsavedWorkspaceIds: Set<String> = emptySet(),
 ) {
+    val windowId = LocalWindowId.current
+    val saveOwner = windowId?.let(SplitViewStateRegistry::getState)
     val currentWorkspace by workspaceManager.currentWorkspace.collectAsState()
     val workspaces by workspaceManager.workspaces.collectAsState()
 
@@ -323,7 +327,11 @@ fun WorkspaceButton(
                 // Get current layout and save it with the provided name
                 getCurrentWorkspace?.invoke()?.let { currentLayout ->
                     workspaceManager.updateCurrentWorkspace(currentLayout)
-                    workspaceManager.saveCurrentWorkspace(name)
+                    workspaceManager.saveCurrentWorkspace(name) { savedWorkspace ->
+                        if (windowId?.let(SplitViewStateRegistry::getState) === saveOwner) {
+                            saveOwner?.rebindCurrentWorkspace(savedWorkspace.id)
+                        }
+                    }
                 }
                 showSaveDialog = false
             },

@@ -346,7 +346,12 @@ class WorkspaceManager {
     /**
      * Save current workspace to disk
      */
-    fun saveCurrentWorkspace(name: String? = null): LayoutWorkspace? {
+    fun saveCurrentWorkspace(name: String? = null): LayoutWorkspace? = saveCurrentWorkspace(name, onSaved = {})
+
+    internal fun saveCurrentWorkspace(
+        name: String?,
+        onSaved: (LayoutWorkspace) -> Unit,
+    ): LayoutWorkspace? {
         val current = _currentWorkspace.value ?: return null
         val now = Clock.System.now().toEpochMilliseconds()
         val savedWorkspace =
@@ -406,6 +411,7 @@ class WorkspaceManager {
 
                 _workspaces.value = workspaces
                 _currentWorkspace.value = savedWorkspace
+                onSaved(savedWorkspace)
             }
         }
 
