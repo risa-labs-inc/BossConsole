@@ -1,7 +1,9 @@
 package ai.rever.boss.plugin
 
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.quarantineCorruptFile
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -65,23 +67,43 @@ object PluginPersistence {
         if (config != null) return config!!
 
         return try {
-            if (configFile.exists()) {
-                val content = configFile.readText()
-                config = json.decodeFromString<InstalledPluginsConfig>(content)
-                logger.info(
-                    LogCategory.SYSTEM,
-                    "Loaded installed plugins config",
-                    mapOf(
-                        "count" to (config?.plugins?.size ?: 0),
-                    ),
-                )
-                // Backfill missing installedVersion from JAR manifests
-                backfillMissingVersions(config!!)
-                config!!
-            } else {
-                logger.debug(LogCategory.SYSTEM, "No installed plugins config found, creating new")
-                config = InstalledPluginsConfig()
-                config!!
+            when (val read = readInstalledPluginsFile(configFile, json)) {
+                is InstalledPluginsFileRead.Loaded -> {
+                    config = read.config
+                    logger.info(
+                        LogCategory.SYSTEM,
+                        "Loaded installed plugins config",
+                        mapOf(
+                            "count" to (config?.plugins?.size ?: 0),
+                        ),
+                    )
+                    // Backfill missing installedVersion from JAR manifests
+                    backfillMissingVersions(config!!)
+                    config!!
+                }
+
+                InstalledPluginsFileRead.Missing -> {
+                    logger.debug(LogCategory.SYSTEM, "No installed plugins config found, creating new")
+                    config = InstalledPluginsConfig()
+                    config!!
+                }
+
+                is InstalledPluginsFileRead.Corrupt -> {
+                    logger.error(
+                        LogCategory.SYSTEM,
+                        "Installed plugins config could not be parsed; the file was set aside, empty list in use",
+                        mapOf("keptAt" to (read.quarantinedTo ?: configFile).absolutePath),
+                        error = read.cause,
+                    )
+                    config = InstalledPluginsConfig()
+                    config!!
+                }
+
+                is InstalledPluginsFileRead.Unreadable -> {
+                    logger.error(LogCategory.SYSTEM, "Failed to read installed plugins config", error = read.cause)
+                    config = InstalledPluginsConfig()
+                    config!!
+                }
             }
         } catch (e: Exception) {
             logger.error(LogCategory.SYSTEM, "Failed to load installed plugins config", error = e)
@@ -158,7 +180,7 @@ object PluginPersistence {
         try {
             val cfg = config ?: return
             configFile.parentFile?.mkdirs()
-            configFile.writeText(json.encodeToString(cfg))
+            configFile.atomicWriteText(json.encodeToString(cfg))
             logger.debug(
                 LogCategory.SYSTEM,
                 "Saved installed plugins config",
@@ -469,3 +491,54 @@ object PluginPersistence {
         }
     }
 }
+
+/**
+ * What reading `installed.json` produced. Four outcomes, because they call for different things.
+ */
+internal sealed interface InstalledPluginsFileRead {
+    data class Loaded(
+        val config: PluginPersistence.InstalledPluginsConfig,
+    ) : InstalledPluginsFileRead
+
+    data object Missing : InstalledPluginsFileRead
+
+    /** Present but not a plugin list. Moved to [quarantinedTo], or null when it could not be moved. */
+    data class Corrupt(
+        val cause: Exception,
+        val quarantinedTo: File?,
+    ) : InstalledPluginsFileRead
+
+    /** Could not be read at all, which says nothing about its contents. */
+    data class Unreadable(
+        val cause: Exception,
+    ) : InstalledPluginsFileRead
+}
+
+/**
+ * Reads [file] as the installed-plugins list.
+ *
+ * **A file that does not parse is moved aside, not left for the next save to overwrite.** The
+ * manager falls back to an empty list in memory, and an install, enable or disable follows almost
+ * at once and writes that list over the only copy of every plugin's enabled flag and source URL.
+ * The save this file used to do (`writeText`, which truncates first) was itself exactly the kind of
+ * write that produces such a file.
+ *
+ * A read failure is not corruption: a locked or unreadable file may be perfectly good, and moving it
+ * would take a working registry away over a transient error.
+ */
+internal fun readInstalledPluginsFile(
+    file: File,
+    json: Json,
+): InstalledPluginsFileRead =
+    if (!file.exists()) {
+        InstalledPluginsFileRead.Missing
+    } else {
+        try {
+            val text = file.readText()
+            InstalledPluginsFileRead.Loaded(json.decodeFromString<PluginPersistence.InstalledPluginsConfig>(text))
+        } catch (e: java.io.IOException) {
+            InstalledPluginsFileRead.Unreadable(e)
+        } catch (e: IllegalArgumentException) {
+            InstalledPluginsFileRead.Corrupt(e, file.quarantineCorruptFile())
+        }
+    }
