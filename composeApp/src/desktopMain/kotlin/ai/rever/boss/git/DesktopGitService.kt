@@ -486,9 +486,13 @@ actual object GitService {
         // when the panel hands it back as a pathspec (stage/discard/diffFile).
         // Same decoder parseNameStatus uses - without it the two parsers
         // report two spellings for the same file.
+        // Split on the FIRST arrow only (limit = 2): a new path may itself
+        // contain " -> " (plain ASCII, so git never C-quotes it), and an
+        // unlimited split would keep only the chunk between the first two
+        // arrows - a path that resolves to nothing when used as a pathspec.
         val (path, originalPath) =
             if (pathPart.contains(" -> ")) {
-                val parts = pathPart.split(" -> ")
+                val parts = pathPart.split(" -> ", limit = 2)
                 UnifiedDiffParser.cUnquote(parts[1]) to UnifiedDiffParser.cUnquote(parts[0])
             } else {
                 UnifiedDiffParser.cUnquote(pathPart) to null
