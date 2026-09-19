@@ -1,5 +1,6 @@
 package ai.rever.boss.plugin
 
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.serialization.Serializable
@@ -158,7 +159,7 @@ object PluginPersistence {
         try {
             val cfg = config ?: return
             configFile.parentFile?.mkdirs()
-            configFile.writeText(json.encodeToString(cfg))
+            configFile.atomicWriteText(json.encodeToString(cfg))
             logger.debug(
                 LogCategory.SYSTEM,
                 "Saved installed plugins config",

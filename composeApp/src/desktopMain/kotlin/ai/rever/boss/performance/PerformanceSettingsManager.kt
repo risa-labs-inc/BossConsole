@@ -1,6 +1,7 @@
 package ai.rever.boss.performance
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.Dispatchers
@@ -56,7 +57,7 @@ actual object PerformanceSettingsManager {
         withContext(Dispatchers.IO) {
             try {
                 val content = json.encodeToString(PerformanceSettings.serializer(), _currentSettings.value)
-                settingsFile.writeText(content)
+                settingsFile.atomicWriteText(content)
             } catch (e: Exception) {
                 // Settings save failed - not critical, will use in-memory settings
                 logger.warn(

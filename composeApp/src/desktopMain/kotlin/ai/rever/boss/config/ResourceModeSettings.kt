@@ -1,6 +1,7 @@
 package ai.rever.boss.config
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -71,7 +72,7 @@ object ResourceModeSettings {
             val next = transform(current())
             runCatching {
                 settingsFile.parentFile?.mkdirs()
-                settingsFile.writeText(encode(next))
+                settingsFile.atomicWriteText(encode(next))
                 state.value = next
             }.onFailure { e ->
                 logger.warn(

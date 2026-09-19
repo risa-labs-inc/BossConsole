@@ -2,6 +2,7 @@ package ai.rever.boss.config
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.VersionConstants
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.Dispatchers
@@ -111,7 +112,7 @@ object BrowserEngineSettingsManager {
             // effectiveVersion, and a failed write only costs us the cleanup.
             runCatching {
                 settingsFile.parentFile?.mkdirs()
-                settingsFile.writeText(json.encodeToString(BrowserEngineSettings.serializer(), normalized))
+                settingsFile.atomicWriteText(json.encodeToString(BrowserEngineSettings.serializer(), normalized))
             }.onSuccess {
                 // Only claim the cleanup happened when it actually did — otherwise
                 // this line reads as confirmation during triage while the pin is
@@ -142,7 +143,7 @@ object BrowserEngineSettingsManager {
             _currentSettings.value = normalized
             try {
                 settingsFile.parentFile?.mkdirs()
-                settingsFile.writeText(json.encodeToString(BrowserEngineSettings.serializer(), normalized))
+                settingsFile.atomicWriteText(json.encodeToString(BrowserEngineSettings.serializer(), normalized))
                 logger.debug(LogCategory.BROWSER, "Browser engine settings saved")
             } catch (e: Exception) {
                 logger.warn(LogCategory.BROWSER, "Error saving browser engine settings", error = e)

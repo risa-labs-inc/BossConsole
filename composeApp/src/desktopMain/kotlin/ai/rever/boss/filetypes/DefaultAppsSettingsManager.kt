@@ -1,6 +1,7 @@
 package ai.rever.boss.filetypes
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.Dispatchers
@@ -150,7 +151,7 @@ internal object DefaultAppsSettingsManager {
         withContext(Dispatchers.IO) {
             try {
                 settingsFile.parentFile?.mkdirs()
-                settingsFile.writeText(json.encodeToString(DefaultAppsSettings.serializer(), _settings.value))
+                settingsFile.atomicWriteText(json.encodeToString(DefaultAppsSettings.serializer(), _settings.value))
             } catch (e: Exception) {
                 // Logged, not surfaced: the decision has already taken effect in
                 // this session, and the only consequence of a failed write is

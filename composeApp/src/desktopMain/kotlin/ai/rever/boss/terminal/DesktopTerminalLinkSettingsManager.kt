@@ -1,6 +1,7 @@
 package ai.rever.boss.terminal
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CoroutineScope
@@ -64,7 +65,7 @@ actual object TerminalLinkSettingsManager {
                 } else {
                     // Create default settings file
                     val content = json.encodeToString(TerminalLinkSettings.serializer(), _currentSettings.value)
-                    settingsFile.writeText(content)
+                    settingsFile.atomicWriteText(content)
                     logger.debug(LogCategory.TERMINAL, "Created default settings file")
                 }
             } catch (e: Exception) {
@@ -80,7 +81,7 @@ actual object TerminalLinkSettingsManager {
         withContext(Dispatchers.IO) {
             try {
                 val content = json.encodeToString(TerminalLinkSettings.serializer(), _currentSettings.value)
-                settingsFile.writeText(content)
+                settingsFile.atomicWriteText(content)
                 logger.debug(LogCategory.TERMINAL, "Settings saved")
             } catch (e: Exception) {
                 logger.warn(LogCategory.TERMINAL, "Error saving settings", error = e)

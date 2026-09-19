@@ -7,6 +7,7 @@ import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class HtmlFileSettingsStoreTest {
     @TempDir
@@ -67,6 +68,19 @@ class HtmlFileSettingsStoreTest {
             assertEquals(1, failures.size)
             store.update(HtmlFileSettings(HtmlFileOpenMode.EDITOR))
             assertEquals(HtmlFileOpenMode.EDITOR, store.awaitSettings().openMode)
+        }
+
+    @Test
+    fun `update writes atomically and leaves no temporary file behind`() =
+        runBlocking {
+            val file = File(temporary, "settings.json").apply { writeText("{}") }
+            val store = HtmlFileSettingsStore(file) { throw it }
+            store.update(HtmlFileSettings(HtmlFileOpenMode.EDITOR))
+            // The settings file re-parses to the published state...
+            assertEquals(HtmlFileOpenMode.EDITOR, HtmlFileSettingsStore(file) { throw it }.awaitSettings().openMode)
+            // ...and the atomic temp-then-move leaves nothing half-written in the directory.
+            val leftovers = temporary.listFiles()?.map { it.name }?.filter { it != "settings.json" } ?: emptyList()
+            assertTrue(leftovers.isEmpty(), "unexpected leftover files: $leftovers")
         }
 
     @Test
