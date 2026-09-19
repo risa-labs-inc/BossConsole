@@ -33,6 +33,13 @@ class PluginDownloadCache(
     private val root: Path get() = location.getOrThrow().first
     private val rootIdentity: Any? get() = location.getOrThrow().second
 
+    init {
+        location.onSuccess {
+            runCatching { cleanOldEntries() }
+                .onFailure { logger.warn(LogCategory.SYSTEM, "Could not clean old plugin cache entries", error = it) }
+        }
+    }
+
     @Serializable
     private data class CacheMetadata(
         val pluginId: String,

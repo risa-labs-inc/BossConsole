@@ -22,10 +22,12 @@ object FaviconCache {
     private val logger = BossLogger.forComponent("FaviconCache")
     private const val MAX_FAVICON_SIZE_BYTES = 100 * 1024 // 100KB limit
     private const val CACHE_DIR_NAME = "favicon-cache"
+    private const val STALE_AFTER_DAYS = 30
 
     private val cacheDir: File by lazy {
         val appCacheDir = BossDirectories.resolve("cache/$CACHE_DIR_NAME")
         appCacheDir.mkdirs()
+        cleanupStaleEntries(STALE_AFTER_DAYS, appCacheDir)
         appCacheDir
     }
 
@@ -185,18 +187,19 @@ object FaviconCache {
      */
     fun cleanupStaleEntries(daysOld: Int = 30) {
         try {
-            val cutoffTime = System.currentTimeMillis() - (daysOld * 24 * 60 * 60 * 1000L)
-            var removedCount = 0
-
-            cacheDir.listFiles()?.forEach { file ->
-                if (file.lastModified() < cutoffTime) {
-                    file.delete()
-                    removedCount++
-                }
-            }
+            cleanupStaleEntries(daysOld, cacheDir)
         } catch (e: Exception) {
             logger.warn(LogCategory.BROWSER, "Error cleaning up cache", error = e)
         }
+    }
+
+    internal fun cleanupStaleEntries(
+        daysOld: Int,
+        dir: File,
+        now: Long = System.currentTimeMillis(),
+    ): Int {
+        val cutoffTime = staleCutoffMillis(now, daysOld)
+        return dir.listFiles()?.count { it.lastModified() < cutoffTime && it.delete() } ?: 0
     }
 
     /**
@@ -209,3 +212,8 @@ object FaviconCache {
      */
     fun getCacheCount(): Int = cacheDir.listFiles()?.size ?: 0
 }
+
+internal fun staleCutoffMillis(
+    now: Long,
+    daysOld: Int,
+): Long = now - (daysOld * 86_400_000L)

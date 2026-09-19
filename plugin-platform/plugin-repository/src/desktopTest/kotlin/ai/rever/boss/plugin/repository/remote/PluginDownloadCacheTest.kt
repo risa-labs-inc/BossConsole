@@ -123,6 +123,24 @@ class PluginDownloadCacheTest {
     }
 
     @Test
+    fun constructionRemovesStaleEntriesAndPreservesFreshOnes() {
+        val root = File(temporary, "cache")
+        val source = File(temporary, "source.jar").also { it.writeText("jar") }
+        val cache = PluginDownloadCache(root)
+        val stale = cache.cacheJar("stale-plugin", "1.0.0", source)
+        val fresh = cache.cacheJar("fresh-plugin", "1.0.0", source)
+        val expired = FileTime.fromMillis(System.currentTimeMillis() - 31L * 86_400_000L)
+        Files.setLastModifiedTime(stale.toPath(), expired)
+        Files.setLastModifiedTime(File(stale.parentFile, stale.nameWithoutExtension + ".json").toPath(), expired)
+
+        val reopened = PluginDownloadCache(root)
+
+        assertNull(reopened.getCachedJar("stale-plugin", "1.0.0", hash(source)))
+        assertNotNull(reopened.getCachedJar("fresh-plugin", "1.0.0", hash(source)))
+        assertTrue(fresh.exists())
+    }
+
+    @Test
     fun refusesSymlinkedEntryAndPluginDirectory() {
         val cache = PluginDownloadCache(File(temporary, "cache"))
         val source = File(temporary, "source.jar").also { it.writeText("sentinel") }

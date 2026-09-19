@@ -128,6 +128,19 @@ class FaviconCacheTest {
         assertTrue(first != second)
     }
 
+    @Test
+    fun `cleanup removes only entries outside the retention window`() {
+        val now = 2_000_000_000_000L
+        val stale = File(dir, "stale.png").apply { writeText("stale") }
+        val fresh = File(dir, "fresh.png").apply { writeText("fresh") }
+        stale.setLastModified(now - 31L * 86_400_000L)
+        fresh.setLastModified(now - 29L * 86_400_000L)
+
+        assertEquals(1, FaviconCache.cleanupStaleEntries(30, dir, now))
+        assertTrue(!stale.exists())
+        assertTrue(fresh.exists())
+    }
+
     private companion object {
         const val URL = "https://example.com/page"
         const val RED = 0xFFFF0000.toInt()

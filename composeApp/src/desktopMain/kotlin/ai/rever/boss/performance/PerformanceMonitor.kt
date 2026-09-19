@@ -23,8 +23,17 @@ import java.lang.management.MemoryMXBean
 import java.lang.management.MemoryPoolMXBean
 import java.lang.management.OperatingSystemMXBean
 import java.lang.management.ThreadMXBean
-import java.text.SimpleDateFormat
-import java.util.Date
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
+
+private val performanceExportTimestamp = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss", Locale.ROOT)
+
+internal fun performanceExportFileName(
+    timestamp: Instant = Instant.now(),
+    zoneId: ZoneId = ZoneId.systemDefault(),
+): String = "performance-export-${performanceExportTimestamp.withZone(zoneId).format(timestamp)}.json"
 
 /**
  * Global singleton for performance monitoring.
@@ -472,8 +481,7 @@ object PerformanceMonitor {
     suspend fun exportMetrics(): Result<String> =
         withContext(Dispatchers.IO) {
             try {
-                val timestamp = SimpleDateFormat("yyyyMMdd-HHmmss").format(Date())
-                val exportFile = BossDirectories.resolve("performance-export-$timestamp.json")
+                val exportFile = BossDirectories.resolve(performanceExportFileName())
                 exportFile.parentFile?.mkdirs()
 
                 val historyData = _history.value
