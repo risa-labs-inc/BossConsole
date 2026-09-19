@@ -1298,6 +1298,12 @@ it moves; selecting afterwards would need the post-move index, which is what the
 Today the two cannot actually coexist - `showSections` is `!several`, so a multi-pane bar draws no
 separator at all - but the ordering is what makes the rule true if they ever do.
 
+**A tab gesture owns its cleanup (#690).** Both `BossTabButton` and `TabFaviconChip` run
+inside `withDragSession`, whose `finally` clears an interrupted gesture even when pointer input
+is cancelled or restarted without an end/cancel callback. Ownership is the exact `DraggingTabInfo`
+instance, not the tab id: a tab can appear on multiple surfaces and can start a new drag before an
+old handler finishes. Never clear window-wide drag state from a tab-id-only disposal hook.
+
 **A collapsed pane springs open under a dragged tab**, after the same 550ms the Top of Mind panel
 gives its own headers (`SPRING_LOAD_DELAY_MS`, a second constant on purpose: nothing links the two
 repositories at compile time). A pane that is not being worked in shows one row plus a favicon

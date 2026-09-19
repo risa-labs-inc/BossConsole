@@ -2,6 +2,7 @@ package ai.rever.boss.components.buttons
 
 import ai.rever.boss.components.model.TabDraggableComponent
 import ai.rever.boss.components.model.TabDropResult
+import ai.rever.boss.components.model.withDragSession
 import ai.rever.boss.components.overlays.ContextMenu
 import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.components.overlays.OverlayConfig
@@ -292,17 +293,6 @@ fun BossTabButton(
     // Check if drag is enabled
     val isDragEnabled = tabDragComponent != null && tabInfo != null && panelId != null && tabIndex >= 0
 
-    // Cleanup drag state if this component is disposed while dragging
-    // This prevents "stuck" drag overlays when gesture is interrupted
-    DisposableEffect(tabDragComponent, tabInfo?.id) {
-        onDispose {
-            // Only cancel if THIS tab is the one being dragged
-            if (tabDragComponent?.draggingTab?.tabInfo?.id == tabInfo?.id) {
-                tabDragComponent?.cancelDrag()
-            }
-        }
-    }
-
     // The tab's own surface, in order: selected in the pane being worked in, selected in a
     // background pane, merely under the pointer, none of those.
     //
@@ -393,31 +383,33 @@ fun BossTabButton(
                 }.then(
                     if (isDragEnabled) {
                         Modifier.pointerInput(tabInfo, panelId, tabIndex) {
-                            detectDragGestures(
-                                onDragStart = { offset ->
-                                    // Calculate absolute position for drag start
-                                    val absolutePosition = windowPosition + offset
-                                    tabDragComponent.startDragging(
-                                        tabInfo = tabInfo,
-                                        panelId = panelId,
-                                        index = tabIndex,
-                                        startPosition = absolutePosition,
-                                    )
-                                    onDragStart()
-                                },
-                                onDrag = { change, dragAmount ->
-                                    change.consume()
-                                    tabDragComponent.updateDrag(dragAmount)
-                                },
-                                onDragEnd = {
-                                    // Always clean up drag state first to prevent stuck ghost
-                                    val result = tabDragComponent.endDrag()
-                                    onDragEnd(result)
-                                },
-                                onDragCancel = {
-                                    tabDragComponent.cancelDrag()
-                                },
-                            )
+                            tabDragComponent.withDragSession { session ->
+                                detectDragGestures(
+                                    onDragStart = { offset ->
+                                        // Calculate absolute position for drag start
+                                        val absolutePosition = windowPosition + offset
+                                        session.start(
+                                            tab = tabInfo,
+                                            panelId = panelId,
+                                            index = tabIndex,
+                                            position = absolutePosition,
+                                        )
+                                        onDragStart()
+                                    },
+                                    onDrag = { change, dragAmount ->
+                                        change.consume()
+                                        session.update(dragAmount)
+                                    },
+                                    onDragEnd = {
+                                        // Always clean up drag state first to prevent stuck ghost
+                                        val result = session.end()
+                                        onDragEnd(result)
+                                    },
+                                    onDragCancel = {
+                                        session.cancel()
+                                    },
+                                )
+                            }
                         }
                     } else {
                         Modifier
