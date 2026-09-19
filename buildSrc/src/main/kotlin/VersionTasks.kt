@@ -7,8 +7,12 @@ import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.Optional
 import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.TaskAction
-import java.text.SimpleDateFormat
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 import java.util.*
+
+internal fun buildDate(date: LocalDate = LocalDate.now()): String =
+    DateTimeFormatter.ISO_LOCAL_DATE.format(date)
 
 // ============================================================================
 // Version Pattern Constants - Shared regex patterns for validation
@@ -207,7 +211,7 @@ abstract class IncrementVersionTask : VersionPropertyWriteTask() {
         // Update patch version and reset build number
         props["app.version.patch"] = newPatch.toString()
         props["app.version"] = "${props["app.version.major"]}.${props["app.version.minor"]}.$newPatch"
-        props["app.build.date"] = SimpleDateFormat("yyyy-MM-dd").format(Date())
+        props["app.build.date"] = buildDate()
         props["app.build.number"] = "1"
 
         saveProperties(props, "Auto-incremented patch version")
@@ -233,7 +237,7 @@ abstract class IncrementMinorTask : VersionPropertyWriteTask() {
         props["app.version.minor"] = newMinor.toString()
         props["app.version.patch"] = "0"
         props["app.version"] = "${props["app.version.major"]}.$newMinor.0"
-        props["app.build.date"] = SimpleDateFormat("yyyy-MM-dd").format(Date())
+        props["app.build.date"] = buildDate()
         props["app.build.number"] = "1"
 
         saveProperties(props, "Auto-incremented minor version")
@@ -260,7 +264,7 @@ abstract class IncrementMajorTask : VersionPropertyWriteTask() {
         props["app.version.minor"] = "0"
         props["app.version.patch"] = "0"
         props["app.version"] = "$newMajor.0.0"
-        props["app.build.date"] = SimpleDateFormat("yyyy-MM-dd").format(Date())
+        props["app.build.date"] = buildDate()
         props["app.build.number"] = "1"
 
         saveProperties(props, "Auto-incremented major version")
@@ -284,7 +288,7 @@ abstract class IncrementBuildNumberTask : VersionPropertyWriteTask() {
 
         // Update build number only, keep version the same
         props["app.build.number"] = newBuildNumber.toString()
-        props["app.build.date"] = SimpleDateFormat("yyyy-MM-dd").format(Date())
+        props["app.build.date"] = buildDate()
 
         saveProperties(props, "Auto-incremented build number")
 
@@ -306,7 +310,7 @@ abstract class AutoIncrementBuildNumberTask : VersionPropertyWriteTask() {
 
         // Update build number only, keep version the same
         props["app.build.number"] = newBuildNumber.toString()
-        props["app.build.date"] = SimpleDateFormat("yyyy-MM-dd").format(Date())
+        props["app.build.date"] = buildDate()
 
         saveProperties(props, "Auto-incremented build number for package build")
 
@@ -355,7 +359,7 @@ abstract class SetPrereleaseSuffixTask : VersionPropertyWriteTask() {
         props["app.prerelease.suffix"] = suffixValue
         props["app.version"] = fullVersion
         props["app.release.channel"] = channel
-        props["app.build.date"] = SimpleDateFormat("yyyy-MM-dd").format(Date())
+        props["app.build.date"] = buildDate()
 
         saveProperties(props, "Set prerelease suffix to $suffixValue")
 
@@ -390,7 +394,7 @@ abstract class ClearPrereleaseSuffixTask : VersionPropertyWriteTask() {
         props["app.prerelease.suffix"] = ""
         props["app.version"] = stableVersion
         props["app.release.channel"] = "stable"
-        props["app.build.date"] = SimpleDateFormat("yyyy-MM-dd").format(Date())
+        props["app.build.date"] = buildDate()
 
         saveProperties(props, "Cleared prerelease suffix - promoted to stable")
 
@@ -435,7 +439,7 @@ abstract class IncrementPrereleaseTask : VersionPropertyWriteTask() {
         // Update properties
         props["app.prerelease.suffix"] = newSuffix
         props["app.version"] = fullVersion
-        props["app.build.date"] = SimpleDateFormat("yyyy-MM-dd").format(Date())
+        props["app.build.date"] = buildDate()
 
         saveProperties(props, "Incremented prerelease number")
 

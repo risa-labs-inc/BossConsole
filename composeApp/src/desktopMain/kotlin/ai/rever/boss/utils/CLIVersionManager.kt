@@ -6,6 +6,16 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 
+private val cliVersionHeader =
+    Regex("Version:\\s*([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?)")
+
+/** Reads the full SemVer stamped into a generated CLI script header. */
+internal fun installedCLIVersionFrom(lines: Sequence<String>): String? =
+    lines
+        .take(20)
+        .mapNotNull { cliVersionHeader.find(it)?.groupValues?.get(1) }
+        .firstOrNull()
+
 /**
  * Desktop implementation of CLI version manager
  *
@@ -49,22 +59,11 @@ actual object CLIVersionManager {
             }
 
             try {
-                scriptFile.readLines().take(20).forEach { line ->
-                    // Match version in comment header
-                    // Examples:
-                    //   # Version: 8.13.4
-                    //   REM Version: 8.13.4
-                    //   Version: 8.13.4
-                    val versionMatch =
-                        Regex("Version:\\s*([0-9]+\\.[0-9]+\\.[0-9]+)")
-                            .find(line)
-
-                    if (versionMatch != null) {
-                        val version = versionMatch.groupValues[1]
+                installedCLIVersionFrom(scriptFile.useLines { it.toList().asSequence() })
+                    ?.let { version ->
                         logger.debug(LogCategory.SYSTEM, "CLI version check: Found installed version", mapOf("version" to version))
                         return@withContext version
                     }
-                }
 
                 logger.debug(LogCategory.SYSTEM, "CLI version check: No version found in script header")
                 null

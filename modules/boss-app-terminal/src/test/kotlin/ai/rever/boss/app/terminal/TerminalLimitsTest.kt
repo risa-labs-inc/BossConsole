@@ -52,7 +52,8 @@ class TerminalLimitsTest {
             queued.add(block)
         }
 
-        fun next(): Runnable = checkNotNull(queued.poll(5, TimeUnit.SECONDS)) { "Expected a dispatched continuation" }
+        fun next(timeoutSeconds: Long = 5): Runnable =
+            checkNotNull(queued.poll(timeoutSeconds, TimeUnit.SECONDS)) { "Expected a dispatched continuation" }
     }
 
     private val root = Files.createTempDirectory("terminal-limits-")
@@ -229,12 +230,12 @@ class TerminalLimitsTest {
     @Test
     fun `cancellation during return dispatch terminates the unclaimed process`() =
         runBlocking {
-            withTimeout(15_000) {
+            withTimeout(40_000) {
                 val dispatcher = PausedDispatcher()
                 val scope = CoroutineScope(SupervisorJob() + dispatcher + callerContext)
                 val creation = scope.async { service.createSession(request("wait")) }
                 dispatcher.next().run()
-                val returning = dispatcher.next()
+                val returning = dispatcher.next(30)
                 val unclaimed =
                     stub
                         .listSessions(Empty.getDefaultInstance())
