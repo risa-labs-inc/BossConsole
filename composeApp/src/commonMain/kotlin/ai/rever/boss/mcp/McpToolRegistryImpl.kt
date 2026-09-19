@@ -2,6 +2,7 @@ package ai.rever.boss.mcp
 
 import ai.rever.boss.components.bars.horizontal.StatusMessageManager
 import ai.rever.boss.mcp.sandbox.DefaultMcpRiskEvaluator
+import ai.rever.boss.mcp.sandbox.McpRiskLevel
 import ai.rever.boss.plugin.api.McpToolArgs
 import ai.rever.boss.plugin.api.McpToolDefinition
 import ai.rever.boss.plugin.api.McpToolProvider
@@ -353,6 +354,32 @@ private fun truncationMarker(
         "limit, so the last $dropped characters were cut. Whatever the tool put at the end is " +
         "gone, including any note it appended about content it had already left out. Re-run " +
         "with a narrower query, a filter, or a smaller range to get the rest.]"
+
+/**
+ * Whether an invocation that already holds a standing ALLOW - a persisted tool rule, provider
+ * trust, session trust, or a permissive default - must still ask before it runs (#895).
+ *
+ * The operator granted the ALLOW before these arguments existed, and the risk evaluator rates
+ * some argument sets CRITICAL where it rates the bare tool HIGH - a `run_command` or
+ * `open_terminal` carrying a destructive command pattern. Those CRITICAL findings used to be
+ * computed for display on the ASK path only: [McpPolicyEngine.policyFor] resolved standing
+ * policy without the invocation's arguments, and the ALLOW branch of the core's
+ * authorization path never evaluated risk at all, so one "Always Allow" executed them
+ * unattended.
+ *
+ * Only tools the mutating catalog already classifies - [McpMutatingToolCatalog.isMutating]
+ * over the same name signals and provider read-only declaration every other gate uses - can
+ * re-ask off this gate, keeping the escalation an explicit catalog rather than a blanket
+ * rule: read-only tools keep their standing ALLOWs and permissive defaults untouched, and a
+ * CRITICAL rating outside the catalog cannot fire it at all.
+ */
+internal fun requiresCriticalReask(
+    toolName: String,
+    declaredReadOnly: Boolean?,
+    args: McpToolArgs,
+): Boolean =
+    McpMutatingToolCatalog.isMutating(toolName, declaredReadOnly) &&
+        DefaultMcpRiskEvaluator().evaluateRisk(toolName, args).level == McpRiskLevel.CRITICAL
 
 /**
  * Testable core behind [McpToolRegistryImpl]. Extracted so unit tests can
@@ -749,11 +776,14 @@ internal class McpToolRegistryCore(
                 ?: return McpToolResult("Unknown or disabled MCP tool: $toolName", isError = true)
         val args = parseArgs(arguments)
         val revocation = policyEngine.revocationVersion(toolName, tool.providerId)
-        // The definition's own readOnly declaration rides along on every policy consult for
-        // this invocation: a tool that declared side effects classifies as mutating whatever
-        // its name says (#804), so it gets the mutating default - ASK under the factory
-        // config - rather than being auto-allowed for avoiding the catalog's name patterns.
-        val policy = policyEngine.policyFor(toolName, tool.providerId, tool.definition.readOnly)
+        // The definition's own readOnly declaration and the invocation's real arguments ride
+        // along on every policy consult for this call: a tool that declared side effects
+        // classifies as mutating whatever its name says (#804), so it gets the mutating
+        // default - ASK under the factory config - rather than being auto-allowed for avoiding
+        // the catalog's name patterns, and the risk-based default resolves against what the
+        // tool is actually being asked to do rather than an empty argument bag (#895).
+        val policy =
+            policyEngine.policyFor(toolName, tool.providerId, tool.definition.readOnly, args)
         val startTime = System.nanoTime()
         var disposition = McpApprovalDisposition.AUTO_ALLOWED
         var result: McpToolResult? = null
@@ -949,13 +979,33 @@ internal class McpToolRegistryCore(
             }
         }
 
+    /**
+     * The policy this invocation is actually governed by. A standing ALLOW is a grant to
+     * the tool, not to every argument set it can carry: when the argument-aware risk rating
+     * is CRITICAL the call escalates to ASK (#895), so the operator sees - and can stop -
+     * the very commands the CRITICAL rating exists to catch. DENY and ASK pass through
+     * untouched, and non-CRITICAL ratings keep the standing ALLOW's promise of no prompt.
+     */
+    private fun escalatedPolicy(
+        tool: RegisteredMcpTool,
+        args: McpToolArgs,
+        policy: McpPolicyAction,
+    ): McpPolicyAction =
+        if (policy == McpPolicyAction.ALLOW &&
+            requiresCriticalReask(tool.definition.name, tool.definition.readOnly, args)
+        ) {
+            McpPolicyAction.ASK
+        } else {
+            policy
+        }
+
     private suspend fun authorizeInvocation(
         tool: RegisteredMcpTool,
         args: McpToolArgs,
         policy: McpPolicyAction,
         revocation: Long,
     ): Pair<McpApprovalDisposition, String?> =
-        when (policy) {
+        when (escalatedPolicy(tool, args, policy)) {
             McpPolicyAction.DENY -> {
                 McpApprovalDisposition.POLICY_DENIED to "MCP tool rejected by policy (DENY)"
             }

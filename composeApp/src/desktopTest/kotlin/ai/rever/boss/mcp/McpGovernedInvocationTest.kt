@@ -276,7 +276,7 @@ class McpGovernedInvocationTest {
                 provider(
                     "p1",
                     echoTool(
-                        "helm_uninstall",
+                        "codebase_write",
                         handler =
                             McpToolHandler {
                                 callCount++
@@ -287,13 +287,15 @@ class McpGovernedInvocationTest {
             )
 
             // First call: the tool has no configured rule, so DefaultMcpRiskEvaluator's
-            // mutating-tool default routes it to ASK.
-            val first = async { core.invoke("helm_uninstall", "{}") }
+            // mutating-tool default routes it to ASK. A HIGH-rated mutating tool on purpose:
+            // since #895 a standing ALLOW re-asks on CRITICAL-rated calls, and this test
+            // pins that what the operator actually allowed still runs prompt-free.
+            val first = async { core.invoke("codebase_write", "{}") }
             val req = approvalBus.pendingList.first { it.isNotEmpty() }.first()
             approvalBus.approve(req.id, trustForSession = false, persistPolicy = true)
             assertFalse(first.await().isError)
             assertEquals(1, callCount)
-            assertEquals(McpPolicyAction.ALLOW, policyEngine.policyFor("helm_uninstall"))
+            assertEquals(McpPolicyAction.ALLOW, policyEngine.policyFor("codebase_write"))
             assertEquals(
                 McpApprovalDisposition.PERSISTENTLY_ALLOWED,
                 ledger.recentOperations.value
@@ -302,7 +304,7 @@ class McpGovernedInvocationTest {
             )
 
             // Second call: the persisted rule means it never suspends for approval again.
-            val second = core.invoke("helm_uninstall", "{}")
+            val second = core.invoke("codebase_write", "{}")
             assertFalse(second.isError)
             assertEquals(2, callCount)
             assertEquals(
@@ -393,11 +395,11 @@ class McpGovernedInvocationTest {
                             },
                     ),
                     echoTool(
-                        "k8s_delete",
+                        "codebase_write",
                         handler =
                             McpToolHandler {
                                 secondCalled = true
-                                McpToolResult("deleted")
+                                McpToolResult("wrote")
                             },
                     ),
                 ),
@@ -418,15 +420,17 @@ class McpGovernedInvocationTest {
             )
 
             // Second call, a DIFFERENT tool from the SAME provider: no approval prompt at all -
-            // the provider-wide rule the first call just persisted covers it.
-            val secondResult = core.invoke("k8s_delete", "{}")
+            // the provider-wide rule the first call just persisted covers it. The sibling is
+            // HIGH-rated (not CRITICAL), so the #895 re-ask stays out of the way here; the
+            // CRITICAL cases live in McpCriticalReaskTest.
+            val secondResult = core.invoke("codebase_write", "{}")
             assertFalse(secondResult.isError)
             assertTrue(secondCalled)
             assertTrue(approvalBus.pendingList.value.isEmpty(), "the second call must never have queued a prompt")
 
             // And it really did persist, not just live in this run's session trust: a fresh
             // engine reading the same policy would agree without ever calling trustForSession.
-            assertEquals(McpPolicyAction.ALLOW, policyEngine.policyFor("k8s_delete", "terminal-tab"))
+            assertEquals(McpPolicyAction.ALLOW, policyEngine.policyFor("codebase_write", "terminal-tab"))
         }
 
     @Test

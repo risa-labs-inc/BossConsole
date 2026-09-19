@@ -803,9 +803,11 @@ object WorkspaceMcpToolProvider : McpToolProvider {
      * MCP invocation is gated by the mutating gate this tool trips by name and by its
      * `readOnly = false` declaration - ASK by default, with the approval dialog the operator's
      * confirmation. A persisted "Always Allow" on `open_terminal` therefore runs later
-     * invocations unconfirmed, so the grant is as strong as an unconfirmed deep link; the
-     * command still passes [CLISecurityValidator.isValidCommand] (shape only) and the risk
-     * evaluator (HIGH, CRITICAL for destructive patterns) on every call.
+     * invocations unconfirmed, so the grant is as strong as an unconfirmed deep link - except
+     * that an argument set the risk evaluator rates CRITICAL re-asks even under the grant
+     * (#895): the command still passes [CLISecurityValidator.isValidCommand] (shape only) and
+     * the risk evaluator (HIGH, CRITICAL for destructive patterns) on every call, and the
+     * CRITICAL rating gates rather than merely labels.
      */
     @Suppress("ReturnCount")
     private suspend fun handleOpenTerminal(args: McpToolArgs): McpToolResult {
