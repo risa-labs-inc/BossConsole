@@ -8,6 +8,7 @@ import java.util.Random
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -54,6 +55,26 @@ class FaviconCacheTest {
     }
 
     private fun cacheFileFor(url: String) = File(dir, "${FaviconCache.generateCacheKey(url)}.png")
+
+    @Test
+    fun `cleanupStaleEntries removes only entries older than the window and reports the count`() {
+        val dayMs = 24L * 60 * 60 * 1000
+        val stale = File(dir, "stale.png").apply { writeBytes(byteArrayOf(1)) }
+        val fresh = File(dir, "fresh.png").apply { writeBytes(byteArrayOf(2)) }
+        assertTrue(stale.setLastModified(System.currentTimeMillis() - 40 * dayMs))
+        assertTrue(fresh.setLastModified(System.currentTimeMillis() - 5 * dayMs))
+
+        val removed = FaviconCache.cleanupStaleEntries(30, dir)
+
+        assertEquals(1, removed)
+        assertFalse(stale.exists(), "entry past the window should be deleted")
+        assertTrue(fresh.exists(), "entry inside the window should be kept")
+    }
+
+    @Test
+    fun `cleanupStaleEntries on a missing directory removes nothing`() {
+        assertEquals(0, FaviconCache.cleanupStaleEntries(30, File(dir, "does-not-exist")))
+    }
 
     @Test
     fun `a saved favicon returns its key and lands on disk`() {
