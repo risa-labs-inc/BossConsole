@@ -46,8 +46,13 @@ data class PerformanceSettings(
     /**
      * Returns a validated copy of settings with values clamped to valid ranges.
      */
-    fun validated(): PerformanceSettings =
-        copy(
+    fun validated(): PerformanceSettings {
+        // Clamp the max heap first and use the CLAMPED value as the initial-heap ceiling. Reading the
+        // raw `pluginJvmHeapMb` as the ceiling would throw when a corrupt file carries a heap below 32
+        // (`coerceIn(32, <32)` is an empty range), defeating this method's purpose of repairing such a
+        // file. The clamped heap is always >= 128 > 32, so the initial-heap range is never empty.
+        val clampedHeapMb = pluginJvmHeapMb.coerceIn(128, 8192)
+        return copy(
             memoryWarningThresholdPercent = memoryWarningThresholdPercent.coerceIn(1, 100),
             memoryCriticalThresholdPercent = memoryCriticalThresholdPercent.coerceIn(1, 100),
             cpuWarningThresholdPercent = cpuWarningThresholdPercent.coerceIn(1, 100),
@@ -57,9 +62,10 @@ data class PerformanceSettings(
             resourceSampleIntervalMs = resourceSampleIntervalMs.coerceAtLeast(100),
             gcSampleIntervalMs = gcSampleIntervalMs.coerceAtLeast(100),
             historyRetentionMinutes = historyRetentionMinutes.coerceIn(1, 180),
-            pluginJvmHeapMb = pluginJvmHeapMb.coerceIn(128, 8192),
-            pluginJvmInitialHeapMb = pluginJvmInitialHeapMb.coerceIn(32, pluginJvmHeapMb),
+            pluginJvmHeapMb = clampedHeapMb,
+            pluginJvmInitialHeapMb = pluginJvmInitialHeapMb.coerceIn(32, clampedHeapMb),
         )
+    }
 }
 
 /**

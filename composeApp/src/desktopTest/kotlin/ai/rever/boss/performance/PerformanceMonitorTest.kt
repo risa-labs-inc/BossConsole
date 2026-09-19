@@ -92,6 +92,42 @@ class PerformanceMonitorTest {
     }
 
     @Test
+    fun `test settings validation clamps plugin jvm heap`() {
+        val settingsLow = PerformanceSettings(pluginJvmHeapMb = 16)
+        val validatedLow = settingsLow.validated()
+        assertEquals(128, validatedLow.pluginJvmHeapMb, "Should clamp heap to 128 MB min")
+
+        val settingsHigh = PerformanceSettings(pluginJvmHeapMb = 100_000)
+        val validatedHigh = settingsHigh.validated()
+        assertEquals(8192, validatedHigh.pluginJvmHeapMb, "Should clamp heap to 8192 MB max")
+    }
+
+    @Test
+    fun `test settings validation repairs a below-minimum heap without throwing`() {
+        // A corrupt or older-schema file can carry pluginJvmHeapMb in 0..31. validated() must repair
+        // it, not throw: the initial-heap ceiling has to use the CLAMPED heap, or coerceIn(32, <32)
+        // raises IllegalArgumentException (empty range) and the caller discards ALL settings.
+        for (badHeap in listOf(0, 1, 31)) {
+            val validated = PerformanceSettings(pluginJvmHeapMb = badHeap, pluginJvmInitialHeapMb = 64).validated()
+            assertEquals(128, validated.pluginJvmHeapMb, "Heap $badHeap should clamp to 128")
+            assertTrue(
+                validated.pluginJvmInitialHeapMb in 32..validated.pluginJvmHeapMb,
+                "Initial heap must stay within [32, heap]",
+            )
+        }
+    }
+
+    @Test
+    fun `test settings validation clamps initial heap to the validated heap`() {
+        val validated = PerformanceSettings(pluginJvmHeapMb = 256, pluginJvmInitialHeapMb = 4096).validated()
+        assertEquals(256, validated.pluginJvmHeapMb, "Heap stays at 256")
+        assertEquals(256, validated.pluginJvmInitialHeapMb, "Initial heap must not exceed the heap")
+
+        val validatedLow = PerformanceSettings(pluginJvmInitialHeapMb = 8).validated()
+        assertEquals(32, validatedLow.pluginJvmInitialHeapMb, "Initial heap clamps to 32 MB min")
+    }
+
+    @Test
     fun `test default settings are valid`() {
         val defaultSettings = PerformanceSettings()
         val validated = defaultSettings.validated()
