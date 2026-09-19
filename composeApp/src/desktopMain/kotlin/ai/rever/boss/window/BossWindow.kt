@@ -309,6 +309,7 @@ fun ApplicationScope.BossWindow(
         // State for the password/bookmark import dialog
         var showImportDialog by remember { mutableStateOf(false) }
         var showTaskManagerDialog by remember { mutableStateOf(false) }
+        var showSystemHealthDialog by remember { mutableStateOf(false) }
 
         // Sync isMaximized state with actual window state (handles OS maximize controls)
         DisposableEffect(window) {
@@ -941,6 +942,11 @@ fun ApplicationScope.BossWindow(
                     onClick = { showTaskManagerDialog = true },
                 )
 
+                Item(
+                    "System Health",
+                    onClick = { showSystemHealthDialog = true },
+                )
+
                 Separator()
 
                 Item(
@@ -1123,6 +1129,12 @@ fun ApplicationScope.BossWindow(
             if (showTaskManagerDialog) {
                 ai.rever.boss.components.dialogs.BossTaskManagerDialog(
                     onDismiss = { showTaskManagerDialog = false }
+                )
+            }
+            
+            if (showSystemHealthDialog) {
+                ai.rever.boss.components.dialogs.BossSystemHealthDialog(
+                    onDismiss = { showSystemHealthDialog = false }
                 )
             }
 
