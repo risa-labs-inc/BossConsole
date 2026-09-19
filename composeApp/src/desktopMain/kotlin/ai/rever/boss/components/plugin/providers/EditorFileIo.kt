@@ -1,5 +1,6 @@
 package ai.rever.boss.components.plugin.providers
 
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import java.io.File
@@ -46,7 +47,8 @@ actual fun writeFileContentSafe(
  * Unlike a render recovery (see isUncontainable and WindowExceptionRoute), returning false
  * does not re-enter the operation that overflowed the stack. OOM remains fatal, matching
  * CrashDisposition.hasFatalCause; the existing read-side OOM catch is not extended here.
- * Failure does not imply atomicity: an I/O failure can leave a partially written file.
+ * The destination is replaced only after a complete unique-sibling write succeeds, so an I/O
+ * failure leaves the last complete file in place.
  *
  * This cannot contain failures upstream of this function. The recursive provider dispatch
  * reported in editor-tab issues #18 and #27 was already fixed by host PR #262.
@@ -56,7 +58,7 @@ internal fun guardedWrite(
     filePath: String,
     content: String,
     reportFailure: (String, String, Throwable) -> Unit = ::logWriteFailure,
-    write: (File, String) -> Unit = { file, text -> file.writeText(text) },
+    write: (File, String) -> Unit = { file, text -> file.atomicWriteText(text) },
 ): Boolean =
     try {
         val file = File(filePath)
