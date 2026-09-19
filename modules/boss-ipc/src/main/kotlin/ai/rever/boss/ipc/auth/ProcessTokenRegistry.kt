@@ -52,7 +52,8 @@ class ProcessTokenRegistry {
     ) {
         val removed =
             synchronized(this) {
-                if (token != null && tokenByProcessId[processId] == token) {
+                val current = tokenByProcessId[processId]
+                if (token != null && current != null && constantTimeEquals(current, token)) {
                     tokenByProcessId.remove(processId)
                     credentials.remove(token)
                 } else {
@@ -119,3 +120,12 @@ private class IssuedCredential(
         }
     }
 }
+
+private fun constantTimeEquals(
+    a: String,
+    b: String,
+): Boolean =
+    java.security.MessageDigest.isEqual(
+        a.toByteArray(Charsets.UTF_8),
+        b.toByteArray(Charsets.UTF_8),
+    )

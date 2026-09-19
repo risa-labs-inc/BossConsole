@@ -2,6 +2,7 @@ package ai.rever.boss.plugin.repository
 
 import ai.rever.boss.plugin.api.PluginManifest
 import ai.rever.boss.plugin.api.PluginManifestConstants
+import ai.rever.boss.plugin.loader.PluginManifestReader
 import ai.rever.boss.plugin.logging.BossLogger
 import ai.rever.boss.plugin.logging.LogCategory
 import kotlinx.coroutines.Dispatchers
@@ -179,7 +180,10 @@ class LocalPluginRepository(
                     jar.getJarEntry(PluginManifestConstants.MANIFEST_PATH)
                         ?: return null
 
-                val content = jar.getInputStream(manifestEntry).bufferedReader().readText()
+                val content =
+                    jar.getInputStream(manifestEntry).use { stream ->
+                        PluginManifestReader.readBoundedManifestText(stream)
+                    }
                 val manifest = json.decodeFromString<PluginManifest>(content)
 
                 PluginInfo(
@@ -221,7 +225,10 @@ class LocalPluginRepository(
                     jar.getJarEntry(PluginManifestConstants.MANIFEST_PATH)
                         ?: return null
 
-                val content = jar.getInputStream(manifestEntry).bufferedReader().readText()
+                val content =
+                    jar.getInputStream(manifestEntry).use { stream ->
+                        PluginManifestReader.readBoundedManifestText(stream)
+                    }
                 val manifest = json.decodeFromString<PluginManifest>(content)
                 manifest.pluginId
             }

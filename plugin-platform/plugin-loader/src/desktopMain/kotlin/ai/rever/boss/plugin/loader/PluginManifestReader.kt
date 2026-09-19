@@ -27,6 +27,29 @@ object PluginManifestReader {
             coerceInputValues = true
         }
 
+    const val MAX_MANIFEST_BYTES: Long = 512L * 1024L // 512 KB
+
+    fun readBoundedManifestText(
+        inputStream: java.io.InputStream,
+        maxBytes: Long = MAX_MANIFEST_BYTES,
+    ): String {
+        val buffer = ByteArray(8192)
+        val baos = java.io.ByteArrayOutputStream()
+        var totalRead = 0L
+        var bytesRead: Int
+        while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+            totalRead += bytesRead
+            if (totalRead > maxBytes) {
+                throw PluginManifestException(
+                    "Plugin manifest exceeds maximum allowed size of $maxBytes bytes",
+                    null,
+                )
+            }
+            baos.write(buffer, 0, bytesRead)
+        }
+        return baos.toString(Charsets.UTF_8.name())
+    }
+
     /**
      * Read a plugin manifest from a JAR file.
      *
@@ -58,8 +81,8 @@ object PluginManifestReader {
                         )
 
                 val manifestContent =
-                    jar.getInputStream(manifestEntry).bufferedReader().use {
-                        it.readText()
+                    jar.getInputStream(manifestEntry).use { stream ->
+                        readBoundedManifestText(stream)
                     }
 
                 parseManifest(manifestContent, jarPath)

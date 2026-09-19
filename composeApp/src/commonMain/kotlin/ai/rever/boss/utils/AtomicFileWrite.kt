@@ -3,8 +3,10 @@ package ai.rever.boss.utils
 import java.io.File
 import java.io.IOException
 import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.FileSystems
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.nio.file.attribute.PosixFilePermissions
 
 /**
  * Move [temp] onto this file, replacing it if it already exists.
@@ -38,6 +40,22 @@ fun File.atomicMoveFrom(temp: File) {
     }
 }
 
+private fun setOwnerOnlyPermissions(file: File) {
+    try {
+        if (FileSystems.getDefault().supportedFileAttributeViews().contains("posix")) {
+            Files.setPosixFilePermissions(file.toPath(), PosixFilePermissions.fromString("rw-------"))
+        } else {
+            file.setReadable(false, false)
+            file.setReadable(true, true)
+            file.setWritable(false, false)
+            file.setWritable(true, true)
+            file.setExecutable(false, false)
+        }
+    } catch (_: Exception) {
+        // Best effort on non-POSIX platforms
+    }
+}
+
 /**
  * Write [text] to this file atomically: content goes to a UNIQUE sibling
  * temp file first, then replaces the target via [atomicMoveFrom]. A crash
@@ -53,8 +71,10 @@ fun File.atomicMoveFrom(temp: File) {
  */
 fun File.atomicWriteText(text: String) {
     parentFile?.mkdirs()
-    val tmp = File.createTempFile("$name.", ".tmp", parentFile)
+    val prefix = "$name.".let { if (it.length < 3) it.padEnd(3, '_') else it }
+    val tmp = File.createTempFile(prefix, ".tmp", parentFile)
     try {
+        setOwnerOnlyPermissions(tmp)
         tmp.writeText(text)
         atomicMoveFrom(tmp)
     } finally {
