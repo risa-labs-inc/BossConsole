@@ -6,6 +6,7 @@ import kotlinx.coroutines.runBlocking
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -121,4 +122,46 @@ class EditorServiceImplTest {
     fun `extension lookup is case-insensitive`() {
         assertEquals("kotlin", service.detectLanguage("KT"))
     }
+
+    @Test
+    fun `saveFile writes content atomically and updates openFiles dirty tracking`() =
+        runBlocking<Unit> {
+            val file = Files.createTempFile("boss-editor-atomic-", ".txt").toFile()
+            try {
+                file.writeText("initial content")
+                service.saveFile(
+                    ai.rever.boss.ipc.proto.services.SaveFileRequest
+                        .newBuilder()
+                        .setPath(file.absolutePath)
+                        .setContent("updated atomic content")
+                        .build(),
+                )
+                assertEquals("updated atomic content", file.readText())
+
+                val openFiles =
+                    service.listOpenFiles(
+                        ai.rever.boss.ipc.proto.Empty
+                            .getDefaultInstance(),
+                    )
+                val info = openFiles.filesList.find { it.path == file.canonicalFile.absolutePath }
+                assertTrue(info != null)
+                assertFalse(info.isModified)
+            } finally {
+                file.delete()
+            }
+        }
+
+    @Test
+    fun `path traversal and system paths are refused`() =
+        runBlocking<Unit> {
+            val openDotDot = service.openFile(OpenFileRequest.newBuilder().setPath("/tmp/../etc/passwd").build())
+            assertFalse(openDotDot.success)
+
+            val openEtc = service.openFile(OpenFileRequest.newBuilder().setPath("/etc/passwd").build())
+            assertFalse(openEtc.success)
+
+            val winPath = "C:\\Windows\\System32\\cmd.exe"
+            val openWin = service.openFile(OpenFileRequest.newBuilder().setPath(winPath).build())
+            assertFalse(openWin.success)
+        }
 }

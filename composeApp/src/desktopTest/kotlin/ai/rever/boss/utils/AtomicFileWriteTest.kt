@@ -1,6 +1,9 @@
 package ai.rever.boss.utils
 
 import java.io.File
+import java.nio.file.FileSystems
+import java.nio.file.Files
+import java.nio.file.attribute.PosixFilePermissions
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -84,5 +87,26 @@ class AtomicFileWriteTest {
 
         val strays = tempDir.listFiles()?.filter { it.name != target.name }.orEmpty()
         assertTrue(strays.isEmpty(), "unexpected leftovers: ${strays.map { it.name }}")
+    }
+
+    @Test
+    fun `atomicWriteText sets owner permissions on POSIX systems`() {
+        val target = File(tempDir, "secure.json")
+        target.atomicWriteText("secret")
+
+        if (FileSystems.getDefault().supportedFileAttributeViews().contains("posix")) {
+            val perms = Files.getPosixFilePermissions(target.toPath())
+            val permStr = PosixFilePermissions.toString(perms)
+            assertEquals("rw-------", permStr)
+        }
+    }
+
+    @Test
+    fun `atomicWriteText handles single character file names`() {
+        val target = File(tempDir, "a")
+
+        target.atomicWriteText("single char")
+
+        assertEquals("single char", target.readText())
     }
 }

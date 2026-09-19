@@ -300,6 +300,19 @@ class GitProviderWritesToRepoTest {
     }
 
     @Test
+    fun remoteBranchWithOptionNameIsRefused(
+        @TempDir tmp: File,
+    ) = runTest {
+        val dir = repo(tmp)
+        File(dir, "tracked.txt").writeText("modified\n")
+
+        val result = provider(dir).checkout("origin/-f")
+
+        assertTrue(result is GitOperationResultData.Error, "checkout on origin/-f must return Error")
+        assertEquals(" M", statusOf(dir, "tracked.txt"), "uncommitted work must not be discarded by option execution")
+    }
+
+    @Test
     fun aWriteHonoursItsProjectPathOverrideEvenWhenTheGlobalPointsAtAnotherRepo(
         @TempDir tmpA: File,
         @TempDir tmpB: File,
