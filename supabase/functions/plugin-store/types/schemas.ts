@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { isHttpUrl } from "../utils/urls.ts"
 
 // ============================================================================
 // Plugin Type Schema
@@ -153,8 +154,8 @@ export const PublishPluginRequestSchema = z.object({
   displayName: z.string().min(1).max(100),
   description: z.string().max(5000).optional().default(''),
   authorName: z.string().min(1).max(100).optional(), // Optional custom author name, defaults to email username
-  homepageUrl: z.string().url('homepageUrl must be a valid URL (required for publishing)'),
-  iconUrl: z.union([z.string().url(), z.literal('')]).optional().default(''),
+  homepageUrl: z.string().refine(isHttpUrl, 'homepageUrl must be an http(s) URL (required for publishing)'),
+  iconUrl: z.union([z.string().refine(isHttpUrl, 'iconUrl must be an http(s) URL'), z.literal('')]).optional().default(''),
   type: PluginTypeSchema.optional().default('panel'),
   apiVersion: z.string().optional().default('1.0'),
   tags: z.array(z.string().max(50)).max(10).optional().default([]),

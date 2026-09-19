@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { PluginListItem, PluginWithStats } from "../types/plugin.ts"
+import { httpUrlOr } from "../utils/urls.ts"
 
 /**
  * Get list of plugins with pagination and sorting
@@ -165,8 +166,10 @@ export async function getPlugin(
     description: row.description,
     authorId: row.author_id,
     authorName: row.author_name,
-    homepageUrl: row.homepage_url,
-    iconUrl: row.icon_url,
+    // Sanitised on the way out as well as on the way in: rows stored before publish refused
+    // non-http(s) URLs are still in the table, and clients must never be handed one of them.
+    homepageUrl: httpUrlOr(row.homepage_url, ''),
+    iconUrl: httpUrlOr(row.icon_url, ''),
     type: row.type,
     apiVersion: row.api_version,
     verified: row.verified,
