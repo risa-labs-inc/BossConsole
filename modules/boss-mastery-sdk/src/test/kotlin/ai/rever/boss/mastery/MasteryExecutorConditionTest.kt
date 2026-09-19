@@ -83,6 +83,55 @@ class MasteryExecutorConditionTest {
         }
 
     @Test
+    fun `a guarded skip emits a NodeSkipped progress event naming the reason`() =
+        runBlocking {
+            val resolver =
+                RecordingResolver(
+                    mapOf("plugin-a/scan" to mapOf("scan_clean" to "false")),
+                )
+            val events =
+                MasteryExecutor(resolver)
+                    .execute(guardedMastery("scan_clean == true"), emptyMap())
+                    .toList()
+
+            // The skip surfaces on the execution stream, not only in server logs -
+            // a UI subscribing to MasteryProgress now sees the guard firing, with
+            // the same reason the executor logged. Without this event the only
+            // signal was a missing NodeStarted and an unexplained Completed.
+            val skipped = events.filterIsInstance<MasteryProgress.NodeSkipped>()
+            assertEquals(1, skipped.size, "exactly one skip: $events")
+            val skip = skipped.single()
+            assertEquals("delete", skip.nodeId)
+            assertTrue(
+                skip.reason.contains("scan_clean") && skip.reason.contains("true"),
+                "reason names the failing condition: ${skip.reason}",
+            )
+            // The skip is the only event carrying delete's id - no NodeStarted for it.
+            assertEquals(0, events.filterIsInstance<MasteryProgress.NodeStarted>().count { it.nodeId == "delete" })
+            assertEquals(0, events.filterIsInstance<MasteryProgress.NodeCompleted>().count { it.nodeId == "delete" })
+        }
+
+    @Test
+    fun `a malformed condition emits NodeSkipped with the fail-closed reason`() =
+        runBlocking {
+            val resolver =
+                RecordingResolver(
+                    mapOf("plugin-a/scan" to mapOf("scan_clean" to "true")),
+                )
+            val events =
+                MasteryExecutor(resolver)
+                    .execute(guardedMastery("scan_clean && ok"), emptyMap())
+                    .toList()
+
+            val skipped = events.filterIsInstance<MasteryProgress.NodeSkipped>().single()
+            assertEquals("delete", skipped.nodeId)
+            assertTrue(
+                skipped.reason.contains("Malformed condition"),
+                "fail-closed reason names the parser verdict: ${skipped.reason}",
+            )
+        }
+
+    @Test
     fun `true condition follows the edge and the guarded node executes with source data`() =
         runBlocking {
             val resolver =

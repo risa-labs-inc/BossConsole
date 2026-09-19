@@ -352,6 +352,16 @@ private fun KProgress.toProto(executionId: String): PProgress {
             )
         }
 
+        is KProgress.NodeSkipped -> {
+            b.setNodeSkipped(
+                NodeSkipped
+                    .newBuilder()
+                    .setNodeId(nodeId)
+                    .setReason(reason)
+                    .build(),
+            )
+        }
+
         is KProgress.Completed -> {
             b.setCompleted(
                 MasteryCompleted

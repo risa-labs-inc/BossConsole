@@ -34,7 +34,9 @@ class MasteryExecutor(
      * A node joins its level only when at least one incoming edge is
      * followed — its source produced output and its [MasteryEdge.condition]
      * (if any) evaluated true against that output. Nodes whose incoming
-     * edges are all blocked are skipped (and logged at WARN), which in turn
+     * edges are all blocked are skipped (a [MasteryProgress.NodeSkipped] event
+     * is emitted with the human-readable reason, and the server-side WARN log
+     * line is kept for whoever is running the executor process), which in turn
      * blocks their downstream edges; nodes without incoming edges and blank
      * or null conditions keep the previous unconditional behaviour.
      *
@@ -74,13 +76,19 @@ class MasteryExecutor(
                     val snapshot = nodeOutputs.toMap()
 
                     // A node joins its level only when at least one incoming edge
-                    // is followed; skips are logged so a guard that fires (or a
-                    // malformed condition that fails closed) is visible, not silent.
+                    // is followed. Skipped nodes emit a NodeSkipped progress event
+                    // so a stream UI sees them, then are dropped. The server-side
+                    // WARN log stays for the operator running the executor process;
+                    // the progress event is for whoever is watching the execution
+                    // - the two readers do not overlap.
                     val admitted =
                         level.filter { node ->
                             val reason = skipReason(node, mastery.edges, snapshot)
                             val follows = reason == null
-                            if (!follows) logger.warn("Node '{}' skipped: {}", node.id, reason)
+                            if (!follows) {
+                                logger.warn("Node '{}' skipped: {}", node.id, reason)
+                                send(MasteryProgress.NodeSkipped(node.id, reason!!))
+                            }
                             follows
                         }
                     if (admitted.isEmpty()) continue
@@ -312,6 +320,21 @@ sealed class MasteryProgress {
         val nodeId: String,
         val error: String,
         val willRetry: Boolean,
+    ) : MasteryProgress()
+
+    /**
+     * A guarded edge fired (its [MasteryEdge.condition] evaluated false or failed closed, or its
+     * source produced no output) and this node was therefore never invoked. Surfaced to the
+     * execution stream so an operator watching a run can tell a silent skip from a missing
+     * NodeStarted - the only signal the executor used to give was a server-side WARN log line,
+     * which a stream UI cannot subscribe to. Pairs with [NodeStarted] / [NodeCompleted] /
+     * [NodeFailed]: if a node ever joins a level, it always emits NodeStarted first, then either
+     * NodeCompleted or NodeFailed; a guarded skip is the only event carrying this node's id, and
+     * its [reason] is what an operator would want to read in the UI. See #1060 follow-up.
+     */
+    data class NodeSkipped(
+        val nodeId: String,
+        val reason: String,
     ) : MasteryProgress()
 
     data class Completed(

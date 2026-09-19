@@ -52,6 +52,14 @@ data class MasteryEdge(
      * established, such as a comparison against a key with no output value —
      * fails closed: the edge is not followed and the dependent node is
      * skipped rather than running unconditionally.
+     *
+     * **Literal-vs-key gotcha**: the bare-key form reads the output value at
+     * `key` and tests it for truthiness, so a condition of `true` or `false`
+     * always means the boolean literal — *never* the value of an output key
+     * literally named `true` or `false`. To compare against those strings,
+     * use the explicit equality form (`key == "true"` / `key != "false"`).
+     * The grammar document at [MasteryEdgeCondition] says this; restating it
+     * here is the one place an author actually looks.
      */
     val condition: String? = null,
 )
