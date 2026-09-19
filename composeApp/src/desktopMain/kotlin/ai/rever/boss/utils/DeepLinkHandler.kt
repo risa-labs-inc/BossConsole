@@ -1,6 +1,7 @@
 package ai.rever.boss.utils
 
 import ai.rever.boss.cli.CLISecurityValidator
+import ai.rever.boss.components.bars.horizontal.StatusMessageManager
 import ai.rever.boss.components.events.PanelEventBus
 import ai.rever.boss.components.plugin.PanelIds
 import ai.rever.boss.components.plugin.panels.left_top.ProjectState
@@ -29,6 +30,9 @@ import java.net.URLDecoder
 import java.net.URLEncoder
 
 private const val BOSS_SCHEME = "boss://"
+
+/** A blocked link is worth reading in full, which is longer than an ordinary status message. */
+private const val REFUSAL_MESSAGE_MS = 6_000L
 
 /**
  * The `boss://` hosts routed by [DeepLinkHandler.processDeepLink].
@@ -172,7 +176,7 @@ actual object DeepLinkHandler {
                 // selecting several files in Finder and hitting Enter is a
                 // single event carrying all of them.
                 files.forEach { file ->
-                    processDeepLink(fileDeepLinkFor(file.absolutePath), DeepLinkOrigin.EXTERNAL)
+                    processDeepLink(fileDeepLinkFor(file.absolutePath), DeepLinkOrigin.OS_FILE_OPEN)
                 }
             }
             logger.info(LogCategory.SYSTEM, "OS open-file handler registered successfully")
@@ -322,7 +326,7 @@ actual object DeepLinkHandler {
      * all of them rather than the first.
      */
     fun processCommandLineArgs(args: Array<String>) {
-        OsOpenArguments.deepLinksFrom(args).forEach { link ->
+        OsOpenArguments.requestsFrom(args).forEach { (link, origin) ->
             logger.info(
                 LogCategory.SYSTEM,
                 "Received deep link from command line",
@@ -330,8 +334,9 @@ actual object DeepLinkHandler {
             )
             // A link in this process's argv is how a registered protocol handler
             // or a file association delivers something somebody asked the OS to
-            // open, so it is external regardless of who launched the process.
-            processDeepLink(link, DeepLinkOrigin.EXTERNAL)
+            // open. A boss:// argument is external regardless of who launched the
+            // process; a bare path is the operator's file association.
+            processDeepLink(link, origin)
         }
     }
 
@@ -411,6 +416,16 @@ actual object DeepLinkHandler {
         uri: String,
         targetWindowId: String?,
         origin: DeepLinkOrigin,
+    ): Deferred<Boolean>? =
+        // Fire-and-forget like every route but a plugin action: a verdict of false would read to a
+        // forwarding second instance as a delivery failure and be retried.
+        if (refusedAsNetworkPath(host, uri, origin)) null else route(host, uri, targetWindowId, origin)
+
+    private fun route(
+        host: DeepLinkHost,
+        uri: String,
+        targetWindowId: String?,
+        origin: DeepLinkOrigin,
     ): Deferred<Boolean>? {
         when (host) {
             DeepLinkHost.URL -> handleUrlLink(uri)
@@ -422,6 +437,22 @@ actual object DeepLinkHandler {
             DeepLinkHost.SPLIT -> handleSplitLink(uri, targetWindowId)
         }
         return null
+    }
+
+    /**
+     * True, after saying so, when [uri] would make BOSS touch a network path it was never asked to.
+     * Checked before any handler runs, because a handler's first step is to stat the path, and the
+     * stat is what reaches the network.
+     */
+    private fun refusedAsNetworkPath(
+        host: DeepLinkHost,
+        uri: String,
+        origin: DeepLinkOrigin,
+    ): Boolean {
+        val reason = NetworkPathGuard.refusalFor(uri, origin) ?: return false
+        logger.warn(LogCategory.FILE, reason, mapOf("host" to host.host, "origin" to origin.name))
+        StatusMessageManager.showMessage(reason, durationMs = REFUSAL_MESSAGE_MS)
+        return true
     }
 
     actual fun clearDeepLink() {

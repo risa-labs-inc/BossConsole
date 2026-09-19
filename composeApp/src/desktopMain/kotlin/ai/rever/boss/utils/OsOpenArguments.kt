@@ -60,7 +60,29 @@ internal object OsOpenArguments {
     fun deepLinksFrom(
         args: Array<String>,
         kindOf: (String) -> OpenTargetKind = ::openTargetKindOf,
-    ): List<String> {
+    ): List<String> = requestsFrom(args, kindOf).map { it.link }
+
+    /** One thing the OS asked BOSS to open, and what that says about who asked. */
+    internal data class OsOpenRequest(
+        val link: String,
+        val origin: DeepLinkOrigin,
+    )
+
+    /**
+     * [deepLinksFrom], with each link's provenance.
+     *
+     * A `boss://` (or http) argument is [DeepLinkOrigin.EXTERNAL]: a registered
+     * protocol handler passes it through verbatim, and a web page can put anything
+     * in it. A bare path or `file://` URL is [DeepLinkOrigin.OS_FILE_OPEN]: it is
+     * what a file association or Open With produces, and a web page has no way to
+     * produce one, because a browser can only hand this process a URL of a scheme
+     * it registered.
+     */
+    @Suppress("ReturnCount")
+    fun requestsFrom(
+        args: Array<String>,
+        kindOf: (String) -> OpenTargetKind = ::openTargetKindOf,
+    ): List<OsOpenRequest> {
         if (args.isEmpty()) return emptyList()
 
         // A CLI invocation is claimed by Clikt. Matched on the FIRST non-flag
@@ -75,7 +97,7 @@ internal object OsOpenArguments {
         return args.mapNotNull { arg ->
             when {
                 LINK_PREFIXES.any { arg.startsWith(it, ignoreCase = true) } -> {
-                    arg
+                    OsOpenRequest(arg, DeepLinkOrigin.EXTERNAL)
                 }
 
                 // Flags are never paths. Checked before the filesystem because a
@@ -92,11 +114,13 @@ internal object OsOpenArguments {
                 // nothing, which is the bug this whole object exists to fix, one
                 // layer down.
                 arg.startsWith(FILE_URL_PREFIX, ignoreCase = true) -> {
-                    pathFromFileUrl(arg)?.let { linkForPath(it, kindOf) }
+                    pathFromFileUrl(arg)
+                        ?.let { linkForPath(it, kindOf) }
+                        ?.let { OsOpenRequest(it, DeepLinkOrigin.OS_FILE_OPEN) }
                 }
 
                 else -> {
-                    linkForPath(arg, kindOf)
+                    linkForPath(arg, kindOf)?.let { OsOpenRequest(it, DeepLinkOrigin.OS_FILE_OPEN) }
                 }
             }
         }

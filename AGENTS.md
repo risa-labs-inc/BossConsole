@@ -979,6 +979,33 @@ into a shell:
 
 Other hosts - including `boss://plugin?id=…&action=…` - are unchanged.
 
+**A `boss://` link can also make Windows send the user's NTLM credentials to another machine.**
+`boss://file`, `folder` and `workspace` carry a `path`, and the first call against a UNC path
+(`\\host\share\x`) - `exists()`, `canonicalFile`, `isDirectory`, all of which the handlers make first -
+opens an SMB connection to `host` and authenticates with the signed-in user's NTLM response. A link
+refused afterwards as "not found" has already leaked. So `NetworkPathGuard.refusalFor` runs in
+`DeepLinkHandler.dispatch`, before any handler, and decides from the text of the path alone: every
+Windows spelling (`\\host`, `//host`, `\\?\UNC\`, `\\.\UNC\`, `\??\UNC\`, `GLOBALROOT\Device\Mup`, any other
+device path that is not a drive or a volume GUID, WebDAV `host@SSL`) is a network path. Three details worth
+not undoing:
+
+- **It applies to `EXTERNAL` only.** `OPERATOR_CLI` typed the path themselves, and the new
+  `OS_FILE_OPEN` origin is what `OsOpenArguments.requestsFrom` and the macOS open-file handler give a bare
+  path or `file://` URL: a file association, which a web page cannot produce (a browser can only hand this
+  process a URL of the scheme it registered). Refusing that would stop a file on a company share opening
+  on double-click. `OS_FILE_OPEN` is **not** `isOperatorInitiated`, so a terminal command or a Space's
+  commands are still confirmed. The single-instance wire needs no change: `fromWireLabel` maps a label an
+  older receiver does not know to `EXTERNAL`, the cautious answer.
+- **Every `path` parameter is checked.** The handler's `parseQueryParams` keeps the last value of a repeated
+  key, so a check of the first would approve `path=/ok&path=\\host\s`.
+- **Trusted hosts** (`BOSS_TRUSTED_NETWORK_HOSTS` or `boss.trusted.network.hosts`, comma-separated, exact
+  names) and loopback are allowed, and a WebDAV `host@8080` form is never trusted by a plain `host` entry.
+  A refused link says so in the status bar, is logged, and is fire-and-forget (a `false` verdict would make a
+  forwarding second instance retry).
+
+Not covered: a mapped drive letter that points at a share looks local and cannot be told apart from text
+alone, and a path an already-open Space carries in its own tabs is not a link.
+
 **Single-instance channel**: `SingleInstanceManager` publishes
 `~/.boss/run/single-instance` (owner-only) with the channel endpoint and a token
 minted at startup, and listens on a Unix-domain socket in that directory (macOS,
