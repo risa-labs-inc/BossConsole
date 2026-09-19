@@ -45,6 +45,7 @@ class McpLedgerCliTest {
         toolName: String,
         disposition: McpApprovalDisposition = McpApprovalDisposition.AUTO_ALLOWED,
         isError: Boolean = false,
+        secretRefs: List<String> = emptyList(),
     ) {
         ledger.record(
             toolName = toolName,
@@ -54,6 +55,7 @@ class McpLedgerCliTest {
             durationMs = 7L,
             isError = isError,
             rawArgs = mapOf("path" to "/project"),
+            secretRefs = secretRefs,
         )
     }
 
@@ -155,6 +157,33 @@ class McpLedgerCliTest {
 
         assertTrue(human.contains("tool_9"), "newest record must be shown: $human")
         assertTrue(human.contains("Showing 3 of 10 matching records."), "truncation must be stated: $human")
+    }
+
+    @Test
+    fun `tail exports secret references in human and JSON audit output`() {
+        val file = createTempLedgerFile()
+        val ledger = McpOperationLedger(ledgerFile = file)
+        val reference = "6f1d2c3e-4b5a-4c6d-8e7f-90a1b2c3d4e5.password"
+        record(ledger, "write", secretRefs = listOf(reference))
+
+        val human = okText(McpLedgerCli.tail(file.absolutePath, 1, McpLedgerQuery(), json = false))
+        val json = okText(McpLedgerCli.tail(file.absolutePath, 1, McpLedgerQuery(), json = true))
+        val exported =
+            Json
+                .parseToJsonElement(json)
+                .jsonObject
+                .getValue("records")
+                .jsonArray
+                .single()
+                .jsonObject
+                .getValue("secretRefs")
+                .jsonArray
+                .single()
+                .jsonPrimitive
+                .content
+
+        assertTrue(human.contains("secrets: $reference"), human)
+        assertEquals(reference, exported)
     }
 
     @Test

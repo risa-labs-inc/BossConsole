@@ -54,6 +54,18 @@ class McpActivityLogDialogTest {
     }
 
     @Test
+    fun `a secret the host would not or could not deliver is withheld, not denied or failed`() {
+        // Both are decided before any prompt and before the handler runs (see
+        // McpSecretPrePass.prepare): not an operator's answer, not the tool's fault.
+        listOf(
+            McpApprovalDisposition.SECRET_FORBIDDEN,
+            McpApprovalDisposition.SECRET_UNRESOLVED,
+        ).forEach { disposition ->
+            assertEquals(McpUnsuccessfulCategory.WITHHELD, disposition.unsuccessfulCategory, disposition.name)
+        }
+    }
+
+    @Test
     fun `a call that ran and then failed classifies as a true tool fault`() {
         listOf(
             McpApprovalDisposition.AUTO_ALLOWED,

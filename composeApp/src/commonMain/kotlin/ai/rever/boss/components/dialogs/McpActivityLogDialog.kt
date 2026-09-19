@@ -321,6 +321,11 @@ internal val McpApprovalDisposition.unsuccessfulCategory: McpUnsuccessfulCategor
 
             McpApprovalDisposition.QUEUE_FULL,
             McpApprovalDisposition.POLICY_PERSIST_FAILED,
+            // Both decided before any prompt and before the handler ran: the host would not
+            // (forbidden) or could not (unresolved) deliver a referenced secret. Neither is an
+            // operator's denial and neither is the tool failing.
+            McpApprovalDisposition.SECRET_FORBIDDEN,
+            McpApprovalDisposition.SECRET_UNRESOLVED,
             -> McpUnsuccessfulCategory.WITHHELD
 
             McpApprovalDisposition.AUTO_ALLOWED,

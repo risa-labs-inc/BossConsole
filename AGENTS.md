@@ -2069,6 +2069,7 @@ workspace by selecting the tools you need." Tools install app-wide, not into a S
 - [Authenticated IPC rollout](docs/authenticated-ipc-rollout.md): paired runtime release, ownership, and credential lifetime.
 
 - [MCP for agent-less operators](docs/mcp-agentless-operators.md) - Toolbox kill-switches and attach path
+- [Secret references in MCP tool calls](docs/MCP_SECRET_REFERENCES.md) - the guarantee, its non-goals, the pipeline and the invariants
 
 - [Core Subsystems](docs/SUBSYSTEMS.md) - Auth, UI, keyboard shortcuts, threading, default applications, runner, BossTerm
 - [BossEditor](docs/BOSSEDITOR.md) - External editor dependency, LSP, PSI, editor features
@@ -2146,6 +2147,58 @@ create_workspace, open_terminal, close_workspace and their aliases) are declared
 on `open_terminal` therefore runs later invocations unconfirmed, i.e. as strong as an
 unconfirmed external deep link; the command still passes the shape check and the shell
 risk evaluation (HIGH, CRITICAL for destructive patterns) on every call.
+
+### Secret references at the governance boundary
+
+`{{secret:<id>}}` in a governed tool's arguments is resolved by the host inside
+`McpToolRegistryCore.invoke`, after the operator approves and before the handler runs. The full
+contract is [docs/MCP_SECRET_REFERENCES.md](docs/MCP_SECRET_REFERENCES.md); the decisions a
+later change is most likely to want to undo are recorded here so they are undone knowingly.
+
+- **Non-disclosure, not non-exfiltration.** The claim is that the value never enters the
+  LLM-facing path (arguments, result, approval dialog, ledger, host log). It is not that an
+  authorized tool cannot forward it. Plugins are in-process and already hold the vault through
+  `PluginContext.secretDataProvider`, so references add no plugin-side exposure. Do not let
+  docs or PR text drift toward the stronger claim.
+- **`invoke` is an enforcement boundary for governed traffic, not a security boundary for the
+  process.** BossTerm's built-ins and terminal-tab's `run_in_sidebar`/`cli` never reach it (#495);
+  a reference typed there is never resolved.
+- **A secret-bearing call always asks.** The secret policy sits above session trust and above a
+  tool or provider ALLOW in the precedence, and `secretBearingCalls` has only ASK and DENY. There
+  is no ALLOW on purpose: a flagship governance primitive must not ship with its own bypass. An
+  operator who wants fewer prompts is asking for a per-(tool, secret) grant with its own review
+  and revocation surface, which is a separate design.
+- **The vault is read once per reference, before the prompt.** The operator must see which
+  secret (website, username, field) the tool would receive, and that metadata comes from the
+  same RPC as the value. A second read after approval would be theatre. The value is delivered
+  only after two fences pass: `secret.read` is re-asserted (a loss records `SECRET_FORBIDDEN`,
+  its own disposition, before `confirmInvocation` can grant session trust on the voided
+  approval), then the tool's revocation fence. The read is `get_user_secret_by_id`, which
+  decrypts the referenced row and nothing else under the listing's own visibility rule; the
+  resolver must not go back to walking `get_user_secrets`, which decrypted every row up to the
+  hit and let an unknown id walk the whole vault on the agent's say-so. A call carries at most
+  `McpSecretPrePass.MAX_REFERENCES_PER_CALL` (16) distinct references, refused before any read.
+- **All or nothing.** One malformed or unresolvable reference refuses the whole call before any
+  prompt. A handler must never receive placeholder text it might mistake for a value; that is
+  also why `secretReferencesEnabled = false` refuses rather than passes through.
+- **Substitution rewrites the JSON tree and rebuilds `McpToolArgs` through `parseMcpToolArgs`**,
+  so the scalar map and the raw JSON a handler may parse itself cannot disagree. Keys are never
+  scanned or substituted.
+- **The scrubber is defense in depth and is switchable** (`resultScrubbingEnabled`). It replaces
+  exact, JSON-escaped and percent-encoded forms of values of 8+ characters; it cannot see a hash,
+  a base64 encoding or a case change, and the docs table says so. The invariant tests run with it
+  off to prove the rest of the pipeline holds without it. It runs before the result cap so a cut
+  cannot land inside a value.
+- **The ledger stores references.** `sanitizedArgs` is built from the ORIGINAL arguments, and
+  `secretRefs` lists `<id>.<field>`. `SECRET_FORBIDDEN` and `SECRET_UNRESOLVED` are "withheld"
+  in the activity log's exhaustive `when`, the same bucket as `QUEUE_FULL`.
+- **UUID ids only, three fields only.** The grammar is anchored and brace-free so it is linear;
+  TOTP is deliberately not a field (a six-digit code cannot be scrubbed, and nothing consumes one
+  through a tool today).
+- **The RBAC gate mirrors the plugin's.** A non-admin needs `secret.read`, the permission the
+  secret-manager plugin puts on `secret_get`; the AI-provider tag refusal mirrors that plugin's
+  `aiProviderRefusal`. Neither can be reached through a reference that could not be reached
+  through the plugin.
 
 ## Process log authority and lifetime
 

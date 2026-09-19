@@ -1,6 +1,7 @@
 package ai.rever.boss.mcp
 
 import ai.rever.boss.mcp.sandbox.McpRiskAssessment
+import ai.rever.boss.mcp.secrets.SecretDescriptor
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CompletableDeferred
@@ -64,6 +65,12 @@ data class McpApprovalRequest(
      * when the request was raised, which leaves the name-only catalog to label it.
      */
     val declaredReadOnly: Boolean? = null,
+    /**
+     * The secrets this call would hand the tool, one per reference in its arguments. Metadata
+     * only (website, username, field): the values are never on this object, so a dialog cannot
+     * show them by accident. Empty for every call without references.
+     */
+    val secretRefs: List<SecretDescriptor> = emptyList(),
     val requestedAt: Long = System.currentTimeMillis(),
     val deferred: CompletableDeferred<McpApprovalDecision> = CompletableDeferred(),
 )
@@ -95,7 +102,8 @@ open class McpApprovalBus(
      * or [timeoutMs] elapses (in which case it fails closed).
      */
     // Queue overflow needs its own returns; the request carries the tool's full approval
-    // context, from name and provider to its own read-only declaration.
+    // context, from name and provider to its own read-only declaration and the secrets it
+    // would receive. Folding those into a builder would move the same names one call deeper.
     @Suppress("ReturnCount", "LongParameterList")
     suspend fun requestApproval(
         toolName: String,
@@ -104,6 +112,7 @@ open class McpApprovalBus(
         timeoutMs: Long = defaultTimeoutMs,
         riskAssessment: McpRiskAssessment? = null,
         declaredReadOnly: Boolean? = null,
+        secretRefs: List<SecretDescriptor> = emptyList(),
     ): McpApprovalDecision {
         val request =
             McpApprovalRequest(
@@ -113,6 +122,7 @@ open class McpApprovalBus(
                 timeoutMs = timeoutMs,
                 riskAssessment = riskAssessment,
                 declaredReadOnly = declaredReadOnly,
+                secretRefs = secretRefs,
             )
 
         synchronized(lock) {
@@ -129,17 +139,19 @@ open class McpApprovalBus(
         }
 
         if (_requests.trySend(request).isFailure) {
-            synchronized(lock) {
-                activeRequests.remove(request.id)
-                _pendingList.update { list -> list.filterNot { it.id == request.id } }
-            }
+            release(request)
             return McpApprovalDecision.QueueFull
         }
 
         logger.info(
             LogCategory.SYSTEM,
             "Approval requested for MCP tool",
-            mapOf("tool" to toolName, "requestId" to request.id, "timeoutMs" to timeoutMs),
+            mapOf(
+                "tool" to toolName,
+                "requestId" to request.id,
+                "timeoutMs" to timeoutMs,
+                "secretRefs" to secretRefs.size,
+            ),
         )
 
         return try {
@@ -159,10 +171,15 @@ open class McpApprovalBus(
             decision
         } finally {
             request.deferred.complete(McpApprovalDecision.Denied("Approval request expired"))
-            synchronized(lock) {
-                activeRequests.remove(request.id)
-                _pendingList.update { list -> list.filterNot { it.id == request.id } }
-            }
+            release(request)
+        }
+    }
+
+    /** Forget [request]: it was answered, timed out, or could not be delivered. */
+    private fun release(request: McpApprovalRequest) {
+        synchronized(lock) {
+            activeRequests.remove(request.id)
+            _pendingList.update { list -> list.filterNot { it.id == request.id } }
         }
     }
 

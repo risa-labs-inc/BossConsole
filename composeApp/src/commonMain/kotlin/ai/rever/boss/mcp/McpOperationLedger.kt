@@ -76,6 +76,7 @@ class McpOperationLedger(
         isError: Boolean,
         rawArgs: Map<String, Any?>,
         errorSnippet: String? = null,
+        secretRefs: List<String> = emptyList(),
     ): McpOperationRecord {
         val sanitized = sanitizeArguments(rawArgs)
         val sanitizedErrorSnippet = errorSnippet?.let { McpArgumentSanitizer.sanitizeMessage(it).take(4096) }
@@ -91,6 +92,7 @@ class McpOperationLedger(
                 isError = isError,
                 sanitizedArgs = sanitized,
                 errorSnippet = sanitizedErrorSnippet,
+                secretRefs = secretRefs,
             )
 
         // 1. Persist first, because persistence is what assigns the chain hash. What comes back is
