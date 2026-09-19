@@ -158,18 +158,32 @@ fun ProjectCard(
 
 /**
  * Format timestamp as relative time (e.g., "2h ago", "Yesterday").
+ *
+ * [now] is injectable so the buckets can be tested deterministically; it defaults to the clock.
  */
-private fun formatRelativeTime(timestamp: Long): String {
+internal fun formatRelativeTime(
+    timestamp: Long,
+    now: Long = System.currentTimeMillis(),
+): String {
     if (timestamp == 0L) return "Never"
 
-    val now = System.currentTimeMillis()
     val diff = now - timestamp
 
+    fun absoluteDate() = SimpleDateFormat("MMM d").format(Date(timestamp))
+
     return when {
+        // Clock skew, or a file mtime in the future, makes diff negative - which is < 60_000 and
+        // would otherwise read "Just now" for a time that has not happened. Show the date instead.
+        diff < 0 -> absoluteDate()
+
         diff < 60_000 -> "Just now"
+
         diff < 3600_000 -> "${diff / 60_000}m ago"
+
         diff < 86400_000 -> "${diff / 3600_000}h ago"
+
         diff < 172800_000 -> "Yesterday"
-        else -> SimpleDateFormat("MMM d").format(Date(timestamp))
+
+        else -> absoluteDate()
     }
 }
