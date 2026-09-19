@@ -13,8 +13,8 @@ import java.io.File
 data class BrowserSettingsData(
     val userAgent: String? = null,
     val customUserAgent: String? = null,
-    val currentProfile: String = "browser-profile",
-    val availableProfiles: List<String> = listOf("browser-profile"),
+    val currentProfile: String = BrowserProfilePaths.DEFAULT_PROFILE_ID,
+    val availableProfiles: List<String> = listOf(BrowserProfilePaths.DEFAULT_PROFILE_ID),
     // Browser initialization retry settings
     val maxInitRetries: Int = 3,
     val maxRecoveryAttempts: Int = 3,
@@ -82,7 +82,12 @@ object BrowserSettingsManager {
                 // Apply loaded settings
                 BrowserSettings.userAgent = settings.userAgent
                 BrowserSettings.customUserAgent = settings.customUserAgent
-                BrowserSettings.currentProfile = settings.currentProfile
+                val profiles =
+                    BrowserProfilePaths.normalizeSelection(
+                        current = settings.currentProfile,
+                        available = settings.availableProfiles,
+                    )
+                BrowserSettings.currentProfile = profiles.current
                 // Validate retry/recovery settings to prevent invalid values from manual file editing
                 BrowserSettings.maxInitRetries = settings.maxInitRetries.coerceIn(1, 10)
                 BrowserSettings.maxRecoveryAttempts = settings.maxRecoveryAttempts.coerceIn(1, 10)
@@ -94,11 +99,8 @@ object BrowserSettingsManager {
                 BrowserSettings.showShareButton = settings.showShareButton
                 BrowserSettings.warnForExecutables = settings.warnForExecutables
 
-                // Update available profiles if we have more
-                if (settings.availableProfiles.isNotEmpty()) {
-                    BrowserSettings.availableProfiles.clear()
-                    BrowserSettings.availableProfiles.addAll(settings.availableProfiles)
-                }
+                BrowserSettings.availableProfiles.clear()
+                BrowserSettings.availableProfiles.addAll(profiles.available)
             }
         } catch (e: Exception) {
             logger.warn(LogCategory.BROWSER, "Failed to load browser settings", error = e)
@@ -108,12 +110,17 @@ object BrowserSettingsManager {
     suspend fun saveSettings() =
         withContext(Dispatchers.IO) {
             try {
+                val profiles =
+                    BrowserProfilePaths.normalizeSelection(
+                        current = BrowserSettings.currentProfile,
+                        available = BrowserSettings.availableProfiles,
+                    )
                 val settings =
                     BrowserSettingsData(
                         userAgent = BrowserSettings.userAgent,
                         customUserAgent = BrowserSettings.customUserAgent,
-                        currentProfile = BrowserSettings.currentProfile,
-                        availableProfiles = BrowserSettings.availableProfiles.toList(),
+                        currentProfile = profiles.current,
+                        availableProfiles = profiles.available,
                         maxInitRetries = BrowserSettings.maxInitRetries,
                         maxRecoveryAttempts = BrowserSettings.maxRecoveryAttempts,
                         discretePasswordFill = BrowserSettings.discretePasswordFill,
