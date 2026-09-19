@@ -25,7 +25,7 @@ object InitThrowingPlugin : Plugin {
     override val displayName: String = "Init Throwing"
 
     init {
-        throw IllegalStateException("this plugin's initializer throws")
+        error("this plugin's initializer throws")
     }
 
     override fun register(context: PluginContext) = Unit
@@ -179,9 +179,8 @@ class PluginLoaderMalformedJarTest {
     @Test
     fun `a truncated jar`() {
         // A download interrupted partway: the central directory never arrived.
-        val whole = Files.readAllBytes(
-            Path.of(jarOf("whole.jar", mapOf(manifestPath to manifest().toByteArray()))),
-        )
+        val complete = jarOf("whole.jar", mapOf(manifestPath to manifest().toByteArray()))
+        val whole = Files.readAllBytes(Path.of(complete))
         val cut = tempDir.resolve("truncated.jar")
         Files.write(cut, whole.copyOf(whole.size / 2))
         assertRefusedCleanly(cut.toAbsolutePath().toString())
