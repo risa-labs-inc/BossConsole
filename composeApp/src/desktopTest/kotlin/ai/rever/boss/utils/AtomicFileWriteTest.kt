@@ -85,4 +85,13 @@ class AtomicFileWriteTest {
         val strays = tempDir.listFiles()?.filter { it.name != target.name }.orEmpty()
         assertTrue(strays.isEmpty(), "unexpected leftovers: ${strays.map { it.name }}")
     }
+
+    @Test
+    fun `atomicWriteText supports one-character file names`() {
+        val target = File(tempDir, "x")
+
+        target.atomicWriteText("content")
+
+        assertEquals("content", target.readText())
+    }
 }
