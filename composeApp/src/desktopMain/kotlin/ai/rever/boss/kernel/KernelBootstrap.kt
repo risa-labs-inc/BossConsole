@@ -540,6 +540,12 @@ class KernelBootstrap(
         spawner: ProcessSpawner,
         failure: ProcessFailure,
     ) {
+        // The dead child's registration in the kernel service must go now: it is otherwise
+        // removed only on a successful requestShutdown, so a dead id would keep reporting
+        // RUNNING and every later child would keep receiving its stale ipcAddress (#1180).
+        // Evicted before any respawn so the replacement's fresh registration is never dropped.
+        kernelService?.deregisterProcess(failure.processId)
+
         val process = registry.getProcess(failure.processId)
         if (process == null || process.config.restartPolicy != RestartPolicy.ON_FAILURE) {
             logger.error(
