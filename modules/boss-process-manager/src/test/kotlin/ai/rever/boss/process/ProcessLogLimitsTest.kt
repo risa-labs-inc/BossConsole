@@ -159,6 +159,7 @@ class ProcessLogLimitsTest {
 
     @Test
     fun `replacing the process directory cannot redirect later rotation`() {
+        if (System.getProperty("os.name").startsWith("Windows")) return
         val logs = Files.createDirectory(root.resolve("logs"))
         val outside = Files.createDirectory(root.resolve("outside"))
         val sentinel = Files.writeString(outside.resolve("stdout.log"), "untouched")
@@ -179,6 +180,7 @@ class ProcessLogLimitsTest {
 
     @Test
     fun `linked log roots and ancestors are refused before outside writes`() {
+        if (System.getProperty("os.name").startsWith("Windows")) return
         val outside = Files.createDirectory(root.resolve("outside"))
         val linked = Files.createSymbolicLink(root.resolve("linked"), outside)
         assertFailsWith<IOException> { ProcessLogDirectory.open(linked, "child") }

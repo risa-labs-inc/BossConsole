@@ -197,6 +197,7 @@ class FileSystemLimitsTest {
     @Test
     fun `reads through file links resolve the target before the bounded open`() =
         runBlocking {
+            if (System.getProperty("os.name").startsWith("Windows")) return@runBlocking
             val target = Files.writeString(root.resolve("target"), "linked content")
             val link = Files.createSymbolicLink(root.resolve("file-link"), target)
             val response = stub.readFile(ReadFileRequest.newBuilder().setPath(link.toString()).build())

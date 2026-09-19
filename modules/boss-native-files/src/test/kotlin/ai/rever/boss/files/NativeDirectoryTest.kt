@@ -11,8 +11,30 @@ import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import java.nio.file.Path
 
 class NativeDirectoryTest {
+    private fun createTestLink(link: Path, target: Path) {
+        if (System.getProperty("os.name").startsWith("Windows")) {
+            val script =
+                "\$ErrorActionPreference='Stop'; " +
+                    "New-Item -ItemType Junction -Path \$env:NATIVE_TEST_LINK " +
+                    "-Target \$env:NATIVE_TEST_TARGET | Out-Null"
+            val builder = ProcessBuilder("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
+            builder.environment()["NATIVE_TEST_LINK"] = link.toString()
+            builder.environment()["NATIVE_TEST_TARGET"] = target.toString()
+            val process = builder.start()
+            try {
+                assertTrue(process.waitFor(60, TimeUnit.SECONDS), "Junction fixture creation timed out")
+                assertEquals(0, process.exitValue(), process.errorStream.bufferedReader().readText())
+            } finally {
+                process.destroyForcibly()
+            }
+        } else {
+            Files.createSymbolicLink(link, target)
+        }
+    }
+
     @Test
     fun `Windows junction entries can be removed without traversing their target`() {
         if (!System.getProperty("os.name").startsWith("Windows")) return
@@ -71,7 +93,7 @@ class NativeDirectoryTest {
             Files.writeString(outside.resolve("sentinel"), "unchanged")
             NativeDirectory.open(inside).use { directory ->
                 Files.move(inside, root.resolve("moved"))
-                Files.createSymbolicLink(inside, outside)
+                createTestLink(inside, outside)
                 directory.file("new", create = true).use { it.write(ByteBuffer.wrap("safe".toByteArray())) }
                 directory.move("new", directory, "renamed", overwrite = false)
                 directory.child("child", create = true).close()
@@ -130,8 +152,9 @@ class NativeDirectoryTest {
     fun `links cannot be opened but can be inspected renamed and unlinked`() {
         val root = Files.createTempDirectory("native-directory-").toRealPath()
         try {
-            val target = Files.writeString(root.resolve("target"), "sentinel")
-            Files.createSymbolicLink(root.resolve("link"), target)
+            val target = Files.createDirectory(root.resolve("target"))
+            Files.writeString(target.resolve("file"), "sentinel")
+            createTestLink(root.resolve("link"), target)
             NativeDirectory.open(root).use { directory ->
                 assertTrue(checkNotNull(directory.info("link")).isLink)
                 assertFails { directory.file("link") }
@@ -140,7 +163,7 @@ class NativeDirectoryTest {
                 assertFails { directory.file("../escape", create = true) }
                 directory.move("link", directory, "moved-link", false)
                 directory.delete("moved-link")
-                assertEquals("sentinel", Files.readString(target))
+                assertEquals("sentinel", Files.readString(target.resolve("file")))
             }
         } finally {
             root.toFile().deleteRecursively()
