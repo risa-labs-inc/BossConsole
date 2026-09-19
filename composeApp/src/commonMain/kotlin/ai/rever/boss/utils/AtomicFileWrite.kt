@@ -6,6 +6,9 @@ import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 
+/** `File.createTempFile` rejects a prefix shorter than this. */
+private const val MIN_TEMP_PREFIX_LENGTH = 3
+
 /**
  * Move [temp] onto this file, replacing it if it already exists.
  *
@@ -53,7 +56,10 @@ fun File.atomicMoveFrom(temp: File) {
  */
 fun File.atomicWriteText(text: String) {
     parentFile?.mkdirs()
-    val tmp = File.createTempFile("$name.", ".tmp", parentFile)
+    // createTempFile requires a prefix of at least 3 characters, so a 1-character file name
+    // (prefix "x.") would throw. Pad to the minimum; longer names are unchanged.
+    val prefix = "$name.".padEnd(MIN_TEMP_PREFIX_LENGTH, '_')
+    val tmp = File.createTempFile(prefix, ".tmp", parentFile)
     try {
         tmp.writeText(text)
         atomicMoveFrom(tmp)

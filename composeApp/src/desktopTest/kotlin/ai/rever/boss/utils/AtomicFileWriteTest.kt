@@ -75,6 +75,19 @@ class AtomicFileWriteTest {
     }
 
     @Test
+    fun `atomicWriteText handles a one-character file name`() {
+        // createTempFile rejects a prefix under 3 chars, so a 1-char name ("x") once threw
+        // IllegalArgumentException from the derived "x." prefix before anything was written.
+        val target = File(tempDir, "x")
+
+        target.atomicWriteText("value")
+
+        assertEquals("value", target.readText())
+        val strays = tempDir.listFiles()?.filter { it.name != target.name }.orEmpty()
+        assertTrue(strays.isEmpty(), "unexpected leftovers: ${strays.map { it.name }}")
+    }
+
+    @Test
     fun `atomicWriteText leaves no temp files behind`() {
         // The temp file is a sibling of the target, so a leak would accumulate in the real cache
         // and config directories rather than in the OS temp dir.
