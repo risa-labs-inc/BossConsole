@@ -6,6 +6,18 @@ import kotlinx.coroutines.runBlocking
 import org.slf4j.LoggerFactory
 
 /**
+ * Output schema for the write_file capability (BossConsole#1157): the RPC used to
+ * return Empty regardless of failure, so the declared `success` boolean could never
+ * exist. The RPC now returns a real SaveFileResponse with `success` (required) and
+ * `error_message` (populated on every failure so a caller can surface "write failed:
+ * <reason>"). The schema lives at the top of the file so the line-length cap on the
+ * `addAllCapabilities` call site does not split the JSON literal across two lines.
+ */
+private const val WRITE_FILE_OUTPUT_SCHEMA =
+    "{\"type\":\"object\",\"properties\":{\"success\":{\"type\":\"boolean\"}," +
+        "\"error_message\":{\"type\":\"string\"}},\"required\":[\"success\"]}"
+
+/**
  * Editor App Service — provides code editing capabilities in its own process.
  * Phase 5: Isolates BossEditor + LSP + PSI from the main kernel process.
  */
@@ -45,8 +57,9 @@ fun main() {
                     PluginCapability
                         .newBuilder()
                         .setAction("write_file")
-                        .setInputSchemaJson("""{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}}}""")
-                        .setOutputSchemaJson("""{"type":"object","properties":{"success":{"type":"boolean"}}}""")
+                        .setInputSchemaJson(
+                            """{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}}}""",
+                        ).setOutputSchemaJson(WRITE_FILE_OUTPUT_SCHEMA)
                         .setDescription("Write content to a file")
                         .build(),
                     PluginCapability
