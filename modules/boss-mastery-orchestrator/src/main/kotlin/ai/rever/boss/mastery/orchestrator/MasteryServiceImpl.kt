@@ -146,14 +146,14 @@ class MasteryServiceImpl(
 
     override suspend fun generateMastery(request: GenerateMasteryRequest): PMasteryDef {
         // AI integration point: future — generate definition from task description + available capabilities
-        logger.info("GenerateMastery stub: task={}", request.taskDescription)
-        return KMasteryDef(
-            id = UUID.randomUUID().toString(),
-            name = "Generated: ${request.taskDescription.take(40)}",
-            description = request.taskDescription,
-            nodes = emptyList(),
-            edges = emptyList(),
-        ).toProto()
+        logger.info("GenerateMastery unimplemented: task={}", request.taskDescription)
+        throw Status
+            .UNIMPLEMENTED
+            .withDescription(
+                "AI-assisted mastery generation is not implemented yet; " +
+                    "author a mastery definition and persist it via CreateMastery, " +
+                    "whose returned ids are the only ones ExecuteMastery resolves.",
+            ).asRuntimeException()
     }
 
     override suspend fun listMasteries(request: ListMasteriesRequest): ListMasteriesResponse {
