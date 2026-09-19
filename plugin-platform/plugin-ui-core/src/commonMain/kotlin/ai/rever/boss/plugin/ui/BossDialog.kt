@@ -570,6 +570,13 @@ fun BossPopup(
  *
  * Pure, and separate from the composable, so the conversion is pinned by a test at more than one
  * scale factor rather than only by looking at a 1x screen.
+ *
+ * A non-positive density, or a layout that has not yet been placed, returns [IntRect.Zero]. The
+ * validity check is `Offset.isValid()` from Compose, which rejects a NaN coordinate; the call site
+ * does NOT reject infinity (Compose's `isValid()` accepts finite-but-non-finite coordinates, so a
+ * downstream `roundToInt()` saturates them to `Int.MAX_VALUE` / `Int.MIN_VALUE`). The pre-removal
+ * local extension defined the same shape - `!x.isNaN() && !y.isNaN()` - so the call site is
+ * unchanged by dropping the dead extension; only the compiler warning is gone.
  */
 internal fun anchorRectInDp(
     positionPx: Offset,
@@ -586,9 +593,6 @@ internal fun anchorRectInDp(
         bottom = top + (sizePx.height / density).roundToInt(),
     )
 }
-
-/** Guards against the Unspecified/NaN offset a detached or not-yet-placed layout reports. */
-private fun Offset.isValid(): Boolean = !x.isNaN() && !y.isNaN()
 
 /**
  * Where a [BossPopup] places itself on the heavyweight path.
