@@ -6,6 +6,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 class MasteryExecutorTest {
     /** Simple mock that returns predefined responses keyed by "pluginId/action". */
@@ -180,5 +181,35 @@ class MasteryExecutorTest {
                 call.third["target_url"],
                 "Expected INPUT.url to be forwarded as target_url",
             )
+        }
+
+    @Test
+    fun `cyclic definition fails with MasteryFailed instead of killing the stream`() =
+        runBlocking {
+            val executor = MasteryExecutor(MockResolver(emptyMap()))
+            val mastery =
+                MasteryDefinition(
+                    id = "cyclic",
+                    name = "Cyclic",
+                    description = "",
+                    nodes =
+                        listOf(
+                            MasteryNode("a", "plugin", "action"),
+                            MasteryNode("b", "plugin", "action"),
+                        ),
+                    edges =
+                        listOf(
+                            MasteryEdge("a", "b", "out", "in"),
+                            MasteryEdge("b", "a", "out", "in"),
+                        ),
+                )
+
+            val events = executor.execute(mastery, emptyMap()).toList()
+
+            assertEquals(2, events.size)
+            assertIs<MasteryProgress.Started>(events[0])
+            val failed = assertIs<MasteryProgress.Failed>(events[1])
+            assertTrue(failed.error.contains("Cycle detected"), failed.error)
+            assertEquals("", failed.failedNodeId)
         }
 }
