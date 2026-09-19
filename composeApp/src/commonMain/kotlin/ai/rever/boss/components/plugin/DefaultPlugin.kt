@@ -794,14 +794,17 @@ class DefaultPlugin(
         registrations.unregister(statusBarItems, itemId, owner = registrationOwner)
     }
 
-    // Split view operations for plugins that need tab/panel operations
-    override val splitViewOperations: SplitViewOperations? by lazy {
-        if (splitViewState != null && _windowId != null) {
-            SplitViewOperationsImpl(splitViewState, _windowId)
-        } else {
-            null
+    // Split view operations for plugins that need tab/panel operations.
+    // Named delegate so dispose() can release its coroutine scope only when it was actually built.
+    private val splitViewOperationsDelegate =
+        lazy {
+            if (splitViewState != null && _windowId != null) {
+                SplitViewOperationsImpl(splitViewState, _windowId)
+            } else {
+                null
+            }
         }
-    }
+    override val splitViewOperations: SplitViewOperations? by splitViewOperationsDelegate
 
     // Active tabs provider for topofmind plugin
     override val activeTabsProvider: ActiveTabsProvider? by lazy {
@@ -1236,6 +1239,9 @@ class DefaultPlugin(
         }
         if (projectDataProviderDelegate.isInitialized()) {
             (projectDataProvider as? DisposableProvider)?.dispose()
+        }
+        if (splitViewOperationsDelegate.isInitialized()) {
+            (splitViewOperations as? DisposableProvider)?.dispose()
         }
         pluginScope.cancel()
     }

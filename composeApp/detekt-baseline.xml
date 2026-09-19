@@ -1467,7 +1467,7 @@
     <ID>TooManyFunctions:SettingsComponents.kt$ai.rever.boss.components.settings.shared.SettingsComponents.kt</ID>
     <ID>TooManyFunctions:ShortcutLifecycleManager.kt$ShortcutLifecycleManager</ID>
     <ID>TooManyFunctions:SplitView.kt$SplitViewState</ID>
-    <ID>TooManyFunctions:SplitViewOperationsImpl.kt$SplitViewOperationsImpl : SplitViewOperations</ID>
+    <ID>TooManyFunctions:SplitViewOperationsImpl.kt$SplitViewOperationsImpl : SplitViewOperationsDisposableProvider</ID>
     <ID>TooManyFunctions:TabDraggableComponent.kt$TabDraggableComponent</ID>
     <ID>TooManyFunctions:TerminalAPIAccess.kt$TerminalAPIAccess</ID>
     <ID>TooManyFunctions:TrackingPluginContext.kt$PluginRegistrationTracker</ID>

@@ -312,6 +312,13 @@ internal fun ComponentContext.rememberBossAppState(
         remember(splitViewState, windowId) {
             SplitViewOperationsImpl(splitViewState, windowId)
         }
+    // Release its Main-dispatched coroutine scope when this window's composition leaves, so a
+    // closed window does not leak the scope or any in-flight operation.
+    DisposableEffect(splitViewOperations) {
+        onDispose {
+            splitViewOperations.dispose()
+        }
+    }
 
     // Create workspace data provider wrapper for plugins
     val workspaceDataProvider =

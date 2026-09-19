@@ -16,6 +16,8 @@ import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.window.WindowProjectStateRegistry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 /**
@@ -25,11 +27,21 @@ import kotlinx.coroutines.launch
 class SplitViewOperationsImpl(
     private val splitViewState: SplitViewState,
     private val windowId: String,
-) : SplitViewOperations {
+    // SupervisorJob so one operation failing does not cancel the scope and silently kill every
+    // later launch; cancelled in dispose() so a closed window's Main-dispatched work does not leak.
+    // Injectable (default preserves production) so dispose() can be tested without a Main dispatcher.
+    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main),
+) : SplitViewOperations,
+    DisposableProvider {
     private val logger = BossLogger.forComponent("SplitViewOperationsImpl")
 
-    // Coroutine scope for launching background operations
-    private val scope = CoroutineScope(Dispatchers.Main)
+    /**
+     * Releases this provider's scope. Called by [DefaultPlugin.dispose] for the plugin-facing
+     * instance and by the composable that owns the [ai.rever.boss.app.BossAppState] instance.
+     */
+    override fun dispose() {
+        scope.cancel()
+    }
 
     override fun openUrlInActivePanel(
         url: String,
