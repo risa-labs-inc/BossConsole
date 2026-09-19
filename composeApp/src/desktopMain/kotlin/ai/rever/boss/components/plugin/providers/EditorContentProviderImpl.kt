@@ -22,6 +22,7 @@ import androidx.compose.ui.Modifier
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private val logger = BossLogger.forComponent("EditorContentProvider")
 
@@ -146,7 +147,6 @@ class EditorContentProviderImpl : EditorContentProvider {
         GlobalScope.launch(Dispatchers.Main) {
             try {
                 val detector = MainFunctionDetectorProvider.get()
-                val actualProjectRoot = detector.findProjectRoot(mainFunction.filePath)
                 val langEnum = runLanguageForMainFunction(mainFunction)
 
                 // Create a DetectedMainFunction from MainFunctionInfo
@@ -160,7 +160,15 @@ class EditorContentProviderImpl : EditorContentProvider {
                         filePath = mainFunction.filePath,
                     )
 
-                val command = detector.generateCommand(detected, actualProjectRoot)
+                // findProjectRoot and generateCommand each walk up from the file's directory with a
+                // File.exists() probe per marker per level, to the filesystem root on a miss: that is
+                // filesystem IO, and on a network drive or a deep tree it froze the UI thread (#1090).
+                // Only the RunEventBus dispatch below needs Main.
+                val (actualProjectRoot, command) =
+                    withContext(Dispatchers.IO) {
+                        val root = detector.findProjectRoot(mainFunction.filePath)
+                        root to detector.generateCommand(detected, root)
+                    }
                 val configName = detected.toShortNameWithProject(actualProjectRoot)
 
                 val config =
