@@ -556,21 +556,27 @@ CoroutineScope(Dispatchers.IO).launch {
 
 ### Engine Shutdown
 
+Closing the engine is the second of two browser steps, not the whole of engine shutdown. A pending
+native close or profile release is drained first, because both call into the engine. See `AGENTS.md`
+under "Browser native disposal" for the contract.
+
 ```kotlin
-// In main.kt shutdown hook
-Runtime.getRuntime().addShutdownHook(Thread {
-    try {
-        val engine = FluckEngine.currentEngine
-        if (engine != null && !engine.isClosed) {
-            engine.close()  // Releases profile lock files
-        }
-    } catch (e: Exception) {
-        println("Engine shutdown error: ${e.message}")
+// ShutdownSequence.defaultSteps() - the two browser steps, in this order
+ShutdownStep("draining browser native cleanup") {
+    // Bounded, and it must precede the close below: what it waits for is a native close
+    // or a profile release, and both call into the engine. Expiry is logged with the
+    // outstanding count; it never authorizes closing underneath the work.
+    runBlocking { BrowserCleanupDrain.awaitDrained(BROWSER_CLEANUP_DRAIN_MS) }
+},
+ShutdownStep("closing browser engine") {
+    val engine = FluckEngine.currentEngine
+    if (engine != null && !engine.isClosed) {
+        engine.close()  // Releases profile lock files
     }
-})
+},
 ```
 
-**Reference**: `main.kt:91-103`, `FluckEngine.kt`
+**Reference**: `ShutdownSequence.kt`, `BrowserNativeDisposal.kt`, `FluckEngine.kt`
 
 ---
 

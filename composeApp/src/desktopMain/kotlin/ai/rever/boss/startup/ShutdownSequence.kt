@@ -6,12 +6,14 @@ import ai.rever.boss.dashboard.RecentBrowserPagesManager
 import ai.rever.boss.dashboard.RecentFilesManager
 import ai.rever.boss.performance.PerformanceMonitor
 import ai.rever.boss.plugin.PluginStoreSetup
+import ai.rever.boss.plugin.browser.BrowserCleanupDrain
 import ai.rever.boss.plugin.browser.FluckEngine
 import ai.rever.boss.services.auth.UserDataStorage
 import ai.rever.boss.updater.AppUpdateRealtimeService
 import ai.rever.boss.updater.UpdateCoordinator
 import ai.rever.boss.utils.SingleInstanceManager
 import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.window.AWTKeyboardInterceptor
 import kotlinx.coroutines.runBlocking
 
@@ -30,6 +32,18 @@ data class ShutdownStep(
  * so a failure in one subsystem teardown does not abort the remaining steps.
  */
 object ShutdownSequence {
+    /**
+     * How long shutdown waits for browser native cleanup before the engine closes.
+     *
+     * The same five-second bound the engine-close path uses, rather than the per-handle ten-second
+     * warning: this is the last moment a pending native close can still run, and a quit that hangs
+     * is its own defect. The engine close that follows is what makes this a deadline rather than a
+     * join - past it the cleanup's own browser close has nothing left to run against.
+     */
+    private const val BROWSER_CLEANUP_DRAIN_MS = 5_000L
+
+    private val logger = BossLogger.forComponent("ShutdownSequence")
+
     /**
      * Builds the standard shutdown steps for the application.
      */
@@ -55,6 +69,20 @@ object ShutdownSequence {
             },
             ShutdownStep("stopping performance monitor") {
                 PerformanceMonitor.stop()
+            },
+            ShutdownStep("draining browser native cleanup") {
+                // Before the engine closes, not after: what is being waited on is a browser close
+                // and a profile release, and both call into the engine this sequence is about to
+                // shut down. Bounded, because a wedged renderer must not hold the quit open - it
+                // keeps its browser and profile exactly as it does on the per-handle path, and the
+                // warning below reports what was left behind.
+                if (!runBlocking { BrowserCleanupDrain.awaitDrained(BROWSER_CLEANUP_DRAIN_MS) }) {
+                    logger.warn(
+                        LogCategory.BROWSER,
+                        "Browser native cleanup abandoned at shutdown",
+                        mapOf("pending" to BrowserCleanupDrain.pending, "deadlineMs" to BROWSER_CLEANUP_DRAIN_MS),
+                    )
+                }
             },
             ShutdownStep("closing browser engine") {
                 val engine = FluckEngine.currentEngine
