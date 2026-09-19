@@ -74,7 +74,7 @@ class AuthServiceGrpcImpl(
         when (val result = client.signInWithEmailPassword(email, password)) {
             is AuthResult.Success -> {
                 val userInfo = result.toUserInfo()
-                updateAuthState(AuthState.AUTH_STATE_AUTHENTICATED, userInfo, emptySet())
+                updateAuthState(AuthState.AUTH_STATE_AUTHENTICATED, userInfo, result.permissions)
                 SignInResponse
                     .newBuilder()
                     .setSuccess(true)
@@ -208,7 +208,7 @@ class AuthServiceGrpcImpl(
         when (val result = client.restoreSession()) {
             is AuthResult.Success -> {
                 val userInfo = result.toUserInfo()
-                updateAuthState(AuthState.AUTH_STATE_AUTHENTICATED, userInfo, emptySet())
+                updateAuthState(AuthState.AUTH_STATE_AUTHENTICATED, userInfo, result.permissions)
                 logger.info("Auth session restored for user: {}", result.email.take(3) + "***")
             }
 
