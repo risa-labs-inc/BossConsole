@@ -9,7 +9,7 @@ option java_multiple_files = true;
 
 service EditorService {
   rpc OpenFile(OpenFileRequest) returns (OpenFileResponse);
-  rpc SaveFile(SaveFileRequest) returns (boss.ipc.v1.Empty);
+  rpc SaveFile(SaveFileRequest) returns (SaveFileResponse);
   rpc GetTokens(GetTokensRequest) returns (GetTokensResponse);
   rpc NavigateToDefinition(NavigateRequest) returns (NavigateResponse);
   rpc DetectMainFunctions(DetectMainRequest) returns (DetectMainResponse);
@@ -32,6 +32,11 @@ message OpenFileResponse {
 message SaveFileRequest {
   string path = 1;
   string content = 2;
+}
+
+message SaveFileResponse {
+  bool success = 1;
+  string error_message = 2;
 }
 
 message GetTokensRequest {

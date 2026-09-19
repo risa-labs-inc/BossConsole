@@ -1,11 +1,16 @@
 package ai.rever.boss.app.editor
 
 import ai.rever.boss.ipc.proto.services.OpenFileRequest
+import ai.rever.boss.ipc.proto.services.SaveFileRequest
 import ai.rever.boss.plugin.language.LanguageIds
+import io.grpc.Status
+import io.grpc.StatusRuntimeException
 import kotlinx.coroutines.runBlocking
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -121,4 +126,156 @@ class EditorServiceImplTest {
     fun `extension lookup is case-insensitive`() {
         assertEquals("kotlin", service.detectLanguage("KT"))
     }
+
+    @Test
+    fun `saveFile writes content and reports success on the wire`() =
+        runBlocking {
+            val directory = Files.createTempDirectory("boss-save-").toFile()
+            try {
+                val target = directory.resolve("Notes.kt")
+                val request =
+                    SaveFileRequest
+                        .newBuilder()
+                        .setPath(target.absolutePath)
+                        .setContent("fun main() {}\n")
+                        .build()
+                val response = service.saveFile(request)
+                assertTrue(response.success)
+                assertEquals("", response.errorMessage)
+                assertEquals("fun main() {}\n", target.readText())
+            } finally {
+                directory.deleteRecursively()
+            }
+        }
+
+    @Test
+    fun `saveFile creates missing parent directories`() =
+        runBlocking {
+            val directory = Files.createTempDirectory("boss-save-mkdirs-").toFile()
+            try {
+                val target = directory.resolve("nested/deeper/notes.txt")
+                val request =
+                    SaveFileRequest
+                        .newBuilder()
+                        .setPath(target.absolutePath)
+                        .setContent("saved")
+                        .build()
+                val response = service.saveFile(request)
+                assertTrue(response.success)
+                assertEquals("saved", target.readText())
+            } finally {
+                directory.deleteRecursively()
+            }
+        }
+
+    @Test
+    fun `saveFile reports failed mkdirs as a wire-visible failure`() =
+        runBlocking {
+            val directory = Files.createTempDirectory("boss-save-blocked-").toFile()
+            try {
+                // A regular file where a directory is needed: mkdirs() cannot create the
+                // parent, so the write must fail - visibly, not as a success-shaped response.
+                directory.resolve("blocker").writeText("not a directory")
+                val target = directory.resolve("blocker/child.txt")
+                val request =
+                    SaveFileRequest
+                        .newBuilder()
+                        .setPath(target.absolutePath)
+                        .setContent("x")
+                        .build()
+                val response = service.saveFile(request)
+                assertFalse(response.success)
+                assertTrue(response.errorMessage.isNotEmpty())
+            } finally {
+                directory.deleteRecursively()
+            }
+        }
+
+    @Test
+    fun `saveFile reports an unwritable target as a wire-visible failure`() =
+        runBlocking {
+            val directory = Files.createTempDirectory("boss-save-dir-").toFile()
+            try {
+                // Writing to an existing directory always fails on the JVM.
+                val request =
+                    SaveFileRequest
+                        .newBuilder()
+                        .setPath(directory.absolutePath)
+                        .setContent("x")
+                        .build()
+                val response = service.saveFile(request)
+                assertFalse(response.success)
+                assertTrue(response.errorMessage.isNotEmpty())
+            } finally {
+                directory.deleteRecursively()
+            }
+        }
+
+    @Test
+    fun `saveFile reports permission denial as a wire-visible failure`() =
+        runBlocking {
+            val directory = Files.createTempDirectory("boss-save-ro-").toFile()
+            try {
+                if (!directory.setWritable(false) || directory.canWrite()) {
+                    // Permission denial cannot be simulated while writing is still permitted
+                    // (e.g. running as root); the structural failure paths cover the contract.
+                    return@runBlocking
+                }
+                val target = directory.resolve("denied.txt")
+                val request =
+                    SaveFileRequest
+                        .newBuilder()
+                        .setPath(target.absolutePath)
+                        .setContent("x")
+                        .build()
+                val response = service.saveFile(request)
+                assertFalse(response.success)
+                assertTrue(response.errorMessage.isNotEmpty())
+            } finally {
+                directory.setWritable(true)
+                directory.deleteRecursively()
+            }
+        }
+
+    @Test
+    fun `saveFile rejects path traversal with INVALID_ARGUMENT`() =
+        runBlocking {
+            val error =
+                assertFailsWith<StatusRuntimeException> {
+                    service.saveFile(SaveFileRequest.newBuilder().setPath("/tmp/../outside").build())
+                }
+            assertEquals(Status.INVALID_ARGUMENT.code, error.status.code)
+        }
+
+    @Test
+    fun `saveFile rejects blocked system paths with INVALID_ARGUMENT`() =
+        runBlocking {
+            val error =
+                assertFailsWith<StatusRuntimeException> {
+                    service.saveFile(SaveFileRequest.newBuilder().setPath("/etc/passwd").build())
+                }
+            assertEquals(Status.INVALID_ARGUMENT.code, error.status.code)
+        }
+
+    @Test
+    fun `saveFile rejects malformed paths with INVALID_ARGUMENT`() =
+        runBlocking {
+            val error =
+                assertFailsWith<StatusRuntimeException> {
+                    service.saveFile(
+                        SaveFileRequest.newBuilder().setPath("bad\u0000path").build(),
+                    )
+                }
+            assertEquals(Status.INVALID_ARGUMENT.code, error.status.code)
+        }
+
+    @Test
+    fun `openFile rejects path traversal with INVALID_ARGUMENT`() =
+        runBlocking {
+            val error =
+                assertFailsWith<StatusRuntimeException> {
+                    service.openFile(OpenFileRequest.newBuilder().setPath("../outside").build())
+                }
+            assertEquals(Status.INVALID_ARGUMENT.code, error.status.code)
+        }
 }
