@@ -1,5 +1,6 @@
 package ai.rever.boss.git
 
+import ai.rever.boss.plugin.api.GitFileStatusTypeData
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -12,6 +13,7 @@ import kotlin.test.assertTrue
  * (status list, commit log, stash list, PR-link building) renders from:
  *
  * - [GitService.parseStatusLine] / [GitService.parseStatusChar] — `git status --porcelain=v1`
+ * - [GitService.statusTypeFromCode] — `git diff --name-status` (the staged/unstaged diff tabs)
  * - [GitService.parseCommitLine] — `git log --format=%H%x00%h%x00…` (NUL-separated)
  * - [GitService.parseStashLine] — `git stash list`
  * - [GitService.parseRemoteUrl] — remote URL → https URL for "Create PR"
@@ -32,6 +34,9 @@ class GitPorcelainParserTest {
         assertEquals(GitFileStatusType.UNTRACKED, GitService.parseStatusChar('?'))
         assertEquals(GitFileStatusType.IGNORED, GitService.parseStatusChar('!'))
         assertEquals(GitFileStatusType.UNMERGED, GitService.parseStatusChar('U'))
+        // 'T' (typechange) is a documented porcelain v1 code too; it shares MODIFIED
+        // with the name-status parser instead of modelling a TYPE_CHANGED variant.
+        assertEquals(GitFileStatusType.MODIFIED, GitService.parseStatusChar('T'))
     }
 
     @Test
@@ -41,9 +46,8 @@ class GitPorcelainParserTest {
 
     @Test
     fun `parseStatusChar returns null for unknown codes`() {
-        // 'T' (type change) is a real porcelain v1 code the parser deliberately
-        // does not model; unknown codes degrade to "no status" instead of crashing.
-        assertNull(GitService.parseStatusChar('T'))
+        // Codes git never emits in porcelain v1 degrade to "no status" instead of
+        // crashing. ('T' used to sit here; it is modelled now - see above.)
         assertNull(GitService.parseStatusChar('X'))
         assertNull(GitService.parseStatusChar('z'))
     }
@@ -331,6 +335,61 @@ class GitPorcelainParserTest {
     }
 
     // ==================== parseStatusLine: empty and malformed ====================
+
+    // ==================== parseStatusLine: typechange (T) ====================
+
+    @Test
+    fun `staged typechange - index T, clean worktree`() {
+        val status = GitService.parseStatusLine("T  link-was-a-file.txt")
+        assertNotNull(status)
+        assertEquals("link-was-a-file.txt", status.path)
+        assertEquals(GitFileStatusType.MODIFIED, status.indexStatus)
+        assertNull(status.workTreeStatus)
+        assertTrue(status.isStaged)
+        assertFalse(status.isUnstaged)
+    }
+
+    @Test
+    fun `unstaged typechange - clean index, worktree T`() {
+        val status = GitService.parseStatusLine(" T link-was-a-file.txt")
+        assertNotNull(status)
+        assertEquals("link-was-a-file.txt", status.path)
+        assertNull(status.indexStatus)
+        assertEquals(GitFileStatusType.MODIFIED, status.workTreeStatus)
+        assertFalse(status.isStaged)
+        assertTrue(status.isUnstaged)
+    }
+
+    @Test
+    fun `typechange no longer vanishes from the commit dialog lists`() {
+        val statuses =
+            GitService.parseStatusOutput(
+                """
+                T  staged-typechange.txt
+                 T unstaged-typechange.txt
+                """.trimIndent(),
+            )
+        // Before #1169 each row parsed its carrying column to "no status", so the
+        // staged list (isStaged) and the unstaged list (isUnstaged) dropped both.
+        assertEquals(
+            listOf("staged-typechange.txt"),
+            statuses.filter { it.isStaged }.map { it.path },
+        )
+        assertEquals(
+            listOf("unstaged-typechange.txt"),
+            statuses.filter { it.isUnstaged }.map { it.path },
+        )
+    }
+
+    @Test
+    fun `typechange parity - name-status T and porcelain T both say MODIFIED`() {
+        // [GitService.statusTypeFromCode] parses `git diff --name-status` (the
+        // staged/unstaged diff tabs); [GitService.parseStatusChar] parses
+        // `git status --porcelain=v1` (the status list). Both must answer 'T'
+        // with MODIFIED so a typechanged path renders the same either way.
+        assertEquals(GitFileStatusTypeData.MODIFIED, GitService.statusTypeFromCode("T"))
+        assertEquals(GitFileStatusType.MODIFIED, GitService.parseStatusChar('T'))
+    }
 
     @Test
     fun `empty and too-short lines return null`() {
