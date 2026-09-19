@@ -68,8 +68,10 @@ import androidx.compose.ui.window.LocalWindowExceptionHandlerFactory
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowExceptionHandler
 import androidx.compose.ui.window.WindowExceptionHandlerFactory
+import androidx.compose.ui.window.Tray
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
+import androidx.compose.ui.window.rememberTrayState
 import androidx.compose.ui.window.rememberWindowState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -420,6 +422,29 @@ fun main(args: Array<String>) {
     // Phase 8: Compose Application Entry & Window Loop
     // -------------------------------------------------------------------------
     application {
+        // -------------------------------------------------------------------------
+        // System Tray Integration
+        // -------------------------------------------------------------------------
+        val trayState = rememberTrayState()
+        BossWindowIcon.painter?.let { iconPainter ->
+            Tray(
+                state = trayState,
+                icon = iconPainter,
+                tooltip = "BOSS",
+                menu = {
+                    Item(
+                        text = "New Window",
+                        onClick = { WindowManager.createNewWindow() }
+                    )
+                    Separator()
+                    Item(
+                        text = "Quit BOSS",
+                        onClick = { exitApplication() }
+                    )
+                }
+            )
+        }
+
         // Provide a custom WindowExceptionHandlerFactory that intercepts plugin crashes
         // during composition. Compose's default factory shows an error dialog and disposes
         // the window, which bypasses our UncaughtExceptionHandler-based interceptor.
