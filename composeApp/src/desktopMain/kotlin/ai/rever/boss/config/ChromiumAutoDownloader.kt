@@ -422,6 +422,7 @@ object ChromiumAutoDownloader {
      * catalog provides one), extract, stamp version. The transfer and extract
      * steps are injectable for tests.
      */
+    @Suppress("CyclomaticComplexMethod", "ThrowsCount", "LongMethod", "NestedBlockDepth")
     internal suspend fun installFromCandidates(
         candidates: List<EngineDownloadCandidate>,
         version: String,
@@ -484,31 +485,50 @@ object ChromiumAutoDownloader {
                     // Update status to extracting
                     onProgress(DownloadProgress(0, 0, isExtracting = true))
 
-                    // Delete existing directory if present
-                    if (targetDir.toFile().exists()) {
-                        targetDir.toFile().deleteRecursively()
-                    }
+                    val extractDir =
+                        if (staged) {
+                            if (targetDir.toFile().exists()) {
+                                targetDir.toFile().deleteRecursively()
+                            }
+                            targetDir
+                        } else {
+                            Files.createTempDirectory(targetDir.parent, "boss-chromium-extract-")
+                        }
 
-                    // Extract
-                    extract(tempFile, targetDir)
+                    try {
+                        // Extract
+                        extract(tempFile, extractDir)
 
-                    // Verify extraction produced executable.name
-                    val executableNameFile = targetDir.resolve("executable.name").toFile()
-                    if (!executableNameFile.exists()) {
-                        throw IllegalStateException(
-                            "Extraction completed but executable.name not found. " +
-                                "The downloaded archive may be corrupted.",
-                        )
-                    }
+                        // Verify extraction produced executable.name
+                        val executableNameFile = extractDir.resolve("executable.name").toFile()
+                        if (!executableNameFile.exists()) {
+                            throw IllegalStateException(
+                                "Extraction completed but executable.name not found. " +
+                                    "The downloaded archive may be corrupted.",
+                            )
+                        }
 
-                    // Write version file to track installed version
-                    targetDir.resolve(VERSION_FILE).toFile().writeText(version)
-                    logger.debug(LogCategory.BROWSER, "Version file written", mapOf("version" to version))
+                        // Write version file to track installed version
+                        extractDir.resolve(VERSION_FILE).toFile().writeText(version)
+                        logger.debug(LogCategory.BROWSER, "Version file written", mapOf("version" to version))
 
-                    // Written last: promotePendingInstall refuses staging dirs
-                    // without this marker.
-                    if (staged) {
-                        targetDir.resolve(STAGED_COMPLETE_MARKER).toFile().writeText(version)
+                        extractDir.resolve(STAGED_COMPLETE_MARKER).toFile().writeText(version)
+
+                        if (!staged) {
+                            val backupFile = targetDir.parent.resolve("${targetDir.fileName}.old").toFile()
+                            promotePendingInstall(
+                                pending = extractDir.toFile(),
+                                target = targetDir.toFile(),
+                                backup = backupFile,
+                            )
+                            check(targetDir.resolve("executable.name").toFile().exists()) {
+                                "Failed to promote extracted Chromium engine to target directory"
+                            }
+                        }
+                    } finally {
+                        if (!staged && extractDir.toFile().exists()) {
+                            extractDir.toFile().deleteRecursively()
+                        }
                     }
 
                     // Clean up old JxBrowser default Chromium directory if it exists
@@ -645,12 +665,12 @@ object ChromiumAutoDownloader {
         val output = process.inputStream.bufferedReader().readText()
         val exitCode = process.waitFor()
         if (exitCode != 0) {
-            logger.warn(
+            logger.error(
                 LogCategory.BROWSER,
-                "ditto extraction failed, falling back to Java",
+                "ditto extraction failed",
                 mapOf("exitCode" to exitCode, "output" to output),
             )
-            extractWithJava(zipPath, targetDir)
+            error("macOS ditto extraction failed (exit code $exitCode): $output")
         }
     }
 
