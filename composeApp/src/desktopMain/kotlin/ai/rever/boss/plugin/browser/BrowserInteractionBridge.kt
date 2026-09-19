@@ -9,6 +9,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.security.SecureRandom
 
 /**
  * Page→host bridge for in-page interaction telemetry.
@@ -18,13 +19,26 @@ import kotlinx.serialization.json.jsonPrimitive
  * and hands each entry to [BrowserAnalytics], which sanitizes every field before an event
  * exists.
  *
- * **Everything arriving here is untrusted.** The bridge is reachable from any JavaScript on
- * the page, not only from the injected collector — a site can call `window.__bossInteraction
- * .emit(...)` itself with whatever it likes. So this parses defensively (unknown interaction
- * types dropped, non-conforming fields dropped by the sanitizers, oversized batches
- * truncated) and treats the collector's own discipline as a first line rather than the only
- * one. It cannot be *unreachable* — the page needs to call in — so it is instead cheap to
- * abuse and impossible to abuse usefully.
+ * **Everything arriving here is untrusted.** The bridge has to be published on the page's own
+ * `window` at injection time, because JxBrowser 9.5.0 offers no isolated JS world to publish
+ * it into (see [BrowserInteractionScript], which records how that was established). The
+ * injected collector copies it into a closure and removes it immediately, so a page script
+ * running after document-start injection never obtains a reference — but this class does not
+ * rest on that alone:
+ *
+ * - every batch must carry the **per-session nonce**, which exists only as a closure variable
+ *   in the collector and as a literal in the injected source. A batch without it is dropped
+ *   before it is parsed, so a page that does reach the bridge cannot forge events with it;
+ * - it still parses defensively (unknown interaction types dropped, non-conforming fields
+ *   dropped by the sanitizers, oversized batches truncated), because a nonce proves which
+ *   script sent a batch, not that the batch is well-formed;
+ * - and it is rate-limited per tab and per process, so even a page holding a valid nonce
+ *   cannot use it to flood the shared bus.
+ *
+ * The nonce is a second line, not the first: what keeps the page out is that it has no
+ * reference to this object. See [BrowserInteractionScript]'s KDoc for what remains — a page
+ * can always synthesise the DOM events the collector observes, and those arrive here
+ * legitimately, carrying a valid nonce.
  *
  * [emit] runs on a JxBrowser thread and must not block or throw into the page's JS thread.
  */
@@ -33,11 +47,33 @@ internal class BrowserInteractionBridge(
     /** Resolved per batch, not captured: a tab moves between windows. */
     private val windowId: () -> String?,
     private val nowMs: () -> Long = System::currentTimeMillis,
+    /**
+     * This session's channel credential: one per bridge, so one per browser handle.
+     *
+     * Never written to a property the page can read by name, and injected into the collector
+     * as a literal, so the only way to obtain it is to read a closure variable.
+     */
+    internal val sessionNonce: String = newSessionNonce(),
+    /**
+     * The host-chosen name of the one property the collector leaves on `window` across a
+     * re-injection: its per-route reset hook.
+     *
+     * Drawn independently of [sessionNonce], so a page that learns one by enumerating
+     * `window` does not thereby learn the other.
+     */
+    internal val resetSlotName: String = newResetSlotName(),
 ) {
     private val logger = BossLogger.forComponent("BrowserInteractionBridge")
 
     @JsAccessible
-    fun emit(json: String) {
+    fun emit(
+        nonce: String?,
+        json: String,
+    ) {
+        if (!nonceMatches(nonce)) {
+            reportRejectedNonce()
+            return
+        }
         try {
             handle(json)
         } catch (e: LinkageError) {
@@ -69,18 +105,41 @@ internal class BrowserInteractionBridge(
      * The exception class only, never its message: page detail must not reach a log line.
      */
     private fun reportFailure(error: Throwable) {
-        val now = nowMs()
-        val shouldLog =
-            synchronized(this) {
-                (now - lastFailureLogMs !in 0 until RATE_WINDOW_MS).also { if (it) lastFailureLogMs = now }
-            }
-        if (!shouldLog) return
+        if (!shouldLogRejection()) return
         logger.debug(
             LogCategory.BROWSER,
             "Interaction batch rejected",
             mapOf("error" to (error::class.simpleName ?: "Throwable")),
         )
     }
+
+    /**
+     * A batch that did not carry this session's nonce.
+     *
+     * Shares [shouldLogRejection]'s window with [reportFailure]: a page that reaches the
+     * bridge can call it in a loop, so the line exists to make the attempt findable rather
+     * than to record every attempt. Deliberately does not log the value it received - that is
+     * page-controlled and must not reach a log line.
+     */
+    private fun reportRejectedNonce() {
+        if (!shouldLogRejection()) return
+        logger.debug(
+            LogCategory.BROWSER,
+            "Interaction batch rejected: missing or wrong channel nonce",
+            mapOf("reason" to "nonce"),
+        )
+    }
+
+    /** At most one rejection line per [RATE_WINDOW_MS], whichever reason produced it. */
+    private fun shouldLogRejection(): Boolean {
+        val now = nowMs()
+        return synchronized(this) {
+            (now - lastFailureLogMs !in 0 until RATE_WINDOW_MS).also { if (it) lastFailureLogMs = now }
+        }
+    }
+
+    /** [sessionNonce] is the expected value. See [matchesNonce]. */
+    private fun nonceMatches(candidate: String?): Boolean = matchesNonce(sessionNonce, candidate)
 
     // Each return is a distinct reason a batch costs the page nothing further: no page, no
     // reportable host, no budget. Folding them into one condition would hide which is which.
@@ -406,5 +465,71 @@ internal class BrowserInteractionBridge(
          * evicts `AuthEvent` / `TabEvent` / `FileChangeEvent` out from under a slow consumer.
          */
         const val MAX_ENTRIES_PER_PROCESS_WINDOW = 300
+
+        /** 128 bits of CSPRNG output, hex-encoded. See [newSessionNonce]. */
+        private const val NONCE_BYTES = 16
+
+        /** Enough to make the reset slot name unguessable. It guards no secret. */
+        private const val RESET_SLOT_BYTES = 12
+
+        /**
+         * Names the reset slot as the collector's own.
+         *
+         * A named constant rather than an inline literal so the line above stays inside the
+         * limit without ktlint wanting the body joined onto the signature - which it would, at
+         * exactly the limit, and which would read worse than this does.
+         */
+        private const val RESET_SLOT_PREFIX = "__boss_i_"
+
+        /**
+         * A fresh channel credential for one session - one [BrowserInteractionBridge], so one
+         * browser handle.
+         *
+         * [random] is injectable so a test can pin the encoding rather than the entropy.
+         */
+        internal fun newSessionNonce(random: () -> ByteArray = ::secureRandomBytes): String = hex(random(), NONCE_BYTES)
+
+        /**
+         * The host-chosen name of the collector's per-route reset hook - the one property it
+         * leaves on `window`.
+         *
+         * A fixed name was the bug: a page could pre-set `window.__bossInteractionStarted` and
+         * the collector returned early, so nothing was collected for the rest of that
+         * document's life. A name the page cannot guess removes that.
+         */
+        internal fun newResetSlotName(random: () -> ByteArray = ::secureRandomBytes): String =
+            RESET_SLOT_PREFIX + hex(random(), RESET_SLOT_BYTES)
+
+        private fun hex(
+            bytes: ByteArray,
+            count: Int,
+        ): String =
+            bytes
+                .take(count)
+                .joinToString("") { byte -> (byte.toInt() and 0xFF).toString(16).padStart(2, '0') }
+
+        /**
+         * Constant-time comparison, so the nonce cannot be recovered byte by byte from how
+         * long a rejection takes. Timing is a weak channel over an in-process bridge, but the
+         * comparison is free and the alternative is a `==` that short-circuits on the first
+         * differing byte.
+         */
+        internal fun matchesNonce(
+            expected: String,
+            candidate: String?,
+        ): Boolean {
+            val a = expected.encodeToByteArray()
+            // `?.` folds an absent credential into the length check: null and wrong-length are
+            // the same answer, and one branch keeps this to two returns, which is what
+            // detekt's ReturnCount allows. Semantics are unchanged - see the tests, which pin
+            // null, empty, prefix, suffix and case separately.
+            val b = candidate?.encodeToByteArray()
+            if (b == null || a.size != b.size) return false
+            var diff = 0
+            for (i in a.indices) diff = diff or (a[i].toInt() xor b[i].toInt())
+            return diff == 0
+        }
+
+        private fun secureRandomBytes(): ByteArray = ByteArray(NONCE_BYTES).also { SecureRandom().nextBytes(it) }
     }
 }

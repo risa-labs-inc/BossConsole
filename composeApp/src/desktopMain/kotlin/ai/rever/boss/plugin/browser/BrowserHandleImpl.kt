@@ -1898,7 +1898,12 @@ internal class BrowserHandleImpl(
         try {
             val window = frame.executeJavaScript<JsObject>("window")
             window?.putProperty(BrowserInteractionScript.BRIDGE_PROPERTY, interactionBridge)
-            frame.executeJavaScript<Any?>(BrowserInteractionScript.source)
+            frame.executeJavaScript<Any?>(
+                BrowserInteractionScript.source(
+                    nonce = interactionBridge.sessionNonce,
+                    slotName = interactionBridge.resetSlotName,
+                ),
+            )
         } catch (e: Exception) {
             // The exception CLASS, not its message. JxBrowser is unlikely to put a URL in
             // one, but this file's whole premise is that page-level detail never reaches a

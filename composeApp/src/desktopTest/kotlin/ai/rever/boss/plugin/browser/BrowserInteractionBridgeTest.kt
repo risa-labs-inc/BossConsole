@@ -32,6 +32,15 @@ class BrowserInteractionBridgeTest {
     private fun parse(json: String) = BrowserInteractionBridge.parseBatch(json)
 
     /**
+     * Fixed stand-ins for the two injected literals. These checks read the collector's source;
+     * they do not run it, so any value will do - what matters is that the placeholders are
+     * resolved and the code around them is readable. The runtime behaviour of both lives in
+     * [BrowserInteractionTamperResistanceTest] and in scripts/test/test-browser-collector.js.
+     */
+    private val collectorNonce = "0123456789abcdef0123456789abcdef"
+    private val collectorSlot = "__boss_i_0123456789abcdef01234567"
+
+    /**
      * The collector source with its `//` comments removed.
      *
      * The comments name the very properties the script must not read ("no getData, no
@@ -39,7 +48,8 @@ class BrowserInteractionBridgeTest {
      * checks below read the code and not the prose about it.
      */
     private fun collectorCode(): String =
-        BrowserInteractionScript.source
+        BrowserInteractionScript
+            .source(nonce = collectorNonce, slotName = collectorSlot)
             .lines()
             .joinToString("\n") { it.substringBefore("//") }
 
@@ -118,7 +128,7 @@ class BrowserInteractionBridgeTest {
                 nowMs = { clock },
             )
         val small = """[{"type":"CLICK","tag":"a"}]"""
-        repeat(100) { bridge.emit(small) }
+        repeat(100) { bridge.emit(bridge.sessionNonce, small) }
 
         // 100 single-entry batches is 100 of the 250-entry budget, so a full batch still fits.
         assertEquals(50, bridge.tryReserve(50), "unused reservation was not released")
@@ -139,7 +149,9 @@ class BrowserInteractionBridgeTest {
                 nowMs = { clock },
             )
         val unpublishable = (1..50).joinToString(",", "[", "]") { """{"type":"KEYSTROKE"}""" }
-        repeat(BrowserInteractionBridge.MAX_ENTRIES_PER_WINDOW) { bridge.emit(unpublishable) }
+        repeat(BrowserInteractionBridge.MAX_ENTRIES_PER_WINDOW) {
+            bridge.emit(bridge.sessionNonce, unpublishable)
+        }
 
         assertEquals(0, bridge.tryReserve(1), "an unparseable flood must exhaust the window")
     }

@@ -106,10 +106,25 @@ function kotlinExtractRegex(key) {
   return new RegExp(pattern);
 }
 
-/** Whether the sibling collector guards against being injected twice into one document. */
+/**
+ * Whether the sibling collector guards against being injected twice into one document.
+ *
+ * It no longer uses a fixed STARTED_FLAG: that name was readable from the page, so a site
+ * could pre-set it and switch collection off for the rest of the document. The collector now
+ * finds its own previous instance through a window property whose name the host injects at
+ * call time (`$slotName`), and returns early when that holds a callable.
+ *
+ * All three parts are checked, because all three are required for it to be a guard at all: a
+ * collector that read a marker it never wrote, or wrote one it never read, would re-register
+ * its listeners on every injection exactly as this script does. That the guard actually holds
+ * at run time is executed, not merely read, in scripts/test/test-browser-collector-tamper.js.
+ */
 function collectorHasReinjectionGuard() {
   const src = readSource(collectorKt);
-  return /STARTED_FLAG/.test(src) && /if \(window\.\$STARTED_FLAG\)/.test(src);
+  const publishesItsMarker = /Object\.defineProperty\(window, "\$slotName"/.test(src);
+  const findsItsPreviousInstance = /var prior = window\["\$slotName"\]/.test(src);
+  const returnsEarlyOnIt = /typeof prior === "function"/.test(src);
+  return publishesItsMarker && findsItsPreviousInstance && returnsEarlyOnIt;
 }
 
 // ---------------------------------------------------------------------------
@@ -293,7 +308,8 @@ console.log('\nDEFECT: the script has no re-injection guard');
 // The host re-runs injectPageHelpers on every main-frame NavigationFinished, and for a
 // single-page app that is a route change WITHIN one document - so the same document accrues
 // another pair of capture-phase listeners per route, permanently. The sibling collector
-// guards exactly this case with its own started-flag; this script has no equivalent.
+// guards exactly this case, by finding its own previous instance through a host-named window
+// property; this script has no equivalent.
 // Follow-up: guard the script the way BrowserInteractionScript guards its own.
 {
   const p = newPage();

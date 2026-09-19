@@ -44,9 +44,11 @@ import com.teamdev.jxbrowser.engine.RenderingMode
  *
  * **Known and accepted: the page can influence the verdict.** The flag lives on `window`, so a
  * page could pin it to `"0"` (forcing a re-attach per navigation, costing flicker) or to `"1"`
- * (suppressing the repair, leaving itself blank). This is the same exposure AGENTS.md already
- * records for `window.__bossInteraction`, and the worst case either way is cosmetic, so it is
- * written down rather than defended against. The re-attach cap below bounds the noisy direction.
+ * (suppressing the repair, leaving itself blank). This is a *wider* exposure than the one
+ * AGENTS.md now records for `window.__bossInteraction`, which is no longer left reachable by
+ * page scripts - this flag is, and nothing here defends against it. The worst case either way is
+ * cosmetic, so it is written down rather than fixed. The re-attach cap below bounds the noisy
+ * direction.
  *
  * **Not injected at document start, though the reason has changed.** This used to say the
  * dispatcher was unusable because `ensureCoBrowseInjectCallback` claimed the browser's single
