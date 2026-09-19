@@ -102,10 +102,18 @@ object McpArgumentSanitizer {
                 """(?:[A-Za-z][A-Za-z0-9._~+/-]*[ \t]+){0,3}(?:"[^"]*"|'[^']*'|[^\s&,;}]+)""",
         )
 
+    /**
+     * A sensitive keyword, a `:` or `=`, then the value. The value may open with auth scheme
+     * words (`Bearer`, `Basic`, ...): the scheme is not the secret, and a value class that
+     * stopped at the first space used to consume the scheme word alone and leave the credential
+     * beside a `[REDACTED]` label - the later [bearer] rule could never fire, because its
+     * `Bearer` had already been replaced (#836).
+     */
     private val sensitiveAssignment =
         Regex(
             """(?i)(?:password|token|secret|api[_-]?key|credential)""" +
-                """\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s&,;}]+)""",
+                """\s*[:=]\s*(?:(?:Bearer|Basic|Token|Negotiate|Digest|NTLM)\s+){0,3}""" +
+                """(?:"[^"]*"|'[^']*'|[^\s&,;}]+)""",
         )
     private val bearer = Regex("""(?i)Bearer\s+[^\s"',;}]+""")
 

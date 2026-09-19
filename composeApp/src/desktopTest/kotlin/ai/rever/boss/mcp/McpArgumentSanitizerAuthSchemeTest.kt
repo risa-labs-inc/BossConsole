@@ -54,7 +54,13 @@ class McpArgumentSanitizerAuthSchemeTest {
 
     @Test
     fun `ordinary sensitive assignments still use their original value boundary`() {
-        assertEquals("note [REDACTED] settings remain", command("note secret: Basic settings remain"))
+        // `Basic` used to pin the boundary here, but a scheme word after a sensitive keyword is
+        // now absorbed together with the value it announces (#836); the scheme boundary lives in
+        // McpArgumentSanitizerOrderLeakTest. An ordinary value keeps the original boundary.
+        assertEquals(
+            "note [REDACTED] settings remain",
+            command("note secret: correct settings remain"),
+        )
     }
 
     @Test
