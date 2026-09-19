@@ -1,8 +1,10 @@
 package ai.rever.boss.components.plugin.panels.left_top
 
 import kotlinx.coroutines.runBlocking
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import java.io.File
+import java.io.IOException
 import java.nio.file.Files
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -68,7 +70,14 @@ class DesktopFileScannerTest {
         File(real, "file.txt").writeText("hi")
         val linkDir = tempDir()
         val link = File(linkDir, "link")
-        Files.createSymbolicLink(link.toPath(), real.toPath())
+        try {
+            Files.createSymbolicLink(link.toPath(), real.toPath())
+        } catch (_: UnsupportedOperationException) {
+            assumeTrue(false, "This filesystem does not support symbolic links")
+        } catch (e: IOException) {
+            if (!System.getProperty("os.name").startsWith("Windows")) throw e
+            assumeTrue(false, "Symbolic link creation is not permitted on this Windows host")
+        }
         assertTrue(directoryHasChildren(link.absolutePath))
     }
 
