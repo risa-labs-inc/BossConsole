@@ -27,12 +27,54 @@ import java.io.InputStreamReader
 object WorkspacePlaceholders {
     private val logger = BossLogger.forComponent("WorkspacePlaceholders")
 
-    // Also the guards in [processPlaceholders], so a guard and its substitution cannot drift.
-    // Every placeholder whose value costs something to compute needs one: a mkdir, a `git`
-    // subprocess and a directory listing respectively.
+    // Also the substitution branches in [processPlaceholders], so a branch and its
+    // substitution cannot drift. Every placeholder whose value costs something to compute
+    // needs one: a mkdir, a `git` subprocess and a directory listing respectively.
     private const val PROJECT_PATH_PLACEHOLDER = "{projectPath}"
     private const val GIT_REMOTE_URL_PLACEHOLDER = "{gitRemoteUrl}"
     private const val CLAUDE_CONTINUE_FLAG_PLACEHOLDER = "{claudeContinueFlag}"
+    private const val CURRENT_FILE_PLACEHOLDER = "{currentFile}"
+
+    /**
+     * Every token the pipeline substitutes, as ONE alternation: the pipeline is one scan
+     * of the template, never of the values. [Regex.replace] with a transform inserts each
+     * value without rescanning it, which is what makes substituted spans inert data -
+     * placeholder syntax inside a value is left as literal text instead of being expanded
+     * by a later pass. The sequential whole-string `replace` passes this replaces re-scanned
+     * everything an earlier pass had substituted in: a project path legitimately named
+     * `{claudeContinueFlag}` (braces are legal in POSIX and Windows filenames) came out as
+     * `--continue`, and a value containing `{projectPath}` was re-expanded by the raw second
+     * stage of the quoting logic into a wrong, doubled path.
+     */
+    private val placeholderTokens =
+        Regex("""\{projectPath\}|\{gitRemoteUrl\}|\{currentFile\}|\{claudeContinueFlag\}""")
+
+    /** Just [PROJECT_PATH_PLACEHOLDER], for [substituteProjectPath]'s single-token scan. */
+    private val projectPathToken = Regex("""\{projectPath\}""")
+
+    /**
+     * The substitution for one data-placeholder match at [tokenRange] in [template]:
+     * [PROJECT_PATH_PLACEHOLDER], [GIT_REMOTE_URL_PLACEHOLDER] and [CURRENT_FILE_PLACEHOLDER]
+     * carry arbitrary bytes - paths and URLs may contain quotes, `$()`, backticks, newlines,
+     * globs - so in shell-command context ([quote] true: `initialCommand`, which is typed
+     * into a live shell) a BARE occurrence is substituted as a shell-quoted literal argument
+     * and its metacharacters stay inert. In non-shell context (url, workingDirectory,
+     * filePath - not shell-parsed) every occurrence is verbatim. An occurrence the template
+     * already wraps in a quote character is left raw: the documented opt-out against
+     * double-quoting a template like `cd "{projectPath}"`.
+     */
+    private fun dataValueFor(
+        template: CharSequence,
+        tokenRange: IntRange,
+        value: String,
+        quote: Boolean,
+    ): String {
+        if (!quote) return value
+        val before = template.getOrNull(tokenRange.first - 1)
+        val after = template.getOrNull(tokenRange.last + 1)
+        val bare = (before != '"' && before != '\'') && (after != '"' && after != '\'')
+        return if (bare) CommandProcessor.quotePath(value) else value
+    }
 
     /**
      * Substitute `{projectPath}` with [pathValue].
@@ -43,23 +85,21 @@ object WorkspacePlaceholders {
      * argument — but occurrences a template already wraps in a quote (e.g. a
      * user who worked around the bug with `cd "{projectPath}"`) are left raw,
      * to avoid double-quoting like `cd "'…'"`.
+     *
+     * ONE scan of [content]: the value is inserted without being rescanned, so a path
+     * value that itself contains `{projectPath}` - braces are legal in a filename on
+     * POSIX and Windows alike - stays byte-intact. The two-stage form this replaces
+     * re-expanded exactly that: the raw second stage re-scanned the text the quoting
+     * stage had just substituted in.
      */
     internal fun substituteProjectPath(
         content: String,
         pathValue: String,
         quote: Boolean,
-    ): String {
-        if (!quote) return content.replace(PROJECT_PATH_PLACEHOLDER, pathValue)
-        val quoted = CommandProcessor.quotePath(pathValue)
-        // Quote only occurrences NOT already adjacent to a quote char. The
-        // lambda form does literal replacement (no $-group interpretation),
-        // so `quoted` containing quotes/backslashes is inserted as-is.
-        val bare = Regex("(?<![\"'])\\{projectPath\\}(?![\"'])")
-        var result = bare.replace(content) { quoted }
-        // Any leftover {projectPath} was already quote-wrapped by the template → raw.
-        result = result.replace("{projectPath}", pathValue)
-        return result
-    }
+    ): String =
+        projectPathToken.replace(content) { match ->
+            dataValueFor(content, match.range, pathValue, quote)
+        }
 
     /**
      * Process placeholders in template content.
@@ -69,6 +109,19 @@ object WorkspacePlaceholders {
      * - {gitRemoteUrl}: Git remote origin URL converted to web URL
      * - {currentFile}: Currently open file path
      *
+     * Post-substitution invariants. Both matter because the shell context below
+     * (`quoteProjectPath = true`, a tab's `initialCommand`) is typed into a live shell,
+     * and a Space file - shareable across machines since #1194 - can put any of these
+     * tokens in a template:
+     * - substituted spans are inert data: ONE scan of the template substitutes each
+     *   token, and text that arrives via a value is never rescanned, so placeholder
+     *   syntax inside a substituted value stays literal (see [placeholderTokens]);
+     * - in shell command context every DATA placeholder ({projectPath}, {gitRemoteUrl},
+     *   {currentFile}) is substituted shell-quoted when bare (see [dataValueFor]), so a
+     *   value carrying `$()`, backticks, semicolons, newlines or globs cannot execute or
+     *   split at the shell boundary. {claudeContinueFlag} is exempt: its value is
+     *   app-generated ("--continue" or empty), never data.
+     *
      * @param content The content string with placeholders
      * @param projectPath The current project path, or null/blank for no project. This function
      *   handles the no-project case for all three project placeholders consistently, so a
@@ -77,12 +130,12 @@ object WorkspacePlaceholders {
      *   the no-project branch below is reached only by a direct caller. Passing an
      *   already-resolved path is not a second answer, just a no-op.
      * @param currentFile The currently open file (optional)
-     * @param quoteProjectPath When true, {projectPath} is substituted as a
-     *   shell-quoted argument. Pass true ONLY for shell command content
-     *   (e.g. `cd {projectPath} && claude`) so a path with spaces/quotes —
-     *   like `AI Workflow Tools' Exports` — survives as one argument. Leave
+     * @param quoteProjectPath When true, shell command content: every data placeholder is
+     *   substituted as a shell-quoted argument, so a path with spaces/quotes — like
+     *   `AI Workflow Tools' Exports` — survives as one argument. Pass true ONLY for shell
+     *   command content (e.g. `cd {projectPath} && claude`). Leave
      *   false for raw paths (workingDirectory, filePath, url), which are NOT
-     *   shell-parsed and must not be quoted. When true, {projectPath} should
+     *   shell-parsed and must not be quoted. When true, a placeholder should
      *   stand alone as a whole argument (`{projectPath}/sub` becomes `'…'/sub`,
      *   which POSIX concatenates but PowerShell does not).
      * @return The content with placeholders replaced
@@ -102,47 +155,57 @@ object WorkspacePlaceholders {
         //
         // Reachable only by a direct caller. Every production caller resolves first, because
         // it needs the same directory for a tab's workingDirectory, so with no project
-        // selected all three see ~/BossProjects and take the has-a-project branch: the git
-        // lookup runs in the projects folder and finds no remote, and the session lookup
-        // misses. That is what the old code did with the home directory too. What this buys is
-        // that the branches agree with each other, whichever one a caller lands on.
+        // selected all three see ~/BossProjects and take the has-a-project branch - see
+        // DefaultWorkingDirectory. What this buys is that the branches agree with each
+        // other, whichever one a caller lands on.
         val selectedProject = DefaultWorkingDirectory.selectedOrNull(projectPath)
 
-        // Replace project path (shell-quoted when used inside a command). With no project the
-        // fallback is ~/BossProjects, not the home directory - see DefaultWorkingDirectory.
-        //
-        // Guarded on the placeholder being present, which substituteProjectPath would handle
-        // by itself: the point is that DefaultWorkingDirectory.ensureDefaultDirectory() *creates a directory*,
-        // and evaluating it for content with no {projectPath} in it - "{gitRemoteUrl}", a
-        // plain string - makes a mkdir a side effect of a function called processPlaceholders.
-        if (result.contains(PROJECT_PATH_PLACEHOLDER)) {
-            val pathValue = selectedProject ?: DefaultWorkingDirectory.ensureDefaultDirectory()
-            result = substituteProjectPath(result, pathValue, quoteProjectPath)
+        // Computed on the first token that needs each value, never before. The sequential
+        // passes this replaces guarded each lookup for the same reason: producing a value
+        // costs something - ensureDefaultDirectory *creates a directory*, getGitRemoteUrl
+        // forks `git remote get-url origin` and waits on it, checkClaudeSessionExists lists
+        // ~/.claude/projects - and paying that for content that never mentions the
+        // placeholder made it a side effect of a function called processPlaceholders.
+        val pathValue by lazy {
+            selectedProject ?: DefaultWorkingDirectory.ensureDefaultDirectory()
         }
+        val gitRemoteUrl by lazy {
+            selectedProject?.let { getGitRemoteUrl(it) } ?: "https://google.com"
+        }
+        val claudeContinueFlag by lazy { getClaudeContinueFlag(selectedProject) }
 
-        // Replace git remote URL. Deliberately not resolved to the default: the projects
-        // folder is not a repository, so "no project" means there is no remote to link to.
-        //
-        // Guarded for the same reason as {projectPath}, and this is the expensive one:
-        // getGitRemoteUrl forks `git remote get-url origin` and waits for it. Restoring a
-        // workspace calls this once per placeholder-carrying field on the composition thread,
-        // so an unguarded lookup was a subprocess spawn per tab for content that never asked
-        // for a remote.
-        if (result.contains(GIT_REMOTE_URL_PLACEHOLDER)) {
-            val gitUrl = selectedProject?.let { getGitRemoteUrl(it) } ?: "https://google.com"
-            result = result.replace(GIT_REMOTE_URL_PLACEHOLDER, gitUrl)
-        }
+        // ONE scan of the template (see [placeholderTokens]): each token's value is
+        // inserted verbatim where the token stands in the template and is never rescanned,
+        // so text that arrives via a value cannot inject placeholder syntax or rewrite
+        // command structure. With no current file, {currentFile} stays literal, as the
+        // sequential pipeline already left it.
+        val template = result
+        result =
+            placeholderTokens.replace(template) { match ->
+                when (match.value) {
+                    PROJECT_PATH_PLACEHOLDER -> {
+                        dataValueFor(template, match.range, pathValue, quoteProjectPath)
+                    }
 
-        // Replace current file
-        if (currentFile != null) {
-            result = result.replace("{currentFile}", currentFile)
-        }
+                    GIT_REMOTE_URL_PLACEHOLDER -> {
+                        dataValueFor(template, match.range, gitRemoteUrl, quoteProjectPath)
+                    }
 
-        // Replace Claude continue flag based on session existence. Guarded too:
-        // checkClaudeSessionExists lists ~/.claude/projects/<encoded>.
-        if (result.contains(CLAUDE_CONTINUE_FLAG_PLACEHOLDER)) {
-            result = result.replace(CLAUDE_CONTINUE_FLAG_PLACEHOLDER, getClaudeContinueFlag(selectedProject))
-        }
+                    CURRENT_FILE_PLACEHOLDER -> {
+                        currentFile
+                            ?.let { dataValueFor(template, match.range, it, quoteProjectPath) }
+                            ?: match.value
+                    }
+
+                    CLAUDE_CONTINUE_FLAG_PLACEHOLDER -> {
+                        claudeContinueFlag
+                    }
+
+                    else -> {
+                        match.value
+                    }
+                }
+            }
 
         // Normalize command separators for current platform (MUST be last step)
         result = CommandProcessor.normalizeCommand(result)
