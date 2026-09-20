@@ -401,6 +401,12 @@ fun main(args: Array<String>) {
     // Configure MCP workspace tool window creator
     ai.rever.boss.mcp.WorkspaceMcpToolProvider.windowCreator = { WindowManager.createNewWindow().id }
 
+    // Session self-awareness tools (session_*). These read the host's own MCP operation ledger,
+    // so they are registered here rather than from inside the registry's init, which would be a
+    // provider reaching back into the object still constructing it.
+    ai.rever.boss.mcp.McpToolRegistryImpl
+        .registerProvider(ai.rever.boss.mcp.session.SessionMcpToolProvider)
+
     // Create initial window BEFORE application{} to prevent auto-recreation
     if (!chromiumNeedsDownload) {
         WindowManager.createNewWindow()
