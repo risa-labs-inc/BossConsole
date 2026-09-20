@@ -162,9 +162,14 @@ class ChromiumAutoDownloaderTest {
         runBlocking {
             val attempted = mutableListOf<String>()
 
+            val zipSha = sha256Of(File(root, "sha-src-zip").apply { writeText("zip-bytes") })
             val result =
                 ChromiumAutoDownloader.installFromCandidates(
-                    candidates = listOf(candidate("supabase", "https://supabase/a.zip"), candidate("github", "https://github/a.zip")),
+                    candidates =
+                        listOf(
+                            candidate("supabase", "https://supabase/a.zip"),
+                            candidate("github", "https://github/a.zip", sha = zipSha),
+                        ),
                     version = "9.2.0",
                     targetDir = target.toPath(),
                     staged = false,
@@ -193,7 +198,9 @@ class ChromiumAutoDownloaderTest {
                     candidates =
                         listOf(
                             candidate("supabase", "https://supabase/a.zip", sha = goodSha),
-                            candidate("github", "https://github/a.zip"), // no hash available
+                            // The integrity gate refuses hashless candidates,
+                            // so the backup now pins the bytes it serves too.
+                            candidate("github", "https://github/a.zip", sha = goodSha),
                         ),
                     version = "9.2.0",
                     targetDir = target.toPath(),
@@ -242,9 +249,10 @@ class ChromiumAutoDownloaderTest {
     @Test
     fun `staged install writes the commit marker last`() =
         runBlocking {
+            val zipSha = sha256Of(File(root, "sha-src-zip").apply { writeText("zip-bytes") })
             val result =
                 ChromiumAutoDownloader.installFromCandidates(
-                    candidates = listOf(candidate("github", "https://github/a.zip")),
+                    candidates = listOf(candidate("github", "https://github/a.zip", sha = zipSha)),
                     version = "9.2.0",
                     targetDir = pending.toPath(),
                     staged = true,
