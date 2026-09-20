@@ -175,13 +175,15 @@ private fun splitTableRow(trimmed: String): List<String> =
 // Alternatives ordered so that at any position the longest-delimiter form wins
 // (e.g. ** matches as bold before * can match as italic). `\b_..._\b` keeps
 // snake_case identifiers from reading as italics (`_` is a word character).
+// `*` and `__` delimiters additionally require non-word flanks (left/right-flanking
+// rules), so intraword runs like 2*3*4 or a__b__c render as literal text.
 private val INLINE =
     Regex(
         "(`[^`]+`)" +
-            "|(\\*\\*[^*]+\\*\\*)|(__[^_]+__)" +
+            "|(\\*\\*[^*]+\\*\\*)|((?<!\\w)__[^_]+__(?!\\w))" +
             "|(~~[^~]+~~)" +
             "|(\\[[^\\]]+\\]\\([^)\\s]+\\))" +
-            "|(\\*[^*\\s][^*]*\\*)|(\\b_[^_\\s][^_]*_\\b)",
+            "|((?<![\\w*])\\*[^*\\s][^*]*\\*(?![\\w*]))|(\\b_[^_\\s][^_]*_\\b)",
     )
 private val LINK = Regex("^\\[([^\\]]+)\\]\\(([^)\\s]+)\\)$")
 
