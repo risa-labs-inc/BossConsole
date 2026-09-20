@@ -401,6 +401,13 @@ fun main(args: Array<String>) {
     // Configure MCP workspace tool window creator
     ai.rever.boss.mcp.WorkspaceMcpToolProvider.windowCreator = { WindowManager.createNewWindow().id }
 
+    // Runtime diagnostics tools (telemetry_*). Registered here rather than in McpToolRegistryImpl's
+    // init because the provider is desktopMain: it attaches to other JVMs through jdk.attach, and
+    // commonMain must not reach a desktop only type. The registry recomputes on every register, so
+    // arriving after the workspace provider costs nothing.
+    ai.rever.boss.mcp.McpToolRegistryImpl
+        .registerProvider(ai.rever.boss.mcp.telemetry.TelemetryMcpToolProvider)
+
     // Create initial window BEFORE application{} to prevent auto-recreation
     if (!chromiumNeedsDownload) {
         WindowManager.createNewWindow()
