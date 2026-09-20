@@ -2058,6 +2058,8 @@ workspace by selecting the tools you need." Tools install app-wide, not into a S
 
 - [MCP for agent-less operators](docs/mcp-agentless-operators.md) - Toolbox kill-switches and attach path
 
+- [Runtime diagnostics for agents](docs/TELEMETRY.md) - the `telemetry_*` MCP tools: CPU sampling, deadlock detection and heap inspection of processes an agent spawned
+
 - [Core Subsystems](docs/SUBSYSTEMS.md) - Auth, UI, keyboard shortcuts, threading, default applications, runner, BossTerm
 - [BossEditor](docs/BOSSEDITOR.md) - External editor dependency, LSP, PSI, editor features
 - [Application Features](docs/FEATURES.md) - Performance monitoring, dashboard, downloads, Chromium branding
