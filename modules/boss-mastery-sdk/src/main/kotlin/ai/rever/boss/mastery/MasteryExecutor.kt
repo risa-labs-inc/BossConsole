@@ -41,6 +41,14 @@ class MasteryExecutor(
             val startTime = System.currentTimeMillis()
             send(MasteryProgress.Started(mastery.id, mastery.nodes.size))
 
+            // A definition reaching the runtime may have been persisted by an
+            // older or more permissive writer; the walk refuses hostile documents
+            // fail-closed, with a verdict, before a single capability invocation.
+            MasteryStructureGuard.executionRefusal(mastery)?.let { refusal ->
+                send(MasteryProgress.Failed("Invalid mastery definition: $refusal", ""))
+                return@channelFlow
+            }
+
             // Accumulates node outputs; "INPUT" is the virtual source node
             val nodeOutputs = mutableMapOf<String, Map<String, String>>("INPUT" to input)
             val outputBudget = AtomicLong()
