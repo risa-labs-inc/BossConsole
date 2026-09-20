@@ -42,3 +42,9 @@ jobs:
 
       - name: Test
         run: npm test
+
+      # Spawns the broker as a real MCP server over stdio, drives it with a real
+      # client, shells out to the real CLI as the operator, and asserts 18
+      # properties end to end. Exits non-zero on any of them.
+      - name: Demo (end-to-end, self-checking)
+        run: npm run demo

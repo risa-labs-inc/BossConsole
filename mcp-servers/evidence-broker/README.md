@@ -136,6 +136,29 @@ boss-evidence-broker verify           # does the ledger still verify?
 boss-evidence-broker log 20           # the last 20 sealed entries
 ```
 
+### See it work
+
+```bash
+npm run demo
+```
+
+One command, about eight seconds, no configuration. It stands up a real HTTP server on
+loopback that **echoes the credential back in both a response header and the body**, spawns
+the broker as a real MCP server over real stdio, connects a real MCP client as the agent, and
+shells out to the real CLI as the operator — because that separation is the actual trust
+boundary, not an implementation detail.
+
+The transcript walks through: the agent discovering the credential without its value; a
+request to `https://127.0.0.1.evil.test/` being refused *without* interrupting the operator,
+even though that hostname contains `127.0.0.1` as a substring; a legitimate request blocking
+on a human; `approve` releasing it; the server receiving `Bearer sk-live-demo-…` while the
+agent receives `Bearer [redacted:DEMO_TOKEN]`; a replay of the spent grant being refused; the
+sealed ledger; and finally one field of one entry being edited on disk, after which `verify`
+reports `{"ok": false, "brokenAtSeq": 2}` and exits non-zero.
+
+It asserts all of that as it goes — **18 checks** — and exits non-zero if any fails, so it is
+an integration check rather than a pretty printer. It runs in CI on all four matrix jobs.
+
 ### The agent's tool surface
 
 | Tool | Purpose |
