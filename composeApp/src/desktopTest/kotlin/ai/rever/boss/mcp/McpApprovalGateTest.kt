@@ -128,4 +128,30 @@ class McpApprovalGateTest {
             d1.await()
             d2.await()
         }
+
+    @Test
+    fun `deny all rejects exactly the visible snapshot without persisting policy`() =
+        runBlocking {
+            val bus = McpApprovalBus(defaultTimeoutMs = 10_000L, maxPendingRequests = 4)
+            val first = async { bus.requestApproval("tool_1", "provider-a", emptyMap()) }
+            val second = async { bus.requestApproval("tool_2", "provider-b", emptyMap()) }
+            bus.pendingList.first { it.size == 2 }
+
+            assertEquals(2, bus.denyAllPending())
+            assertEquals(
+                "Operator rejected all pending actions",
+                assertIs<McpApprovalDecision.Denied>(first.await()).reason,
+            )
+            assertEquals(
+                "Operator rejected all pending actions",
+                assertIs<McpApprovalDecision.Denied>(second.await()).reason,
+            )
+            assertTrue(bus.pendingList.value.isEmpty())
+
+            val later = async { bus.requestApproval("tool_3", "provider-c", emptyMap()) }
+            val laterRequest = bus.pendingList.first { it.size == 1 }.single()
+            assertEquals("tool_3", laterRequest.toolName)
+            assertTrue(bus.approve(laterRequest.id))
+            assertIs<McpApprovalDecision.Approved>(later.await())
+        }
 }

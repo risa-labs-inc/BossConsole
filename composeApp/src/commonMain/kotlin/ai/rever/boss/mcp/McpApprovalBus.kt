@@ -214,6 +214,33 @@ open class McpApprovalBus(
         }
         return completed
     }
+
+    /**
+     * Reject every request that is pending at the instant this method takes its snapshot.
+     *
+     * New requests may arrive immediately afterwards and are deliberately left alone: this is an
+     * operator response to the queue they can see, not a hidden global kill-switch. The snapshot
+     * is taken under the same lock that admits requests so a request cannot be half-registered
+     * while the bulk decision is assembled. Each caller still removes its own request from
+     * [pendingList] in [requestApproval]'s `finally` block, preserving the single cleanup path.
+     *
+     * Bulk rejection never persists a policy. A burst of unrelated calls must not turn one click
+     * into a durable DENY for multiple tools or providers.
+     *
+     * @return the number of callers whose still-pending decision was completed by this call.
+     */
+    fun denyAllPending(reason: String = "Operator rejected all pending actions"): Int {
+        val pending = synchronized(lock) { activeRequests.values.toList() }
+        val denied = pending.count { it.deferred.complete(McpApprovalDecision.Denied(reason)) }
+        if (denied > 0) {
+            logger.info(
+                LogCategory.SYSTEM,
+                "Operator denied all pending MCP tool executions",
+                mapOf("count" to denied),
+            )
+        }
+        return denied
+    }
 }
 
 /** Each delivered request belongs to one window until answered, timed out or that window closes. */

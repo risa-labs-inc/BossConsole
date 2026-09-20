@@ -871,6 +871,9 @@ internal fun BossAppDialogs(state: BossAppState) {
             onDeny = { reason, persistPolicy ->
                 McpToolRegistryImpl.approvalBus.deny(approvalRequest.id, reason, persistPolicy)
             },
+            onDenyAllPending = {
+                McpToolRegistryImpl.approvalBus.denyAllPending()
+            },
         )
     }
 
