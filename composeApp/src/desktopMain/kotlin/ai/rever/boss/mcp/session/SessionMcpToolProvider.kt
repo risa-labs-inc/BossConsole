@@ -22,7 +22,7 @@ import java.io.File
 import java.lang.management.ManagementFactory
 
 /**
- * Lets an agent see its own governed session, exposed as `mcp__boss__session_*`.
+ * Lets an agent see the governed MCP session it is part of, exposed as `mcp__boss__session_*`.
  *
  * ## Why this can only exist inside BOSS
  *
@@ -37,6 +37,19 @@ import java.lang.management.ManagementFactory
  * Agents get stuck, and cannot tell. They repeat a call that has already failed three times, they
  * do not notice that a call was **denied by policy and never ran**, and they cannot answer "what
  * have I already tried". Nothing in the session, human or agent, can answer that today.
+ *
+ * ## Scope: the whole process, not one agent
+ *
+ * `McpToolRegistryImpl` is a process-wide singleton and `McpOperationRecord` carries **no caller
+ * identity** - no session id, no terminal pane, no client name. So these tools report every MCP
+ * call made in this BOSS process, by every agent in it, and cannot attribute a call to one of
+ * them.
+ *
+ * That is worth stating plainly because it cuts both ways. It is a limitation if you wanted "what
+ * did *I* do", and there is no way to answer that today without a caller id on the record. It is
+ * a feature if you are running two agents on overlapping work, because a loop or a policy block
+ * caused by one of them is visible to the other. What it cannot do is tell them apart, so it is
+ * not a coordination mechanism.
  *
  * ## Why two tools rather than one
  *
@@ -92,10 +105,12 @@ internal object SessionMcpToolProvider : McpToolProvider {
         McpToolDefinition(
             name = SESSION_REVIEW,
             description =
-                "Review your own MCP activity this session: how many calls you made, which failed, which were " +
-                    "blocked by policy and never actually ran, and whether you are stuck repeating something. " +
+                "Review MCP activity in this BOSS session: how many calls were made, which failed, which were " +
+                    "blocked by policy and never actually ran, and whether something is stuck repeating. " +
                     "Call this when a task is not converging, before retrying a failing tool again, or to " +
-                    "recall what you have already tried. Returns tool names and counts only, no arguments.",
+                    "recall what has already been tried. Covers EVERY agent running in this BOSS process, " +
+                    "not only you, and the ledger records no caller identity, so calls cannot be attributed " +
+                    "to a particular agent. Returns tool names and counts only, no arguments.",
             inputSchema =
                 """
                 {

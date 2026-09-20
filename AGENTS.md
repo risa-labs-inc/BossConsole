@@ -2058,6 +2058,8 @@ workspace by selecting the tools you need." Tools install app-wide, not into a S
 
 - [MCP for agent-less operators](docs/mcp-agentless-operators.md) - Toolbox kill-switches and attach path
 
+- [Agent session self-awareness](docs/SESSION_TOOLS.md) - the `session_*` MCP tools: an agent can read the host's governed call ledger to see what failed, what policy blocked, and whether something is stuck in a loop (process-wide, with no per-agent attribution)
+
 - [Core Subsystems](docs/SUBSYSTEMS.md) - Auth, UI, keyboard shortcuts, threading, default applications, runner, BossTerm
 - [BossEditor](docs/BOSSEDITOR.md) - External editor dependency, LSP, PSI, editor features
 - [Application Features](docs/FEATURES.md) - Performance monitoring, dashboard, downloads, Chromium branding
