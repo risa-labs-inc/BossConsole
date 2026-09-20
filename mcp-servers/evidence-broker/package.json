@@ -1,0 +1,27 @@
+{
+  "name": "@boss/evidence-broker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Credential brokering and tamper-evident evidence capture for BOSS operators: an agent names a secret it never sees, the broker host-parses the egress target, and every decision lands in a hash-chained append-only ledger.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "boss-evidence-broker": "./dist/src/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test \"dist/test/*.test.js\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}
