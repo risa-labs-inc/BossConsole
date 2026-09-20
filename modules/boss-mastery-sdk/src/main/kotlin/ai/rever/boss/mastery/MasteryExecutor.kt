@@ -20,6 +20,7 @@ import org.slf4j.LoggerFactory
  */
 class MasteryExecutor(
     private val capabilityResolver: CapabilityResolver,
+    private val executionStore: ExecutionStore? = null,
 ) {
     private val logger = LoggerFactory.getLogger(MasteryExecutor::class.java)
 
@@ -33,13 +34,35 @@ class MasteryExecutor(
     fun execute(
         mastery: MasteryDefinition,
         input: Map<String, String>,
+        executionId: String? = null,
+        initialNodeOutputs: Map<String, Map<String, String>>? = null,
+        previousOutputs: Map<String, Map<String, String>>? = null,
+        feedbacks: Map<String, String>? = null,
     ): Flow<MasteryProgress> =
         channelFlow {
             val startTime = System.currentTimeMillis()
             send(MasteryProgress.Started(mastery.id, mastery.nodes.size))
 
+            // If an executionId + store were provided, create an execution record.
+            if (executionId != null && executionStore != null) {
+                executionStore.createExecution(
+                    MasteryExecution(
+                        executionId = executionId,
+                        masteryId = mastery.id,
+                        input = input,
+                        state = "running",
+                    ),
+                )
+            }
+
             // Accumulates node outputs; "INPUT" is the virtual source node
             val nodeOutputs = mutableMapOf<String, Map<String, String>>("INPUT" to input)
+            // Merge any provided initial node outputs (reused checkpoints)
+            if (initialNodeOutputs != null) {
+                for ((k, v) in initialNodeOutputs) {
+                    if (k != "INPUT") nodeOutputs[k] = v
+                }
+            }
 
             try {
                 val levels =
@@ -62,7 +85,23 @@ class MasteryExecutor(
                             level
                                 .map { node ->
                                     async {
-                                        executeNode(node, snapshot) { progress ->
+                                        // If this node already has an output in the snapshot (reused checkpoint),
+                                        // skip executing it and emit NodeStarted/NodeCompleted based on existing output.
+                                        val existing = snapshot[node.id]
+                                        if (existing != null) {
+                                            this@channelFlow.send(
+                                                MasteryProgress.NodeStarted(
+                                                    node.id,
+                                                    node.displayName.ifEmpty { "${node.pluginId}/${node.action}" },
+                                                ),
+                                            )
+                                            this@channelFlow.send(
+                                                MasteryProgress.NodeCompleted(node.id, existing, 0L),
+                                            )
+                                            return@async node.id to existing
+                                        }
+
+                                        executeNode(node, snapshot, executionId, previousOutputs, feedbacks) { progress ->
                                             this@channelFlow.send(progress)
                                         }
                                     }
@@ -83,6 +122,9 @@ class MasteryExecutor(
     private suspend fun executeNode(
         node: MasteryNode,
         nodeOutputs: Map<String, Map<String, String>>,
+        executionId: String?,
+        previousOutputs: Map<String, Map<String, String>>?,
+        feedbacks: Map<String, String>?,
         emit: suspend (MasteryProgress) -> Unit,
     ): Pair<String, Map<String, String>> {
         emit(
@@ -92,17 +134,53 @@ class MasteryExecutor(
             ),
         )
 
-        val resolvedInput = resolveNodeInput(node, nodeOutputs)
+        val resolvedInput = resolveNodeInput(node, nodeOutputs).toMutableMap()
+
+        // If this node has a previous output (from an earlier attempt) or feedback, expose
+        // them to the capability via namespaced keys. Plugins/adapters can read these keys.
+        val prev = previousOutputs?.get(node.id)
+        if (prev != null) {
+            for ((k, v) in prev) {
+                resolvedInput["_checkpoint.previousOutput.$k"] = v
+            }
+        }
+        val fb = feedbacks?.get(node.id)
+        if (fb != null) {
+            resolvedInput["_checkpoint.feedback"] = fb
+        }
         val nodeStart = System.currentTimeMillis()
         var lastError: Throwable? = null
 
         for (attempt in 0..node.maxRetries) {
             try {
-                val output =
-                    withTimeout(node.timeoutMs) {
-                        capabilityResolver.invoke(node.pluginId, node.action, resolvedInput)
+                val attemptStart = System.currentTimeMillis()
+                val output = withTimeout(node.timeoutMs) {
+                    capabilityResolver.invoke(node.pluginId, node.action, resolvedInput)
+                }
+
+                val attemptCompleted = System.currentTimeMillis()
+                val duration = attemptCompleted - nodeStart
+
+                // Persist a checkpoint if we have an execution store + id
+                if (executionId != null && executionStore != null) {
+                    val checkpoint =
+                        NodeCheckpoint(
+                            checkpointId = java.util.UUID.randomUUID().toString(),
+                            executionId = executionId,
+                            nodeId = node.id,
+                            attempt = attempt + 1,
+                            input = resolvedInput.toMap(),
+                            output = output.toMap(),
+                            startedAt = attemptStart,
+                            completedAt = attemptCompleted,
+                        )
+                    try {
+                        executionStore.saveCheckpoint(checkpoint)
+                    } catch (e: Exception) {
+                        logger.warn("Failed to save checkpoint for node {}: {}", node.id, e.message)
                     }
-                val duration = System.currentTimeMillis() - nodeStart
+                }
+
                 emit(MasteryProgress.NodeCompleted(node.id, output, duration))
                 return node.id to output
             } catch (e: kotlinx.coroutines.CancellationException) {

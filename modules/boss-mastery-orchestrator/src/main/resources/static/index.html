@@ -1,0 +1,54 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Mastery Checkpoints</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 16px; }
+    .exec { border: 1px solid #ddd; padding: 8px; margin-bottom: 8px; }
+    .checkpoint { margin-left: 12px; }
+  </style>
+</head>
+<body>
+  <h1>Mastery Executions</h1>
+  <div id="content">Loading...</div>
+  <script>
+    async function load() {
+      const res = await fetch('/api/executions')
+      const data = await res.json()
+      const root = document.getElementById('content')
+      root.innerHTML = ''
+      if (!data || data.length === 0) {
+        root.textContent = 'No executions found.'
+        return
+      }
+      for (const e of data) {
+        const div = document.createElement('div')
+        div.className = 'exec'
+        const h = document.createElement('div')
+        h.innerHTML = `<strong>${e.executionId}</strong> — ${e.masteryId} — ${e.state}`
+        div.appendChild(h)
+        const btn = document.createElement('button')
+        btn.textContent = 'Show checkpoints'
+        btn.onclick = async () => {
+          const cpRes = await fetch(`/api/executions/${e.executionId}/checkpoints`)
+          const cps = await cpRes.json()
+          const list = document.createElement('div')
+          for (const c of cps) {
+            const cdiv = document.createElement('div')
+            cdiv.className = 'checkpoint'
+            cdiv.textContent = `${c.checkpointId}: node=${c.nodeId} output=${JSON.stringify(c.output)} feedback=${c.feedback || ''}`
+            list.appendChild(cdiv)
+          }
+          div.appendChild(list)
+          btn.disabled = true
+        }
+        div.appendChild(btn)
+        root.appendChild(div)
+      }
+    }
+    load()
+    setInterval(load, 5000)
+  </script>
+</body>
+</html>

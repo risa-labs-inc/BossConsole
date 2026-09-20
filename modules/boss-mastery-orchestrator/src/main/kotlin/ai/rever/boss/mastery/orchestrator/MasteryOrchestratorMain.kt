@@ -5,6 +5,28 @@ import ai.rever.boss.ipc.proto.*
 import ai.rever.boss.mastery.MasteryExecutor
 import ai.rever.boss.process.ProcessRegistry
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
+import io.ktor.server.engine.embeddedServer
+import io.ktor.server.netty.Netty
+import io.ktor.server.routing.routing
+import io.ktor.server.response.respond
+import io.ktor.server.request.*
+import io.ktor.server.application.*
+import io.ktor.http.*
+import io.ktor.server.plugins.contentnegotiation.*
+import io.ktor.serialization.kotlinx.json.*
+import io.ktor.server.routing.*
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+
+@Serializable
+data class SubmitFeedbackReq(val nodeId: String, val feedback: String)
+
+@Serializable
+data class EditCheckpointReq(val nodeId: String, val editedOutput: Map<String, String>)
+
+@Serializable
+data class ReplayReq(val startNodeId: String, val feedback: String? = null)
 import org.slf4j.LoggerFactory
 
 /**
@@ -51,13 +73,74 @@ fun main() {
 
         val processRegistry = ProcessRegistry()
         val capabilityResolver = ProcessRegistryCapabilityResolver(processRegistry)
-        val masteryExecutor = MasteryExecutor(capabilityResolver)
-        val masteryService = MasteryServiceImpl(masteryExecutor)
-
+        // Use a file-based SQLite execution store for persistence across restarts.
+        val dbPath = System.getProperty("boss.mastery.db")
+            ?: "${System.getProperty("user.home")}${java.io.File.separator}.boss${java.io.File.separator}mastery.db"
+        val executionStore = ai.rever.boss.mastery.SqlExecutionStore(dbPath)
+        val masteryExecutor = MasteryExecutor(capabilityResolver, executionStore)
+        val masteryService = MasteryServiceImpl(masteryExecutor, executionStore)
         connection.processServer.addService(masteryService)
         connection.startServer()
+
+        // Start a small HTTP server for checkpoint inspection UI and JSON API
+        kotlinx.coroutines.launch {
+            startHttpUiServer(executionStore, masteryService)
+        }
 
         logger.info("Mastery Orchestrator running on: {}", bootstrap.processAddress)
         connection.awaitTermination()
     }
+}
+
+// Minimal Ktor-based UI server for inspection
+private fun startHttpUiServer(executionStore: ai.rever.boss.mastery.ExecutionStore, masteryService: MasteryServiceImpl) {
+    val server = embeddedServer(Netty, port = 8081) {
+        install(ContentNegotiation) { json(Json { prettyPrint = true }) }
+
+        routing {
+            static("/") {
+                resources("static")
+                defaultResource("static/index.html")
+            }
+
+            get("/api/executions") {
+                val execs = executionStore.listExecutions()
+                call.respond(execs)
+            }
+
+            get("/api/executions/{id}/checkpoints") {
+                val id = call.parameters["id"] ?: return@get call.respond(HttpStatusCode.BadRequest)
+                val cps = executionStore.getCheckpoints(id)
+                call.respond(cps)
+            }
+
+            post("/api/executions/{id}/feedback") {
+                val id = call.parameters["id"] ?: return@post call.respond(HttpStatusCode.BadRequest)
+                val req = call.receive<SubmitFeedbackReq>()
+                val ok = masteryService.submitNodeFeedback(id, req.nodeId, req.feedback)
+                call.respond(mapOf("success" to ok))
+            }
+
+            post("/api/executions/{id}/edit") {
+                val id = call.parameters["id"] ?: return@post call.respond(HttpStatusCode.BadRequest)
+                val req = call.receive<EditCheckpointReq>()
+                val newExec = masteryService.continueFromEditedCheckpoint(id, req.nodeId, req.editedOutput)
+                call.respond(mapOf("newExecutionId" to (newExec ?: "")))
+            }
+
+            post("/api/executions/{id}/replay") {
+                val id = call.parameters["id"] ?: return@post call.respond(HttpStatusCode.BadRequest)
+                val req = call.receive<ReplayReq>()
+                val newExec = masteryService.replayFromNode(id, req.startNodeId, req.feedback)
+                call.respond(mapOf("newExecutionId" to (newExec ?: "")))
+            }
+
+            post("/api/executions/{id}/resume") {
+                val id = call.parameters["id"] ?: return@post call.respond(HttpStatusCode.BadRequest)
+                val newExec = masteryService.resumeMastery(ai.rever.boss.ipc.proto.MasteryExecutionId.newBuilder().setExecutionId(id).build())
+                call.respond(mapOf("newExecutionId" to newExec.newExecutionId))
+            }
+        }
+    }
+    server.start(false)
 }

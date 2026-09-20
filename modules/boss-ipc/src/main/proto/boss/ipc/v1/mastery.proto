@@ -22,6 +22,12 @@ service MasteryService {
   // Get the status of a running or completed mastery execution
   rpc GetMasteryStatus(MasteryExecutionId) returns (MasteryStatus);
 
+  // Retrieve a recorded execution with its checkpoints
+  rpc GetMasteryExecution(MasteryExecutionId) returns (MasteryExecution);
+
+  // Retrieve a single node checkpoint
+  rpc GetNodeCheckpoint(NodeCheckpointRequest) returns (NodeCheckpointResponse);
+
   // AI-assisted: generate a mastery definition from a natural language task description
   rpc GenerateMastery(GenerateMasteryRequest) returns (MasteryDefinition);
 
@@ -30,6 +36,18 @@ service MasteryService {
 
   // Delete a saved mastery
   rpc DeleteMastery(MasteryId) returns (Empty);
+
+  // Replay the DAG starting from a given node in a prior execution. Returns the new execution id.
+  rpc ReplayFromNode(ReplayFromNodeRequest) returns (ReplayResponse);
+
+  // Submit human feedback attached to a checkpoint attempt
+  rpc SubmitNodeFeedback(SubmitNodeFeedbackRequest) returns (SubmitFeedbackResponse);
+
+  // Continue from an edited checkpoint's output and replay downstream nodes
+  rpc ContinueFromEditedCheckpoint(ContinueFromEditedCheckpointRequest) returns (ReplayResponse);
+
+  // Resume an interrupted execution (reuse completed checkpoints and run remaining nodes)
+  rpc ResumeMastery(MasteryExecutionId) returns (ReplayResponse);
 }
 
 // ---- Mastery Definition (the DAG) ----
@@ -134,6 +152,64 @@ message MasteryFailed {
   string error_message = 1;
   string failed_node_id = 2;
   int64 total_duration_ms = 3;
+}
+
+// A recorded execution and its checkpoints
+message MasteryExecution {
+  string execution_id = 1;
+  string mastery_id = 2;
+  map<string, string> input = 3;
+  string state = 4;
+  repeated NodeCheckpoint checkpoints = 5;
+}
+
+message NodeCheckpoint {
+  string checkpoint_id = 1;
+  string execution_id = 2;
+  string node_id = 3;
+  int32 attempt = 4;
+  map<string, string> input = 5;
+  map<string, string> output = 6;
+  int64 started_at = 7;
+  int64 completed_at = 8;
+  string feedback = 9;
+  string parent_checkpoint_id = 10;
+  bool human_edited = 11;
+}
+
+message NodeCheckpointRequest {
+  string execution_id = 1;
+  string checkpoint_id = 2;
+}
+
+message NodeCheckpointResponse {
+  NodeCheckpoint checkpoint = 1;
+}
+
+message ReplayFromNodeRequest {
+  string execution_id = 1; // original execution
+  string node_id = 2; // node to replay from
+  string feedback = 3; // optional human feedback
+}
+
+message ReplayResponse {
+  string new_execution_id = 1;
+}
+
+message SubmitNodeFeedbackRequest {
+  string execution_id = 1;
+  string node_id = 2;
+  string feedback = 3;
+}
+
+message SubmitFeedbackResponse {
+  bool success = 1;
+}
+
+message ContinueFromEditedCheckpointRequest {
+  string execution_id = 1; // original execution
+  string node_id = 2;
+  map<string, string> edited_output = 3;
 }
 
 message MasteryStatus {

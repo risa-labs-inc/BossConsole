@@ -7,6 +7,15 @@ import ai.rever.boss.ipc.proto.GenerateMasteryRequest
 import ai.rever.boss.ipc.proto.ListMasteriesRequest
 import ai.rever.boss.ipc.proto.ListMasteriesResponse
 import ai.rever.boss.ipc.proto.MasteryCompleted
+import ai.rever.boss.ipc.proto.MasteryExecution as PMasteryExecution
+import ai.rever.boss.ipc.proto.NodeCheckpoint as PNodeCheckpoint
+import ai.rever.boss.ipc.proto.NodeCheckpointRequest
+import ai.rever.boss.ipc.proto.NodeCheckpointResponse
+import ai.rever.boss.ipc.proto.ReplayFromNodeRequest
+import ai.rever.boss.ipc.proto.ReplayResponse
+import ai.rever.boss.ipc.proto.SubmitNodeFeedbackRequest
+import ai.rever.boss.ipc.proto.SubmitFeedbackResponse
+import ai.rever.boss.ipc.proto.ContinueFromEditedCheckpointRequest
 import ai.rever.boss.ipc.proto.MasteryExecutionId
 import ai.rever.boss.ipc.proto.MasteryFailed
 import ai.rever.boss.ipc.proto.MasteryId
@@ -43,6 +52,7 @@ import ai.rever.boss.mastery.MasteryProgress as KProgress
  */
 class MasteryServiceImpl(
     private val executor: MasteryExecutor,
+    private val executionStore: ExecutionStore? = null,
 ) : MasteryServiceGrpcKt.MasteryServiceCoroutineImplBase() {
     private val logger = LoggerFactory.getLogger(MasteryServiceImpl::class.java)
 
@@ -76,7 +86,17 @@ class MasteryServiceImpl(
                     // a cancel-window race where cancelMastery() arrives before registration (M9 fix).
                     runningJobs[executionId] = coroutineContext[Job]!!
 
-                    executor.execute(def, request.inputMap).collect { progress ->
+                    // Persist initial execution metadata if a store is present
+                    executionStore?.createExecution(
+                        MasteryExecution(
+                            executionId = executionId,
+                            masteryId = def.id,
+                            input = request.inputMap,
+                            state = "running",
+                        ),
+                    )
+
+                    executor.execute(def, request.inputMap, executionId).collect { progress ->
                         emit(progress.toProto(executionId))
                         when (progress) {
                             is KProgress.Completed -> updateStatus(executionId, request.masteryId, "completed")
@@ -186,6 +206,256 @@ class MasteryServiceImpl(
             builder.setCompletedAt(System.currentTimeMillis())
         }
         execStatus[executionId] = builder.build()
+    }
+
+    /**
+     * Replay from a specific node in an existing execution. Creates a new execution that reuses
+     * checkpoints for unaffected nodes and reruns the selected node and its descendants.
+     * Returns the new execution id on success, or null if not possible.
+     */
+    suspend fun replayFromNode(originalExecutionId: String, startNodeId: String, feedback: String? = null): String? {
+        if (executionStore == null) return null
+
+        val originalExecution = executionStore.getExecution(originalExecutionId) ?: return null
+        val def = definitions[originalExecution.masteryId] ?: return null
+
+        val oldCheckpoints = executionStore.getCheckpoints(originalExecutionId)
+
+        val planner = MasteryReplayPlanner()
+        val nodesToReplay = planner.nodesToReplay(def, startNodeId).map { it.id }.toSet()
+
+        // Build initial node outputs from reused checkpoints (latest attempt per node)
+        val latestByNode = mutableMapOf<String, NodeCheckpoint>()
+        for (cp in oldCheckpoints) {
+            val cur = latestByNode[cp.nodeId]
+            if (cur == null || cp.completedAt > cur.completedAt) latestByNode[cp.nodeId] = cp
+        }
+
+        val initialOutputs = mutableMapOf<String, Map<String, String>>()
+        // Reuse INPUT from original execution
+        initialOutputs["INPUT"] = originalExecution.input
+
+        for ((nodeId, cp) in latestByNode) {
+            if (nodeId !in nodesToReplay) {
+                initialOutputs[nodeId] = cp.output
+            }
+        }
+
+        val newExecutionId = java.util.UUID.randomUUID().toString()
+        // Persist new execution record
+        executionStore.createExecution(
+            MasteryExecution(
+                executionId = newExecutionId,
+                masteryId = def.id,
+                input = originalExecution.input,
+                state = "running",
+            ),
+        )
+
+        // Execute with initial outputs so reused nodes are not rerun
+        try {
+            coroutineScope {
+                runningJobs[newExecutionId] = coroutineContext[Job]!!
+                // For replay, pass previousOutputs for the start node so the replayed agent receives
+                // the previous attempt's output and any feedback.
+                val previousOutputsForReplay = mutableMapOf<String, Map<String, String>>()
+                val startPrev = latestByNode[startNodeId]
+                if (startPrev != null) previousOutputsForReplay[startNodeId] = startPrev.output
+
+                val feedbacksForReplay = if (feedback != null) mapOf(startNodeId to feedback) else null
+
+                executor.execute(def, originalExecution.input, newExecutionId, initialOutputs, previousOutputsForReplay, feedbacksForReplay).collect { progress ->
+                    // persist checkpoints are already saved by executor when executionStore provided to it
+                    when (progress) {
+                        is KProgress.Completed -> updateStatus(newExecutionId, def.id, "completed")
+                        is KProgress.Failed -> updateStatus(newExecutionId, def.id, "failed")
+                        else -> Unit
+                    }
+                }
+            }
+        } finally {
+            runningJobs.remove(newExecutionId)
+        }
+
+        return newExecutionId
+    }
+
+    suspend fun submitNodeFeedback(originalExecutionId: String, nodeId: String, feedback: String): Boolean {
+        if (executionStore == null) return false
+        val cps = executionStore.getCheckpoints(originalExecutionId)
+        val latest = cps.filter { it.nodeId == nodeId }.maxByOrNull { it.completedAt } ?: return false
+
+        val now = System.currentTimeMillis()
+        val newCp =
+            NodeCheckpoint(
+                checkpointId = java.util.UUID.randomUUID().toString(),
+                executionId = originalExecutionId,
+                nodeId = nodeId,
+                attempt = latest.attempt + 1,
+                input = latest.input,
+                output = latest.output,
+                startedAt = now,
+                completedAt = now,
+                feedback = feedback,
+                parentCheckpointId = latest.checkpointId,
+            )
+        executionStore.saveCheckpoint(newCp)
+        return true
+    }
+
+    suspend fun continueFromEditedCheckpoint(originalExecutionId: String, nodeId: String, editedOutput: Map<String, String>): String? {
+        if (executionStore == null) return null
+        val originalExecution = executionStore.getExecution(originalExecutionId) ?: return null
+        val def = definitions[originalExecution.masteryId] ?: return null
+
+        val oldCheckpoints = executionStore.getCheckpoints(originalExecutionId)
+        val latestByNode = mutableMapOf<String, NodeCheckpoint>()
+        for (cp in oldCheckpoints) {
+            val cur = latestByNode[cp.nodeId]
+            if (cur == null || cp.completedAt > cur.completedAt) latestByNode[cp.nodeId] = cp
+        }
+
+        val newExecutionId = java.util.UUID.randomUUID().toString()
+        executionStore.createExecution(
+            MasteryExecution(newExecutionId, def.id, originalExecution.input, "running"),
+        )
+
+        val now = System.currentTimeMillis()
+        val parent = latestByNode[nodeId]
+        val editedCheckpoint =
+            NodeCheckpoint(
+                checkpointId = java.util.UUID.randomUUID().toString(),
+                executionId = newExecutionId,
+                nodeId = nodeId,
+                attempt = (parent?.attempt ?: 0) + 1,
+                input = parent?.input ?: emptyMap(),
+                output = editedOutput,
+                startedAt = now,
+                completedAt = now,
+                feedback = null,
+                parentCheckpointId = parent?.checkpointId,
+                humanEdited = true,
+            )
+        executionStore.saveCheckpoint(editedCheckpoint)
+
+        // Build initial outputs: reuse others, overlay edited output for nodeId
+        val initialOutputs = mutableMapOf<String, Map<String, String>>()
+        initialOutputs["INPUT"] = originalExecution.input
+        for ((n, cp) in latestByNode) {
+            if (n == nodeId) continue
+            initialOutputs[n] = cp.output
+        }
+        initialOutputs[nodeId] = editedOutput
+
+        try {
+            coroutineScope {
+                runningJobs[newExecutionId] = coroutineContext[Job]!!
+                executor.execute(def, originalExecution.input, newExecutionId, initialOutputs).collect { progress ->
+                    when (progress) {
+                        is KProgress.Completed -> updateStatus(newExecutionId, def.id, "completed")
+                        is KProgress.Failed -> updateStatus(newExecutionId, def.id, "failed")
+                        else -> Unit
+                    }
+                }
+            }
+        } finally {
+            runningJobs.remove(newExecutionId)
+        }
+
+        return newExecutionId
+    }
+
+    override suspend fun getMasteryExecution(request: MasteryExecutionId): PMasteryExecution? {
+        if (executionStore == null) return null
+        val exec = executionStore.getExecution(request.executionId) ?: return null
+        val checkpoints = executionStore.getCheckpoints(request.executionId)
+        val b = PMasteryExecution.newBuilder()
+            .setExecutionId(exec.executionId)
+            .setMasteryId(exec.masteryId)
+            .putAllInput(exec.input)
+            .setState(exec.state)
+        checkpoints.forEach { cp ->
+            b.addCheckpoints(nodeCheckpointToProto(cp))
+        }
+        return b.build()
+    }
+
+    override suspend fun getNodeCheckpoint(request: NodeCheckpointRequest): NodeCheckpointResponse {
+        val empty = NodeCheckpointResponse.newBuilder().build()
+        if (executionStore == null) return empty
+        val cps = executionStore.getCheckpoints(request.executionId)
+        val found = cps.find { it.checkpointId == request.checkpointId } ?: return empty
+        return NodeCheckpointResponse.newBuilder().setCheckpoint(nodeCheckpointToProto(found)).build()
+    }
+
+    override suspend fun replayFromNode(request: ReplayFromNodeRequest): ReplayResponse {
+        val newId = replayFromNode(request.executionId, request.nodeId, request.feedback)
+        return ReplayResponse.newBuilder().setNewExecutionId(newId ?: "").build()
+    }
+
+    override suspend fun submitNodeFeedback(request: SubmitNodeFeedbackRequest): SubmitFeedbackResponse {
+        val ok = submitNodeFeedback(request.executionId, request.nodeId, request.feedback)
+        return SubmitFeedbackResponse.newBuilder().setSuccess(ok).build()
+    }
+
+    override suspend fun continueFromEditedCheckpoint(request: ContinueFromEditedCheckpointRequest): ReplayResponse {
+        val newId = continueFromEditedCheckpoint(request.executionId, request.nodeId, request.editedOutputMap)
+        return ReplayResponse.newBuilder().setNewExecutionId(newId ?: "").build()
+    }
+
+    override suspend fun resumeMastery(request: MasteryExecutionId): ReplayResponse {
+        if (executionStore == null) return ReplayResponse.newBuilder().setNewExecutionId("").build()
+        val originalExecution = executionStore.getExecution(request.executionId) ?: return ReplayResponse.newBuilder().setNewExecutionId("").build()
+        val def = definitions[originalExecution.masteryId] ?: return ReplayResponse.newBuilder().setNewExecutionId("").build()
+
+        val oldCheckpoints = executionStore.getCheckpoints(request.executionId)
+        val latestByNode = mutableMapOf<String, NodeCheckpoint>()
+        for (cp in oldCheckpoints) {
+            val cur = latestByNode[cp.nodeId]
+            if (cur == null || cp.completedAt > cur.completedAt) latestByNode[cp.nodeId] = cp
+        }
+
+        val initialOutputs = mutableMapOf<String, Map<String, String>>()
+        initialOutputs["INPUT"] = originalExecution.input
+        for ((n, cp) in latestByNode) {
+            initialOutputs[n] = cp.output
+        }
+
+        val newExecutionId = java.util.UUID.randomUUID().toString()
+        executionStore.createExecution(MasteryExecution(newExecutionId, def.id, originalExecution.input, "running"))
+
+        try {
+            coroutineScope {
+                runningJobs[newExecutionId] = coroutineContext[Job]!!
+                executor.execute(def, originalExecution.input, newExecutionId, initialOutputs).collect { progress ->
+                    when (progress) {
+                        is KProgress.Completed -> updateStatus(newExecutionId, def.id, "completed")
+                        is KProgress.Failed -> updateStatus(newExecutionId, def.id, "failed")
+                        else -> Unit
+                    }
+                }
+            }
+        } finally {
+            runningJobs.remove(newExecutionId)
+        }
+
+        return ReplayResponse.newBuilder().setNewExecutionId(newExecutionId).build()
+    }
+
+    private fun nodeCheckpointToProto(cp: NodeCheckpoint): PNodeCheckpoint {
+        val b = PNodeCheckpoint.newBuilder()
+            .setCheckpointId(cp.checkpointId)
+            .setExecutionId(cp.executionId)
+            .setNodeId(cp.nodeId)
+            .setAttempt(cp.attempt)
+            .putAllInput(cp.input)
+            .putAllOutput(cp.output)
+            .setStartedAt(cp.startedAt)
+            .setCompletedAt(cp.completedAt)
+        cp.feedback?.let { b.setFeedback(it) }
+        cp.parentCheckpointId?.let { b.setParentCheckpointId(it) }
+        b.setHumanEdited(cp.humanEdited)
+        return b.build()
     }
 }
 
