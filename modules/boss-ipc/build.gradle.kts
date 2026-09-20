@@ -91,6 +91,8 @@ dependencies {
     testImplementation(libs.kotlin.test.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.grpc.services)
+    // Binds SLF4J so KernelLogForgingTest can capture the kernel's own log records.
+    testImplementation(libs.logback)
 }
 
 if (protocAvailable) {

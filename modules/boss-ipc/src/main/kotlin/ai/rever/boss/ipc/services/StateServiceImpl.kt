@@ -1,5 +1,6 @@
 package ai.rever.boss.ipc.services
 
+import ai.rever.boss.ipc.IpcLogText
 import ai.rever.boss.ipc.auth.IpcCall
 import ai.rever.boss.ipc.auth.ProcessAuthority
 import ai.rever.boss.ipc.auth.ProcessIdentity
@@ -100,9 +101,11 @@ class StateServiceImpl : StateServiceGrpcKt.StateServiceCoroutineImplBase() {
                 if (request.expectedVersion > 0) {
                     val current = stateStore[key]
                     if (current != null && current.version != request.expectedVersion) {
+                        // The key is free text from the writer: neutralized so a hostile key cannot
+                        // forge kernel log records. The stored entry is untouched.
                         logger.warn(
                             "State update conflict for key={}: expected version {}, current {}",
-                            key,
+                            IpcLogText.neutralize(key),
                             request.expectedVersion,
                             current.version,
                         )
@@ -126,7 +129,13 @@ class StateServiceImpl : StateServiceGrpcKt.StateServiceCoroutineImplBase() {
         val stateValue = entry.toStateValue()
         stateChanges.emit(entry)
 
-        logger.debug("State updated: key={}, version={}, owner={}", key, entry.version, ownerProcess)
+        // Same as the conflict warning above: the key is caller-supplied text.
+        logger.debug(
+            "State updated: key={}, version={}, owner={}",
+            IpcLogText.neutralize(key),
+            entry.version,
+            ownerProcess,
+        )
 
         return stateValue
     }

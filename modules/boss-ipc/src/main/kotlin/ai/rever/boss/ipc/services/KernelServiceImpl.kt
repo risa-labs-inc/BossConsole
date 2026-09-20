@@ -1,5 +1,6 @@
 package ai.rever.boss.ipc.services
 
+import ai.rever.boss.ipc.IpcLogText
 import ai.rever.boss.ipc.auth.IpcCall
 import ai.rever.boss.ipc.auth.ProcessAuthority
 import ai.rever.boss.ipc.proto.*
@@ -36,11 +37,13 @@ class KernelServiceImpl(
         val caller = IpcCall.requireOwnProcess(processId)
         IpcCall.requirePermission(caller.expectedAddress != null && request.ipcAddress == caller.expectedAddress)
 
+        // The display name is free text from the child's own manifest: neutralized so a hostile
+        // name cannot forge kernel log records. The manifest the registry stores is untouched.
         logger.info(
             "Process registering: id={}, type={}, name={}, ipc={}",
             processId,
             manifest.processType,
-            manifest.displayName,
+            IpcLogText.neutralize(manifest.displayName),
             request.ipcAddress,
         )
 
@@ -107,13 +110,18 @@ class KernelServiceImpl(
     override suspend fun requestShutdown(request: ShutdownRequest): ShutdownResponse {
         val processId = request.processId
         IpcCall.requireProcessControl(processId)
-        logger.info("Shutdown requested for process: id={}, force={}", processId, request.force)
+        // A supervisor may name any target, so the id that reaches the log is caller-supplied text.
+        logger.info(
+            "Shutdown requested for process: id={}, force={}",
+            IpcLogText.neutralize(processId),
+            request.force,
+        )
 
         val success =
             try {
                 onShutdownRequested(processId, request.force)
             } catch (e: Exception) {
-                logger.error("Error shutting down process {}", processId, e)
+                logger.error("Error shutting down process {}", IpcLogText.neutralize(processId), e)
                 false
             }
 
