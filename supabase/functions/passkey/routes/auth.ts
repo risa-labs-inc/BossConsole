@@ -6,6 +6,7 @@ import {
   checkAuthStatus
 } from "../services/auth.ts"
 import { getAllowedOrigins } from "../utils/config.ts"
+import { clientKey, rateLimit } from "../utils/rate-limit.ts"
 import { parseClientDataJSON } from "../utils/webauthn.ts"
 import {
   AuthChallengeRequestSchema,
@@ -17,6 +18,18 @@ import {
 } from "../types/schemas.ts"
 
 const auth = new OpenAPIHono<{ Variables: PasskeyContext }>()
+
+// Brake on the cheap loop: an unauthenticated script walking a candidate
+// email list (BossConsole#768). Per-isolate, honestly not a defence against
+// a distributed attacker; the inert-challenge response is what removes the
+// oracle, this only makes bulk probing cost a real rate.
+//
+// Budget (review follow-up): the desktop sign-in flow spends up to three
+// challenge calls per successful sign-in (initial + retry/re-prompt paths),
+// so the per-client budget is 60/hour - three full sign-in attempts with
+// headroom, while a candidate-list walk still hits the wall after 60 probes.
+const AUTH_CHALLENGE_LIMIT = 60
+const AUTH_CHALLENGE_WINDOW_SECONDS = 60 * 60
 
 // ============================================================================
 // POST /auth/challenge - Generate authentication challenge
@@ -54,6 +67,14 @@ const authChallengeRoute = createRoute({
         }
       }
     },
+    429: {
+      description: 'Too many requests - per-client rate limit exceeded',
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
+        }
+      }
+    },
     500: {
       description: 'Internal server error',
       content: {
@@ -66,6 +87,17 @@ const authChallengeRoute = createRoute({
 })
 
 auth.openapi(authChallengeRoute, async (ctx) => {
+  // Rate limit first, before any lookup: the probe itself is what is being
+  // braked, not the failure it produces.
+  const limit = rateLimit(
+    `authchallenge:${clientKey(ctx.req.raw.headers)}`,
+    AUTH_CHALLENGE_LIMIT,
+    AUTH_CHALLENGE_WINDOW_SECONDS,
+  )
+  if (!limit.allowed) {
+    return ctx.json({ error: 'Too many requests' }, 429)
+  }
+
   try {
     const supabase = ctx.get("supabase")
     const { email, sessionId } = ctx.req.valid('json')
