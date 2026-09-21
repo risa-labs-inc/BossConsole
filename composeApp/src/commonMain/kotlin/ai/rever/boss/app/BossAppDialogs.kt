@@ -506,7 +506,7 @@ internal fun BossAppDialogs(state: BossAppState) {
                 if (targetWindowId == windowId) {
                     coroutineScope.launch {
                         delay(100)
-                        splitViewState.selectTabInPanel(tabId, panelId)
+                        splitViewState.focusOpenTab(tabId, workspaceManager)
                     }
                 } else {
                     // Returns false when the window closed while the dialog was open. The bus

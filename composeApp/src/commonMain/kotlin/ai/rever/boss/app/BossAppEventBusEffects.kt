@@ -260,11 +260,11 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
         TabEventBus.tabSelectEvents
             .filter { event -> event.targetWindowId == windowId }
             .onEach { event ->
-                // UX grace, not correctness: selectTabInPanel below is a pure state mutation
+                // UX grace, not correctness: focusOpenTab below restores an already-live tree
                 // and this window is already composed. The pause only lets the focused
                 // window's UI come to the front before the tab switches underneath it.
                 delay(TAB_SELECT_FOCUS_GRACE_MS)
-                splitViewState.selectTabInPanel(event.tabId, event.panelId)
+                splitViewState.focusOpenTab(event.tabId, workspaceManager)
             }.launchIn(this)
     }
 

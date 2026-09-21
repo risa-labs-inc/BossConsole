@@ -2301,3 +2301,13 @@ update it with the pinned distribution checksum and scaffold validation together
 - `atomicWriteText` pins POSIX files to 0600. The separate `writeModeFile` writer for `env_vars` preserves existing permissions; that rule does not apply to all state writers.
 - Chromium's constructed GitHub backup URL uses the catalog checksum. Primary and backup must contain identical artifact bytes; checksum mismatch fails closed. See `docs/dev-935-release-checklist.md` for deployment checks.
 - Browser print is a direct-native exception to the usual AWT ownership rule after macOS manual verification. Pending AWT cancellation is best-effort, not a cross-thread exactly-once guarantee; do not copy this pattern for destructive actions.
+
+## Focus an open tab across running Spaces
+
+Spotlight and destination-addressed tab events use `focusOpenTab`, as does the plugin
+`ActiveTabsProvider` adapter. Resolve the tab's live location at action time: panel ids
+such as `main` repeat between Spaces and search rows can become stale after a move.
+Select the preserved tab and pane before restoring its live Space, then update the
+workspace metadata. Derive the outgoing name from the split state's workspace id,
+not the process-wide `currentWorkspace`. Do not rebuild a saved layout or run startup
+commands to focus an already-running tab. Missing/closed tabs leave the window alone.
