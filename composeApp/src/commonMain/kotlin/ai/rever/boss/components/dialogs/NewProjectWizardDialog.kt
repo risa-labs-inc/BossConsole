@@ -62,7 +62,19 @@ fun NewProjectWizardDialog(
     onDismiss: () -> Unit,
     onProjectCreated: (Project) -> Unit,
 ) {
+    NewProjectWizardDialog(onDismiss, onProjectCreated, ProjectCreationService::createProject)
+}
+
+@Composable
+internal fun NewProjectWizardDialog(
+    onDismiss: () -> Unit,
+    onProjectCreated: (Project) -> Unit,
+    createProject: suspend (String, String, ProjectTemplate, (Float, String) -> Unit) -> Result<Project>,
+) {
     var wizardStep by remember { mutableStateOf<WizardStep>(WizardStep.TemplateSelection) }
+    var projectName by remember { mutableStateOf("") }
+    var projectLocation by remember { mutableStateOf(ProjectCreationService.getDefaultProjectsDirectory()) }
+    var selectedTemplate by remember { mutableStateOf<ProjectTemplate?>(null) }
 
     BossDialog(
         onDismissRequest = {
@@ -90,6 +102,8 @@ fun NewProjectWizardDialog(
                 is WizardStep.TemplateSelection -> {
                     TemplateSelectionStep(
                         onDismiss = onDismiss,
+                        selectedTemplate = selectedTemplate,
+                        onSelectionChange = { selectedTemplate = it },
                         onTemplateSelected = { template ->
                             wizardStep = WizardStep.Configuration(template)
                         },
@@ -99,6 +113,10 @@ fun NewProjectWizardDialog(
                 is WizardStep.Configuration -> {
                     ConfigurationStep(
                         template = step.template,
+                        projectName = projectName,
+                        projectLocation = projectLocation,
+                        onNameChange = { projectName = it },
+                        onLocationChange = { projectLocation = it },
                         onBack = { wizardStep = WizardStep.TemplateSelection },
                         onCreate = { name, path ->
                             wizardStep = WizardStep.Creating(name, path, step.template)
@@ -111,11 +129,12 @@ fun NewProjectWizardDialog(
                         name = step.name,
                         path = step.path,
                         template = step.template,
+                        createProject = createProject,
                         onSuccess = { project ->
                             wizardStep = WizardStep.Success(project)
                         },
                         onError = { message ->
-                            wizardStep = WizardStep.Error(message)
+                            wizardStep = WizardStep.Error(message, step.template)
                         },
                     )
                 }
@@ -133,7 +152,7 @@ fun NewProjectWizardDialog(
                 is WizardStep.Error -> {
                     ErrorStep(
                         message = step.message,
-                        onRetry = { wizardStep = WizardStep.TemplateSelection },
+                        onRetry = { wizardStep = WizardStep.Configuration(step.template) },
                         onClose = onDismiss,
                     )
                 }
@@ -148,10 +167,10 @@ fun NewProjectWizardDialog(
 @Composable
 private fun TemplateSelectionStep(
     onDismiss: () -> Unit,
+    selectedTemplate: ProjectTemplate?,
+    onSelectionChange: (ProjectTemplate) -> Unit,
     onTemplateSelected: (ProjectTemplate) -> Unit,
 ) {
-    var selectedTemplate by remember { mutableStateOf<ProjectTemplate?>(null) }
-
     Column(
         modifier =
             Modifier
@@ -203,7 +222,7 @@ private fun TemplateSelectionStep(
                 TemplateCard(
                     template = template,
                     isSelected = selectedTemplate == template,
-                    onClick = { selectedTemplate = template },
+                    onClick = { onSelectionChange(template) },
                 )
             }
         }
@@ -361,34 +380,40 @@ private fun TemplateCard(
 @Composable
 private fun ConfigurationStep(
     template: ProjectTemplate,
+    projectName: String,
+    projectLocation: String,
+    onNameChange: (String) -> Unit,
+    onLocationChange: (String) -> Unit,
     onBack: () -> Unit,
     onCreate: (name: String, path: String) -> Unit,
 ) {
-    var projectName by remember { mutableStateOf("") }
-    var projectLocation by remember { mutableStateOf(ProjectCreationService.getDefaultProjectsDirectory()) }
+    var validatedInputs by remember { mutableStateOf<Pair<String, String>?>(null) }
     var validationError by remember { mutableStateOf<String?>(null) }
 
     // Directory picker
     val directoryPicker =
         rememberDirectoryPicker { path ->
-            path?.let { projectLocation = it }
+            path?.let(onLocationChange)
         }
+
+    val currentInputs by rememberUpdatedState(projectName to projectLocation)
 
     // Debounce validation to avoid excessive I/O on every keystroke (300ms delay)
     @OptIn(FlowPreview::class)
     LaunchedEffect(Unit) {
-        snapshotFlow { projectName to projectLocation }
+        snapshotFlow { currentInputs }
             .debounce(300L)
             .collectLatest { (name, location) ->
                 validationError =
                     if (name.isNotBlank()) {
-                        when (val result = ProjectCreationService.validateProjectLocation(location, name)) {
+                        when (val result = ProjectCreationService.validateProjectLocation(location, name.trim())) {
                             is ValidationResult.Valid -> null
                             is ValidationResult.Invalid -> result.reason
                         }
                     } else {
                         null
                     }
+                validatedInputs = name to location
             }
     }
 
@@ -445,7 +470,7 @@ private fun ConfigurationStep(
 
         OutlinedTextField(
             value = projectName,
-            onValueChange = { projectName = it },
+            onValueChange = onNameChange,
             placeholder = { Text("my-project", color = BossTheme.colors.textSecondary.copy(alpha = 0.5f)) },
             modifier = Modifier.fillMaxWidth(),
             colors =
@@ -480,7 +505,7 @@ private fun ConfigurationStep(
         ) {
             OutlinedTextField(
                 value = projectLocation,
-                onValueChange = { projectLocation = it },
+                onValueChange = onLocationChange,
                 modifier = Modifier.weight(1f),
                 colors =
                     TextFieldDefaults.outlinedTextFieldColors(
@@ -557,7 +582,9 @@ private fun ConfigurationStep(
 
             Button(
                 onClick = { onCreate(projectName.trim(), projectLocation) },
-                enabled = projectName.isNotBlank() && validationError == null,
+                enabled =
+                    projectName.isNotBlank() &&
+                        validatedInputs == (projectName to projectLocation) && validationError == null,
                 colors =
                     ButtonDefaults.buttonColors(
                         backgroundColor = Accent,
@@ -582,6 +609,7 @@ private fun CreatingStep(
     name: String,
     path: String,
     template: ProjectTemplate,
+    createProject: suspend (String, String, ProjectTemplate, (Float, String) -> Unit) -> Result<Project>,
     onSuccess: (Project) -> Unit,
     onError: (String) -> Unit,
 ) {
@@ -592,11 +620,11 @@ private fun CreatingStep(
     // LaunchedEffect already provides a coroutine scope, no need for rememberCoroutineScope
     LaunchedEffect(Unit) {
         val result =
-            ProjectCreationService.createProject(
-                name = name,
-                parentDirectory = path,
-                template = template,
-                onProgress = { p, msg ->
+            createProject(
+                name,
+                path,
+                template,
+                { p, msg ->
                     progress = p
                     statusMessage = msg
                 },
@@ -836,5 +864,6 @@ private sealed class WizardStep {
 
     data class Error(
         val message: String,
+        val template: ProjectTemplate,
     ) : WizardStep()
 }

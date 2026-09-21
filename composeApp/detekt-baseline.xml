@@ -353,11 +353,11 @@
     <ID>LongMethod:MenuShortcutBridge.kt$MenuShortcutBridge$private fun keyNameToComposeKey(keyName: String): Key?</ID>
     <ID>LongMethod:NameInputDialog.kt$@Composable fun NewCollectionDialog( onDismiss: () -&gt; Unit, onCreate: (name: String) -&gt; Unit, )</ID>
     <ID>LongMethod:NameInputDialog.kt$@Composable fun NewWorkspaceDialog( onDismiss: () -&gt; Unit, onCreate: (name: String) -&gt; Unit, )</ID>
-    <ID>LongMethod:NewProjectWizardDialog.kt$@Composable fun NewProjectWizardDialog( onDismiss: () -&gt; Unit, onProjectCreated: (Project) -&gt; Unit, )</ID>
-    <ID>LongMethod:NewProjectWizardDialog.kt$@Composable private fun ConfigurationStep( template: ProjectTemplate, onBack: () -&gt; Unit, onCreate: (name: String, path: String) -&gt; Unit, )</ID>
+    <ID>LongMethod:NewProjectWizardDialog.kt$@Composable internal fun NewProjectWizardDialog( onDismiss: () -&gt; Unit, onProjectCreated: (Project) -&gt; Unit, createProject: suspend (String, String, ProjectTemplate, (Float, String) -&gt; Unit) -&gt; Result&lt;Project&gt;, )</ID>
+    <ID>LongMethod:NewProjectWizardDialog.kt$@Composable private fun ConfigurationStep( template: ProjectTemplate, projectName: String, projectLocation: String, onNameChange: (String) -&gt; Unit, onLocationChange: (String) -&gt; Unit, onBack: () -&gt; Unit, onCreate: (name: String, path: String) -&gt; Unit, )</ID>
     <ID>LongMethod:NewProjectWizardDialog.kt$@Composable private fun ErrorStep( message: String, onRetry: () -&gt; Unit, onClose: () -&gt; Unit, )</ID>
     <ID>LongMethod:NewProjectWizardDialog.kt$@Composable private fun TemplateCard( template: ProjectTemplate, isSelected: Boolean, onClick: () -&gt; Unit, )</ID>
-    <ID>LongMethod:NewProjectWizardDialog.kt$@Composable private fun TemplateSelectionStep( onDismiss: () -&gt; Unit, onTemplateSelected: (ProjectTemplate) -&gt; Unit, )</ID>
+    <ID>LongMethod:NewProjectWizardDialog.kt$@Composable private fun TemplateSelectionStep( onDismiss: () -&gt; Unit, selectedTemplate: ProjectTemplate?, onSelectionChange: (ProjectTemplate) -&gt; Unit, onTemplateSelected: (ProjectTemplate) -&gt; Unit, )</ID>
     <ID>LongMethod:NewTabDialog.kt$@Composable private fun DialogFileTreeItem( node: FileNodeData, level: Int, expandedPaths: Set&lt;String&gt;, onToggleExpanded: (String) -&gt; Unit, onFileClick: (FileNodeData) -&gt; Unit, )</ID>
     <ID>LongMethod:OfflineScreen.kt$@Composable fun OfflineScreen(onRetry: suspend () -&gt; Boolean)</ID>
     <ID>LongMethod:OutOfProcessPluginSpawnerImpl.kt$OutOfProcessPluginSpawnerImpl$override suspend fun spawn( manifest: PluginManifest, jarPath: String, ): Result&lt;Unit&gt;</ID>
