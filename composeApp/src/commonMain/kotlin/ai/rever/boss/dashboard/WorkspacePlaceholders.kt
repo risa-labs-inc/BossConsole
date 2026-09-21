@@ -60,8 +60,8 @@ object WorkspacePlaceholders {
      * into a live shell) a BARE occurrence is substituted as a shell-quoted literal argument
      * and its metacharacters stay inert. In non-shell context (url, workingDirectory,
      * filePath - not shell-parsed) every occurrence is verbatim. An occurrence the template
-     * already wraps in a quote character is left raw: the documented opt-out against
-     * double-quoting a template like `cd "{projectPath}"`.
+     * wraps in an exact symmetric pair of quote characters is left raw: the documented
+     * opt-out against double-quoting a template like `cd "{projectPath}"`.
      */
     private fun dataValueFor(
         template: CharSequence,
@@ -70,10 +70,44 @@ object WorkspacePlaceholders {
         quote: Boolean,
     ): String {
         if (!quote) return value
-        val before = template.getOrNull(tokenRange.first - 1)
-        val after = template.getOrNull(tokenRange.last + 1)
-        val bare = (before != '"' && before != '\'') && (after != '"' && after != '\'')
-        return if (bare) CommandProcessor.quotePath(value) else value
+        return if (isExactlyQuoteWrapped(template, tokenRange)) value else CommandProcessor.quotePath(value)
+    }
+
+    /**
+     * Whether [tokenRange] sits inside one quote region that the template opened exactly
+     * at the token's left edge and closes exactly at its right edge - `"{token}"` or
+     * `'{token}'`, nothing wider and nothing narrower. Only that shape is honoured as the
+     * raw-emission opt-out; every other adjacency means the value is NOT wrapped and is
+     * shell-quoted so its metacharacters stay inert:
+     * - one-sided quotes: `{token}'s` - an apostrophe after the token closes nothing;
+     * - neighbouring regions: `'prefix'{token}'suffix'` - both adjacent quotes close and
+     *   reopen other regions, so the token sits between quoted spans, bare;
+     * - mismatched types: `"{token}'`;
+     * - backslash-escaped quotes: a backslash before the quote makes it a literal
+     *   character, not a region delimiter.
+     *
+     * The neighbouring-region case is why this walks the template prefix: if the quote at
+     * the token's left edge closes a region that opened earlier, the token sits outside
+     * any quote, and trusting adjacency alone would emit a metacharacter value raw.
+     */
+    private fun isExactlyQuoteWrapped(
+        template: CharSequence,
+        tokenRange: IntRange,
+    ): Boolean {
+        val open = template.getOrNull(tokenRange.first - 1)
+        val close = template.getOrNull(tokenRange.last + 1)
+        if (open != close || (open != '"' && open != '\'')) return false
+        if (template.getOrNull(tokenRange.first - 2) == '\\') return false
+        var inQuote: Char? = null
+        for (i in 0 until tokenRange.first - 1) {
+            val c = template[i]
+            if (inQuote == null) {
+                if (c == '"' || c == '\'') inQuote = c
+            } else if (c == inQuote) {
+                inQuote = null
+            }
+        }
+        return inQuote == null
     }
 
     /**

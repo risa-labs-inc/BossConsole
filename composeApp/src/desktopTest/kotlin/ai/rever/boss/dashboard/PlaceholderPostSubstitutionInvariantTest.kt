@@ -170,6 +170,49 @@ class PlaceholderPostSubstitutionInvariantTest {
     }
 
     @Test
+    fun `an apostrophe after a current file does not suppress quoting`() {
+        // {currentFile}'s - the quote after the token closes nothing, so the token is bare.
+        val file = "/tmp/space name.md"
+        val result =
+            WorkspacePlaceholders.processPlaceholders(
+                "cat {currentFile}'s backup",
+                noRepo,
+                currentFile = file,
+                quoteProjectPath = true,
+            )
+        assertEquals("cat ${CommandProcessor.quotePath(file)}'s backup", result)
+    }
+
+    @Test
+    fun `quotes from neighbouring regions do not suppress quoting`() {
+        // 'prefix'{currentFile}'suffix' - both adjacent quotes close and open other regions;
+        // the token sits between quoted spans, so it is bare.
+        val file = "/tmp/space name.md"
+        val result =
+            WorkspacePlaceholders.processPlaceholders(
+                "cat 'prefix'{currentFile}'suffix'",
+                noRepo,
+                currentFile = file,
+                quoteProjectPath = true,
+            )
+        assertEquals("cat 'prefix'${CommandProcessor.quotePath(file)}'suffix'", result)
+    }
+
+    @Test
+    fun `escaped quotes around a current file do not suppress quoting`() {
+        // Backslash-escaped quotes are literal characters, not region delimiters.
+        val file = "/tmp/space name.md"
+        val result =
+            WorkspacePlaceholders.processPlaceholders(
+                "cat \\\"{currentFile}\\\"",
+                noRepo,
+                currentFile = file,
+                quoteProjectPath = true,
+            )
+        assertEquals("cat \\\"${CommandProcessor.quotePath(file)}\\\"", result)
+    }
+
+    @Test
     fun `current file stays literal when no file is open`() {
         val result =
             WorkspacePlaceholders.processPlaceholders(
