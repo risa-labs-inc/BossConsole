@@ -18,19 +18,106 @@ import java.util.concurrent.ConcurrentHashMap
  * - DetectMainFunctions: regex-based scan for entry points across multiple languages
  * - GetTokens / NavigateToDefinition: require PSI (in composeApp) — return empty
  */
+@Suppress("TooManyFunctions")
 class EditorServiceImpl : EditorServiceGrpcKt.EditorServiceCoroutineImplBase() {
     private val logger = LoggerFactory.getLogger(EditorServiceImpl::class.java)
 
     /** path → isDirty: tracks files opened in this session */
     private val openFiles = ConcurrentHashMap<String, Boolean>()
 
-    /** Paths that must not be accessed via IPC — mirrors FileSystemServiceImpl policy. */
-    private val BLOCKED_PATH_PREFIXES = listOf("/etc", "/sys", "/proc")
+    private val blockedPrefixes: List<String> by lazy {
+        val list =
+            mutableListOf(
+                "/etc",
+                "/sys",
+                "/proc",
+                "/dev",
+                "/boot",
+                "/root",
+                "C:\\Windows",
+                "C:\\Program Files",
+                "C:\\Program Files (x86)",
+                "C:\\System Volume Information",
+            )
+        System.getenv("SystemRoot")?.let { list.add(it) }
+        System.getenv("WINDIR")?.let { list.add(it) }
+        list.map { runCatching { File(it).canonicalPath }.getOrDefault(it) }
+    }
 
-    private fun validatePath(path: String) {
-        require(!path.contains("..")) { "Path traversal sequences ('..') are not allowed: $path" }
-        BLOCKED_PATH_PREFIXES.forEach { prefix ->
-            require(!path.startsWith(prefix)) { "Access to system path '$prefix' is not allowed: $path" }
+    private fun isSubpathOf(
+        path: String,
+        root: String,
+    ): Boolean {
+        val normPath = runCatching { File(path).canonicalPath }.getOrDefault(path)
+        val normRoot = runCatching { File(root).canonicalPath }.getOrDefault(root)
+        return normPath.equals(normRoot, ignoreCase = true) ||
+            normPath.lowercase().startsWith(normRoot.lowercase() + File.separator.lowercase())
+    }
+
+    private fun validatePath(rawPath: String): File {
+        require(!rawPath.contains("..")) { "Path traversal sequences ('..') are not allowed: $rawPath" }
+
+        val canonicalFile =
+            try {
+                File(rawPath).canonicalFile
+            } catch (e: Exception) {
+                throw IllegalArgumentException("Invalid or unresolvable path: $rawPath", e)
+            }
+
+        val canonicalPath = canonicalFile.absolutePath
+        require(!canonicalPath.contains("..")) { "Canonical path traversal sequences ('..') are not allowed: $rawPath" }
+
+        val userHome = System.getProperty("user.home") ?: ""
+        val tempDir = System.getProperty("java.io.tmpdir") ?: ""
+
+        val isUnderHome = userHome.isNotEmpty() && isSubpathOf(canonicalPath, userHome)
+        val isUnderTemp = tempDir.isNotEmpty() && isSubpathOf(canonicalPath, tempDir)
+
+        require(isUnderHome || isUnderTemp) {
+            "Access denied: path '$rawPath' (canonical: '$canonicalPath') is outside allowed roots"
+        }
+
+        blockedPrefixes.forEach { prefix ->
+            require(!isSubpathOf(canonicalPath, prefix)) {
+                "Access to system path '$prefix' is not allowed: $rawPath"
+            }
+        }
+
+        return canonicalFile
+    }
+
+    private fun atomicWriteText(
+        file: File,
+        content: String,
+    ) {
+        file.parentFile?.mkdirs()
+        val tempFile = File.createTempFile("${file.name}.", ".tmp", file.parentFile)
+        try {
+            tempFile.writeText(content, Charsets.UTF_8)
+            atomicMoveFrom(file, tempFile)
+        } finally {
+            tempFile.delete()
+        }
+    }
+
+    @Suppress("SwallowedException")
+    private fun atomicMoveFrom(
+        target: File,
+        temp: File,
+    ) {
+        try {
+            java.nio.file.Files.move(
+                temp.toPath(),
+                target.toPath(),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+            )
+        } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
+            java.nio.file.Files.move(
+                temp.toPath(),
+                target.toPath(),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+            )
         }
     }
 
@@ -48,8 +135,16 @@ class EditorServiceImpl : EditorServiceGrpcKt.EditorServiceCoroutineImplBase() {
     override suspend fun openFile(request: OpenFileRequest): OpenFileResponse =
         withContext(Dispatchers.IO) {
             logger.info("openFile: path={}", request.path)
-            validatePath(request.path)
-            val file = File(request.path)
+            val file =
+                try {
+                    validatePath(request.path)
+                } catch (e: Exception) {
+                    return@withContext OpenFileResponse
+                        .newBuilder()
+                        .setSuccess(false)
+                        .setErrorMessage(e.message ?: "Invalid path")
+                        .build()
+                }
             if (!file.exists() || !file.isFile) {
                 return@withContext OpenFileResponse
                     .newBuilder()
@@ -59,7 +154,7 @@ class EditorServiceImpl : EditorServiceGrpcKt.EditorServiceCoroutineImplBase() {
             }
             try {
                 val content = file.readText(Charsets.UTF_8)
-                openFiles[request.path] = false
+                openFiles[file.absolutePath] = false
                 OpenFileResponse
                     .newBuilder()
                     .setSuccess(true)
@@ -79,12 +174,10 @@ class EditorServiceImpl : EditorServiceGrpcKt.EditorServiceCoroutineImplBase() {
     override suspend fun saveFile(request: SaveFileRequest): Empty =
         withContext(Dispatchers.IO) {
             logger.info("saveFile: path={}", request.path)
-            validatePath(request.path)
             try {
-                val file = File(request.path)
-                file.parentFile?.mkdirs()
-                file.writeText(request.content, Charsets.UTF_8)
-                openFiles[request.path] = false
+                val file = validatePath(request.path)
+                atomicWriteText(file, request.content)
+                openFiles[file.absolutePath] = false
             } catch (e: Exception) {
                 logger.error("saveFile failed for {}: {}", request.path, e.message)
             }
@@ -106,8 +199,13 @@ class EditorServiceImpl : EditorServiceGrpcKt.EditorServiceCoroutineImplBase() {
     override suspend fun detectMainFunctions(request: DetectMainRequest): DetectMainResponse =
         withContext(Dispatchers.IO) {
             logger.info("detectMainFunctions: path={}", request.path)
-            validatePath(request.path)
-            val file = File(request.path)
+            val file =
+                try {
+                    validatePath(request.path)
+                } catch (e: Exception) {
+                    logger.warn("detectMainFunctions path validation failed: {}", e.message)
+                    return@withContext DetectMainResponse.newBuilder().build()
+                }
             if (!file.exists() || !file.isFile) return@withContext DetectMainResponse.newBuilder().build()
 
             val functions = mutableListOf<MainFunctionInfo>()

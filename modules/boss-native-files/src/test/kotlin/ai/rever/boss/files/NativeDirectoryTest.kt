@@ -63,6 +63,7 @@ class NativeDirectoryTest {
     }
 
     @Test
+    @Suppress("SwallowedException")
     fun `held directory cannot be redirected by replacing its pathname with a link`() {
         val root = Files.createTempDirectory("native-directory-").toRealPath()
         try {
@@ -71,7 +72,12 @@ class NativeDirectoryTest {
             Files.writeString(outside.resolve("sentinel"), "unchanged")
             NativeDirectory.open(inside).use { directory ->
                 Files.move(inside, root.resolve("moved"))
-                Files.createSymbolicLink(inside, outside)
+                try {
+                    Files.createSymbolicLink(inside, outside)
+                } catch (e: java.nio.file.FileSystemException) {
+                    // Windows without Developer Mode / admin privilege cannot create symbolic links
+                    return
+                }
                 directory.file("new", create = true).use { it.write(ByteBuffer.wrap("safe".toByteArray())) }
                 directory.move("new", directory, "renamed", overwrite = false)
                 directory.child("child", create = true).close()
@@ -127,11 +133,17 @@ class NativeDirectoryTest {
     }
 
     @Test
+    @Suppress("SwallowedException")
     fun `links cannot be opened but can be inspected renamed and unlinked`() {
         val root = Files.createTempDirectory("native-directory-").toRealPath()
         try {
             val target = Files.writeString(root.resolve("target"), "sentinel")
-            Files.createSymbolicLink(root.resolve("link"), target)
+            try {
+                Files.createSymbolicLink(root.resolve("link"), target)
+            } catch (e: java.nio.file.FileSystemException) {
+                // Windows without Developer Mode / admin privilege cannot create symbolic links
+                return
+            }
             NativeDirectory.open(root).use { directory ->
                 assertTrue(checkNotNull(directory.info("link")).isLink)
                 assertFails { directory.file("link") }
