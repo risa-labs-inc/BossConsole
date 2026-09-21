@@ -80,7 +80,9 @@ object CLISecurityValidator {
      * traversal defence when every caller may pass an absolute path anyway, so
      * canonicalising is both stricter and correct. What remains is what actually
      * matters: no NUL (which truncates the path in any native call underneath),
-     * and a path that resolves.
+     * no Windows-shaped dangerous input (which a Windows parser or filesystem
+     * would silently rewrite or open against a device rather than the file the
+     * string names), and a path that resolves.
      *
      * Callers still check `exists()`, `isFile()` and `canRead()` afterwards;
      * this decides only whether the string is a usable path at all.
@@ -88,7 +90,10 @@ object CLISecurityValidator {
     fun isValidOpenTargetPath(path: String): Boolean {
         if (path.isBlank()) return false
         if (path.length > MAX_OPEN_TARGET_PATH_LENGTH) return false
-        if (path.contains('\u0000')) return false
+        // Run BEFORE any path parsing/canonicalisation so a Windows-shaped
+        // dangerous input cannot slip past a parser that silently strips or
+        // rewrites the offending bytes on one platform only. See #832.
+        if (hasWindowsDangerousShape(path)) return false
 
         // canonicalFile resolves `..` and symlinks and throws on a path the
         // filesystem cannot represent, which is the honest way to reject the
@@ -106,16 +111,107 @@ object CLISecurityValidator {
     }
 
     /**
+     * The Windows device names the filesystem treats as reserved regardless of
+     * extension. They are not real directories on any Windows filesystem, so
+     * `C:\CON`, `\\?\C:\foo\NUL\bar` and `C:\Users\me\COM1\notes.md` all open
+     * something other than what the string names - the console, the null device
+     * and the first serial port respectively. The check is path-component-wise
+     * (matched case-insensitively against the component with any trailing dots
+     * or spaces stripped - Windows does that before the lookup, so `con.`
+     * resolves to `con`).
+     */
+    private val WINDOWS_RESERVED_NAMES: Set<String> =
+        setOf(
+            "CON",
+            "PRN",
+            "AUX",
+            "NUL",
+            "COM1",
+            "COM2",
+            "COM3",
+            "COM4",
+            "COM5",
+            "COM6",
+            "COM7",
+            "COM8",
+            "COM9",
+            "LPT1",
+            "LPT2",
+            "LPT3",
+            "LPT4",
+            "LPT5",
+            "LPT6",
+            "LPT7",
+            "LPT8",
+            "LPT9",
+        )
+
+    private val DRIVE_ROOT_REGEX = Regex("^[A-Za-z]:[\\\\/]?$")
+
+    /**
+     * Returns true when [path] has a Windows-shaped dangerous pattern that the
+     * filesystem or a parser would handle differently from the bytes shown.
+     *
+     * Applied platform-independently (see #832: a check that fires on macOS and
+     * Linux must also fire on Windows for the same input). The categories:
+     *
+     * - NUL or any ISO control character - truncates the path in any native
+     *   call underneath.
+     * - UNC path at start (`\\` or `//`) - the canonicalised local path is not
+     *   the path the OS will read; the share is named on a remote host.
+     * - Trailing dot or space - Windows strips both before resolving, so the
+     *   checked string and the resolved file are different bytes.
+     * - Drive root (`C:`, `C:\`, `C:/`) - never a project directory; the
+     *   existence probe would otherwise succeed for `isDirectory` on the root.
+     * - Reserved-name path component (CON, PRN, AUX, NUL, COM1-9, LPT1-9) -
+     *   opens a device, not the directory the string names.
+     */
+    @Suppress("ReturnCount")
+    internal fun hasWindowsDangerousShape(path: String): Boolean {
+        if (path.isEmpty()) return false
+        if (path.any { it.isISOControl() }) return true
+        if (path.startsWith("\\\\") || path.startsWith("//")) return true
+
+        // Trailing dot or space (Windows strips both before resolving). Skip when the
+        // path is nothing but dots and spaces - there is nothing left to strip TO, so
+        // `." and `..` (caught by the `..` check in callers) are not Windows bypasses.
+        val trimmed = path.trimEnd('.', ' ')
+        if (trimmed.isNotEmpty() && trimmed.length < path.length) return true
+
+        // Drive root: "C:", "C:\", "C:/" and case-insensitive variants. The
+        // regex matches the whole string so a drive letter buried inside a
+        // longer path does not match.
+        if (DRIVE_ROOT_REGEX.matches(path)) return true
+
+        val components = path.split('\\', '/')
+        for (component in components) {
+            if (component.isEmpty()) continue
+            val normalized = component.trimEnd('.', ' ').uppercase()
+            if (normalized in WINDOWS_RESERVED_NAMES) return true
+        }
+        return false
+    }
+
+    /**
      * Validates file path for security.
      * Prevents path traversal attacks and other malicious patterns.
      *
      * For a path that is only going to be **read** (opening a file in the
      * editor), use [isValidOpenTargetPath]: these rules assume the path may
      * reach a shell and reject legal filenames that never would.
+     *
+     * This is the strict gate used for paths whose value will become a terminal
+     * working directory (`open_workspace` `projectPath`, `open_terminal`
+     * `workingDirectory`, the `boss://folder` deep link). It is therefore run
+     * BEFORE any path parsing/canonicalisation on every platform, so a check
+     * that fires on macOS and Linux fires on Windows for the same input. The
+     * Windows-shaped cases that would otherwise slip through - reserved names
+     * like CON/PRN, drive roots, UNC paths, trailing dot/space, control
+     * characters - are caught by [hasWindowsDangerousShape].
      */
     fun isValidPath(path: String): Boolean {
         // Check for null bytes
-        if (path.contains('\u0000')) {
+        if (path.contains(' ')) {
             return false
         }
 
@@ -130,11 +226,19 @@ object CLISecurityValidator {
             return false
         }
 
+        // Windows-shaped dangerous patterns must fire on every platform: the
+        // strict gate is the only defence between a caller-supplied path and
+        // a terminal working directory, so it cannot depend on a Windows
+        // parser or filesystem to bail out for us. See #832.
+        if (hasWindowsDangerousShape(path)) {
+            return false
+        }
+
         return true
     }
 
     /**
-     * Longest terminal command BOSS will type into a shell — well past anything
+     * Longest terminal command BOSS will type into a shell - well past anything
      * a person writes by hand, and a bound on what a caller can make the app
      * hold. Commands that must be confirmed are held to the tighter
      * [TERMINAL_CONFIRM_MAX_COMMAND_LENGTH], which is what the prompt can show in
@@ -147,14 +251,14 @@ object CLISecurityValidator {
      * printable text, no longer than [MAX_COMMAND_LENGTH].
      *
      * This is a shape check, not a judgement about what the command does. An
-     * allow-list of commands would rule out the legitimate use — `boss terminal
-     * -c` exists precisely to run whatever the operator types — without ruling
+     * allow-list of commands would rule out the legitimate use - `boss terminal
+     * -c` exists precisely to run whatever the operator types - without ruling
      * out much else, so **who asked** is decided separately by
      * [ai.rever.boss.utils.DeepLinkOrigin]: only a request the operator made
      * themselves runs without a prompt.
      *
      * Control characters are rejected because the command is written into a
-     * shell followed by a single Enter — an embedded line break would submit
+     * shell followed by a single Enter - an embedded line break would submit
      * further lines that nothing ever displayed, so keeping the command to one
      * line is what makes the text shown equal to the text that runs. The NUL
      * byte the previous check looked for is one of them.
