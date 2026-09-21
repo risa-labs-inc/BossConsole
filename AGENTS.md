@@ -2301,3 +2301,12 @@ update it with the pinned distribution checksum and scaffold validation together
 - `atomicWriteText` pins POSIX files to 0600. The separate `writeModeFile` writer for `env_vars` preserves existing permissions; that rule does not apply to all state writers.
 - Chromium's constructed GitHub backup URL uses the catalog checksum. Primary and backup must contain identical artifact bytes; checksum mismatch fails closed. See `docs/dev-935-release-checklist.md` for deployment checks.
 - Browser print is a direct-native exception to the usual AWT ownership rule after macOS manual verification. Pending AWT cancellation is best-effort, not a cross-thread exactly-once guarantee; do not copy this pattern for destructive actions.
+
+### Clone retry form lifetime
+
+`CloneProjectDialog` keeps the configuration form in a `SaveableStateHolder` while
+progress, failure and success replace it. Preserve the URL, parent directory, directory
+name and auto-name/manual-edit flags together. Validation stays outside saved state so
+returning from a failed clone rechecks the filesystem, including a partial destination.
+Retry returns to that form; it neither starts a clone immediately nor deletes files.
+The internal clone callback overload supports Compose flow tests without a remote Git process.

@@ -275,7 +275,7 @@
     <ID>LongMethod:ChromiumAutoDownloader.kt$ChromiumAutoDownloader$internal suspend fun installFromCandidates( candidates: List&lt;EngineDownloadCandidate&gt;, version: String, targetDir: Path, staged: Boolean, onProgress: (DownloadProgress) -&gt; Unit, fetch: (String, Path) -&gt; Unit = { url, dest -&gt; downloadWithProgress(url, dest, onProgress) }, extract: (Path, Path) -&gt; Unit = { zip, dest -&gt; extractZip(zip, dest) }, ): Result&lt;Path&gt;</ID>
     <ID>LongMethod:ChromiumDownloadDialog.kt$@Composable private fun DownloadSurface( progress: Float, downloadedMB: Long, totalMB: Long, status: String, error: String?, onCancel: () -&gt; Unit, onRetry: (() -&gt; Unit)?, )</ID>
     <ID>LongMethod:ChromiumFlagsSection.kt$@Composable fun ChromiumFlagsSections()</ID>
-    <ID>LongMethod:CloneProjectDialog.kt$@Composable fun CloneProjectDialog( onDismiss: () -&gt; Unit, onProjectCloned: (String) -&gt; Unit, )</ID>
+    <ID>LongMethod:CloneProjectDialog.kt$@Composable internal fun CloneProjectDialog( onDismiss: () -&gt; Unit, onProjectCloned: (String) -&gt; Unit, cloneRepository: suspend (String, String, (String) -&gt; Unit) -&gt; GitOperationResult, )</ID>
     <ID>LongMethod:CloneProjectDialog.kt$@Composable private fun CloningStep( repositoryUrl: String, targetDirectory: String, progressMessage: String, onProgress: (String) -&gt; Unit, onSuccess: (String) -&gt; Unit, onError: (String) -&gt; Unit, )</ID>
     <ID>LongMethod:CloneProjectDialog.kt$@Composable private fun ConfigurationStep( onDismiss: () -&gt; Unit, onClone: (url: String, directory: String) -&gt; Unit, )</ID>
     <ID>LongMethod:CloneProjectDialog.kt$@Composable private fun ErrorStep( message: String, onRetry: () -&gt; Unit, onClose: () -&gt; Unit, )</ID>

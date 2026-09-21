@@ -18,6 +18,8 @@ import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -46,7 +48,17 @@ fun CloneProjectDialog(
     onDismiss: () -> Unit,
     onProjectCloned: (String) -> Unit,
 ) {
+    CloneProjectDialog(onDismiss, onProjectCloned, GitService::cloneRepository)
+}
+
+@Composable
+internal fun CloneProjectDialog(
+    onDismiss: () -> Unit,
+    onProjectCloned: (String) -> Unit,
+    cloneRepository: suspend (String, String, (String) -> Unit) -> GitOperationResult,
+) {
     var cloneStep by remember { mutableStateOf<CloneStep>(CloneStep.Configuration) }
+    val configurationState = rememberSaveableStateHolder()
 
     BossDialog(
         onDismissRequest = {
@@ -73,16 +85,19 @@ fun CloneProjectDialog(
         ) {
             when (val step = cloneStep) {
                 is CloneStep.Configuration -> {
-                    ConfigurationStep(
-                        onDismiss = onDismiss,
-                        onClone = { url, directory ->
-                            cloneStep = CloneStep.Cloning(url, directory, "Initializing...")
-                        },
-                    )
+                    configurationState.SaveableStateProvider("configuration") {
+                        ConfigurationStep(
+                            onDismiss = onDismiss,
+                            onClone = { url, directory ->
+                                cloneStep = CloneStep.Cloning(url, directory, "Initializing...")
+                            },
+                        )
+                    }
                 }
 
                 is CloneStep.Cloning -> {
                     CloningStep(
+                        cloneRepository = cloneRepository,
                         repositoryUrl = step.repositoryUrl,
                         targetDirectory = step.targetDirectory,
                         progressMessage = step.progressMessage,
@@ -129,12 +144,12 @@ private fun ConfigurationStep(
     onDismiss: () -> Unit,
     onClone: (url: String, directory: String) -> Unit,
 ) {
-    var repositoryUrl by remember { mutableStateOf("") }
-    var targetDirectory by remember { mutableStateOf(ProjectCreationService.getDefaultProjectsDirectory()) }
-    var customDirectoryName by remember { mutableStateOf("") }
+    var repositoryUrl by rememberSaveable { mutableStateOf("") }
+    var targetDirectory by rememberSaveable { mutableStateOf(ProjectCreationService.getDefaultProjectsDirectory()) }
+    var customDirectoryName by rememberSaveable { mutableStateOf("") }
     var urlError by remember { mutableStateOf<String?>(null) }
-    var lastAutoFilledName by remember { mutableStateOf("") }
-    var userManuallyEdited by remember { mutableStateOf(false) }
+    var lastAutoFilledName by rememberSaveable { mutableStateOf("") }
+    var userManuallyEdited by rememberSaveable { mutableStateOf(false) }
 
     // Directory picker
     val directoryPicker =
@@ -455,6 +470,7 @@ private fun ConfigurationStep(
  */
 @Composable
 private fun CloningStep(
+    cloneRepository: suspend (String, String, (String) -> Unit) -> GitOperationResult,
     repositoryUrl: String,
     targetDirectory: String,
     progressMessage: String,
@@ -474,11 +490,7 @@ private fun CloningStep(
             )
 
             val result =
-                GitService.cloneRepository(
-                    repositoryUrl = repositoryUrl,
-                    targetDirectory = targetDirectory,
-                    onProgress = onProgress,
-                )
+                cloneRepository(repositoryUrl, targetDirectory, onProgress)
 
             when (result) {
                 is GitSuccess -> {
