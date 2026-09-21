@@ -277,4 +277,49 @@ class ChromiumAutoDownloaderTest {
             assertEquals("network down", reportedError)
             assertFalse(File(target, "version.txt").exists())
         }
+
+    @Test
+    fun `failed extraction during non-staged install preserves existing engine`() =
+        runBlocking {
+            makeExistingTarget("9.1.2")
+
+            val result =
+                ChromiumAutoDownloader.installFromCandidates(
+                    candidates = listOf(candidate("github", "https://github/a.zip")),
+                    version = "9.2.0",
+                    targetDir = target.toPath(),
+                    staged = false,
+                    onProgress = {},
+                    fetch = { _, dest -> dest.toFile().writeText("zip-bytes") },
+                    extract = { _, _ -> throw IllegalStateException("extraction corrupted") },
+                )
+
+            assertTrue(result.isFailure)
+            assertEquals(
+                "9.1.2",
+                File(target, "version.txt").readText(),
+                "existing engine must be preserved on extraction failure",
+            )
+            assertEquals("old-engine", File(target, "payload.bin").readText())
+        }
+
+    @Test
+    fun `non-staged install replaces existing engine atomically`() =
+        runBlocking {
+            makeExistingTarget("9.1.2")
+
+            val result =
+                ChromiumAutoDownloader.installFromCandidates(
+                    candidates = listOf(candidate("github", "https://github/a.zip")),
+                    version = "9.2.0",
+                    targetDir = target.toPath(),
+                    staged = false,
+                    onProgress = {},
+                    fetch = { _, dest -> dest.toFile().writeText("zip-bytes") },
+                    extract = fakeExtract,
+                )
+
+            assertTrue(result.isSuccess)
+            assertEquals("9.2.0", File(target, "version.txt").readText())
+        }
 }

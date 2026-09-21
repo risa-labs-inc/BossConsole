@@ -251,7 +251,8 @@ object FluckEngine {
         proactiveCleanupDone = true
 
         val selectedProfile = BrowserSettings.currentProfile
-        val profileDirPath = BossDirectories.resolve(selectedProfile).toPath()
+        if (!BossDirectories.isValidProfileIdentifier(selectedProfile)) return
+        val profileDirPath = BossDirectories.resolveContained(selectedProfile).toPath()
 
         // First, kill any stale Chromium processes from previous sessions
         killStaleChromiumProcesses()
@@ -1065,7 +1066,10 @@ object FluckEngine {
                 force = force,
                 engineRunning = { _engine != null && isEngineHealthy() },
                 engineUsable = { hasUsableEngine(cacheIsHealthy()) },
-                profileExists = { BossDirectories.resolve(BrowserSettings.currentProfile).exists() },
+                profileExists = {
+                    val p = BrowserSettings.currentProfile
+                    BossDirectories.isValidProfileIdentifier(p) && BossDirectories.resolveContained(p).exists()
+                },
             )
         if (decision != PrewarmDecision.RUN) {
             // The reason, not a guess at it, and as a field rather than interpolated into the
@@ -1794,7 +1798,7 @@ object FluckEngine {
                         it.name != "browser-profile" &&
                         it.lastModified() < oneDayAgo
                 }?.forEach { dir ->
-                    dir.deleteRecursively()
+                    BossDirectories.deleteSafelyWithoutFollowingLinks(dir)
                 }
         } catch (e: Exception) {
             // Housekeeping only - old temp profiles are retried next startup
@@ -1819,7 +1823,7 @@ object FluckEngine {
                         it.name.startsWith("browser-profile-") &&
                         it.name != "browser-profile"
                 }?.forEach { dir ->
-                    if (dir.deleteRecursively()) {
+                    if (BossDirectories.deleteSafelyWithoutFollowingLinks(dir)) {
                         cleanedCount++
                     }
                 }
@@ -1844,9 +1848,13 @@ object FluckEngine {
         }
     }
 
+    @Suppress("ThrowsCount")
     private fun createEngineWithProfile(chromiumDir: java.nio.file.Path): Engine {
         val selectedProfile = BrowserSettings.currentProfile
-        val profileDirPath = BossDirectories.resolve(selectedProfile).toPath()
+        if (!BossDirectories.isValidProfileIdentifier(selectedProfile)) {
+            throw SecurityException("Invalid browser profile identifier: $selectedProfile")
+        }
+        val profileDirPath = BossDirectories.resolveContained(selectedProfile).toPath()
         profileDirPath.toFile().mkdirs()
 
         return try {
@@ -1872,8 +1880,8 @@ object FluckEngine {
             }
 
             // Profile is genuinely in use by another process, use temporary
-            val tempProfile = "browser-profile-${System.currentTimeMillis()}"
-            val tempProfilePath = BossDirectories.resolve(tempProfile).toPath()
+            val tempProfile = BossDirectories.sanitizeProfileIdentifier("browser-profile-${System.currentTimeMillis()}")
+            val tempProfilePath = BossDirectories.resolveContained(tempProfile).toPath()
             tempProfilePath.toFile().mkdirs()
 
             try {
@@ -3508,10 +3516,20 @@ object FluckEngine {
 
                 // Step 4: Delete browser profile directory
                 val selectedProfile = BrowserSettings.currentProfile
-                val profileDir = BossDirectories.resolve(selectedProfile)
+                if (!BossDirectories.isValidProfileIdentifier(selectedProfile)) {
+                    return@withContext ResetResult(
+                        success = false,
+                        engineClosed = engineClosed,
+                        profileDeleted = false,
+                        tempProfilesCleaned = false,
+                        errorMessage = "Invalid browser profile identifier: $selectedProfile",
+                        failedStep = "Validate profile identifier",
+                    )
+                }
+                val profileDir = BossDirectories.resolveContained(selectedProfile)
 
                 if (profileDir.exists()) {
-                    profileDeleted = profileDir.deleteRecursively()
+                    profileDeleted = BossDirectories.deleteSafelyWithoutFollowingLinks(profileDir)
                     if (profileDeleted) {
                     } else {
                         // This is a partial failure - return with details

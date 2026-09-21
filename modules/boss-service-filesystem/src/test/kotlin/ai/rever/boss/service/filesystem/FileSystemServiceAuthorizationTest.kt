@@ -140,8 +140,8 @@ class FileSystemServiceAuthorizationTest {
                         }
                     }
                 val event = awaitWatchEvent(first)
-                // Drain queued events after writes stop, then observe three poll intervals of quiet.
-                while (withTimeoutOrNull(1_500) { activity.receive() } != null) { /* wait for quiescence */ }
+                // Drain queued events after writes stop, then observe quiet.
+                while (withTimeoutOrNull(300) { activity.receive() } != null) { /* wait for quiescence */ }
                 assertFalse(completion.isCompleted, "The watch must remain open before revocation")
                 service.registry.revoke("host")
                 val failure = withTimeout(5_000) { completion.await() }

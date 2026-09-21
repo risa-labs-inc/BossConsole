@@ -3,6 +3,7 @@ package ai.rever.boss.components.settings.sections
 import ai.rever.boss.components.settings.shared.SettingsSection
 import ai.rever.boss.plugin.browser.BrowserSettings
 import ai.rever.boss.plugin.browser.BrowserSettingsManager
+import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.plugin.ui.BossAlertDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.BorderStroke
@@ -204,9 +205,14 @@ fun ProfileManagementSection(
                 TextButton(
                     onClick = {
                         if (newProfileName.isNotBlank()) {
-                            val profileName = "browser-profile-${newProfileName.replace(" ", "-").lowercase()}"
-                            availableProfiles.add(profileName)
-                            BrowserSettings.availableProfiles.add(profileName)
+                            val profileName = BossDirectories.sanitizeProfileIdentifier(newProfileName)
+                            if (!availableProfiles.contains(profileName)) {
+                                availableProfiles.add(profileName)
+                            }
+                            if (!BrowserSettings.availableProfiles.contains(profileName)) {
+                                BrowserSettings.availableProfiles.add(profileName)
+                            }
+                            BrowserSettings.currentProfile = profileName
                             onProfileChange(profileName)
                             showNewProfileDialog = false
                             newProfileName = ""

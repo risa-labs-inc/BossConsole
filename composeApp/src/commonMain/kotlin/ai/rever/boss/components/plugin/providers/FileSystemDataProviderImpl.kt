@@ -10,6 +10,8 @@ import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.utils.revealInFileManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
@@ -20,9 +22,16 @@ import ai.rever.boss.components.plugin.panels.left_top.scanDirectoryWithDepth as
  * Implementation of FileSystemDataProvider that wraps platform-specific file operations.
  * This allows plugins to access file system without direct platform coupling.
  */
-class FileSystemDataProviderImpl : FileSystemDataProvider {
+@Suppress("TooManyFunctions")
+class FileSystemDataProviderImpl :
+    FileSystemDataProvider,
+    DisposableProvider {
     private val logger = BossLogger.forComponent("FileSystemDataProvider")
-    private val ioScope = CoroutineScope(Dispatchers.IO)
+    private val ioScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    override fun dispose() {
+        ioScope.cancel()
+    }
 
     override suspend fun scanDirectory(path: String): FileNodeData? =
         kotlinx.coroutines.withContext(Dispatchers.IO) {
