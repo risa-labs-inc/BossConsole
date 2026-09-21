@@ -155,7 +155,7 @@ class ReleaseNotesMarkdownTest {
 
     @Test
     fun `intraword emphasis stays literal`() {
-        val text = "2*3*4 and a__b__c plus snake_case_text"
+        val text = "2*3*4 and 2**3**4 and a__b__c and a**b**c plus snake_case_text"
         assertEquals(text, buildInlineMarkdown(text).text)
     }
 
