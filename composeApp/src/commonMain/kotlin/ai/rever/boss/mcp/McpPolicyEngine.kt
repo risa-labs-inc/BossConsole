@@ -200,6 +200,57 @@ class McpPolicyEngine(
     }
 
     /**
+     * Risk-aware policy consult that takes the tool's actual arguments into account.
+     *
+     * `policyFor` consults name-only and provider-only signals. A standing ALLOW rule
+     * (`configuredTool == ALLOW`, session trust, provider ALLOW) bypasses the risk
+     * evaluator entirely, so a destructive argument - CRITICAL by `evaluateRisk` -
+     * still runs unprompted under the persisted grant (#895 tracks the related
+     * standing-section-policy gap; this is the per-tool `setToolPolicy` half, which
+     * a single "Always Allow" click writes through `validateApproval`).
+     *
+     * Downstream callers that know the arguments must consult this overload and use
+     * its result - not `policyFor`'s - when the tool would otherwise be auto-allowed.
+     * The previous `policyFor` keeps its name-only signature for the rate-limited
+     * policy consult path; the gate that runs at invocation time uses this one.
+     */
+    @Suppress("ReturnCount")
+    fun policyForWithArgs(
+        toolName: String,
+        args: McpToolArgs,
+        providerId: String? = null,
+        declaredReadOnly: Boolean? = null,
+    ): McpPolicyAction {
+        if (_fault.value is McpPolicyFault.PersistedPolicyUnreadable) return McpPolicyAction.DENY
+        val configuredTool = _config.value.rules[toolName]
+        if (configuredTool == McpPolicyAction.DENY) {
+            return McpPolicyAction.DENY
+        }
+        val configuredProvider = providerId?.let { _config.value.providerRules[it] }
+        if (configuredProvider == McpPolicyAction.DENY) {
+            return McpPolicyAction.DENY
+        }
+        // CRITICAL-rated arguments (e.g. "rm -rf /") downgrade a standing ALLOW rule
+        // back to ASK regardless of how it got there - session trust, persisted
+        // "Always Allow", or provider-wide trust. Anything stronger than the mutating
+        // default is refused on this argument shape.
+        val risk = DefaultMcpRiskEvaluator().evaluateRisk(toolName, args).level
+        if (risk >= McpRiskLevel.CRITICAL) {
+            return McpPolicyAction.ASK
+        }
+        if (toolName in _sessionTrustedTools.value) {
+            return McpPolicyAction.ALLOW
+        }
+        if (configuredTool != null) return configuredTool
+        if (configuredProvider == McpPolicyAction.ALLOW) return McpPolicyAction.ALLOW
+        return if (risk >= McpRiskLevel.HIGH || McpMutatingToolCatalog.isMutating(toolName, declaredReadOnly)) {
+            _config.value.defaultMutatingAction
+        } else {
+            _config.value.defaultReadOnlyAction
+        }
+    }
+
+    /**
      * Trust [toolName] for the duration of this session only.
      * Session trust is not written to disk and clears upon app restart.
      */
