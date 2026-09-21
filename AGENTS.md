@@ -2301,3 +2301,13 @@ update it with the pinned distribution checksum and scaffold validation together
 - `atomicWriteText` pins POSIX files to 0600. The separate `writeModeFile` writer for `env_vars` preserves existing permissions; that rule does not apply to all state writers.
 - Chromium's constructed GitHub backup URL uses the catalog checksum. Primary and backup must contain identical artifact bytes; checksum mismatch fails closed. See `docs/dev-935-release-checklist.md` for deployment checks.
 - Browser print is a direct-native exception to the usual AWT ownership rule after macOS manual verification. Pending AWT cancellation is best-effort, not a cross-thread exactly-once guarantee; do not copy this pattern for destructive actions.
+
+### Run scan publication ownership
+
+Run configurations retain a process-wide detected list. Scans from different windows may
+overlap, but only the latest request owns its results, error, and busy state. A short
+`scanLock` protects ownership and publication, never filesystem traversal. `clearDetected`
+invalidates pending publication and clears scan status; it does not cancel detector work.
+Cancellation propagates without becoming a scan error. The internal scanner overload lets
+`RunConfigurationScanOwnershipTest` control completion order on the real manager without
+mutating a global detector or reading a user's project.
