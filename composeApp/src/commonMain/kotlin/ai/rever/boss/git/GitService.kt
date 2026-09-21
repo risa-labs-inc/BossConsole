@@ -274,6 +274,9 @@ expect object GitService {
      */
     suspend fun getLastCommitMessage(): String?
 
+    /** Read the amend draft from an explicitly selected repository. */
+    suspend fun getLastCommitMessage(projectPathOverride: String?): String?
+
     // ===== Commit Log =====
 
     /**

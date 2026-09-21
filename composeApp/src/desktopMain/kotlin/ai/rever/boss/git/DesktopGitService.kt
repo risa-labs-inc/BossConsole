@@ -745,9 +745,11 @@ actual object GitService {
             }
         }
 
-    actual suspend fun getLastCommitMessage(): String? =
+    actual suspend fun getLastCommitMessage(): String? = getLastCommitMessage(projectPathOverride = null)
+
+    actual suspend fun getLastCommitMessage(projectPathOverride: String?): String? =
         withContext(Dispatchers.IO) {
-            val projectPath = currentProjectPath ?: return@withContext null
+            val projectPath = projectPathOverride ?: currentProjectPath ?: return@withContext null
 
             try {
                 val result = runGitCommand(projectPath, "log", "-1", "--format=%B")

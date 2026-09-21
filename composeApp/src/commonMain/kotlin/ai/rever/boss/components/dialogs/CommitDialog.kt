@@ -3,11 +3,11 @@ package ai.rever.boss.components.dialogs
 import ai.rever.boss.git.GitFileStatus
 import ai.rever.boss.git.GitFileStatusType
 import ai.rever.boss.git.GitOperationResult
-import ai.rever.boss.git.GitService
 import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.window.LocalWindowGitState
 import ai.rever.boss.window.LocalWindowId
+import ai.rever.boss.window.LocalWindowProjectState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -29,6 +29,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import ai.rever.boss.plugin.git.GitOperationResult.Error as GitError
 import ai.rever.boss.plugin.git.GitOperationResult.Success as GitSuccess
@@ -54,25 +57,70 @@ fun CommitDialog(
     val windowId = LocalWindowId.current
     // Use window-specific git state for independent per-window git UI
     val windowGitState = LocalWindowGitState.current
-    val fileStatus by windowGitState?.fileStatus?.collectAsState() ?: remember { mutableStateOf(emptyList()) }
+    val windowProjectState = LocalWindowProjectState.current
+    val selectedProject by windowProjectState?.selectedProject?.collectAsState()
+        ?: remember { mutableStateOf(null) }
+    val repository =
+        remember {
+            CommitDialogRepository(selectedProject?.path?.ifBlank { null }, windowId) {
+                windowProjectState
+                    ?.selectedProject
+                    ?.value
+                    ?.path
+                    ?.ifBlank { null }
+            }
+        }
+    val projectUnavailable = selectedProject.let { repository.unavailableReason }
+    var actionRunning by remember { mutableStateOf(false) }
+    var fileStatus by remember { mutableStateOf(emptyList<GitFileStatus>()) }
+    var statusLoading by remember { mutableStateOf(true) }
+    val statusRefreshTrigger by windowGitState?.fileStatus?.collectAsState()
+        ?: remember { mutableStateOf(emptyList()) }
     val isLoading by windowGitState?.isLoading?.collectAsState() ?: remember { mutableStateOf(false) }
+    val statusReady = !statusLoading && !isLoading
 
     var commitMessage by remember { mutableStateOf("") }
     var amendCommit by remember { mutableStateOf(false) }
     var signOff by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
+    fun runAction(action: suspend () -> GitOperationResult) {
+        if (actionRunning || projectUnavailable != null || !statusReady) return
+        actionRunning = true
+        errorMessage = null
+        scope.launch {
+            try {
+                val result = action()
+                if (result is GitError) errorMessage = result.message
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                errorMessage = "The Git action failed. Your draft is preserved. Try again."
+            } finally {
+                actionRunning = false
+            }
+        }
+    }
+
     val focusRequester = remember { FocusRequester() }
 
-    // Load file status and last commit message on open - using window-specific state
-    LaunchedEffect(windowGitState) {
-        GitService.getStatusForWindow(windowGitState)
+    // Own the snapshot as well as the target: a late shared-window refresh must not supply
+    // filenames from another repository to this dialog. Shared changes only trigger a fresh bound read.
+    LaunchedEffect(repository, statusRefreshTrigger, actionRunning) {
+        if (actionRunning) return@LaunchedEffect
+        statusLoading = true
+        try {
+            fileStatus = repository.status()
+        } finally {
+            // A cancelled read must not clear the loading state of its replacement.
+            if (currentCoroutineContext().isActive) statusLoading = false
+        }
     }
 
     // Load last commit message when amend is checked
     LaunchedEffect(amendCommit) {
         if (amendCommit) {
-            val lastMessage = GitService.getLastCommitMessage()
+            val lastMessage = repository.lastCommitMessage()
             if (lastMessage != null && commitMessage.isEmpty()) {
                 commitMessage = lastMessage
             }
@@ -90,7 +138,7 @@ fun CommitDialog(
     val hasChangesToCommit = stagedFiles.isNotEmpty()
 
     BossDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { if (!actionRunning) onDismiss() },
         // Honour the declared 600.dp: the platform default width caps content at 580.dp on the
         // lightweight path only, so the two paths disagreed about the card's width.
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -121,6 +169,7 @@ fun CommitDialog(
                     )
                     IconButton(
                         onClick = onDismiss,
+                        enabled = !actionRunning,
                         modifier = Modifier.size(24.dp),
                     ) {
                         Icon(
@@ -136,6 +185,7 @@ fun CommitDialog(
                 // Commit message input
                 OutlinedTextField(
                     value = commitMessage,
+                    enabled = !actionRunning,
                     onValueChange = { commitMessage = it },
                     label = { Text("Commit message", color = BossTheme.colors.textSecondary, fontSize = 12.sp) },
                     placeholder = { Text("Enter commit message...", color = BossTheme.colors.textSecondary.copy(alpha = 0.5f)) },
@@ -165,10 +215,11 @@ fun CommitDialog(
                     // Amend checkbox
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.clickable { amendCommit = !amendCommit },
+                        modifier = Modifier.clickable(enabled = !actionRunning) { amendCommit = !amendCommit },
                     ) {
                         Checkbox(
                             checked = amendCommit,
+                            enabled = !actionRunning,
                             onCheckedChange = { amendCommit = it },
                             colors =
                                 CheckboxDefaults.colors(
@@ -186,10 +237,11 @@ fun CommitDialog(
                     // Sign-off checkbox
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.clickable { signOff = !signOff },
+                        modifier = Modifier.clickable(enabled = !actionRunning) { signOff = !signOff },
                     ) {
                         Checkbox(
                             checked = signOff,
+                            enabled = !actionRunning,
                             onCheckedChange = { signOff = it },
                             colors =
                                 CheckboxDefaults.colors(
@@ -223,10 +275,11 @@ fun CommitDialog(
                             item {
                                 CommitFileSectionHeader(
                                     title = "Staged Changes",
+                                    enabled = !actionRunning && projectUnavailable == null && statusReady,
                                     count = stagedFiles.size,
                                     actionText = "Unstage All",
                                     onAction = {
-                                        scope.launch { GitService.unstageAll(windowId = windowId) }
+                                        runAction { repository.unstageAll() }
                                     },
                                 )
                             }
@@ -234,8 +287,9 @@ fun CommitDialog(
                                 CommitFileRow(
                                     file = file,
                                     isStaged = true,
+                                    enabled = !actionRunning && projectUnavailable == null && statusReady,
                                     onToggle = {
-                                        scope.launch { GitService.unstage(file.path, windowId = windowId) }
+                                        runAction { repository.unstage(file.path) }
                                     },
                                 )
                             }
@@ -246,10 +300,11 @@ fun CommitDialog(
                             item {
                                 CommitFileSectionHeader(
                                     title = "Changes",
+                                    enabled = !actionRunning && projectUnavailable == null && statusReady,
                                     count = unstagedFiles.size,
                                     actionText = "Stage All",
                                     onAction = {
-                                        scope.launch { GitService.stageAll(windowId = windowId) }
+                                        runAction { repository.stageAll() }
                                     },
                                 )
                             }
@@ -257,8 +312,9 @@ fun CommitDialog(
                                 CommitFileRow(
                                     file = file,
                                     isStaged = false,
+                                    enabled = !actionRunning && projectUnavailable == null && statusReady,
                                     onToggle = {
-                                        scope.launch { GitService.stage(file.path, windowId = windowId) }
+                                        runAction { repository.stage(file.path) }
                                     },
                                 )
                             }
@@ -286,7 +342,7 @@ fun CommitDialog(
                 }
 
                 // Error message
-                errorMessage?.let { error ->
+                (projectUnavailable ?: errorMessage)?.let { error ->
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         text = error,
@@ -313,7 +369,7 @@ fun CommitDialog(
                         Spacer(modifier = Modifier.width(16.dp))
                     }
 
-                    TextButton(onClick = onDismiss) {
+                    TextButton(onClick = onDismiss, enabled = !actionRunning) {
                         Text("Cancel", color = BossTheme.colors.textSecondary)
                     }
 
@@ -321,7 +377,7 @@ fun CommitDialog(
 
                     Button(
                         onClick = {
-                            scope.launch {
+                            runAction {
                                 val finalMessage =
                                     if (signOff) {
                                         "$commitMessage\n\nSigned-off-by: ${System.getProperty("user.name")}"
@@ -329,7 +385,7 @@ fun CommitDialog(
                                         commitMessage
                                     }
 
-                                val result = GitService.commit(finalMessage, amend = amendCommit, windowId = windowId)
+                                val result = repository.commit(finalMessage, amend = amendCommit)
                                 when (result) {
                                     is GitSuccess -> {
                                         onCommitSuccess(commitMessage)
@@ -340,9 +396,13 @@ fun CommitDialog(
                                         errorMessage = result.message
                                     }
                                 }
+                                result
                             }
                         },
-                        enabled = commitMessage.isNotBlank() && (hasChangesToCommit || amendCommit) && !isLoading,
+                        enabled =
+                            !actionRunning && projectUnavailable == null && statusReady && commitMessage.isNotBlank() &&
+                                (hasChangesToCommit || amendCommit) &&
+                                !isLoading,
                         colors =
                             ButtonDefaults.buttonColors(
                                 backgroundColor = BossTheme.colors.signal,
@@ -351,7 +411,7 @@ fun CommitDialog(
                                 disabledContentColor = BossTheme.colors.textMuted,
                             ),
                     ) {
-                        if (isLoading) {
+                        if (isLoading || actionRunning) {
                             // Renders on the disabled `line` background, not amber
                             CircularProgressIndicator(
                                 modifier = Modifier.size(16.dp),
@@ -373,6 +433,7 @@ private fun CommitFileSectionHeader(
     title: String,
     count: Int,
     actionText: String,
+    enabled: Boolean,
     onAction: () -> Unit,
 ) {
     Row(
@@ -400,6 +461,7 @@ private fun CommitFileSectionHeader(
         }
         TextButton(
             onClick = onAction,
+            enabled = enabled,
             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
             modifier = Modifier.height(24.dp),
         ) {
@@ -416,39 +478,24 @@ private fun CommitFileSectionHeader(
 private fun CommitFileRow(
     file: GitFileStatus,
     isStaged: Boolean,
+    enabled: Boolean,
     onToggle: () -> Unit,
 ) {
     val statusType = if (isStaged) file.indexStatus else file.workTreeStatus
-    val statusChar =
-        when (statusType) {
-            GitFileStatusType.MODIFIED -> "M"
-            GitFileStatusType.ADDED -> "A"
-            GitFileStatusType.DELETED -> "D"
-            GitFileStatusType.RENAMED -> "R"
-            GitFileStatusType.COPIED -> "C"
-            GitFileStatusType.UNTRACKED -> "?"
-            else -> " "
-        }
-    val statusColor =
-        when (statusType) {
-            GitFileStatusType.MODIFIED -> BossTheme.colors.data
-            GitFileStatusType.ADDED -> BossTheme.colors.ok
-            GitFileStatusType.DELETED -> BossTheme.colors.alert
-            GitFileStatusType.RENAMED, GitFileStatusType.COPIED -> BossTheme.colors.warn
-            GitFileStatusType.UNTRACKED -> BossTheme.colors.textSecondary
-            else -> BossTheme.colors.textSecondary
-        }
+    val statusChar = commitStatusLabel(statusType)
+    val statusColor = commitStatusColor(statusType)
 
     Row(
         modifier =
             Modifier
                 .fillMaxWidth()
-                .clickable(onClick = onToggle)
+                .clickable(enabled = enabled, onClick = onToggle)
                 .padding(horizontal = 12.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Checkbox(
             checked = isStaged,
+            enabled = enabled,
             onCheckedChange = { onToggle() },
             colors =
                 CheckboxDefaults.colors(
@@ -481,3 +528,25 @@ private fun CommitFileRow(
         )
     }
 }
+
+private fun commitStatusLabel(statusType: GitFileStatusType?): String =
+    when (statusType) {
+        GitFileStatusType.MODIFIED -> "M"
+        GitFileStatusType.ADDED -> "A"
+        GitFileStatusType.DELETED -> "D"
+        GitFileStatusType.RENAMED -> "R"
+        GitFileStatusType.COPIED -> "C"
+        GitFileStatusType.UNTRACKED -> "?"
+        else -> " "
+    }
+
+@Composable
+private fun commitStatusColor(statusType: GitFileStatusType?) =
+    when (statusType) {
+        GitFileStatusType.MODIFIED -> BossTheme.colors.data
+        GitFileStatusType.ADDED -> BossTheme.colors.ok
+        GitFileStatusType.DELETED -> BossTheme.colors.alert
+        GitFileStatusType.RENAMED, GitFileStatusType.COPIED -> BossTheme.colors.warn
+        GitFileStatusType.UNTRACKED -> BossTheme.colors.textSecondary
+        else -> BossTheme.colors.textSecondary
+    }
