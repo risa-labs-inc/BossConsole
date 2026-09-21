@@ -2312,3 +2312,9 @@ window project refuses commands, preserving the draft until the dialog is closed
 local in-flight guard so a pending command cannot be submitted twice or have its draft edited.
 `CommitDialogRepositoryTest` exercises the dialog adapter with two real disposable repositories
 and the global deliberately pointed at the other one.
+
+Commit dialog sign-off is Git-owned: pass the checkbox flag to `git commit --signoff`,
+never construct a trailer from the OS username. This uses the selected repository
+committer identity and Git trailer deduplication for ordinary commits and amend.
+Keep the original four-argument suspend `GitService.commit` overload and its defaults
+for already compiled callers; it delegates with sign-off disabled.

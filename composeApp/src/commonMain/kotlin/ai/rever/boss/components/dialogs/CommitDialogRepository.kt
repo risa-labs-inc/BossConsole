@@ -41,7 +41,8 @@ internal class CommitDialogRepository(
     suspend fun commit(
         message: String,
         amend: Boolean,
-    ): GitOperationResult = write { GitService.commit(message, amend, windowId, it) }
+        signOff: Boolean = false,
+    ): GitOperationResult = write { GitService.commit(message, amend, windowId, it, signOff) }
 
     suspend fun lastCommitMessage(): String? =
         if (unavailableReason == null) GitService.getLastCommitMessage(projectPathOverride = projectPath) else null

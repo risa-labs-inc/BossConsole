@@ -713,6 +713,14 @@ actual object GitService {
         amend: Boolean,
         windowId: String?,
         projectPathOverride: String?,
+    ): GitOperationResult = commit(message, amend, windowId, projectPathOverride, signOff = false)
+
+    actual suspend fun commit(
+        message: String,
+        amend: Boolean,
+        windowId: String?,
+        projectPathOverride: String?,
+        signOff: Boolean,
     ): GitOperationResult =
         withContext(Dispatchers.IO) {
             val projectPath =
@@ -722,10 +730,12 @@ actual object GitService {
             _isLoading.value = true
             try {
                 val args =
-                    if (amend) {
-                        listOf("commit", "--amend", "-m", message)
-                    } else {
-                        listOf("commit", "-m", message)
+                    buildList {
+                        add("commit")
+                        if (amend) add("--amend")
+                        if (signOff) add("--signoff")
+                        add("-m")
+                        add(message)
                     }
 
                 val result = runGitCommand(projectPath, *args.toTypedArray())

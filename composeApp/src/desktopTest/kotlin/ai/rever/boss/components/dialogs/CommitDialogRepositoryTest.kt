@@ -129,4 +129,71 @@ class CommitDialogRepositoryTest {
             assertEquals("initial other", git(other, "log", "-1", "--format=%B"))
         }
     }
+
+    @Test
+    fun signOffUsesTheDialogsGitIdentityAndPreservesOtherTrailers(
+        @TempDir temp: File,
+    ) = runTest {
+        val own = repo(temp, "own")
+        val other = repo(temp, "other")
+        git(own, "config", "user.name", "Repository Maintainer")
+        git(own, "config", "user.email", "maintainer@example.test")
+        val dialog = CommitDialogRepository(own.absolutePath, null) { own.absolutePath }
+        withOtherRepo(other) {
+            assertTrue(dialog.stageAll() is GitOperationResult.Success)
+            val message = "change\n\nSigned-off-by: Contributor <contributor@example.test>"
+            assertTrue(dialog.commit(message, amend = false, signOff = true) is GitOperationResult.Success)
+            assertEquals(
+                "$message\nSigned-off-by: Repository Maintainer <maintainer@example.test>",
+                git(own, "log", "-1", "--format=%B"),
+            )
+            assertEquals("initial other", git(other, "log", "-1", "--format=%B"))
+        }
+    }
+
+    @Test
+    fun repeatedAmendDoesNotDuplicateExistingSignOff(
+        @TempDir temp: File,
+    ) = runTest {
+        val own = repo(temp, "own")
+        val dialog = CommitDialogRepository(own.absolutePath, null) { own.absolutePath }
+        val message = "amended\n\nSigned-off-by: Test <test@example.test>"
+        repeat(2) {
+            assertTrue(dialog.commit(message, amend = true, signOff = true) is GitOperationResult.Success)
+            assertEquals(message, git(own, "log", "-1", "--format=%B"))
+        }
+        assertEquals("1", git(own, "rev-list", "--count", "HEAD"))
+    }
+
+    @Test
+    fun missingGitIdentityLeavesStagedWorkAndAllowsRetry(
+        @TempDir temp: File,
+    ) = runTest {
+        val own = repo(temp, "own")
+        git(own, "config", "user.useConfigOnly", "true")
+        git(own, "config", "user.email", "")
+        git(own, "config", "user.name", "")
+        val dialog = CommitDialogRepository(own.absolutePath, null) { own.absolutePath }
+        assertTrue(dialog.stageAll() is GitOperationResult.Success)
+        assertTrue(dialog.commit("draft", amend = false, signOff = true) is GitOperationResult.Error)
+        assertEquals("initial own", git(own, "log", "-1", "--format=%B"))
+        assertEquals("file.txt", git(own, "diff", "--cached", "--name-only"))
+        git(own, "config", "user.email", "retry@example.test")
+        git(own, "config", "user.name", "Test")
+        assertTrue(dialog.commit("draft", amend = false, signOff = true) is GitOperationResult.Success)
+        assertEquals("draft\n\nSigned-off-by: Test <retry@example.test>", git(own, "log", "-1", "--format=%B"))
+    }
+
+    @Test
+    fun oldCommitJvmEntryPointRemainsAvailable() {
+        GitService::class.java.getMethod(
+            "commit",
+            String::class.java,
+            Boolean::class.javaPrimitiveType,
+            String::class.java,
+            String::class.java,
+            kotlin.coroutines.Continuation::class.java,
+        )
+        assertTrue(GitService::class.java.declaredMethods.any { it.name == "commit" + "$" + "default" })
+    }
 }

@@ -378,14 +378,7 @@ fun CommitDialog(
                     Button(
                         onClick = {
                             runAction {
-                                val finalMessage =
-                                    if (signOff) {
-                                        "$commitMessage\n\nSigned-off-by: ${System.getProperty("user.name")}"
-                                    } else {
-                                        commitMessage
-                                    }
-
-                                val result = repository.commit(finalMessage, amend = amendCommit)
+                                val result = repository.commit(commitMessage, amend = amendCommit, signOff = signOff)
                                 when (result) {
                                     is GitSuccess -> {
                                         onCommitSuccess(commitMessage)
