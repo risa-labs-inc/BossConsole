@@ -74,6 +74,7 @@ object TabColorRegistry {
 
     private val lock = Any()
     private val tabTags = mutableMapOf<String, TabColorTag>()
+    private var isLoaded = false
 
     private val _tagsFlow = MutableStateFlow<Map<String, TabColorTag>>(emptyMap())
     val tagsFlow: StateFlow<Map<String, TabColorTag>> = _tagsFlow.asStateFlow()
@@ -96,6 +97,7 @@ object TabColorRegistry {
     ) {
         if (tabId.isBlank()) return
         synchronized(lock) {
+            isLoaded = true
             tabTags[tabId] = TabColorTag(category = category, customLabel = customLabel)
             _tagsFlow.value = tabTags.toMap()
         }
@@ -117,6 +119,7 @@ object TabColorRegistry {
      */
     fun removeTag(tabId: String) {
         synchronized(lock) {
+            isLoaded = true
             tabTags.remove(tabId)
             _tagsFlow.value = tabTags.toMap()
         }
@@ -130,6 +133,7 @@ object TabColorRegistry {
      */
     fun clear() {
         synchronized(lock) {
+            isLoaded = true
             tabTags.clear()
             _tagsFlow.value = emptyMap()
         }
@@ -145,6 +149,10 @@ object TabColorRegistry {
     @Suppress("TooGenericExceptionCaught")
     internal suspend fun loadTagsFromDisk() =
         withContext(Dispatchers.IO) {
+            synchronized(lock) {
+                if (isLoaded) return@withContext
+                isLoaded = true
+            }
             try {
                 val file = getTagsFile() ?: return@withContext
                 if (file.exists()) {
