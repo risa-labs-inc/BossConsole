@@ -686,10 +686,10 @@ class DefaultPlugin(
         SupabaseDataProviderImpl()
     }
 
-    // File system data provider for codebase plugin
-    override val fileSystemDataProvider: FileSystemDataProvider by lazy {
-        FileSystemDataProviderImpl()
-    }
+    // File system data provider for codebase plugin. A delegate rather than a bare `by lazy` so
+    // dispose() can reach it without forcing it into existence: see [logDataProviderDelegate].
+    private val fileSystemDataProviderDelegate = lazy { FileSystemDataProviderImpl() }
+    override val fileSystemDataProvider: FileSystemDataProvider by fileSystemDataProviderDelegate
 
     // Workspace data provider for plugins that manage workspaces
     override val workspaceDataProvider: WorkspaceDataProvider? by lazy {
@@ -1262,6 +1262,9 @@ class DefaultPlugin(
         }
         if (projectDataProviderDelegate.isInitialized()) {
             (projectDataProvider as? DisposableProvider)?.dispose()
+        }
+        if (fileSystemDataProviderDelegate.isInitialized()) {
+            (fileSystemDataProvider as? DisposableProvider)?.dispose()
         }
         pluginScope.cancel()
     }

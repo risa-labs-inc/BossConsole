@@ -1432,7 +1432,7 @@
     <ID>TooManyFunctions:DesktopUpdateService.kt$UpdateService</ID>
     <ID>TooManyFunctions:DownloadManager.kt$DownloadManager</ID>
     <ID>TooManyFunctions:DynamicPluginManager.kt$DynamicPluginManager</ID>
-    <ID>TooManyFunctions:FileSystemDataProviderImpl.kt$FileSystemDataProviderImpl : FileSystemDataProvider</ID>
+    <ID>TooManyFunctions:FileSystemDataProviderImpl.kt$FileSystemDataProviderImpl : FileSystemDataProviderDisposableProvider</ID>
     <ID>TooManyFunctions:Fluck.kt$FluckTabInfo : TabInfo</ID>
     <ID>TooManyFunctions:Fluck.kt$ai.rever.boss.components.plugin.tab_types.fluck.Fluck.kt</ID>
     <ID>TooManyFunctions:FluckEngine.kt$FluckEngine</ID>
