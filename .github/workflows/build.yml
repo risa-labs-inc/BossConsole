@@ -48,6 +48,9 @@ jobs:
       - name: Headless CLI launcher tests
         run: bash scripts/test/test-headless-cli.sh
 
+      - name: CLI shim path resolution tests
+        run: bash scripts/test/test-cli-shim-paths.sh
+
       - name: 🧪 Release publish — TUS slice tests
         # Guards the byte-accurate chunk slicing in the release publish path
         # (regressed twice: #877 misaligned resume, and the SIGPIPE status bug).
