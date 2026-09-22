@@ -19,6 +19,12 @@ object FileHashing {
                 digest.update(buffer, 0, read)
             }
         }
-        return digest.digest().joinToString("") { "%02x".format(it) }
+        return hexOf(digest.digest())
     }
+
+    /**
+     * Lowercase hex of a finished digest — the one format every anchor build
+     * and digest comparison in this package uses.
+     */
+    internal fun hexOf(bytes: ByteArray): String = bytes.joinToString("") { "%02x".format(it) }
 }

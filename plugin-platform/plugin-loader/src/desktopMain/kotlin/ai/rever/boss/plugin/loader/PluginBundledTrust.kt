@@ -106,11 +106,26 @@ object PluginBundledTrust {
      * after the marker was written (same filename, different content) reads as untrusted.
      */
     fun isTrusted(jarPath: String): Boolean {
+        val actual = runCatching { FileHashing.sha256(File(jarPath)) }.getOrNull() ?: return false
+        return isTrusted(jarPath, actual)
+    }
+
+    /**
+     * Whether [jarPath]'s marker records [actualSha256].
+     *
+     * The load-time variant: the caller supplies the digest of the bytes it is
+     * about to execute (the staged copy), so the marker is compared against
+     * what will load rather than whatever currently sits at [jarPath] — a swap
+     * of the original file between hashing and loading cannot move the answer.
+     */
+    fun isTrusted(
+        jarPath: String,
+        actualSha256: String,
+    ): Boolean {
         val marker = File(pathFor(jarPath))
         if (!marker.exists()) return false
         val recorded = runCatching { marker.readText().trim() }.getOrNull()
-        val actual = runCatching { FileHashing.sha256(File(jarPath)) }.getOrNull()
-        return !recorded.isNullOrEmpty() && recorded == actual
+        return !recorded.isNullOrEmpty() && recorded == actualSha256
     }
 
     /** Remove the marker (e.g. alongside a deleted/replaced JAR). Best-effort. */

@@ -55,12 +55,22 @@ enum class ClassLoaderState {
  * @param urls URLs to the plugin JAR and its dependencies
  * @param parent Parent classloader (usually the application classloader)
  * @param sharedPackages Packages that should use parent-first loading
+ * @param ownedJarFile A staged copy this loader was built over (see
+ *   [StagedPluginJar]). Owned once set: deleted in [close], after the jar
+ *   handle is released, so the temp copy cannot outlive the plugin.
+ * @param sourceJarPath The real plugin path [ownedJarFile] was staged from.
+ *   Reported by [isPathOpenByLiveLoader] while this loader is live so the
+ *   reconciler keeps the on-disk jar the plugin (or its out-of-process child)
+ *   may still reopen by name, exactly as it did when the classpath pointed at
+ *   the original file.
  */
 class PluginClassLoader(
     val pluginId: String,
     urls: Array<URL>,
     parent: ClassLoader,
     private val sharedPackages: Set<String> = defaultSharedPackages,
+    private val ownedJarFile: File? = null,
+    private val sourceJarPath: String? = null,
 ) : URLClassLoader(urls, parent) {
     companion object {
         init {
@@ -113,9 +123,17 @@ class PluginClassLoader(
             val snapshot = synchronized(allInstances) { allInstances.toList() }
             return snapshot.any { loader ->
                 loader.state != ClassLoaderState.UNLOADED &&
-                    loader.getURLs().any { url ->
-                        runCatching { File(url.toURI()).canonicalPath == target }.getOrDefault(false)
-                    }
+                    (
+                        loader.getURLs().any { url ->
+                            runCatching { File(url.toURI()).canonicalPath == target }.getOrDefault(false)
+                        } ||
+                            // Staged loads point the classpath at a private copy; the
+                            // plugin's real path still counts as in use for as long as
+                            // the loader lives (reconciler / reopen-by-name contract).
+                            loader.sourceJarPath?.let { source ->
+                                runCatching { File(source).canonicalPath == target }.getOrDefault(false)
+                            } == true
+                    )
             }
         }
 
@@ -534,6 +552,21 @@ class PluginClassLoader(
             super.close()
         } finally {
             markUnloaded()
+            // The staged copy is owned by this loader; delete only after
+            // super.close() released the jar handle, which Windows requires.
+            // Failure leaves the deleteOnExit backstop registered at staging.
+            ownedJarFile?.let { file ->
+                if (file.exists() && !file.delete()) {
+                    logger.warn(
+                        LogCategory.SYSTEM,
+                        "Could not delete staged plugin jar copy",
+                        mapOf(
+                            "pluginId" to pluginId,
+                            "file" to file.name,
+                        ),
+                    )
+                }
+            }
         }
     }
 
