@@ -40,7 +40,7 @@ jobs:
       target-channel: ${{ steps.validate.outputs.target-channel }}
     steps:
       - name: 📥 Checkout Repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           token: ${{ secrets.PUBLIC_REPO_TOKEN }}
           fetch-depth: 0
@@ -211,7 +211,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 📥 Checkout Repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           token: ${{ secrets.PUBLIC_REPO_TOKEN }}
 
@@ -269,7 +269,7 @@ jobs:
           git push
 
       - name: 🎉 Create GitHub Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           tag_name: v${{ needs.validate-and-prepare.outputs.target-version }}
           name: ${{ needs.validate-and-prepare.outputs.target-is-prerelease == 'true' && '🧪' || '🚀' }} BOSS ${{ needs.validate-and-prepare.outputs.target-version }}

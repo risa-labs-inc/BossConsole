@@ -29,7 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 📥 Checkout Repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Full history: the em-dash guard below diffs against the PR base, and
           # at the default depth of 1 that base is unreachable, so the diff fails
@@ -168,6 +168,13 @@ jobs:
         # pre-release page whose "always latest" links point at an older stable.
         run: bash scripts/test/test-release-download-table.sh
 
+      - name: 🧪 Action SHA pins
+        # Every external `uses:` is pinned to a 40-hex commit SHA with the tag
+        # kept as a `# vX` comment. A tag can be retargeted by whoever controls
+        # the action's repository, so an unpinned line is a supply-chain hole
+        # nothing else in this job notices - the pin is the boundary.
+        run: bash scripts/test/test-action-sha-pins.sh
+
   version-check:
     runs-on: ubuntu-latest
     outputs:
@@ -175,7 +182,7 @@ jobs:
       build-number: ${{ steps.get-version.outputs.build-number }}
     steps:
       - name: 📥 Checkout Repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # No JDK and no Gradle here on purpose. This job's two outputs are read
       # out of version.properties with grep, and the `./gradlew showVersion`
@@ -219,16 +226,16 @@ jobs:
 
     steps:
       - name: 📥 Checkout Repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: ☕ Setup JDK
-        uses: actions/setup-java@v6.0.0
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: ${{ env.JAVA_DISTRIBUTION }}
 
       - name: 🎯 Setup Gradle
-        uses: gradle/actions/setup-gradle@v6
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
         with:
           cache-read-only: false
 
@@ -267,7 +274,7 @@ jobs:
           GRADLE_OPTS: ${{ matrix.os == 'windows-latest' && '-Dorg.gradle.daemon=false -Dorg.gradle.parallel=false -Dorg.gradle.caching=true -Dkotlin.daemon.jvm.options=-Xmx2g' || '-Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Dorg.gradle.caching=true' }}
 
       - name: 📊 Upload Test Results
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: test-results-${{ matrix.os }}
@@ -281,7 +288,7 @@ jobs:
 
       - name: 📦 Upload Build Artifacts
         if: success() && matrix.os == 'ubuntu-latest'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: boss-jar-${{ needs.version-check.outputs.version }}-build${{ github.run_number }}
           path: composeApp/build/libs/*-all.jar
@@ -292,16 +299,16 @@ jobs:
 
     steps:
       - name: 📥 Checkout Repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: ☕ Setup JDK
-        uses: actions/setup-java@v6.0.0
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: ${{ env.JAVA_DISTRIBUTION }}
 
       - name: 🎯 Setup Gradle
-        uses: gradle/actions/setup-gradle@v6
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
         with:
           cache-read-only: false
 
@@ -317,7 +324,7 @@ jobs:
 
       - name: 📊 Upload detekt Reports
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: detekt-reports
           path: '**/build/reports/detekt/'
@@ -338,16 +345,16 @@ jobs:
 
     steps:
       - name: 📥 Checkout Repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: ☕ Setup JDK
-        uses: actions/setup-java@v6.0.0
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: ${{ env.JAVA_DISTRIBUTION }}
 
       - name: 🎯 Setup Gradle
-        uses: gradle/actions/setup-gradle@v6
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
 
       - name: 🧪 Test Version System
         run: |
@@ -374,8 +381,8 @@ jobs:
     name: BOSS AI contracts
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: denoland/setup-deno@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
         with:
           deno-version: v2.x
       - run: deno task check && deno task test
@@ -392,10 +399,10 @@ jobs:
         run: test "${{ needs.boss-ai-tests.result }}" = "success"
 
       - name: 📥 Checkout Repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: 🟩 Setup Supabase CLI
-        uses: supabase/setup-cli@v2
+        uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2
         with:
           # Pinned (not "latest"): resolving "latest" hits the unauthenticated GitHub
           # API from shared runners and intermittently fails with "rate limit exceeded".

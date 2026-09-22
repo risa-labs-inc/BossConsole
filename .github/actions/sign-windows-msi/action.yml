@@ -73,6 +73,14 @@ outputs:
       publish this as a job output so the release body can name an installer that
       is not signed.
     value: ${{ steps.verify.outputs.status }}
+  can_sign:
+    description: >
+      'true' when signing credentials were present and the signing chain ran,
+      'false' when it was skipped for lack of a KeyLocker host. Callers use this
+      to skip assertions that only make sense when signing was possible - a fork
+      pull request receives no secrets, so it can never produce a signed binary.
+      Exposes only the boolean probe result, never a credential value.
+    value: ${{ steps.check-secret.outputs.can_sign }}
 
 runs:
   using: composite
@@ -123,7 +131,7 @@ runs:
 
     - name: Install DigiCert STM client tools
       if: steps.check-secret.outputs.can_sign == 'true'
-      uses: digicert/ssm-code-signing@v1.2.1
+      uses: digicert/ssm-code-signing@1d820463733701cf1484c7eb5d7d24a15ca2c454 # v1.2.1
       env:
         SM_HOST: ${{ inputs.cert-host }}
         SM_API_KEY: ${{ inputs.api-key }}

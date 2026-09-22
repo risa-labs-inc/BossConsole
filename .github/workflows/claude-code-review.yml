@@ -29,7 +29,7 @@ jobs:
       # Never check out a fork, run its code, or consume build artifacts here.
       - name: Resolve current approved PR and prepare diff
         id: pr
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
           script: |
             const fs = require('fs');
@@ -95,7 +95,7 @@ jobs:
 
       - name: Publish review only on the reviewed head
         if: steps.pr.outputs.number != ''
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
           PR_NUMBER: ${{ steps.pr.outputs.number }}
           REVIEWED_SHA: ${{ steps.pr.outputs.sha }}

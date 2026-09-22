@@ -28,7 +28,7 @@ jobs:
       release_mode: ${{ steps.release.outputs.release_mode }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Check for a complete published release
         id: release
@@ -47,13 +47,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Chromium-Branding Tool
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: TeamDev-IP/Chromium-Branding
           path: chromium-branding-tool
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: '1.21'
           cache: false
@@ -103,7 +103,7 @@ jobs:
           GOOS=windows GOARCH=arm64 go build -o chromium_branding_windows_arm64.exe .
 
       - name: Upload Branding Tool
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: branding-tool
           path: |
@@ -120,10 +120,10 @@ jobs:
     timeout-minutes: 50
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Download Branding Tool
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: branding-tool
           path: tools
@@ -132,13 +132,13 @@ jobs:
         run: chmod +x tools/chromium_branding_macos_arm64
 
       - name: Set up JDK
-        uses: actions/setup-java@v6.0.0
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
         with:
           distribution: 'temurin'
           java-version: '17'
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v6
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
 
       - name: Download JxBrowser Chromium
         env:
@@ -437,7 +437,7 @@ jobs:
           ls -la boss-chromium-macos-arm64.zip
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: boss-chromium-macos-arm64
           path: boss-chromium-macos-arm64.zip
@@ -449,10 +449,10 @@ jobs:
     timeout-minutes: 50
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Download Branding Tool
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: branding-tool
           path: tools
@@ -461,13 +461,13 @@ jobs:
         run: chmod +x tools/chromium_branding_macos_x64
 
       - name: Set up JDK
-        uses: actions/setup-java@v6.0.0
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
         with:
           distribution: 'temurin'
           java-version: '17'
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v6
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
 
       - name: Download JxBrowser Chromium
         env:
@@ -745,7 +745,7 @@ jobs:
           zip -y -r ../boss-chromium-macos-x64.zip .
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: boss-chromium-macos-x64
           path: boss-chromium-macos-x64.zip
@@ -759,22 +759,22 @@ jobs:
     timeout-minutes: 50
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Download Branding Tool
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: branding-tool
           path: tools
 
       - name: Set up JDK
-        uses: actions/setup-java@v6.0.0
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
         with:
           distribution: 'temurin'
           java-version: '17'
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v6
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
 
       - name: Download JxBrowser Chromium
         # Cap the download: a transient stall here previously hung the job for ~6h
@@ -844,7 +844,7 @@ jobs:
           Compress-Archive -Path output/* -DestinationPath boss-chromium-windows-x64.zip
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: boss-chromium-windows-x64
           path: boss-chromium-windows-x64.zip
@@ -859,10 +859,10 @@ jobs:
     timeout-minutes: 50
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Download Branding Tool
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: branding-tool
           path: tools
@@ -895,13 +895,13 @@ jobs:
           }
 
       - name: Set up JDK
-        uses: actions/setup-java@v6.0.0
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
         with:
           distribution: 'microsoft'  # Microsoft OpenJDK has ARM64 builds
           java-version: '17'
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v6
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
 
       - name: Download JxBrowser Chromium
         # Same bound + retry as windows-x64: a transient stall here must fail fast
@@ -972,7 +972,7 @@ jobs:
           Compress-Archive -Path output\* -DestinationPath boss-chromium-windows-arm64.zip
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: boss-chromium-windows-arm64
           path: boss-chromium-windows-arm64.zip
@@ -984,10 +984,10 @@ jobs:
     timeout-minutes: 50
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Download Branding Tool
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: branding-tool
           path: tools
@@ -996,13 +996,13 @@ jobs:
         run: chmod +x tools/chromium_branding_linux
 
       - name: Set up JDK
-        uses: actions/setup-java@v6.0.0
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
         with:
           distribution: 'temurin'
           java-version: '17'
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v6
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
 
       - name: Download JxBrowser Chromium
         env:
@@ -1068,7 +1068,7 @@ jobs:
           zip -r ../boss-chromium-linux-x64.zip .
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: boss-chromium-linux-x64
           path: boss-chromium-linux-x64.zip
@@ -1080,16 +1080,16 @@ jobs:
     timeout-minutes: 50
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Download Branding Tool
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: branding-tool
           path: tools
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: '1.21'
           cache: false
@@ -1104,13 +1104,13 @@ jobs:
           chmod +x tools/chromium_branding_linux_arm64
 
       - name: Set up JDK
-        uses: actions/setup-java@v6.0.0
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
         with:
           distribution: 'temurin'
           java-version: '17'
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v6
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
 
       - name: Download JxBrowser Chromium
         env:
@@ -1175,7 +1175,7 @@ jobs:
           zip -r ../boss-chromium-linux-arm64.zip .
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: boss-chromium-linux-arm64
           path: boss-chromium-linux-arm64.zip
@@ -1195,10 +1195,10 @@ jobs:
       # Checkout first: actions/checkout cleans the workspace, so it must run
       # before artifacts are downloaded into it.
       - name: Checkout (for publish script)
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Download All Artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: artifacts
 

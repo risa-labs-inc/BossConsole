@@ -27,16 +27,16 @@ jobs:
         os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
         with:
           distribution: temurin
           java-version: '17'
-      - uses: gradle/actions/setup-gradle@v6
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
       - name: Run filesystem and paging regressions
         shell: bash
         run: ./gradlew :boss-service-filesystem:test :plugin-platform:plugin-api-ipc:desktopTest :boss-service-filesystem:ktlintCheck :boss-service-filesystem:detekt :plugin-platform:plugin-api-ipc:ktlintCheck :plugin-platform:plugin-api-ipc:detekt --no-daemon
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: filesystem-limits-${{ matrix.os }}

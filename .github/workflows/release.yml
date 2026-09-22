@@ -140,7 +140,7 @@ jobs:
         # which is what you want since it is the same release.
         run: echo "build-id=$(date +%s)" >> "$GITHUB_OUTPUT"
       - name: 📥 Checkout Repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           token: ${{ secrets.PUBLIC_REPO_TOKEN }}
 
@@ -158,14 +158,14 @@ jobs:
       # all five platform builds queue behind.
       - name: ☕ Setup JDK
         if: github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call'
-        uses: actions/setup-java@v6.0.0
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
         with:
           java-version: '17'
           distribution: 'temurin'
 
       - name: 🎯 Setup Gradle
         if: github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call'
-        uses: gradle/actions/setup-gradle@v6
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
         with:
           cache-read-only: false
 
@@ -433,18 +433,18 @@ jobs:
           echo "✅ CFBundleVersion build id: $BOSS_BUILD_ID"
 
       - name: 📥 Checkout Repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.prepare-version.outputs.updated-sha }}
 
       - name: ☕ Setup JDK
-        uses: actions/setup-java@v6.0.0
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
         with:
           java-version: '17'
           distribution: 'temurin'
 
       - name: 🎯 Setup Gradle
-        uses: gradle/actions/setup-gradle@v6
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
         with:
           cache-read-only: false
 
@@ -723,7 +723,7 @@ jobs:
           fi
 
       - name: 📤 Upload macOS DMG (ARM64)
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: boss-macos-arm64-${{ needs.prepare-version.outputs.version }}
           path: composeApp/build/compose/binaries/main/dmg/*.dmg
@@ -736,18 +736,18 @@ jobs:
 
     steps:
       - name: 📥 Checkout Repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.prepare-version.outputs.updated-sha }}
 
       - name: ☕ Setup JDK
-        uses: actions/setup-java@v6.0.0
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
         with:
           java-version: '17'
           distribution: 'temurin'
 
       - name: 🎯 Setup Gradle
-        uses: gradle/actions/setup-gradle@v6
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
         with:
           cache-read-only: false
 
@@ -906,7 +906,7 @@ jobs:
           fi
 
       - name: 📤 Upload Linux Packages (AMD64)
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: boss-linux-amd64-${{ needs.prepare-version.outputs.version }}
           path: |
@@ -923,18 +923,18 @@ jobs:
 
     steps:
       - name: 📥 Checkout Repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.prepare-version.outputs.updated-sha }}
 
       - name: ☕ Setup JDK
-        uses: actions/setup-java@v6.0.0
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
         with:
           java-version: '17'
           distribution: 'temurin'
 
       - name: 🎯 Setup Gradle
-        uses: gradle/actions/setup-gradle@v6
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
         with:
           cache-read-only: false
 
@@ -1106,7 +1106,7 @@ jobs:
           fi
 
       - name: 📤 Upload Linux Packages (ARM64)
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: boss-linux-arm64-${{ needs.prepare-version.outputs.version }}
           path: |
@@ -1126,18 +1126,18 @@ jobs:
 
     steps:
       - name: 📥 Checkout Repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.prepare-version.outputs.updated-sha }}
 
       - name: ☕ Setup JDK
-        uses: actions/setup-java@v6.0.0
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
         with:
           java-version: '17'
           distribution: 'temurin'
 
       - name: 🎯 Setup Gradle
-        uses: gradle/actions/setup-gradle@v6
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
 
       - name: 🔧 Setup Build Environment
         run: |
@@ -1327,7 +1327,7 @@ jobs:
         shell: powershell
 
       - name: 📤 Upload Windows MSI
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: boss-windows-${{ needs.prepare-version.outputs.version }}
           path: composeApp/build/compose/binaries/main/msi/
@@ -1343,18 +1343,18 @@ jobs:
 
     steps:
       - name: 📥 Checkout Repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.prepare-version.outputs.updated-sha }}
 
       - name: ☕ Setup JDK
-        uses: actions/setup-java@v6.0.0
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
         with:
           java-version: '17'
           distribution: 'microsoft'  # Temurin doesn't have JDK 17 for Windows ARM64
 
       - name: 🎯 Setup Gradle
-        uses: gradle/actions/setup-gradle@v6
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
 
       - name: 🔧 Setup Build Environment
         shell: powershell
@@ -1530,7 +1530,7 @@ jobs:
           }
 
       - name: 📤 Upload Windows ARM64 MSI
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: boss-windows-arm64-${{ needs.prepare-version.outputs.version }}
           path: composeApp/build/compose/binaries/main/msi/
@@ -1549,23 +1549,23 @@ jobs:
 
     steps:
       - name: 📥 Checkout Repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.prepare-version.outputs.updated-sha }}
 
       - name: 📥 Download All Artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: ./artifacts
 
       - name: ☕ Setup JDK 17 (for upstream-jar assembly)
-        uses: actions/setup-java@v6.0.0
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
         with:
           java-version: '17'
           distribution: 'temurin'
 
       - name: 🎯 Setup Gradle (for upstream-jar assembly)
-        uses: gradle/actions/setup-gradle@v6
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
 
       - name: 📦 Assemble upstream IPC JARs
         run: |
@@ -1840,7 +1840,7 @@ jobs:
           github.event_name == 'push' ||
           (github.event_name == 'workflow_call' && inputs.create_release != false) ||
           (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release != 'false')
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           tag_name: v${{ needs.prepare-version.outputs.version }}
           name: ${{ needs.prepare-version.outputs.is-prerelease == 'true' && '🧪 Pre-release' || '🚀 Release' }} BOSS ${{ needs.prepare-version.outputs.version }}
