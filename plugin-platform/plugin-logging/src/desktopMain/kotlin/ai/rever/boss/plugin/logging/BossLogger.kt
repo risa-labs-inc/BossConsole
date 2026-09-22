@@ -432,14 +432,7 @@ object BossLogger {
         }
 
         // Format message for SLF4J
-        val formattedMessage =
-            buildString {
-                append("[${entry.category}]")
-                append(" ${entry.component}: ${entry.message}")
-                if (entry.data != null) {
-                    append(" | ${entry.data}")
-                }
-            }
+        val formattedMessage = renderConsoleMessage(entry)
 
         // Log to SLF4J (which outputs to stdout, captured by GlobalLogCapture)
         when (entry.level) {
@@ -494,6 +487,52 @@ object BossLogger {
             .format(dateFormatter)
 
     /**
+     * The exact text of one console (SLF4J) message. Split out so the shape can be tested without
+     * a running appender. One entry is one line: see [LogLineText].
+     */
+    internal fun renderConsoleMessage(entry: LogEntry): String =
+        buildString {
+            append("[${entry.category}]")
+            append(" ${LogLineText.neutralize(entry.component)}: ${LogLineText.neutralize(entry.message)}")
+            if (entry.data != null) {
+                append(" | ${LogLineText.neutralize(entry.data.toString())}")
+            }
+        }
+
+    /**
+     * The exact text of one log-file record, trailing newline included. Text that came from outside
+     * the logger is escaped by [LogLineText] so it cannot start a second record; the only line
+     * breaks written here are the logger's own, before the exception block and its frames.
+     */
+    internal fun renderFileLine(entry: LogEntry): String =
+        buildString {
+            append(formatTimestamp(entry.timestamp))
+            append(" [${entry.level.name.padEnd(5)}]")
+            append(" [${entry.category.name}]")
+            append(" ${LogLineText.neutralize(entry.component)}: ${LogLineText.neutralize(entry.message)}")
+            if (entry.data != null) {
+                append(" | ${LogLineText.neutralize(entry.data.toString())}")
+            }
+            if (entry.error != null) {
+                append("\n  Exception: ${LogLineText.neutralize(entry.error.message.toString())}")
+                // Use configurable stack trace depth
+                val frames =
+                    if (stackTraceDepth <= 0) {
+                        entry.error.stackTrace.toList()
+                    } else {
+                        entry.error.stackTrace.take(stackTraceDepth)
+                    }
+                frames.forEach { frame ->
+                    append("\n    at $frame")
+                }
+                if (stackTraceDepth > 0 && entry.error.stackTrace.size > stackTraceDepth) {
+                    append("\n    ... ${entry.error.stackTrace.size - stackTraceDepth} more frames")
+                }
+            }
+            append("\n")
+        }
+
+    /**
      * Write log entry to file asynchronously.
      * Includes file rotation when size limit is exceeded.
      */
@@ -505,34 +544,7 @@ object BossLogger {
                 rotateLogFiles(file)
             }
 
-            val line =
-                buildString {
-                    append(formatTimestamp(entry.timestamp))
-                    append(" [${entry.level.name.padEnd(5)}]")
-                    append(" [${entry.category.name}]")
-                    append(" ${entry.component}: ${entry.message}")
-                    if (entry.data != null) {
-                        append(" | ${entry.data}")
-                    }
-                    if (entry.error != null) {
-                        append("\n  Exception: ${entry.error.message}")
-                        // Use configurable stack trace depth
-                        val frames =
-                            if (stackTraceDepth <= 0) {
-                                entry.error.stackTrace.toList()
-                            } else {
-                                entry.error.stackTrace.take(stackTraceDepth)
-                            }
-                        frames.forEach { frame ->
-                            append("\n    at $frame")
-                        }
-                        if (stackTraceDepth > 0 && entry.error.stackTrace.size > stackTraceDepth) {
-                            append("\n    ... ${entry.error.stackTrace.size - stackTraceDepth} more frames")
-                        }
-                    }
-                    append("\n")
-                }
-            file.appendText(line)
+            file.appendText(renderFileLine(entry))
         } catch (e: Exception) {
             // Avoid recursive logging
             slf4jLogger.warn("Failed to write to log file: ${e.message}")
