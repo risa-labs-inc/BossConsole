@@ -149,14 +149,15 @@ object TabColorRegistry {
                     val json = file.readText()
                     val rawMap = Json.decodeFromString<Map<String, SerializableTabTag>>(json)
                     val loaded =
-                        rawMap.mapNotNull { (id, serializable) ->
-                            val cat = runCatching { TabCategory.valueOf(serializable.category) }.getOrNull()
-                            if (cat != null) {
-                                id to TabColorTag(category = cat, customLabel = serializable.customLabel)
-                            } else {
-                                null
-                            }
-                        }.toMap()
+                        rawMap
+                            .mapNotNull { (id, serializable) ->
+                                val cat = runCatching { TabCategory.valueOf(serializable.category) }.getOrNull()
+                                if (cat != null) {
+                                    id to TabColorTag(category = cat, customLabel = serializable.customLabel)
+                                } else {
+                                    null
+                                }
+                            }.toMap()
 
                     synchronized(lock) {
                         tabTags.clear()
@@ -192,4 +193,3 @@ object TabColorRegistry {
             }
         }
 }
-
