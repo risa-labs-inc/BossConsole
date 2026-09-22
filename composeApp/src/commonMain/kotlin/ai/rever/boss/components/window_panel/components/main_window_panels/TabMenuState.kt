@@ -13,6 +13,8 @@ import ai.rever.boss.plugin.tab.codeeditor.EditorTabInfo
 import ai.rever.boss.plugin.tab.jupyter.JupyterTabInfo
 import ai.rever.boss.services.bookmarks.BookmarkAPIAccess
 import ai.rever.boss.services.bookmarks.rememberBookmarkCollections
+import ai.rever.boss.tabs.TabCategory
+import ai.rever.boss.tabs.TabColorRegistry
 import ai.rever.boss.utils.revealInFileManager
 import ai.rever.boss.utils.revealInFileManagerLabel
 import ai.rever.boss.window.WindowOperations
@@ -30,6 +32,7 @@ import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Splitscreen
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.StarBorder
+import androidx.compose.material.icons.outlined.Tag
 import androidx.compose.material.icons.outlined.ViewColumn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
@@ -163,6 +166,42 @@ fun BossTabsComponent.rememberTabMenuState(
                     ContextMenuItem("Pin Tab", Icons.Outlined.PushPin, onClick = { pinTab(index) }),
                 )
             }
+
+            // Category color tag assignment
+            val activeTag = TabColorRegistry.getTag(config.id)
+            add(
+                ContextMenuItem(
+                    "Label as…",
+                    Icons.Outlined.Tag,
+                    subMenu =
+                        buildList {
+                            TabCategory.entries.forEach { category ->
+                                val isSelected = activeTag?.category == category
+                                add(
+                                    ContextMenuItem(
+                                        if (isSelected) "${category.label} ✓" else category.label,
+                                        onClick = {
+                                            if (isSelected) {
+                                                TabColorRegistry.removeTag(config.id)
+                                            } else {
+                                                TabColorRegistry.setTag(config.id, category)
+                                            }
+                                        },
+                                    ),
+                                )
+                            }
+                            if (activeTag != null) {
+                                add(ContextMenuItem(isDivider = true))
+                                add(
+                                    ContextMenuItem(
+                                        "Clear Label",
+                                        onClick = { TabColorRegistry.removeTag(config.id) },
+                                    ),
+                                )
+                            }
+                        },
+                ),
+            )
             add(ContextMenuItem(isDivider = true))
 
             // Split operations (if split state is available)

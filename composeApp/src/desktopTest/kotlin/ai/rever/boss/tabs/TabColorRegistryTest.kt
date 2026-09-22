@@ -47,6 +47,31 @@ class TabColorRegistryTest {
     }
 
     @Test
+    fun `parseColorHex guards short and invalid hex input`() {
+        val shortHexColor = parseColorHex("#F00")
+        assertEquals(Color(0xFF3B82F6), shortHexColor)
+
+        val invalidHexColor = parseColorHex("invalid")
+        assertEquals(Color(0xFF3B82F6), invalidHexColor)
+    }
+
+    @Test
+    fun `persistence saves and loads tags across cycles`() =
+        kotlinx.coroutines.runBlocking {
+            TabColorRegistry.setTag("t-persist", TabCategory.IMPORTANT, customLabel = "Urgent Bug")
+            TabColorRegistry.saveTagsToDisk()
+
+            TabColorRegistry.clear()
+            assertNull(TabColorRegistry.getTag("t-persist"))
+
+            TabColorRegistry.loadTagsFromDisk()
+            val restored = TabColorRegistry.getTag("t-persist")
+            assertNotNull(restored)
+            assertEquals(TabCategory.IMPORTANT, restored.category)
+            assertEquals("Urgent Bug", restored.displayLabel)
+        }
+
+    @Test
     fun `clear resets all registered color tags`() {
         TabColorRegistry.setTag("t1", TabCategory.DEV)
         TabColorRegistry.setTag("t2", TabCategory.WORK)

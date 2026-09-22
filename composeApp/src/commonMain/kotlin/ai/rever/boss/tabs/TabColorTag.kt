@@ -1,9 +1,21 @@
 package ai.rever.boss.tabs
 
+import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.ui.graphics.Color
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import java.io.File
 
 /**
  * Predefined workspace tab categories with harmonious UI badge color tokens.
@@ -33,28 +45,45 @@ data class TabColorTag(
         get() = parseColorHex(category.colorHex)
 }
 
+@Serializable
+private data class SerializableTabTag(
+    val category: String,
+    val customLabel: String? = null,
+)
+
 /**
  * Parses a hex color string into a Compose Color object.
  */
 fun parseColorHex(hex: String): Color {
-    val cleanHex = hex.removePrefix("#")
-    val colorInt = cleanHex.toLongOrNull(16) ?: 0xFF3B82F6
-    return if (cleanHex.length == 6) {
-        Color(0xFF000000 or colorInt)
-    } else {
-        Color(colorInt)
+    val cleanHex = hex.removePrefix("#").trim()
+    val colorInt = cleanHex.toLongOrNull(16) ?: 0x3B82F6L
+    return when (cleanHex.length) {
+        6 -> Color(0xFF000000 or colorInt)
+        8 -> Color(colorInt)
+        else -> Color(0xFF3B82F6)
     }
 }
 
 /**
- * Thread-safe registry managing tab color tags per workspace.
+ * Thread-safe registry managing tab color tags per workspace with file persistence.
  */
 object TabColorRegistry {
+    private val logger = BossLogger.forComponent("TabColorRegistry")
+    private const val TAB_COLOR_TAGS_FILE = "tab-color-tags.json"
+
     private val lock = Any()
     private val tabTags = mutableMapOf<String, TabColorTag>()
 
     private val _tagsFlow = MutableStateFlow<Map<String, TabColorTag>>(emptyMap())
     val tagsFlow: StateFlow<Map<String, TabColorTag>> = _tagsFlow.asStateFlow()
+
+    private val ioScope = CoroutineScope(Dispatchers.IO)
+
+    init {
+        ioScope.launch {
+            loadTagsFromDisk()
+        }
+    }
 
     /**
      * Assigns a color tag to a specific tab ID.
@@ -68,6 +97,9 @@ object TabColorRegistry {
         synchronized(lock) {
             tabTags[tabId] = TabColorTag(category = category, customLabel = customLabel)
             _tagsFlow.value = tabTags.toMap()
+        }
+        ioScope.launch {
+            saveTagsToDisk()
         }
     }
 
@@ -87,10 +119,13 @@ object TabColorRegistry {
             tabTags.remove(tabId)
             _tagsFlow.value = tabTags.toMap()
         }
+        ioScope.launch {
+            saveTagsToDisk()
+        }
     }
 
     /**
-     * Clears all tab color tag assignments.
+     * Clears all tab color tag assignments from memory.
      */
     fun clear() {
         synchronized(lock) {
@@ -98,4 +133,61 @@ object TabColorRegistry {
             _tagsFlow.value = emptyMap()
         }
     }
+
+    private fun getTagsFile(): File {
+        val bossDir = BossDirectories.rootDir
+        if (!bossDir.exists()) bossDir.mkdirs()
+        return File(bossDir, TAB_COLOR_TAGS_FILE)
+    }
+
+    internal suspend fun loadTagsFromDisk() =
+        withContext(Dispatchers.IO) {
+            try {
+                val file = getTagsFile()
+                if (file.exists()) {
+                    val json = file.readText()
+                    val rawMap = Json.decodeFromString<Map<String, SerializableTabTag>>(json)
+                    val loaded =
+                        rawMap.mapNotNull { (id, serializable) ->
+                            val cat = runCatching { TabCategory.valueOf(serializable.category) }.getOrNull()
+                            if (cat != null) {
+                                id to TabColorTag(category = cat, customLabel = serializable.customLabel)
+                            } else {
+                                null
+                            }
+                        }.toMap()
+
+                    synchronized(lock) {
+                        tabTags.clear()
+                        tabTags.putAll(loaded)
+                        _tagsFlow.value = tabTags.toMap()
+                    }
+                    logger.debug(
+                        LogCategory.FILE,
+                        "Loaded tab color tags from disk",
+                        mapOf("count" to loaded.size),
+                    )
+                }
+            } catch (e: Exception) {
+                logger.warn(LogCategory.FILE, "Failed to load tab color tags", error = e)
+            }
+        }
+
+    internal suspend fun saveTagsToDisk() =
+        withContext(Dispatchers.IO) {
+            try {
+                val snapshot =
+                    synchronized(lock) {
+                        tabTags.mapValues { (_, tag) ->
+                            SerializableTabTag(category = tag.category.name, customLabel = tag.customLabel)
+                        }
+                    }
+                val file = getTagsFile()
+                val json = Json.encodeToString(snapshot)
+                file.writeText(json)
+            } catch (e: Exception) {
+                logger.warn(LogCategory.FILE, "Failed to save tab color tags", error = e)
+            }
+        }
 }
+
