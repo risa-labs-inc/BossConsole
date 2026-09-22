@@ -28,6 +28,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withTimeout
 import java.io.File
 import java.nio.file.Files
@@ -52,7 +53,21 @@ class TerminalLimitsTest {
             queued.add(block)
         }
 
-        fun next(): Runnable = checkNotNull(queued.poll(5, TimeUnit.SECONDS)) { "Expected a dispatched continuation" }
+        // runInterruptible so a withTimeout around the caller actually applies to this poll:
+        // cancellation cannot interrupt a bare BlockingQueue.poll, only a thread interrupt can,
+        // and without this the outer deadline only fired once the poll had already returned.
+        suspend fun next(
+            timeout: Long = 5,
+            unit: TimeUnit = TimeUnit.SECONDS,
+            label: String = "continuation",
+        ): Runnable =
+            runInterruptible {
+                val started = System.nanoTime()
+                checkNotNull(queued.poll(timeout, unit)) {
+                    val waitedMs = (System.nanoTime() - started) / 1_000_000
+                    "Expected the $label to be dispatched within $timeout $unit (waited ${waitedMs}ms, queue empty)"
+                }
+            }
     }
 
     private val root = Files.createTempDirectory("terminal-limits-")
@@ -229,12 +244,18 @@ class TerminalLimitsTest {
     @Test
     fun `cancellation during return dispatch terminates the unclaimed process`() =
         runBlocking {
-            withTimeout(15_000) {
+            // 30 s of fixture startup plus the usual 15 s lifecycle budget: the return dispatch below is
+            // only queued once the child JVM has launched, and the poll it waits on is blocking, so the
+            // outer deadline has to cover it rather than race it.
+            withTimeout(45_000) {
                 val dispatcher = PausedDispatcher()
                 val scope = CoroutineScope(SupervisorJob() + dispatcher + callerContext)
                 val creation = scope.async { service.createSession(request("wait")) }
-                dispatcher.next().run()
-                val returning = dispatcher.next()
+                dispatcher.next(label = "async start").run()
+                // JVM fixture startup is not the lifecycle deadline, especially on a busy Windows runner
+                // (same split as the `background` test): this continuation arrives after the cold child
+                // JVM is up, so give it the startup budget, not the 5 s every other dispatch gets.
+                val returning = dispatcher.next(timeout = 30, unit = TimeUnit.SECONDS, label = "return dispatch")
                 val unclaimed =
                     stub
                         .listSessions(Empty.getDefaultInstance())
