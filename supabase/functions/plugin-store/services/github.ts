@@ -6,6 +6,7 @@
 
 import { PluginManifest } from "../types/plugin.ts"
 import { createHash } from "node:crypto"
+import { readBodyCapped } from "../utils/bounded-body.ts"
 
 /**
  * Hosts permitted to serve externally-hosted plugin JARs.
@@ -341,7 +342,8 @@ export async function downloadJar(downloadUrl: string): Promise<ArrayBuffer> {
     throw new Error(`Failed to download JAR: ${response.status} ${response.statusText}`)
   }
 
-  return await response.arrayBuffer()
+  const bytes = await readBodyCapped(response, LARGE_JAR_THRESHOLD - 1, "JAR download")
+  return bytes.buffer as ArrayBuffer
 }
 
 /**
@@ -403,21 +405,18 @@ export async function downloadReleaseAsset(asset: GitHubAsset): Promise<ArrayBuf
  * `downloadReleaseAsset` is only ever called for JARs the caller pre-checked as
  * < 50 MB, but that check trusts the release API's self-reported `size`. This
  * bounds the actual buffer against the declared `Content-Length` (rejecting
- * before the read when present) and against the real byte count (after), so a
- * lying size can't blow the edge function's memory budget.
+ * before the read when present) and against the bytes actually streamed in
+ * (the read is abandoned at the cap), so a lying size can't blow the edge
+ * function's memory budget.
  */
 async function readBoundedArrayBuffer(resp: Response, label: string): Promise<ArrayBuffer> {
-  // `>=` mirrors fetchPluginFromGitHub's own size gate so the "too large"
-  // boundary is identical on both the pre-download check and this buffer guard.
-  const declared = Number(resp.headers.get("content-length") || "0")
-  if (Number.isFinite(declared) && declared >= LARGE_JAR_THRESHOLD) {
-    throw new Error(`${label} declares ${declared} bytes, at/over the ${LARGE_JAR_THRESHOLD}-byte cap`)
-  }
-  const buf = await resp.arrayBuffer()
-  if (buf.byteLength >= LARGE_JAR_THRESHOLD) {
-    throw new Error(`${label} is ${buf.byteLength} bytes, at/over the ${LARGE_JAR_THRESHOLD}-byte cap`)
-  }
-  return buf
+  // `>=` mirrors fetchPluginFromGitHub's own size gate, so the cap is one byte
+  // under the threshold and the "too large" boundary is identical on both the
+  // pre-download check and this buffer guard. The body is read as a stream and
+  // abandoned at the cap; buffering it whole first only reported the size after
+  // the memory was already spent.
+  const bytes = await readBodyCapped(resp, LARGE_JAR_THRESHOLD - 1, label)
+  return bytes.buffer as ArrayBuffer
 }
 
 /**
@@ -440,7 +439,14 @@ async function downloadRange(
     throw new Error(`Range request failed: ${response.status}`)
   }
 
-  const data = new Uint8Array(await response.arrayBuffer())
+  // A server that ignores `Range` answers 200 with the whole file. Read only as
+  // many bytes as were asked for, so that case fails here instead of buffering a
+  // jar of any size.
+  const data = await readBodyCapped(
+    response,
+    end - start + 1,
+    `Range ${start}-${end} (server may have ignored the Range header)`
+  )
 
   // Parse total size from Content-Range: bytes 0-999/12345
   let totalSize = data.length
@@ -501,7 +507,11 @@ export async function extractManifestFromRemoteJar(
     throw new Error(`Range request for EOCD failed: ${tailResp.status}`)
   }
 
-  const tailData = new Uint8Array(await tailResp.arrayBuffer())
+  const tailData = await readBodyCapped(
+    tailResp,
+    tailEnd - tailStart + 1,
+    "JAR tail (server may have ignored the Range header)"
+  )
 
   // The tail starts at this absolute offset in the file
   const tailOffset = totalSize - tailData.length
