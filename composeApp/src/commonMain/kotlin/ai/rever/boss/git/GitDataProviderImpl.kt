@@ -195,8 +195,9 @@ class GitDataProviderImpl(
         }
         // Align the global project path unconditionally: it is still read by the
         // verbs that carry no window override (openFile's fallback,
-        // getCurrentProjectPath's fallback), and it is a bare assignment -
-        // the four-command probe below stays gated.
+        // getCurrentProjectPath's fallback). The align is cheap - it takes the
+        // path lock and no-ops (no epoch bump) when the path is already
+        // aligned; the four-command probe below stays gated.
         GitService.alignCurrentProjectPath(path)
 
         // `changed` covers a project switch. `lastProbedPath != path` covers
