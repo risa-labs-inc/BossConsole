@@ -22,6 +22,7 @@ import {
 import { createVersion, versionExists, finalizeVersion, getVersionById } from "../services/versions.ts"
 import { getSignedUploadUrl, getSignedDownloadUrl, generateJarPath, uploadJar } from "../services/storage.ts"
 import { getAuthenticatedUser, getUserDisplayName, logApiKeyAction } from "../utils/auth.ts"
+import { httpUrlOr, httpUrlOrNull } from "../utils/urls.ts"
 import {
   fetchPluginFromGitHub,
   parseGitHubUrl,
@@ -749,8 +750,10 @@ publish.openapi(publishFromGitHubRoute, async (ctx) => {
       await updatePlugin(supabase, pluginUuid, {
         displayName: manifest.displayName,
         description: manifest.description,
-        homepageUrl: manifest.url || manifest.homepageUrl,
-        iconUrl: manifest.iconUrl,
+        // A manifest is a repository's own file and never went through the request schema, so its
+        // URLs are held to the same rule here: a non-http(s) value leaves the stored one alone.
+        homepageUrl: httpUrlOrNull(manifest.url) ?? httpUrlOrNull(manifest.homepageUrl) ?? undefined,
+        iconUrl: httpUrlOrNull(manifest.iconUrl) ?? undefined,
         type: (manifest.type as string || 'panel').toLowerCase(),
         apiVersion: manifest.apiVersion,
         requiredPermissions: manifest.requiredPermissions || [],
@@ -775,8 +778,9 @@ publish.openapi(publishFromGitHubRoute, async (ctx) => {
         manifest.pluginId,
         manifest.displayName,
         manifest.description || '',
-        manifest.url || manifest.homepageUrl || body.githubUrl, // Fall back to GitHub URL if no homepage
-        manifest.iconUrl || '',
+        // Fall back to the GitHub URL if the manifest names no usable http(s) homepage
+        httpUrlOrNull(manifest.url) ?? httpUrlOrNull(manifest.homepageUrl) ?? body.githubUrl,
+        httpUrlOr(manifest.iconUrl, ''),
         ((manifest.type as string) || 'panel').toLowerCase(),
         manifest.apiVersion,
         manifest.requiredPermissions || [],
