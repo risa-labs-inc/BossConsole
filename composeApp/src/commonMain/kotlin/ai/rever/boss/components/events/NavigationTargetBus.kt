@@ -1,20 +1,18 @@
 package ai.rever.boss.components.events
 
 import ai.rever.boss.ipc.IpcEventBridge
+import ai.rever.boss.plugin.api.NavigationTargetEvent
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.serialization.Serializable
 
-/**
- * Navigation target event for cursor positioning after file opens.
- *
- * @property filePath Absolute path to the file
- * @property line Line number (1-based)
- * @property column Column number (1-based)
- * @property sourceWindowId The window that initiated the navigation (required for multi-window support)
- */
-data class NavigationTargetEvent(
+/** Structured payload for cross-process navigation delivery. */
+@Serializable
+internal data class NavigationTargetIpcPayload(
     val filePath: String,
     val line: Int,
     val column: Int,
@@ -32,6 +30,8 @@ data class NavigationTargetEvent(
  * still receive the navigation target.
  */
 object NavigationTargetBus {
+    private val logger = BossLogger.forComponent("NavigationTargetBus")
+
     /** Optional IPC bridge for forwarding events cross-process in kernel mode. */
     @Volatile var ipcBridge: IpcEventBridge? = null
 
@@ -59,8 +59,22 @@ object NavigationTargetBus {
     ) {
         if (line > 0) {
             val event = NavigationTargetEvent(filePath, line, column, sourceWindowId)
+            logger.debug(
+                LogCategory.EDITOR,
+                "Emitting navigation target",
+                mapOf(
+                    "path" to filePath,
+                    "line" to line,
+                    "column" to column,
+                    "sourceWindowId" to sourceWindowId,
+                ),
+            )
             _targets.emit(event)
-            ipcBridge?.forward("NavigationTargetEvent", event, sourceWindowId)
+            ipcBridge?.forward(
+                "NavigationTargetEvent",
+                NavigationTargetIpcPayload(filePath, line, column, sourceWindowId),
+                sourceWindowId,
+            )
         }
     }
 
