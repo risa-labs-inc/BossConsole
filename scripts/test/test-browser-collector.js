@@ -47,7 +47,7 @@ function eq(name, actual, expected) {
 // ---------------------------------------------------------------------------
 // Extract the collector source out of the Kotlin string, resolving $CONSTANTS.
 // ---------------------------------------------------------------------------
-function loadCollector() {
+function loadCollector(nonce, slotName) {
   const src = fs.readFileSync(scriptKt, 'utf8');
   const consts = {};
   for (const m of src.matchAll(/const val (\w+)\s*(?::\s*\w+)?\s*=\s*"?([^"\n]+?)"?\s*\n/g)) {
@@ -62,6 +62,9 @@ function loadCollector() {
   for (const k of Object.keys(consts).sort((a, b) => b.length - a.length)) {
     js = js.split('$' + k).join(consts[k]);
   }
+  // The two runtime literals the host injects. They are function parameters in the Kotlin,
+  // not `const val`s, so the constant scan above cannot see them.
+  js = js.split('$nonce').join(nonce).split('$slotName').join(slotName);
   const unresolved = js.split('\n').filter((l) => l.includes('$'));
   if (unresolved.length) {
     throw new Error(`unresolved interpolation in collector source: ${unresolved[0]}`);
@@ -130,9 +133,21 @@ function newPage(collectorJs) {
     Math,
     String,
   };
-  sandbox.window.__bossInteraction = {
-    emit: (s) => emitted.push(...JSON.parse(s)),
+  // The channel credential the collector is expected to present on every batch.
+  const nonces = [];
+  const bridgeObject = {
+    emit: (nonce, s) => {
+      nonces.push(nonce);
+      emitted.push(...JSON.parse(s));
+    },
   };
+  // Exactly what the host does: publish the bridge, then inject. The collector takes the
+  // bridge out of reach on the way in, so a re-injection that did not re-publish first would
+  // find nothing - which is the property the tamper suite asserts.
+  const publish = () => {
+    sandbox.window.__bossInteraction = bridgeObject;
+  };
+  publish();
   vm.createContext(sandbox);
   const run = () => vm.runInContext(collectorJs, sandbox);
   run();
@@ -142,7 +157,12 @@ function newPage(collectorJs) {
     append,
     emitted,
     sandbox,
-    reinject: run, // what the host does on every main-frame navigation
+    nonces,
+    // What the host does on every main-frame navigation: re-publish, then re-inject.
+    reinject: () => {
+      publish();
+      run();
+    },
     fire: (type, target) => (listeners[type] || []).forEach((f) => f({ target })),
     flush: () => (listeners['pagehide'] || []).forEach((f) => f()),
     siblingReads: () => siblingReads,
@@ -160,7 +180,15 @@ function newPage(collectorJs) {
 }
 
 // ---------------------------------------------------------------------------
-const { js, consts } = loadCollector();
+/**
+ * The two literals the host injects. Fixed here because this file pins BEHAVIOUR, not the
+ * nonce: what a wrong or missing nonce does is pinned in
+ * scripts/test/test-browser-collector-tamper.js.
+ */
+const TEST_NONCE = 'aaaabbbbccccddddaaaabbbbccccdddd';
+const TEST_SLOT = '__boss_i_00112233445566778899aabb';
+
+const { js, consts } = loadCollector(TEST_NONCE, TEST_SLOT);
 const host = hostPathRule();
 console.log(
   `collector: MAX_PATH_DEPTH=${consts.MAX_PATH_DEPTH} MAX_SIBLING_SCAN=${consts.MAX_SIBLING_SCAN} ` +

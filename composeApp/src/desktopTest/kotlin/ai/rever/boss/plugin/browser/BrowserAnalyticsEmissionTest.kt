@@ -244,6 +244,15 @@ class BrowserAnalyticsEmissionTest {
             windowId = { "w1" },
         )
 
+    /**
+     * Emit exactly as the injected collector does, with this session's nonce.
+     *
+     * These tests are about what a *legitimately sent* batch turns into, so they have to clear
+     * the nonce gate. What a batch without the nonce does is pinned separately, in
+     * [BrowserInteractionTamperResistanceTest].
+     */
+    private fun BrowserInteractionBridge.emitFromCollector(json: String) = emit(sessionNonce, json)
+
     @Test
     fun `a batch off the page becomes an event with every field in its own slot`() {
         // The tests either side of this one cover parseBatch and BrowserAnalytics.interaction
@@ -251,7 +260,7 @@ class BrowserAnalyticsEmissionTest {
         // covered by neither. Writing `fieldName = entry.path` there passes every other test
         // in this suite while shipping an element path into whatever a dashboard labels
         // "field name", so the wire names and the event fields are pinned together here.
-        bridge().emit(
+        bridge().emitFromCollector(
             """
             [{"type":"FIELD_FOCUSED","tag":"input","role":"searchbox","inputType":"TEXT",
               "fieldName":"patient_mrn_4417882","path":"form>div:2>input:1"}]
@@ -271,7 +280,7 @@ class BrowserAnalyticsEmissionTest {
 
     @Test
     fun `a hostile batch reaches the bus with its content stripped, not with an error`() {
-        bridge().emit(
+        bridge().emitFromCollector(
             """
             [{"type":"CLICK","tag":"Patient: John Smith","role":"MRN 4417882",
               "fieldName":"John Smith","path":"form>input[value='John Smith']"},
@@ -299,8 +308,8 @@ class BrowserAnalyticsEmissionTest {
         // This is the mechanism that keeps clicks on an error page - or on a dev server -
         // off a domain the user never reached: dispose() and a failed navigation both clear
         // the authority the bridge reads.
-        bridge(authority = null).emit("""[{"type":"CLICK","tag":"button"}]""")
-        bridge(authority = "localhost:3000").emit("""[{"type":"CLICK","tag":"button"}]""")
+        bridge(authority = null).emitFromCollector("""[{"type":"CLICK","tag":"button"}]""")
+        bridge(authority = "localhost:3000").emitFromCollector("""[{"type":"CLICK","tag":"button"}]""")
 
         assertTrue(interactions().isEmpty(), "emitted: ${interactions()}")
     }
@@ -309,7 +318,7 @@ class BrowserAnalyticsEmissionTest {
     fun `the kill switch stops a page batch too, not just the host emitters`() {
         BrowserAnalytics.telemetryEnabled = false
 
-        bridge().emit("""[{"type":"CLICK","tag":"button"}]""")
+        bridge().emitFromCollector("""[{"type":"CLICK","tag":"button"}]""")
 
         assertTrue(captured.isEmpty())
     }

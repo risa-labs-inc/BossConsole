@@ -789,12 +789,25 @@ restart. There is no Settings row and no per-site exclusion.
   largest change in what a third-party plugin can observe, and it is a deliberate
   choice to keep the bus uniform rather than an oversight - gate at install time
   by choosing which plugins are allowed, not by trusting the bus.
-- **The interaction numbers are attacker-influenceable.** `window.__bossInteraction`
-  is reachable by any script on the page, so a site can fabricate its own
-  engagement (bounded by the rate limiter) or suppress it by pre-setting
-  `window.__bossInteractionStarted`. The sanitizers bound what can be *smuggled*
-  through; nothing bounds a site lying about its own usage. Treat these as
-  indicative, not as measurements, wherever a site has an incentive to lie.
+- **The interaction numbers are still self-reported, but the collector is no longer
+  a channel a page can forge through.** `window.__bossInteraction` is no longer left
+  reachable: the injected collector copies the bridge into a closure and removes it
+  before doing anything else, so a page script that runs after injection has no
+  reference to it. If a page reaches the bridge anyway, every batch must carry a
+  per-session nonce that exists on the page side only as a closure variable, and a
+  batch without it is
+  dropped before it is parsed - at no cost to the rate budget, so a flood of
+  rejected calls cannot silence legitimate traffic. The retired
+  `__bossInteractionStarted` / `__bossInteractionReset` globals are gone, so a page
+  can no longer switch collection off by pre-setting a flag, and the single property
+  the collector does leave behind is host-named, non-enumerable, non-configurable and
+  non-writable, and holds no credential. **What is not covered:** a page can still
+  synthesise the DOM events the collector observes, and those arrive legitimately
+  with a valid nonce, so a site can still overstate its own engagement (bounded by
+  the rate limiter) and the sanitizers still only bound what can be *smuggled*
+  through. Whether the engine really injects this ahead of every page script is a
+  runtime property no unit test can establish, and is checked by hand. Treat these
+  as indicative, not as measurements, wherever a site has an incentive to lie.
 - **A page can observe the current trackpad gesture token.** The injected swipe bridge exposes
   the process-wide contact id and begin epoch while fingers are down. It does not expose deltas,
   but a page can poll the bridge and infer that a trackpad contact is active.

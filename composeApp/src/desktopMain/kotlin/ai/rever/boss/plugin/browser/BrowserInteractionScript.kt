@@ -25,6 +25,35 @@ package ai.rever.boss.plugin.browser
  * its own DOM and can name an input whatever it likes, so a second independent pass runs
  * where the page cannot reach it. Anything failing validation is dropped there.
  *
+ * ## Why there is a nonce, and what it does and does not buy
+ *
+ * JxBrowser 9.5.0 has **no isolated JS world**: `InjectJsCallback` carries only a `Frame`,
+ * `Frame.executeJavaScript` has no world parameter, and no class in the pinned jar mentions
+ * a world at all (see the PR for the jar inspection). So this collector necessarily shares
+ * a JS context with the page, and the page can reach anything this script leaves on
+ * `window`.
+ *
+ * Three things follow, and this file implements all three:
+ *
+ * 1. **The bridge is not left on `window`.** It is copied into a closure and then removed
+ *    (`delete`, then a null assignment as a fallback for a non-configurable property), and
+ *    every counter lives in the closure. The `__bossInteractionStarted` /
+ *    `__bossInteractionReset` globals are gone, so a page can no longer suppress the
+ *    collector by pre-setting a flag before injection. The one property that does survive is
+ *    item 3 below, and it is named by the host rather than by this file.
+ * 2. **The channel carries a per-session nonce**, injected as a literal here and verified
+ *    host-side in [BrowserInteractionBridge]. A page that reaches the bridge without the
+ *    nonce gets its batch dropped.
+ * 3. **The one property that must persist across re-injection** (the per-route reset hook,
+ *    needed because a single-page-app route change re-runs this script inside one document)
+ *    is named by the host with a value the page cannot guess, and defined non-enumerable and
+ *    non-configurable.
+ *
+ * The nonce is a *second* line, not the first: what actually keeps the page out is that it
+ * never gets a reference to the bridge. The nonce is what still holds if removal ever fails.
+ * See the class KDoc of [BrowserInteractionBridge] for what is explicitly NOT covered — a
+ * page can always synthesise DOM events, and this script will faithfully report them.
+ *
  * ## Behaviour
  *
  * Events are batched and flushed on a timer (and on `pagehide`) so a mutation-heavy page
@@ -35,12 +64,6 @@ package ai.rever.boss.plugin.browser
 internal object BrowserInteractionScript {
     /** Property the bridge is published on. Matched by [BrowserHandleImpl]. */
     const val BRIDGE_PROPERTY: String = "__bossInteraction"
-
-    /** Guard so re-injection into the same document is a no-op. */
-    private const val STARTED_FLAG = "__bossInteractionStarted"
-
-    /** Per-route reset, called when re-injection finds the collector already running. */
-    private const val RESET_FLAG = "__bossInteractionReset"
 
     private const val FLUSH_INTERVAL_MS = 2000
     private const val MAX_BATCH = 50
@@ -92,22 +115,53 @@ internal object BrowserInteractionScript {
     /**
      * The collector source.
      *
+     * [nonce] is this session's channel credential, and [slotName] the host-chosen name of the
+     * one property that survives a re-injection. Both are injected as literals and neither is
+     * ever written to a property the page can read by name. See the object KDoc.
+     *
      * `describe()` is the only place the DOM is inspected, deliberately — one function to
      * audit, and the sole reason the exclusion list above can be stated as a fact.
+     *
+     * A function rather than a `val` because the two literals are parameters, so the
+     * substitution happens at the one place that knows them. Its length is the JavaScript
+     * itself: there is no Kotlin logic here to extract, and splitting the string across
+     * constants would break the `$CONSTANT` resolution the node harness performs against this
+     * exact literal, which is what detekt's LongMethod is suppressed for below.
      */
-    val source: String =
+    @Suppress("LongMethod") // One JavaScript string literal; see the KDoc above.
+    fun source(
+        nonce: String,
+        slotName: String,
+    ): String =
         """
         (function () {
-          if (window.$STARTED_FLAG) {
-            // Already collecting in this document. The host re-runs this script on every
-            // main-frame NavigationFinished, and for a single-page app that is a ROUTE
-            // change within one document — so this is the only signal the collector gets
-            // that the user is on a different page. Without it maxScrollBucket stayed at
-            // its high-water mark and every route after the first reported no scroll depth
-            // at all, and a click on the old route could pair with one on the new.
-            if (window.$RESET_FLAG) window.$RESET_FLAG();
-            return;
-          }
+          // Take the bridge out of reach FIRST, before any other work and before the
+          // re-injection check below. Anything that returned earlier would leave the page a
+          // live channel for the rest of the document's life.
+          var bridge = window.$BRIDGE_PROPERTY;
+          var removed = false;
+          try { removed = delete window.$BRIDGE_PROPERTY; } catch (_) {}
+          // A property the host defined non-configurable cannot be deleted; a plain
+          // assignment is still allowed and is what makes it unreachable in that case.
+          // Only as a fallback: assigning unconditionally would recreate the property the
+          // delete just removed, leaving a null-valued global behind for no gain.
+          if (!removed) { try { window.$BRIDGE_PROPERTY = null; } catch (_) {} }
+          if (!bridge) return;
+          var NONCE = "$nonce";
+          // Already collecting in this document. The host re-runs this script on every
+          // main-frame NavigationFinished, and for a single-page app that is a ROUTE
+          // change within one document - so this is the only signal the collector gets
+          // that the user is on a different page. Without it maxScrollBucket stayed at
+          // its high-water mark and every route after the first reported no scroll depth
+          // at all, and a click on the old route could pair with one on the new.
+          //
+          // Found by a host-chosen name rather than a fixed one, because a fixed name is
+          // readable from the page: pre-setting `window.__bossInteractionStarted` used to
+          // suppress collection entirely for the rest of the document.
+          try {
+            var prior = window["$slotName"];
+            if (typeof prior === "function") { try { prior(); } catch (_) {} return; }
+          } catch (_) {}
           try {
             var queue = [];
             var lastClick = { path: null, startedAt: 0, count: 0, event: null };
@@ -128,9 +182,7 @@ internal object BrowserInteractionScript {
               var batch = queue;
               queue = [];
               try {
-                if (window.$BRIDGE_PROPERTY) {
-                  window.$BRIDGE_PROPERTY.emit(JSON.stringify(batch));
-                }
+                bridge.emit(NONCE, JSON.stringify(batch));
               } catch (_) {}
             }
 
@@ -312,26 +364,31 @@ internal object BrowserInteractionScript {
               } catch (_) {}
             }, { capture: true, passive: true });
 
-            // Per-route state, reset when the host re-runs this script in the same document.
-            // Deliberately does NOT read location: the collector never touches a URL, and it
-            // does not need to - the host already knows a navigation happened.
-            window.$RESET_FLAG = function () {
-              maxScrollBucket = 0;
-              lastClick = { path: null, startedAt: 0, count: 0, event: null };
-            };
-
             setInterval(flush, $FLUSH_INTERVAL_MS);
             // pagehide only: it also fires on bfcache entry, which beforeunload does not, and
             // registering a beforeunload listener has engine-visible side effects for no gain.
             window.addEventListener('pagehide', flush, true);
 
-            // Claimed LAST, once everything above actually succeeded. Set at the top, a throw
-            // anywhere in between was swallowed by the catch and left the flag standing with
-            // no listeners and no reset function - so every later re-injection took the
-            // "already collecting" path and the collector was dead for that document with no
-            // signal at all. Setting it here makes a failed injection retryable on the next
+            // Published LAST, once everything above actually succeeded, and non-enumerable
+            // and non-configurable so it cannot be listed by for..in / Object.keys and cannot
+            // be deleted by the page. It is the ONLY thing this script leaves behind, it
+            // holds no credential and no bridge, and it is reachable only by a page that
+            // already knows its name. Written at the top it would have been a "collector is
+            // running" flag standing over a body that threw - so every later re-injection
+            // took the reset path and the collector was dead for that document with no signal
+            // at all. Writing it here makes a failed injection retryable on the next
             // navigation instead.
-            window.$STARTED_FLAG = true;
+            try {
+              Object.defineProperty(window, "$slotName", {
+                value: function () {
+                  maxScrollBucket = 0;
+                  lastClick = { path: null, startedAt: 0, count: 0, event: null };
+                },
+                enumerable: false,
+                configurable: false,
+                writable: false
+              });
+            } catch (_) {}
           } catch (_) {
             // Never surface anything into the page.
           }

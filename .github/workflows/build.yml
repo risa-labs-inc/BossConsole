@@ -89,6 +89,18 @@ jobs:
         # files and two languages and fail by making elementPath vanish silently.
         run: node scripts/test/test-browser-collector.js
 
+      - name: 🧪 Browser interaction collector tamper resistance
+        # The collector shares a JS context with the page - JxBrowser 9.5.0 has no
+        # isolated world to put it in - so "a page cannot reach the bridge or switch
+        # the collector off" is a claim about run time, not about how the source
+        # reads. Reading it cannot establish that: the suppression bug this replaced
+        # was one readable line that looked like a sensible guard. This executes the
+        # real script against a fake window and asserts the bridge is out of reach,
+        # that the one surviving property is non-enumerable, non-configurable and
+        # non-writable, that it holds no credential, and that the retired fixed-name
+        # flags no longer suppress collection.
+        run: node scripts/test/test-browser-collector-tamper.js
+
       - name: 🧪 Find-key probe
         # BrowserFindKeyProbe's script decides whether the PAGE keeps Cmd+F (Sheets,
         # Docs, Notion all claim it) or BOSS opens its own find bar, and it is
