@@ -144,9 +144,10 @@ class TerminalServiceImpl(
                     ).asRuntimeException()
             }
             try {
+                // session() admits once at stream start (fail-closed). Mid-stream revoke is
+                // ProcessIdentityInterceptor's job; per-chunk ownership checks were hot-path cost (#1321).
                 val owned = session(request.sessionId)
                 owned.output.stream().collect { chunk ->
-                    IpcCall.requireOwner(owned.ownerInstance)
                     emit(chunk)
                 }
             } finally {
