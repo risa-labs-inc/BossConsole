@@ -140,6 +140,7 @@ object TabColorRegistry {
         return File(bossDir, TAB_COLOR_TAGS_FILE)
     }
 
+    @Suppress("TooGenericExceptionCaught")
     internal suspend fun loadTagsFromDisk() =
         withContext(Dispatchers.IO) {
             try {
@@ -173,6 +174,7 @@ object TabColorRegistry {
             }
         }
 
+    @Suppress("TooGenericExceptionCaught")
     internal suspend fun saveTagsToDisk() =
         withContext(Dispatchers.IO) {
             try {
