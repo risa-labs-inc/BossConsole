@@ -6,6 +6,7 @@ import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.ui.graphics.Color
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -77,7 +78,7 @@ object TabColorRegistry {
     private val _tagsFlow = MutableStateFlow<Map<String, TabColorTag>>(emptyMap())
     val tagsFlow: StateFlow<Map<String, TabColorTag>> = _tagsFlow.asStateFlow()
 
-    private val ioScope = CoroutineScope(Dispatchers.IO)
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     init {
         ioScope.launch {
@@ -134,17 +135,18 @@ object TabColorRegistry {
         }
     }
 
-    private fun getTagsFile(): File {
-        val bossDir = BossDirectories.rootDir
-        if (!bossDir.exists()) bossDir.mkdirs()
-        return File(bossDir, TAB_COLOR_TAGS_FILE)
-    }
+    private fun getTagsFile(): File? =
+        runCatching {
+            val bossDir = BossDirectories.rootDir
+            if (!bossDir.exists()) bossDir.mkdirs()
+            File(bossDir, TAB_COLOR_TAGS_FILE)
+        }.getOrNull()
 
     @Suppress("TooGenericExceptionCaught")
     internal suspend fun loadTagsFromDisk() =
         withContext(Dispatchers.IO) {
             try {
-                val file = getTagsFile()
+                val file = getTagsFile() ?: return@withContext
                 if (file.exists()) {
                     val json = file.readText()
                     val rawMap = Json.decodeFromString<Map<String, SerializableTabTag>>(json)
@@ -179,13 +181,13 @@ object TabColorRegistry {
     internal suspend fun saveTagsToDisk() =
         withContext(Dispatchers.IO) {
             try {
+                val file = getTagsFile() ?: return@withContext
                 val snapshot =
                     synchronized(lock) {
                         tabTags.mapValues { (_, tag) ->
                             SerializableTabTag(category = tag.category.name, customLabel = tag.customLabel)
                         }
                     }
-                val file = getTagsFile()
                 val json = Json.encodeToString(snapshot)
                 file.writeText(json)
             } catch (e: Exception) {
