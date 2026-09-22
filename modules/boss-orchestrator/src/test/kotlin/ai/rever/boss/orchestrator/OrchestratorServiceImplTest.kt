@@ -445,6 +445,39 @@ class OrchestratorServiceImplTest {
             assertEquals(0, applications)
         }
 
+    // ---- a tuned restart carries its args through to the wire (fixes #978) ----
+
+    @Test
+    fun `a tuned restart action keeps the RESTART_TUNED strategy and carries its jvm override`() =
+        runTest(hostContext) {
+            val service = OrchestratorServiceImpl(engine())
+
+            val action = service.reportFailure(report("oom", RepairStrategy.REPAIR_STRATEGY_RESTART_TUNED))
+
+            // The kernel only consumes jvm_args_override on REPAIR_STRATEGY_RESTART_TUNED,
+            // so the strategy seam is what makes the override reach the respawn. A naive
+            // map-everything-to-RESTART mapping silently downgraded the OOM respawn to
+            // the original heap and the self-healer's tuned restart was a crash loop.
+            assertEquals(RepairStrategy.REPAIR_STRATEGY_RESTART_TUNED, action.strategy)
+            assertTrue(action.hasRestart())
+            assertEquals(listOf("-Xmx512m"), action.restart.jvmArgsOverrideList)
+        }
+
+    @Test
+    fun `a plain restart action stays on RESTART with an empty jvm override (#978)`() =
+        runTest(hostContext) {
+            val service = OrchestratorServiceImpl(engine())
+
+            val action = service.reportFailure(report("plain", RepairStrategy.REPAIR_STRATEGY_RESTART))
+
+            // The two strategies must stay distinguishable on the wire so the kernel does
+            // not apply a tuned override to a plain restart (or fail to apply one to a
+            // tuned restart). An empty override list is the wire form "no change".
+            assertEquals(RepairStrategy.REPAIR_STRATEGY_RESTART, action.strategy)
+            assertTrue(action.hasRestart())
+            assertEquals(emptyList(), action.restart.jvmArgsOverrideList)
+        }
+
     private fun approval(repairId: String): RepairApproval =
         RepairApproval
             .newBuilder()

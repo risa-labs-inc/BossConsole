@@ -271,6 +271,32 @@ class RepairEngineTest {
         }
 
     @Test
+    fun `a tuned restart records its JVM args in the outcome (#978)`() =
+        runTest {
+            val capturedArgs = mutableListOf<List<String>>()
+
+            val outcome =
+                engine(onRequestRestart = { _, args -> capturedArgs.add(args) })
+                    .handleFailure(report("p9", RepairStrategy.REPAIR_STRATEGY_RESTART_TUNED))
+
+            // The tuned args must reach BOTH the callback and the outcome the
+            // kernel-side RestartAction is built from - the callback alone left
+            // the proto field empty and the respawn kept the same heap.
+            assertEquals(listOf(listOf("-Xmx512m")), capturedArgs)
+            assertEquals(RepairOutcome.Restarted("p9", listOf("-Xmx512m")), outcome)
+        }
+
+    @Test
+    fun `a plain restart records an empty JVM-args override (#978)`() =
+        runTest {
+            val outcome =
+                engine(onRequestRestart = { _, _ -> })
+                    .handleFailure(report("p10", RepairStrategy.REPAIR_STRATEGY_RESTART))
+
+            assertEquals(RepairOutcome.Restarted("p10", emptyList()), outcome)
+        }
+
+    @Test
     fun `an unusable project root leaves no source file readable`() =
         runTest {
             val absentRoot = File(projectRoot, "never-created")

@@ -282,7 +282,12 @@ class OrchestratorServiceImpl(
             is RepairOutcome.Restarted -> {
                 builder
                     .setDescription("Process ${outcome.processId} restarted")
-                    .setRestart(RestartAction.getDefaultInstance())
+                    .setRestart(
+                        RestartAction
+                            .newBuilder()
+                            .addAllJvmArgsOverride(outcome.jvmArgs)
+                            .build(),
+                    )
             }
 
             is RepairOutcome.StateReset -> {
@@ -393,10 +398,35 @@ private fun noApprovalSinkReason(
 
 private fun outcomeToStrategy(outcome: RepairOutcome): RepairStrategy =
     when (outcome) {
-        is RepairOutcome.Restarted -> RepairStrategy.REPAIR_STRATEGY_RESTART
-        is RepairOutcome.StateReset -> RepairStrategy.REPAIR_STRATEGY_RESET_STATE
-        is RepairOutcome.ConfigPatched -> RepairStrategy.REPAIR_STRATEGY_PATCH_CONFIG
-        is RepairOutcome.CodeFixProposed -> RepairStrategy.REPAIR_STRATEGY_PATCH_SOURCE
-        is RepairOutcome.Escalated -> RepairStrategy.REPAIR_STRATEGY_ESCALATE
-        is RepairOutcome.Failed -> RepairStrategy.REPAIR_STRATEGY_ESCALATE
+        // A non-empty jvmArgs is what the kernel keys on: REPAIR_STRATEGY_RESTART_TUNED is
+        // the only branch that honours RestartAction.jvm_args_override. Plain restarts
+        // carry no override and stay on REPAIR_STRATEGY_RESTART, so the two stay
+        // distinguishable end-to-end.
+        is RepairOutcome.Restarted -> {
+            if (outcome.jvmArgs.isNotEmpty()) {
+                RepairStrategy.REPAIR_STRATEGY_RESTART_TUNED
+            } else {
+                RepairStrategy.REPAIR_STRATEGY_RESTART
+            }
+        }
+
+        is RepairOutcome.StateReset -> {
+            RepairStrategy.REPAIR_STRATEGY_RESET_STATE
+        }
+
+        is RepairOutcome.ConfigPatched -> {
+            RepairStrategy.REPAIR_STRATEGY_PATCH_CONFIG
+        }
+
+        is RepairOutcome.CodeFixProposed -> {
+            RepairStrategy.REPAIR_STRATEGY_PATCH_SOURCE
+        }
+
+        is RepairOutcome.Escalated -> {
+            RepairStrategy.REPAIR_STRATEGY_ESCALATE
+        }
+
+        is RepairOutcome.Failed -> {
+            RepairStrategy.REPAIR_STRATEGY_ESCALATE
+        }
     }
