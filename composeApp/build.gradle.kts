@@ -2595,3 +2595,34 @@ tasks.register<JavaExec>("downloadChromium") {
         println("Downloading Chromium to: $chromiumDir")
     }
 }
+
+// Agent Loom: turn a persisted MCP ledger into one standalone, no-login replay artifact.
+//   ./gradlew :composeApp:exportAgentLoom
+//   ./gradlew :composeApp:exportAgentLoom -Pledger=<mcp-calls.jsonl> -Pout=<artifact.html>
+tasks.register<JavaExec>("exportAgentLoom") {
+    group = "agent-loom"
+    description = "Exports a persisted MCP ledger into a standalone Agent Loom replay HTML artifact"
+
+    dependsOn("desktopJar")
+
+    // The desktop JAR and its runtime classpath. Unlike downloadChromium this needs no JxBrowser
+    // platform binary, because the exporter only reads the ledger and writes a file.
+    classpath =
+        files(
+            tasks.named("desktopJar").map { it.outputs.files },
+            configurations.named("desktopRuntimeClasspath"),
+        )
+    mainClass.set("ai.rever.boss.mcp.loom.AgentLoomCliKt")
+
+    val ledger =
+        project.findProperty("ledger")?.toString()
+            ?: "${System.getProperty("user.home")}/.boss/mcp-calls.jsonl"
+    val out =
+        project.findProperty("out")?.toString()
+            ?: layout.buildDirectory
+                .file("agent-loom/agent-loom-session.html")
+                .get()
+                .asFile.absolutePath
+
+    args = listOf(ledger, out)
+}
