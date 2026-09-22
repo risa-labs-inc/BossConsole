@@ -1,5 +1,6 @@
 package ai.rever.boss.plugin.repository.remote
 
+import kotlinx.coroutines.Dispatchers
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
@@ -8,6 +9,7 @@ import java.nio.file.attribute.FileTime
 import java.security.MessageDigest
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -120,6 +122,36 @@ class PluginDownloadCacheTest {
         assertEquals(0, cache.cleanOldEntries(0))
         cache.clearCache()
         assertEquals("sentinel", sentinel.readText())
+    }
+
+    @Test
+    fun expiresStaleEntriesAtConstruction() {
+        val root = File(temporary, "cache")
+        val source = File(temporary, "source.jar").also { it.writeText("jar") }
+        val seeded = PluginDownloadCache(root)
+        val stale = seeded.cacheJar("plugin", "1.0.0", source)
+        val fresh = seeded.cacheJar("plugin", "2.0.0", source)
+        val staleMetadata = stale.toPath().resolveSibling(stale.name.removeSuffix(".jar") + ".json")
+        val fortyDaysAgo = FileTime.fromMillis(System.currentTimeMillis() - 40L * 86_400_000L)
+        Files.setLastModifiedTime(stale.toPath(), fortyDaysAgo)
+        Files.setLastModifiedTime(staleMetadata, fortyDaysAgo)
+
+        val cache = PluginDownloadCache(root, sweepDispatcher = Dispatchers.Unconfined)
+
+        assertFalse(stale.exists(), "version past the window should be swept at construction")
+        assertFalse(Files.exists(staleMetadata))
+        assertTrue(fresh.exists(), "version inside the window should be kept")
+        assertEquals(listOf("2.0.0"), cache.listCachedPlugins()["plugin"])
+    }
+
+    @Test
+    fun constructionSurvivesAnUnusableRoot() {
+        val notADirectory = File(temporary, "cache").also { it.writeText("in the way") }
+        // Must not throw: the startup sweep fails the same way any later use will, and
+        // construction is required to survive that.
+        val cache = PluginDownloadCache(notADirectory, sweepDispatcher = Dispatchers.Unconfined)
+        assertFailsWith<Exception> { cache.getCachedFileCount() }
+        assertEquals("in the way", notADirectory.readText())
     }
 
     @Test
