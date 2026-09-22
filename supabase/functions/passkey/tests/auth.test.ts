@@ -32,6 +32,8 @@ Deno.test("generateAuthChallenge - should generate challenge for existing user",
     error: null
   }, 'insert')
 
+  mockClient.mockResponse('rpc.admit_passkey_challenge', { data: [{ allowed: true, retry_after_seconds: 0, duplicate: false }], error: null }, 'call')
+
   const result = await generateAuthChallenge(mockClient as unknown as SupabaseClient, 'test@example.com', 'session-xyz')
 
   assertEquals(result.success, true)
@@ -50,6 +52,8 @@ Deno.test("generateAuthChallenge - should return an inert challenge for a non-ex
     data: [],
     error: null
   }, 'call')
+
+  mockClient.mockResponse('rpc.admit_passkey_challenge', { data: [{ allowed: true, retry_after_seconds: 0, duplicate: false }], error: null }, 'call')
 
   const result = await generateAuthChallenge(mockClient as unknown as SupabaseClient, 'nonexistent@example.com')
 
@@ -76,6 +80,8 @@ Deno.test("generateAuthChallenge - should return an inert challenge when user ha
     data: [],
     error: null
   }, 'select')
+
+  mockClient.mockResponse('rpc.admit_passkey_challenge', { data: [{ allowed: true, retry_after_seconds: 0, duplicate: false }], error: null }, 'call')
 
   const result = await generateAuthChallenge(mockClient as unknown as SupabaseClient, 'test@example.com')
 

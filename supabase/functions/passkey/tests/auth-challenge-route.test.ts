@@ -16,6 +16,13 @@ import type { PasskeyContext } from "../types/context.ts"
 import auth from "../routes/auth.ts"
 import { createMockSupabaseClient, type MockSupabaseClient } from "./helpers/mocks.ts"
 import { resetRateLimiter } from "../utils/rate-limit.ts"
+import { GATEWAY_ADMISSION_HEADER } from "../utils/trusted-gateway.ts"
+import {
+  clearGatewayTestKeys,
+  gatewayTestKeys,
+  mintGatewayAssertion,
+  useGatewayTestKeys,
+} from "./helpers/gateway.ts"
 
 Deno.env.set('PASSKEY_RP_ID', 'api.risaboss.com')
 
@@ -33,34 +40,58 @@ function buildApp(mockClient: MockSupabaseClient) {
 // Mirrors the route's AUTH_CHALLENGE_LIMIT (60/hour per client).
 const AUTH_CHALLENGE_LIMIT = 60
 
+async function gatewayHeaders(body: string, privateKey: CryptoKey, ip: string) {
+  return {
+    'content-type': 'application/json',
+    'x-forwarded-for': ip,
+    [GATEWAY_ADMISSION_HEADER]: await mintGatewayAssertion(privateKey, { path: '/auth/challenge', body }),
+  }
+}
+
 Deno.test("auth/challenge - the limiter trips before any lookup: an over-budget client gets 429 with zero Supabase lookups", async () => {
   resetRateLimiter()
-  const mockClient = createMockSupabaseClient()
-  mockClient.mockResponse('rpc.find_user_by_email', { data: [], error: null }, 'call')
-  const app = buildApp(mockClient)
+  const { privateKey, publicKeyRaw } = await gatewayTestKeys()
+  useGatewayTestKeys(publicKeyRaw)
+  try {
+    const mockClient = createMockSupabaseClient()
+    mockClient.mockResponse('rpc.find_user_by_email', { data: [], error: null }, 'call')
+    for (let i = 0; i <= AUTH_CHALLENGE_LIMIT; i++) {
+      mockClient.mockResponse('rpc.admit_passkey_challenge', {
+        data: [{ allowed: true, retry_after_seconds: 0, duplicate: false }],
+        error: null,
+      }, 'call')
+    }
+    const app = buildApp(mockClient)
 
-  const headers = {
-    'content-type': 'application/json',
-    'x-forwarded-for': '9.9.9.9',
+    const body = JSON.stringify({ email: 'probe@example.com' })
+
+    for (let i = 0; i < AUTH_CHALLENGE_LIMIT; i++) {
+      const res = await app.request('http://gateway.test/auth/challenge', {
+        method: 'POST',
+        headers: await gatewayHeaders(body, privateKey, '9.9.9.9'),
+        body,
+      })
+      assertEquals(res.status, 200, `request ${i + 1} within budget must be served`)
+    }
+
+    const lookupsBefore = mockClient.getQueryHistory().length
+
+    // The very next probe from the same client: 429, and no lookup spent on it.
+    const res = await app.request('http://gateway.test/auth/challenge', {
+      method: 'POST',
+      headers: await gatewayHeaders(body, privateKey, '9.9.9.9'),
+      body,
+    })
+    assertEquals(res.status, 429, "the 61st probe in the window must be rate-limited")
+    assertEquals(
+      mockClient.getQueryHistory().length,
+      lookupsBefore,
+      "the rate-limited probe must not reach the user lookup",
+    )
+    resetRateLimiter()
+  } finally {
+    clearGatewayTestKeys()
   }
-  const body = JSON.stringify({ email: 'probe@example.com' })
-
-  for (let i = 0; i < AUTH_CHALLENGE_LIMIT; i++) {
-    const res = await app.request('/auth/challenge', { method: 'POST', headers, body })
-    assertEquals(res.status, 200, `request ${i + 1} within budget must be served`)
-  }
-
-  const lookupsBefore = mockClient.getQueryHistory().length
-
-  // The very next probe from the same client: 429, and no lookup spent on it.
-  const res = await app.request('/auth/challenge', { method: 'POST', headers, body })
-  assertEquals(res.status, 429, "the 61st probe in the window must be rate-limited")
-  assertEquals(
-    mockClient.getQueryHistory().length,
-    lookupsBefore,
-    "the rate-limited probe must not reach the user lookup",
-  )
-  resetRateLimiter()
 })
 
 Deno.test("auth/challenge - unknown email and no-passkeys produce identical response shapes", async () => {
@@ -76,22 +107,27 @@ Deno.test("auth/challenge - unknown email and no-passkeys produce identical resp
   }, 'call')
   noPasskeysClient.mockResponse('user_passkeys', { data: [], error: null }, 'select')
 
-  const body = JSON.stringify({ email: 'any@example.com' })
-  const headers = (ip: string) => ({
-    'content-type': 'application/json',
-    'x-forwarded-for': ip,
-  })
+  const { privateKey, publicKeyRaw } = await gatewayTestKeys()
+  useGatewayTestKeys(publicKeyRaw)
+  try {
+    for (const client of [unknownClient, noPasskeysClient]) {
+      client.mockResponse('rpc.admit_passkey_challenge', {
+        data: [{ allowed: true, retry_after_seconds: 0, duplicate: false }],
+        error: null,
+      }, 'call')
+    }
+    const body = JSON.stringify({ email: 'any@example.com' })
 
-  const resUnknown = await buildApp(unknownClient).request('/auth/challenge', {
-    method: 'POST',
-    headers: headers('8.8.4.4'),
-    body,
-  })
-  const resNoPasskeys = await buildApp(noPasskeysClient).request('/auth/challenge', {
-    method: 'POST',
-    headers: headers('8.8.8.8'),
-    body,
-  })
+    const resUnknown = await buildApp(unknownClient).request('http://gateway.test/auth/challenge', {
+      method: 'POST',
+      headers: await gatewayHeaders(body, privateKey, '8.8.4.4'),
+      body,
+    })
+    const resNoPasskeys = await buildApp(noPasskeysClient).request('http://gateway.test/auth/challenge', {
+      method: 'POST',
+      headers: await gatewayHeaders(body, privateKey, '8.8.8.8'),
+      body,
+    })
 
   assertEquals(resUnknown.status, 200)
   assertEquals(resNoPasskeys.status, 200)
@@ -111,5 +147,8 @@ Deno.test("auth/challenge - unknown email and no-passkeys produce identical resp
   assertEquals(noPasskeys.allowCredentials, [], "no-passkeys yields the same empty allow list")
   assertEquals(typeof unknown.challenge, typeof noPasskeys.challenge)
   assertEquals(unknown.challenge !== noPasskeys.challenge, true, "challenges are per-request randoms, not a static tell")
-  resetRateLimiter()
+    resetRateLimiter()
+  } finally {
+    clearGatewayTestKeys()
+  }
 })

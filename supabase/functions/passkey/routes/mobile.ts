@@ -1,3 +1,4 @@
+import { ChallengeSchema, CredentialIdentifierSchema, SessionIdentifierSchema } from "../types/schemas.ts"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { PasskeyContext } from "../types/context.ts"
 import { getMobileRegistrationHTML, getMobileAuthenticationHTML, getMobileErrorHTML } from "../utils/html.ts"
@@ -27,11 +28,11 @@ const registerMobileRoute = createRoute({
   description: 'Returns HTML page that performs WebAuthn registration ceremony on mobile device',
   request: {
     query: z.object({
-      challenge: z.string().describe('WebAuthn challenge'),
-      email: z.string().email().describe('User email'),
-      sessionId: z.string().describe('Session ID for tracking'),
-      rpId: z.string().optional().describe('Relying party ID'),
-      rpName: z.string().optional().describe('Relying party name')
+      challenge: ChallengeSchema.describe('WebAuthn challenge'),
+      email: z.string().max(320).email().describe('User email'),
+      sessionId: SessionIdentifierSchema.describe('Session ID for tracking'),
+      rpId: z.string().max(253).optional().describe('Relying party ID'),
+      rpName: z.string().max(256).optional().describe('Relying party name')
     })
   },
   responses: {
@@ -125,11 +126,11 @@ const authMobileRoute = createRoute({
   description: 'Returns HTML page that performs WebAuthn authentication ceremony on mobile device',
   request: {
     query: z.object({
-      challenge: z.string().describe('WebAuthn challenge'),
-      email: z.string().email().describe('User email'),
-      sessionId: z.string().describe('Session ID for tracking'),
-      credentialId: z.string().describe('Credential ID to use for authentication'),
-      rpId: z.string().optional().describe('Relying party ID')
+      challenge: ChallengeSchema.describe('WebAuthn challenge'),
+      email: z.string().max(320).email().describe('User email'),
+      sessionId: SessionIdentifierSchema.describe('Session ID for tracking'),
+      credentialId: CredentialIdentifierSchema.describe('Credential ID to use for authentication'),
+      rpId: z.string().max(253).optional().describe('Relying party ID')
     })
   },
   responses: {

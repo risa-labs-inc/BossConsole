@@ -1,3 +1,5 @@
+import { admitChallenge } from "../utils/admission.ts"
+import type { GatewayAdmission } from "../utils/trusted-gateway.ts"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { generateChallenge, storeChallenge } from "../utils/challenge.ts"
 import {
@@ -77,7 +79,15 @@ function inertChallenge(sessionId?: string) {
  * tracked separately in #768. Timing is not equalised by this function.
  */
 export const generateAuthChallenge = withErrorHandler(
-  async (supabase: SupabaseClient, email: string, sessionId?: string) => {
+  async (supabase: SupabaseClient, email: string, sessionId?: string, admission?: GatewayAdmission) => {
+    const decision = await admitChallenge(
+      supabase,
+      ChallengeType.Authentication,
+      admission?.lane ?? "untrusted",
+      admission?.requestId,
+    )
+    if (!decision.success) return decision
+
     console.log('🔑 Generating authentication challenge for email:', email)
 
     // Use utility function for scalable user lookup

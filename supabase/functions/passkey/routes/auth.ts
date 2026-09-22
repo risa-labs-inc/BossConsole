@@ -1,3 +1,5 @@
+import { limitPasskeyRequest } from "../utils/request-limits.ts"
+import { trustedGatewayAdmission } from "../utils/trusted-gateway.ts"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { PasskeyContext } from "../types/context.ts"
 import {
@@ -9,6 +11,7 @@ import { getAllowedOrigins } from "../utils/config.ts"
 import { clientKey, rateLimit } from "../utils/rate-limit.ts"
 import { parseClientDataJSON } from "../utils/webauthn.ts"
 import {
+  SessionIdentifierSchema,
   AuthChallengeRequestSchema,
   AuthChallengeResponseSchema,
   AuthCompleteRequestSchema,
@@ -18,6 +21,11 @@ import {
 } from "../types/schemas.ts"
 
 const auth = new OpenAPIHono<{ Variables: PasskeyContext }>()
+auth.use("*", limitPasskeyRequest)
+// The gateway assertion is verified before any credential parsing or
+// database RPC. The verified lane and request ID travel in typed context
+// variables; the handler never reads them from the request body.
+auth.use("/challenge", trustedGatewayAdmission)
 
 // Brake on the cheap loop: an unauthenticated script walking a candidate
 // email list (BossConsole#768). Per-isolate, honestly not a defence against
@@ -68,12 +76,24 @@ const authChallengeRoute = createRoute({
       }
     },
     429: {
-      description: 'Too many requests - per-client rate limit exceeded',
+      description: 'Too many requests or challenge capacity reached; retry after the Retry-After interval',
       content: {
         'application/json': {
           schema: ErrorResponseSchema
         }
       }
+    },
+    403: {
+      description: 'Gateway admission missing, invalid, or already redeemed',
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
+        }
+      }
+    },
+    503: {
+      description: 'Shared admission storage unavailable; retry after the Retry-After interval',
+      content: { 'application/json': { schema: ErrorResponseSchema } }
     },
     500: {
       description: 'Internal server error',
@@ -102,9 +122,19 @@ auth.openapi(authChallengeRoute, async (ctx) => {
     const supabase = ctx.get("supabase")
     const { email, sessionId } = ctx.req.valid('json')
 
-    const result = await generateAuthChallenge(supabase, email, sessionId)
+    const result = await generateAuthChallenge(supabase, email, sessionId, {
+      lane: ctx.get("gatewayLane") ?? "untrusted",
+      requestId: ctx.get("gatewayRequestId"),
+    })
 
     if (!result.success) {
+      if ('status' in result && (result.status === 429 || result.status === 503)) {
+        ctx.header('Retry-After', String(result.retryAfterSeconds))
+        return ctx.json({ error: result.error }, result.status)
+      }
+      if ('status' in result && result.status === 403) {
+        return ctx.json({ error: result.error }, 403)
+      }
       return ctx.json({ error: result.error || 'Failed to generate challenge' }, 400)
     }
 
@@ -214,7 +244,7 @@ const authStatusRoute = createRoute({
   description: 'Checks whether an authentication session is pending, completed, or expired',
   request: {
     params: z.object({
-      sessionId: z.string()
+      sessionId: SessionIdentifierSchema
     })
   },
   responses: {
