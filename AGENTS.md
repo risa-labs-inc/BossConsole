@@ -758,12 +758,16 @@ new browser reuse it or LRU eviction delete it. Named-profile creation/seeding
 waits at most ten seconds to acquire the fence, then reports that it is still in
 use rather than suspending indefinitely.
 
-The process-wide cleanup scopes use daemon threads. The shutdown hook does not
-drain them before forced engine close/process exit, so pending native close and
-profile cleanup can be abandoned at exit. Ephemeral leftovers are reclaimed on
-the next managed-profile creation. This is not a guaranteed shutdown flush. This
-is not an engine-abort mechanism and does not coordinate external raw-JxBrowser
-callers or engine-level forced closure.
+The process-wide cleanup scopes use daemon threads. The shutdown hook drains them
+before the forced engine close, bounded at five seconds, so a pending native close
+or profile cleanup finishes instead of being abandoned at exit. The bound is real
+and expiry is reported with the outstanding count: a wedged renderer keeps its
+browser and profile exactly as it does on the per-handle path. Cleanup registered
+after the drain returns is not covered, and the drain is ordered before the engine
+close because that is what the cleanup calls into. Ephemeral leftovers are
+reclaimed on the next managed-profile creation. This is not a guaranteed shutdown
+flush. This is not an engine-abort mechanism and does not coordinate external
+raw-JxBrowser callers or engine-level forced closure.
 
 ## Browser telemetry, and how to turn it off
 

@@ -314,4 +314,89 @@ class BrowserNativeDisposalTest {
                 mutex.unlock()
             }
         }
+
+    /**
+     * The wiring, not the drain object: if this scope goes back to its own `SupervisorJob`, the drain
+     * reports idle while a native close is still queued and shutdown closes the engine underneath it.
+     */
+    @Test
+    fun `a pending native close is visible to the shutdown drain`() =
+        runBlocking {
+            val executor = DrainingBrowserExecutor("test-drain-shutdown-native")
+            val entered = CountDownLatch(1)
+            val release = CountDownLatch(1)
+            val disposal = BrowserNativeDisposal(listOf(executor)) {}
+            executor.execute {
+                entered.countDown()
+                release.await()
+            }
+            try {
+                assertTrue(entered.await(5, TimeUnit.SECONDS))
+                disposal.start()
+                assertTrue(BrowserCleanupDrain.pending >= 1, "the native close was not admitted to the drain")
+                assertFalse(
+                    BrowserCleanupDrain.awaitDrained(100),
+                    "the drain reported idle with a native close still queued",
+                )
+                release.countDown()
+                assertTrue(BrowserCleanupDrain.awaitDrained(5_000), "the drain never saw the native close finish")
+                disposal.awaitCompletion()
+            } finally {
+                release.countDown()
+                disposal.start()
+            }
+        }
+
+    /** The same wiring for the profile-release path, which reaches the drain through another scope. */
+    @Test
+    fun `a pending profile cleanup is visible to the shutdown drain`() =
+        runBlocking {
+            val closeFinished = CompletableDeferred<Unit>()
+            val releaseFinished = CompletableDeferred<Unit>()
+            val cleanup =
+                disposeBrowserResources(
+                    dispose = {},
+                    awaitNativeClose = { closeFinished.await() },
+                    release = { releaseFinished.complete(Unit) },
+                )
+            try {
+                assertTrue(BrowserCleanupDrain.pending >= 1, "the profile cleanup was not admitted to the drain")
+                assertFalse(
+                    BrowserCleanupDrain.awaitDrained(100),
+                    "the drain reported idle with a profile release still queued",
+                )
+                closeFinished.complete(Unit)
+                cleanup.await()
+                assertTrue(releaseFinished.isCompleted)
+                assertTrue(BrowserCleanupDrain.awaitDrained(5_000), "the drain never saw the profile cleanup finish")
+            } finally {
+                closeFinished.complete(Unit)
+            }
+        }
+
+    /**
+     * The wedge the per-handle path already refuses to close underneath. Shutdown must bound its wait
+     * for the same reason: a renderer that never answers cannot be allowed to hold the quit open.
+     */
+    @Test
+    fun `the drain gives up at its deadline instead of waiting out a wedged cleanup`() =
+        runBlocking {
+            val executor = DrainingBrowserExecutor("test-drain-shutdown-wedge")
+            val entered = CountDownLatch(1)
+            val release = CountDownLatch(1)
+            val disposal = BrowserNativeDisposal(listOf(executor)) {}
+            executor.execute {
+                entered.countDown()
+                release.await()
+            }
+            try {
+                assertTrue(entered.await(5, TimeUnit.SECONDS))
+                disposal.start()
+                assertFalse(BrowserCleanupDrain.awaitDrained(150), "a wedged cleanup must not extend the drain")
+            } finally {
+                release.countDown()
+                disposal.start()
+                disposal.awaitCompletion()
+            }
+        }
 }
