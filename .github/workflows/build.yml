@@ -45,6 +45,15 @@ jobs:
           export BOSS_TEST_PWSH
           python3 scripts/test/test-publish-plugin.py
 
+      - name: 🧪 Verified JRE download harness
+        # build-windows-standalone.bat acquires the bundled JRE through
+        # Get-VerifiedDownload.ps1. The harness stages synthetic local archives
+        # through the same .part/hash/promote path and static-checks the .bat's
+        # pinned descriptor and no-argument CALL contract - no network, no real
+        # JRE. pwsh is preinstalled on ubuntu-latest (the plugin publisher
+        # fixture above already relies on it).
+        run: pwsh -NoProfile -File scripts/test/test-verified-download.ps1
+
       - name: Headless CLI launcher tests
         run: bash scripts/test/test-headless-cli.sh
 
