@@ -95,7 +95,7 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
         val lowerCmd = command.lowercase().trim()
 
         return when {
-            isDestructiveShellCommand(lowerCmd) -> {
+            DestructiveShellCommands.matches(lowerCmd) -> {
                 McpRiskAssessment(
                     level = McpRiskLevel.CRITICAL,
                     reason = "Shell execution tool '$toolName' contains potentially destructive command pattern",
@@ -109,19 +109,6 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
                 )
             }
         }
-    }
-
-    // Wording heuristic only: both HIGH and CRITICAL must require approval. This is not a shell parser.
-    private fun isDestructiveShellCommand(cmd: String): Boolean {
-        if (cmd.isEmpty()) return false
-        return cmd.contains("rm -rf") ||
-            cmd.contains("del /s") ||
-            cmd.contains("format ") ||
-            cmd.contains("mkfs") ||
-            cmd.contains("git push --force") ||
-            cmd.contains("git push -f") ||
-            cmd.contains("dd if=") ||
-            cmd.contains("chmod -r 777")
     }
 
     companion object {
