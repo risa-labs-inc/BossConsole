@@ -221,8 +221,16 @@ actual object DeepLinkHandler {
         }
     }
 
+    /**
+     * Windows needs the registry entry and nothing else: the links themselves arrive in
+     * `argv`, at cold start and forwarded to a running instance over the single-instance
+     * channel (see [processCommandLineArgs]). The JDK's Windows Desktop peer has no
+     * APP_OPEN_URI action, so the `setOpenURIHandler` call that used to follow the
+     * registration threw on every launch and logged the stack trace at WARN, which read as
+     * a broken feature in every Windows log. Same gap #437 closed for Linux, and the same
+     * reason [setupOpenFileHandler] skips Windows.
+     */
     private fun setupWindowsHandler() {
-        // Windows requires registry setup and command line argument handling
         try {
             // Called unconditionally: registerProtocol() is idempotent and inspects the
             // actual shell\open\command value, while isProtocolRegistered() only reports
@@ -232,33 +240,6 @@ actual object DeepLinkHandler {
             // never repaired, leaving boss:// broken for that user on every launch. Costs one
             // extra `reg query` per Windows start in the already-correct case, bounded at 5s.
             WindowsProtocolHandler.registerProtocol()
-
-            // On Windows, deep links come through command line args when the app is already running
-            // For new instances, we need to check args in main()
-            if (Desktop.isDesktopSupported()) {
-                // This might not work on all Windows versions, but try it
-                try {
-                    Desktop.getDesktop().setOpenURIHandler { event ->
-                        val uri = event.uri.toString()
-                        logger.info(
-                            LogCategory.SYSTEM,
-                            "Received deep link (Windows via Desktop)",
-                            mapOf("uri" to LogSanitizer.describeUri(uri)),
-                        )
-
-                        // Handle http/https URLs for default browser functionality
-                        if (uri.startsWith("http://") || uri.startsWith("https://")) {
-                            logger.debug(LogCategory.BROWSER, "Handling as HTTP(S) URL")
-                            URLHandlerService.handleURL(uri)
-                        } else {
-                            // Handle boss:// deep links for auth
-                            _deepLinkFlow.value = uri
-                        }
-                    }
-                } catch (e: Exception) {
-                    logger.warn(LogCategory.SYSTEM, "Desktop.setOpenURIHandler not supported on Windows", error = e)
-                }
-            }
         } catch (e: Exception) {
             logger.error(LogCategory.SYSTEM, "Failed to set up Windows deep link handler", error = e)
         }
