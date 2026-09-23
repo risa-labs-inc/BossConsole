@@ -2,8 +2,12 @@ package ai.rever.boss.components.plugin.providers
 
 import ai.rever.boss.plugin.api.FileReadResult
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.attribute.PosixFileAttributeView
+import java.nio.file.attribute.PosixFilePermission
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
@@ -41,6 +45,36 @@ class EditorFileIoTest {
         assertTrue(provider.writeFileContent(nested.absolutePath, "nested"))
         assertTrue(nested.exists())
         root.deleteRecursively()
+    }
+
+    @Test
+    fun `write preserves an existing file when a sibling temp file cannot be created`() {
+        val root = Files.createTempDirectory("editor-file-io-readonly-").toFile()
+        val target = File(root, "source.kt").also { it.writeText("last complete source") }
+        if (Files.getFileAttributeView(root.toPath(), PosixFileAttributeView::class.java) == null) return
+        try {
+            Files.setPosixFilePermissions(
+                target.toPath(),
+                setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE),
+            )
+            Files.setPosixFilePermissions(
+                root.toPath(),
+                setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_EXECUTE),
+            )
+
+            assertFalse(provider.writeFileContent(target.absolutePath, "replacement"))
+            assertEquals("last complete source", target.readText())
+        } finally {
+            Files.setPosixFilePermissions(
+                root.toPath(),
+                setOf(
+                    PosixFilePermission.OWNER_READ,
+                    PosixFilePermission.OWNER_WRITE,
+                    PosixFilePermission.OWNER_EXECUTE,
+                ),
+            )
+            root.deleteRecursively()
+        }
     }
 
     @Test
