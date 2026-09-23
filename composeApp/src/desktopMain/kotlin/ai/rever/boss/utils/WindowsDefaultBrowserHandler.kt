@@ -257,15 +257,11 @@ object WindowsDefaultBrowserHandler {
     private fun getApplicationPath(): String? =
         try {
             // Try to get the path from the running JAR/EXE
-            val jarPath =
-                WindowsDefaultBrowserHandler::class.java.protectionDomain.codeSource.location
-                    .toURI()
-                    .path
+            val jarFile = codeSourceFile(WindowsDefaultBrowserHandler::class.java.protectionDomain.codeSource.location)
 
             when {
-                jarPath.endsWith(".jar") -> {
+                jarFile.name.endsWith(".jar") -> {
                     // Running from JAR - look for launcher executable
-                    val jarFile = File(jarPath)
                     val launcherPath = jarFile.parentFile.resolve("BOSS.exe")
                     if (launcherPath.exists()) {
                         launcherPath.absolutePath
@@ -277,9 +273,9 @@ object WindowsDefaultBrowserHandler {
                     }
                 }
 
-                jarPath.contains("BOSS.exe") -> {
+                jarFile.path.contains("BOSS.exe") -> {
                     // Already an executable
-                    File(jarPath).absolutePath
+                    jarFile.absolutePath
                 }
 
                 else -> {

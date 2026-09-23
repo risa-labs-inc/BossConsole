@@ -5,6 +5,7 @@ import ai.rever.boss.utils.BOSS_MACOS_APP_BUNDLE_NAME
 import ai.rever.boss.utils.BOSS_MACOS_BUNDLE_ID
 import ai.rever.boss.utils.Version
 import ai.rever.boss.utils.WindowsProtocolCleanup
+import ai.rever.boss.utils.codeSourceFile
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.Dispatchers
@@ -1026,11 +1027,7 @@ object UpdateInstaller {
      */
     private fun getCurrentJarPath(): File? =
         try {
-            val jarPath =
-                UpdateInstaller::class.java.protectionDomain.codeSource.location
-                    .toURI()
-                    .path
-            val jarFile = File(jarPath)
+            val jarFile = codeSourceFile(UpdateInstaller::class.java.protectionDomain.codeSource.location)
             if (jarFile.exists() && jarFile.name.endsWith(".jar")) {
                 jarFile
             } else {

@@ -2,6 +2,7 @@ package ai.rever.boss.filetypes
 
 import ai.rever.boss.utils.DefaultHandlerState
 import ai.rever.boss.utils.WindowsDefaultBrowserHandler
+import ai.rever.boss.utils.codeSourceFile
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import java.io.File
@@ -237,13 +238,10 @@ internal object WindowsFileTypeHandler {
      */
     private fun applicationPath(): String? =
         try {
-            val codeSource =
-                WindowsFileTypeHandler::class.java.protectionDomain.codeSource.location
-                    .toURI()
-                    .path
+            val codeSource = codeSourceFile(WindowsFileTypeHandler::class.java.protectionDomain.codeSource.location)
             when {
-                codeSource.endsWith(".jar") -> {
-                    val launcher = File(codeSource).parentFile?.resolve("BOSS.exe")
+                codeSource.name.endsWith(".jar") -> {
+                    val launcher = codeSource.parentFile?.resolve("BOSS.exe")
                     launcher?.takeIf { it.exists() }?.absolutePath
                 }
 

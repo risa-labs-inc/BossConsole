@@ -274,16 +274,12 @@ object WindowsProtocolHandler {
             }
 
             // Priority 2: Try to get the path from the running JAR/EXE
-            val jarPath =
-                WindowsProtocolHandler::class.java.protectionDomain.codeSource.location
-                    .toURI()
-                    .path
+            val jarFile = codeSourceFile(WindowsProtocolHandler::class.java.protectionDomain.codeSource.location)
 
             // Convert to Windows path format and handle different packaging scenarios
             when {
-                jarPath.endsWith(".jar") -> {
+                jarFile.name.endsWith(".jar") -> {
                     // Running from JAR - look for launcher executable
-                    val jarFile = File(jarPath)
                     val launcherPath = jarFile.parentFile.resolve("BOSS.exe")
                     if (launcherPath.exists()) {
                         launcherPath.absolutePath
@@ -294,9 +290,9 @@ object WindowsProtocolHandler {
                     }
                 }
 
-                jarPath.contains("BOSS.exe") -> {
+                jarFile.path.contains("BOSS.exe") -> {
                     // Already an executable
-                    File(jarPath).absolutePath
+                    jarFile.absolutePath
                 }
 
                 else -> {
