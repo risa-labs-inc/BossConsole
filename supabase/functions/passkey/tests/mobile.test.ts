@@ -579,8 +579,7 @@ for (const boundSession of [null, 'session-victim']) {
       'mock-challenge-base64',
       'test@example.com',
       'session-attacker',
-      'api.risaboss.com',
-      'BOSS'
+      'api.risaboss.com'
     )
 
     assertEquals(result.success, false)
