@@ -101,11 +101,14 @@ boss mcp describe browser_navigate --json
 MCP Tool: browser_navigate
 Plugin:   fluck-browser
 Access:   Standard
+Effect:   Declares that it changes state
 
 Description:
   Navigates the active browser tab to the specified URL.
   Arguments: {"url": "<target_url>"}
 ```
+
+The `Effect:` line reports the tool's own `readOnly` declaration, in one of three states. `Declared read-only (hint, not verified)` and `Declares that it changes state` repeat what the plugin author set. `Not declared` appears when the running instance is on a build that predates the field and so sends no declaration at all. The declaration is the plugin author's unverified claim, not something BOSS checks, and the api currently defaults it to read-only, so a tool whose author never set it will show as declared read-only.
 
 ---
 
