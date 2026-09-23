@@ -2138,6 +2138,19 @@ a tool-wide rule for all agents and arguments across restarts. Saved rules can b
 reviewed and reset from “Persisted MCP policies” in the bottom bar; a reset removes
 the rule and clears that tool's session trust, so the tool uses the configured default
 policy (ASK for known mutations in the shipped defaults). Unrelated DENYs remain intact.
+
+**`apply_template` is the exception to "Always Allow is unconditional".** A saved ALLOW
+on `apply_template` / `workspace_apply_template` is escalated back to ASK whenever the
+resolved template's runtime risk is HIGH (any template that launches an agent with
+`--dangerously-skip-permissions`, the file-deletion-on-scan-clean and code-review kinds
+among the eight shipped layouts). The escalation runs BEFORE the template's own logic
+and refuses the call with the standard ASK disposition - a saved operator grant is
+not enough on its own to launch a permission-skipping agent. MEDIUM and LOW templates
+still honor the saved ALLOW unchanged. Re-evaluation happens on every call, so the
+escalation is also the answer when the operator "Always Allows" a SAFE template and
+the plugin then substitutes a different template id in a later call: the new template's
+risk is read fresh, and a HIGH one is refused even though the operator's grant on
+the tool name still stands.
 A failed reset keeps the previous durable rule visible and clears the selected session
 trust; it does not promise ASK if a saved ALLOW remains. Failed approval writes record
 POLICY_PERSIST_FAILED and withhold the current execution. A queued approval cannot
