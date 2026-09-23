@@ -479,6 +479,7 @@ Deno.test("GET /register/mobile - a request-supplied rpName cannot spoof the rel
   mockClient.mockResponse('passkey_challenges', {
     data: {
       ...mockChallenge,
+      session_id: 'session-123',
       type: 'registration',
       expires_at: new Date(Date.now() + 60000).toISOString()
     },
