@@ -14,6 +14,8 @@ import kotlinx.coroutines.launch
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.LinkOption
 import ai.rever.boss.components.plugin.panels.left_top.scanDirectoryWithDepth as platformScanDirectoryWithDepth
 
 /**
@@ -167,30 +169,105 @@ class FileSystemDataProviderImpl : FileSystemDataProvider {
         return kotlinx.coroutines.withContext(Dispatchers.IO) {
             try {
                 val file = java.io.File(path)
-
-                // Security: Validate path is within user's home directory (prevent path traversal)
-                val canonicalFile = file.canonicalFile
                 val homeDir = File(System.getProperty("user.home")).canonicalFile
-                if (!canonicalFile.absolutePath.startsWith(homeDir.absolutePath + File.separator) &&
-                    canonicalFile.absolutePath != homeDir.absolutePath
+
+                // Security: refuse any path outside the user-home boundary. The check is
+                // component-aware (homeDir + separator) so `/home/user` does not match
+                // `/home/user2/...`. The homeDir-itself case is refused below so a request for
+                // `System.getProperty("user.home")` is rejected; that was the original
+                // containment gap behind #1118, where deleteRecursively() would then erase
+                // the profile the guard is meant to protect.
+                //
+                // BOTH sides use Path.toRealPath() so the symlink target is fully resolved
+                // before the boundary check runs. File.canonicalFile does NOT reliably resolve
+                // reparse-point symlinks on Windows (measured 2026-09-22: `File.canonicalFile`
+                // on a directory symlink returned the link path, while `Path.toRealPath()`
+                // returned the target). Walking the unresolved path through Files.walk below
+                // would then descend into the target and erase it - which is exactly the
+                // #1118 escape this guard is meant to prevent.
+                val canonicalFile = file.canonicalFile
+                val realCanonicalPath =
+                    runCatching { canonicalFile.toPath().toRealPath().toString() }
+                        .getOrDefault(canonicalFile.absolutePath)
+                val realHomePath =
+                    runCatching { homeDir.toPath().toRealPath().toString() }
+                        .getOrDefault(homeDir.absolutePath)
+                val canonicalPath = realCanonicalPath.trimEnd('\\', '/')
+                val homePath = realHomePath.trimEnd('\\', '/')
+                if (!canonicalPath.startsWith(homePath + File.separator) &&
+                    !canonicalPath.equals(homePath, ignoreCase = true)
                 ) {
-                    return@withContext Result.failure(SecurityException("Access denied: file path outside user directory"))
+                    return@withContext Result.failure(
+                        SecurityException("Access denied: file path outside user directory"),
+                    )
                 }
 
-                // Note: We don't check exists() first to avoid race conditions.
-                // delete() and deleteRecursively() handle non-existent files gracefully.
+                // Security: refuse to delete the home directory itself even though the
+                // component-aware check above admits it. Without this guard, the recursive
+                // walk below would erase the entire profile.
+                if (canonicalPath.equals(homePath, ignoreCase = true)) {
+                    return@withContext Result.failure(
+                        SecurityException("Access denied: cannot delete the user home directory"),
+                    )
+                }
+
+                // The walk MUST operate on the SAME resolved path the containment check used.
+                // The check above resolves `home/link/../<sibling>` through both lexical `..`
+                // resolution and symlink resolution; the walk operating on the original input
+                // would let the OS re-resolve through the link and reach a path the check never
+                // saw. Use toRealPath() to keep the two paths byte-identical; fall back to the
+                // canonical path when toRealPath() throws (file missing), which is still in scope
+                // because the check above already admitted it.
+                //
+                // Recursive deletion must NEVER follow directory symlinks. A permitted directory
+                // can contain a symlink to an external directory, and Files.walk without
+                // NOFOLLOW_LINKS would traverse that link and remove entries outside the
+                // intended target. Files.walk defaults to NOFOLLOW_LINKS, so a symlinked
+                // child is visited as a symlink entry and Files.delete removes the link itself
+                // rather than its target.
+                //
+                // A non-existent target must report success: the pre-fix delete used
+                // File.deleteRecursively(), which returned true for a missing path, and that
+                // contract is what plugins and the #1118 boundary test depend on. The existence
+                // check is on the resolved path so a deleted-and-recreated entry cannot be
+                // treated as the original target.
+                val target =
+                    runCatching { canonicalFile.toPath().toRealPath() }
+                        .getOrElse { canonicalFile.toPath() }
                 val deleted =
-                    if (file.isDirectory) {
-                        file.deleteRecursively()
-                    } else {
-                        file.delete()
+                    when {
+                        !Files.exists(target, LinkOption.NOFOLLOW_LINKS) -> {
+                            // Missing - nothing to delete, but treat as success.
+                            true
+                        }
+
+                        Files.isDirectory(target, LinkOption.NOFOLLOW_LINKS) -> {
+                            Files.walk(target).use { paths ->
+                                paths.sorted(Comparator.reverseOrder()).forEach { Files.delete(it) }
+                            }
+                            true
+                        }
+
+                        else -> {
+                            Files.deleteIfExists(target)
+                        }
                     }
 
                 if (deleted) {
                     Result.success(Unit)
                 } else {
-                    Result.failure(IllegalStateException("Failed to delete (file may not exist or is locked): $path"))
+                    Result.failure(IllegalStateException("Failed to delete (file may be locked): $path"))
                 }
+            } catch (e: java.nio.file.NoSuchFileException) {
+                // Treat "not there" as success to match the pre-fix deleteRecursively contract.
+                // Logged at debug so a security review can confirm the call was a no-op rather than
+                // an unrelated failure being misclassified.
+                logger.debug(
+                    LogCategory.FILE,
+                    "Delete target already absent",
+                    mapOf("path" to path, "exception" to e::class.qualifiedName),
+                )
+                Result.success(Unit)
             } catch (e: Exception) {
                 Result.failure(e)
             }
