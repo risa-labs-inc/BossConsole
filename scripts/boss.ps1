@@ -179,7 +179,10 @@ switch ($Command.ToLower()) {
             Write-Host "Usage: boss.ps1 workspace <config>"
             exit 1
         }
-        $encoded = [System.Uri]::EscapeDataString($Argument)
+        # Expand relative paths (., .., ~, etc.) to full path - the app resolves
+        # the link against its own working directory, not this shell's
+        $configPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Argument)
+        $encoded = [System.Uri]::EscapeDataString($configPath)
         $deepLink = "boss://workspace?config=$encoded"
         Open-BossDeepLink $deepLink
     }
@@ -190,7 +193,9 @@ switch ($Command.ToLower()) {
             Write-Host "Usage: boss.ps1 file <path>"
             exit 1
         }
-        $encoded = [System.Uri]::EscapeDataString($Argument)
+        # Expand relative paths (., .., ~, etc.) to full path - see "workspace"
+        $filePath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Argument)
+        $encoded = [System.Uri]::EscapeDataString($filePath)
         $deepLink = "boss://file?path=$encoded"
         Open-BossDeepLink $deepLink
     }

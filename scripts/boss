@@ -33,6 +33,29 @@ urlencode() {
     echo "${encoded}"
 }
 
+# Resolve a user-typed path against this shell's working directory.
+# The app resolves whatever a deep link carries against its own working
+# directory, which is never the caller's, so a relative path has to be made
+# absolute before it leaves the shim. `.` and `..` are collapsed while the
+# directory exists: the app refuses a workspace path that still contains them.
+absolute_path() {
+    local path="${1/#\~/$HOME}"
+    if [[ ! "$path" =~ ^/ ]]; then
+        path="$(pwd)/$path"
+    fi
+    if [ -d "$path" ]; then
+        (cd "$path" 2>/dev/null && pwd) || echo "$path"
+        return
+    fi
+    local parent
+    if parent="$(cd "$(dirname "$path")" 2>/dev/null && pwd)"; then
+        [[ "$parent" == "/" ]] && parent=""
+        echo "${parent}/$(basename "$path")"
+    else
+        echo "$path"
+    fi
+}
+
 # Detect OS for URL opening
 open_url() {
     if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -158,7 +181,8 @@ case "$1" in
             echo "Usage: boss workspace <config>"
             exit 1
         fi
-        encoded_path=$(urlencode "$2")
+        config_path="$(absolute_path "$2")"
+        encoded_path=$(urlencode "$config_path")
         deep_link="boss://workspace?config=${encoded_path}"
         open_url "$deep_link"
         ;;
@@ -169,7 +193,8 @@ case "$1" in
             echo "Usage: boss file <path>"
             exit 1
         fi
-        encoded_path=$(urlencode "$2")
+        file_path="$(absolute_path "$2")"
+        encoded_path=$(urlencode "$file_path")
         deep_link="boss://file?path=${encoded_path}"
         open_url "$deep_link"
         ;;

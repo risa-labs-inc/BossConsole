@@ -62,7 +62,10 @@ if "%~2"=="" (
     echo Usage: boss workspace ^<config^>
     exit /b 1
 )
-call :urlencode "%~2" ENCODED
+REM Expand relative paths (., .., etc.) to full path - the app resolves the
+REM link against its own working directory, not this shell's
+set "config_path=%~f2"
+call :urlencode "%config_path%" ENCODED
 start "" "boss://workspace?config=%ENCODED%"
 goto :eof
 
@@ -72,7 +75,9 @@ if "%~2"=="" (
     echo Usage: boss file ^<path^>
     exit /b 1
 )
-call :urlencode "%~2" ENCODED
+REM Expand relative paths (., .., etc.) to full path - see :cmd_workspace
+set "file_path=%~f2"
+call :urlencode "%file_path%" ENCODED
 start "" "boss://file?path=%ENCODED%"
 goto :eof
 
