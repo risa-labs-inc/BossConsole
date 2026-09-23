@@ -104,6 +104,38 @@ class ProcessRegistry {
         action: String,
     ): PluginCapability? = manifests[pluginId]?.capabilitiesList?.find { it.action == action }
 
+    /**
+     * Admit one capability dispatch, re-checking scope at the boundary instead of trusting
+     * registration-time knowledge.
+     *
+     * A mastery node names any (pluginId, action) pair it wants executed; this is the single
+     * place that decides whether the pair may reach a child. It does, only when the registry
+     * still knows the process, the process has completed registration (state RUNNING - the
+     * kernel marks this exactly when the manifest and the child's IPC server are live), and
+     * the owning plugin's current manifest advertises that exact action. That is what keeps
+     * an action borrowed from a sibling plugin's namespace from being routed to the wrong
+     * owner, and what makes a crashed, stopped or since-unregistered plugin undispatchable
+     * even though it may still be in the map.
+     *
+     * @throws IllegalStateException when [pluginId] is unknown, is not dispatchable, or does
+     * not advertise [action].
+     */
+    fun admitCapabilityDispatch(
+        pluginId: String,
+        action: String,
+    ): ManagedProcess {
+        val process =
+            processes[pluginId] ?: error("Process not found: $pluginId")
+        val state = process.state.value
+        check(state == ProcessState.PROCESS_STATE_RUNNING) {
+            "Process $pluginId is not dispatchable (state: ${state.name})"
+        }
+        checkNotNull(findCapability(pluginId, action)) {
+            "Plugin $pluginId does not advertise capability: $action"
+        }
+        return process
+    }
+
     fun getRestartCount(id: String): Int = restartCounts[id] ?: 0
 
     fun incrementRestartCount(id: String): Int {
@@ -112,9 +144,7 @@ class ProcessRegistry {
         return count
     }
 
-    fun resetRestartCount(id: String) {
-        restartCounts.remove(id)
-    }
+    fun resetRestartCount(id: String) = restartCounts.remove(id)
 
     fun contains(id: String): Boolean = processes.containsKey(id)
 
