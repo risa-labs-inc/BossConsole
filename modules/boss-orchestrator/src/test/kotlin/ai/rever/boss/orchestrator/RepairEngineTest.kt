@@ -241,6 +241,196 @@ class RepairEngineTest {
         }
 
     @Test
+    fun `a tuned restart records its JVM args in the outcome (#978)`() =
+        runTest {
+            val capturedArgs = mutableListOf<List<String>>()
+
+            val tunedReport =
+                report("p9", RepairStrategy.REPAIR_STRATEGY_RESTART_TUNED)
+                    .toBuilder()
+                    .addAllCurrentJvmArgs(listOf("-Xmx1024m"))
+                    .build()
+
+            val outcome =
+                engine(onRequestRestart = { _, args -> capturedArgs.add(args) })
+                    .handleFailure(tunedReport)
+
+            // The 3/2 growth: 1024 -> 1536. Other flags (none here) would be preserved.
+            assertEquals(listOf(listOf("-Xmx1536m")), capturedArgs)
+            assertEquals(RepairOutcome.Restarted("p9", listOf("-Xmx1536m")), outcome)
+        }
+
+    @Test
+    fun `a plain restart records an empty JVM-args override (#978)`() =
+        runTest {
+            val outcome =
+                engine(onRequestRestart = { _, _ -> })
+                    .handleFailure(report("p10", RepairStrategy.REPAIR_STRATEGY_RESTART))
+
+            assertEquals(RepairOutcome.Restarted("p10", emptyList()), outcome)
+        }
+
+    // ---- the tuned heap grows each restart, capped and floored correctly (#980) ----
+
+    @Test
+    fun `a tuned restart grows the configured heap by 50 percent (#980)`() =
+        runTest {
+            // The follow-up review caught that `maxOf(512MB, current heap)` left a
+            // 2 GB plugin at 2 GB on every "tuned" restart - the label was a lie. Each
+            // restart must move the heap upward; here 2 GB -> 3 GB.
+            val capturedArgs = mutableListOf<List<String>>()
+
+            val report =
+                report("p-big", RepairStrategy.REPAIR_STRATEGY_RESTART_TUNED)
+                    .toBuilder()
+                    .addAllCurrentJvmArgs(listOf("-Xmx2048m"))
+                    .build()
+
+            val outcome =
+                engine(onRequestRestart = { _, args -> capturedArgs.add(args) })
+                    .handleFailure(report)
+
+            assertEquals(listOf(listOf("-Xmx3072m")), capturedArgs)
+            assertEquals(RepairOutcome.Restarted("p-big", listOf("-Xmx3072m")), outcome)
+        }
+
+    @Test
+    fun `a tuned restart applies the floor when the configured heap is below it (#980)`() =
+        runTest {
+            // 256 MB * 3/2 = 384 MB, which is below the 512 MB floor; the floor wins.
+            val report =
+                report("p-small", RepairStrategy.REPAIR_STRATEGY_RESTART_TUNED)
+                    .toBuilder()
+                    .addAllCurrentJvmArgs(listOf("-Xmx256m"))
+                    .build()
+
+            val outcome =
+                engine(onRequestRestart = { _, _ -> }).handleFailure(report)
+
+            assertEquals(RepairOutcome.Restarted("p-small", listOf("-Xmx512m")), outcome)
+        }
+
+    @Test
+    fun `a tuned restart leaves args alone when no -Xmx is present (#980)`() =
+        runTest {
+            // Without an -Xmx to compare against, the previous code dropped to 512 MB
+            // and could lower a user's heap. Returning the args unchanged means the
+            // user's configured JVM keeps whatever heap it had.
+            val outcome =
+                engine(onRequestRestart = { _, _ -> })
+                    .handleFailure(report("p-default", RepairStrategy.REPAIR_STRATEGY_RESTART_TUNED))
+
+            assertEquals(RepairOutcome.Restarted("p-default", emptyList()), outcome)
+        }
+
+    @Test
+    fun `a tuned restart leaves args alone when -Xmx is malformed (#980)`() =
+        runTest {
+            // An unparseable -Xmx is treated the same as no -Xmx: we don't know
+            // what the user has, so we keep the args unchanged.
+            val report =
+                report("p-malformed", RepairStrategy.REPAIR_STRATEGY_RESTART_TUNED)
+                    .toBuilder()
+                    .addAllCurrentJvmArgs(listOf("-Xmxgarbage", "-Xss2m"))
+                    .build()
+
+            val outcome =
+                engine(onRequestRestart = { _, _ -> }).handleFailure(report)
+
+            assertEquals(
+                RepairOutcome.Restarted("p-malformed", listOf("-Xmxgarbage", "-Xss2m")),
+                outcome,
+            )
+        }
+
+    @Test
+    fun `a tuned restart grows the heap on each OOM until it hits the cap (#980)`() =
+        runTest {
+            // The follow-up review's mutation check: the heap must visibly grow on
+            // repeat OOMs (1g -> 1.5g -> 2.25g -> ...) and stop growing once it
+            // reaches the cap, so a restarted-at-the-same-heap loop is impossible.
+            val capturedArgs = mutableListOf<List<String>>()
+
+            // Start at 1g and feed each outcome back as the next report's currentJvmArgs,
+            // driving the ladder through 4 OOMs (1024 -> 1536 -> 2304 -> 3456 -> 5184).
+            var report =
+                report("p-grow", RepairStrategy.REPAIR_STRATEGY_RESTART_TUNED)
+                    .toBuilder()
+                    .addAllCurrentJvmArgs(listOf("-Xmx1024m"))
+                    .build()
+
+            repeat(4) { _ ->
+                val outcome =
+                    engine(onRequestRestart = { _, args -> capturedArgs.add(args) })
+                        .handleFailure(report)
+                val args =
+                    when (outcome) {
+                        is RepairOutcome.Restarted -> outcome.jvmArgs
+                        else -> emptyList()
+                    }
+                // Feed the result back so the next restart grows the previous heap.
+                report =
+                    report
+                        .toBuilder()
+                        .clearCurrentJvmArgs()
+                        .addAllCurrentJvmArgs(args)
+                        .build()
+            }
+
+            assertEquals(
+                listOf(
+                    listOf("-Xmx1536m"),
+                    listOf("-Xmx2304m"),
+                    listOf("-Xmx3456m"),
+                    listOf("-Xmx5184m"),
+                ),
+                capturedArgs,
+                "the heap must visibly grow on every tuned restart (1024 -> 1536 -> 2304 -> 3456 -> 5184)",
+            )
+        }
+
+    @Test
+    fun `a tuned restart preserves every other JVM flag in order (#980)`() =
+        runTest {
+            // The follow-up review's third ask: replacing -Xmx must swap the single
+            // entry and leave every other flag untouched. -Xss, -D..., GC settings,
+            // module flags all stay where the user put them.
+            val capturedArgs = mutableListOf<List<String>>()
+
+            val report =
+                report("p-flags", RepairStrategy.REPAIR_STRATEGY_RESTART_TUNED)
+                    .toBuilder()
+                    .addAllCurrentJvmArgs(
+                        listOf(
+                            "-Xss2m",
+                            "-Xmx512m",
+                            "-Dfile.encoding=UTF-8",
+                            "--add-opens=java.base/java.lang=ALL-UNNAMED",
+                            "-XX:+UseG1GC",
+                            "-XX:MaxGCPauseMillis=200",
+                        ),
+                    ).build()
+
+            val outcome =
+                engine(onRequestRestart = { _, args -> capturedArgs.add(args) })
+                    .handleFailure(report)
+
+            // 512 MB * 3/2 = 768 MB; the existing -Xmx is swapped in place (third
+            // position), every other flag keeps its original slot.
+            val expected =
+                listOf(
+                    "-Xss2m",
+                    "-Xmx768m",
+                    "-Dfile.encoding=UTF-8",
+                    "--add-opens=java.base/java.lang=ALL-UNNAMED",
+                    "-XX:+UseG1GC",
+                    "-XX:MaxGCPauseMillis=200",
+                )
+            assertEquals(listOf(expected), capturedArgs)
+            assertEquals(RepairOutcome.Restarted("p-flags", expected), outcome)
+        }
+
+    @Test
     fun `a state reset with no snapshot recorded is a plain restart`() =
         runTest {
             val restarted = mutableListOf<String>()

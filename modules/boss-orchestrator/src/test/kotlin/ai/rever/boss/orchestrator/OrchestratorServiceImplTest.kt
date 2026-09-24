@@ -445,6 +445,48 @@ class OrchestratorServiceImplTest {
             assertEquals(0, applications)
         }
 
+    // ---- the tuned-restart outcome reaches the wire as RESTART_TUNED, not RESTART ----
+
+    @Test
+    fun `a tuned-restart outcome crosses the seam as RESTART_TUNED with the jvmArgs intact (#980)`() =
+        runTest(hostContext) {
+            // The kernel's recoveryFor() reads jvmArgsOverrideList ONLY when the strategy is
+            // RESTART_TUNED. A tuned outcome that came out as plain RESTART would be respawned
+            // with the original heap and the OOM fix would be lost on the wire.
+            val service = OrchestratorServiceImpl(repairEngine = engine())
+            val tunedReport =
+                report("p-tuned", RepairStrategy.REPAIR_STRATEGY_RESTART_TUNED)
+                    .toBuilder()
+                    .addAllCurrentJvmArgs(listOf("-Xmx256m"))
+                    .build()
+
+            val action = service.reportFailure(tunedReport)
+
+            assertEquals(
+                RepairStrategy.REPAIR_STRATEGY_RESTART_TUNED,
+                action.strategy,
+                "tuned outcomes must travel as RESTART_TUNED so the kernel respawns with the new args",
+            )
+            assertTrue(action.hasRestart(), "a tuned action carries the restart detail")
+            assertEquals(
+                listOf("-Xmx512m"),
+                action.restart.jvmArgsOverrideList,
+                "the override must be the exact args the orchestrator decided on",
+            )
+        }
+
+    @Test
+    fun `a plain-restart outcome crosses the seam as RESTART with no jvmArgs override (#980)`() =
+        runTest(hostContext) {
+            val service = OrchestratorServiceImpl(repairEngine = engine())
+
+            val action = service.reportFailure(report("p-plain", RepairStrategy.REPAIR_STRATEGY_RESTART))
+
+            assertEquals(RepairStrategy.REPAIR_STRATEGY_RESTART, action.strategy)
+            assertTrue(action.hasRestart(), "a plain restart still carries the restart detail (empty override)")
+            assertEquals(emptyList(), action.restart.jvmArgsOverrideList)
+        }
+
     private fun approval(repairId: String): RepairApproval =
         RepairApproval
             .newBuilder()

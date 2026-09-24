@@ -41,6 +41,9 @@ message ProcessFailureReport {
   ProcessHealthMetrics last_metrics = 9;
   // Process manifest for self-describing diagnosis
   ProcessManifest manifest = 10;
+  // JVM args the failing process was actually started with, so the orchestrator can floor its
+  // suggested heap against the user's configured value rather than hand back a smaller number.
+  repeated string current_jvm_args = 11;
 }
 
 // ---- Repair Actions ----

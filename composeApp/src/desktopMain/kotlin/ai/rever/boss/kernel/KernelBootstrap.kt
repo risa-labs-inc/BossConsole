@@ -635,6 +635,17 @@ class KernelBootstrap(
         // not registered an address yet.
         if (failure.processId == ORCHESTRATOR_PROCESS_ID) return null
 
+        // The orchestrator is the only side that knows what heap it is about to suggest, but it
+        // is also the only side that needs to know what heap the failing process had been given
+        // so the suggestion does not silently lower the user's configured value. The kernel has
+        // both halves: the live [process.config.jvmArgs] and the report it is about to send.
+        val currentJvmArgs =
+            registry
+                .getProcess(failure.processId)
+                ?.config
+                ?.jvmArgs
+                .orEmpty()
+
         val report =
             ProcessFailureReport
                 .newBuilder()
@@ -645,6 +656,7 @@ class KernelBootstrap(
                 .setExitCode(failure.exitCode)
                 .setTimestamp(failure.timestamp)
                 .setConsecutiveFailures(registry.getRestartCount(failure.processId) + 1)
+                .addAllCurrentJvmArgs(currentJvmArgs)
                 .apply { registry.getManifest(failure.processId)?.let { setManifest(it) } }
                 .build()
 

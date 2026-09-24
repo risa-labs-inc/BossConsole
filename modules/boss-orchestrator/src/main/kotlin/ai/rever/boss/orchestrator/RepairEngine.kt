@@ -56,6 +56,29 @@ class RepairEngine(
 ) {
     private val logger = LoggerFactory.getLogger(RepairEngine::class.java)
 
+    /**
+     * Floor for the heap a tuned restart applies. A user's configured heap above this is left
+     * alone; anything below is bumped up to it. Expressed in MiB so the comparison with the
+     * parsed current value does not need to think about units.
+     */
+    private val minTunedHeapMb = 512
+
+    /**
+     * Ceiling for the heap a tuned restart applies. Beyond this we stop growing and give up
+     * the restart - a 1g process that OOMs twice should land on 2g, not on the JVM's addressable
+     * ceiling or on the box's swap budget. 8g covers every realistic plugin out to a typical
+     * desktop-class workflow; raise if a real case demands more.
+     */
+    private val maxTunedHeapMb = 8 * 1024
+
+    /**
+     * Growth applied to the heap on each tuned restart. The 3/2 multiplier leaves the next
+     * restart visibly different from the previous one (1g -> 1.5g -> 2.25g) without the
+     * doubling that would skip past the cap and bounce off it.
+     */
+    private val tunedGrowthNumerator = 3
+    private val tunedGrowthDenominator = 2
+
     /** Manifest source file paths come from the diagnosed process, so they are confined. */
     private val sourceRoots =
         if (projectRoot == null) AllowedRoots.none() else AllowedRoots.of(File(projectRoot))
@@ -134,9 +157,10 @@ class RepairEngine(
 
             RepairStrategy.REPAIR_STRATEGY_RESTART_TUNED -> {
                 try {
-                    onRequestRestart(processId, listOf("-Xmx512m"))
-                    logger.info("Tuned restart requested for process: {}", processId)
-                    RepairOutcome.Restarted(processId)
+                    val tunedArgs = tunedJvmArgs(report)
+                    onRequestRestart(processId, tunedArgs)
+                    logger.info("Tuned restart requested for process: {} with {}", processId, tunedArgs)
+                    RepairOutcome.Restarted(processId, tunedArgs)
                 } catch (e: CancellationException) {
                     // Before the Exception arm: CancellationException *is* an Exception, so
                     // catching it here would turn "the caller hung up" into a repair failure
@@ -297,6 +321,83 @@ class RepairEngine(
         return bytes.toString(Charsets.UTF_8)
     }
 
+    /**
+     * JVM args a tuned restart should apply: the [currentArgs] with the `-Xmx` entry
+     * replaced by a 3/2-grown value (capped at [maxTunedHeapMb], floored at [minTunedHeapMb]),
+     * every other flag kept in place.
+     *
+     * Three things that have to be true:
+     *
+     *  - **Repeated OOMs grow the heap.** A 1g process that OOMs must come back at 1.5g,
+     *    not at the same 1g labeled "tuned". The growth is a 3/2 multiplier; once the cap
+     *    is hit, this returns [currentArgs] unchanged so the restart does not loop on the
+     *    same heap.
+     *  - **Missing or unparseable `-Xmx` never lowers the heap.** The current JVM args
+     *    carry no parseable value (or no `-Xmx` at all); we don't know what the user has,
+     *    so we return [currentArgs] rather than picking a fallback that could be smaller
+     *    than what the user actually configured.
+     *  - **Other JVM flags are preserved in order.** `-Xmx` is swapped in place; flags like
+     *    `-Xss`, `-Dfoo=bar`, `--add-opens`, GC settings, etc. stay where the user put them.
+     */
+    private fun tunedJvmArgs(report: ProcessFailureReport): List<String> {
+        val currentArgs = report.currentJvmArgsList.toList()
+        // No parseable heap flag: we don't know what the user has, so leave the args alone
+        // (returning the user's current args means the restart never lowers the heap).
+        val currentMb = parseXmxMb(currentArgs) ?: return currentArgs
+
+        val grownMb =
+            (currentMb.toLong() * tunedGrowthNumerator / tunedGrowthDenominator)
+                .coerceAtMost(maxTunedHeapMb.toLong())
+                .toInt()
+        // Below the floor: bump up to the floor (rare - only when the configured heap is
+        // genuinely tiny, e.g. a 256m plugin that OOMs).
+        val newXmx = "-Xmx${maxOf(grownMb, minTunedHeapMb)}m"
+        val swapped =
+            currentArgs.map { arg -> if (XMX_PATTERN.matchEntire(arg) != null) newXmx else arg }
+        return when {
+            // No growth possible (already at/over the cap, or growth rounds back to the same
+            // value): restart the process with the args it already had.
+            grownMb <= currentMb -> currentArgs
+
+            // parseXmxMb found the -Xmx we read currentMb from, so an existing entry is the
+            // common case; the else is defensive against a future refactor that decouples
+            // the parser from this swap.
+            currentArgs.any { XMX_PATTERN.matchEntire(it) != null } -> swapped
+
+            else -> swapped + newXmx
+        }
+    }
+
+    /**
+     * The largest `-Xmx{N}[g|G|m|M|k|K]` (in MiB) in [args], or null when none parses.
+     *
+     * A process can name multiple `-Xmx` flags (the last wins), but [args] here is the kernel's
+     * actual spawn list, so there is at most one. The unit suffix is required: an unrecognised
+     * unit or an unparseable number is "no floor" rather than zero, because zero would floor
+     * every process against a meaningless minimum.
+     */
+    private fun parseXmxMb(args: List<String>): Int? =
+        args
+            .asSequence()
+            .mapNotNull { arg ->
+                val match = XMX_PATTERN.matchEntire(arg) ?: return@mapNotNull null
+                val value = match.groupValues[1].toLongOrNull() ?: return@mapNotNull null
+                val unit = match.groupValues[2]
+                when (unit.lowercase()) {
+                    "g" -> value * 1024L
+                    "m" -> value
+                    "k" -> (value + 1023L) / 1024L
+                    else -> null
+                }
+            }.maxOrNull()
+            ?.let { Math.min(Math.max(it, 1L), Long.MAX_VALUE).toInt() }
+
+    private companion object {
+        // Accepts -Xmx<digits><g|G|m|M|k|K> end-to-end. Anything else (no unit, bare -Xmx with no
+        // value, or whitespace inside) is "not a heap flag" and falls through to null.
+        private val XMX_PATTERN = Regex("""-Xmx(\d+)([gGmMkK])""")
+    }
+
     private fun buildEscalationReport(
         processId: String,
         report: ProcessFailureReport,
@@ -319,6 +420,8 @@ class RepairEngine(
 sealed class RepairOutcome {
     data class Restarted(
         val processId: String,
+        /** The JVM args the restart must apply (e.g. a tuned -Xmx); empty for a plain restart. */
+        val jvmArgs: List<String> = emptyList(),
     ) : RepairOutcome()
 
     data class StateReset(
