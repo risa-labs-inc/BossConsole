@@ -206,25 +206,23 @@ class McpOperationLedger(
     }
 
     // Rotation walks numbered backups under a single write lock.
-    @Suppress("NestedBlockDepth", "TooGenericExceptionCaught")
+    @Suppress("NestedBlockDepth", "TooGenericExceptionCaught", "ReturnCount")
     private fun rotateIfNeeded(file: File) {
         if (!file.exists() || file.length() < maxFileSizeBytes) return
 
         try {
             val parent = file.parentFile ?: return
-            // Shift older backups: .4 -> .5, .3 -> .4, etc.
+            // Shift older backups: .4 -> .5, .3 -> .4, etc. Falls back to copy+delete
+            // when renameTo fails (Windows holds the destination open for antivirus /
+            // search indexer) so a stuck rotation does not stop the active file
+            // being capped - the unbounded growth this path was meant to prevent.
             for (i in maxBackupIndex - 1 downTo 1) {
                 val src = File(parent, "${file.name}.$i")
                 val dst = File(parent, "${file.name}.${i + 1}")
                 if (src.exists()) {
                     if (dst.exists()) dst.delete()
-                    val renamed = src.renameTo(dst)
-                    if (!renamed) {
-                        logger.debug(
-                            LogCategory.SYSTEM,
-                            "Could not rename rotated ledger backup file",
-                            mapOf("src" to src.name, "dst" to dst.name),
-                        )
+                    if (!rotateFile(src, dst, "rotated ledger backup")) {
+                        return
                     }
                 }
             }
@@ -232,13 +230,8 @@ class McpOperationLedger(
             // Move active file to .1
             val backup1 = File(parent, "${file.name}.1")
             if (backup1.exists()) backup1.delete()
-            val renamed = file.renameTo(backup1)
-            if (!renamed) {
-                logger.warn(
-                    LogCategory.SYSTEM,
-                    "Could not rename active ledger to .1 backup",
-                    mapOf("file" to file.name),
-                )
+            if (!rotateFile(file, backup1, "active ledger")) {
+                return
             }
 
             logger.info(
@@ -253,6 +246,38 @@ class McpOperationLedger(
                 mapOf("error" to (t.message ?: t::class.simpleName)),
             )
         }
+    }
+
+    /**
+     * Copy-then-delete fallback for rotation. `renameTo` returns false on Windows when
+     * the destination is open by another process (antivirus, search indexer, file
+     * preview); the previous code logged at DEBUG and continued, leaving the active
+     * file unbounded. Copying then deleting the source works in every case because
+     * copy opens the source for read and writes a fresh destination.
+     *
+     * Returns true when the destination now holds the source's content and the
+     * source is gone; false (and warns) when neither the rename nor the copy
+     * succeeded - rotation cannot proceed, so the caller bails out and the next
+     * attempt gets another chance rather than half-rotating.
+     */
+    @Suppress("ReturnCount", "LongParameterList")
+    private fun rotateFile(
+        src: File,
+        dst: File,
+        label: String,
+    ): Boolean {
+        if (src.renameTo(dst)) return true
+        val copied =
+            runCatching {
+                src.copyTo(dst, overwrite = true)
+            }.getOrNull()
+        if (copied != null && src.delete()) return true
+        logger.warn(
+            LogCategory.SYSTEM,
+            "Could not rotate $label; rotation aborted to avoid unbounded growth",
+            mapOf("src" to src.name, "dst" to dst.name),
+        )
+        return false
     }
 
     /**
