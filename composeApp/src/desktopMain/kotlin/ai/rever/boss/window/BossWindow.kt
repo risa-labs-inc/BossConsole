@@ -152,11 +152,15 @@ fun ApplicationScope.BossWindow(
     // Test crash state - when true, simulates a main window crash (Issue #543)
     var shouldTriggerTestCrash by remember { mutableStateOf(false) }
 
+    var isAlwaysOnTop by remember { mutableStateOf(false) }
+    var showAboutDialog by remember { mutableStateOf(false) }
+
     Window(
         onCloseRequest = onCloseRequest,
         title = windowState.title,
         state = composeWindowState,
         icon = BossWindowIcon.painter,
+        alwaysOnTop = isAlwaysOnTop,
     ) {
         ApplyBossWindowIcon(window)
 
@@ -311,6 +315,8 @@ fun ApplicationScope.BossWindow(
 
         // State for the password/bookmark import dialog
         var showImportDialog by remember { mutableStateOf(false) }
+        var showTaskManagerDialog by remember { mutableStateOf(false) }
+        var showSystemHealthDialog by remember { mutableStateOf(false) }
 
         // Sync isMaximized state with actual window state (handles OS maximize controls)
         DisposableEffect(window) {
@@ -944,6 +950,14 @@ fun ApplicationScope.BossWindow(
 
                 Separator()
 
+                CheckboxItem(
+                    "Always on Top",
+                    checked = isAlwaysOnTop,
+                    onCheckedChange = { isAlwaysOnTop = it }
+                )
+
+                Separator()
+
                 Item(
                     "Minimize",
                     onClick = {
@@ -960,6 +974,20 @@ fun ApplicationScope.BossWindow(
                                 Frame.MAXIMIZED_BOTH
                             }
                     },
+                )
+
+                Separator()
+
+                Separator()
+
+                Item(
+                    "Task Manager",
+                    onClick = { showTaskManagerDialog = true },
+                )
+
+                Item(
+                    "System Health",
+                    onClick = { showSystemHealthDialog = true },
                 )
 
                 Separator()
@@ -1106,6 +1134,15 @@ fun ApplicationScope.BossWindow(
                         shouldTriggerTestCrash = true
                     },
                 )
+                
+                Separator()
+
+                Item(
+                    "About BOSS...",
+                    onClick = {
+                        showAboutDialog = true
+                    },
+                )
             }
         }
 
@@ -1125,6 +1162,25 @@ fun ApplicationScope.BossWindow(
             with(createBossAppContext) {
                 // Only the first window should load "Last Session" workspace (Issue #129)
                 val isFirstWindow = WindowManager.windowCount == 1
+
+                if (showAboutDialog) {
+                    BossAlertDialog(
+                        onDismissRequest = { showAboutDialog = false },
+                        title = { Text("About BOSS Console") },
+                        text = {
+                            Text(
+                                text = "BOSS Console\nVersion: ${UpdateCoordinator.instance.currentVersion()}\n\nA modern console for developers.",
+                                color = BossTheme.colors.textPrimary
+                            )
+                        },
+                        confirmButton = {
+                            TextButton(onClick = { showAboutDialog = false }) {
+                                Text("OK", color = BossTheme.colors.signalText)
+                            }
+                        }
+                    )
+                }
+
                 BossAppWithAuth(
                     windowId = windowState.id,
                     isFirstWindow = isFirstWindow,
@@ -1141,6 +1197,18 @@ fun ApplicationScope.BossWindow(
             }
 
             // CLI Installation Dialog
+            if (showTaskManagerDialog) {
+                ai.rever.boss.components.dialogs.BossTaskManagerDialog(
+                    onDismiss = { showTaskManagerDialog = false }
+                )
+            }
+            
+            if (showSystemHealthDialog) {
+                ai.rever.boss.components.dialogs.BossSystemHealthDialog(
+                    onDismiss = { showSystemHealthDialog = false }
+                )
+            }
+
             if (showCLIInstallDialog) {
                 CLIInstallationDialog(
                     onDismiss = {

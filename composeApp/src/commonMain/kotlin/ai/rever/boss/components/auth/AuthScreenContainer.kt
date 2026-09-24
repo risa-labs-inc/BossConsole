@@ -71,16 +71,7 @@ fun AuthScreenContainer(onLoginSuccess: () -> Unit) {
         }
     }
 
-    // Handle deep links while on magic link waiting screen
-    val deepLink by DeepLinkHandler.deepLinkFlow.collectAsState()
-    LaunchedEffect(deepLink, currentScreen) {
-        val link = deepLink
-        if (currentScreen == AuthScreen.MAGIC_LINK_WAITING && link != null && link.contains("auth/verify")) {
-            logger.debug(LogCategory.AUTH, "Received deep link while on waiting screen")
-            // Deep link will be processed by BossAppWithAuth, just clear it here to avoid reprocessing
-            DeepLinkHandler.clearDeepLink()
-        }
-    }
+    // Deep link is now handled centrally in DeepLinkHandler and updates AuthService.authState directly
 
     // Debug current screen changes
     LaunchedEffect(currentScreen) {
