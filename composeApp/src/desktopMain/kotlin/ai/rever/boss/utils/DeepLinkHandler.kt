@@ -10,6 +10,9 @@ import ai.rever.boss.utils.extractFileName
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.utils.logging.LogSanitizer
+import ai.rever.boss.services.auth.MagicLinkErrorService
+import ai.rever.boss.services.auth.PasskeySessionEventHandler
+import ai.rever.boss.services.supabase.AuthService
 import ai.rever.boss.window.MenuActionsHandler
 import ai.rever.boss.window.Project
 import kotlinx.coroutines.CompletableDeferred
@@ -61,6 +64,8 @@ internal enum class DeepLinkHost(
     FOLDER("folder", resolvesWindowAtDispatch = true),
     PLUGIN("plugin", resolvesWindowAtDispatch = true),
     SPLIT("split", resolvesWindowAtDispatch = true),
+    AUTH("auth", resolvesWindowAtDispatch = false),
+    PASSKEY("passkey", resolvesWindowAtDispatch = false),
 }
 
 /**
@@ -420,6 +425,8 @@ actual object DeepLinkHandler {
             DeepLinkHost.FOLDER -> handleFolderLink(uri, targetWindowId)
             DeepLinkHost.PLUGIN -> return handlePluginLink(uri, targetWindowId)
             DeepLinkHost.SPLIT -> handleSplitLink(uri, targetWindowId)
+            DeepLinkHost.AUTH -> handleAuthLink(uri)
+            DeepLinkHost.PASSKEY -> handlePasskeyLink(uri)
         }
         return null
     }
@@ -901,6 +908,68 @@ actual object DeepLinkHandler {
         } catch (e: Exception) {
             logger.warn(LogCategory.AUTH, "Error extracting verification type", error = e)
             null
+        }
+    }
+
+    private fun handleAuthLink(uri: String) {
+        logger.debug(LogCategory.AUTH, "Handling auth link")
+        val token = extractVerificationToken(uri)
+        val type = extractVerificationType(uri) ?: "magiclink"
+
+        if (token == null) {
+            logger.warn(LogCategory.AUTH, "Missing verification token in auth link")
+            return
+        }
+
+        WindowFocusManager.bringToFront()
+
+        scope.launch {
+            AuthService.verifyEmail(token, type).fold(
+                onSuccess = {
+                    logger.info(LogCategory.AUTH, "Magic link authentication successful")
+                    if (AuthService.authState.value is AuthService.AuthState.NotAuthenticated) {
+                        AuthService.initialize()
+                    }
+                },
+                onFailure = { error ->
+                    logger.error(LogCategory.AUTH, "Magic link authentication failed", error = error)
+                    MagicLinkErrorService.setError(
+                        error.message ?: "Magic link verification failed"
+                    )
+                }
+            )
+        }
+    }
+
+    private fun handlePasskeyLink(uri: String) {
+        logger.debug(LogCategory.AUTH, "Handling passkey link")
+        WindowFocusManager.bringToFront()
+
+        val sessionId = try {
+            val regex = Regex("sessionId=([^&]+)")
+            regex.find(uri)?.groupValues?.get(1)
+        } catch (e: Exception) {
+            logger.warn(LogCategory.AUTH, "Failed to extract sessionId from passkey link", mapOf("uri" to uri))
+            null
+        }
+
+        if (uri.contains("passkey/registered")) {
+            sessionId?.let { id ->
+                logger.info(LogCategory.AUTH, "Passkey registration completed", mapOf("sessionId" to id))
+                PasskeySessionEventHandler.handleRegistrationCompleted(id)
+            }
+        } else if (uri.contains("passkey/authenticated")) {
+            sessionId?.let { id ->
+                logger.info(LogCategory.AUTH, "Passkey authentication completed", mapOf("sessionId" to id))
+                scope.launch {
+                    val metadata = PasskeySessionEventHandler.getSessionMetadata(id)
+                    if (metadata != null) {
+                        PasskeySessionEventHandler.handleAuthenticationCompleted(id)
+                    } else {
+                        logger.warn(LogCategory.AUTH, "No metadata found for session", mapOf("sessionId" to id))
+                    }
+                }
+            }
         }
     }
 }
