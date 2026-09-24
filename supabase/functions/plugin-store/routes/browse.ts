@@ -262,7 +262,10 @@ const popularTagsRoute = createRoute({
   description: 'Get the most used tags for filtering',
   request: {
     query: z.object({
-      limit: z.string().optional().default('20').transform(Number)
+      // BossConsole#1253: cap `limit` so an unauthenticated caller cannot
+      // ask the SECURITY DEFINER `get_popular_tags` RPC for the entire
+      // tag cloud in one request.
+      limit: z.coerce.number().int().min(1).max(100).default(20)
     })
   },
   responses: {
