@@ -245,9 +245,9 @@ object PluginFileSystemSecurity {
         }
 
         // Prevent path traversal in the child name
-        if (childName.contains("..") || childName.contains("/") || childName.contains("\\") ||
-            childName.contains(File.separator)
-        ) {
+        val containsTraversal = childName.contains("..") || childName.contains("/") ||
+            childName.contains("\\") || childName.contains(File.separator)
+        if (containsTraversal) {
             throw SecurityException("Child name contains path traversal sequences for $operation")
         }
 

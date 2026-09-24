@@ -5,6 +5,7 @@ import org.junit.Assume.assumeNoException
 import org.junit.Test
 import java.io.File
 import java.nio.file.Files
+import kotlinx.coroutines.runBlocking
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
@@ -40,7 +41,7 @@ class FileSystemDataProviderSecurityTest {
         )
 
         val testFile = File(testDir, "test.txt").apply { writeText("test content") }
-        val result = provider.scanDirectory(testDir.absolutePath)
+        val result = runBlocking { provider.scanDirectory(testDir.absolutePath) }
 
         assertNotNull(result, "Should be able to scan directory within allowed roots")
     }
@@ -63,7 +64,7 @@ class FileSystemDataProviderSecurityTest {
             "/etc"
         }
 
-        val result = provider.scanDirectory(systemPath)
+        val result = runBlocking { provider.scanDirectory(systemPath) }
         assertEquals(null, result, "Should return null for scan outside allowed roots")
     }
 
@@ -75,7 +76,7 @@ class FileSystemDataProviderSecurityTest {
         )
 
         val fileName = "new-file.txt"
-        val result = provider.createFile(testDir.absolutePath, fileName)
+        val result = runBlocking { provider.createFile(testDir.absolutePath, fileName) }
 
         assertTrue(result.isSuccess, "Should successfully create file within allowed roots")
         val createdFile = File(testDir, fileName)
@@ -100,7 +101,7 @@ class FileSystemDataProviderSecurityTest {
             "/etc"
         }
 
-        val result = provider.createFile(systemDir, "malicious.txt")
+        val result = runBlocking { provider.createFile(systemDir, "malicious.txt") }
         assertFalse(result.isSuccess, "Should fail to create file outside allowed roots")
     }
 
@@ -112,7 +113,7 @@ class FileSystemDataProviderSecurityTest {
         )
 
         val testFile = File(testDir, "read-test.txt").apply { writeText("test content") }
-        val result = provider.readFile(testFile.absolutePath)
+        val result = runBlocking { provider.readFile(testFile.absolutePath) }
 
         assertTrue(result.isSuccess, "Should successfully read file within allowed roots")
         assertEquals("test content", result.getOrNull(), "Should read correct content")
@@ -136,7 +137,7 @@ class FileSystemDataProviderSecurityTest {
             "/etc/passwd"
         }
 
-        val result = provider.readFile(systemPath)
+        val result = runBlocking { provider.readFile(systemPath) }
         assertFalse(result.isSuccess, "Should fail to read file outside allowed roots")
     }
 
@@ -148,7 +149,7 @@ class FileSystemDataProviderSecurityTest {
         )
 
         val testFile = File(testDir, "write-test.txt")
-        val result = provider.writeFile(testFile.absolutePath, "new content")
+        val result = runBlocking { provider.writeFile(testFile.absolutePath, "new content") }
 
         assertTrue(result.isSuccess, "Should successfully write file within allowed roots")
         assertEquals("new content", testFile.readText(), "Should write correct content")
@@ -172,7 +173,7 @@ class FileSystemDataProviderSecurityTest {
             "/etc/test-file.txt"
         }
 
-        val result = provider.writeFile(systemPath, "malicious content")
+        val result = runBlocking { provider.writeFile(systemPath, "malicious content") }
         assertFalse(result.isSuccess, "Should fail to write file outside allowed roots")
     }
 
@@ -184,7 +185,7 @@ class FileSystemDataProviderSecurityTest {
         )
 
         val testFile = File(testDir, "delete-test.txt").apply { writeText("test content") }
-        val result = provider.delete(testFile.absolutePath)
+        val result = runBlocking { provider.delete(testFile.absolutePath) }
 
         assertTrue(result.isSuccess, "Should successfully delete file within allowed roots")
         assertFalse(testFile.exists(), "File should be deleted")
@@ -207,7 +208,7 @@ class FileSystemDataProviderSecurityTest {
             "/etc/test-file.txt"
         }
 
-        val result = provider.delete(systemPath)
+        val result = runBlocking { provider.delete(systemPath) }
         assertFalse(result.isSuccess, "Should fail to delete file outside allowed roots")
     }
 
@@ -219,7 +220,7 @@ class FileSystemDataProviderSecurityTest {
         )
 
         val originalFile = File(testDir, "original.txt").apply { writeText("test content") }
-        val result = provider.rename(originalFile.absolutePath, "renamed.txt")
+        val result = runBlocking { provider.rename(originalFile.absolutePath, "renamed.txt") }
 
         assertTrue(result.isSuccess, "Should successfully rename file within allowed roots")
         val renamedFile = File(testDir, "renamed.txt")
@@ -245,7 +246,7 @@ class FileSystemDataProviderSecurityTest {
             "/etc/test-file.txt"
         }
 
-        val result = provider.rename(systemPath, "renamed.txt")
+        val result = runBlocking { provider.rename(systemPath, "renamed.txt") }
         assertFalse(result.isSuccess, "Should fail to rename file outside allowed roots")
     }
 
@@ -301,7 +302,7 @@ class FileSystemDataProviderSecurityTest {
         val maliciousPath = File(testDir.parentFile, "filesystem-provider-security-test-sibling/secret.txt").absolutePath
 
         // This should be denied since it's outside the allowed root
-        val result = provider.readFile(maliciousPath)
+        val result = runBlocking { provider.readFile(maliciousPath) }
         assertFalse(result.isSuccess, "Should prevent sibling-prefix path traversal")
 
         siblingFile.delete()
@@ -318,7 +319,7 @@ class FileSystemDataProviderSecurityTest {
         // Try to access parent directory through traversal
         val maliciousPath = File(testDir, "..").absolutePath
 
-        val result = provider.scanDirectory(maliciousPath)
+        val result = runBlocking { provider.scanDirectory(maliciousPath) }
         assertEquals(null, result, "Should prevent path traversal through parent directory")
     }
 
@@ -333,7 +334,7 @@ class FileSystemDataProviderSecurityTest {
         if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) {
             // Try to access a different drive (assuming D: exists or testing the logic)
             val crossDrivePath = "D:\\test.txt"
-            val result = provider.readFile(crossDrivePath)
+            val result = runBlocking { provider.readFile(crossDrivePath) }
 
             // Should fail since D: is not in allowed roots
             assertFalse(result.isSuccess, "Should prevent cross-drive access outside allowed roots")
@@ -364,7 +365,7 @@ class FileSystemDataProviderSecurityTest {
         }
 
         // Try to access a file through the symlink
-        val result = provider.scanDirectory(symlink.absolutePath)
+        val result = runBlocking { provider.scanDirectory(symlink.absolutePath) }
         assertEquals(null, result, "Should prevent symlink escape from allowed directory")
 
         symlink.delete()
@@ -388,7 +389,7 @@ class FileSystemDataProviderSecurityTest {
         }
 
         // Access through symlink should be allowed since target is within boundary
-        val result = provider.readFile(symlink.absolutePath)
+        val result = runBlocking { provider.readFile(symlink.absolutePath) }
         assertTrue(result.isSuccess, "Should allow symlink within allowed directory")
         assertEquals("target content", result.getOrNull(), "Should read correct content through symlink")
 
