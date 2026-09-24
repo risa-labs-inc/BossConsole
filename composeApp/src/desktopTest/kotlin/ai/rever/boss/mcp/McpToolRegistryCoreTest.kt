@@ -446,6 +446,71 @@ class McpToolRegistryCoreTest {
         }
 
     @Test
+    fun `invoke parses JSON arrays into typed lists of strings, numbers, and booleans`() =
+        runBlocking {
+            var captured: McpToolArgs? = null
+            val core = McpToolRegistryCore(disabledFile = null)
+            core.registerProvider(
+                provider(
+                    "p1",
+                    echoTool(
+                        "array_tool",
+                        handler =
+                            McpToolHandler { args ->
+                                captured = args
+                                McpToolResult("ok")
+                            },
+                    ),
+                ),
+            )
+
+            core.invoke(
+                "array_tool",
+                """{
+                    "files": ["fileA.kt", "fileB.kt", "fileC.kt"],
+                    "counts": [1, 2, 3],
+                    "flags": [true, false, true],
+                    "empty": []
+                }""",
+            )
+
+            val args = requireNotNull(captured)
+            assertTrue(args.has("files"))
+            assertEquals(listOf("fileA.kt", "fileB.kt", "fileC.kt"), args.map["files"])
+            assertEquals(listOf(1L, 2L, 3L), args.map["counts"])
+            assertEquals(listOf(true, false, true), args.map["flags"])
+            assertEquals(emptyList<Any?>(), args.map["empty"])
+        }
+
+    @Test
+    fun `invoke parses nested JSON arrays recursively`() =
+        runBlocking {
+            var captured: McpToolArgs? = null
+            val core = McpToolRegistryCore(disabledFile = null)
+            core.registerProvider(
+                provider(
+                    "p1",
+                    echoTool(
+                        "nested_array_tool",
+                        handler =
+                            McpToolHandler { args ->
+                                captured = args
+                                McpToolResult("ok")
+                            },
+                    ),
+                ),
+            )
+
+            core.invoke(
+                "nested_array_tool",
+                """{"matrix": [["a", "b"], ["c", "d"]]}""",
+            )
+
+            val args = requireNotNull(captured)
+            assertEquals(listOf(listOf("a", "b"), listOf("c", "d")), args.map["matrix"])
+        }
+
+    @Test
     fun `invoke coerces a JSON integer through int() and double()`() =
         runBlocking {
             // scalarOf() stores whole numbers as Long; McpToolArgs getters must still
