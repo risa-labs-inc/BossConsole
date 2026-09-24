@@ -23,12 +23,12 @@ import java.util.concurrent.ConcurrentHashMap
  *   never sees the id missing); when none is left, the id is withdrawn as before. A window with no
  *   entry changes nothing, so it can no longer remove another window's registration.
  *
- * **Locked per (registry, id), never globally.** Publishing runs plugin code - the MCP registry calls
- * the provider's `tools()`, the shortcut registry its `shortcuts()` - and `McpToolRegistryCore`
- * keeps untrusted plugin code away from any lock another plugin's lifecycle waits on. A per-id lock
- * can only make the same id in another window wait. Restore re-queries tools()/shortcuts() on the
- * closing thread; a slow surviving provider can therefore delay closing a window that shared its id.
- * Release fences future registrations and visits only slots admitted by that owner.
+ * **Locked per (registry, id), never globally.** A target can [Target.prepare] a value once, after
+ * the owner is admitted but before it is published. MCP and shortcut targets use that boundary to
+ * snapshot `tools()` / `shortcuts()`: restoring an older window republishes its prepared value and
+ * never re-enters surviving plugin code on the closing thread. A per-id lock can only make the same
+ * id in another window wait. Release fences future registrations and visits only slots admitted by
+ * that owner.
  *
  * Not addressed here: while two windows are open, the most recent window's copy serves every window,
  * exactly as before. A provider whose action looks a window up in its own plugin state (a shortcut's
@@ -66,6 +66,8 @@ internal class WindowRegistrations {
         val name: String,
         val publish: (V) -> Unit,
         val withdraw: (id: String) -> Unit,
+        /** Runs once per admitted registration; restored entries reuse its returned value. */
+        val prepare: (V) -> V = { it },
     )
 
     /** What an [unregister] did to the registry, for logging and tests. */
@@ -87,7 +89,7 @@ internal class WindowRegistrations {
         private val target: Target<V>,
         private val id: String,
     ) {
-        /** (window, value), the served one last. Guarded by this slot's monitor. */
+        /** (window, prepared value), the served one last. Guarded by this slot's monitor. */
         private val entries = ArrayList<Pair<Owner, V>>()
 
         fun register(
@@ -95,9 +97,12 @@ internal class WindowRegistrations {
             value: V,
         ) = synchronized(this) {
             if (!owner.admit(this)) return@synchronized
+            // Prepare BEFORE dropping the owner's previous entry: a prepare that throws must
+            // leave the live registration serving, not strand it with nothing published.
+            val prepared = target.prepare(value)
             entries.removeAll { it.first === owner }
-            entries += owner to value
-            target.publish(value)
+            entries += owner to prepared
+            target.publish(prepared)
         }
 
         fun unregister(owner: Owner): Outcome =

@@ -34,6 +34,7 @@ import androidx.compose.runtime.Composable
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /**
  * A plugin's app-wide registrations must survive another window closing.
@@ -174,6 +175,66 @@ class PluginRegistrationsAcrossWindowsTest {
                     expect("first", kind)
                 }
             }
+        }
+
+    @Test
+    fun `restoring an MCP provider replays its original snapshot without calling tools again`() =
+        withTwoWindows { first, second ->
+            val kind = kinds.first { it.name == "MCP tool provider" }
+            val id = idFor(kind)
+            var calls = 0
+            val stateful =
+                object : McpToolProvider {
+                    override val providerId = id
+
+                    override fun tools(): List<McpToolDefinition> {
+                        calls++
+                        check(calls == 1) { "tools() was re-entered while another window closed" }
+                        return mcpProvider(id, "first").tools()
+                    }
+                }
+
+            first.registerMcpToolProvider(stateful)
+            second.registerMcpToolProvider(mcpProvider(id, "second"))
+            second.unregisterMcpToolProvider(id)
+
+            assertEquals(1, calls)
+            assertEquals("first", kind.current(id))
+        }
+
+    @Test
+    fun `restoring a shortcut provider replays its original snapshot without calling shortcuts again`() =
+        withTwoWindows { first, second ->
+            val kind = kinds.first { it.name == "shortcut action provider" }
+            val id = idFor(kind)
+            var calls = 0
+            var actions = 0
+            val stateful =
+                object : ShortcutActionProvider {
+                    override val providerId = id
+
+                    override fun shortcuts(): List<PluginShortcutSpec> {
+                        calls++
+                        check(calls == 1) { "shortcuts() was re-entered while another window closed" }
+                        return shortcutProvider(id, "first").shortcuts()
+                    }
+
+                    override fun onAction(
+                        actionId: String,
+                        windowId: String?,
+                    ) {
+                        actions++
+                    }
+                }
+
+            first.registerShortcutActionProvider(stateful)
+            second.registerShortcutActionProvider(shortcutProvider(id, "second"))
+            second.unregisterShortcutActionProvider(id)
+
+            assertEquals(1, calls)
+            assertEquals("first", kind.current(id))
+            assertTrue(PluginShortcutRegistryImpl.dispatch("plugin.$id.act", windowId = null))
+            assertEquals(1, actions, "the prepared provider must retain its original action delegate")
         }
 
     @Test

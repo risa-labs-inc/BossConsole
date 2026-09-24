@@ -182,6 +182,7 @@ class DefaultPlugin(
                 "mcp",
                 ai.rever.boss.mcp.McpToolRegistryImpl::registerProvider,
                 ai.rever.boss.mcp.McpToolRegistryImpl::unregisterProvider,
+                prepare = ai.rever.boss.mcp.McpToolRegistryImpl::snapshotProvider,
             )
         private val panelMenus =
             WindowRegistrations.Target<ai.rever.boss.plugin.api.PanelMenuContribution>(
@@ -206,6 +207,7 @@ class DefaultPlugin(
                 "shortcutAction",
                 ai.rever.boss.components.plugin.registries.PluginShortcutRegistryImpl::register,
                 ai.rever.boss.components.plugin.registries.PluginShortcutRegistryImpl::unregister,
+                prepare = ai.rever.boss.components.plugin.registries.PluginShortcutRegistryImpl::snapshotProvider,
             )
         private val statusBarItems =
             WindowRegistrations.Target<ai.rever.boss.plugin.api.StatusBarItemProvider>(

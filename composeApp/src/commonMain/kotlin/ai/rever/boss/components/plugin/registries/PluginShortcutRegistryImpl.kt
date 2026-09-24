@@ -50,22 +50,38 @@ object PluginShortcutRegistryImpl {
     /** All registered plugin shortcuts (interceptor + settings UI read this). */
     val shortcuts: StateFlow<List<RegisteredPluginShortcut>> = _shortcuts.asStateFlow()
 
-    fun register(provider: ShortcutActionProvider) {
-        // Snapshot outside any lock; a throwing provider registers with none.
+    /** Host-owned marker that prevents a prepared registration from being wrapped again on replay. */
+    private interface ProviderSnapshot
+
+    /** Capture plugin-owned metadata once so a later window restore cannot re-enter the plugin. */
+    internal fun snapshotProvider(provider: ShortcutActionProvider): ShortcutActionProvider {
+        val providerId = provider.providerId
         val specs =
             try {
-                provider.shortcuts()
+                provider.shortcuts().toList()
             } catch (t: Throwable) {
                 logger.warn(
                     LogCategory.SYSTEM,
                     "Shortcut provider shortcuts() failed; registering with none",
                     mapOf(
-                        "providerId" to provider.providerId,
+                        "providerId" to providerId,
                         "error" to (t.message ?: t::class.simpleName),
                     ),
                 )
                 emptyList()
             }
+        return object : ShortcutActionProvider by provider, ProviderSnapshot {
+            override val providerId = providerId
+
+            override fun shortcuts(): List<PluginShortcutSpec> = specs
+        }
+    }
+
+    fun register(provider: ShortcutActionProvider) {
+        // Snapshot outside any lock. Window arbitration passes a snapshot provider here, so
+        // restoring another window reuses its cached list and original action delegate.
+        val prepared = if (provider is ProviderSnapshot) provider else snapshotProvider(provider)
+        val specs = prepared.shortcuts()
 
         val valid =
             specs
@@ -120,7 +136,7 @@ object PluginShortcutRegistryImpl {
                         )
                         null
                     } else {
-                        RegisteredPluginShortcut(provider.providerId, spec, provider)
+                        RegisteredPluginShortcut(prepared.providerId, spec, prepared)
                     }
                 }
         }

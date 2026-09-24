@@ -223,6 +223,51 @@ class WindowRegistrationsTest {
     }
 
     @Test
+    fun `preparation runs once per admitted registration and never during restore`() {
+        var preparations = 0
+        val target =
+            WindowRegistrations.Target(
+                name = "prepared",
+                publish = registry.target.publish,
+                withdraw = registry.target.withdraw,
+                prepare = { value: Pair<String, String> ->
+                    preparations++
+                    value.first to value.second.uppercase()
+                },
+            )
+
+        registrations.register(target, "tools", window1, "tools" to "one")
+        registrations.register(target, "tools", window2, "tools" to "two")
+        assertEquals(2, preparations)
+
+        registrations.unregister(target, "tools", window2)
+
+        assertEquals(2, preparations, "restoring the survivor must reuse its prepared value")
+        assertEquals("ONE", registry.served["tools"])
+    }
+
+    @Test
+    fun `a released window is rejected before preparation`() {
+        var preparations = 0
+        val target =
+            WindowRegistrations.Target(
+                name = "prepared",
+                publish = registry.target.publish,
+                withdraw = registry.target.withdraw,
+                prepare = { value: Pair<String, String> ->
+                    preparations++
+                    value
+                },
+            )
+        registrations.release(window1)
+
+        registrations.register(target, "tools", window1, "tools" to "late")
+
+        assertEquals(0, preparations)
+        assertEquals(emptyMap(), registry.served)
+    }
+
+    @Test
     fun `release fences new registrations while an admitted publication finishes`() {
         val entered = CountDownLatch(1)
         val resume = CountDownLatch(1)
