@@ -10,6 +10,10 @@ import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.graphics.toComposeImageBitmap
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import java.io.File
 import java.security.MessageDigest
 import javax.imageio.ImageIO
@@ -23,9 +27,23 @@ object FaviconCache {
     private const val MAX_FAVICON_SIZE_BYTES = 100 * 1024 // 100KB limit
     private const val CACHE_DIR_NAME = "favicon-cache"
 
+    private const val STALE_AFTER_DAYS = 30
+
+    // Off-thread home for the once-per-process sweep. The first touch of cacheDir can be the UI
+    // thread - workspace restore loads cached favicons while it builds tabs - and a directory
+    // listing plus per-file mtime reads and deletes has no business there. SupervisorJob so a
+    // failed sweep can never poison the scope for a future launch.
+    private val sweepScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
     private val cacheDir: File by lazy {
         val appCacheDir = BossDirectories.resolve("cache/$CACHE_DIR_NAME")
         appCacheDir.mkdirs()
+        // The only thing that ever ages this cache out. Once per process, on first use: nothing
+        // else calls cleanupStaleEntries, so without this the directory only ever grows. Launched
+        // rather than run inline so the first touch does not pay for it. Racing a concurrent save
+        // is safe: the sweep reads each file's mtime right before deleting it and a fresh write
+        // has a fresh mtime, so the worst case is one re-fetch of an icon written the same instant.
+        sweepScope.launch { cleanupStaleEntries(STALE_AFTER_DAYS, appCacheDir) }
         appCacheDir
     }
 
@@ -182,21 +200,27 @@ object FaviconCache {
     /**
      * Removes stale cache entries older than the specified number of days.
      * @param daysOld Remove files older than this many days (default: 30)
+     * @param dir The directory to sweep. Explicit only from the [cacheDir] initializer (which
+     *   cannot read [cacheDir] yet) and from tests.
+     * @return the number of entries removed
      */
-    fun cleanupStaleEntries(daysOld: Int = 30) {
+    fun cleanupStaleEntries(
+        daysOld: Int = STALE_AFTER_DAYS,
+        dir: File = cacheDir,
+    ): Int {
+        var removedCount = 0
         try {
             val cutoffTime = System.currentTimeMillis() - (daysOld * 24 * 60 * 60 * 1000L)
-            var removedCount = 0
 
-            cacheDir.listFiles()?.forEach { file ->
-                if (file.lastModified() < cutoffTime) {
-                    file.delete()
+            dir.listFiles()?.forEach { file ->
+                if (file.lastModified() < cutoffTime && file.delete()) {
                     removedCount++
                 }
             }
         } catch (e: Exception) {
             logger.warn(LogCategory.BROWSER, "Error cleaning up cache", error = e)
         }
+        return removedCount
     }
 
     /**
