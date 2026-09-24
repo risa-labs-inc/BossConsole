@@ -3,6 +3,7 @@ package ai.rever.boss.app.editor
 import ai.rever.boss.ipc.proto.Empty
 import ai.rever.boss.ipc.proto.services.*
 import ai.rever.boss.plugin.language.LanguageIds
+import io.grpc.Status
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
@@ -28,9 +29,17 @@ class EditorServiceImpl : EditorServiceGrpcKt.EditorServiceCoroutineImplBase() {
     private val BLOCKED_PATH_PREFIXES = listOf("/etc", "/sys", "/proc")
 
     private fun validatePath(path: String) {
-        require(!path.contains("..")) { "Path traversal sequences ('..') are not allowed: $path" }
+        if (path.contains("..")) {
+            throw Status.INVALID_ARGUMENT
+                .withDescription("Path traversal sequences ('..') are not allowed: $path")
+                .asRuntimeException()
+        }
         BLOCKED_PATH_PREFIXES.forEach { prefix ->
-            require(!path.startsWith(prefix)) { "Access to system path '$prefix' is not allowed: $path" }
+            if (path.startsWith(prefix)) {
+                throw Status.INVALID_ARGUMENT
+                    .withDescription("Access to system path '$prefix' is not allowed: $path")
+                    .asRuntimeException()
+            }
         }
     }
 
@@ -76,19 +85,31 @@ class EditorServiceImpl : EditorServiceGrpcKt.EditorServiceCoroutineImplBase() {
             }
         }
 
-    override suspend fun saveFile(request: SaveFileRequest): Empty =
+    override suspend fun saveFile(request: SaveFileRequest): SaveFileResponse =
         withContext(Dispatchers.IO) {
             logger.info("saveFile: path={}", request.path)
             validatePath(request.path)
+            val file = File(request.path)
             try {
-                val file = File(request.path)
                 file.parentFile?.mkdirs()
                 file.writeText(request.content, Charsets.UTF_8)
                 openFiles[request.path] = false
+                SaveFileResponse
+                    .newBuilder()
+                    .setSuccess(true)
+                    .build()
             } catch (e: Exception) {
+                // An unwritable target, a failed mkdirs, a permission denial, or a disk-full
+                // would otherwise have been indistinguishable from success on the wire (#1157).
+                // Surface the failure so a caller can show "write failed: <reason>" instead of
+                // silently moving on with a stale buffer.
                 logger.error("saveFile failed for {}: {}", request.path, e.message)
+                SaveFileResponse
+                    .newBuilder()
+                    .setSuccess(false)
+                    .setErrorMessage(e.message ?: "Write failed")
+                    .build()
             }
-            Empty.getDefaultInstance()
         }
 
     override suspend fun getTokens(request: GetTokensRequest): GetTokensResponse {
