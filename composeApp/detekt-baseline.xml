@@ -46,6 +46,10 @@
     <ID>SwallowedException:TabPaths.kt$TabPaths$e: Exception</ID>
     <ID>TooGenericExceptionCaught:ContentSearchService.kt$ContentSearchService$e: Exception</ID>
     <ID>TooGenericExceptionCaught:TabPaths.kt$TabPaths$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:PluginFileSystemSecurity.kt$PluginFileSystemSecurity$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:FileSystemDataProviderSecurityTest.kt$FileSystemDataProviderSecurityTest$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:PluginFileSystemSecurityTest.kt$PluginFileSystemSecurityTest$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:TrackingPluginContext.kt$TrackingPluginContext$e: Exception</ID>
     <ID>TooManyFunctions:ContentSearchService.kt$ContentSearchService : ProjectSearchProvider</ID>
     <ID>TooManyFunctions:EditorAPIAccess.kt$EditorAPIAccess</ID>
     <ID>LongParameterList:DownloadCenter.kt$DownloadCenter$( id: String, title: String, kind: TransferKind, detail: String? = null, onCancel: (() -&gt; Unit)? = null, owner: String? = null, )</ID>
