@@ -9,12 +9,22 @@ filesystem limits retains its existing coverage of PRs to any branch. Existing
 path filters on the specialized workflows are unchanged. The required Build &
 Test workflow has no path filter, including for documentation-only PRs.
 
-A push to `dev` or `develop` no longer starts a second validation alongside the
-branch's open integration PR. **Without an open PR, these branches have no
-automatic push validation.** Open a PR or use `workflow_dispatch` to validate
-them. This is an event policy, not an API lookup that conditionally skips required
-jobs. Main pushes still validate the actual merged tree, and manual runs remain
-available on any branch.
+A push to `develop`, and to `dev` in every workflow except `build.yml`, does not
+start a second validation alongside the branch's open integration PR. **Without an
+open PR, `develop` has no automatic push validation.** Open a PR or use
+`workflow_dispatch` to validate it. This is an event policy, not an API lookup that
+conditionally skips required jobs. Main pushes still validate the actual merged
+tree, and manual runs remain available on any branch.
+
+`build.yml` does run on pushes to `dev`, on the Linux legs only. That run exists to
+seed the shared Gradle caches: pull requests restore caches from their base branch
+but never write them (`cache-read-only` is true on `pull_request`), because
+PR-scoped caches can't be read by any other PR and, at about 1 GB each, kept the
+repository over GitHub's 10 GB cache cap and evicted the shared entries. Before
+this change 14 of 20 sampled PR runs of `build-test (ubuntu-latest)` started from
+an empty Gradle User Home (313 of 313 tasks executed, about 830 s) against about
+250-490 s when a cache was restored. The dev push run skips macOS and Windows, so
+it adds no load to the hosted runners the original routing change protected.
 
 Only superseded runs of the same PR are cancelled. Main push and manual runs
 keep unique run-id concurrency groups, so a newer commit cannot cancel work
