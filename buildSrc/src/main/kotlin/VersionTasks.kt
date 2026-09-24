@@ -7,7 +7,9 @@ import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.Optional
 import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.TaskAction
-import java.text.SimpleDateFormat
+import java.time.LocalDate
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
 import java.util.*
 
 // ============================================================================
@@ -26,6 +28,23 @@ val PRERELEASE_SUFFIX_VALIDATION_PATTERN = Regex("^(alpha|beta|rc)\\.[1-9]\\d*$"
  * Group 2: prerelease number
  */
 val PRERELEASE_SUFFIX_PARSE_PATTERN = Regex("^(alpha|beta|rc)\\.([1-9]\\d*)$")
+
+/**
+ * Value written to `app.build.date`: today's date in UTC. ISO_LOCAL_DATE always renders the ISO
+ * calendar with ASCII digits, so the committed `version.properties` does not depend on the locale
+ * of the machine that ran the task: `SimpleDateFormat` gave `2569-09-19` under a Thai-Buddhist
+ * locale, `8-09-19` under the Japanese imperial calendar and Arabic-Indic digits under `ar-EG`.
+ * The day is read in UTC for the same reason - two machines running the task at the same instant
+ * in Auckland and Los Angeles would otherwise commit dates a day apart - and it is read here
+ * rather than at each call site, so a new call site cannot pick a different zone. CI runs in UTC,
+ * so released files are unchanged.
+ *
+ * Named `isoBuildDate` so it does not share a name with the `buildDate` timestamp
+ * `composeApp/build.gradle.kts` keeps for its CLI scripts, a different value.
+ */
+fun isoBuildDate(): String = isoBuildDate(LocalDate.now(ZoneOffset.UTC))
+
+internal fun isoBuildDate(date: LocalDate): String = date.format(DateTimeFormatter.ISO_LOCAL_DATE)
 
 // ============================================================================
 // Task Classes - Proper Provider API usage
@@ -207,7 +226,7 @@ abstract class IncrementVersionTask : VersionPropertyWriteTask() {
         // Update patch version and reset build number
         props["app.version.patch"] = newPatch.toString()
         props["app.version"] = "${props["app.version.major"]}.${props["app.version.minor"]}.$newPatch"
-        props["app.build.date"] = SimpleDateFormat("yyyy-MM-dd").format(Date())
+        props["app.build.date"] = isoBuildDate()
         props["app.build.number"] = "1"
 
         saveProperties(props, "Auto-incremented patch version")
@@ -233,7 +252,7 @@ abstract class IncrementMinorTask : VersionPropertyWriteTask() {
         props["app.version.minor"] = newMinor.toString()
         props["app.version.patch"] = "0"
         props["app.version"] = "${props["app.version.major"]}.$newMinor.0"
-        props["app.build.date"] = SimpleDateFormat("yyyy-MM-dd").format(Date())
+        props["app.build.date"] = isoBuildDate()
         props["app.build.number"] = "1"
 
         saveProperties(props, "Auto-incremented minor version")
@@ -260,7 +279,7 @@ abstract class IncrementMajorTask : VersionPropertyWriteTask() {
         props["app.version.minor"] = "0"
         props["app.version.patch"] = "0"
         props["app.version"] = "$newMajor.0.0"
-        props["app.build.date"] = SimpleDateFormat("yyyy-MM-dd").format(Date())
+        props["app.build.date"] = isoBuildDate()
         props["app.build.number"] = "1"
 
         saveProperties(props, "Auto-incremented major version")
@@ -284,7 +303,7 @@ abstract class IncrementBuildNumberTask : VersionPropertyWriteTask() {
 
         // Update build number only, keep version the same
         props["app.build.number"] = newBuildNumber.toString()
-        props["app.build.date"] = SimpleDateFormat("yyyy-MM-dd").format(Date())
+        props["app.build.date"] = isoBuildDate()
 
         saveProperties(props, "Auto-incremented build number")
 
@@ -306,7 +325,7 @@ abstract class AutoIncrementBuildNumberTask : VersionPropertyWriteTask() {
 
         // Update build number only, keep version the same
         props["app.build.number"] = newBuildNumber.toString()
-        props["app.build.date"] = SimpleDateFormat("yyyy-MM-dd").format(Date())
+        props["app.build.date"] = isoBuildDate()
 
         saveProperties(props, "Auto-incremented build number for package build")
 
@@ -355,7 +374,7 @@ abstract class SetPrereleaseSuffixTask : VersionPropertyWriteTask() {
         props["app.prerelease.suffix"] = suffixValue
         props["app.version"] = fullVersion
         props["app.release.channel"] = channel
-        props["app.build.date"] = SimpleDateFormat("yyyy-MM-dd").format(Date())
+        props["app.build.date"] = isoBuildDate()
 
         saveProperties(props, "Set prerelease suffix to $suffixValue")
 
@@ -390,7 +409,7 @@ abstract class ClearPrereleaseSuffixTask : VersionPropertyWriteTask() {
         props["app.prerelease.suffix"] = ""
         props["app.version"] = stableVersion
         props["app.release.channel"] = "stable"
-        props["app.build.date"] = SimpleDateFormat("yyyy-MM-dd").format(Date())
+        props["app.build.date"] = isoBuildDate()
 
         saveProperties(props, "Cleared prerelease suffix - promoted to stable")
 
@@ -435,7 +454,7 @@ abstract class IncrementPrereleaseTask : VersionPropertyWriteTask() {
         // Update properties
         props["app.prerelease.suffix"] = newSuffix
         props["app.version"] = fullVersion
-        props["app.build.date"] = SimpleDateFormat("yyyy-MM-dd").format(Date())
+        props["app.build.date"] = isoBuildDate()
 
         saveProperties(props, "Incremented prerelease number")
 

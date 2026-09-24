@@ -327,7 +327,7 @@ object DependentRestartCoordinator {
                     manager.restartDependentPlugin
                         ?.takeIf {
                             manager in DynamicPluginManager.activeManagers() &&
-                                manager.isInstalled(dependentId)
+                                manager.hasEntry(dependentId)
                         } ?: continue
                 runCatching { restart(dependentId) }
                     .onFailure { cause ->

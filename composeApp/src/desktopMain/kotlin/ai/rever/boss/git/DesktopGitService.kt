@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -28,6 +29,7 @@ import java.io.BufferedReader
 import java.io.File
 import java.io.IOException
 import java.io.InputStreamReader
+import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -84,7 +86,7 @@ actual object GitService {
     actual val stashList: StateFlow<List<GitStashInfo>> = _stashList.asStateFlow()
 
     private var currentProjectPath: String? = null
-    private var refreshJob: Job? = null
+    private val refreshMutex = Mutex()
 
     // How many git commands are in flight OR waiting on [gitCommandLock], and
     // the boolean view of it. The lock is process-wide, so a slow index-write
@@ -103,47 +105,46 @@ actual object GitService {
     }
 
     actual suspend fun refresh(projectPath: String) =
-        withContext(Dispatchers.IO) {
-            // Cancel any pending refresh
-            refreshJob?.cancel()
+        refreshMutex.withLock {
+            withContext(Dispatchers.IO) {
+                currentProjectPath = projectPath
+                _isLoading.value = true
+                _lastError.value = null
 
-            currentProjectPath = projectPath
-            _isLoading.value = true
-            _lastError.value = null
+                try {
+                    if (!_isGitAvailable.value) {
+                        _isGitRepository.value = false
+                        _currentBranch.value = null
+                        _localBranches.value = emptyList()
+                        _remoteBranches.value = emptyList()
+                        return@withContext
+                    }
 
-            try {
-                if (!_isGitAvailable.value) {
-                    _isGitRepository.value = false
-                    _currentBranch.value = null
-                    _localBranches.value = emptyList()
-                    _remoteBranches.value = emptyList()
-                    return@withContext
+                    // Check if directory is a git repository
+                    val isRepo = isGitRepo(projectPath)
+                    _isGitRepository.value = isRepo
+
+                    if (!isRepo) {
+                        _currentBranch.value = null
+                        _localBranches.value = emptyList()
+                        _remoteBranches.value = emptyList()
+                        return@withContext
+                    }
+
+                    // Get current branch (or short SHA for detached HEAD)
+                    _currentBranch.value = getCurrentBranchName(projectPath)
+
+                    // Get local branches
+                    _localBranches.value = getLocalBranchList(projectPath)
+
+                    // Get remote branches
+                    _remoteBranches.value = getRemoteBranchList(projectPath)
+                } catch (e: Exception) {
+                    _lastError.value = e.message
+                    logger.warn(LogCategory.SYSTEM, "Error refreshing git state", error = e)
+                } finally {
+                    _isLoading.value = false
                 }
-
-                // Check if directory is a git repository
-                val isRepo = isGitRepo(projectPath)
-                _isGitRepository.value = isRepo
-
-                if (!isRepo) {
-                    _currentBranch.value = null
-                    _localBranches.value = emptyList()
-                    _remoteBranches.value = emptyList()
-                    return@withContext
-                }
-
-                // Get current branch (or short SHA for detached HEAD)
-                _currentBranch.value = getCurrentBranchName(projectPath)
-
-                // Get local branches
-                _localBranches.value = getLocalBranchList(projectPath)
-
-                // Get remote branches
-                _remoteBranches.value = getRemoteBranchList(projectPath)
-            } catch (e: Exception) {
-                _lastError.value = e.message
-                logger.warn(LogCategory.SYSTEM, "Error refreshing git state", error = e)
-            } finally {
-                _isLoading.value = false
             }
         }
 
@@ -176,6 +177,15 @@ actual object GitService {
                     } else {
                         branchName
                     }
+                // The STRIPPED name is what git receives, and it has not been
+                // through the gate above: `origin/-f` is a legal ref as a whole,
+                // but it strips to `-f`, which checkout would read as a FLAG -
+                // `git checkout -f --` discards every uncommitted modification
+                // in the tree, planted by anyone who can push a branch name.
+                // Gate the name that will actually run.
+                if (!isSafeRefName(localName)) {
+                    return@withContext GitError("Refused an unsafe ref: branch")
+                }
                 // `--` terminates the revision list: without it `checkout <name>`
                 // on a name that is also a path checks OUT THE PATH, discarding
                 // that file's uncommitted changes.
@@ -307,28 +317,66 @@ actual object GitService {
                 val repoUrl = parseRemoteUrl(remoteUrl) ?: return@withContext null
 
                 // Construct the PR creation URL based on the platform
-                when {
-                    repoUrl.contains("github.com") -> {
-                        // GitHub: https://github.com/owner/repo/compare/branch?expand=1
-                        "$repoUrl/compare/$branch?expand=1"
-                    }
-
-                    repoUrl.contains("gitlab.com") || repoUrl.contains("gitlab") -> {
-                        // GitLab: https://gitlab.com/owner/repo/-/merge_requests/new?merge_request[source_branch]=branch
-                        "$repoUrl/-/merge_requests/new?merge_request[source_branch]=$branch"
-                    }
-
-                    repoUrl.contains("bitbucket.org") -> {
-                        // Bitbucket: https://bitbucket.org/owner/repo/pull-requests/new?source=branch
-                        "$repoUrl/pull-requests/new?source=$branch"
-                    }
-
-                    else -> {
-                        null
-                    }
-                }
+                buildCreatePRUrl(repoUrl, branch)
             } catch (e: Exception) {
                 logger.warn(LogCategory.SYSTEM, "Error getting PR URL", error = e)
+                null
+            }
+        }
+
+    /**
+     * Percent-encodes [branch] for interpolation into a URL *path*.
+     *
+     * [URLEncoder] already escapes every reserved byte, but it follows query-string
+     * rules and emits `+` for spaces, which a URL path would keep as a literal `+`.
+     * Each `/`-separated segment of the branch is therefore encoded separately and
+     * `+` is rewritten to `%20`, while `/` itself stays the path separator so branch
+     * names like `feature/login` keep their canonical compare URLs.
+     */
+    private fun encodeBranchForPath(branch: String): String =
+        branch.split("/").joinToString("/") { segment ->
+            URLEncoder.encode(segment, Charsets.UTF_8).replace("+", "%20")
+        }
+
+    /**
+     * Builds the PR/compare creation URL for the provider matched by [repoUrl],
+     * percent-encoding [branch] before interpolation.
+     *
+     * Git refnames may legally contain `#`, `&`, `%`, quotes and non-ASCII, all of
+     * which corrupt a URL when interpolated raw: `#` starts the fragment (the
+     * browser then opens the compare page for a truncated branch), `&` spawns
+     * phantom query parameters, and non-ASCII makes the URL invalid. Encoding is
+     * position-aware:
+     * - GitHub places the branch in the URL *path* -> [encodeBranchForPath].
+     * - GitLab and Bitbucket place the branch in the *query string*, where
+     *   application/x-www-form-urlencoded rules apply -> [URLEncoder.encode].
+     *
+     * Returns null when the provider is not recognized.
+     */
+    internal fun buildCreatePRUrl(
+        repoUrl: String,
+        branch: String,
+    ): String? =
+        when {
+            repoUrl.contains("github.com") -> {
+                // GitHub: .../compare/<branch>?expand=1
+                val encodedBranch = encodeBranchForPath(branch)
+                "$repoUrl/compare/$encodedBranch?expand=1"
+            }
+
+            repoUrl.contains("gitlab.com") || repoUrl.contains("gitlab") -> {
+                // GitLab: .../-/merge_requests/new?merge_request[source_branch]=<branch>
+                val encodedBranch = URLEncoder.encode(branch, Charsets.UTF_8)
+                "$repoUrl/-/merge_requests/new?merge_request[source_branch]=$encodedBranch"
+            }
+
+            repoUrl.contains("bitbucket.org") -> {
+                // Bitbucket: .../pull-requests/new?source=<branch>
+                val encodedBranch = URLEncoder.encode(branch, Charsets.UTF_8)
+                "$repoUrl/pull-requests/new?source=$encodedBranch"
+            }
+
+            else -> {
                 null
             }
         }
@@ -398,17 +446,20 @@ actual object GitService {
         }
 
     actual fun clear() {
-        refreshJob?.cancel()
-        currentProjectPath = null
-        _currentBranch.value = null
-        _isGitRepository.value = false
-        _localBranches.value = emptyList()
-        _remoteBranches.value = emptyList()
-        _lastError.value = null
-        _isLoading.value = false
-        _fileStatus.value = emptyList()
-        _commitLog.value = emptyList()
-        _stashList.value = emptyList()
+        runBlocking {
+            refreshMutex.withLock {
+                currentProjectPath = null
+                _currentBranch.value = null
+                _isGitRepository.value = false
+                _localBranches.value = emptyList()
+                _remoteBranches.value = emptyList()
+                _lastError.value = null
+                _isLoading.value = false
+                _fileStatus.value = emptyList()
+                _commitLog.value = emptyList()
+                _stashList.value = emptyList()
+            }
+        }
     }
 
     actual fun getCurrentProjectPath(): String? = currentProjectPath
@@ -421,7 +472,7 @@ actual object GitService {
 
             try {
                 // Use porcelain v1 format for stable parsing
-                val result = runGitCommand(projectPath, "status", "--porcelain=v1")
+                val result = runGitCommand(projectPath, "status", "--porcelain=v1", "-z")
                 if (result.exitCode != 0) {
                     _lastError.value = result.error.ifEmpty { result.output }
                     return@withContext emptyList()
@@ -457,65 +508,48 @@ actual object GitService {
      * bridge forwards. Fixing only one of the two booleans would just move such an entry
      * from the staged list to the unstaged one.
      *
-     * [parseStatusLine] itself stays faithful to porcelain and still reports IGNORED, so
+     * The parser itself stays faithful to porcelain and still supports IGNORED, so
      * a future caller that deliberately passes `--ignored` can parse those lines — it
-     * just has to opt in here rather than inherit them silently.
+     * just has to pass `keepIgnored = true` here rather than inherit them silently.
      */
-    internal fun parseStatusOutput(output: String): List<GitFileStatus> =
-        output
-            .lines()
-            .filter { it.isNotBlank() }
-            .mapNotNull { parseStatusLine(it) }
-            .filterNot { it.indexStatus == GitFileStatusType.IGNORED }
-
-    /**
-     * Parse a single line from `git status --porcelain=v1`.
-     * Format: XY PATH or XY ORIG_PATH -> PATH (for renames)
-     * X = index status, Y = worktree status
-     */
-    internal fun parseStatusLine(line: String): GitFileStatus? {
-        if (line.length < 3) return null
-
-        val indexChar = line[0]
-        val workTreeChar = line[1]
-        val pathPart = line.substring(3)
-
-        // Handle rename/copy with arrow. C-unquote afterwards (not before): with
-        // core.quotePath on (the default) git wraps a non-ASCII path in quotes
-        // and octal-escapes its bytes, and that token then fails to resolve
-        // when the panel hands it back as a pathspec (stage/discard/diffFile).
-        // Same decoder parseNameStatus uses - without it the two parsers
-        // report two spellings for the same file.
-        val (path, originalPath) =
-            if (pathPart.contains(" -> ")) {
-                val parts = pathPart.split(" -> ")
-                UnifiedDiffParser.cUnquote(parts[1]) to UnifiedDiffParser.cUnquote(parts[0])
-            } else {
-                UnifiedDiffParser.cUnquote(pathPart) to null
+    internal fun parseStatusOutput(
+        output: String,
+        keepIgnored: Boolean = false,
+    ): List<GitFileStatus> {
+        val statuses = mutableListOf<GitFileStatus>()
+        val tokens = output.split('\u0000')
+        var i = 0
+        while (i < tokens.size - 1) {
+            val token = tokens[i]
+            if (token.length < 3) {
+                i++
+                continue
             }
-
-        val indexStatus = parseStatusChar(indexChar)
-        val workTreeStatus = parseStatusChar(workTreeChar)
-
-        // A file is staged if it has an index status, minus the codes that fill the index
-        // column without describing staged content (see [NEVER_STAGED]).
-        val isStaged = indexStatus != null && indexStatus !in NEVER_STAGED
-
-        // A file is unstaged if it has a worktree status (not space). Note this is a
-        // faithful reading of the worktree column, not a judgement about the entry: for
-        // "??" and "!!" it is true because both columns carry the code. Untracked is a
-        // real (unstaged) change so that is correct; ignored is not a change at all, and
-        // is excluded from the status list by [parseStatusOutput] rather than here.
-        val isUnstaged = workTreeStatus != null
-
-        return GitFileStatus(
-            path = path,
-            indexStatus = indexStatus,
-            workTreeStatus = workTreeStatus,
-            isStaged = isStaged,
-            isUnstaged = isUnstaged,
-            originalPath = originalPath,
-        )
+            val indexChar = token[0]
+            val workTreeChar = token[1]
+            val isRenameOrCopy = indexChar in "RC" || workTreeChar in "RC"
+            val path = token.substring(3)
+            val originalPath =
+                if (isRenameOrCopy && i + 1 < tokens.size - 1) {
+                    val orig = tokens[i + 1]
+                    i++
+                    orig
+                } else {
+                    null
+                }
+            val indexStatus = parseStatusChar(indexChar)
+            val workTreeStatus = parseStatusChar(workTreeChar)
+            val isStaged = indexStatus != null && indexStatus !in NEVER_STAGED
+            val isUnstaged = workTreeStatus != null
+            if (
+                keepIgnored ||
+                (indexStatus != GitFileStatusType.IGNORED && workTreeStatus != GitFileStatusType.IGNORED)
+            ) {
+                statuses.add(GitFileStatus(path, indexStatus, workTreeStatus, isStaged, isUnstaged, originalPath))
+            }
+            i++
+        }
+        return statuses
     }
 
     internal fun parseStatusChar(c: Char): GitFileStatusType? =
@@ -525,6 +559,7 @@ actual object GitService {
             'D' -> GitFileStatusType.DELETED
             'R' -> GitFileStatusType.RENAMED
             'C' -> GitFileStatusType.COPIED
+            'T' -> GitFileStatusType.MODIFIED
             '?' -> GitFileStatusType.UNTRACKED
             '!' -> GitFileStatusType.IGNORED
             'U' -> GitFileStatusType.UNMERGED
@@ -645,15 +680,11 @@ actual object GitService {
     ): List<String> {
         val status =
             runCatching {
-                runGitCommand(projectPath, "status", "--porcelain=v1", "--untracked-files=all")
+                runGitCommand(projectPath, "status", "--porcelain=v1", "-z", "--untracked-files=all")
             }.getOrNull()
         if (status == null || status.exitCode != 0) return listOf(filePath)
         val entry =
-            status.output
-                .lines()
-                .filter { it.length > 3 }
-                .mapNotNull { parseStatusLine(it) }
-                .firstOrNull { it.path == filePath }
+            parseStatusOutput(status.output).firstOrNull { it.path == filePath }
         val original = entry?.originalPath
         return if (original.isNullOrBlank() || original == filePath) {
             listOf(filePath)
@@ -1119,10 +1150,10 @@ actual object GitService {
         vararg args: String,
     ) {
         val projectPath = currentProjectPath ?: return
-        // Every argument is interpolated VERBATIM into a shell command string.
-        // There is no in-repo caller today; a future one must pass literal,
-        // trusted arguments only - or shell-quote them, as mergeInTerminal does.
-        val command = "git ${args.joinToString(" ")}"
+        // Every argument lands in a SHELL command string, so each is quoted the same way
+        // mergeInTerminal/rebaseInTerminal quote the ref - a bare join would let `;`, `|`
+        // or `$()` in any argument become live shell for whichever caller arrives first.
+        val command = args.joinToString(" ", prefix = "git ") { CommandProcessor.quotePath(it) }
         GitTerminalEventBus.openGitTerminal(
             command = command,
             workingDirectory = projectPath,
@@ -1483,7 +1514,11 @@ actual object GitService {
         return list
     }
 
-    private fun statusTypeFromCode(code: String): GitFileStatusTypeData? =
+    // `git diff --name-status` code -> status type. Kept in lock-step with
+    // [parseStatusChar]: a code one parser models, the other must answer with
+    // the same type (#1169). internal, like the porcelain parsers, so tests
+    // can feed it raw codes and pin that parity.
+    internal fun statusTypeFromCode(code: String): GitFileStatusTypeData? =
         when (code.firstOrNull()) {
             'M' -> GitFileStatusTypeData.MODIFIED
             'A' -> GitFileStatusTypeData.ADDED
@@ -1765,7 +1800,7 @@ actual object GitService {
                 // every editor's SCM view does. .gitignore still applies, so an
                 // ignored build/ or node_modules/ contributes nothing.
                 val result =
-                    runGitCommand(projectPath, "status", "--porcelain=v1", "--untracked-files=all")
+                    runGitCommand(projectPath, "status", "--porcelain=v1", "-z", "--untracked-files=all")
                 if (result.exitCode != 0) {
                     return@withContext emptyList()
                 }
@@ -2233,6 +2268,74 @@ actual object GitService {
     internal fun cloneProgressLogMessage(line: String) = "Clone progress: ${LogSanitizer.redactUrlUserInfo(line)}"
 
     /**
+     * [cloneRepository] is the only arg-taking command in this service whose
+     * argument is a URL rather than a ref, so it gets the same service-layer
+     * guard as [isSafeRefName] (see the checkout-guard doctrine above
+     * [createBranch]): the clone dialog's prefix filter is a property of one
+     * caller, not of this service.
+     *
+     * Allow-list, fail-closed: the four URL forms the clone dialog accepts
+     * (https://, http://, ssh://, git@host:path) plus explicit local paths,
+     * which the clone lifecycle tests and the retry flow clone from. Refused:
+     * option-shaped values (a leading `-`: `--upload-pack=<cmd>` is honored
+     * by git on local clones), remote-helper URLs (`ext::sh -c <cmd>` is a
+     * clone "URL" that git executes), any other scheme (`file://`, `git://`,
+     * `ftp://`), and blank strings.
+     *
+     * Like [isSafeRefName] this is ARGV safety, and the `--` end-of-options
+     * separator in [buildCloneCommand] stays even for allowed URLs: the
+     * positional repositoryUrl and targetDirectory can never be re-read as
+     * git options by a future edit here.
+     */
+    internal fun isSafeCloneUrl(repositoryUrl: String): Boolean {
+        // Fail-closed on option-shaped values (a leading `-`, e.g. `--upload-pack=<cmd>`
+        // which git honors on local clones) and blank strings: neither can reach the
+        // allow-list below.
+        //
+        // Same control-character and length limits as [isSafeRefName], so an embedded
+        // newline cannot forge a log line when the URL is logged. One deliberate
+        // difference: the plain space stays allowed, because local paths legitimately
+        // contain it - every other whitespace is refused with the C0 controls and DEL.
+        // U+2028/U+2029 are the separators a `code < 0x20` check alone misses, and NEL
+        // (U+0085) is refused explicitly: Unicode reclassified it from LINE SEPARATOR
+        // to CONTROL, so isWhitespace() no longer reports it (#1602).
+        val refused =
+            repositoryUrl.isBlank() ||
+                repositoryUrl.startsWith("-") ||
+                repositoryUrl.length > MAX_CLONE_URL_LENGTH ||
+                repositoryUrl.any {
+                    it.code < 0x20 || it == '\u007F' || it == '\u0085' || (it.isWhitespace() && it != ' ')
+                }
+        if (refused) return false
+        // The allow-list: the four URL forms the clone dialog accepts, or an explicit
+        // local path, which the clone lifecycle tests and retry flow clone from.
+        // Everything else is refused fail-closed: remote-helper URLs (`ext::sh -c <cmd>`
+        // is a clone "URL" that git executes) and any other scheme (`file://`, `git://`).
+        val isDialogUrlForm = CLONE_URL_PREFIXES.any { repositoryUrl.startsWith(it) }
+        // A local path is the only other allowed form. It is not a URL scheme (no
+        // `://`) and not a remote-helper invocation: a helper URL is
+        // `<transport>::<address>`, so `::` before the first `/` marks a helper
+        // invocation, never a path.
+        val isLocalPath =
+            !repositoryUrl.contains("://") && !repositoryUrl.substringBefore('/').contains("::")
+        return isDialogUrlForm || isLocalPath
+    }
+
+    private val CLONE_URL_PREFIXES = listOf("https://", "http://", "ssh://", "git@")
+
+    private const val MAX_CLONE_URL_LENGTH = 4096
+
+    /**
+     * The exact argv handed to git for a clone. The `--` end-of-options
+     * separator keeps both positionals after it out of git's option parser,
+     * even for a value that begins with `-`.
+     */
+    internal fun buildCloneCommand(
+        repositoryUrl: String,
+        targetDirectory: String,
+    ): List<String> = listOf("git", "clone", "--progress", "--", repositoryUrl, targetDirectory)
+
+    /**
      * Clone a Git repository to the specified directory.
      * Executes git clone with progress output and streams updates via callback.
      * Includes a 10-minute timeout to prevent indefinite hangs.
@@ -2262,6 +2365,14 @@ actual object GitService {
         onProgress: (String) -> Unit,
     ): GitOperationResult =
         withContext(Dispatchers.IO) {
+            // Validated like every other arg-taking command in this file (see the
+            // checkout-guard doctrine above createBranch): the clone dialog's prefix
+            // filter is a property of one caller, not of this service. Refused
+            // before git is spawned or any directory is created.
+            if (!isSafeCloneUrl(repositoryUrl)) {
+                return@withContext GitError("Refused an unsafe clone URL")
+            }
+
             logger.info(
                 LogCategory.GENERAL,
                 "Starting git clone",
@@ -2315,17 +2426,15 @@ actual object GitService {
                 // Execute git clone with progress and a cancellable 10-minute timeout
                 runCatching { onProgress("Initializing clone...") }
 
+                // The `--` inside buildCloneCommand keeps both positionals out of
+                // git's option parser, even for values the allow-list accepted.
+                val cloneCommand = buildCloneCommand(repositoryUrl, targetDirectory)
                 val process =
-                    ProcessBuilder(
-                        "git",
-                        "clone",
-                        "--progress",
-                        repositoryUrl,
-                        targetDirectory,
-                    ).apply {
-                        // Inherit parent process environment for SSH/git credentials
-                        environment().putAll(System.getenv())
-                    }.redirectErrorStream(true) // Merge stderr into stdout for progress
+                    ProcessBuilder(cloneCommand)
+                        .apply {
+                            // Inherit parent process environment for SSH/git credentials
+                            environment().putAll(System.getenv())
+                        }.redirectErrorStream(true) // Merge stderr into stdout for progress
                         .start()
 
                 val exitCode =

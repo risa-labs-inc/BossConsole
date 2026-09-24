@@ -28,8 +28,8 @@ import auth from "./routes/auth.ts"
 import register from "./routes/register.ts"
 import management from "./routes/management.ts"
 import mobile from "./routes/mobile.ts"
+import maintenance from "./routes/maintenance.ts"
 import type { PasskeyContext } from "./types/context.ts"
-import { cleanupExpiredChallenges } from "./utils/challenge.ts"
 
 const app = new OpenAPIHono<{ Variables: PasskeyContext }>().basePath("/passkey")
 const supabaseUrl = Deno.env.get("SUPABASE_URL") || ""
@@ -65,17 +65,9 @@ app.get("/health", (ctx) => {
   return ctx.json({ status: "healthy", timestamp: new Date().toISOString() }, 200)
 })
 
-// Maintenance endpoint to cleanup expired challenges (can be called by cron/scheduler)
-app.post("/maintenance/cleanup", async (ctx) => {
-  const supabase = ctx.get("supabase")
-  const result = await cleanupExpiredChallenges(supabase)
-
-  if (result.success) {
-    return ctx.json({ message: "Cleanup completed successfully" }, 200)
-  } else {
-    return ctx.json({ error: 'Internal server error' }, 500)
-  }
-})
+// Maintenance routes: the cleanup DELETE is gated on the service-role key;
+// see routes/maintenance.ts for why that gate is closed by default.
+app.route("/maintenance", maintenance)
 
 // OpenAPI documentation
 app.doc("/openapi", {

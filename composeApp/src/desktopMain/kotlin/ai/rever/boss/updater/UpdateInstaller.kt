@@ -3,6 +3,7 @@ package ai.rever.boss.updater
 import ai.rever.boss.utils.AppVersion
 import ai.rever.boss.utils.BOSS_MACOS_APP_BUNDLE_NAME
 import ai.rever.boss.utils.BOSS_MACOS_BUNDLE_ID
+import ai.rever.boss.utils.CodeSourceLocation
 import ai.rever.boss.utils.Version
 import ai.rever.boss.utils.WindowsProtocolCleanup
 import ai.rever.boss.utils.logging.BossLogger
@@ -95,6 +96,63 @@ internal fun realAppPathFor(
     if (appExists(applicationsPath)) return applicationsPath
 
     return installedAppLookup()?.takeIf(appExists) ?: path
+}
+
+/**
+ * The mount point `hdiutil attach` reported for the DMG it just attached, or null
+ * when its output carries no usable `/Volumes` path (Issue #922).
+ *
+ * `hdiutil attach` ends its device table with the mount point of the volume it
+ * mounted: the last tab-delimited field of the last line naming a /Volumes
+ * path - tab-delimited because volume names can contain spaces. That line is
+ * the only authoritative answer to "where did this DMG mount": scanning
+ * /Volumes for a BOSS-named directory instead answers with whatever the
+ * filesystem lists first - a user's own external BOSS drive, or an older BOSS
+ * DMG left mounted - and the updater then verifies and installs whatever app
+ * bundle that unrelated volume happens to hold.
+ *
+ * Parsing is deliberately strict - split on tabs rather than any whitespace,
+ * and require the result to look like a /Volumes path - so a truncated or
+ * malformed line yields null and callers fall back instead of acting on a
+ * half-parsed mount point.
+ */
+internal fun dmgMountPointFromHdiutilOutput(output: String): String? =
+    output
+        .lineSequence()
+        .lastOrNull { it.contains("/Volumes/") }
+        ?.substringAfterLast('\t')
+        ?.trim()
+        ?.takeIf { it.startsWith("/Volumes/") }
+
+/**
+ * Decide which volume a just-attached BOSS DMG mounted at (Issue #922), with
+ * the filesystem injected so the choice stays unit-testable.
+ *
+ * `hdiutil attach`'s own answer wins whenever it is available: it names the
+ * volume this exact attach mounted, where a directory scan can only guess. The
+ * scan exists for callers that captured no output, and as a fallback when the
+ * output could not be parsed, and is stricter than the first-match lookup it
+ * replaces:
+ *
+ * - a candidate must actually hold a BOSS `.app` bundle ([appBundleIn]), not
+ *   merely name itself BOSS, so an unrelated drive sharing the name can no
+ *   longer stand in for the update DMG;
+ * - among candidates that do hold a bundle, the most recently mounted one
+ *   wins - the DMG attached seconds ago, not last year's image the user never
+ *   ejected.
+ */
+internal fun mountedBossDmgVolume(
+    hdiutilAttachOutput: String?,
+    candidateVolumes: List<File>?,
+    appBundleIn: (File) -> File?,
+): File? {
+    val reportedMountPoint = hdiutilAttachOutput?.let(::dmgMountPointFromHdiutilOutput)
+    if (reportedMountPoint != null) return File(reportedMountPoint)
+
+    return candidateVolumes
+        ?.filter { volume -> volume.isDirectory && volume.name.contains("BOSS", ignoreCase = true) }
+        ?.filter { volume -> appBundleIn(volume) != null }
+        ?.maxByOrNull { volume -> volume.lastModified() }
 }
 
 /**
@@ -510,7 +568,11 @@ object UpdateInstaller {
 
                 logger.debug(LogCategory.SYSTEM, "Target application path", mapOf("path" to currentAppPath))
 
-                // Verify DMG is valid by attempting to mount it
+                // Verify DMG is valid by attempting to mount it. No -quiet: the
+                // device table it suppresses ends with the mount point of the
+                // volume this exact attach mounted, which is what identifies it
+                // below (Issue #922); errors merge into stdout, so a pipe nobody
+                // drains can never block the child mid-checksum.
                 logger.debug(LogCategory.SYSTEM, "Mounting DMG for verification")
                 val mountTest =
                     ProcessBuilder(
@@ -518,18 +580,32 @@ object UpdateInstaller {
                         "attach",
                         downloadFile.absolutePath,
                         "-nobrowse",
-                        "-quiet",
                         "-verify",
-                    ).start()
+                    ).redirectErrorStream(true)
+                        .start()
+
+                // Drain while hdiutil runs - findInstalledAppViaSpotlight uses
+                // the same pattern - so the captured table cannot deadlock the
+                // mount.
+                val mountOutputFuture =
+                    CompletableFuture.supplyAsync {
+                        mountTest.inputStream.bufferedReader().use { it.readText() }
+                    }
                 mountTest.waitFor()
 
                 if (mountTest.exitValue() != 0) {
-                    logger.error(LogCategory.SYSTEM, "DMG mounting failed")
+                    val output = runCatching { mountOutputFuture.get(1, TimeUnit.SECONDS) }.getOrNull()
+                    logger.error(LogCategory.SYSTEM, "DMG mounting failed: ${output?.take(500)}")
                     return@withContext InstallResult.Error("Failed to mount DMG for verification")
                 }
 
-                // Find the mounted volume
-                val mountedVolume = findMountedBossVolume()
+                // Find the mounted volume from what hdiutil itself reported about
+                // this attach, not by grabbing the first BOSS-named directory
+                // under /Volumes (Issue #922).
+                // A drain hiccup must not leak the mount we just attached: get() throws
+                // outside the unmount guard, so degrade to the directory fallback instead.
+                val mountOutput = runCatching { mountOutputFuture.get(1, TimeUnit.SECONDS) }.getOrNull()
+                val mountedVolume = findMountedBossVolume(mountOutput)
                 if (mountedVolume == null) {
                     logger.error(LogCategory.SYSTEM, "Could not find mounted BOSS volume")
                     cleanupDMG(null) // Try to cleanup any stray mounts
@@ -758,9 +834,18 @@ object UpdateInstaller {
      * The validation is swallowed here rather than left to the script generator on
      * purpose. The generator throws, and a throw on this argument would abort an
      * update that is otherwise fine - trading "installs but does not relaunch" for
-     * "does not install", which is strictly worse. In practice it cannot trigger: the
-     * MSI path passed alongside it lives under the same user profile and so carries
-     * the same account name, and the filename component is the constant `BOSS.exe`.
+     * "does not install", which is strictly worse. For a local install it cannot
+     * trigger: the MSI path passed alongside it lives under the same user profile and
+     * so carries the same account name, and the filename component is the constant
+     * `BOSS.exe`.
+     *
+     * It does trigger for an install on a hidden network share, whose name ends in `$`
+     * (`\\nas01\apps$\BOSS\BOSS.exe`): the validator refuses `$` anywhere in a path.
+     * Such an install updates but does not relaunch. That was already the outcome
+     * through `jpackage.app-path`, which names the same share and is tried first; the
+     * code-source fallback reaching the share too does not change it. Allowing `$` in
+     * the directory component would mean relaxing a rule every platform's update
+     * script shares, which is a decision for [UpdatePathValidator], not for this path.
      */
     internal fun getWindowsLauncherPath(): String? {
         val launcher =
@@ -797,25 +882,11 @@ object UpdateInstaller {
 
     /**
      * The jar or classes directory this code is running from, or null if the location
-     * is unavailable. Goes through [java.net.URI] rather than `location.path`: that is
-     * URL-encoded, so a Windows install under a profile with a space in it yields a
-     * `%20` no filesystem call resolves.
+     * is unavailable. [CodeSourceLocation] explains why this is neither `location.path`
+     * (URL-encoded) nor `File(URI)` (which rejects a network share's authority), and
+     * logs the reason when it answers null; it does not throw.
      */
-    private fun currentCodeSourceFile(): File? =
-        try {
-            UpdateInstaller::class.java.protectionDomain
-                ?.codeSource
-                ?.location
-                ?.toURI()
-                ?.let(::File)
-        } catch (e: Exception) {
-            logger.debug(
-                LogCategory.SYSTEM,
-                "Could not resolve the current code source",
-                mapOf("error" to (e.message ?: "unknown")),
-            )
-            null
-        }
+    private fun currentCodeSourceFile(): File? = CodeSourceLocation.fileFor(UpdateInstaller::class.java)
 
     /**
      * Get current application path for macOS .app bundle
@@ -965,14 +1036,21 @@ object UpdateInstaller {
     }
 
     /**
-     * Find the mounted BOSS volume after DMG mount
+     * Find the volume the just-attached BOSS DMG mounted at (Issue #922).
+     *
+     * Delegates to [mountedBossDmgVolume]: the mount point `hdiutil attach`
+     * reported for this attach when the caller captured its output, else the
+     * strictest directory scan - a candidate must hold a BOSS app bundle, and
+     * the most recently mounted candidate wins. The old first-match lookup
+     * answered to whatever BOSS-named volume /Volumes happened to list first,
+     * including volumes this DMG never mounted.
      */
-    private fun findMountedBossVolume(): File? {
-        val volumesDir = File("/Volumes")
-        return volumesDir.listFiles()?.find {
-            it.name.contains("BOSS", ignoreCase = true) && it.isDirectory
-        }
-    }
+    private fun findMountedBossVolume(hdiutilAttachOutput: String? = null): File? =
+        mountedBossDmgVolume(
+            hdiutilAttachOutput = hdiutilAttachOutput,
+            candidateVolumes = File("/Volumes").listFiles()?.toList(),
+            appBundleIn = ::findAppBundleInVolume,
+        )
 
     /**
      * Find the .app bundle in the mounted volume
@@ -1026,12 +1104,11 @@ object UpdateInstaller {
      */
     private fun getCurrentJarPath(): File? =
         try {
-            val jarPath =
-                UpdateInstaller::class.java.protectionDomain.codeSource.location
-                    .toURI()
-                    .path
-            val jarFile = File(jarPath)
-            if (jarFile.exists() && jarFile.name.endsWith(".jar")) {
+            // Resolved through CodeSourceLocation, not URI.path: on a network-share
+            // install the path component has already lost the server name, so the
+            // existence check below failed and the JAR update silently never ran.
+            val jarFile = CodeSourceLocation.fileFor(UpdateInstaller::class.java)
+            if (jarFile != null && jarFile.exists() && jarFile.name.endsWith(".jar")) {
                 jarFile
             } else {
                 null
@@ -1039,7 +1116,7 @@ object UpdateInstaller {
         } catch (e: Exception) {
             logger.debug(
                 LogCategory.SYSTEM,
-                "Could not determine current JAR path - not running from a JAR",
+                "Could not check the current JAR path",
                 mapOf("error" to e.toString()),
             )
             null

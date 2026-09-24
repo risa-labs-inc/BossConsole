@@ -7,6 +7,26 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
+ * Match a `Version:` header line, capturing the WHOLE version including any pre-release suffix.
+ *
+ * The generated CLI scripts stamp the full `app.version` into their header (e.g.
+ * `# Version: 9.5.21` or `# Version: 9.5.21-alpha.1`; see `generateVersionedCLIScripts`), and the
+ * installed version is compared against `AppVersion.CURRENT.toString()`, which likewise keeps the
+ * pre-release suffix. Capturing only `major.minor.patch` made those two disagree on every
+ * pre-release build - the header said `9.5.21-alpha.1`, extraction returned `9.5.21`, the compare
+ * failed, and `needsCLIUpdate()` reported "outdated" and re-installed the CLI on every launch.
+ */
+private val CLI_VERSION_HEADER_REGEX = Regex("""Version:\s*([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)""")
+
+/**
+ * Extract the version stamped in a CLI script header [line], or null when the line carries none.
+ *
+ * Pure and file-scoped so the header parsing can be unit-tested without touching the installed
+ * script on disk.
+ */
+internal fun cliVersionFromScriptLine(line: String): String? = CLI_VERSION_HEADER_REGEX.find(line)?.groupValues?.get(1)
+
+/**
  * Desktop implementation of CLI version manager
  *
  * Checks installed CLI version against current app version and triggers
@@ -50,17 +70,14 @@ actual object CLIVersionManager {
 
             try {
                 scriptFile.readLines().take(20).forEach { line ->
-                    // Match version in comment header
+                    // Match version in comment header, keeping any pre-release suffix.
                     // Examples:
                     //   # Version: 8.13.4
                     //   REM Version: 8.13.4
-                    //   Version: 8.13.4
-                    val versionMatch =
-                        Regex("Version:\\s*([0-9]+\\.[0-9]+\\.[0-9]+)")
-                            .find(line)
+                    //   Version: 9.5.21-alpha.1
+                    val version = cliVersionFromScriptLine(line)
 
-                    if (versionMatch != null) {
-                        val version = versionMatch.groupValues[1]
+                    if (version != null) {
                         logger.debug(LogCategory.SYSTEM, "CLI version check: Found installed version", mapOf("version" to version))
                         return@withContext version
                     }

@@ -1,7 +1,9 @@
 package ai.rever.boss.mcp
 
 import ai.rever.boss.components.bars.horizontal.StatusMessageManager
+import ai.rever.boss.mcp.rlm.RlmToolProvider
 import ai.rever.boss.mcp.sandbox.DefaultMcpRiskEvaluator
+import ai.rever.boss.mcp.sandbox.McpRiskLevel
 import ai.rever.boss.plugin.api.McpToolArgs
 import ai.rever.boss.plugin.api.McpToolDefinition
 import ai.rever.boss.plugin.api.McpToolProvider
@@ -125,6 +127,12 @@ object McpToolRegistryImpl : McpToolRegistry {
 
     init {
         registerProvider(WorkspaceMcpToolProvider)
+        registerProvider(SnippetMcpToolProvider)
+        registerProvider(NotificationMcpToolProvider)
+        registerProvider(IntrospectionMcpToolProvider)
+        // Registered alongside the workspace tools rather than inside them: the RLM surface
+        // has its own provider id, so one `providerRules` entry trusts or withholds all of it.
+        registerProvider(RlmToolProvider)
     }
 
     override val allTools: StateFlow<List<RegisteredMcpTool>> get() = core.allTools
@@ -796,13 +804,14 @@ internal class McpToolRegistryCore(
         // this invocation: a tool that declared side effects classifies as mutating whatever
         // its name says (#804), so it gets the mutating default - ASK under the factory
         // config - rather than being auto-allowed for avoiding the catalog's name patterns.
-        val policy = policyEngine.policyFor(toolName, tool.providerId, tool.definition.readOnly)
+        val savedPolicy = policyEngine.policyFor(toolName, tool.providerId, tool.definition.readOnly)
+        val policy = askBeforeDestructiveShell(toolName, args, savedPolicy)
         val startTime = System.nanoTime()
         var disposition = McpApprovalDisposition.AUTO_ALLOWED
         var result: McpToolResult? = null
         var executionStarted = false
         try {
-            val authorization = authorizeInvocation(tool, args, policy, revocation)
+            val authorization = authorizeInvocation(tool, args, policy, revocation, escalated = policy != savedPolicy)
             disposition = authorization.first
             val denial = authorization.second
             result =
@@ -831,6 +840,10 @@ internal class McpToolRegistryCore(
                 }
             throw cancelled
         } finally {
+            // NonCancellable because a cancelled invoke is still an event the audit journal
+            // must capture; Dispatchers.IO because invoke() is callable from any dispatcher
+            // (including Main), and record() still runs argument sanitization plus the queue
+            // hop on the caller - the disk work itself belongs to the writer thread.
             withContext(NonCancellable + Dispatchers.IO) {
                 ledger.record(
                     toolName = toolName,
@@ -992,11 +1005,71 @@ internal class McpToolRegistryCore(
             }
         }
 
+    /**
+     * A saved ALLOW on a shell tool means "don't ask for routine calls", not "run anything" (#1577).
+     *
+     * Every shell call already rates HIGH - arbitrary command execution - so HIGH cannot be the
+     * line, or "Always Allow" would ask every time and mean nothing. CRITICAL is: the evaluator
+     * reserves it for destructive command wording (`rm -rf`, `git push --force`, `mkfs`, ...), and
+     * those calls go back to ASK, where the operator sees the same assessment on the prompt.
+     *
+     * The assessment is of the very [args] this invocation executes - parsed once in [invoke] and
+     * never re-read - so the arguments cannot change between this check and the call. Tool names
+     * are matched through [DefaultMcpRiskEvaluator.isShellTool], the evaluator's own
+     * normalization, so the two cannot disagree about which calls are shell calls. DENY and ASK
+     * pass through untouched, and so does ALLOW for every non-shell tool, whose risk is fixed by
+     * its name and already weighed when the policy was saved. The ALLOW may be a tool rule or a
+     * provider-wide "Trust This Plugin" rule; both are covered.
+     */
+    private fun askBeforeDestructiveShell(
+        toolName: String,
+        args: McpToolArgs,
+        policy: McpPolicyAction,
+    ): McpPolicyAction =
+        if (
+            policy == McpPolicyAction.ALLOW &&
+            DefaultMcpRiskEvaluator.isShellTool(toolName) &&
+            DefaultMcpRiskEvaluator().evaluateRisk(toolName, args).level >= McpRiskLevel.CRITICAL
+        ) {
+            McpPolicyAction.ASK
+        } else {
+            policy
+        }
+
+    /**
+     * [escalated] is true when [askBeforeDestructiveShell] turned a saved ALLOW into this ASK. A
+     * rule saved from such a prompt would change nothing - the gate overrides it on the next
+     * destructive call - so an approval here always counts as once, whatever scope came back
+     * (#1624). The dialog offers only that scope; this holds the line if a caller asks for more.
+     */
+
+    /**
+     * An approval of an escalated call counts as once, whatever scope came back (#1624). The dialog
+     * never asks for more there, so a broader request came from another caller of the approval
+     * bus: it is logged, or the ledger's APPROVED_ONCE would carry no explanation.
+     */
+    private fun onceIfEscalated(
+        tool: RegisteredMcpTool,
+        decision: McpApprovalDecision.Approved,
+        escalated: Boolean,
+    ): McpApprovalDecision.Approved {
+        if (!escalated) return decision
+        if (decision.trustForSession || decision.persistPolicy || decision.trustProvider) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Escalated MCP approval asked to be remembered; applied once only",
+                mapOf("tool" to tool.definition.name, "provider" to tool.providerId),
+            )
+        }
+        return McpApprovalDecision.Approved()
+    }
+
     private suspend fun authorizeInvocation(
         tool: RegisteredMcpTool,
         args: McpToolArgs,
         policy: McpPolicyAction,
         revocation: Long,
+        escalated: Boolean = false,
     ): Pair<McpApprovalDisposition, String?> =
         when (policy) {
             McpPolicyAction.DENY -> {
@@ -1022,10 +1095,13 @@ internal class McpToolRegistryCore(
                             McpArgumentSanitizer.parseArguments(args.raw),
                             riskAssessment = DefaultMcpRiskEvaluator().evaluateRisk(tool.definition.name, args),
                             declaredReadOnly = tool.definition.readOnly,
+                            toolDescription = tool.definition.description,
+                            policy = policy,
+                            escalated = escalated,
                         )
                 ) {
                     is McpApprovalDecision.Approved -> {
-                        approvedAuthorization(tool, decision, revocation)
+                        approvedAuthorization(tool, onceIfEscalated(tool, decision, escalated), revocation)
                     }
 
                     is McpApprovalDecision.Denied -> {

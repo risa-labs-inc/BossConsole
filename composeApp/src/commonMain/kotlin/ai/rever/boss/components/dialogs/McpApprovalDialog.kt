@@ -42,6 +42,7 @@ import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -54,6 +55,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
+import kotlinx.coroutines.delay
 
 /**
  * How far an operator's answer in [McpApprovalDialog] reaches, in increasing durability.
@@ -100,6 +102,43 @@ internal fun McpApprovalScope.approveFlags(): McpApproveFlags =
  */
 internal fun McpApprovalScope.persistsDeny(): Boolean = this == McpApprovalScope.ALWAYS_TOOL
 
+/**
+ * What an approval prompt offers, and what its allow button does, for escalated requests - a
+ * saved ALLOW overridden because the call rates CRITICAL (#1577, #1624). No saved *allow* can
+ * pre-approve such a call - the gate overrides it on the next destructive attempt - but a saved
+ * *deny* is never overridden, so it is exactly the durable answer an operator facing repeated
+ * destructive attempts needs. An object so the rules sit together, apart from the composable.
+ */
+internal object McpPromptChoices {
+    /** The scopes offered: all of them, or once plus "Always" for its deny half when escalated. */
+    fun scopesFor(request: McpApprovalRequest): List<McpApprovalScope> =
+        if (request.escalated) listOf(McpApprovalScope.ONCE, McpApprovalScope.ALWAYS_TOOL) else McpApprovalScope.entries
+
+    /** What the allow button sends: always once on an escalated request, whatever is selected. */
+    fun allowFlagsFor(
+        request: McpApprovalRequest,
+        scope: McpApprovalScope,
+    ): McpApproveFlags = if (request.escalated) McpApprovalScope.ONCE.approveFlags() else scope.approveFlags()
+
+    /** The allow button's label, matching [allowFlagsFor]. */
+    fun allowLabelFor(
+        request: McpApprovalRequest,
+        scope: McpApprovalScope,
+    ): String = if (request.escalated) McpApprovalScope.ONCE.allowLabel() else scope.allowLabel()
+
+    /** Title and description of the "Always, for this tool" option, which only denies when escalated. */
+    fun alwaysToolText(request: McpApprovalRequest): Pair<String, String> =
+        if (request.escalated) {
+            "Always deny this tool" to
+                "Saves a deny by tool name, across restarts. Allowing still runs just this call: a saved " +
+                "allow cannot pre-approve a destructive one."
+        } else {
+            "Always, for this tool" to
+                "Saved by tool name for all agents and arguments, across restarts - including a replacement " +
+                "plugin that ships a tool with this name."
+        }
+}
+
 internal fun McpApprovalScope.allowLabel(): String =
     when (this) {
         McpApprovalScope.ONCE -> "Allow once"
@@ -141,6 +180,7 @@ fun McpApprovalDialog(
     pendingQueueSize: Int = 1,
     onApprove: (trustForSession: Boolean, persistPolicy: Boolean, trustProvider: Boolean) -> Unit,
     onDeny: (reason: String, persistPolicy: Boolean) -> Unit,
+    onDenyAllPending: () -> Unit = {},
 ) {
     val colors = BossTheme.colors
     val radii = BossTheme.radius
@@ -153,6 +193,16 @@ fun McpApprovalDialog(
     var rejectionReason by remember(request.id) { mutableStateOf("") }
     var showReasonInput by remember(request.id) { mutableStateOf(false) }
     var scope by remember(request.id) { mutableStateOf(McpApprovalScope.ONCE) }
+    val remainingMs by
+        produceState(
+            initialValue = approvalMillisRemaining(request, System.currentTimeMillis()),
+            key1 = request.id,
+        ) {
+            while (value > 0L) {
+                delay(minOf(APPROVAL_COUNTDOWN_TICK_MS, value))
+                value = approvalMillisRemaining(request, System.currentTimeMillis())
+            }
+        }
 
     BossDialog(
         // onDismissRequest is required by BossDialog; outside-click and back-press are disabled below
@@ -175,7 +225,11 @@ fun McpApprovalDialog(
         ) {
             Column {
                 Column(modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 16.dp)) {
-                    ApprovalHeader(isMutating = isMutating, pendingQueueSize = pendingQueueSize)
+                    ApprovalHeader(
+                        isMutating = isMutating,
+                        pendingQueueSize = pendingQueueSize,
+                        remainingMs = remainingMs,
+                    )
 
                     Spacer(modifier = Modifier.height(16.dp))
                     ToolDetails(request)
@@ -190,6 +244,35 @@ fun McpApprovalDialog(
                         RiskBanner(riskLines)
                     }
 
+                    if (pendingQueueSize > 1) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .background(colors.raised, RoundedCornerShape(radii.card))
+                                    .border(1.dp, colors.line, RoundedCornerShape(radii.card))
+                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text =
+                                    "$pendingQueueSize actions are waiting for approval. " +
+                                        "New requests are unaffected.",
+                                fontSize = 10.sp,
+                                color = colors.textSecondary,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            TextButton(
+                                onClick = onDenyAllPending,
+                                colors = ButtonDefaults.textButtonColors(contentColor = colors.alert),
+                            ) {
+                                Text("Deny All Pending", fontSize = 11.sp)
+                            }
+                        }
+                    }
+
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
                         text = "Remember this decision",
@@ -198,34 +281,52 @@ fun McpApprovalDialog(
                         color = colors.textSecondary,
                     )
                     Spacer(modifier = Modifier.height(4.dp))
+                    val scopes = McpPromptChoices.scopesFor(request)
                     Column(modifier = Modifier.selectableGroup()) {
-                        ScopeOption(
-                            title = "Just this call",
-                            description = "Ask again next time.",
-                            selected = scope == McpApprovalScope.ONCE,
-                            onSelect = { scope = McpApprovalScope.ONCE },
-                        )
-                        ScopeOption(
-                            title = "This session",
-                            description = "Allow this tool until BOSS quits. Deny still applies once.",
-                            selected = scope == McpApprovalScope.SESSION,
-                            onSelect = { scope = McpApprovalScope.SESSION },
-                        )
-                        ScopeOption(
-                            title = "Always, for this tool",
-                            description =
-                                "Saved by tool name for all agents and arguments, across restarts - " +
-                                    "including a replacement plugin that ships a tool with this name.",
-                            selected = scope == McpApprovalScope.ALWAYS_TOOL,
-                            onSelect = { scope = McpApprovalScope.ALWAYS_TOOL },
-                        )
-                        ScopeOption(
-                            title = "Always, for every tool from this plugin",
-                            description =
-                                "Trusts everything \"${request.providerId}\" provides, now and in later versions.",
-                            selected = scope == McpApprovalScope.ALWAYS_PLUGIN,
-                            titleColor = colors.warn,
-                            onSelect = { scope = McpApprovalScope.ALWAYS_PLUGIN },
+                        if (McpApprovalScope.ONCE in scopes) {
+                            ScopeOption(
+                                title = "Just this call",
+                                description = "Ask again next time.",
+                                selected = scope == McpApprovalScope.ONCE,
+                                onSelect = { scope = McpApprovalScope.ONCE },
+                            )
+                        }
+                        if (McpApprovalScope.SESSION in scopes) {
+                            ScopeOption(
+                                title = "This session",
+                                description = "Allow this tool until BOSS quits. Deny still applies once.",
+                                selected = scope == McpApprovalScope.SESSION,
+                                onSelect = { scope = McpApprovalScope.SESSION },
+                            )
+                        }
+                        if (McpApprovalScope.ALWAYS_TOOL in scopes) {
+                            val (alwaysTitle, alwaysDescription) = McpPromptChoices.alwaysToolText(request)
+                            ScopeOption(
+                                title = alwaysTitle,
+                                description = alwaysDescription,
+                                selected = scope == McpApprovalScope.ALWAYS_TOOL,
+                                onSelect = { scope = McpApprovalScope.ALWAYS_TOOL },
+                            )
+                        }
+                        if (McpApprovalScope.ALWAYS_PLUGIN in scopes) {
+                            ScopeOption(
+                                title = "Always, for every tool from this plugin",
+                                description =
+                                    "Trusts everything \"${request.providerId}\" provides, now and in later versions.",
+                                selected = scope == McpApprovalScope.ALWAYS_PLUGIN,
+                                titleColor = colors.warn,
+                                onSelect = { scope = McpApprovalScope.ALWAYS_PLUGIN },
+                            )
+                        }
+                    }
+                    if (request.escalated) {
+                        Text(
+                            text =
+                                "This call is asked every time, even though this tool is allowed: it looks " +
+                                    "destructive, and no saved rule can approve that in advance - only deny it.",
+                            fontSize = 11.sp,
+                            color = colors.warn,
+                            modifier = Modifier.padding(top = 6.dp),
                         )
                     }
                     Text(
@@ -301,7 +402,7 @@ fun McpApprovalDialog(
 
                     Button(
                         onClick = {
-                            val flags = scope.approveFlags()
+                            val flags = McpPromptChoices.allowFlagsFor(request, scope)
                             onApprove(flags.trustForSession, flags.persistPolicy, flags.trustProvider)
                         },
                         shape = RoundedCornerShape(radii.button),
@@ -314,7 +415,11 @@ fun McpApprovalDialog(
                         contentPadding = DIALOG_BUTTON_PADDING,
                         modifier = Modifier.height(DIALOG_BUTTON_HEIGHT),
                     ) {
-                        Text(scope.allowLabel(), fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        Text(
+                            McpPromptChoices.allowLabelFor(request, scope),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                        )
                     }
                 }
             }
@@ -329,6 +434,7 @@ private val DIALOG_BUTTON_PADDING = PaddingValues(horizontal = 14.dp)
 private fun ApprovalHeader(
     isMutating: Boolean,
     pendingQueueSize: Int,
+    remainingMs: Long,
 ) {
     val colors = BossTheme.colors
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -350,6 +456,17 @@ private fun ApprovalHeader(
                 text = "An AI agent requested to invoke a governed tool.",
                 fontSize = 12.sp,
                 color = colors.textSecondary,
+            )
+            Text(
+                text = approvalExpiryLabel(remainingMs),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                color =
+                    if (remainingMs <= APPROVAL_EXPIRY_WARNING_MS) {
+                        colors.alert
+                    } else {
+                        colors.textSecondary
+                    },
             )
         }
         if (pendingQueueSize > 1) {
@@ -406,6 +523,17 @@ private fun ToolDetails(request: McpApprovalRequest) {
             )
         }
 
+        // The tool's own description is the operator's only sight of what it
+        // claims to do - without it an approval is a guess on a bare name.
+        request.toolDescription?.takeIf { it.isNotBlank() }?.let { description ->
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = description,
+                fontSize = 12.sp,
+                color = colors.textPrimary,
+            )
+        }
+
         val sanitizedArguments =
             remember(request.arguments) {
                 McpArgumentSanitizer.sanitize(request.arguments)
@@ -432,6 +560,19 @@ private fun ToolDetails(request: McpApprovalRequest) {
                 }
             }
         }
+
+        // Why the prompt exists and when it expires: the policy that suspended the
+        // call plus the auto-deny countdown, snapshotted once at open.
+        val remainingSeconds =
+            remember(request.id) {
+                ((request.remainingTimeoutMs() + 999L) / 1000L).coerceAtLeast(1L)
+            }
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = "Policy: ${request.policy?.name ?: "ASK"} · auto-denies in ~${remainingSeconds}s",
+            fontSize = 10.sp,
+            color = colors.textSecondary,
+        )
     }
 }
 

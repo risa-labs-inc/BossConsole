@@ -3,6 +3,7 @@ package ai.rever.boss.components.dialogs
 import ai.rever.boss.git.GitOperationResult
 import ai.rever.boss.git.GitService
 import ai.rever.boss.platform.rememberDirectoryPicker
+import ai.rever.boss.plugin.logging.LogSanitizer
 import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.project.ProjectCreationService
@@ -451,6 +452,24 @@ private fun ConfigurationStep(
 }
 
 /**
+ * The clone URL as the log may carry it: masked with [LogSanitizer.maskUriParams] like the
+ * service layer's own clone log, and stripped of the control characters that could forge a
+ * second record (#1602). The "Starting clone operation" call below logs this BEFORE
+ * [GitService.cloneRepository] runs, so no later seam has seen the value yet, and BossLogger
+ * appends the data map verbatim. Spaces survive, because a local clone path legitimately
+ * contains them; every other whitespace is stripped with the C0 controls and DEL.
+ */
+internal fun cloneUrlForLog(repositoryUrl: String): String =
+    LogSanitizer.maskUriParams(repositoryUrl.filterNot { it.isLogForgingControlChar() })
+
+/**
+ * The characters a pasted URL must not carry into the log: the C0 controls and DEL, plus the
+ * separators a plain `code < 0x20` check misses - NEL (U+0085), U+2028 and U+2029.
+ */
+private fun Char.isLogForgingControlChar(): Boolean =
+    code < 0x20 || this == '\u007F' || this == '\u0085' || this == '\u2028' || this == '\u2029'
+
+/**
  * Step 2: Cloning - Show progress while cloning
  */
 @Composable
@@ -470,7 +489,10 @@ private fun CloningStep(
             logger.info(
                 LogCategory.GENERAL,
                 "Starting clone operation",
-                mapOf("url" to repositoryUrl, "target" to targetDirectory),
+                mapOf(
+                    "url" to cloneUrlForLog(repositoryUrl),
+                    "target" to targetDirectory.filterNot { it.isLogForgingControlChar() },
+                ),
             )
 
             val result =

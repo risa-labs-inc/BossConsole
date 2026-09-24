@@ -103,7 +103,13 @@ internal fun deletableWorkspaces(workspaces: List<LayoutWorkspace>): List<Layout
  * record by that name, so a second claim on it would make which one restores a matter of scan
  * order.
  */
-internal fun isSpaceSlot(id: String): Boolean = id in PredefinedWorkspaces.allIds || id == LAST_SESSION_ID
+internal fun isSpaceSlot(id: String): Boolean =
+    // Case-folded, because an id becomes a FILE name and the default filesystems on macOS and
+    // Windows fold case: `Last-Session` writes `Last-Session.json`, which there IS the record's
+    // `last-session.json`. Stricter than the collision on a case-sensitive filesystem, and a
+    // wrongly-slotted id only means a save makes a new Space instead of overwriting (#1590).
+    id.equals(LAST_SESSION_ID, ignoreCase = true) ||
+        PredefinedWorkspaces.allIds.any { it.equals(id, ignoreCase = true) }
 
 /**
  * The Space an explicit save should write when the current one is a [isSpaceSlot].

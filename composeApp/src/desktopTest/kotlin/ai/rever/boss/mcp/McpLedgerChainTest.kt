@@ -50,6 +50,8 @@ class McpLedgerChainTest {
             isError = false,
             rawArgs = mapOf("path" to "/project"),
         )
+        // Persistence is asynchronous: drain the writer so the file asserts below see it.
+        assertTrue(ledger.awaitIdle(), "ledger writer never drained")
     }
 
     @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)

@@ -274,13 +274,17 @@ object WindowsProtocolHandler {
             }
 
             // Priority 2: Try to get the path from the running JAR/EXE
-            val jarPath =
-                WindowsProtocolHandler::class.java.protectionDomain.codeSource.location
-                    .toURI()
-                    .path
+            // Resolved through CodeSourceLocation, not URI.path: on a network-share
+            // install the path component has already lost the server name.
+            val jarPath = CodeSourceLocation.fileFor(WindowsProtocolHandler::class.java)?.path
 
             // Convert to Windows path format and handle different packaging scenarios
             when {
+                jarPath == null -> {
+                    logger.warn(LogCategory.SYSTEM, "Could not resolve the code source location")
+                    null
+                }
+
                 jarPath.endsWith(".jar") -> {
                     // Running from JAR - look for launcher executable
                     val jarFile = File(jarPath)

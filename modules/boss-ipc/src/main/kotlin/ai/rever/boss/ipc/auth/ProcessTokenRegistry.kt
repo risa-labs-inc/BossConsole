@@ -1,5 +1,6 @@
 package ai.rever.boss.ipc.auth
 
+import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.HexFormat
 import java.util.UUID
@@ -52,7 +53,11 @@ class ProcessTokenRegistry {
     ) {
         val removed =
             synchronized(this) {
-                if (token != null && tokenByProcessId[processId] == token) {
+                val current = tokenByProcessId[processId]
+                // Constant-time compare: not an auth boundary (authentication is the credentials map
+                // lookup of a 256-bit random token), but a security-critical module should not compare
+                // a credential with short-circuiting ==.
+                if (token != null && current != null && constantTimeEquals(current, token)) {
                     tokenByProcessId.remove(processId)
                     credentials.remove(token)
                 } else {
@@ -61,6 +66,11 @@ class ProcessTokenRegistry {
             }
         removed?.revoke()
     }
+
+    private fun constantTimeEquals(
+        a: String,
+        b: String,
+    ): Boolean = MessageDigest.isEqual(a.toByteArray(Charsets.UTF_8), b.toByteArray(Charsets.UTF_8))
 
     fun revoke(processId: String) {
         val removed = synchronized(this) { tokenByProcessId.remove(processId)?.let { credentials.remove(it) } }

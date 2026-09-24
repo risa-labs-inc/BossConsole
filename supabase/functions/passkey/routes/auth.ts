@@ -31,6 +31,15 @@ const auth = new OpenAPIHono<{ Variables: PasskeyContext }>()
 const AUTH_CHALLENGE_LIMIT = 60
 const AUTH_CHALLENGE_WINDOW_SECONDS = 60 * 60
 
+// Same brake for the completion step. /auth/complete verifies an ES256
+// signature BEFORE the challenge row is consumed, so a single captured
+// challenge replays into unlimited signature-verification CPU until the
+// replay loop itself is capped. A sign-in spends one complete per attempt
+// (plus a retry when the authenticator bumps its counter), so 120/hour is
+// far above any honest client and far below a replay script.
+const AUTH_COMPLETE_LIMIT = 120
+const AUTH_COMPLETE_WINDOW_SECONDS = 60 * 60
+
 // ============================================================================
 // POST /auth/challenge - Generate authentication challenge
 // ============================================================================
@@ -159,6 +168,14 @@ const authCompleteRoute = createRoute({
         }
       }
     },
+    429: {
+      description: 'Too many requests - per-client rate limit exceeded',
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
+        }
+      }
+    },
     500: {
       description: 'Internal server error',
       content: {
@@ -171,6 +188,18 @@ const authCompleteRoute = createRoute({
 })
 
 auth.openapi(authCompleteRoute, async (ctx) => {
+  // Rate limit first, before the ES256 verification: the challenge row is
+  // consumed only after signature verification succeeds, so a single captured
+  // challenge would otherwise replay into unlimited verification CPU.
+  const limit = rateLimit(
+    `authcomplete:${clientKey(ctx.req.raw.headers)}`,
+    AUTH_COMPLETE_LIMIT,
+    AUTH_COMPLETE_WINDOW_SECONDS,
+  )
+  if (!limit.allowed) {
+    return ctx.json({ error: 'Too many requests' }, 429)
+  }
+
   try {
     const supabase = ctx.get("supabase")
     const { credential, challenge } = ctx.req.valid('json')

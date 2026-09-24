@@ -246,8 +246,18 @@ object RecentBrowserPagesManager {
     /**
      * Load recent pages from disk asynchronously.
      * If no data exists, bootstraps from existing browser history.
+     *
+     * Internal rather than private so tests can drive the real load path against a hermetic file,
+     * as [RecentFilesManager]'s already is; production still reaches it only from `init`.
+     *
+     * Known limitation, tracked the same way [RecentFilesManager.loadAsync] tracks it: the read
+     * and decode run before the flow update, so a `removePage` or `clearAll` landing inside that
+     * window (milliseconds, at launch) is applied first, and the merge then reapplies the stale
+     * decoded pages until the next real mutation. Closing the window would mean doing the file
+     * read inside the flow update, and a slow disk would then stall every visit and removal for
+     * the whole read - the worse trade, the same one the sibling documents for its lock.
      */
-    private suspend fun loadAsync() =
+    internal suspend fun loadAsync() =
         withContext(Dispatchers.IO) {
             try {
                 settingsFile.parentFile?.mkdirs()

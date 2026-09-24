@@ -125,6 +125,9 @@ class WorkspaceTemplateTest {
             PredefinedWorkspaces.TERMINAL_BROWSER_ID,
             PredefinedWorkspaces.DUAL_TERMINAL_ID,
             PredefinedWorkspaces.BROWSER_ONLY_ID,
+            PredefinedWorkspaces.DATA_SCIENCE_STUDIO_ID,
+            PredefinedWorkspaces.ACADEMIC_RESEARCH_ID,
+            PredefinedWorkspaces.DEVOPS_INFRA_ID,
         ).forEach { id ->
             assertTrue(id in PredefinedWorkspaces.allIds, "$id is a constant for a layout nobody ships")
         }
@@ -156,7 +159,12 @@ class WorkspaceTemplateTest {
         val optional = PredefinedWorkspaces.allWorkspaces.filter { it.projectIsOptional() }.map { it.id }
 
         assertEquals(
-            setOf(PredefinedWorkspaces.TERMINAL_BROWSER_ID, PredefinedWorkspaces.DUAL_TERMINAL_ID),
+            setOf(
+                PredefinedWorkspaces.TERMINAL_BROWSER_ID,
+                PredefinedWorkspaces.DUAL_TERMINAL_ID,
+                // Every pane only opens a shell in the project (#1143).
+                PredefinedWorkspaces.DEVOPS_INFRA_ID,
+            ),
             optional.toSet(),
         )
     }
@@ -367,6 +375,9 @@ class WorkspaceTemplateTest {
                 "workspace-terminal-browser",
                 "workspace-dual-terminal",
                 "workspace-browser",
+                "workspace-data-science-studio",
+                "workspace-academic-research",
+                "workspace-devops-infra",
             )
     }
 }

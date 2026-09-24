@@ -20,12 +20,12 @@ import java.io.File
  * helper shape introduced for the Secret Service in PR #505.
  *
  * [openFile] and [revealInFolder] get a second, narrower guard on top: [FileSystemUtils.openFile]
- * (reached through [DownloadDataProvider.openFile]) shells out to the OS's own "open with default
- * application" command (`open`/`start`/`xdg-open`) for *any* path that exists on disk - it does
- * not check that the path has anything to do with a download. Before this bridge required a
- * caller identity at all, that was an unauthenticated, unconfined "launch this file" primitive:
- * for an executable, `start "" file.exe` and a double-click are the same action, and this path
- * provides no executable-consent step. Confining both calls to a path this provider's own
+ * (reached through [DownloadDataProvider.openFile]) hands the path to the OS's own "open with
+ * default application" launcher (`open`/`explorer.exe`/`xdg-open`) for *any* path that exists on
+ * disk - it does not check that the path has anything to do with a download. Before this bridge
+ * required a caller identity at all, that was an unauthenticated, unconfined "launch this file"
+ * primitive: for an executable, `explorer.exe file.exe` and a double-click are the same action,
+ * and this path provides no executable-consent step. Confining both calls to a path this provider's own
  * [DownloadDataProvider.downloads] list currently tracks - canonical-path compared, so a symlink
  * or a `..` cannot walk outside it - turns "open any file that exists" back into "open a file
  * BOSS itself downloaded", which is the only thing either RPC's own name promises to do.

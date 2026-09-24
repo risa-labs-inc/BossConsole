@@ -1,10 +1,13 @@
 name: 🔨 Build & Test
 
 on:
+  # PRs validate dev/develop integration; main pushes validate the merged tree.
+  # Do not add dev here: dev -> main would enqueue the same macOS work twice.
+  # For a branch without a PR, use workflow_dispatch. See docs/ci-validation.md.
   push:
-    branches: [ main, develop, dev ]
+    branches: [main]
   pull_request:
-    branches: [ main, dev ]
+    branches: [main, dev, develop]
   workflow_dispatch:
 
 # Only superseded PR validation is disposable. Push/manual runs get unique
@@ -47,6 +50,13 @@ jobs:
 
       - name: Headless CLI launcher tests
         run: bash scripts/test/test-headless-cli.sh
+
+      - name: 🧪 boss.bat :urlencode injection regression (#1057)
+        # The shipped Windows CLI shim interpolated the CLI argument into a
+        # single-quoted PowerShell string; one quote in any argument executed
+        # attacker PowerShell. Source-shape checks run everywhere; the live
+        # probes need cmd.exe and skip where it is absent.
+        run: pwsh -NoProfile -File scripts/test/test-boss-bat-urlencode.ps1
 
       - name: 🧪 Release publish — TUS slice tests
         # Guards the byte-accurate chunk slicing in the release publish path
@@ -214,7 +224,9 @@ jobs:
     needs: version-check
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # macOS runs on PRs into main, pushes to main and manual runs. PRs that
+        # don't target main skip macOS: hosted macOS runs few jobs at once.
+        os: ${{ fromJSON(github.event_name == 'pull_request' && github.base_ref != 'main' && '["ubuntu-latest", "windows-latest"]' || '["ubuntu-latest", "macos-latest", "windows-latest"]') }}
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -402,6 +414,31 @@ jobs:
           # Pinning skips that lookup. Bump as needed.
           version: 2.109.0
 
+      # `supabase db start` pulls postgres plus the realtime, storage and auth init images, and
+      # `supabase test db` pulls pg_prove. `supabase/setup-cli` pins the CLI to ghcr.io
+      # (SUPABASE_INTERNAL_IMAGE_REGISTRY), and when GitHub's shared runner pool is busy ghcr.io
+      # refuses those pulls with `toomanyrequests` (a pool-wide limit, so signing in doesn't help,
+      # see #1583 / #1585). Pull the same images from ECR Public first and tag them with the
+      # ghcr.io names the CLI resolves. The CLI checks the local image cache before pulling, so it
+      # never touches ghcr.io. Needs no secrets, so fork PRs get it too.
+      # The tags below match the images pinned by CLI 2.109.0 and the services enabled in
+      # supabase/config.toml (db major_version, realtime, storage, auth). Revisit the list when
+      # either changes. If it drifts, or ECR Public is down, the CLI pulls whatever is missing
+      # itself, which is no worse than before.
+      - name: 📦 Pre-pull Supabase images from ECR Public
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          for img in postgres:17.6.1.140 realtime:v2.112.1 storage-api:v1.61.7 gotrue:v2.192.0 pg_prove:3.36; do
+            src="public.ecr.aws/supabase/$img"
+            for attempt in 1 2 3 4; do
+              if docker pull --quiet "$src"; then break; fi
+              if [ "$attempt" = 4 ]; then echo "::warning::could not pull $src; the CLI will fall back to ghcr.io"; continue 2; fi
+              sleep $((attempt * 15))
+            done
+            docker tag "$src" "ghcr.io/supabase/$img"
+          done
+
       - name: 🚀 Start local Postgres (applies migrations)
         run: supabase db start
 
@@ -421,6 +458,9 @@ jobs:
       - name: Verify BOSS AI admission across PostgreSQL sessions
         timeout-minutes: 2
         run: python3 scripts/test/test-boss-ai-concurrency.py
+      - name: Verify BOSS AI ticket single-spend across PostgreSQL sessions
+        timeout-minutes: 2
+        run: python3 scripts/test/test-boss-ai-ticket-concurrency.py
 
       - name: 🧹 Stop Supabase
         if: always()

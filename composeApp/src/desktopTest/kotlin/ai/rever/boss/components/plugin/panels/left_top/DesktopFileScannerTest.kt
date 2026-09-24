@@ -1,6 +1,7 @@
 package ai.rever.boss.components.plugin.panels.left_top
 
 import kotlinx.coroutines.runBlocking
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import java.io.File
 import java.nio.file.Files
@@ -68,7 +69,12 @@ class DesktopFileScannerTest {
         File(real, "file.txt").writeText("hi")
         val linkDir = tempDir()
         val link = File(linkDir, "link")
-        Files.createSymbolicLink(link.toPath(), real.toPath())
+        val canCreateSymlinks =
+            runCatching { Files.createSymbolicLink(link.toPath(), real.toPath()) }.isSuccess
+        assumeTrue(
+            canCreateSymlinks,
+            "creating a symlink is not permitted on this machine (e.g. Windows without privilege)",
+        )
         assertTrue(directoryHasChildren(link.absolutePath))
     }
 

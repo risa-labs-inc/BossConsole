@@ -38,6 +38,11 @@ enum class SettingsSection(
     val description: String,
     val icon: ImageVector,
 ) {
+    GETTING_STARTED(
+        displayName = "Getting Started",
+        description = "Reopen the plugin setup wizard",
+        icon = Icons.Outlined.PlayArrow,
+    ),
     FLUCK(
         displayName = "Browser",
         description = "Configure browser behavior, user agent, and link handling",

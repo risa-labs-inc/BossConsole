@@ -722,6 +722,10 @@ private fun SettingsContentArea(
                     ThemeSettings()
                 }
 
+                SettingsSection.GETTING_STARTED -> {
+                    GettingStartedSettings()
+                }
+
                 else -> {}
             }
         }

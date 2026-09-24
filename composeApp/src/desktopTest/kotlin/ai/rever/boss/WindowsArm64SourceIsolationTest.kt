@@ -50,11 +50,15 @@ class WindowsArm64SourceIsolationTest {
         listOf(
             "/kernel/",
             "/plugin/remote/",
+            "/plugin/OopPluginDisableLifecycleTest.kt",
+            "/plugin/OutOfProcessPluginSpawnerLifecycleTest.kt",
+            "/plugin/OutOfProcessSpawnerEpochFencingTest.kt",
             "/plugin/IpcCompatibilityTest.kt",
             "/plugin/PluginStoreSetupIpcGateTest.kt",
             "/plugin/PluginStateDeltaTest.kt",
             "/plugin/PluginProcessIdTest.kt",
             "/run/DesktopRunnerTerminalServiceTest.kt",
+            "/git/GitRunInTerminalQuotingTest.kt",
         )
 
     /** Excluded for reasons unrelated to the platform, so not part of the mirror. */

@@ -1,5 +1,6 @@
 package ai.rever.boss.updater
 
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import java.nio.file.Files
@@ -62,7 +63,12 @@ class DiscardDownloadContainmentTest {
         val dir = createRestrictedDir(defaultStagingDir())
         val link = File(dir, "link-to-victim.dmg")
         link.delete()
-        Files.createSymbolicLink(link.toPath(), victim.toPath())
+        val canCreateSymlinks =
+            runCatching { Files.createSymbolicLink(link.toPath(), victim.toPath()) }.isSuccess
+        assumeTrue(
+            canCreateSymlinks,
+            "creating a symlink is not permitted on this machine (e.g. Windows without privilege)",
+        )
 
         service.discardDownload(link.absolutePath)
 

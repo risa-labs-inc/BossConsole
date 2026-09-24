@@ -57,6 +57,9 @@ object PredefinedWorkspaces {
     const val OPENCODE_ID = "workspace-opencode"
     const val TERMINAL_BROWSER_ID = "workspace-terminal-browser"
     const val DUAL_TERMINAL_ID = "workspace-dual-terminal"
+    const val DATA_SCIENCE_STUDIO_ID = "workspace-data-science-studio"
+    const val ACADEMIC_RESEARCH_ID = "workspace-academic-research"
+    const val DEVOPS_INFRA_ID = "workspace-devops-infra"
 
     /**
      * Every id BOSS ships a layout for.
@@ -403,6 +406,179 @@ object PredefinedWorkspaces {
                                     ),
                                 ),
                         ),
+                    ),
+            ),
+            // Data Science Studio: Docs (left) + Editor (top right) + Terminal (bottom right)
+            LayoutWorkspace(
+                id = DATA_SCIENCE_STUDIO_ID,
+                name = "Data Science Studio",
+                description = "Python Documentation + Code Editor + Python Terminal",
+                layout =
+                    VerticalSplit(
+                        left =
+                            SinglePanel(
+                                PanelConfig(
+                                    id = generatePanelId(),
+                                    tabs =
+                                        listOf(
+                                            TabConfig(
+                                                type = "browser",
+                                                title = "Python Documentation",
+                                                url = "https://docs.python.org/3/",
+                                            ),
+                                        ),
+                                ),
+                            ),
+                        right =
+                            HorizontalSplit(
+                                top =
+                                    SinglePanel(
+                                        PanelConfig(
+                                            id = generatePanelId(),
+                                            tabs =
+                                                listOf(
+                                                    TabConfig(
+                                                        type = "editor",
+                                                        title = "main.py",
+                                                        filePath = "{projectPath}/main.py",
+                                                    ),
+                                                ),
+                                        ),
+                                    ),
+                                bottom =
+                                    SinglePanel(
+                                        PanelConfig(
+                                            id = generatePanelId(),
+                                            tabs =
+                                                listOf(
+                                                    TabConfig(
+                                                        type = "terminal",
+                                                        title = "Python Terminal",
+                                                        initialCommand = "cd {projectPath}",
+                                                        workingDirectory = "{projectPath}",
+                                                    ),
+                                                ),
+                                        ),
+                                    ),
+                            ),
+                    ),
+            ),
+            // Academic & Literature Research: Reference Browser (left) + Notes Editor (center) + Terminal (right)
+            LayoutWorkspace(
+                id = ACADEMIC_RESEARCH_ID,
+                name = "Academic & Literature Research",
+                description = "arXiv Reference Browser + Markdown Notes + Terminal",
+                layout =
+                    VerticalSplit(
+                        left =
+                            SinglePanel(
+                                PanelConfig(
+                                    id = generatePanelId(),
+                                    tabs =
+                                        listOf(
+                                            TabConfig(
+                                                type = "browser",
+                                                title = "arXiv Reference",
+                                                url = "https://arxiv.org",
+                                            ),
+                                        ),
+                                ),
+                            ),
+                        right =
+                            VerticalSplit(
+                                left =
+                                    SinglePanel(
+                                        PanelConfig(
+                                            id = generatePanelId(),
+                                            tabs =
+                                                listOf(
+                                                    TabConfig(
+                                                        type = "editor",
+                                                        title = "notes.md",
+                                                        filePath = "{projectPath}/notes.md",
+                                                    ),
+                                                ),
+                                        ),
+                                    ),
+                                right =
+                                    SinglePanel(
+                                        PanelConfig(
+                                            id = generatePanelId(),
+                                            tabs =
+                                                listOf(
+                                                    TabConfig(
+                                                        type = "terminal",
+                                                        title = "Terminal",
+                                                        initialCommand = "cd {projectPath}",
+                                                        workingDirectory = "{projectPath}",
+                                                    ),
+                                                ),
+                                        ),
+                                    ),
+                            ),
+                    ),
+            ),
+            // DevOps & Infrastructure: Terminals (left top/bottom) + Monitor tabs (right)
+            LayoutWorkspace(
+                id = DEVOPS_INFRA_ID,
+                name = "DevOps & Infrastructure",
+                description = "Split Terminals (Tail Logs & Shell) + Performance & Process Monitor",
+                layout =
+                    VerticalSplit(
+                        left =
+                            HorizontalSplit(
+                                top =
+                                    SinglePanel(
+                                        PanelConfig(
+                                            id = generatePanelId(),
+                                            tabs =
+                                                listOf(
+                                                    TabConfig(
+                                                        type = "terminal",
+                                                        title = "Tail Logs",
+                                                        initialCommand = "cd {projectPath}",
+                                                        workingDirectory = "{projectPath}",
+                                                    ),
+                                                ),
+                                        ),
+                                    ),
+                                bottom =
+                                    SinglePanel(
+                                        PanelConfig(
+                                            id = generatePanelId(),
+                                            tabs =
+                                                listOf(
+                                                    TabConfig(
+                                                        type = "terminal",
+                                                        title = "Active Shell",
+                                                        initialCommand = "cd {projectPath}",
+                                                        workingDirectory = "{projectPath}",
+                                                    ),
+                                                ),
+                                        ),
+                                    ),
+                            ),
+                        right =
+                            SinglePanel(
+                                PanelConfig(
+                                    id = generatePanelId(),
+                                    tabs =
+                                        listOf(
+                                            TabConfig(
+                                                type = "terminal",
+                                                title = "Host Performance Monitor",
+                                                initialCommand = "cd {projectPath}",
+                                                workingDirectory = "{projectPath}",
+                                            ),
+                                            TabConfig(
+                                                type = "terminal",
+                                                title = "Process Inspector",
+                                                initialCommand = "cd {projectPath}",
+                                                workingDirectory = "{projectPath}",
+                                            ),
+                                        ),
+                                ),
+                            ),
                     ),
             ),
         )

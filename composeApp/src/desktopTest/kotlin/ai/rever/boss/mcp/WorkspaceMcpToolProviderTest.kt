@@ -8,6 +8,7 @@ import ai.rever.boss.components.workspaces.LayoutWorkspace
 import ai.rever.boss.components.workspaces.PredefinedWorkspaces
 import ai.rever.boss.components.workspaces.WorkspaceFileManager
 import ai.rever.boss.components.workspaces.WorkspaceFileManagerCommon
+import ai.rever.boss.components.workspaces.WorkspaceSerializer
 import ai.rever.boss.components.workspaces.extractCurrentWorkspace
 import ai.rever.boss.plugin.api.McpToolResult
 import ai.rever.boss.plugin.api.TabComponentWithUI
@@ -59,7 +60,14 @@ class WorkspaceMcpToolProviderTest {
         WorkspaceMcpToolProvider.fileManagerProvider = { fileManager }
         WorkspaceMcpToolProvider.windowCreator = {
             windowCreatorCalls++
-            "test-window-window-1"
+            // A real window registers its SplitViewState as it composes; the tools await that.
+            "test-window-window-1".also { id ->
+                if (!SplitViewStateRegistry.isRegistered(id)) {
+                    val state = SplitViewState(stubTabRegistry, id)
+                    createdSplitViewStates.add(state)
+                    SplitViewStateRegistry.register(id, state)
+                }
+            }
         }
         windowCreatorCalls = 0
         WorkspaceMcpToolProvider.splitViewStateResolver = { null }
@@ -288,6 +296,33 @@ class WorkspaceMcpToolProviderTest {
         }
 
     @Test
+    fun `open_workspace is an error, not a silent success, when the window never registers its UI state`() =
+        runBlocking {
+            // A window creator that returns an id nothing ever registers: the cold-start shape
+            // where the window failed to come up within the wait.
+            WorkspaceMcpToolProvider.windowCreator = { "never-registers" }
+            val core = createTestCore()
+
+            val result = core.invoke("open_workspace", """{"workspaceId":"${PredefinedWorkspaces.DUAL_TERMINAL_ID}"}""")
+            assertTrue(result.isError, "nothing was applied, so the call must not report success: ${result.text}")
+            assertTrue(result.text.contains("did not register its UI state"), result.text)
+            assertTrue(result.text.contains(PredefinedWorkspaces.DUAL_TERMINAL_ID), result.text)
+            assertFalse(result.text.contains("file was saved"), "nothing was created for a shipped layout")
+        }
+
+    @Test
+    fun `open_workspace with createIfAbsent says the file was saved when the window never registers`() =
+        runBlocking {
+            WorkspaceMcpToolProvider.windowCreator = { "never-registers" }
+            val core = createTestCore()
+
+            val result = core.invoke("open_workspace", """{"workspaceId":"saved-not-opened","createIfAbsent":true}""")
+            assertTrue(result.isError, result.text)
+            assertTrue(result.text.contains("The new workspace file was saved"), result.text)
+            assertNotNull(fileManager.loadWorkspace(WorkspaceFileManagerCommon.fileNameForId("saved-not-opened")))
+        }
+
+    @Test
     fun `open_workspace with missing file returns clear error`() =
         runBlocking {
             val core = createTestCore()
@@ -297,6 +332,120 @@ class WorkspaceMcpToolProviderTest {
             val result = core.invoke("open_workspace", args)
             assertTrue(result.isError)
             assertTrue(result.text.contains("Workspace file not found"))
+        }
+
+    @Test
+    fun `open_workspace refuses a workspacePath outside the workspaces directory`() =
+        runBlocking {
+            val core = createTestCore()
+            // A well-formed, readable Space file OUTSIDE the workspace store: had the refusal
+            // come after the read, this file would parse cleanly and be applied. Every payload
+            // below resolves outside the store and must be refused with the containment
+            // message, before the file is probed, read, or parsed.
+            val outsideDir = Files.createTempDirectory("ws-path-outside").toFile()
+            tempDirs.add(outsideDir)
+            val outsideSpaceFile = File(outsideDir, "outside-space.json")
+            outsideSpaceFile.writeText(
+                WorkspaceSerializer.serialize(savedSpaceFixture("outside-space", "/work/outside")),
+            )
+            val escapeLink = File(workspaceDir, "escape-link.json")
+            Files.createSymbolicLink(escapeLink.toPath(), outsideSpaceFile.toPath())
+
+            val payloads =
+                listOf(
+                    // Any readable file on disk, by absolute path.
+                    "/etc/passwd",
+                    // A valid Space file that lives elsewhere.
+                    outsideSpaceFile.absolutePath.replace('\\', '/'),
+                    // `..` escaping the store from inside it.
+                    File(workspaceDir, "../../etc/passwd").absolutePath.replace('\\', '/'),
+                    // A symlink inside the store pointing out.
+                    escapeLink.absolutePath.replace('\\', '/'),
+                    // A missing file outside the store: refused before the existence probe
+                    // ("Workspace file not found"), because containment runs first.
+                    "/no/such/store/missing-space.json",
+                    // The store directory itself is not a Space file inside the store.
+                    workspaceDir.absolutePath.replace('\\', '/'),
+                )
+            for (payload in payloads) {
+                val result = core.invoke("open_workspace", """{"workspacePath":"$payload"}""")
+                assertTrue(result.isError, "expected a refusal for $payload: ${result.text}")
+                assertTrue(result.text.contains("workspaces directory"), result.text)
+                // The containment refusal is its own message, not the startup-command
+                // refusal (the file was never parsed) and not the not-found probe.
+                assertFalse(result.text.contains("startup commands"), result.text)
+                assertFalse(result.text.contains("not found"), result.text)
+            }
+            // Refused before any window was resolved or created.
+            assertEquals(0, windowCreatorCalls)
+        }
+
+    @Test
+    fun `open_workspace applies a Space file inside the workspaces directory`() =
+        runBlocking {
+            val windowId = "ws-path-in-store-window"
+            val state = SplitViewState(stubTabRegistry, windowId)
+            createdSplitViewStates.add(state)
+            SplitViewStateRegistry.register(windowId, state)
+
+            val project = Files.createTempDirectory("ws-path-in-store-project").toFile()
+            tempDirs.add(project)
+            val space = savedSpaceFixture("in-store-space", project.canonicalPath)
+            fileManager.saveWorkspace(space)
+            val onDisk = File(workspaceDir, WorkspaceFileManagerCommon.fileNameForId(space.id))
+            assertTrue(onDisk.exists())
+
+            // `..` stays legal while it resolves inside the store; the canonicalised file
+            // the gate returned is the file that loads.
+            val viaDotDot = File(File(workspaceDir, "nested"), "../${onDisk.name}")
+            val pathArg = viaDotDot.absolutePath.replace('\\', '/')
+            val args = """{"workspacePath":"$pathArg","windowId":"$windowId"}"""
+            val result = createTestCore().invoke("open_workspace", args)
+            assertFalse(result.isError, result.text)
+
+            val json = Json.parseToJsonElement(result.text).jsonObject
+            assertTrue(json["success"]?.jsonPrimitive?.booleanOrNull == true)
+            assertEquals("in-store-space", json["workspaceId"]?.jsonPrimitive?.content)
+            assertEquals(project.canonicalPath, json["projectPath"]?.jsonPrimitive?.content)
+
+            // Not merely parsed - applied as the window's live Space.
+            val onScreen = extractCurrentWorkspace(state, projectPath = project.canonicalPath)
+            assertEquals(1, (onScreen.layout as SplitConfig.SinglePanel).panel.tabs.size)
+        }
+
+    @Test
+    fun `workspacePath containment decides by canonical location`() =
+        runBlocking {
+            val store = workspaceDir.absolutePath
+            val inStore = File(workspaceDir, "a-space.json")
+            val contained = checkWorkspacePathContainment(inStore.absolutePath, store)
+            assertNull(contained.error)
+            assertEquals(inStore.canonicalPath, contained.canonicalPath)
+
+            // `..` that stays inside the store is contained; `..` that escapes is not.
+            val dotted = File(File(workspaceDir, "sub"), "../a-space.json")
+            assertEquals(
+                inStore.canonicalPath,
+                checkWorkspacePathContainment(dotted.absolutePath, store).canonicalPath,
+            )
+            val escaped =
+                checkWorkspacePathContainment(
+                    File(workspaceDir, "../../etc/passwd").absolutePath,
+                    store,
+                )
+            assertNull(escaped.canonicalPath)
+            assertTrue(escaped.error!!.contains("workspaces directory"))
+
+            // The store directory itself, a sibling named to share its prefix, and a
+            // symlink out of the store are all refused: containment is component-wise.
+            assertNull(checkWorkspacePathContainment(store, store).canonicalPath)
+            val sibling = File(workspaceDir.parentFile, workspaceDir.name + "-evil/space.json")
+            assertNull(checkWorkspacePathContainment(sibling.absolutePath, store).canonicalPath)
+            val outside = Files.createTempDirectory("ws-containment-outside").toFile()
+            tempDirs.add(outside)
+            val link = File(workspaceDir, "link.json")
+            Files.createSymbolicLink(link.toPath(), outside.toPath())
+            assertNull(checkWorkspacePathContainment(link.absolutePath, store).canonicalPath)
         }
 
     @Test
@@ -496,7 +645,10 @@ class WorkspaceMcpToolProviderTest {
     fun `open_terminal rejects command with newlines or control characters`() =
         runBlocking {
             val core = createTestCore()
-            val args = """{"command":"echo hello\nrm -rf /"}"""
+            // A benign second line: a destructive one (`rm -rf /`) is now stopped earlier, at the
+            // approval gate, even under this provider-wide ALLOW (#1577), so it would no longer
+            // reach the tool's own newline check that this test is about.
+            val args = """{"command":"echo hello\necho world"}"""
             val result = core.invoke("open_terminal", args)
             assertTrue(result.isError)
             assertTrue(result.text.contains("security check failed"))
@@ -531,7 +683,8 @@ class WorkspaceMcpToolProviderTest {
             assertTrue(traversalResult.isError)
             assertTrue(traversalResult.text.contains("Refusing to open"), traversalResult.text)
 
-            // workspacePath is READ, so `..` is legal (it canonicalises); a NUL byte is not.
+            // A NUL byte never reaches containment - the path cannot even be canonicalised -
+            // and containment separately refuses paths outside the workspaces directory.
             val badFileArgs = """{"workspacePath":"/etc/shadow\u0000.json"}"""
             val fileResult = core.invoke("open_workspace", badFileArgs)
             assertTrue(fileResult.isError)
@@ -915,11 +1068,13 @@ class WorkspaceMcpToolProviderTest {
             assertFalse(createResult.isError, createResult.text)
             assertNotNull(fileManager.loadWorkspace(WorkspaceFileManagerCommon.fileNameForId("disposable-env")))
 
-            // Nothing is released and nothing is deleted, so the tool says so instead of
-            // reporting a success that would leave the agent thinking the space is gone.
+            // The open above applied the Space to the window, so closing releases it there; the
+            // reply says exactly that and that no file was deleted.
             val closeResult = core.invoke("close_workspace", """{"workspaceId":"disposable-env"}""")
-            assertTrue(closeResult.isError, closeResult.text)
-            assertTrue(closeResult.text.contains("nothing was closed"), closeResult.text)
+            assertFalse(closeResult.isError, closeResult.text)
+            val closeJson = Json.parseToJsonElement(closeResult.text).jsonObject
+            assertTrue(closeJson["releasedHere"]?.jsonPrimitive?.booleanOrNull == true, closeResult.text)
+            assertTrue(closeJson["fileDeleted"]?.jsonPrimitive?.booleanOrNull == false, closeResult.text)
 
             // A user's saved Space whose id merely contains "disposable" survives.
             assertNotNull(fileManager.loadWorkspace(WorkspaceFileManagerCommon.fileNameForId("disposable-env")))

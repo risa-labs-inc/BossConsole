@@ -78,14 +78,18 @@ export async function deleteRating(
 }
 
 /**
- * Get all ratings for a plugin with pagination
+ * Get all ratings for a plugin with pagination.
+ *
+ * Deliberately selects no user_id and returns no rater identity: the ratings route is
+ * unauthenticated, and the raw auth.users UUID it used to return let any caller enumerate
+ * rater identities page by page (issue #915).
  */
 export async function getPluginRatings(
   supabase: SupabaseClient,
   pluginUuid: string,
   page: number = 1,
   pageSize: number = 20
-): Promise<{ ratings: Array<{ userId: string, rating: number, review: string, createdAt: string }>, totalCount: number }> {
+): Promise<{ ratings: Array<{ rating: number, review: string, createdAt: string }>, totalCount: number }> {
   const offset = (page - 1) * pageSize
 
   // Get total count
@@ -102,7 +106,7 @@ export async function getPluginRatings(
   // Get ratings
   const { data, error } = await supabase
     .from('plugin_ratings')
-    .select('user_id, rating, review, created_at')
+    .select('rating, review, created_at')
     .eq('plugin_id', pluginUuid)
     .order('created_at', { ascending: false })
     .range(offset, offset + pageSize - 1)
@@ -114,7 +118,6 @@ export async function getPluginRatings(
 
   return {
     ratings: (data || []).map(r => ({
-      userId: r.user_id,
       rating: r.rating,
       review: r.review,
       createdAt: r.created_at

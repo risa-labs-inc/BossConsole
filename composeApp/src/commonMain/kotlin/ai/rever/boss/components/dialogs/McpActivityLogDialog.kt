@@ -62,6 +62,8 @@ fun McpActivityLogDialog(
     totalCalls: Long,
     totalErrors: Long,
     ledgerPath: String? = null,
+    pendingWriteIds: Set<String> = emptySet(),
+    droppedWrites: Long = 0,
     onDismiss: () -> Unit,
 ) {
     val windowSize = LocalWindowInfo.current.containerSize
@@ -132,6 +134,19 @@ fun McpActivityLogDialog(
                             color = colors.textSecondary,
                         )
                     }
+                    // A dropped audit record is the one thing this dialog exists to make
+                    // loud: it never reached the ledger file, so the alert colour, not a
+                    // quiet counter folded into the totals.
+                    if (droppedWrites > 0) {
+                        Text(
+                            text =
+                                "$droppedWrites record" + (if (droppedWrites != 1L) "s" else "") +
+                                    " never reached the ledger file - the write queue overflowed " +
+                                    "or a disk write failed (see host log).",
+                            fontSize = 11.sp,
+                            color = colors.alert,
+                        )
+                    }
                     Spacer(modifier = Modifier.height(16.dp))
 
                     if (operations.isEmpty()) {
@@ -147,7 +162,12 @@ fun McpActivityLogDialog(
                                     .fillMaxWidth(),
                         ) {
                             operations.forEach { op ->
-                                McpOperationRow(op, timeFormat, colors)
+                                McpOperationRow(
+                                    op,
+                                    timeFormat,
+                                    colors,
+                                    persistenceState = op.persistenceState(ledgerPath != null, pendingWriteIds),
+                                )
                             }
                         }
                     }
@@ -171,10 +191,11 @@ private fun McpOperationRow(
     op: McpOperationRecord,
     timeFormat: SimpleDateFormat,
     colors: BossColorScheme,
+    persistenceState: McpPersistenceState? = null,
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
         McpOperationHeaderRow(op, timeFormat, colors)
-        McpOperationMetaRow(op, colors)
+        McpOperationMetaRow(op, colors, persistenceState)
         op.errorSnippet?.let { snippet ->
             Text(
                 text = snippet,
@@ -233,8 +254,22 @@ private fun McpOperationHeaderRow(
 private fun McpOperationMetaRow(
     op: McpOperationRecord,
     colors: BossColorScheme,
+    persistenceState: McpPersistenceState? = null,
 ) {
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        if (persistenceState != null) {
+            Text(
+                text =
+                    when (persistenceState) {
+                        McpPersistenceState.QUEUED -> "queued for write"
+                        McpPersistenceState.NOT_PERSISTED -> "not persisted"
+                    },
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Medium,
+                color =
+                    if (persistenceState == McpPersistenceState.NOT_PERSISTED) colors.alert else colors.textSecondary,
+            )
+        }
         Text(
             text = op.providerId,
             fontSize = 11.sp,
@@ -270,6 +305,35 @@ private fun McpOperationMetaRow(
  */
 internal fun McpApprovalDisposition.readable(): String =
     name.lowercase(Locale.ROOT).split("_").joinToString(" ") { it.replaceFirstChar(Char::uppercase) }
+
+/**
+ * Whether a record shown in the dialog is actually on disk yet. [ai.rever.boss.mcp.McpOperationLedger] assigns
+ * the chain hash on its writer thread, so a draft can sit in `recentOperations` with no hash:
+ * either it is still queued behind the writer, or the write failed/was dropped and no hash
+ * will ever arrive - the two states an operator needs told apart.
+ */
+internal enum class McpPersistenceState {
+    /** Handed to the writer, not yet confirmed on disk. */
+    QUEUED,
+
+    /** Refused by the queue or lost to a failed write - counted in the ledger's droppedWrites. */
+    NOT_PERSISTED,
+}
+
+/**
+ * The persistence state a row should render, or null to render nothing: a record carrying a
+ * hash is on disk (the default, quiet case), and a ledger without a configured file has no
+ * persistence to report at all.
+ */
+internal fun McpOperationRecord.persistenceState(
+    ledgerConfigured: Boolean,
+    pendingWriteIds: Set<String>,
+): McpPersistenceState? =
+    when {
+        !ledgerConfigured || hash != null -> null
+        id in pendingWriteIds -> McpPersistenceState.QUEUED
+        else -> McpPersistenceState.NOT_PERSISTED
+    }
 
 /**
  * How an unsuccessful call is summarized - split from a flat "N errors"/"N failed" count because

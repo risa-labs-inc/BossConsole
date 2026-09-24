@@ -42,9 +42,12 @@ Deno.test("rateLimit - distinct clients get distinct budgets", () => {
   assertEquals(rateLimit("authchallenge:2.2.2.2", 20, 3600, 1_000_000).allowed, true)
 })
 
-Deno.test("clientKey - prefers the first forwarded-for hop, falls back to connecting headers", () => {
+Deno.test("clientKey - prefers the gateway-appended hop, falls back to connecting headers", () => {
+  // Leftmost XFF is the caller's own claim: writing a victim's address there would spend the
+  // victim's rate budget from anywhere (a targeted lockout against /auth/complete). The
+  // rightmost entry is the one the gateway appended for the accepted connection.
   const forwarded = new Headers({ "x-forwarded-for": "3.3.3.3, 4.4.4.4" })
-  assertEquals(clientKey(forwarded), "3.3.3.3")
+  assertEquals(clientKey(forwarded), "4.4.4.4")
 
   const cf = new Headers({ "cf-connecting-ip": "5.5.5.5" })
   assertEquals(clientKey(cf), "5.5.5.5")
@@ -77,6 +80,14 @@ Deno.test("rateLimit - an attacker spraying distinct keys is bounded by MAX_KEYS
   assertEquals(rateLimit("authchallenge:11.11.11.11", 60, 3600, base + 20_000).allowed, true)
   // And the same fresh key is still within its own budget on the next call.
   assertEquals(rateLimit("authchallenge:11.11.11.11", 60, 3600, base + 20_001).allowed, true)
+})
+
+Deno.test("clientKey - a caller-supplied forwarded prefix cannot key someone else's bucket", () => {
+  // Without connecting headers the rightmost XFF entry stands - and it is the gateway's, so a
+  // spoofed prefix only adds decoys to the caller's left, never rekeys the bucket.
+  assertEquals(clientKey(new Headers({
+    "x-forwarded-for": "9.9.9.9, 8.8.8.8, 7.7.7.7",
+  })), "7.7.7.7")
 })
 
 Deno.test("clientKey - connecting identity wins over a spoofed forwarded prefix", () => {

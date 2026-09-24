@@ -1,6 +1,10 @@
 package ai.rever.boss.crash
 
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -28,7 +32,13 @@ class RenderCrashPolicyTest {
         clock: FakeClock,
         maxFailures: Int = RenderCrashPolicy.DEFAULT_MAX_FAILURES,
         windowMillis: Long = RenderCrashPolicy.DEFAULT_WINDOW_MILLIS,
-    ) = RenderCrashPolicy(maxFailures = maxFailures, windowMillis = windowMillis, now = { clock.now })
+        incidentGapMillis: Long = RenderCrashPolicy.DEFAULT_INCIDENT_GAP_MILLIS,
+    ) = RenderCrashPolicy(
+        maxFailures = maxFailures,
+        windowMillis = windowMillis,
+        incidentGapMillis = incidentGapMillis,
+        now = { clock.now },
+    )
 
     @Test
     fun `a burst up to the limit is contained`() {
@@ -62,7 +72,7 @@ class RenderCrashPolicyTest {
             policy.recordFailureAndShouldContain(),
             "an app that hits one bad frame long after the last one is healthy, not looping",
         )
-        assertTrue(policy.recentFailureCount() == 1, "stale failures should have been discarded")
+        assertEquals(1, policy.recentFailureCount(), "stale failures should have been discarded")
     }
 
     @Test
@@ -112,7 +122,7 @@ class RenderCrashPolicyTest {
     @Test
     fun `settling refunds expire once per continuous burst`() {
         val clock = FakeClock()
-        val policy = policy(clock, windowMillis = 100L)
+        val policy = policy(clock, windowMillis = 100L, incidentGapMillis = 100L)
 
         assertTrue(policy.recordFailureAndShouldContain())
         assertTrue(policy.noteSettlingFault(), "the first queued fault gets settle room")
@@ -123,13 +133,13 @@ class RenderCrashPolicyTest {
         assertTrue(policy.recordFailureAndShouldContain())
 
         assertFalse(policy.noteSettlingFault(), "settling must not refund one continuous burst forever")
-        assertTrue(policy.recentFailureCount() == 1, "the expired settling fault must stay counted")
+        assertEquals(1, policy.recentFailureCount(), "the expired settling fault must stay counted")
     }
 
     @Test
     fun `settling after a quiet window receives a fresh bounded allowance`() {
         val clock = FakeClock()
-        val policy = policy(clock, windowMillis = 100L)
+        val policy = policy(clock, windowMillis = 100L, incidentGapMillis = 100L)
 
         assertTrue(policy.recordFailureAndShouldContain())
         assertTrue(policy.noteSettlingFault())
@@ -137,7 +147,79 @@ class RenderCrashPolicyTest {
         assertTrue(policy.recordFailureAndShouldContain())
 
         assertTrue(policy.noteSettlingFault(), "a later incident must not inherit an expired settle deadline")
-        assertTrue(policy.recentFailureCount() == 0)
+        assertEquals(0, policy.recentFailureCount())
+    }
+
+    @Test
+    fun `visible recovery progress expires at the same incident deadline`() {
+        val clock = FakeClock()
+        val policy = policy(clock, windowMillis = 100L, incidentGapMillis = 100L)
+
+        assertTrue(policy.recordFailureAndShouldContain())
+        assertTrue(policy.noteRecoveryProgress())
+        clock.advance(100)
+        assertTrue(policy.recordFailureAndShouldContain())
+        assertTrue(policy.noteRecoveryProgress(), "the incident deadline is inclusive")
+        clock.advance(1)
+        assertTrue(policy.recordFailureAndShouldContain())
+
+        assertFalse(policy.noteRecoveryProgress(), "visible progress must not manufacture refunds forever")
+        assertEquals(1, policy.recentFailureCount(), "expired progress must stay counted")
+    }
+
+    @Test
+    fun `intermittent recovery reanchors before a later fast burst`() {
+        val clock = FakeClock()
+        val policy = policy(clock)
+
+        repeat(3) {
+            assertTrue(policy.recordFailureAndShouldContain())
+            assertTrue(policy.noteRecoveryProgress())
+            clock.advance(RenderCrashPolicy.DEFAULT_INCIDENT_GAP_MILLIS + 1)
+        }
+
+        assertTrue(policy.recordFailureAndShouldContain())
+        assertTrue(
+            policy.noteSettlingFault(),
+            "a fresh recovery incident must not inherit the intermittent stream's expired allowance",
+        )
+    }
+
+    @Test
+    fun `a thread refunds its own recorded fault after another thread records`() {
+        val clock = AtomicLong(0L)
+        val policy = RenderCrashPolicy(windowMillis = 100L, now = clock::get)
+        val firstRecorded = CountDownLatch(1)
+        val secondRecorded = CountDownLatch(1)
+        val firstRefunded = AtomicBoolean()
+        val firstThread =
+            Thread {
+                policy.recordFailureAndShouldContain()
+                firstRecorded.countDown()
+                secondRecorded.await()
+                firstRefunded.set(policy.noteRecoveryProgress())
+            }
+        val secondThread =
+            Thread {
+                firstRecorded.await()
+                clock.set(10L)
+                policy.recordFailureAndShouldContain()
+                secondRecorded.countDown()
+            }
+
+        firstThread.start()
+        secondThread.start()
+        firstThread.join()
+        secondThread.join()
+        assertTrue(firstRefunded.get(), "the first thread should find its own pending fault")
+        clock.set(101L)
+        assertTrue(policy.recordFailureAndShouldContain())
+
+        assertEquals(
+            2,
+            policy.recentFailureCount(),
+            "the second thread's newer fault must remain counted after the first thread refunds",
+        )
     }
 
     @Test

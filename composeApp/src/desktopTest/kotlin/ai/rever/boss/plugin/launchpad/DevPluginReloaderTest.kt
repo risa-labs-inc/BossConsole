@@ -115,7 +115,7 @@ class DevPluginReloaderTest {
     @Test
     fun `two managers dry-run pre-flight check aborts if one manager has protected plugin`() =
         runBlocking {
-            val pluginId = "protected-test-plugin"
+            val pluginId = "com.example.protected.reload"
             val stagingRoot = DevPluginArtifacts.stagingRoot()
             val vDir = File(stagingRoot, "$pluginId/v1000").apply { mkdirs() }
             java.util.jar.JarOutputStream(File(vDir, "$pluginId.jar").outputStream()).use { jar ->
@@ -190,7 +190,7 @@ class DevPluginReloaderTest {
     fun `reload fails when staged dev JAR is missing`() =
         runBlocking {
             createManager()
-            val result = DevPluginReloader.reload("missing-jar-plugin")
+            val result = DevPluginReloader.reload("com.example.missing.jar")
             assertTrue(result.isFailure)
             assertTrue(result.exceptionOrNull()?.message?.contains("No staged dev JAR found") == true)
         }

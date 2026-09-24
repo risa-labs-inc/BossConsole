@@ -55,6 +55,8 @@ class McpLedgerCliTest {
             isError = isError,
             rawArgs = mapOf("path" to "/project"),
         )
+        // Persistence is asynchronous: drain the writer so file asserts below see it.
+        assertTrue(ledger.awaitIdle(), "ledger writer never drained")
     }
 
     private fun okText(outcome: McpLedgerOutcome): String = assertIs<McpLedgerOutcome.Ok>(outcome).text

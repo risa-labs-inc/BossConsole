@@ -50,6 +50,22 @@ class CliBootstrapTest {
     }
 
     @Test
+    fun unframeableLinksAreRefusedBeforeTheRetryLoop() {
+        val attempted = mutableListOf<String>()
+        val unframeable = "boss://x\nOPEN evil"
+        val result =
+            CliBootstrap.forwardToExistingInstance(arrayOf(unframeable, "https://two.example")) { link, _ ->
+                attempted.add(link)
+                false
+            }
+        assertFalse(result)
+        // The unframeable link never reaches the sender - refused once, not
+        // retried - while an ordinary link keeps its bounded retries.
+        assertEquals(3, attempted.size)
+        assertTrue(attempted.all { it == "https://two.example" })
+    }
+
+    @Test
     fun actionLinksAreForwardedWithoutReplay() {
         val attempted = mutableListOf<String>()
         val actionLink = "boss://plugin/test-plugin?action=open"

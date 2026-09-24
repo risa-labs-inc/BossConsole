@@ -1,6 +1,13 @@
 package ai.rever.boss.mcp.sandbox
 
+import ai.rever.boss.mcp.mcpJsonNestingExceeds
 import ai.rever.boss.plugin.api.McpToolArgs
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * Evaluates the risk level of an MCP tool call based on tool name and parsed arguments.
@@ -30,59 +37,51 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
                 evaluateShellCommand(normalizedName, args)
             }
 
+            // Workspace lifecycle mutations
+            normalizedName in WORKSPACE_MUTATION_TOOLS -> {
+                McpRiskAssessment(McpRiskLevel.HIGH, "Workspace lifecycle mutation '$toolName'")
+            }
+
             // Secrets access
             normalizedName == "secret_get" -> {
-                McpRiskAssessment(
-                    level = McpRiskLevel.CRITICAL,
-                    reason = "Accessing plaintext secret credentials via '$toolName'",
-                )
+                McpRiskAssessment(McpRiskLevel.CRITICAL, "Accessing plaintext secret credentials via '$toolName'")
             }
 
             normalizedName in SECRET_MANAGEMENT_TOOLS -> {
-                McpRiskAssessment(
-                    level = McpRiskLevel.HIGH,
-                    reason = "Credential vault operation via '$toolName'",
-                )
+                McpRiskAssessment(McpRiskLevel.HIGH, "Credential vault operation via '$toolName'")
             }
 
             // Docker infrastructure mutations
             normalizedName in DOCKER_DESTRUCTIVE_TOOLS -> {
-                McpRiskAssessment(
-                    level = McpRiskLevel.CRITICAL,
-                    reason = "Docker infrastructure mutation '$toolName'",
-                )
+                McpRiskAssessment(McpRiskLevel.CRITICAL, "Docker infrastructure mutation '$toolName'")
             }
 
             // Destructive Kubernetes / Helm infrastructure operations
             normalizedName in K8S_DESTRUCTIVE_TOOLS -> {
-                McpRiskAssessment(
-                    level = McpRiskLevel.CRITICAL,
-                    reason = "Kubernetes/Helm mutation '$toolName'",
-                )
+                McpRiskAssessment(McpRiskLevel.CRITICAL, "Kubernetes/Helm mutation '$toolName'")
             }
 
             // File / Codebase write or delete operations
             normalizedName in FILE_WRITE_TOOLS -> {
+                McpRiskAssessment(McpRiskLevel.HIGH, "File system write operation via '$toolName'")
+            }
+
+            // Installs code and writes durable MCP policy in one call
+            normalizedName in POLICY_WRITING_TOOLS -> {
                 McpRiskAssessment(
                     level = McpRiskLevel.HIGH,
-                    reason = "File system write operation via '$toolName'",
+                    reason = "Installs plugins and writes durable MCP policy via '$toolName'",
                 )
             }
 
             // Read-only / safe tools
             normalizedName in READ_ONLY_TOOLS -> {
-                McpRiskAssessment(
-                    level = McpRiskLevel.LOW,
-                    reason = "Read-only tool (returned data may be sensitive) '$toolName'",
-                )
+                McpRiskAssessment(McpRiskLevel.LOW, "Read-only tool (returned data may be sensitive) '$toolName'")
             }
 
             // Unknown / unclassified tools default to LOW
             else -> {
-                McpRiskAssessment(
-                    level = McpRiskLevel.LOW,
-                    reason = "Unclassified tool '$toolName' - defaulting to low risk",
-                )
+                McpRiskAssessment(McpRiskLevel.LOW, "Unclassified tool '$toolName' - defaulting to low risk")
             }
         }
     }
@@ -91,11 +90,18 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
         toolName: String,
         args: McpToolArgs,
     ): McpRiskAssessment {
-        val command = args.string("command") ?: args.string("cmd") ?: ""
-        val lowerCmd = command.lowercase().trim()
-
+        val scan = shellPayloads(args)
         return when {
-            isDestructiveShellCommand(lowerCmd) -> {
+            // Past the node cap the rest of the payload was never inspected, so it cannot be
+            // vouched for: a saved Always Allow must not run it unasked.
+            scan.uninspected != null -> {
+                McpRiskAssessment(
+                    level = McpRiskLevel.CRITICAL,
+                    reason = "Shell execution tool '$toolName' arguments are ${scan.uninspected}",
+                )
+            }
+
+            scan.payloads.any { isDestructiveShellCommand(it.lowercase().trim()) } -> {
                 McpRiskAssessment(
                     level = McpRiskLevel.CRITICAL,
                     reason = "Shell execution tool '$toolName' contains potentially destructive command pattern",
@@ -112,19 +118,144 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
     }
 
     // Wording heuristic only: both HIGH and CRITICAL must require approval. This is not a shell parser.
-    private fun isDestructiveShellCommand(cmd: String): Boolean {
-        if (cmd.isEmpty()) return false
-        return cmd.contains("rm -rf") ||
-            cmd.contains("del /s") ||
-            cmd.contains("format ") ||
-            cmd.contains("mkfs") ||
-            cmd.contains("git push --force") ||
-            cmd.contains("git push -f") ||
-            cmd.contains("dd if=") ||
-            cmd.contains("chmod -r 777")
+    // CRITICAL is also what makes a saved "Always Allow" on a shell tool ask again (#1577), so the
+    // matcher reads each command of a chain for the flag shapes a destructive call really takes,
+    // not only the one spelling of each: `rm -fr`, `rm -r -f`, `/bin/rm -R`, `git push origin
+    // main --force`, `Remove-Item -Recurse`. [cmd] arrives lowercased and trimmed.
+
+    /**
+     * Every text a shell tool's call could hand a shell: `command` and `cmd`, plus every string
+     * anywhere in the raw arguments (#1624). `send_input` carries its keystrokes in `text`, and a
+     * plugin-defined shell tool may use any key, so reading only `command`/`cmd` let a destructive
+     * payload under another name rate HIGH and run under a saved "Always Allow". Rating on the most
+     * dangerous string can only err toward asking. Unparseable raw arguments fall back to the two
+     * named keys.
+     */
+    private fun shellPayloads(args: McpToolArgs): ShellScan {
+        val named = listOfNotNull(args.string("command"), args.string("cmd"))
+        // Checked before parsing: the parser itself overflows on deep nesting (see MAX_MCP_ARGUMENT_DEPTH).
+        if (mcpJsonNestingExceeds(args.raw)) return ShellScan(named, NESTED_TOO_DEEPLY)
+        val raw =
+            try {
+                stringsIn(Json.parseToJsonElement(args.raw))
+            } catch (_: SerializationException) {
+                ShellScan(emptyList(), uninspected = null)
+            }
+        return ShellScan(named + raw.payloads, raw.uninspected)
+    }
+
+    /**
+     * Every string value in [root], walked with an explicit stack rather than recursion: the JSON
+     * is agent-controlled, and a StackOverflowError here would escape the registry's invoke before
+     * its ledger record is written. Depth is already bounded by [mcpJsonNestingExceeds]; this bounds width,
+     * stopping after [MAX_ARGUMENT_NODES] nodes and reporting the scan as truncated.
+     */
+    private fun stringsIn(root: JsonElement): ShellScan {
+        val found = mutableListOf<String>()
+        val pending = ArrayDeque<JsonElement>().apply { add(root) }
+        var visited = 0
+        while (pending.isNotEmpty()) {
+            if (visited++ == MAX_ARGUMENT_NODES) return ShellScan(found, TOO_LARGE)
+            when (val element = pending.removeLast()) {
+                is JsonPrimitive -> if (element.isString) found += element.content
+                is JsonArray -> pending.addAll(element)
+                is JsonObject -> pending.addAll(element.values)
+            }
+        }
+        return ShellScan(found, uninspected = null)
+    }
+
+    /**
+     * The strings a shell call carries, and - when a cap stopped the scan - why the rest of the
+     * payload was not inspected, in words the operator sees on the prompt.
+     */
+    private class ShellScan(
+        val payloads: List<String>,
+        val uninspected: String?,
+    )
+
+    private fun isDestructiveShellCommand(raw: String): Boolean {
+        if (raw.isEmpty()) return false
+        // A line continuation (`\`, PowerShell's backtick or cmd's `^` before a newline) joins two
+        // lines into one command for the shell; join them here too, or `rm \` + newline + `-rf /srv`
+        // splits into an `rm` with no flags and a line with no `rm` (#1624).
+        val cmd = raw.replace(LINE_CONTINUATION, " ")
+        val normalized = cmd.replace(WHITESPACE, " ")
+        // Split the raw command, not [normalized]: collapsing whitespace first turns a newline
+        // into a space, and the next command would hide inside the previous one's tokens.
+        return DESTRUCTIVE_WORDING.any { it in normalized } ||
+            cmd.split(COMMAND_SEPARATOR).any { segment ->
+                val tokens =
+                    segment
+                        .split(WHITESPACE)
+                        .map { token -> token.trim { it in TOKEN_QUOTES } }
+                        .filter { it.isNotEmpty() }
+                isRecursiveRm(tokens) || isRecursiveWindowsDelete(tokens) || isForcePush(tokens)
+            }
+    }
+
+    /**
+     * `rm` (by any path, after `sudo` or not) with a recursive flag in any spelling or order.
+     * GNU rm also takes options after operands (`rm build -r`), so every token up to `--` counts,
+     * and every `rm` in the segment is checked, not only the first.
+     */
+    private fun isRecursiveRm(tokens: List<String>): Boolean {
+        val rms = tokens.indices.filter { tokens[it] == "rm" || tokens[it].endsWith("/rm") }
+        return rms.any { rm ->
+            tokens.drop(rm + 1).takeWhile { it != "--" }.any { flag ->
+                flag.startsWith("--recursive") || (flag.startsWith("-") && !flag.startsWith("--") && 'r' in flag)
+            }
+        }
+    }
+
+    /** cmd's `del`/`erase`/`rd`/`rmdir /s`, and PowerShell's `Remove-Item` (or `del`) `-Recurse`. */
+    private fun isRecursiveWindowsDelete(tokens: List<String>): Boolean =
+        tokens.any { it in WINDOWS_DELETE_COMMANDS } &&
+            tokens.any { it == "/s" || it.startsWith("-recurse") }
+
+    /** `git push` with a force flag anywhere after `push`, including `--force-with-lease` and `-uf`. */
+    private fun isForcePush(tokens: List<String>): Boolean {
+        val push = tokens.indexOf("push")
+        if (push < 1 || "git" !in tokens.subList(0, push)) return false
+        return tokens.drop(push + 1).any { flag ->
+            flag.startsWith("--force") || (flag.startsWith("-") && !flag.startsWith("--") && 'f' in flag)
+        }
     }
 
     companion object {
+        /**
+         * Whether [toolName] is one of the shell tools, read with the same `mcp__boss__`
+         * normalization [evaluateRisk] applies - so a caller deciding "is this a shell call"
+         * and the evaluator rating it can never disagree about the name.
+         */
+        fun isShellTool(toolName: String): Boolean = toolName.removePrefix("mcp__boss__") in SHELL_TOOLS
+
+        private val DESTRUCTIVE_WORDING =
+            listOf("rm -rf", "del /s", "format ", "mkfs", "git push --force", "git push -f", "dd if=", "chmod -r 777")
+
+        private val WHITESPACE = Regex("""\s+""")
+
+        /**
+         * JSON nodes a shell call's arguments are scanned for before the rest is treated as
+         * uninspectable (and so CRITICAL). Real tool calls carry a handful; this only bounds a
+         * hostile payload.
+         */
+        private const val MAX_ARGUMENT_NODES = 10_000
+
+        private const val NESTED_TOO_DEEPLY = "nested too deeply to inspect"
+        private const val TOO_LARGE = "too large to inspect fully"
+
+        /** A shell line continuation: `\` (POSIX), a backtick (PowerShell) or `^` (cmd) before a newline. */
+        private val LINE_CONTINUATION = Regex("""[\\`^]\r?\n""")
+
+        /** Where one command of a chain ends: `;`, `&`/`&&`, `|`/`||`, a newline, `$(` or a backtick. */
+        private val COMMAND_SEPARATOR = Regex("""[;&|\n`]|\$\(""")
+
+        /** Quoting and grouping stripped from a token's ends, so `(rm` and `"-rf"` still read. */
+        private val TOKEN_QUOTES = setOf('"', '\'', '(', ')', '{', '}')
+
+        private val WINDOWS_DELETE_COMMANDS = setOf("del", "erase", "rd", "rmdir", "remove-item")
+
         private val SHELL_TOOLS =
             setOf(
                 "run_command",
@@ -137,6 +268,20 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
                 // `command` argument is the same argument name evaluateShellCommand reads.
                 "open_terminal",
                 "terminal_open",
+            )
+
+        // The workspace provider's lifecycle tools are family siblings of the terminal
+        // tools above: they mutate the workspace catalog (opening windows, persisting or
+        // deleting workspace state) but take no `command` argument, so unlike the shell
+        // tools they carry a flat HIGH instead of a command-inspection floor.
+        private val WORKSPACE_MUTATION_TOOLS =
+            setOf(
+                "open_workspace",
+                "workspace_open",
+                "create_workspace",
+                "workspace_create",
+                "close_workspace",
+                "workspace_close",
             )
 
         private val SECRET_MANAGEMENT_TOOLS =
@@ -183,6 +328,24 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
                 "project_replace",
             )
 
+        /**
+         * Tools that install executable code and write durable policy in one approved call.
+         *
+         * HIGH rather than the unclassified default of LOW, and the level is doing real work
+         * here: the gate itself is unchanged (`pack_apply` is mutating by name and by
+         * declaration, so `policyFor` already reaches `defaultMutatingAction`), but the host
+         * requires Review-then-Confirm before a HIGH/CRITICAL tool can be granted a *durable*
+         * ALLOW. Left at LOW, one "Always Allow" - or one "Trust This Plugin" on the pack
+         * plugin - hands any agent the operator's own policy authority, unattended and for
+         * good: `pack_apply` installs plugins from the network and writes ALLOW rules for
+         * arbitrary tools and providers. The parser's pack-tool guard stops a pack from
+         * bootstrapping that; it cannot stop the one-click grant that reaches it directly.
+         */
+        private val POLICY_WRITING_TOOLS =
+            setOf(
+                "pack_apply",
+            )
+
         private val READ_ONLY_TOOLS =
             setOf(
                 "codebase_read",
@@ -197,6 +360,9 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
                 "plugins_list",
                 "list_tabs",
                 "read_scrollback",
+                // The workspace provider's listing tools are pure reads.
+                "list_workspaces",
+                "workspace_list",
             )
     }
 }

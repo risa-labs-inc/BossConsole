@@ -1119,6 +1119,10 @@ kotlin {
                 // Not under either directory, but they assert on boss-ipc's IpcVersion, and
                 // that module is dropped from the dependency list above on this platform.
                 // Found by WindowsArm64SourceIsolationTest rather than by a build breaking.
+                "**/plugin/OopPluginDisableLifecycleTest.kt",
+                "**/plugin/OutOfProcessPluginSpawnerLifecycleTest.kt",
+                // Exercises the OOP spawner implementation, excluded from this platform.
+                "**/plugin/OutOfProcessSpawnerEpochFencingTest.kt",
                 "**/plugin/IpcCompatibilityTest.kt",
                 "**/plugin/PluginStoreSetupIpcGateTest.kt",
                 "**/plugin/PluginStateDeltaTest.kt",
@@ -1126,6 +1130,9 @@ kotlin {
                 "**/plugin/PluginProcessIdTest.kt",
                 // The source-isolation guard rejects this test's IPC package import.
                 "**/run/DesktopRunnerTerminalServiceTest.kt",
+                // Same IpcEventBridge dependency - the capture seam it uses lives in
+                // the boss-ipc module dropped on this platform.
+                "**/git/GitRunInTerminalQuotingTest.kt",
             )
         }
     }

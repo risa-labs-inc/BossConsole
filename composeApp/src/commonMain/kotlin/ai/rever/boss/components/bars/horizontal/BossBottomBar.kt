@@ -1,3 +1,5 @@
+@file:Suppress("TooManyFunctions") // Status-bar items and their dialogs are one cohesive file.
+
 package ai.rever.boss.components.bars.horizontal
 
 import ai.rever.boss.components.bars.ChromeBar
@@ -10,6 +12,7 @@ import ai.rever.boss.components.dialogs.McpPolicyManagerDialog
 import ai.rever.boss.components.dialogs.McpProviderTrustDialog
 import ai.rever.boss.components.dialogs.McpSessionTrustDialog
 import ai.rever.boss.components.dialogs.McpToolIdentity
+import ai.rever.boss.components.dialogs.RlmQueryTreeDialog
 import ai.rever.boss.components.events.PanelEventBus
 import ai.rever.boss.components.overlays.ContextMenu
 import ai.rever.boss.components.overlays.HoverTooltipBox
@@ -24,6 +27,8 @@ import ai.rever.boss.mcp.McpPolicyAction
 import ai.rever.boss.mcp.McpToolPolicyConfig
 import ai.rever.boss.mcp.McpToolRegistryImpl
 import ai.rever.boss.mcp.McpYoloPrompt
+import ai.rever.boss.mcp.rlm.RlmToolProvider
+import ai.rever.boss.mcp.rlm.summary
 import ai.rever.boss.performance.PerformanceState
 import ai.rever.boss.plugin.api.PanelId
 import ai.rever.boss.plugin.api.RegisteredMcpTool
@@ -275,6 +280,11 @@ fun BossRightBottomBar() {
     // opening the rotated MCP ledger file in a text editor.
     McpActivityStatusItem()
 
+    // RLM telemetry, next to the MCP line it shares a subject with: a recursive query is the one
+    // thing that makes a single agent action appear as many ledger entries, so "what was that
+    // burst of codebase_read calls?" is answered here rather than by reading the ledger.
+    RlmStatusItem()
+
     // Status message (temporary messages like "Space Saved")
     val statusMessage by StatusMessageManager.currentMessage.collectAsState()
     statusMessage?.let { message ->
@@ -292,6 +302,10 @@ fun BossRightBottomBar() {
     // the performance indicator so a transfer sits next to the plugin status items
     // it used to be one of, rather than at the far edge of the bar.
     DownloadCenterStatusItem()
+
+    // Workspace health: shown only while something is wrong, beside the performance figures it
+    // complements - those say what BOSS costs, this says what is not working (BossConsole#394).
+    WorkspaceHealthStatusItem()
 
     // Performance indicator (shows memory/CPU usage)
     val showIndicator = PerformanceState.shouldShowIndicator()
@@ -554,12 +568,51 @@ private fun McpActivityStatusItem() {
     if (showActivityLog) {
         val totalCalls by McpToolRegistryImpl.ledger.totalCalls.collectAsState()
         val totalErrors by McpToolRegistryImpl.ledger.totalErrors.collectAsState()
+        val pendingWriteIds by McpToolRegistryImpl.ledger.pendingWriteIds.collectAsState()
+        val droppedWrites by McpToolRegistryImpl.ledger.droppedWrites.collectAsState()
         McpActivityLogDialog(
             operations = recentOps,
             totalCalls = totalCalls,
             totalErrors = totalErrors,
             ledgerPath = McpToolRegistryImpl.ledger.persistencePath,
+            pendingWriteIds = pendingWriteIds,
+            droppedWrites = droppedWrites,
             onDismiss = { showActivityLog = false },
+        )
+    }
+}
+
+/**
+ * RLM telemetry: how many delegate calls this session's recursive codebase queries have made, how
+ * deep they went, and whether any hit a bound.
+ *
+ * Hidden until the first query, exactly like [McpActivityStatusItem] - "has anything used RLM
+ * yet?" is answered by the absence, and a permanent row for a surface an operator may never use is
+ * noise in a bar that already carries MCP policy, MCP activity and status messages.
+ *
+ * The click target is [StatusBarTextButton] rather than a second copy of it: it already carries a
+ * tooltip and a `clickLabel` separate from that tooltip, which is what keeps the RLM row from
+ * announcing "Open the MCP activity log" to a screen reader.
+ */
+@Composable
+private fun RlmStatusItem() {
+    val runs by RlmToolProvider.runLog.runs.collectAsState()
+    var showTrees by remember { mutableStateOf(false) }
+    if (runs.isEmpty() && !showTrees) return
+    val latest = runs.firstOrNull()
+    StatusBarTextButton(
+        text = if (latest != null) "RLM: ${latest.summary()}" else "RLM: no queries yet",
+        color = if (latest?.root?.isError == true) BossTheme.colors.alert else BossTheme.colors.textSecondary,
+        tooltip = "Open the RLM query trees",
+        onClick = { showTrees = true },
+    )
+    if (showTrees) {
+        RlmQueryTreeDialog(
+            runs = runs,
+            onDismiss = { showTrees = false },
+            // The dialog shows this row's own log, so clearing it is the same act as the row
+            // disappearing - and the dialog stays open, showing its empty state.
+            onClear = { RlmToolProvider.runLog.clear() },
         )
     }
 }

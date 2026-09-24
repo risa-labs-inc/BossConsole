@@ -137,7 +137,7 @@ class PluginSandboxUnloadAwaitTest {
                 } else {
                     assertTrue(withTimeout(5_000) { uninstall.await() }.isSuccess)
                 }
-                assertFalse(manager.isInstalled(id))
+                assertFalse(manager.hasEntry(id))
                 assertFalse(PluginCrashRegistry.isIncompatible(id))
             } finally {
                 release.complete(Unit)
