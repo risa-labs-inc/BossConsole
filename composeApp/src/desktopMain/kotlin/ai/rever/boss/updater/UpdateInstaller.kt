@@ -445,7 +445,11 @@ object UpdateInstaller {
      * @param downloadPath Path to the downloaded update file
      * @return InstallResult indicating success, restart required, or error
      */
-    suspend fun installUpdate(downloadPath: String): InstallResult {
+    @Suppress("LongMethod", "CyclomaticComplexMethod", "ReturnCount")
+    suspend fun installUpdate(
+        downloadPath: String,
+        stagingDir: File = defaultStagingDir(),
+    ): InstallResult {
         return try {
             val downloadFile = File(downloadPath)
 
@@ -461,12 +465,27 @@ object UpdateInstaller {
                 return InstallResult.Error("Update file not found")
             }
 
+            // Containment must precede reading the marker or hashing the artifact.
+            validateDownloadFile(downloadFile, ".${downloadFile.extension}", stagingDir)
+
             // Verify this is not a downgrade (Issue #111 fix)
             if (!verifyNoDowngrade(downloadFile)) {
                 return InstallResult.Error(
                     "Cannot install older version. This update appears to be a downgrade from your current version.",
                 )
             }
+
+            // The install boundary re-verifies the artifact bytes against the
+            // checksum bound when the download passed the catalog check. The
+            // download-time verification and this elevated install can be minutes,
+            // days or an app restart apart, and nothing between them re-checked the
+            // staged file: an artifact swapped in the staging directory meanwhile -
+            // or one that was never checksum-verified at all, like a hashless
+            // manifest or a leftover from before the gate - went straight into
+            // msiexec/hdiutil/dpkg, or overwrote the running jar in place. Fail
+            // closed here, before a single installer command runs: a refusal
+            // leaves the previous installation untouched and runnable.
+            UpdateArtifactIntegrityVet.requireVerifiedChecksum(downloadFile)
 
             // Validate downloaded file type matches expected types for current platform
             // This prevents installing wrong package type (e.g., .msi on Linux)

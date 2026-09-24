@@ -378,6 +378,13 @@ class UpdateManager private constructor(
             // and leave that error where the offer to update used to be.
             _updateState.value = UpdateState.UpdateAvailable(updateInfo)
             throw e
+        } catch (e: UpdateDownloadRefusedException) {
+            // A refusal is an answer with a reason the user must see (a catalog
+            // row with no checksum), not a download fault: surface its message
+            // verbatim instead of the generic "Failed to download update".
+            val errorMsg = e.message ?: "Update download refused"
+            _updateState.value = UpdateState.Error(errorMsg)
+            UpdateResult.Error(errorMsg, e)
         } catch (e: Exception) {
             val errorMsg = "Download failed: ${e.message}"
             _updateState.value = UpdateState.Error(errorMsg)
@@ -438,6 +445,12 @@ class UpdateManager private constructor(
                     ?.let { UpdateState.UpdateAvailable(it) }
                     ?: UpdateState.Idle
             throw e
+        } catch (e: UpdateDownloadRefusedException) {
+            // See downloadAvailableUpdate: a refusal carries its own user-facing
+            // reason, which must not be flattened into a generic download error.
+            val errorMsg = e.message ?: "Update download refused"
+            _updateState.value = UpdateState.Error(errorMsg)
+            UpdateResult.Error(errorMsg, e)
         } catch (e: Exception) {
             val errorMsg = "Download failed: ${e.message}"
             _updateState.value = UpdateState.Error(errorMsg)

@@ -25,6 +25,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.IOException
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 /**
  * Validate a release-catalog asset name before it is used as a path component.
@@ -59,6 +63,7 @@ actual class UpdateService internal constructor(
      * [UpdateInstaller].validateDownloadFile.
      */
     private val stagingDir: File = defaultStagingDir(),
+    private val bindVerifiedChecksum: (File, String) -> Unit = UpdateArtifactIntegrityVet::bindVerifiedChecksum,
 ) {
     /**
      * Matches the common `expect class UpdateService()` shape (expect/actual
@@ -221,15 +226,15 @@ actual class UpdateService internal constructor(
         // for the same version — unless that's already the URL we just tried.
         //
         // The fallback fetches the SAME asset of the SAME version the UpdateInfo row
-        // describes, so - when the catalog row carried a hash - the catalog's hash
-        // binds these bytes exactly as it binds the primary download's (the release
-        // pipeline publishes one artifact to both sources; a GitHub-only catalog row
-        // carries none and stays unverified on both paths, same as before). Passing
-        // null here (BossConsole#797) meant the fallback installed with NO integrity
-        // check at all on the path that only runs because a CDN was already
-        // misbehaving, and the staged installer later runs elevated. A genuine build
-        // difference between sources must fail loudly and fall back to a
-        // re-download, never install unverified.
+        // describes, so the catalog's hash binds these bytes exactly as it binds the
+        // primary download's (the release pipeline publishes one artifact to both
+        // sources). Passing null here (BossConsole#797) meant the fallback installed
+        // with NO integrity check at all on the path that only runs because a CDN was
+        // already misbehaving, and the staged installer later runs elevated. A genuine
+        // build difference between sources must fail loudly and fall back to a
+        // re-download, never install unverified - and a catalog row that cannot
+        // describe its asset with a hash at all is refused downstream the same way,
+        // instead of staging an unverifiable body.
         val gitHubUrl = gitHubAssetUrlFor(updateInfo.latestVersion)
         if (gitHubUrl != null && gitHubUrl != primaryUrl) {
             logger.warn(
@@ -251,8 +256,16 @@ actual class UpdateService internal constructor(
     }
 
     /**
-     * Download [url] to a temp file in [stagingDir], verifying [sha256] when
-     * provided. Returns the path or null.
+     * Download [url] to a temp file in [stagingDir], verifying the REQUIRED
+     * [sha256] - a manifest without one is refused rather than staged - and
+     * binding the verified checksum for the install boundary. Returns the path
+     * or null.
+     *
+     * A hashless row is refused BEFORE anything on disk is touched, and that
+     * refusal is an [UpdateDownloadRefusedException] with a user-facing reason
+     * rather than a null: with GitHub releases list-only, a Supabase outage or
+     * a GitHub-primary switch would otherwise offer an update that then fails
+     * as a generic "Failed to download update" that explains nothing.
      *
      * `internal` (not private) so the fallback-checksum regression test (BossConsole#797)
      * can drive the verification path directly against a local HTTP server, instead of
@@ -265,6 +278,15 @@ actual class UpdateService internal constructor(
         sha256: String?,
         onProgress: (progress: Float) -> Unit,
     ): String? {
+        // A hashless catalog row is refused BEFORE anything on disk is touched: the checksum
+        // is required, so there is nothing to verify the download against and no reason to
+        // fetch it (the refusal used to land only after the whole download completed). The
+        // order matters as much as the refusal itself: this call must stay ABOVE the
+        // clean-slate deletes below, or a hashless row would destroy a good, already-verified
+        // staged update - and its checksum marker - just to reject a different body it never
+        // fetched. See `refuseHashlessCatalogRow` for the typed, user-facing reason.
+        refuseHashlessCatalogRow(sha256, assetName)
+
         // Held outside the try so a cancellation can clean up the partial file. A
         // cancelled download otherwise leaves a half-written installer in the staging
         // directory under the exact name the next attempt checks for, and the next
@@ -290,16 +312,25 @@ actual class UpdateService internal constructor(
             // must not be able to swap it (fails closed).
             val tempDir = createRestrictedDir(stagingDir)
 
+            // The bytes stream into a `.part` sibling and only move under the
+            // install name AFTER the catalog checksum verifies, so a download cut
+            // short by a crash never leaves a partial artifact sitting under the
+            // exact name the installer would later run elevated.
             val downloadFile = File(tempDir, assetName)
-            if (downloadFile.exists()) {
-                downloadFile.delete()
-            }
-            partial = downloadFile
+            val partFile = File(tempDir, "$assetName.part")
 
-            streamToFile(url, assetSize, downloadFile, onProgress)
+            // Clean slate: remnants of a crashed earlier attempt (a published
+            // artifact, its checksum marker, or a partial) must not be mistakable
+            // for this attempt's result.
+            downloadFile.delete()
+            UpdateArtifactIntegrityVet.checksumSidecarOf(downloadFile).delete()
+            partFile.delete()
+            partial = partFile
 
-            if (downloadFile.exists() && downloadFile.length() > 0) {
-                verifyDownloadedAsset(downloadFile, assetName, sha256)
+            streamToFile(url, assetSize, partFile, onProgress)
+
+            if (partFile.exists() && partFile.length() > 0) {
+                publishVerifiedDownload(partFile, downloadFile, assetName, sha256)
             } else {
                 logger.error(LogCategory.SYSTEM, "Download failed - file is empty or doesn't exist")
                 null
@@ -329,23 +360,105 @@ actual class UpdateService internal constructor(
     }
 
     /**
-     * The post-download gate both download paths share (BossConsole#797): verify the
-     * staged bytes against the catalog hash when one was provided, and only then
-     * hand the path to the caller for install.
+     * [downloadFrom]'s catalog-checksum gate, hoisted above everything the download touches
+     * on disk: a row that cannot describe its own asset's bytes - a GitHub-only catalog row,
+     * whose releases carry no hashes - offers nothing that can be verified before an
+     * elevated install, so there is nothing to fetch and nothing to stage. Refused here as
+     * its own typed answer with a user-facing reason rather than a null, so it cannot
+     * flatten into the generic "Failed to download update" downstream. The call site must
+     * stay at the top of [downloadFrom], above its clean-slate deletes: below them, a
+     * hashless row would destroy a good, already-verified staged update - and its checksum
+     * marker - just to reject a different body it never fetches. The hashless-refusal
+     * regression tests pin both the ordering and the zero-fetch contract.
+     */
+    private fun refuseHashlessCatalogRow(
+        sha256: String?,
+        assetName: String,
+    ) {
+        if (sha256 != null) return
+        logger.error(
+            LogCategory.SYSTEM,
+            "Refusing the update download - catalog row has no checksum",
+            mapOf("asset" to assetName),
+        )
+        throw UpdateDownloadRefusedException(
+            "The update was not downloaded: the release catalog lists no checksum " +
+                "for $assetName, so its integrity cannot be verified.",
+        )
+    }
+
+    /**
+     * The post-download gate both download paths share (BossConsole#797, now fail
+     * closed): the staged bytes are verified against the catalog hash, published
+     * under the install name, and the verified checksum is bound beside them so
+     * [UpdateInstaller.installUpdate] can re-verify it at the install boundary.
      *
      * Integrity check, NOT authenticity: the hash and URL come from the same
      * app_releases row, so this guards against Storage/CDN corruption and a tampered
      * fallback hop, not a compromised catalog. Update authenticity still rests on OS
-     * code-signing. A mismatch is discarded and reported; a verified download (or a
-     * source that genuinely cannot describe a hash) is staged.
+     * code-signing.
+     *
+     * The catalog row is the trusted manifest channel (app_releases, writable only
+     * by the CI service role), and its sha256 is REQUIRED: a row that cannot
+     * describe its own asset's bytes - a GitHub-only catalog row, whose releases
+     * carry no hashes - used to stage (and later install, elevated) with NO
+     * integrity check at all. Such a download is refused instead, exactly as the
+     * engine lane refuses catalog-hashless archives (#1237) and the plugin lane
+     * refuses unvetted jars (#947).
+     *
+     * A mismatch is discarded and reported. Every refusal returns null; the caller
+     * surfaces that as a failed download and the previous install keeps running.
      */
-    private fun verifyDownloadedAsset(
+    private fun publishVerifiedDownload(
+        partFile: File,
         downloadFile: File,
         assetName: String,
         sha256: String?,
-    ): String? {
-        val actualSha = if (sha256 != null) sha256Of(downloadFile) else null
-        if (sha256 != null && !sha256.equals(actualSha, ignoreCase = true)) {
+    ): String? =
+        try {
+            val verifiedSha = requireCatalogChecksum(partFile, assetName, sha256)
+            publishAtomically(partFile, downloadFile, assetName)
+            try {
+                bindVerifiedChecksum(downloadFile, verifiedSha)
+            } catch (e: Exception) {
+                val sidecar = UpdateArtifactIntegrityVet.checksumSidecarOf(downloadFile)
+                if (sidecar.exists()) deleteOrComplain(sidecar, "a failed checksum marker")
+                deleteOrComplain(downloadFile, "an unbound update download")
+                throw SecurityException("Could not bind the verified checksum for $assetName", e)
+            }
+            logger.info(LogCategory.SYSTEM, "Update checksum verified", mapOf("asset" to assetName))
+            logger.info(LogCategory.SYSTEM, "Update downloaded successfully", mapOf("path" to downloadFile.absolutePath))
+            downloadFile.absolutePath
+        } catch (e: SecurityException) {
+            logger.error(
+                LogCategory.SYSTEM,
+                "Refusing the downloaded update - integrity gate",
+                mapOf("asset" to assetName),
+                error = e,
+            )
+            null
+        }
+
+    /**
+     * Verify [partFile] against the catalog hash. Fails closed on a hashless
+     * manifest exactly as on a mismatch, deleting the partial either way.
+     *
+     * @throws SecurityException when [sha256] is null, the bytes cannot be hashed,
+     * or the hash does not match - the download is refused.
+     */
+    private fun requireCatalogChecksum(
+        partFile: File,
+        assetName: String,
+        sha256: String?,
+    ): String {
+        if (sha256 == null) {
+            deleteOrComplain(partFile, "a hash-less update download")
+            throw SecurityException(
+                "The update manifest carries no sha256 for $assetName - refusing an unverified download",
+            )
+        }
+        val actualSha = runCatching { sha256Of(partFile) }.getOrNull()
+        if (actualSha == null || !sha256.equals(actualSha, ignoreCase = true)) {
             logger.error(
                 LogCategory.SYSTEM,
                 "Update checksum mismatch; discarding download",
@@ -355,25 +468,60 @@ actual class UpdateService internal constructor(
                     "actual" to (actualSha ?: ""),
                 ),
             )
-            val deleted = runCatching { downloadFile.delete() }.getOrDefault(false)
-            if (!deleted) {
-                // Not an install vector - the installer only uses the returned path,
-                // and the next attempt deletes before writing. But the KDoc above
-                // promises a discard, so a failed delete must be visible, not silent
-                // (a Windows AV scanner holding a freshly written MSI is the case).
-                logger.error(
-                    LogCategory.SYSTEM,
-                    "Mismatched update download could not be deleted from staging",
-                    mapOf("path" to downloadFile.absolutePath),
-                )
+            deleteOrComplain(partFile, "a mismatched update download")
+            throw SecurityException(
+                "Update checksum mismatch for $assetName - discarding download " +
+                    "(expected $sha256, got $actualSha)",
+            )
+        }
+        return actualSha
+    }
+
+    /**
+     * Publish the verified bytes under the install name, atomically where the
+     * filesystem supports it. A crash mid-publish can at worst leave a partial
+     * artifact that carries no checksum marker, which the install boundary refuses.
+     *
+     * @throws SecurityException when the move fails; the partial is deleted.
+     */
+    private fun publishAtomically(
+        partFile: File,
+        downloadFile: File,
+        assetName: String,
+    ) {
+        try {
+            Files.move(partFile.toPath(), downloadFile.toPath(), StandardCopyOption.ATOMIC_MOVE)
+        } catch (_: AtomicMoveNotSupportedException) {
+            try {
+                Files.move(partFile.toPath(), downloadFile.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            } catch (fallback: IOException) {
+                deleteOrComplain(partFile, "an unpublished update download")
+                throw SecurityException("Could not publish the verified download for $assetName", fallback)
             }
-            return null
+        } catch (e: IOException) {
+            deleteOrComplain(partFile, "an unpublished update download")
+            throw SecurityException("Could not publish the verified download for $assetName", e)
         }
-        if (sha256 != null) {
-            logger.info(LogCategory.SYSTEM, "Update checksum verified", mapOf("asset" to assetName))
+    }
+
+    /**
+     * Delete a refused download, loudly. Not an install vector - the installer only
+     * uses the returned path, and the next attempt deletes before writing - but the
+     * discard is part of this gate's contract, so a failed delete must be visible,
+     * not silent (a Windows AV scanner holding a freshly written MSI is the case).
+     */
+    private fun deleteOrComplain(
+        file: File,
+        description: String,
+    ) {
+        val deleted = runCatching { file.delete() }.getOrDefault(false)
+        if (!deleted) {
+            logger.error(
+                LogCategory.SYSTEM,
+                "Could not delete $description from staging",
+                mapOf("path" to file.absolutePath),
+            )
         }
-        logger.info(LogCategory.SYSTEM, "Update downloaded successfully", mapOf("path" to downloadFile.absolutePath))
-        return downloadFile.absolutePath
     }
 
     /** Resolve the GitHub Releases asset URL for [version] — the download-time backup. */
@@ -506,10 +654,19 @@ actual class UpdateService internal constructor(
 
             else -> {
                 val deleted = runCatching { file.delete() }.getOrDefault(false)
+                // The checksum marker goes with its artifact, so a later download of
+                // the same asset can never inherit a marker for other bytes.
+                val markerDeleted =
+                    runCatching { UpdateArtifactIntegrityVet.checksumSidecarOf(file).delete() }
+                        .getOrDefault(false)
                 logger.info(
                     LogCategory.SYSTEM,
                     "Discarded a downloaded update",
-                    mapOf("path" to file.absolutePath, "deleted" to deleted.toString()),
+                    mapOf(
+                        "path" to file.absolutePath,
+                        "deleted" to deleted.toString(),
+                        "markerDeleted" to markerDeleted.toString(),
+                    ),
                 )
             }
         }

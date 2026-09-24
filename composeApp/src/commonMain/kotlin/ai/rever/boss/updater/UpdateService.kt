@@ -41,8 +41,9 @@ data class UpdateInfo(
     val downloadUrl: String? = null,
     val assetSize: Long = 0,
     val assetName: String = "",
-    // Optional integrity hash for the asset (populated by the Supabase source).
-    // When present, the download is verified against it before install.
+    // Integrity hash for the asset (the Supabase catalog carries it; GitHub
+    // releases do not). The download is verified against it before install, and a
+    // manifest without one is refused rather than staged unverified.
     val sha256: String? = null,
 ) {
     val isNewerVersionAvailable: Boolean
@@ -82,6 +83,22 @@ data class InstallOutcome(
     val errorMessage: String? = null,
     val failureReason: InstallFailureReason? = null,
 )
+
+/**
+ * The download was refused on integrity grounds — most importantly a catalog
+ * row that carries no sha256, so the bytes it offers cannot be verified before
+ * an elevated install.
+ *
+ * A refusal is an answer with a reason, not a download fault. With GitHub
+ * releases list-only, a Supabase outage or a GitHub-primary switch can
+ * otherwise offer an update that then fails as a generic "Failed to download
+ * update" that explains nothing. The message is user-facing and
+ * [UpdateManager] surfaces it verbatim — the download-side counterpart of
+ * [InstallOutcome]'s errorMessage rule.
+ */
+class UpdateDownloadRefusedException(
+    message: String,
+) : Exception(message)
 
 /**
  * Platform-specific update service interface
