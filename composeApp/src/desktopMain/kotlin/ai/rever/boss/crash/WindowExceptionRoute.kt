@@ -96,29 +96,40 @@ fun decideWindowExceptionRoute(
  * [PluginRenderRecovery.Outcome.NotPluginRelated] mean it did not, and those must
  * keep accumulating or a corrupt scene never escalates.
  *
- * @return true only when recovery changed visible state and the caller should
- *   repaint. Refund and repaint are deliberately separate decisions.
+ * @return whether the recorded fault was refunded and whether recovery changed
+ *   visible state. Refund and repaint are deliberately separate decisions.
  */
 internal fun noteRecoveryOutcome(
     policy: RenderCrashPolicy,
     outcome: PluginRenderRecovery.Outcome,
-): Boolean =
+): RecoveryOutcomeEffect =
     when (outcome) {
         is PluginRenderRecovery.Outcome.Rebuilt,
         is PluginRenderRecovery.Outcome.Quarantined,
         -> {
-            policy.noteRecoveryProgress()
-            true
+            RecoveryOutcomeEffect(
+                visibleProgress = true,
+                faultRefunded = policy.noteRecoveryProgress(),
+            )
         }
 
         is PluginRenderRecovery.Outcome.Settling -> {
-            policy.noteSettlingFault()
-            false
+            RecoveryOutcomeEffect(
+                visibleProgress = false,
+                faultRefunded = policy.noteSettlingFault(),
+            )
         }
 
         PluginRenderRecovery.Outcome.Unexplained,
         PluginRenderRecovery.Outcome.NotPluginRelated,
         -> {
-            false
+            policy.noteUnproductiveFault()
+            RecoveryOutcomeEffect(visibleProgress = false, faultRefunded = false)
         }
     }
+
+/** The two independent host decisions produced by [noteRecoveryOutcome]. */
+internal data class RecoveryOutcomeEffect(
+    val visibleProgress: Boolean,
+    val faultRefunded: Boolean,
+)

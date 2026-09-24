@@ -208,8 +208,11 @@ private fun configureBrowserPopupHandler(
                                             ),
                                         )
                                         if (!isDownload) {
-                                            FluckEngine.notifyTabOpened()
-                                            onOpenInNewTab(loadedUrl)
+                                            // notifyTabOpened doubles as the auto-open burst
+                                            // cap: false means do not open the tab.
+                                            if (FluckEngine.notifyTabOpened()) {
+                                                onOpenInNewTab(loadedUrl)
+                                            }
                                         } else {
                                             logger.debug(LogCategory.BROWSER, "Skipping new tab for download URL")
                                         }
@@ -248,8 +251,10 @@ private fun configureBrowserPopupHandler(
                     val isDownload = FluckEngine.isActiveDownload(targetUrl)
                     logger.debug(LogCategory.BROWSER, "Popup with immediate URL", mapOf("url" to targetUrl, "isDownload" to isDownload))
                     if (!isDownload) {
-                        FluckEngine.notifyTabOpened()
-                        onOpenInNewTab(targetUrl)
+                        // Same burst cap as the adopted-popup path in BrowserHandleImpl.
+                        if (FluckEngine.notifyTabOpened()) {
+                            onOpenInNewTab(targetUrl)
+                        }
                     } else {
                         logger.debug(LogCategory.BROWSER, "Skipping new tab for download URL")
                     }

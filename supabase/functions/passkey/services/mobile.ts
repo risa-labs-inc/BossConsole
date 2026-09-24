@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { withErrorHandler } from "../utils/error-handler.ts"
 import { normalizeBase64Url } from "../utils/base64.ts"
+import { getRpName } from "../utils/config.ts"
 
 /**
  * Mobile Registration Service
@@ -12,10 +13,13 @@ export const generateMobileRegistrationPage = withErrorHandler(
     challenge: string,
     email: string,
     sessionId: string,
-    rpId: string,
-    rpName: string
+    rpId: string
   ) => {
     console.log('📱 Generating mobile registration page for:', email)
+
+    // rp.name is rendered by the OS passkey prompt, so it is derived from the
+    // (allow-listed) rpId — a request-supplied name would be UI spoofing.
+    const rpName = getRpName(rpId)
 
     // Verify challenge exists and is valid
     const { data: challengeData, error: challengeError } = await supabase

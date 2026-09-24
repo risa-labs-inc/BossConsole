@@ -30,8 +30,7 @@ const registerMobileRoute = createRoute({
       challenge: z.string().describe('WebAuthn challenge'),
       email: z.string().email().describe('User email'),
       sessionId: z.string().describe('Session ID for tracking'),
-      rpId: z.string().optional().describe('Relying party ID'),
-      rpName: z.string().optional().describe('Relying party name')
+      rpId: z.string().optional().describe('Relying party ID')
     })
   },
   responses: {
@@ -65,7 +64,11 @@ const registerMobileRoute = createRoute({
 mobile.openapi(registerMobileRoute, async (ctx) => {
   try {
     const supabase = ctx.get("supabase")
-    const { challenge, email, sessionId, rpId = 'api.risaboss.com', rpName = 'BOSS' } = ctx.req.valid('query')
+    // No rpName is read from the query: it lands in `rp.name`, which the OS
+    // passkey prompt renders in a trusted system dialog. The service derives
+    // it from the allow-listed rpId (see getRpName). Clients that still send
+    // rpName are unaffected - the parameter is simply ignored.
+    const { challenge, email, sessionId, rpId = 'api.risaboss.com' } = ctx.req.valid('query')
 
     if (!challenge || !email || !sessionId) {
       return ctx.html(getMobileErrorHTML('Missing required parameters: challenge, email, sessionId'), 400)
@@ -82,8 +85,7 @@ mobile.openapi(registerMobileRoute, async (ctx) => {
       challenge,
       email,
       sessionId,
-      rpId,
-      rpName
+      rpId
     )
 
     if (!result.success) {

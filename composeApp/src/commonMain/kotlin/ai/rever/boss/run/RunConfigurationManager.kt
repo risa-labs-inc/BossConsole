@@ -31,7 +31,8 @@ expect object RunConfigurationManager {
 
     /**
      * Scan a project directory for runnable entry points.
-     * Clears previous detected configs before scanning.
+     * Clears previous detected configs before scanning. Only the newest request publishes
+     * results, errors, and scanning state; results remain shared across windows.
      */
     suspend fun scanProject(projectPath: String)
 
@@ -56,7 +57,8 @@ expect object RunConfigurationManager {
     suspend fun updateConfiguration(config: RunConfiguration)
 
     /**
-     * Clear all detected configurations.
+     * Clear all detected configurations and invalidate pending scan publication.
+     * This does not stop filesystem traversal already in progress.
      */
     suspend fun clearDetected()
 

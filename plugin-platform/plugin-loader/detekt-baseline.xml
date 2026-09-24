@@ -34,7 +34,7 @@
     <ID>ReturnCount:BinaryCompatibilityValidator.kt$ConstantPoolParser$fun extractReferences(classBytes: ByteArray): List&lt;MemberRef&gt;</ID>
     <ID>ReturnCount:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$override suspend fun unloadPlugin( pluginId: String, waitForGC: Boolean, force: Boolean, ): Result&lt;Unit&gt;</ID>
     <ID>ReturnCount:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$private fun isBossVersionCompatible( requiredVersion: String, currentVersion: String, ): Boolean</ID>
-    <ID>ReturnCount:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$private fun verifySignatureOrThrow( jarPath: String, manifest: PluginManifest, ): PluginSignatureException?</ID>
+    <ID>ReturnCount:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$private fun verifySignatureOrThrow( jarPath: String, manifest: PluginManifest, jarSha256: String, ): PluginSignatureException?</ID>
     <ID>ReturnCount:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$suspend fun loadBundledPlugins(bundledDir: java.io.File): List&lt;LoadedPlugin&gt;</ID>
     <ID>ReturnCount:PluginClassLoaderManager.kt$PluginClassLoaderManager$fun initializeApiLayer(pluginDir: File): ApiClassLoader</ID>
     <ID>ReturnCount:PluginManifestReader.kt$PluginManifestReader$private fun isCompatibleApiVersion(requiredVersion: String): Boolean</ID>

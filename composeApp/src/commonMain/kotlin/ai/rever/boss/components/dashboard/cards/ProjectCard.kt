@@ -39,6 +39,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.ZoneId
 import java.util.Date
 
 /**
@@ -158,18 +160,60 @@ fun ProjectCard(
 
 /**
  * Format timestamp as relative time (e.g., "2h ago", "Yesterday").
+ *
+ * Buckets below one day are elapsed-time and stay that way; "Yesterday" answers to the
+ * calendar in the local zone instead of a 24-48h elapsed window (#1078): a file modified
+ * at 23:00 two days back is the day before yesterday, not yesterday, and a file modified
+ * at 23:59 last night is yesterday, not "Just now", at one minute past midnight.
  */
-private fun formatRelativeTime(timestamp: Long): String {
-    if (timestamp == 0L) return "Never"
-
-    val now = System.currentTimeMillis()
+internal fun formatRelativeTime(
+    timestamp: Long,
+    now: Long = System.currentTimeMillis(),
+    zone: ZoneId = ZoneId.systemDefault(),
+): String {
     val diff = now - timestamp
+    val elapsedLabel =
+        when {
+            diff < 60_000 -> "Just now"
+            diff < 3600_000 -> "${diff / 60_000}m ago"
+            diff < 86400_000 -> "${diff / 3600_000}h ago"
+            else -> null
+        }
+
+    // Exactly one calendar day back reads "Yesterday". Same-day below is only reachable
+    // through a DST 25-hour day where 24h elapsed did not cross midnight; the date is
+    // the honest label for that rare case, not "Yesterday".
+    val today =
+        Instant
+            .ofEpochMilli(now)
+            .atZone(zone)
+            .toLocalDate()
+    val thatDay =
+        Instant
+            .ofEpochMilli(timestamp)
+            .atZone(zone)
+            .toLocalDate()
+    val calendarLabel =
+        when (today.toEpochDay() - thatDay.toEpochDay()) {
+            1L -> {
+                "Yesterday"
+            }
+
+            // SimpleDateFormat formats in the host default zone unless told otherwise -
+            // honour the same zone the bucket decision used, otherwise a project opened
+            // 26 hours ago crosses midnight in UTC and labels as "Today" / "Yesterday"
+            // differently depending on where the test machine sits.
+            else -> {
+                SimpleDateFormat("MMM d")
+                    .apply {
+                        timeZone = java.util.TimeZone.getTimeZone(zone)
+                    }.format(Date(timestamp))
+            }
+        }
 
     return when {
-        diff < 60_000 -> "Just now"
-        diff < 3600_000 -> "${diff / 60_000}m ago"
-        diff < 86400_000 -> "${diff / 3600_000}h ago"
-        diff < 172800_000 -> "Yesterday"
-        else -> SimpleDateFormat("MMM d").format(Date(timestamp))
+        timestamp == 0L -> "Never"
+        elapsedLabel != null -> elapsedLabel
+        else -> calendarLabel
     }
 }

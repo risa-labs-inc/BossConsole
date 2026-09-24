@@ -41,7 +41,7 @@ object CliBootstrap {
      */
     fun isHeadlessCli(args: Array<String>): Boolean {
         val firstNonFlag = args.firstOrNull { !it.startsWith("-") }?.lowercase()
-        return firstNonFlag in setOf("status", "doctor", "mcp", "completion", "plugin") ||
+        return firstNonFlag in setOf("status", "doctor", "mcp", "pack", "completion", "plugin") ||
             (args.isNotEmpty() && args.all { it in setOf("-h", "--help") })
     }
 
@@ -101,7 +101,7 @@ object CliBootstrap {
             SingleInstanceManager.sendToExistingInstance(link, origin)
         },
     ): Boolean {
-        val deepLinks = OsOpenArguments.deepLinksFrom(args)
+        val deepLinks = OsOpenArguments.requestsFrom(args)
         if (deepLinks.isEmpty()) {
             logger.info(LogCategory.SYSTEM, "No URL to send - existing BOSS window should be visible")
             return true
@@ -121,13 +121,13 @@ object CliBootstrap {
         // runBlocking is acceptable here: this runs during pre-UI
         // initialization, before the Compose application starts.
         val success =
-            deepLinks.fold(true) { acc, link ->
+            deepLinks.fold(true) { acc, (link, origin) ->
                 // Forward first, combine after: `acc &&` would short-circuit and
                 // silently drop the rest of a multi-file selection after one failure.
                 forwardDeepLinkWithRetry(
                     link = link,
                     send = { attempt ->
-                        val accepted = send(link, DeepLinkOrigin.EXTERNAL)
+                        val accepted = send(link, origin)
                         // dev's per-attempt positive confirmation - the auth deep-link path is
                         // where it was most used during sign-in debugging (BossConsole#450's
                         // review: the extraction dropped it, leaving only the failure WARN).

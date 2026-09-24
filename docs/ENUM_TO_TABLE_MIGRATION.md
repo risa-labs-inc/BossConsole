@@ -147,7 +147,7 @@ CREATE TABLE user_roles (
 
 **Functions created:**
 1. `get_user_roles_with_names(user_id)` - Returns user roles with role names
-2. `check_user_has_role(user_id, role_name)` - Checks if user has specific role
+2. `check_user_has_role(user_id, role_name)` - listed here, but no migration creates it; the role check that exists is `user_has_role(check_user_id, check_role)`
 3. `get_role_permissions_with_names(role_name)` - Returns permissions for a role
 
 **Why needed:**
@@ -241,7 +241,7 @@ data class RoleCreationState(
 
 **Updated functions:**
 - `getUserRoles()` - Now calls `get_user_roles_with_names()` RPC
-- `userHasRole()` - Now calls `check_user_has_role()` RPC
+- `userHasRole()` - called `check_user_has_role()`, which does not exist; it had no callers and has been removed, with `isUserAdmin()`
 - `getRolePermissions()` - Now calls `get_role_permissions_with_names()` RPC
 
 **No breaking changes:**

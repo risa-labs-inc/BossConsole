@@ -19,7 +19,7 @@ import {
   authorizeNewPluginPublish,
   preflightPublishAuthz,
 } from "../services/publish-authz.ts"
-import { createVersion, versionExists, finalizeVersion, getVersionById } from "../services/versions.ts"
+import { createVersion, versionExists, finalizeVersion, getVersionById, deleteStalePendingVersion } from "../services/versions.ts"
 import { getSignedUploadUrl, getSignedDownloadUrl, generateJarPath, uploadJar } from "../services/storage.ts"
 import { getAuthenticatedUser, getUserDisplayName, logApiKeyAction } from "../utils/auth.ts"
 import {
@@ -145,8 +145,12 @@ publish.openapi(publishPluginRoute, async (ctx) => {
       return ctx.json({ success: false, error: 'Plugin ID already exists' }, 400)
     }
 
-    // Get author display name - use custom name if provided, otherwise derive from email
-    const authorName = body.authorName || await getUserDisplayName(supabase, user.userId)
+    // The display name is ALWAYS derived from the authenticated user. A
+    // publisher-supplied authorName is free text rendered as "Published by
+    // ..." and returned in store JSON, so honouring it let any publisher
+    // claim "BOSS Team" or an org they do not belong to. The field stays in
+    // the request schema for compatibility but is ignored.
+    const authorName = await getUserDisplayName(supabase, user.userId)
 
     // Create plugin
     const result = await createPlugin(
@@ -318,9 +322,21 @@ publish.openapi(publishVersionRoute, async (ctx) => {
       return ctx.json({ success: false, error: authz.error }, authz.status)
     }
 
-    // Check if version already exists
+    // Check if version already exists. One legitimate way for that to happen is
+    // a publish that died between createVersion and its finalize (client
+    // crash, dropped upload): that row is unfinalized — never "latest", never
+    // downloadable — but it still squats on the UNIQUE(plugin_id, version)
+    // slot. Reap it if its upload window has lapsed so the retry can proceed;
+    // anything else is a real collision (#912).
     if (await versionExists(supabase, plugin.id, body.version)) {
-      return ctx.json({ success: false, error: 'Version already exists' }, 400)
+      const reaped = await deleteStalePendingVersion(supabase, plugin.id, body.version)
+        .catch((e) => {
+          console.error('Error reaping stale pending version:', e)
+          return false
+        })
+      if (!reaped) {
+        return ctx.json({ success: false, error: 'Version already exists' }, 400)
+      }
     }
 
     // Generate JAR path
@@ -759,7 +775,10 @@ publish.openapi(publishFromGitHubRoute, async (ctx) => {
     } else {
       // Create new plugin
       isNewPlugin = true
-      const authorName = manifest.author || await getUserDisplayName(supabase, user.userId)
+      // manifest.author is publisher-controlled text from plugin.json - the
+      // same impersonation vector as a request authorName - so the display
+      // name is derived from the authenticated user, never the manifest.
+      const authorName = await getUserDisplayName(supabase, user.userId)
 
       // Which organisation owns it, and whether they may publish for it at all. The preflight
       // above only established that they can publish SOMEWHERE.
@@ -794,12 +813,21 @@ publish.openapi(publishFromGitHubRoute, async (ctx) => {
       await setPluginTags(supabase, pluginUuid, tags)
     }
 
-    // Check if version already exists
+    // Check if version already exists. Same stale-pending reap as the two-step
+    // path above (#912): this route also has a createVersion → finalize
+    // window that a mid-request crash can strand.
     if (await versionExists(supabase, pluginUuid, version)) {
-      return ctx.json({
-        success: false,
-        error: `Version ${version} already exists for ${manifest.pluginId}`
-      }, 400)
+      const reaped = await deleteStalePendingVersion(supabase, pluginUuid, version)
+        .catch((e) => {
+          console.error('Error reaping stale pending version:', e)
+          return false
+        })
+      if (!reaped) {
+        return ctx.json({
+          success: false,
+          error: `Version ${version} already exists for ${manifest.pluginId}`
+        }, 400)
+      }
     }
 
     // Generate JAR path and upload
@@ -1078,7 +1106,10 @@ publish.openapi(publishFromGitHubMetadataRoute, async (ctx) => {
       })
     } else {
       isNewPlugin = true
-      const authorName = manifest.author || await getUserDisplayName(supabase, user.userId)
+      // Same rule as the other publish paths: manifest.author is
+      // publisher-controlled text, so the display name is derived from the
+      // authenticated user.
+      const authorName = await getUserDisplayName(supabase, user.userId)
 
       // Which organisation owns it, and whether they may publish for it at all. The preflight
       // above only established that they can publish SOMEWHERE.
@@ -1114,12 +1145,21 @@ publish.openapi(publishFromGitHubMetadataRoute, async (ctx) => {
 
     const version = manifest.version
 
-    // Check if version already exists
+    // Check if version already exists. Same stale-pending reap as the two-step
+    // path above (#912): this route also has a createVersion → finalize
+    // window that a mid-request crash can strand.
     if (await versionExists(supabase, pluginUuid, version)) {
-      return ctx.json({
-        success: false,
-        error: `Version ${version} already exists for ${manifest.pluginId}`
-      }, 400)
+      const reaped = await deleteStalePendingVersion(supabase, pluginUuid, version)
+        .catch((e) => {
+          console.error('Error reaping stale pending version:', e)
+          return false
+        })
+      if (!reaped) {
+        return ctx.json({
+          success: false,
+          error: `Version ${version} already exists for ${manifest.pluginId}`
+        }, 400)
+      }
     }
 
     // Store the GitHub download URL directly as jar_path

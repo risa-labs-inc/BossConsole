@@ -17,12 +17,17 @@ import java.util.UUID
  *
  * Layout: $dataDir/snapshots/{processId}/{timestamp}-{uuid}.snapshot
  * Optional description: $dataDir/snapshots/{processId}/{timestamp}-{uuid}.desc
+ * The timestamp is a wall-clock-derived monotonic ordering key; collisions and clock rollback may
+ * advance it past the current wall time so "latest" remains deterministic.
  *
  * On POSIX filesystems, construction and writes fail closed when owner-only permissions cannot be applied.
  */
-class SnapshotManager(
+class SnapshotManager internal constructor(
     private val dataDir: File,
+    private val currentTimeMillis: () -> Long,
 ) {
+    constructor(dataDir: File) : this(dataDir, System::currentTimeMillis)
+
     private val snapshotsRoot: File =
         File(dataDir, "snapshots").also {
             Files.createDirectories(it.toPath())
@@ -70,8 +75,8 @@ class SnapshotManager(
         description: String = "",
     ): String {
         val id = UUID.randomUUID().toString()
-        val timestamp = System.currentTimeMillis()
         val dir = checkNotNull(snapshotDir(processId, create = true))
+        val timestamp = SnapshotTimestampAllocator.next(canonicalSnapshotsRoot, dir, currentTimeMillis())
         val snapshotFile = File(dir, "$timestamp-$id.snapshot")
         atomicWriteFile(snapshotFile, data)
         if (description.isNotBlank()) {
@@ -90,7 +95,7 @@ class SnapshotManager(
         val dir = snapshotDir(processId, create = false) ?: return null
         return dir
             .listFiles { f -> f.extension == "snapshot" && f.isRegularFileNoFollow() }
-            ?.maxByOrNull { it.nameWithoutExtension.substringBefore("-").toLongOrNull() ?: 0L }
+            ?.maxByOrNull { it.snapshotTimestamp() }
             ?.readBytes()
     }
 
@@ -106,7 +111,7 @@ class SnapshotManager(
             ?.map { file ->
                 val nameWithoutExt = file.nameWithoutExtension
                 val dashIdx = nameWithoutExt.indexOf('-')
-                val timestamp = if (dashIdx > 0) nameWithoutExt.substring(0, dashIdx).toLongOrNull() ?: 0L else 0L
+                val timestamp = file.snapshotTimestamp().coerceAtLeast(0L)
                 val id = if (dashIdx > 0) nameWithoutExt.substring(dashIdx + 1) else nameWithoutExt
                 val descFile = File(dir, "$nameWithoutExt.desc")
                 SnapshotInfo(
@@ -133,7 +138,7 @@ class SnapshotManager(
         val snapshots =
             dir
                 .listFiles { f -> f.extension == "snapshot" && f.isRegularFileNoFollow() }
-                ?.sortedByDescending { it.nameWithoutExtension.substringBefore("-").toLongOrNull() ?: 0L }
+                ?.sortedByDescending { it.snapshotTimestamp() }
                 ?: return
         snapshots.drop(keepLast).forEach { file ->
             file.delete()
@@ -200,7 +205,50 @@ class SnapshotManager(
     private fun hasPosix(path: Path): Boolean = path.fileSystem.supportedFileAttributeViews().contains("posix")
 }
 
+/**
+ * Allocates the ordering key embedded in a snapshot filename.
+ *
+ * Wall time alone is not an ordering key: several state publications routinely fit inside one
+ * millisecond, and the clock can move backwards after an OS time correction. `loadLatest`,
+ * `listSnapshots`, cleanup, and repair selection all order by this number, so a tie lets the
+ * filesystem's unspecified directory order decide which state is "latest".
+ *
+ * The newest value already on disk is part of the floor so the guarantee survives a manager
+ * restart. The process-wide lock covers the production shape (one orchestrator and one data
+ * directory) as well as two manager instances in the same JVM. Snapshot UUIDs still provide
+ * filename uniqueness; this value provides a strict, monotonic ordering per snapshots root.
+ */
+private object SnapshotTimestampAllocator {
+    private val lock = Any()
+    private val lastAllocatedByRoot = mutableMapOf<Path, Long>()
+
+    fun next(
+        snapshotsRoot: Path,
+        processDirectory: File,
+        wallTime: Long,
+    ): Long =
+        synchronized(lock) {
+            val newestOnDisk =
+                processDirectory
+                    .listFiles { file -> file.extension == "snapshot" && file.isRegularFileNoFollow() }
+                    ?.maxOfOrNull { it.snapshotTimestamp() }
+                    ?: Long.MIN_VALUE
+            val floor = maxOf(lastAllocatedByRoot[snapshotsRoot] ?: Long.MIN_VALUE, newestOnDisk)
+            val next =
+                if (wallTime > floor) {
+                    wallTime
+                } else {
+                    check(floor < Long.MAX_VALUE) { "Snapshot timestamp space exhausted" }
+                    floor + 1
+                }
+            lastAllocatedByRoot[snapshotsRoot] = next
+            next
+        }
+}
+
 private fun File.isRegularFileNoFollow(): Boolean = Files.isRegularFile(toPath(), LinkOption.NOFOLLOW_LINKS)
+
+private fun File.snapshotTimestamp(): Long = nameWithoutExtension.substringBefore("-").toLongOrNull() ?: Long.MIN_VALUE
 
 data class SnapshotInfo(
     val id: String,

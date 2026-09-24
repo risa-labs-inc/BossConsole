@@ -25,6 +25,14 @@ data class PerformanceSettings(
     val pluginJvmInitialHeapMb: Int = 64,
 ) {
     companion object {
+        /**
+         * Hard ceiling on history retention regardless of the configured value.
+         * Snapshots are added on every significant change, so at the worst-case
+         * 1s tick this and `PerformanceMonitor.MAX_HISTORY_SIZE` together bound
+         * history at one hour / 3,600 entries.
+         */
+        const val MAX_HISTORY_RETENTION_MINUTES = 60
+
         /** Auto-detect: 2% of system RAM per plugin, clamped 256–4096 MB. */
         val DEFAULT_PLUGIN_HEAP_MB: Int =
             run {
@@ -56,7 +64,7 @@ data class PerformanceSettings(
             cpuSampleIntervalMs = cpuSampleIntervalMs.coerceAtLeast(100),
             resourceSampleIntervalMs = resourceSampleIntervalMs.coerceAtLeast(100),
             gcSampleIntervalMs = gcSampleIntervalMs.coerceAtLeast(100),
-            historyRetentionMinutes = historyRetentionMinutes.coerceIn(1, 180),
+            historyRetentionMinutes = historyRetentionMinutes.coerceIn(1, MAX_HISTORY_RETENTION_MINUTES),
             pluginJvmHeapMb = pluginJvmHeapMb.coerceIn(128, 8192),
             pluginJvmInitialHeapMb = pluginJvmInitialHeapMb.coerceIn(32, pluginJvmHeapMb),
         )
@@ -72,7 +80,24 @@ data class PerformanceSnapshot(
     val cpu: CpuMetrics,
     val gc: GcMetrics,
     val resources: ResourceMetrics,
-)
+) {
+    /**
+     * The form retained in history and written by metrics export.
+     *
+     * The live snapshot carries the full top-thread list for the panel's thread
+     * table, but a retained copy of it is multiplied by thousands of history
+     * entries - the thread names and states are the dominant per-entry cost.
+     * History keeps only the hottest [HISTORY_THREAD_LIMIT]; scalar metrics,
+     * resource counts, memory pools and GC collectors are already bounded and
+     * pass through untouched.
+     */
+    fun forHistory(): PerformanceSnapshot = copy(cpu = cpu.copy(threads = cpu.threads.take(HISTORY_THREAD_LIMIT)))
+
+    companion object {
+        /** Threads retained per history entry; the live snapshot carries the full top-20. */
+        const val HISTORY_THREAD_LIMIT = 5
+    }
+}
 
 /**
  * Memory metrics from JVM.
@@ -271,6 +296,11 @@ data class LastGcInfo(
 
 /**
  * Resource counts (browser tabs, terminals, etc.).
+ *
+ * Counts only. This used to also embed per-tab detail lists (titles, URLs, file
+ * paths) collected for a Resources tab, but no consumer reads them - the plugin
+ * API surface carries the counts alone - so the strings were retained in every
+ * history entry and every export for nothing. They are gone rather than trimmed.
  */
 @Serializable
 data class ResourceMetrics(
@@ -279,43 +309,6 @@ data class ResourceMetrics(
     val editorTabCount: Int,
     val panelCount: Int,
     val windowCount: Int,
-    val browserTabs: List<BrowserTabInfo> = emptyList(),
-    val terminals: List<TerminalInfo> = emptyList(),
-    val editorTabs: List<EditorTabResourceInfo> = emptyList(),
-)
-
-/**
- * Information about an open browser tab.
- */
-@Serializable
-data class BrowserTabInfo(
-    val id: String,
-    val title: String,
-    val url: String,
-    val isActive: Boolean = false,
-)
-
-/**
- * Information about an open terminal session.
- */
-@Serializable
-data class TerminalInfo(
-    val id: String,
-    val title: String,
-    val workingDirectory: String = "",
-    val isActive: Boolean = false,
-)
-
-/**
- * Information about an open editor tab.
- */
-@Serializable
-data class EditorTabResourceInfo(
-    val id: String,
-    val fileName: String,
-    val filePath: String,
-    val isModified: Boolean = false,
-    val isActive: Boolean = false,
 )
 
 /**

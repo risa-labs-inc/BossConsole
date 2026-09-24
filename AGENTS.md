@@ -232,6 +232,17 @@ manager directly rather than `loadPlugin`, and for the same reason as before: an
 question must never produce a second dialog. What changed is that the first question now covers
 the whole closure, where it used to cover one plugin and stay silent about the rest.
 
+A plugin pack consents through `pack_plan` rather than this dialog, and the same rule holds:
+`pack_plan` resolves each install's closure with the same `planFor` and returns the extra ids as
+`alsoInstalls`, with `closureComplete: false` plus `unresolved`, `cyclic` or `truncated` when the
+walk could not see all of it. `pack_apply` installs the order its own fresh plan resolved and is
+handed that order rather than re-walking the store, so the installs cannot exceed the closure
+that apply's own plan resolved - a walk repeated at install time could follow store rows that
+changed in between. That bounds the install to the plan, not to what the operator saw: the
+`pack_apply` approval dialog shows the raw pack arguments, so a direct `pack_apply` with no
+earlier `pack_plan` has no closure in its consent. Showing the closure in that dialog is a
+recorded follow-up.
+
 Three properties of the plan are worth knowing before touching it. The plugin the user was asked
 about is always in the plan and always last, even if it turns out to be present, because the
 Install guard already answers that and an empty plan has no sensible reading. A store that cannot
@@ -826,8 +837,12 @@ restart. There is no Settings row and no per-site exclusion.
   bridge. Project paths routinely contain usernames, so this widens *when* a filesystem
   path reaches every installed plugin, not *what* - the same install-time-gating stance
   as the bus above applies. In particular, `boss://` links can originate outside BOSS and
-  only a deep link that would start a terminal command consults `DeepLinkOrigin`, so an
+  a deep link that would start a terminal command, and a plugin action link, consult
+  `DeepLinkOrigin`; project/file deep links still do not, so an
   externally opened project link can trigger this broadcast without operator confirmation.
+  Plugin action links are the exception: external and in-process-plugin requests are held for
+  confirmation before their registered handler runs, including when they arrive before any
+  window exists, in which case they wait for the first one.
   It is recorded here because this paragraph is the canonical list of what a third-party
   plugin can observe.
 - **`PluginContext.projectSearchProvider` is the first UNGATED WRITE surface.**
@@ -980,8 +995,8 @@ URL produces the same input. Entry points therefore tag each link with a
   Also the default for an unstated origin, so a new caller that forgets to say
   gets the cautious handling.
 
-Two hosts consult it, and both for the same reason - each can type a command
-into a shell:
+Three hosts consult it. The first two share a reason - each can type a command
+into a shell - and the third reaches a plugin's own code instead:
 
 - `boss://terminal?command=`: an `OPERATOR_CLI` command runs as before, anything
   else is shown to the operator for confirmation first (the `boss` shell shim
@@ -995,8 +1010,36 @@ into a shell:
   `CLICommand.LoadWorkspace` through the cold-start readiness queue to
   `WorkspaceLoadEvent.requiresConfirmation`, because only the window parses the
   file and so only it knows whether there is anything to confirm.
+- `boss://plugin?id=…&action=…`: the link dispatches into a plugin's registered
+  `DeepLinkActionHandler`, which is a program the operator did not ask to run, so an
+  `EXTERNAL` request is held (`pluginActionDisposition`) and
+  `PluginActionApprovalDialog` shows the handler, the action and the parameter KEYS -
+  never a parameter value, which is attacker-chosen text. Malformed prompt tokens are
+  refused outright.
 
-Other hosts - including `boss://plugin?id=…&action=…` - are unchanged.
+No other host consults it.
+
+A terminal request with no usable window is refused. A **plugin action** with no usable
+window is instead *retained* by `PluginActionEventBus` until some window claims it, because
+that is the ordinary cold-start path rather than an edge case: `CliBootstrap.dispatchPostLock`
+runs an argv link before `application {}` builds the first window, so refusing there meant a
+link clicked while BOSS was not running was never put to the operator at all. A retained
+request has not run and still cannot run without a confirmation, so this widens nothing. The
+registry is bounded (`MAX_PENDING`); a request arriving when it is full is refused, not
+dropped silently. Every open window is offered every retained request and
+`shouldClaimPluginAction` decides whose it is - the window it resolved to, or any window once
+that one has closed - so exactly one window shows it. A window claims one request at a time,
+only while nothing is on screen (`PluginActionApprovalQueue.canClaim`), as the dependency bus
+does, so every other request stays retained for the next window. Closing a window after its
+prompt appears can still abandon that one claimed request. Because the window's own queue
+holds only the prompt on screen, the prompt's "(n pending)" counts that one plus every request
+still retained on the bus (`pluginActionBacklog`), so a flood of links is visible. The wiring
+lives in `PluginActionApprovalPrompt`, not inline in `BossAppDialogs`, so a test drives the real
+count. A retained request carries no age and does not expire: the registry is bounded and a
+request reaches its handler only through the prompt, so a prompt shown long after the link was
+clicked still fails closed rather than acting on its own. That is a recorded decision, not an
+oversight - a TTL, or the arrival time in the prompt text, would make a late prompt easier for
+the operator to place.
 
 **Single-instance channel**: `SingleInstanceManager` publishes
 `~/.boss/run/single-instance` (owner-only) with the channel endpoint and a token
@@ -1005,10 +1048,12 @@ Linux) or a loopback port (Windows). Every request must present the token,
 "another instance is running" means something answered on the channel rather than
 a pid existing, and a descriptor nobody answers on is reclaimed.
 
-A forwarded plugin action (`boss://plugin?id=...&action=...`) is acknowledged
-only when its handler reports true. Missing ids, missing handlers, declined
-and throwing handlers report failure. The channel waits up to five seconds;
-a timeout reports an unknown outcome and cancels dispatch if it is still queued.
+A forwarded operator-origin plugin action (`boss://plugin?id=...&action=...`) is
+acknowledged only when its handler reports true. An external action is acknowledged when
+it is queued for confirmation, before anything runs. Missing ids, refused actions, missing
+handlers, declined and throwing operator-origin handlers report failure. The channel waits
+up to five seconds for a direct dispatch; a timeout reports an unknown outcome and cancels it
+if it is still queued.
 An already-running synchronous handler cannot be interrupted. Startup therefore
 never retries plugin actions automatically, even after a lost response; auth and
 other open requests retain their existing retries. Panel-open links still only
@@ -2355,3 +2400,13 @@ update it with the pinned distribution checksum and scaffold validation together
 - `atomicWriteText` pins POSIX files to 0600. The separate `writeModeFile` writer for `env_vars` preserves existing permissions; that rule does not apply to all state writers.
 - Chromium's constructed GitHub backup URL uses the catalog checksum. Primary and backup must contain identical artifact bytes; checksum mismatch fails closed. See `docs/dev-935-release-checklist.md` for deployment checks.
 - Browser print is a direct-native exception to the usual AWT ownership rule after macOS manual verification. Pending AWT cancellation is best-effort, not a cross-thread exactly-once guarantee; do not copy this pattern for destructive actions.
+
+### Run scan publication ownership
+
+Run configurations retain a process-wide detected list. Scans from different windows may
+overlap, but only the latest request owns its results, error, and busy state. A short
+`scanLock` protects ownership and publication, never filesystem traversal. `clearDetected`
+invalidates pending publication and clears scan status; it does not cancel detector work.
+Cancellation propagates without becoming a scan error. The internal scanner overload lets
+`RunConfigurationScanOwnershipTest` control completion order on the real manager without
+mutating a global detector or reading a user's project.

@@ -5,7 +5,10 @@ import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.extractFileName
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -50,6 +53,8 @@ actual object RunConfigurationManager {
     private val trailingProjectRegex = Regex("( \\[[^\\]]*])\\)$")
 
     private val detector = DesktopMainFunctionDetector()
+    private val scanLock = Any()
+    private var scanOwner: Any? = null
 
     private val _currentSettings = MutableStateFlow(RunConfigurationSettings())
     private val settingsMutex = Mutex()
@@ -112,9 +117,12 @@ actual object RunConfigurationManager {
      */
     internal fun resetForTesting(testFile: File? = null) {
         settingsFile = testFile ?: defaultSettingsFile
-        _detectedConfigurations.value = emptyList()
-        _isScanning.value = false
-        _lastError.value = null
+        synchronized(scanLock) {
+            scanOwner = null
+            _detectedConfigurations.value = emptyList()
+            _isScanning.value = false
+            _lastError.value = null
+        }
         loadSettingsSync()
     }
 
@@ -199,33 +207,65 @@ actual object RunConfigurationManager {
      * Names are made unique by adding path context when duplicates exist.
      * Clears previous detected configs before scanning to prevent unbounded growth.
      */
-    actual suspend fun scanProject(projectPath: String) =
-        withContext(Dispatchers.IO) {
+    actual suspend fun scanProject(projectPath: String) = scanProject(projectPath, detector::scanProject)
+
+    /** The injected scanner keeps tests on the same publication path as the real detector. */
+    internal suspend fun scanProject(
+        projectPath: String,
+        scan: suspend (String) -> List<RunConfiguration>,
+    ) {
+        currentCoroutineContext().ensureActive()
+        val owner = Any()
+        synchronized(scanLock) {
+            scanOwner = owner
             _isScanning.value = true
-            _lastError.value = null // Clear previous error
-            // Clear previous detections to prevent memory leak on project switches
+            _lastError.value = null
             _detectedConfigurations.value = emptyList()
-            try {
-                logger.debug(LogCategory.SYSTEM, "Scanning project for run configurations", mapOf("path" to projectPath))
-                val detected = detector.scanProject(projectPath)
-                val detectedWithUniqueNames = makeNamesUnique(detected, projectPath)
-                _detectedConfigurations.value = detectedWithUniqueNames
-                logger.debug(LogCategory.SYSTEM, "Found runnable configurations", mapOf("count" to detectedWithUniqueNames.size))
-                // Don't auto-select - user must choose from dropdown
-            } catch (e: Exception) {
-                val errorMsg = "Failed to scan project: ${e.message}"
-                logger.warn(LogCategory.SYSTEM, "Failed to scan project", error = e)
-                _lastError.value = errorMsg
-            } finally {
-                _isScanning.value = false
+        }
+        try {
+            logger.debug(LogCategory.SYSTEM, "Scanning project for run configurations", mapOf("path" to projectPath))
+            val detected = withContext(Dispatchers.IO) { makeNamesUnique(scan(projectPath), projectPath) }
+            currentCoroutineContext().ensureActive()
+            val published =
+                synchronized(scanLock) {
+                    if (scanOwner === owner) {
+                        _detectedConfigurations.value = detected
+                        true
+                    } else {
+                        false
+                    }
+                }
+            if (published) {
+                logger.debug(LogCategory.SYSTEM, "Found runnable configurations", mapOf("count" to detected.size))
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            val published =
+                synchronized(scanLock) {
+                    if (scanOwner === owner) {
+                        _lastError.value = "Failed to scan project: ${e.message}"
+                        true
+                    } else {
+                        false
+                    }
+                }
+            if (published) logger.warn(LogCategory.SYSTEM, "Failed to scan project", error = e)
+        } finally {
+            synchronized(scanLock) {
+                if (scanOwner === owner) {
+                    scanOwner = null
+                    _isScanning.value = false
+                }
             }
         }
+    }
 
     /**
      * Clear the last error.
      */
     actual suspend fun clearError() {
-        _lastError.value = null
+        synchronized(scanLock) { _lastError.value = null }
     }
 
     /**
@@ -361,7 +401,12 @@ actual object RunConfigurationManager {
      * Clear all detected configurations.
      */
     actual suspend fun clearDetected() {
-        _detectedConfigurations.value = emptyList()
+        synchronized(scanLock) {
+            scanOwner = null
+            _detectedConfigurations.value = emptyList()
+            _isScanning.value = false
+            _lastError.value = null
+        }
     }
 
     /**

@@ -1,6 +1,7 @@
 package ai.rever.boss.plugin.browser
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.Dispatchers
@@ -37,7 +38,20 @@ data class BrowserZoomSettingsData(
  */
 object BrowserZoomSettingsManager {
     private val logger = BossLogger.forComponent("BrowserZoomSettingsManager")
-    private val settingsFile = BossDirectories.resolve("browser-zoom-settings.json")
+
+    /**
+     * The production settings path, captured once so [resetForTesting] can restore it without
+     * re-deriving the literal at every call site.
+     */
+    private val defaultSettingsFile = BossDirectories.resolve("browser-zoom-settings.json")
+
+    /**
+     * Overridable so hermetic tests exercise the real read/write path without touching
+     * `~/.boss`, as [ai.rever.boss.run.RunConfigurationManager] does. Restored by
+     * [resetForTesting] callers; production code never reassigns it.
+     */
+    @Volatile
+    internal var settingsFile: File = defaultSettingsFile
     private val json =
         Json {
             prettyPrint = true
@@ -107,13 +121,25 @@ object BrowserZoomSettingsManager {
     }
 
     /**
+     * Reset manager state and optionally redirect [settingsFile] to [testFile]; with no
+     * argument, restore [defaultSettingsFile]. Call only when no save is in flight, and
+     * always finish with a no-argument call, so the singleton is left where the app and
+     * other tests expect it. Mirrors [ai.rever.boss.run.RunConfigurationManager].
+     */
+    internal fun resetForTesting(testFile: File? = null) {
+        settingsFile = testFile ?: defaultSettingsFile
+        settings = BrowserZoomSettingsData()
+        loadSettings()
+    }
+
+    /**
      * Save settings to disk.
      */
     suspend fun saveSettings() {
         withContext(Dispatchers.IO) {
             try {
                 settingsFile.parentFile?.mkdirs()
-                settingsFile.writeText(json.encodeToString(settings))
+                settingsFile.atomicWriteText(json.encodeToString(settings))
             } catch (e: Exception) {
                 logger.warn(LogCategory.BROWSER, "Error saving zoom settings", error = e)
             }
@@ -126,21 +152,11 @@ object BrowserZoomSettingsManager {
     fun saveSettingsSync() {
         try {
             settingsFile.parentFile?.mkdirs()
-            settingsFile.writeText(json.encodeToString(settings))
+            settingsFile.atomicWriteText(json.encodeToString(settings))
         } catch (e: Exception) {
             logger.warn(LogCategory.BROWSER, "Error saving zoom settings (sync)", error = e)
         }
     }
-
-    /**
-     * Normalize domain to handle variations.
-     * Removes www. prefix and converts to lowercase.
-     */
-    private fun normalizeDomain(domain: String): String =
-        domain
-            .lowercase()
-            .removePrefix("www.")
-            .trim()
 
     /**
      * Extract domain from a URL.
@@ -183,3 +199,16 @@ object BrowserZoomSettingsManager {
         settings = BrowserZoomSettingsData()
     }
 }
+
+/**
+ * Normalize domain to handle variations.
+ * Removes www. prefix and converts to lowercase.
+ *
+ * Top-level because [BrowserZoomSettingsManager] sits on detekt's TooManyFunctions
+ * threshold inside objects, and this helper touches none of its state.
+ */
+private fun normalizeDomain(domain: String): String =
+    domain
+        .lowercase()
+        .removePrefix("www.")
+        .trim()

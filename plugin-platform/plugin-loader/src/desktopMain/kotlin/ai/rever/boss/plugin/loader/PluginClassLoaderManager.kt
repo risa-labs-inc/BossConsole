@@ -177,6 +177,12 @@ class PluginClassLoaderManager(
      * @param manifest The plugin manifest
      * @param jarPath Path to the plugin JAR file
      * @param dependencyJars Additional dependency JARs to include in the classpath
+     * @param stagedJar Private verified copy of [jarPath] (see [StagedPluginJar]).
+     *   When present the classpath points at the staged file — so the bytes the
+     *   classloader executes are exactly the bytes the caller verified — the
+     *   copy is owned by the created loader (deleted on [PluginClassLoader.close]),
+     *   and [jarPath] is recorded as the loader's source path so the reconciler
+     *   keeps it for as long as the plugin is live.
      * @return The created classloader
      * @throws PluginLoadException if a classloader already exists for this plugin
      */
@@ -184,6 +190,7 @@ class PluginClassLoaderManager(
         manifest: PluginManifest,
         jarPath: String,
         dependencyJars: List<String> = emptyList(),
+        stagedJar: StagedPluginJar? = null,
     ): PluginClassLoader {
         val pluginId = manifest.pluginId
 
@@ -207,8 +214,9 @@ class PluginClassLoaderManager(
         // Build URLs for the classloader
         val urls = mutableListOf<URL>()
 
-        // Add main JAR
-        val mainJar = File(jarPath)
+        // Add main JAR. A staged load puts the verified private copy on the
+        // classpath instead of [jarPath] — the original is never re-opened.
+        val mainJar = stagedJar?.file ?: File(jarPath)
         if (!mainJar.exists()) {
             throw PluginLoadException(
                 "Plugin JAR not found: $jarPath",
@@ -248,6 +256,8 @@ class PluginClassLoaderManager(
                 urls = urls.toTypedArray(),
                 parent = sharedApiClassLoader ?: parentClassLoader,
                 sharedPackages = sharedPackages,
+                ownedJarFile = stagedJar?.file,
+                sourceJarPath = stagedJar?.let { jarPath },
             )
 
         activeClassLoaders[pluginId] = classLoader

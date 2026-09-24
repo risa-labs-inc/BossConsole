@@ -73,16 +73,6 @@ expect object PerformanceState {
     )
 
     /**
-     * Register detailed resource providers for the Resources tab.
-     * Provides detailed information about each resource (titles, URLs, paths, etc.)
-     */
-    fun registerDetailedResourceProviders(
-        browserTabs: () -> List<BrowserTabInfo>,
-        terminals: () -> List<TerminalInfo>,
-        editorTabs: () -> List<EditorTabResourceInfo>,
-    )
-
-    /**
      * Clear resource providers to prevent memory leaks.
      * Should be called when BossApp is disposed.
      */

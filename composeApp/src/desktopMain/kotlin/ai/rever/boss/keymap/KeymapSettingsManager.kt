@@ -8,6 +8,7 @@ import ai.rever.boss.keymap.presets.KeymapPresets
 import ai.rever.boss.keymap.presets.KeymapPresets.claimsChord
 import ai.rever.boss.keymap.presets.KeymapPresets.withoutChordsTakenBy
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.ComponentLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -30,7 +31,20 @@ import java.io.File
  */
 actual object KeymapSettingsManager {
     private val logger = BossLogger.forComponent("KeymapSettingsManager")
-    private val settingsFile = BossDirectories.resolve("keymap-settings.json")
+
+    /**
+     * The production settings path, captured once so [resetForTesting] can restore it without
+     * re-deriving the literal at every call site.
+     */
+    internal val defaultSettingsFile = BossDirectories.resolve("keymap-settings.json")
+
+    /**
+     * Overridable so hermetic tests exercise the real read/write path without touching
+     * `~/.boss`, as [ai.rever.boss.run.RunConfigurationManager] does. Restored by
+     * [resetForTesting] callers; production code never reassigns it.
+     */
+    @Volatile
+    internal var settingsFile: File = defaultSettingsFile
     private val json =
         Json {
             prettyPrint = true
@@ -53,7 +67,7 @@ actual object KeymapSettingsManager {
      * If file doesn't exist, uses default keymap.
      * Applies migration to add any new actions from presets.
      */
-    private fun loadSettingsSync() {
+    internal fun loadSettingsSync() {
         try {
             if (settingsFile.exists()) {
                 val content = settingsFile.readText()
@@ -67,7 +81,7 @@ actual object KeymapSettingsManager {
                 if (migrated != loaded) {
                     try {
                         val migratedContent = json.encodeToString(KeymapSettings.serializer(), migrated)
-                        settingsFile.writeText(migratedContent)
+                        settingsFile.atomicWriteText(migratedContent)
                         logger.debug(LogCategory.SYSTEM, "Migrated keymap settings saved")
                     } catch (e: Exception) {
                         logger.warn(LogCategory.SYSTEM, "Could not save migrated keymap settings", error = e)
@@ -84,7 +98,7 @@ actual object KeymapSettingsManager {
                 // Save default settings to file
                 try {
                     val content = json.encodeToString(KeymapSettings.serializer(), defaultSettings)
-                    settingsFile.writeText(content)
+                    settingsFile.atomicWriteText(content)
                     logger.debug(LogCategory.SYSTEM, "Created default keymap settings file", mapOf("path" to settingsFile.absolutePath))
                 } catch (e: Exception) {
                     logger.warn(LogCategory.SYSTEM, "Could not write default keymap settings file", error = e)
@@ -187,7 +201,7 @@ actual object KeymapSettingsManager {
         withContext(Dispatchers.IO) {
             try {
                 val content = json.encodeToString(KeymapSettings.serializer(), _currentSettings.value)
-                settingsFile.writeText(content)
+                settingsFile.atomicWriteText(content)
                 logger.debug(LogCategory.SYSTEM, "Keymap settings saved")
             } catch (e: Exception) {
                 logger.error(LogCategory.SYSTEM, "Failed to save keymap settings", error = e)
@@ -405,4 +419,16 @@ private fun repairStoredKeyCodes(
         mapOf("count" to repairs),
     )
     return loaded.copy(shortcuts = shortcuts)
+}
+
+/**
+ * Reset manager state and optionally redirect [KeymapSettingsManager.settingsFile] to
+ * [testFile]; with no argument, restore the production path. Call only when no save is in
+ * flight, and always finish with a no-argument call, so the singleton is left where the
+ * app and other tests expect it. Mirrors ai.rever.boss.run.RunConfigurationManager, as a
+ * top-level extension because the object sits on its TooManyFunctions threshold.
+ */
+internal fun KeymapSettingsManager.resetForTesting(testFile: File? = null) {
+    settingsFile = testFile ?: defaultSettingsFile
+    loadSettingsSync()
 }

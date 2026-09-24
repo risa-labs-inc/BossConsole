@@ -17,10 +17,24 @@ import java.util.concurrent.atomic.AtomicReference
  * - Heartbeat monitoring
  * - Process status queries
  * - Shutdown requests
+ * - Capability mediation between child processes (#1061)
  */
+
+/** Signature of the host-wired broker that invokes a registered process's capability. */
+private typealias CapabilityBroker = suspend (InvokeCapabilityRequest) -> InvokeCapabilityResponse
+
+@Suppress("TooManyFunctions") // registration, heartbeat, status, shutdown and mediation share one process table.
 class KernelServiceImpl(
     private val onProcessRegistered: suspend (String, ProcessManifest, String) -> Unit = { _, _, _ -> },
     private val onShutdownRequested: suspend (String, Boolean) -> Boolean = { _, _ -> true },
+    /**
+     * Broker a capability invocation on a registered process, exactly as the host
+     * kernel wires it: look the process up in the registry RegisterProcess populates
+     * and dial it over that process's IPC client. Children cannot reach each other
+     * directly, so this callback is the only road between two child processes
+     * (#1061). Unwired kernels fail closed.
+     */
+    private val onCapabilityInvocation: CapabilityBroker = ::unwiredCapabilityInvocation,
 ) : KernelServiceGrpcKt.KernelServiceCoroutineImplBase() {
     private val logger = LoggerFactory.getLogger(KernelServiceImpl::class.java)
 
@@ -118,14 +132,46 @@ class KernelServiceImpl(
             }
 
         if (success) {
-            registeredProcesses.remove(processId)
-            lastHeartbeats.remove(processId)
+            evictProcess(processId)
         }
 
         return ShutdownResponse
             .newBuilder()
             .setSuccess(success)
             .build()
+    }
+
+    /**
+     * Deregister a process that died without a clean shutdown - the crash path the kernel's
+     * failure handling reports on the host side (KernelBootstrap.handleFailure).
+     *
+     * Registration is otherwise removed only on a successful [requestShutdown], so a crashed
+     * id would stay in the tables for the rest of the session: [getProcessStatus] and
+     * [listProcesses] keep stamping it RUNNING and [registerProcess] keeps handing its stale
+     * [RegisteredProcessInfo.ipcAddress] to every later child. Evicting here keeps
+     * "registered" equivalent to "live" for this table.
+     *
+     * Call before spawning a replacement: a respawn re-registers the same id, and evicting
+     * after that would drop the live child's entries instead of the dead one's.
+     *
+     * @return true if the id was registered and its entries were dropped.
+     */
+    fun deregisterProcess(processId: String): Boolean {
+        val evicted = evictProcess(processId)
+        if (evicted) {
+            logger.info("Deregistered process after failure: id={}", processId)
+        }
+        return evicted
+    }
+
+    /**
+     * Single eviction site for both deregistration paths: the clean [requestShutdown] flow
+     * and the crash path via [deregisterProcess].
+     */
+    private fun evictProcess(processId: String): Boolean {
+        val evicted = registeredProcesses.remove(processId) != null
+        lastHeartbeats.remove(processId)
+        return evicted
     }
 
     override suspend fun getProcessStatus(request: ProcessStatusRequest): ProcessStatusResponse {
@@ -172,6 +218,56 @@ class KernelServiceImpl(
             .build()
     }
 
+    override suspend fun invokeCapability(request: InvokeCapabilityRequest): InvokeCapabilityResponse {
+        requireCapabilityCaller()
+        if (!registeredProcesses.containsKey(request.pluginId)) {
+            return InvokeCapabilityResponse
+                .newBuilder()
+                .setSuccess(false)
+                .setErrorMessage("Process not found: ${request.pluginId}")
+                .build()
+        }
+        return onCapabilityInvocation(request)
+    }
+
+    override suspend fun listCapabilities(request: Empty): ListCapabilitiesResponse {
+        requireCapabilityCaller()
+        val descriptors =
+            registeredProcesses.values.flatMap { info ->
+                info.manifest.capabilitiesList.map { capability ->
+                    CapabilityDescriptor
+                        .newBuilder()
+                        .setPluginId(info.manifest.processId)
+                        .setAction(capability.action)
+                        .setDescription(capability.description)
+                        .setInputSchemaJson(capability.inputSchemaJson)
+                        .setOutputSchemaJson(capability.outputSchemaJson)
+                        .build()
+                }
+            }
+        return ListCapabilitiesResponse
+            .newBuilder()
+            .addAllCapabilities(descriptors)
+            .build()
+    }
+
+    /**
+     * Capability composition is kernel-brokered: the caller must be the host, a
+     * supervisor, or a process that completed its own registration. Anyone else - an
+     * issued token that never registered, a stranger - learns nothing about the
+     * registered processes and invokes nothing through them. Capability descriptors
+     * are advertised to every admitted caller because composing other processes'
+     * capabilities is what the Mastery orchestrator is for; what a capability
+     * actually does remains the offering process's own decision.
+     */
+    private fun requireCapabilityCaller() {
+        val caller = IpcCall.current()
+        val isRegisteredProcess = registeredProcesses.containsKey(caller.processId)
+        IpcCall.requirePermission(
+            caller.authority != ProcessAuthority.PROCESS || isRegisteredProcess,
+        )
+    }
+
     /**
      * Get the last heartbeat timestamp for a process.
      * Returns null if the process has never sent a heartbeat.
@@ -194,6 +290,14 @@ class KernelServiceImpl(
      */
     val registeredCount: Int get() = registeredProcesses.size
 }
+
+/** An unwired kernel fails closed: it never reports another process's capability as done. */
+private suspend fun unwiredCapabilityInvocation(request: InvokeCapabilityRequest): InvokeCapabilityResponse =
+    InvokeCapabilityResponse
+        .newBuilder()
+        .setSuccess(false)
+        .setErrorMessage("Capability invocation is not configured on this kernel: ${request.pluginId}")
+        .build()
 
 internal data class RegisteredProcessInfo(
     val manifest: ProcessManifest,

@@ -126,25 +126,77 @@ class DynamicPluginLoaderImpl(
         return classLoaderManager.swapApiLayer(pluginDir)
     }
 
+    /**
+     * Test-only seam invoked after the staged JAR passes signature
+     * verification and before its classloader is created — the window the
+     * verify-then-load TOCTOU used to expose. Lets a regression test swap the
+     * bytes at the original path (or at the staged copy) mid-load and assert
+     * the swap cannot reach execution. Never set outside tests.
+     */
+    internal var verifyToLoadHook: ((jarPath: String, stagedJar: File) -> Unit)? = null
+
     // JAR reading, bytecode validation, classloading, and instantiation are
     // heavy; callers typically run on Dispatchers.Main, so keep it all on IO.
     override suspend fun loadPlugin(jarPath: String): Result<LoadedPlugin> =
         withContext(Dispatchers.IO) {
-            try {
-                logger.info(
-                    LogCategory.SYSTEM,
-                    "Loading plugin from JAR",
-                    mapOf(
-                        "jarPath" to jarPath,
-                    ),
-                )
+            logger.info(
+                LogCategory.SYSTEM,
+                "Loading plugin from JAR",
+                mapOf(
+                    "jarPath" to jarPath,
+                ),
+            )
 
-                // Read and validate manifest
-                val manifest = PluginManifestReader.readFromJar(jarPath)
+            // Stage the JAR into a private copy before anything else reads it:
+            // the manifest, the signature digest anchor, binary validation and
+            // the classloader all then operate on one snapshot, and the
+            // original path is never re-opened. Closes the verify-then-load gap
+            // where a local writer could swap bytes at jarPath between the
+            // opens (identity of A, digest of B, execution of C). See
+            // [StagedPluginJar].
+            val staged =
+                try {
+                    StagedPluginJar.stage(File(jarPath))
+                } catch (e: PluginLoadException) {
+                    logger.error(
+                        LogCategory.SYSTEM,
+                        "Failed to load plugin",
+                        mapOf(
+                            "jarPath" to jarPath,
+                            "error" to (e.message ?: "unknown"),
+                        ),
+                        e,
+                    )
+                    return@withContext Result.failure(e)
+                } catch (e: Exception) {
+                    logger.error(
+                        LogCategory.SYSTEM,
+                        "Unexpected error loading plugin",
+                        mapOf(
+                            "jarPath" to jarPath,
+                        ),
+                        e,
+                    )
+                    return@withContext Result.failure(
+                        PluginLoadException(
+                            "Unexpected error loading plugin: ${e.message}",
+                            cause = e,
+                        ),
+                    )
+                }
+
+            // The classloader takes ownership of the staged copy when it is
+            // created (it deletes the copy in close()); every exit before that
+            // must delete it here.
+            var stagedOwnedByLoader = false
+            try {
+                // Read and validate manifest — from the staged copy, so the
+                // identity checked below is the identity that will execute.
+                val manifest = PluginManifestReader.readFromJar(staged.file.absolutePath)
                 val pluginId = manifest.pluginId
 
-                // Check if already loaded (before hashing the JAR for signature
-                // verification — no point re-hashing to then bail as ALREADY_LOADED).
+                // Check if already loaded — refuse the duplicate before any
+                // further verification work on the staged copy.
                 if (loadedPlugins.containsKey(pluginId)) {
                     return@withContext Result.failure(
                         PluginLoadException(
@@ -157,8 +209,13 @@ class DynamicPluginLoaderImpl(
                 // Verify the store signature (sidecar) before loading. This is the
                 // choke point every install path funnels through, so it covers
                 // Toolbox installs/updates, the first-run wizard, and restored
-                // plugins alike.
-                verifySignatureOrThrow(jarPath, manifest)?.let { return@withContext Result.failure(it) }
+                // plugins alike. The digest it anchors is the staged copy's —
+                // the bytes that will execute — not whatever sits at jarPath now.
+                verifySignatureOrThrow(jarPath, manifest, staged.sha256)?.let { return@withContext Result.failure(it) }
+
+                // Test-only seam at the old verify→load window (see
+                // [verifyToLoadHook]); a no-op in production.
+                verifyToLoadHook?.invoke(jarPath, staged.file)
 
                 // Check API version compatibility
                 if (!isApiVersionCompatible(manifest.apiVersion)) {
@@ -223,11 +280,16 @@ class DynamicPluginLoaderImpl(
                     }
                 }
 
-                // Create classloader
-                val classLoader = classLoaderManager.createClassLoader(manifest, jarPath)
+                // Create classloader over the staged copy — the verified
+                // bytes, not a re-open of jarPath. Ownership of the copy
+                // transfers to the loader (deleted on close).
+                val classLoader =
+                    classLoaderManager
+                        .createClassLoader(manifest, jarPath, stagedJar = staged)
+                        .also { stagedOwnedByLoader = true }
 
-                // Binary compatibility check
-                val validation = BinaryCompatibilityValidator.validate(classLoader, jarPath)
+                // Binary compatibility check — against the same staged bytes.
+                val validation = BinaryCompatibilityValidator.validate(classLoader, staged.file.absolutePath)
                 if (!validation.isCompatible) {
                     classLoaderManager.closeClassLoader(pluginId, classLoader)
                     return@withContext Result.failure(
@@ -248,6 +310,23 @@ class DynamicPluginLoaderImpl(
                         return@withContext Result.failure(
                             PluginClassException(
                                 "Plugin main class not found: ${manifest.mainClass}",
+                                pluginId,
+                                manifest.mainClass,
+                                e,
+                            ),
+                        )
+                    } catch (e: LinkageError) {
+                        // The JVM reports "these bytes will not link into this host" as an Error,
+                        // not an Exception, so it matches neither the clause above nor the
+                        // Exception clause that closes this function - it left by being thrown.
+                        // The commonest instance is the commonest packaging mistake: a plugin
+                        // built on a newer JDK arrives as UnsupportedClassVersionError.
+                        // LinkageError, deliberately not Error: OutOfMemoryError and
+                        // StackOverflowError are the host's problem and must keep propagating.
+                        classLoaderManager.closeClassLoader(pluginId, classLoader)
+                        return@withContext Result.failure(
+                            PluginClassException(
+                                "Plugin main class could not be linked: ${e.javaClass.simpleName}",
                                 pluginId,
                                 manifest.mainClass,
                                 e,
@@ -291,6 +370,22 @@ class DynamicPluginLoaderImpl(
                             // Try no-arg constructor
                             pluginClass.getDeclaredConstructor().newInstance() as Plugin
                         }
+                    } catch (e: LinkageError) {
+                        // Reading a Kotlin object's INSTANCE field runs its static initializer -
+                        // the plugin's own code, on this thread, for the first time. When that
+                        // throws, the JVM wraps it in ExceptionInInitializerError, which is a
+                        // LinkageError and so is not caught below. Nothing earlier can pre-empt
+                        // it either: BinaryCompatibilityValidator loads classes with
+                        // initialize=false precisely so it does NOT run plugin code.
+                        classLoaderManager.closeClassLoader(pluginId, classLoader)
+                        return@withContext Result.failure(
+                            PluginClassException(
+                                "Plugin failed to initialize: ${e.javaClass.simpleName}",
+                                pluginId,
+                                manifest.mainClass,
+                                e,
+                            ),
+                        )
                     } catch (e: Exception) {
                         classLoaderManager.closeClassLoader(pluginId, classLoader)
                         return@withContext Result.failure(
@@ -352,6 +447,30 @@ class DynamicPluginLoaderImpl(
                         cause = e,
                     ),
                 )
+            } catch (e: LinkageError) {
+                // A backstop for the linkage failures the two clauses above do not sit in front
+                // of - a class resolved lazily somewhere in this body, for instance. Without it
+                // this function can still leave by throwing, and its signature promises a Result:
+                // every getOrElse and onFailure on the install and startup-scan paths is bypassed
+                // when it does. Still LinkageError rather than Error, so a VirtualMachineError
+                // continues to propagate rather than being filed as a failed plugin.
+                logger.error(
+                    LogCategory.SYSTEM,
+                    "Plugin could not be linked",
+                    mapOf(
+                        "jarPath" to jarPath,
+                        "error" to e.javaClass.simpleName,
+                    ),
+                    e,
+                )
+                Result.failure(
+                    PluginLoadException(
+                        "Plugin could not be linked: ${e.javaClass.simpleName}: ${e.message}",
+                        cause = e,
+                    ),
+                )
+            } finally {
+                if (!stagedOwnedByLoader) staged.delete()
             }
         }
 
@@ -561,14 +680,19 @@ class DynamicPluginLoaderImpl(
      * exemption, which is permanent rather than rollout-scoped: a bundled JAR
      * has no store signature to eventually gain, so it stays exempt even once
      * enforcement is on.
+     *
+     * [jarSha256] must be the digest of the bytes that will execute — the
+     * staged copy — so the anchored identity cannot drift from the loaded
+     * artifact no matter how the file at [jarPath] changes after staging.
      */
     private fun verifySignatureOrThrow(
         jarPath: String,
         manifest: PluginManifest,
+        jarSha256: String,
     ): PluginSignatureException? {
         val signature = PluginSignatureSidecar.read(jarPath)
         if (signature == null) {
-            if (PluginBundledTrust.isTrusted(jarPath)) {
+            if (PluginBundledTrust.isTrusted(jarPath, jarSha256)) {
                 logger.debug(
                     LogCategory.SYSTEM,
                     "Plugin has no store signature but is a trusted bundled artifact - exempt from enforcement",
@@ -597,13 +721,11 @@ class DynamicPluginLoaderImpl(
             return null
         }
 
-        // NOTE (TOCTOU boundary): the JAR is hashed here and re-read by the
-        // classloader below, so a LOCAL filesystem attacker could swap bytes in
-        // the gap. That's outside the stated threat model (compromised store /
-        // DB, not local FS) — a local attacker can already tamper with the
-        // plugin dir directly — so we accept it rather than hold the file open.
-        val sha256 = FileHashing.sha256(File(jarPath))
-        val anchor = PluginStoreTrust.versionAnchor(manifest.pluginId, manifest.version, sha256)
+        // [jarSha256] is the digest of the staged copy, computed over the same
+        // stream that wrote it — the load below executes those exact bytes, so
+        // the anchor binds the artifact that will run even if jarPath's file
+        // was swapped after staging (the old verify→load TOCTOU).
+        val anchor = PluginStoreTrust.versionAnchor(manifest.pluginId, manifest.version, jarSha256)
         val result = signatureVerifier.verifySignedMessage(anchor, signature)
         if (!result.isVerified) {
             val reason = (result as? SignatureVerificationResult.Failed)?.reason ?: "unknown"

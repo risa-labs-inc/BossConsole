@@ -5,6 +5,8 @@ import ai.rever.boss.plugin.sandbox.ui.PluginRenderRecovery
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -43,10 +45,11 @@ class RenderRecoverySeamTest {
         val policy = RenderCrashPolicy(now = { 0L })
         policy.recordFailureAndShouldContain()
 
-        val visibleProgress = noteRecoveryOutcome(policy, PluginRenderRecovery.Outcome.Unexplained)
+        val effect = noteRecoveryOutcome(policy, PluginRenderRecovery.Outcome.Unexplained)
 
-        assertTrue(!visibleProgress, "Unexplained is not progress")
-        assertTrue(policy.recentFailureCount() == 1, "an unproductive fault must stay counted")
+        assertFalse(effect.visibleProgress, "Unexplained is not progress")
+        assertFalse(effect.faultRefunded, "Unexplained must stay counted")
+        assertEquals(1, policy.recentFailureCount(), "an unproductive fault must stay counted")
     }
 
     @Test
@@ -54,15 +57,22 @@ class RenderRecoverySeamTest {
         val policy = RenderCrashPolicy(now = { 0L })
         policy.recordFailureAndShouldContain()
 
-        val visibleProgress =
+        val effect =
             noteRecoveryOutcome(
                 policy,
                 PluginRenderRecovery.Outcome.Settling(setOf("plugin.c")),
             )
 
-        assertTrue(!visibleProgress, "settling changed no registry or generation state")
-        assertTrue(policy.recentFailureCount() == 0, "early queued work should still be refunded")
+        assertFalse(effect.visibleProgress, "settling changed no registry or generation state")
+        assertTrue(effect.faultRefunded, "early queued work should still be refunded")
+        assertEquals(0, policy.recentFailureCount())
     }
+
+    private data class FrameResult(
+        val route: WindowExceptionRoute,
+        val outcome: PluginRenderRecovery.Outcome? = null,
+        val effect: RecoveryOutcomeEffect? = null,
+    )
 
     /**
      * One frame of a scene that throws every repaint.
@@ -76,13 +86,13 @@ class RenderRecoverySeamTest {
     private fun frame(
         policy: RenderCrashPolicy,
         clockMillis: Long,
-    ): WindowExceptionRoute {
+    ): FrameResult {
         val route = decideWindowExceptionRoute(error, attributedPluginId = null, policy = policy)
         if (route == WindowExceptionRoute.Contain) {
             val outcome = PluginRenderRecovery.onUnattributedRenderException(error, now = clockMillis)
-            noteRecoveryOutcome(policy, outcome)
+            return FrameResult(route, outcome, noteRecoveryOutcome(policy, outcome))
         }
-        return route
+        return FrameResult(route)
     }
 
     @Test
@@ -95,7 +105,7 @@ class RenderRecoverySeamTest {
         // from the budget rather than from the clock.
         var escalatedAt: Int? = null
         for (frameNumber in 1..200) {
-            if (frame(policy, now) == WindowExceptionRoute.Escalate) {
+            if (frame(policy, now).route == WindowExceptionRoute.Escalate) {
                 escalatedAt = frameNumber
                 break
             }
@@ -120,15 +130,14 @@ class RenderRecoverySeamTest {
         val expectedSuspects = PluginRenderRecovery.mountedPlugins().toSet()
         val triedSuspects = mutableSetOf<String>()
 
-        while (now <= 48_000 && escalatedAt == null) {
-            val route = decideWindowExceptionRoute(error, attributedPluginId = null, policy = policy)
-            if (route == WindowExceptionRoute.Escalate) {
+        while (now <= 48_000) {
+            val result = frame(policy, now)
+            if (result.route == WindowExceptionRoute.Escalate) {
                 escalatedAt = now
                 break
             }
-            val outcome = PluginRenderRecovery.onUnattributedRenderException(error, now = now)
+            val outcome = result.outcome
             if (outcome is PluginRenderRecovery.Outcome.Quarantined) triedSuspects += outcome.plugins
-            noteRecoveryOutcome(policy, outcome)
             now += 16
         }
 
@@ -159,11 +168,10 @@ class RenderRecoverySeamTest {
         // without ever finding the culprit — the bug the progress allowance fixes.
         val quarantined = mutableSetOf<String>()
         for (frameNumber in 1..200) {
-            val route = decideWindowExceptionRoute(error, null, policy)
-            if (route == WindowExceptionRoute.Escalate) break
-            val outcome = PluginRenderRecovery.onUnattributedRenderException(error, now = now)
+            val result = frame(policy, now)
+            if (result.route == WindowExceptionRoute.Escalate) break
+            val outcome = result.outcome
             if (outcome is PluginRenderRecovery.Outcome.Quarantined) quarantined += outcome.plugins
-            noteRecoveryOutcome(policy, outcome)
             now += 16
         }
 
@@ -178,17 +186,17 @@ class RenderRecoverySeamTest {
         var now = 1_000L
         val policy = RenderCrashPolicy(now = { now })
 
-        assertTrue(frame(policy, now) == WindowExceptionRoute.Contain) // rebuild
+        assertEquals(WindowExceptionRoute.Contain, frame(policy, now).route) // rebuild
         now += 16
-        assertTrue(frame(policy, now) == WindowExceptionRoute.Contain) // quarantine c
+        assertEquals(WindowExceptionRoute.Contain, frame(policy, now).route) // quarantine c
 
         repeat(12) {
             now += 16
             assertTrue(
-                frame(policy, now) == WindowExceptionRoute.Contain,
+                frame(policy, now).route == WindowExceptionRoute.Contain,
                 "the circuit breaker fired before the quarantined subtree could leave Compose",
             )
-            assertTrue(policy.recentFailureCount() == 0, "bounded settling faults must be refunded")
+            assertEquals(0, policy.recentFailureCount(), "bounded settling faults must be refunded")
             assertTrue(PluginCrashRegistry.hasCrashed("plugin.c"), "the same suspect must remain held")
         }
     }
@@ -205,7 +213,7 @@ class RenderRecoverySeamTest {
             (escalationCeiling / 16L + RenderCrashPolicy.DEFAULT_MAX_FAILURES + 2).toInt()
 
         for (frameNumber in 1..maximumFrames) {
-            if (frame(policy, now) == WindowExceptionRoute.Escalate) {
+            if (frame(policy, now).route == WindowExceptionRoute.Escalate) {
                 escalatedAt = frameNumber
                 break
             }
@@ -217,6 +225,39 @@ class RenderRecoverySeamTest {
             now - 1_000 <= escalationCeiling,
             "a corrupt scene should fail honestly by its burst deadline; " +
                 "got frame $escalatedAt at ${now - 1_000} ms",
+        )
+    }
+
+    @Test
+    fun `slow visible progress cannot refund a corrupt scene forever`() {
+        val cadenceMillis = 1_000L
+        var now = 0L
+        val policy = RenderCrashPolicy(now = { now })
+        var escalatedAt: Long? = null
+
+        while (now <= 30_000) {
+            if (frame(policy, now).route == WindowExceptionRoute.Escalate) {
+                escalatedAt = now
+                break
+            }
+            now += cadenceMillis
+        }
+
+        val escalationTime = assertNotNull(escalatedAt, "slow recovery progress hid a permanent fault")
+        val ceiling =
+            RenderCrashPolicy.DEFAULT_WINDOW_MILLIS +
+                (RenderCrashPolicy.DEFAULT_MAX_FAILURES + 1) * cadenceMillis
+        assertTrue(
+            escalationTime <= ceiling,
+            "a slow corrupt incident should escalate by $ceiling ms, got $escalationTime",
+        )
+    }
+
+    @Test
+    fun `policy incident gap matches the recovery machine grace`() {
+        assertEquals(
+            PluginRenderRecovery.REBUILD_GRACE_MILLIS,
+            RenderCrashPolicy.DEFAULT_INCIDENT_GAP_MILLIS,
         )
     }
 }

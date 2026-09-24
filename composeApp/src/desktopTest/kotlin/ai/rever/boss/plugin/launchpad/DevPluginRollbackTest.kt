@@ -212,7 +212,7 @@ class DevPluginRollbackTest {
     @Test
     fun `first link failure uninstalls partially installed plugin across managers to restore clean initial state`() =
         runBlocking {
-            val pluginId = "first-link-tool"
+            val pluginId = "com.example.first.link"
             val stagingRoot = DevPluginArtifacts.stagingRoot()
             createDevTestJar(stagingRoot, pluginId, "v1000", "1.0.0")
 
@@ -516,14 +516,14 @@ class DevPluginRollbackTest {
     fun `findAllActiveDevJars with deepValidate filters out invalid dev jars`() {
         val devRoot = tempDir.resolve("staging-test").toFile().apply { mkdirs() }
 
-        // Corrupt dev jar under plugin-corrupt
-        val corruptDir = File(devRoot, "plugin-corrupt/v1000").apply { mkdirs() }
-        File(corruptDir, "plugin-corrupt.jar").writeBytes(byteArrayOf(1, 2, 3, 4, 5))
+        // Corrupt dev jar under com.example.corrupt
+        val corruptDir = File(devRoot, "com.example.corrupt/v1000").apply { mkdirs() }
+        File(corruptDir, "com.example.corrupt.jar").writeBytes(byteArrayOf(1, 2, 3, 4, 5))
 
-        // Valid dev jar under plugin-valid
-        val validDir = File(devRoot, "plugin-valid/v2000").apply { mkdirs() }
-        val manifestBytes = """{"id": "plugin-valid", "version": "1.0.0"}""".toByteArray()
-        val validJar = File(validDir, "plugin-valid.jar")
+        // Valid dev jar under com.example.valid
+        val validDir = File(devRoot, "com.example.valid/v2000").apply { mkdirs() }
+        val manifestBytes = """{"id": "com.example.valid", "version": "1.0.0"}""".toByteArray()
+        val validJar = File(validDir, "com.example.valid.jar")
         createJar(validJar, mapOf("META-INF/boss-plugin/plugin.json" to manifestBytes))
 
         val allDiscovered = DevPluginArtifacts.findAllActiveDevJars(devRoot, deepValidate = true)
