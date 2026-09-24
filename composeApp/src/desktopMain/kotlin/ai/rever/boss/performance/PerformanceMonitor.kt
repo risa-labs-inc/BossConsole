@@ -2,6 +2,7 @@ package ai.rever.boss.performance
 
 import ai.rever.boss.config.SystemMemory
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CoroutineScope
@@ -486,7 +487,7 @@ object PerformanceMonitor {
                         kotlinx.serialization.builtins.ListSerializer(PerformanceSnapshot.serializer()),
                         historyData,
                     )
-                exportFile.writeText(content)
+                exportFile.atomicWriteText(content)
 
                 Result.success(exportFile.absolutePath)
             } catch (e: Exception) {
