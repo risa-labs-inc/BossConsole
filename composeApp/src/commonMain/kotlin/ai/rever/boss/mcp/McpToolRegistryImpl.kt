@@ -170,6 +170,15 @@ object McpToolRegistryImpl : McpToolRegistry {
         toolName: String,
         arguments: String,
     ): McpToolResult = core.invoke(toolName, arguments)
+
+    /** See [McpPolicyEngine.yoloMode]. */
+    val yoloMode: StateFlow<Boolean> get() = core.policyEngine.yoloMode
+
+    /** False when the deployment refuses YOLO mode ([McpYoloGate]); both entry points hide. */
+    val yoloAvailable: Boolean get() = core.yoloAvailable
+
+    /** See `Core.setYoloMode`. The only way UI should switch YOLO mode. */
+    suspend fun setYoloMode(enabled: Boolean): Boolean = core.setYoloMode(enabled)
 }
 
 /**
@@ -384,8 +393,42 @@ internal class McpToolRegistryCore(
     val policyEngine: McpPolicyEngine = McpPolicyEngine(),
     val approvalBus: McpApprovalBus = McpApprovalBus(),
     val ledger: McpOperationLedger = McpOperationLedger(),
+    /** Injected so tests need not set process env; production reads [McpYoloGate]. */
+    val yoloAvailable: Boolean = !McpYoloGate.disabledByDeployment,
 ) {
     private val logger = BossLogger.forComponent("McpToolRegistry")
+
+    /**
+     * Switch YOLO mode, and record the switch in the ledger. Returns false (and changes nothing)
+     * when turning it on is refused by the deployment ([yoloAvailable]); turning it off is never
+     * refused. A no-op switch writes nothing, so the ledger holds one marker per real transition.
+     *
+     * The flag flips before the ledger write so "off" takes effect immediately even if the disk
+     * is slow; the write runs on [Dispatchers.IO] because the ledger does synchronous file I/O.
+     */
+    @Suppress("ReturnCount") // Refused, no-op and switched are three distinct outcomes.
+    suspend fun setYoloMode(enabled: Boolean): Boolean {
+        if (enabled && !yoloAvailable) {
+            logger.warn(LogCategory.SYSTEM, "MCP YOLO mode refused: disabled by deployment")
+            return false
+        }
+        if (policyEngine.yoloMode.value == enabled) return true
+        policyEngine.setYoloMode(enabled)
+        withContext(NonCancellable + Dispatchers.IO) {
+            ledger.record(
+                toolName = McpYoloMode.LEDGER_TOOL_NAME,
+                providerId = McpYoloMode.LEDGER_PROVIDER_ID,
+                policyApplied = McpPolicyAction.ASK,
+                approvalDisposition =
+                    if (enabled) McpApprovalDisposition.YOLO_ENABLED else McpApprovalDisposition.YOLO_DISABLED,
+                durationMs = 0L,
+                isError = false,
+                rawArgs = emptyMap(),
+                countsAsCall = false,
+            )
+        }
+        return true
+    }
 
     /**
      * Serializes all mutations + recomputes (see [McpToolRegistryImpl] KDoc).
@@ -962,6 +1005,12 @@ internal class McpToolRegistryCore(
 
             McpPolicyAction.ALLOW -> {
                 McpApprovalDisposition.AUTO_ALLOWED to null
+            }
+
+            // YOLO answers the prompt, and only the prompt: DENY above, the kill switch and RBAC
+            // are all decided before this branch is reached.
+            McpPolicyAction.ASK if policyEngine.yoloMode.value -> {
+                McpApprovalDisposition.YOLO_ALLOWED to null
             }
 
             McpPolicyAction.ASK -> {

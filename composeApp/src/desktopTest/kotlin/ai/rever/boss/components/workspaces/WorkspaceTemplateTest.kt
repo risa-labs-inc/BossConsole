@@ -147,6 +147,43 @@ class WorkspaceTemplateTest {
         )
     }
 
+    /**
+     * The plain-shell layouts open with no project and say nothing; the agent layouts still warn.
+     * Pinned over the SHIPPED list, so editing a built-in's command moves it between the two.
+     */
+    @Test
+    fun `only the plain-shell built-ins can stand without a project`() {
+        val optional = PredefinedWorkspaces.allWorkspaces.filter { it.projectIsOptional() }.map { it.id }
+
+        assertEquals(
+            setOf(PredefinedWorkspaces.TERMINAL_BROWSER_ID, PredefinedWorkspaces.DUAL_TERMINAL_ID),
+            optional.toSet(),
+        )
+    }
+
+    @Test
+    fun `an agent command, a project file or a project url each keep the project required`() {
+        fun single(vararg tabs: TabConfig): LayoutWorkspace {
+            val panel = PanelConfig(id = "main", tabs = tabs.toList())
+            return template(layout = SinglePanel(panel))
+        }
+
+        val shell = tab(initialCommand = "cd {projectPath}", workingDirectory = "{projectPath}")
+        assertTrue(single(shell).projectIsOptional())
+        assertTrue(single(tab(workingDirectory = "{projectPath}")).projectIsOptional(), "no command at all")
+        assertTrue(single(shell, tab(type = "browser", url = "https://google.com")).projectIsOptional())
+
+        val agent = tab(initialCommand = "cd {projectPath} && claude", workingDirectory = "{projectPath}")
+        assertFalse(single(agent).projectIsOptional())
+        assertFalse(single(tab(initialCommand = "claude", workingDirectory = "{projectPath}")).projectIsOptional())
+        assertFalse(single(shell, tab(type = "editor", filePath = "{projectPath}/README.md")).projectIsOptional())
+        assertFalse(single(shell, tab(type = "browser", url = "{gitRemoteUrl}")).projectIsOptional())
+        assertFalse(
+            single(tab(type = "browser", url = "https://google.com")).projectIsOptional(),
+            "needs no project at all",
+        )
+    }
+
     // ==================== materialising ====================
 
     @Test

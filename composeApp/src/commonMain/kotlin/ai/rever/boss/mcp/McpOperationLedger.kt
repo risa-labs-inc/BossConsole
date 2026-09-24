@@ -76,6 +76,10 @@ class McpOperationLedger(
         isError: Boolean,
         rawArgs: Map<String, Any?>,
         errorSnippet: String? = null,
+        // False for a governance event (YOLO mode switched on or off): it belongs in the
+        // hash-chained ledger an audit reads, but it is not a tool call and must not inflate the
+        // call and error counters the activity log summarises.
+        countsAsCall: Boolean = true,
     ): McpOperationRecord {
         val sanitized = sanitizeArguments(rawArgs)
         val sanitizedErrorSnippet = errorSnippet?.let { McpArgumentSanitizer.sanitizeMessage(it).take(4096) }
@@ -103,9 +107,11 @@ class McpOperationLedger(
             _recentOperations.update { current ->
                 (listOf(record) + current).take(ringBufferCapacity)
             }
-            _totalCalls.update { it + 1 }
-            if (isError) {
-                _totalErrors.update { it + 1 }
+            if (countsAsCall) {
+                _totalCalls.update { it + 1 }
+                if (isError) {
+                    _totalErrors.update { it + 1 }
+                }
             }
 
             record

@@ -278,6 +278,31 @@ class McpPolicyEngine(
         _sessionTrustedTools.value = emptySet()
     }
 
+    private val _yoloMode = MutableStateFlow(false)
+
+    /**
+     * YOLO mode: while true, a call whose policy resolves to ASK runs without prompting, recorded
+     * as [McpApprovalDisposition.YOLO_ALLOWED]. It covers every tool and provider, including ones
+     * registered after it was turned on, and CRITICAL-risk calls too - that is the operator's
+     * explicit choice, made through a confirmation that says so.
+     *
+     * It replaces only the PROMPT. [policyFor] is untouched, so everything decided before a
+     * prompt still decides: an explicit tool or provider DENY, an unreadable policy file, the
+     * kill switch and RBAC (both refuse before the policy engine is consulted). In memory only,
+     * never persisted: every launch starts with it off. Prompts already queued when it is
+     * turned on still ask.
+     */
+    val yoloMode: StateFlow<Boolean> = _yoloMode.asStateFlow()
+
+    fun setYoloMode(enabled: Boolean) {
+        if (_yoloMode.value == enabled) return
+        _yoloMode.value = enabled
+        logger.warn(
+            LogCategory.SYSTEM,
+            if (enabled) "MCP YOLO mode enabled for this session" else "MCP YOLO mode disabled",
+        )
+    }
+
     /**
      * Persists an already-built config and publishes the result the same way for every
      * caller - [setToolPolicy]'s add/replace, [revokePersistedPolicy]'s remove,
@@ -451,7 +476,7 @@ class McpPolicyEngine(
      * time. Weaker than an explicit tool-specific rule: see [policyFor].
      *
      * [preserveDeny]/[expectedRevocation]/[toolName] mirror [setToolPolicy]'s own guards: a
-     * queued "Trust This Plugin" click is answering for the *tool* that prompted it, so its
+     * queued "Trust plugin" click is answering for the *tool* that prompted it, so its
      * write must recheck that tool's revocation/DENY state under this same lock, not only at
      * the caller's pre-check - otherwise a reset landing between the pre-check and the write
      * (BossConsole#542 review) persists a provider-wide grant the reset was supposed to
@@ -507,7 +532,7 @@ class McpPolicyEngine(
      *
      * Does not touch session trust for the provider's tools, unlike
      * [revokePersistedPolicy] for a single tool: session trust is a separate, in-session grant
-     * the operator manages from the "Revoke MCP session trust" control, and revoking a
+     * the operator manages from "Session trust" in the MCP access menu, and revoking a
      * durable provider rule must not silently withdraw grants the operator made per tool.
      */
     fun revokeProviderPolicy(providerId: String): Boolean =
@@ -535,7 +560,7 @@ class McpPolicyEngine(
      * calling `setToolPolicy(toolName, ASK)`, which - because [setToolPolicy] always writes
      * `rules + (toolName to action)` - left the key in the map forever, just holding ASK instead
      * of its old value. Three consequences that all trace back to that one line: the bottom bar's
-     * "Persisted MCP policies (n)" count never dropped after a revoke, because the row was still
+     * "Tool policies (n)" count never dropped after a revoke, because the row was still
      * there; the policy manager dialog kept listing the "revoked" tool with a Reset button that
      * rewrote the same value and reported success; and on a config with `defaultMutatingAction =
      * DENY`, the explicit ASK a revoke left behind was *weaker* than the operator's own configured

@@ -23,12 +23,14 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.Icon
 import androidx.compose.material.OutlinedTextField
 import androidx.compose.material.Text
 import androidx.compose.material.TextButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DriveFileRenameOutline
+import androidx.compose.material.icons.outlined.OpenInFull
 import androidx.compose.material.icons.outlined.Splitscreen
 import androidx.compose.material.icons.outlined.ViewColumn
 import androidx.compose.runtime.Composable
@@ -124,16 +126,16 @@ internal fun SplitMap(
         groups.forEach { group ->
             val glyph = group.glyph ?: return@forEach
             with(density) {
+                val paneWidth = ((glyph.right - glyph.left) * sizePx.width).toDp()
+                val paneHeight = ((glyph.bottom - glyph.top) * sizePx.height).toDp()
                 Box(
                     modifier =
                         Modifier
                             .offset(
                                 x = (glyph.left * sizePx.width).toDp(),
                                 y = (glyph.top * sizePx.height).toDp(),
-                            ).size(
-                                width = ((glyph.right - glyph.left) * sizePx.width).toDp(),
-                                height = ((glyph.bottom - glyph.top) * sizePx.height).toDp(),
-                            ).padding(PANE_GAP),
+                            ).size(width = paneWidth, height = paneHeight)
+                            .padding(PANE_GAP),
                 ) {
                     // Not interactive while zoomed: the map has one job then, and a pane that
                     // swallowed the click would leave parts of its own frame meaning "back" and
@@ -141,6 +143,10 @@ internal fun SplitMap(
                     MapPane(
                         group = group,
                         interactive = !zoomed,
+                        // Measured here, where the pane's size is already known, rather than by
+                        // a BoxWithConstraints inside it - see the note on sizePx above.
+                        showsFullScreenMark =
+                            paneWidth >= MARK_MIN_PANE_WIDTH && paneHeight >= MARK_MIN_PANE_HEIGHT,
                         onRename = { renamingId = group.panelId },
                     )
                 }
@@ -198,7 +204,18 @@ private fun paneMenuItems(
     onRename: () -> Unit,
 ): List<ContextMenuItem> =
     buildList {
-        // Splitting first, because it is the one that makes another pane - the other two are about
+        // Full screen first: it is the pane's one "look at just this" action, and the menu is the
+        // place someone who never tried double-clicking goes looking for what a pane can do. The
+        // label carries the gesture so the menu teaches the shortcut rather than replacing it.
+        add(
+            ContextMenuItem(
+                text = "Full Screen (double-click)",
+                icon = Icons.Outlined.OpenInFull,
+                onClick = group.zoom,
+            ),
+        )
+        add(ContextMenuItem(isDivider = true))
+        // Splitting next, because it is the one that makes another pane - the other two are about
         // the pane you right-clicked. Same wording and same icons as a tab's own Split entries, so
         // the two menus do not describe the same operation two different ways.
         add(
@@ -276,12 +293,22 @@ private fun RenamePaneDialog(
  * Double-clicking shows it alone. That is what double-click already means for a pane in every
  * window manager worth copying, and the map is the one place in BOSS where a pane is a thing you
  * can point at rather than a region of the screen you are already inside.
+ *
+ * **A gesture nobody can see is a gesture nobody finds**, so every pane also wears a small
+ * full-screen mark in its corner - drawn at rest, not only on hover, because hover is exactly what
+ * a person who does not know there is something here never does. The mark is a real button (one
+ * click is full screen) and it is the maximise glyph people already read, so it says "this pane
+ * can fill the screen" before anyone reads a tooltip, and the tooltip then names the double-click
+ * that does the same from anywhere on the pane. Muted at rest so four of them do not compete with
+ * the pane labels; full strength under the pointer. Left off panes too small to hold it beside
+ * their label ([showsFullScreenMark]), where double-click and the menu still work.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun MapPane(
     group: TabBarGroup,
     interactive: Boolean,
+    showsFullScreenMark: Boolean,
     onRename: () -> Unit,
 ) {
     val colors = BossTheme.colors
@@ -332,7 +359,52 @@ private fun MapPane(
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
             )
+            if (interactive && showsFullScreenMark) {
+                FullScreenMark(
+                    onActivePane = group.isActive,
+                    paneHovered = hovered,
+                    onClick = group.zoom,
+                    modifier = Modifier.align(Alignment.TopEnd),
+                )
+            }
         }
+    }
+}
+
+/**
+ * The corner button that says a pane can go full screen. See [MapPane] for why it is always drawn.
+ *
+ * Its own `clickable` consumes the press, so a click here is full screen and never also a "go to
+ * this pane" on the pane underneath.
+ */
+@Composable
+private fun FullScreenMark(
+    onActivePane: Boolean,
+    paneHovered: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = BossTheme.colors
+    // On the active pane the fill is the signal, so the mark takes the colour its label does. On
+    // the others, textPrimary rather than the label's textSecondary: rendered, a textSecondary
+    // glyph at rest all but vanished into the idle pane's grey, which is the one failure a hint
+    // that has to be seen without hovering cannot have.
+    val base = if (onActivePane) colors.onSignal else colors.textPrimary
+    Box(
+        modifier =
+            modifier
+                .padding(MARK_INSET)
+                .size(MARK_TARGET)
+                .clip(RoundedCornerShape(2.dp))
+                .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = Icons.Outlined.OpenInFull,
+            contentDescription = "Full screen",
+            tint = base.copy(alpha = if (paneHovered) MARK_HOVER_ALPHA else MARK_REST_ALPHA),
+            modifier = Modifier.size(MARK_GLYPH),
+        )
     }
 }
 
@@ -344,6 +416,24 @@ private const val MAP_HOVER_ALPHA = 0.55f
 
 /** At rest: enough to read as a region, quiet enough that the active one is obvious. */
 private const val MAP_IDLE_ALPHA = 0.5f
+
+/** The full-screen mark's glyph, its click target, and its distance from the pane's corner. */
+private val MARK_GLYPH = 10.dp
+private val MARK_TARGET = 16.dp
+private val MARK_INSET = 1.dp
+
+/**
+ * The smallest pane that carries the mark. Below it the corner glyph would sit on the centred
+ * label; a 180dp map split four ways is ~90x60dp a pane, three ways ~60x40dp, all well above.
+ */
+private val MARK_MIN_PANE_WIDTH = 40.dp
+private val MARK_MIN_PANE_HEIGHT = 28.dp
+
+/** Visible at rest - the point is to be seen without hovering - but quieter than the label. */
+private const val MARK_REST_ALPHA = 0.75f
+
+/** Full strength under the pointer, when it is about to be clicked. */
+private const val MARK_HOVER_ALPHA = 1f
 
 /** How far the panes are dimmed behind "Exit Full Screen", so the words stay readable over them. */
 private const val EXIT_SCRIM_ALPHA = 0.72f

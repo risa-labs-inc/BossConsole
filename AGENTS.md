@@ -765,6 +765,25 @@ the next managed-profile creation. This is not a guaranteed shutdown flush. This
 is not an engine-abort mechanism and does not coordinate external raw-JxBrowser
 callers or engine-level forced closure.
 
+## JxBrowser's native libraries swap the process's malloc zones when they load
+
+On macOS each of JxBrowser's JNI libraries (`libtoolkit`, `libipc`, `libawt_toolkit`) makes
+PartitionAlloc the default malloc zone in a static initializer, briefly unregistering the system
+zone; a `free()` on another thread in that gap is an uncatchable SIGTRAP. `ChromiumToolkitPreload`
+loads the first two on the main thread before the engine pre-warm. Its KDoc is the canonical
+account (mechanism, measurements, what it does not cover); keep it there rather than here.
+
+Rules for anyone touching it:
+
+- **Preload only from the directory `FluckEngine.resolveEngineDir` boots**, or the library loads
+  twice from two paths and swaps zones twice.
+- **JxBrowser must stay in the host class loader.** A plugin that bundled JxBrowser would get
+  `already loaded in another classloader` for a library the host preloaded.
+- **Known gaps:** `libawt_toolkit` is not preloaded (it links `libjawt` and must follow AWT), and
+  a first-run download-then-boot gets no preload. Off switch: `BOSS_TOOLKIT_PRELOAD=false`.
+- **Re-measure after a JxBrowser bump.** The offsets in the KDoc are for 9.5.0 / Chromium
+  152.0.7977.65; check the zone swap still sits in a static initializer before trusting them.
+
 ## Browser telemetry, and how to turn it off
 
 The integrated browser reports which sites BOSS is used with and how - page views,
@@ -2094,16 +2113,16 @@ defence against a hostile one that lies. Unknown tool names default to ALLOW whi
 the provider declares (or defaults to) `readOnly = true`. Known mutations default to ASK with
 a 45-second timeout. Each queued prompt is delivered to exactly one window and
 window teardown denies its owned request. Session trust is process-wide and can
-be cleared using “Revoke MCP session trust” in the bottom bar; restore the bar if
+be reviewed and revoked per tool (or all at once) from “Session trust” in the bottom bar's MCP access menu; restore the bar if
 it is hidden. Session trust is keyed to the exact provider the operator approved (#815): a same-named
 tool from a different provider gets its own ASK instead of inheriting the grant - the tool-name squat.
 McpSessionTrust keeps the (providerId, toolName) identity the engine uses everywhere else: a name-only
 grant would hand an unvetted plugin the approval its sibling earned, and trusting less than the operator
 meant is the fail-closed direction. Revocation stays name-wide as the operator escape hatch:
 revokeSessionTrust(toolName, providerId = null) still clears every provider's trust for that name, and
-over-removing trust fails closed. The approval dialog offers Always Allow and Always Deny, which save
+over-removing trust fails closed. The approval dialog's “Always, for this tool” scope (Always allow / Always deny) saves
 a tool-wide rule for all agents and arguments across restarts. Saved rules can be
-reviewed and reset from “Persisted MCP policies” in the bottom bar; a reset removes
+reviewed and reset from “Tool policies” in the bottom bar's MCP access menu; a reset removes
 the rule and clears that tool's session trust, so the tool uses the configured default
 policy (ASK for known mutations in the shipped defaults). Unrelated DENYs remain intact.
 A failed reset keeps the previous durable rule visible and clears the selected session
@@ -2112,9 +2131,9 @@ POLICY_PERSIST_FAILED and withhold the current execution. A queued approval cann
 replace a newer DENY or reset: each reset invalidates older authorizations before their
 final approval boundary, including queued once/session/persistent grants. Calls already
 authorized to execute are not cancelled. Reset remains host UI only, not an MCP tool.
-“Trust This Plugin” persists a provider-wide ALLOW covering every tool that provider
+“Trust plugin” (the “Always, for every tool from this plugin” scope) persists a provider-wide ALLOW covering every tool that provider
 contributes - weaker than an explicit tool-specific rule, reviewed and reset from
-“Trusted plugins” in the bottom bar rather than “Persisted MCP policies”. The same
+“Trusted plugins” in the MCP access menu rather than “Tool policies”. The same
 reset-invalidates-queued-grants guarantee applies to it: the write rechecks the
 prompting tool's and provider's revocation state, plus DENY, under the policy lock, so a reset landing
 while the dialog is open refuses the write and withholds that call instead of persisting
@@ -2123,10 +2142,45 @@ write that fails for a genuine disk error (not a stale-dialog refusal) still run
 already-approved call, falling back to session trust for that one tool only - a
 deliberate asymmetry, since the operator already approved the call in hand and a disk
 fault should not retroactively withhold it.
+The approval dialog asks for a scope once (just this call, this session, always for this tool,
+always for every tool from this plugin) and answers with one Deny / Allow pair whose labels name
+the effect; there is no session or provider-wide deny, so under those scopes Deny reads “Deny
+once”. The bottom bar shows all three consent surfaces (session trust, tool policies, trusted
+plugins) behind one “MCP access” item, badged in the alert colour while session trust is live.
+The "Always, for this tool" scope says in the dialog that it is keyed by tool name, so it also
+covers a replacement plugin shipping a tool of that name - the one place the operator is told.
 Provider trust also covers tools added by later versions and replacement plugins claiming
 that provider id. Already queued sibling prompts still ask. Explicit tool ASK rules
 still override provider ALLOW. The Trusted plugins UI lists ALLOW rules only; hand-edited
 provider DENY rules currently require policy-file editing to remove.
+
+**YOLO mode** makes any call whose policy resolves to ASK run without prompting, for every tool
+and provider, CRITICAL-risk ones and tools registered later included. Any user can turn it on,
+behind one confirmation (`McpYoloConfirmation`, composed per window in `BossAppDialogs` and
+raised through `McpYoloPrompt`), from either of two places: **MCP access → YOLO mode...** in the
+bottom bar, or the **Tools → MCP YOLO Mode** checkbox in the application menu. The menu item is
+not a convenience: the bar can be hidden (`showBottomBar`, and Focus mode hides it by default),
+and a live global bypass must keep an indicator and an off switch that survive that. Its
+checkmark is the indicator and unchecking turns the mode off; in the bar it reads "MCP: YOLO"
+in the alert colour with "Turn off YOLO mode" first in the menu.
+
+- **It replaces only the prompt.** `policyFor` is untouched, so explicit tool or provider DENY,
+  an unreadable policy file, the kill switch and RBAC still refuse first, and a revoke or DENY
+  landing mid-flight still stops the call at `confirmInvocation`. `McpYoloModeTest` drives the
+  real registry to pin this.
+- **In memory only** (`McpPolicyEngine.yoloMode`), off at every launch. Prompts already queued
+  when it is turned on still ask.
+- **Audited in the ledger, both the calls and the switch.** Each call it lets through is
+  `YOLO_ALLOWED` with `policyApplied = ASK`. Turning it on or off writes a `YOLO_ENABLED` /
+  `YOLO_DISABLED` marker (tool `yolo_mode`, provider `host`) through `McpToolRegistryCore
+  .setYoloMode`, so a window in which calls could run unattended is in the hash-chained record
+  even if nothing was invoked. Markers do not count as calls (`countsAsCall = false`), and the
+  bar's last-call line skips them (`isGovernanceEvent`). Always switch through
+  `McpToolRegistryImpl.setYoloMode`, never `policyEngine.setYoloMode` directly, or the marker is
+  lost.
+- **A deployment can refuse it**: `BOSS_MCP_YOLO_DISABLED=true` (also `1` / `yes` / `on`) or
+  `-Dboss.mcp.yolo.disabled=true` hides both entry points and makes turning it on a logged no-op.
+  Read once at startup (`McpYoloGate`). Turning it off is never refused.
 
 Preserve a backup before manual recovery of a damaged policy;
 the fault flow withholds all tools until recovery. No automatic quarantine UI is
@@ -2195,9 +2249,9 @@ The viewer uses the ledger instance's actual optional persistence path. Its tool
 heavyweight overlay route. Width and height follow the originating window, with a fixed-cap fallback
 while window metadata is not yet measured; Close stays outside the scrolling body.
 
-**The "Persisted MCP policies" bottom bar button also lets an operator set a rule
+**The "Tool policies" entry of the bottom bar's MCP access menu also lets an operator set a rule
 *proactively*, for a registered tool without a saved rule.** It is present even with zero saved
-rules (labeled "Set MCP tool policies" then). Allow requires a second confirming tap
+rules. Allow requires a second confirming tap
 and shows the tool's risk assessment first, the same way the approval dialog's own
 "Always Allow" does, since it is the same durable, tool-name-wide grant. The write goes
 through `McpPolicyEngine.setToolPolicyIfAbsent`, not the reactive approval path's

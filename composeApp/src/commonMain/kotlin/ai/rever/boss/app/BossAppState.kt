@@ -118,6 +118,13 @@ internal class BossAppState(
     var showNewProjectDialog by mutableStateOf(false)
     var showCloneProjectDialog by mutableStateOf(false)
     var projectToOpen by mutableStateOf<Project?>(null)
+
+    /**
+     * Whether answering [projectToOpen] should also show the CodeBase panel: File > Open Project's
+     * folder picker always has. Held until the project lands in THIS window, so choosing New
+     * Window or dismissing leaves no panel open for a project this window never got.
+     */
+    var projectToOpenShowsCodebase by mutableStateOf(false)
     var showShortcutHelpDialog by mutableStateOf(false)
 
     /**
@@ -127,7 +134,7 @@ internal class BossAppState(
      * Null when nothing is pending. Window-scoped, like the project it follows from:
      * project selection is per window, so two windows can be asked independently.
      */
-    var pendingWorkspacePrompt by mutableStateOf<String?>(null)
+    var pendingWorkspacePrompt by mutableStateOf<SpacePrompt?>(null)
 
     /** Settings window visibility, deep-link section and raise-requests. See [SettingsWindowState]. */
     val settingsWindow = SettingsWindowState()
@@ -246,6 +253,17 @@ internal class BossAppState(
      * later, deliberate re-selection of the same project is a real choice and is prompted.
      */
     var restoredProjectPath by mutableStateOf<String?>(null)
+
+    /**
+     * The project a person just placed with an explicit answer to "where should this open?" -
+     * This Space, New Space, or a new window arriving with it.
+     *
+     * The project-selection effect skips it once, like [restoredProjectPath], because the answer
+     * already said what happens to the layout: This Space keeps it, New Space raises the Space
+     * list itself, and a new window opens on its own fresh Space. Consulting the default-Space
+     * setting on top would apply a layout or prompt a second time.
+     */
+    var answeredProjectPath by mutableStateOf<String?>(null)
 
     // Track if handlers have been marked ready (prevents race condition between workspace load and timeout)
     // Uses atomic flag to ensure handler marking happens exactly once

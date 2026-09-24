@@ -1,12 +1,12 @@
 package ai.rever.boss.components.bars.horizontal
 
+import ai.rever.boss.app.ProjectOpenRequests
 import ai.rever.boss.components.bars.ChromeBar
 import ai.rever.boss.components.bars.rememberBarContextMenuItems
 import ai.rever.boss.components.buttons.BossActionButton
 import ai.rever.boss.components.buttons.QuickActionHints
 import ai.rever.boss.components.buttons.ToolboxButton
 import ai.rever.boss.components.dialogs.CommitDialog
-import ai.rever.boss.components.dialogs.ProjectOpenModeDialog
 import ai.rever.boss.components.dialogs.ProjectSelectionDialog
 import ai.rever.boss.components.dialogs.RemoveProjectDialog
 import ai.rever.boss.components.events.PanelEventBus
@@ -37,7 +37,6 @@ import ai.rever.boss.window.LocalWindowId
 import ai.rever.boss.window.LocalWindowProjectState
 import ai.rever.boss.window.Project
 import ai.rever.boss.window.WindowGitState
-import ai.rever.boss.window.WindowOperations
 import ai.rever.boss.window.selectProjectInWindow
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -459,7 +458,6 @@ fun BossDraggableComponent.BossTopLeftBar(
     val selectedProject by windowProjectState?.selectedProject?.collectAsState()
         ?: remember { mutableStateOf(Project("No Project", "", 0L)) }
     var showProjectDialog by remember { mutableStateOf(false) }
-    var projectToOpen by remember { mutableStateOf<Project?>(null) }
     var deletedProjectName by remember { mutableStateOf<String?>(null) }
     var projectToRemove by remember { mutableStateOf<Project?>(null) }
 
@@ -541,12 +539,10 @@ fun BossDraggableComponent.BossTopLeftBar(
             // Project folder was deleted - show message and remove from list
             deletedProjectName = project.name
             ProjectState.removeRecentProject(project.path)
-        } else if (selectedProject.path.isNotEmpty()) {
-            // Project exists and another project is already open - show dialog
-            projectToOpen = project
         } else {
-            // Project exists and no project selected - open directly
-            openProjectInCurrentWindow(project)
+            // Asked where it goes - this Space, a new one, or a new window - by the window's one
+            // dialog (see ProjectOpenRequests). Straight in only when there is no window to ask.
+            if (!ProjectOpenRequests.ask(windowId, project)) openProjectInCurrentWindow(project)
         }
     }
 
@@ -762,13 +758,7 @@ fun BossDraggableComponent.BossTopLeftBar(
                 val project = Project(name = projectName, path = it)
                 // Close the selection dialog
                 showProjectDialog = false
-                // Only show dialog if a project is already selected
-                if (selectedProject.path.isNotEmpty()) {
-                    projectToOpen = project
-                } else {
-                    // No project selected, open directly in current window
-                    openProjectInCurrentWindow(project)
-                }
+                if (!ProjectOpenRequests.ask(windowId, project)) openProjectInCurrentWindow(project)
             }
         }
 
@@ -780,23 +770,6 @@ fun BossDraggableComponent.BossTopLeftBar(
             onOpenDirectoryPicker = {
                 showProjectDialog = false
                 directoryPicker.pickDirectory()
-            },
-        )
-    }
-
-    // Project open mode dialog
-    projectToOpen?.let { project ->
-        ProjectOpenModeDialog(
-            project = project,
-            onDismiss = { projectToOpen = null },
-            onOpenInCurrentWindow = { selectedProj ->
-                openProjectInCurrentWindow(selectedProj)
-                projectToOpen = null
-            },
-            onOpenInNewWindow = { selectedProj ->
-                // Create new window with the project - each window has independent project state
-                WindowOperations.createNewWindowWithProject(selectedProj)
-                projectToOpen = null
             },
         )
     }

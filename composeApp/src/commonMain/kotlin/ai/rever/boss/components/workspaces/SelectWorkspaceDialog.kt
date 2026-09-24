@@ -52,6 +52,12 @@ fun SelectWorkspaceDialog(
     workspaces: List<LayoutWorkspace>,
     onDismiss: () -> Unit,
     onSelect: (LayoutWorkspace) -> Unit,
+    /**
+     * False when the project is NOT open yet and only a pick places it - "New Space" from the
+     * project-open dialog. The copy then says so, and dismissing is a cancel rather than "keep
+     * this window as it is".
+     */
+    projectIsOpen: Boolean = true,
 ) {
     var selectedId by remember(workspaces) { mutableStateOf(workspaces.firstOrNull()?.id) }
 
@@ -61,7 +67,7 @@ fun SelectWorkspaceDialog(
         text = {
             Column(modifier = Modifier.widthIn(min = DIALOG_MIN_WIDTH)) {
                 Text(
-                    text = "$projectName is open. Choose a layout to start with, or keep this window as it is.",
+                    text = promptCopy(projectName, projectIsOpen),
                     color = BossTheme.colors.textSecondary,
                     fontSize = 12.sp,
                     modifier = Modifier.padding(bottom = 12.dp),
@@ -107,7 +113,7 @@ fun SelectWorkspaceDialog(
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Not now", color = BossTheme.colors.textMuted)
+                Text(if (projectIsOpen) "Not now" else "Cancel", color = BossTheme.colors.textMuted)
             }
         },
     )
@@ -145,3 +151,13 @@ private fun WorkspaceRow(
         }
     }
 }
+
+private fun promptCopy(
+    projectName: String,
+    projectIsOpen: Boolean,
+): String =
+    if (projectIsOpen) {
+        "$projectName is open. Choose a layout to start with, or keep this window as it is."
+    } else {
+        "Choose a space to open $projectName in."
+    }

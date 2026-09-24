@@ -64,6 +64,7 @@ class McpActivityLogDialogTest {
             // Unlike POLICY_PERSIST_FAILED, this one's own KDoc says the call in hand still
             // executes - a rare isError = true here is the executed tool genuinely failing.
             McpApprovalDisposition.PROVIDER_TRUST_PERSIST_FAILED,
+            McpApprovalDisposition.YOLO_ALLOWED,
         ).forEach { disposition ->
             assertEquals(McpUnsuccessfulCategory.FAILED, disposition.unsuccessfulCategory, disposition.name)
         }

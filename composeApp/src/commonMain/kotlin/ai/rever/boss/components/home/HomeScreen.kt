@@ -1,5 +1,6 @@
 package ai.rever.boss.components.home
 
+import ai.rever.boss.app.ProjectOpenRequests
 import ai.rever.boss.components.dashboard.cards.BrowserPageCard
 import ai.rever.boss.components.dashboard.cards.FileCard
 import ai.rever.boss.components.dashboard.cards.ProjectCard
@@ -20,6 +21,7 @@ import ai.rever.boss.plugin.scrollbar.verticalScrollWithScrollbar
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.project.ProjectRemovalScope
 import ai.rever.boss.project.removeProjectAndReport
+import ai.rever.boss.window.LocalWindowId
 import ai.rever.boss.window.LocalWindowProjectState
 import ai.rever.boss.window.Project
 import ai.rever.boss.window.selectProjectInWindow
@@ -81,7 +83,10 @@ fun HomeScreen(modifier: Modifier = Modifier) {
     // instead, a second hand-maintained copy of the same layouts (now deleted).
     val workspaces by workspaceManager.workspaces.collectAsState()
 
-    var projectToOpen by remember { mutableStateOf<Project?>(null) }
+    val windowId = LocalWindowId.current
+    val openProject: (Project) -> Unit = { project ->
+        if (!ProjectOpenRequests.ask(windowId, project)) selectProjectInWindow(windowProjectState, project)
+    }
     var projectToRemove by remember { mutableStateOf<Project?>(null) }
     val scrollState = rememberScrollState()
     val scope = rememberCoroutineScope()
@@ -104,10 +109,10 @@ fun HomeScreen(modifier: Modifier = Modifier) {
 
             JumpBackInSection(
                 recentProjects = recentProjects,
-                windowHoldsProject = selectedProject.path.isNotEmpty(),
                 actions = actions,
-                onAskWhichWindow = { projectToOpen = it },
-                onOpenHere = { selectProjectInWindow(windowProjectState, it) },
+                // The window's one "where should this open?" dialog, whether or not a project is
+                // already open: a Space carries its own project either way.
+                onOpen = openProject,
                 onAskToRemove = { projectToRemove = it },
             )
 
@@ -122,11 +127,8 @@ fun HomeScreen(modifier: Modifier = Modifier) {
     }
 
     HomeProjectDialogs(
-        projectToOpen = projectToOpen,
         projectToRemove = projectToRemove,
         openProjectPath = selectedProject.path,
-        onOpenHere = { selectProjectInWindow(windowProjectState, it) },
-        onOpenDone = { projectToOpen = null },
         onRemoveDone = { projectToRemove = null },
         onRemove = { project, removalScope -> scope.launch { removeProjectAndReport(project, removalScope) } },
     )
@@ -143,10 +145,8 @@ private const val RECENT_FILE_LIMIT = 8
 @Composable
 private fun JumpBackInSection(
     recentProjects: List<Project>,
-    windowHoldsProject: Boolean,
     actions: HomeActions,
-    onAskWhichWindow: (Project) -> Unit,
-    onOpenHere: (Project) -> Unit,
+    onOpen: (Project) -> Unit,
     onAskToRemove: (Project) -> Unit,
 ) {
     if (recentProjects.isEmpty()) return
@@ -160,7 +160,7 @@ private fun JumpBackInSection(
                 ProjectCard(
                     project = project,
                     // Only ask which window when this one already holds a project.
-                    onClick = { if (windowHoldsProject) onAskWhichWindow(project) else onOpenHere(project) },
+                    onClick = { onOpen(project) },
                     // Asks rather than removing. The cross used to forget the project on
                     // the click, with no undo and no way to get rid of the folder.
                     onRemove = { onAskToRemove(project) },

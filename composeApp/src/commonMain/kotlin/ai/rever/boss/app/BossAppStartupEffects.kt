@@ -196,7 +196,7 @@ internal fun BossAppStartupEffects(state: BossAppState) {
 
     // Cancel any active drag when window loses focus (prevents stuck ghost)
     LaunchedEffect(state.tabDragComponent, windowId) {
-        WindowFocusManager.focusedWindowFlow.collect { focusedWindowId ->
+        WindowFocusManager.activeWindowFlow.collect { focusedWindowId ->
             // If this window lost focus and there's an active drag, cancel it
             if (focusedWindowId != windowId && state.tabDragComponent.isDragging) {
                 state.tabDragComponent.cancelDrag()
@@ -223,7 +223,18 @@ internal fun BossAppStartupEffects(state: BossAppState) {
     LaunchedEffect(windowId, windowProjectState) {
         val pendingProject = consumePendingInitialProject(windowId)
         if (pendingProject != null) {
+            // Opening a project in a NEW window is itself the answer to "where": the window's
+            // own fresh Space. So the project-selection effect must not ask for a layout on top.
+            state.answeredProjectPath = pendingProject.path
             windowProjectState.selectProject(pendingProject)
+        }
+    }
+
+    // "Open this project" from anywhere outside BossAppDialogs - the top bar, Home, the Open
+    // Project list - lands on this window's one "where should it open?" dialog.
+    LaunchedEffect(windowId) {
+        ProjectOpenRequests.requestsFor(windowId).collect { project ->
+            requestProjectOpen(state, state.windowProjectState, project)
         }
     }
 
@@ -362,15 +373,16 @@ internal fun BossAppStartupEffects(state: BossAppState) {
         val path = selectedProject.path
         if (path.isEmpty()) return@LaunchedEffect
 
-        // A project the restore selected is not a project the user just picked. Last
-        // Session carries its own layout, and both of the branches below would discard
-        // it - the apply by clearing panels, the prompt by covering it with a question
-        // nobody asked. See isUserProjectSelection.
-        if (!isUserProjectSelection(path, state.restoredProjectPath)) {
-            // Consumed, so re-opening the same project later still counts as a choice.
-            state.restoredProjectPath = null
-            return@LaunchedEffect
-        }
+        // A project the restore selected is not a project the user just picked: Last Session
+        // carries its own layout, and both branches below would discard it - the apply by
+        // clearing panels, the prompt by covering it with a question nobody asked. Nor is one a
+        // person placed through "where should this open?", which already decided the layout.
+        // Both marks are consumed together, so re-opening the same project later still counts as
+        // a choice. See gateProjectSelection.
+        val gate = gateProjectSelection(path, state.restoredProjectPath, state.answeredProjectPath)
+        state.restoredProjectPath = gate.restoredProjectPath
+        state.answeredProjectPath = gate.answeredProjectPath
+        if (!gate.handle) return@LaunchedEffect
 
         when (val choice = WorkspaceSettingsManager.currentSettings.value.resolveOnProjectSelection()) {
             // Named rather than folded into an else, so adding a fourth mode has to
@@ -381,7 +393,7 @@ internal fun BossAppStartupEffects(state: BossAppState) {
             is ProjectSelectionWorkspace.Ask -> {
                 // The prompt names the project so it reads as a consequence of what was
                 // just done, rather than an unexplained dialog at startup.
-                state.pendingWorkspacePrompt = selectedProject.name
+                state.pendingWorkspacePrompt = SpacePrompt(selectedProject, placeOnPick = false)
             }
 
             is ProjectSelectionWorkspace.Apply -> {
