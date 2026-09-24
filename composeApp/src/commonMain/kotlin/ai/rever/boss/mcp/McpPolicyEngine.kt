@@ -79,7 +79,8 @@ data class McpSectionPolicyChange(
  * until it is revoked, a policy reset lands, or the app restarts. The provider is part of
  * the identity because a second provider shipping a same-named tool is a *different* tool:
  * a name-only grant would hand an unvetted plugin the approval its sibling earned, the same
- * tool-name squat the provider rules and the mutating catalog already defend against.
+ * tool-name squat the provider rules, the mutating catalog and the scope a persisted rule now
+ * records ([McpToolPolicyConfig.ruleProviders]) defend against.
  */
 data class McpSessionTrust(
     val providerId: String,
@@ -189,7 +190,9 @@ class McpPolicyEngine(
      * Precedence, most authoritative first:
      * 1. A fault that withholds every tool.
      * 2. An explicit DENY - tool-specific **or** [providerId]'s own - always wins, over
-     *    everything below, including a more specific ALLOW. This is deliberately NOT
+     *    everything below, including a more specific ALLOW. The tool-specific one speaks only
+     *    for the provider it was decided for (see [ruleSpeaksForProvider]); another provider's
+     *    same-named tool is a different tool. This is deliberately NOT
      *    "most specific wins": a provider-wide DENY is a broader, and typically later,
      *    decision than whatever per-tool rule it sits next to, and letting a narrower ALLOW
      *    punch a hole through it would reopen exactly the access the wide DENY was meant to
@@ -199,14 +202,19 @@ class McpPolicyEngine(
      *    a same-named tool from a different provider does not inherit it, and with no
      *    provider in hand session trust never applies.
      * 4. An explicit tool-specific rule that is not DENY (ALLOW or ASK) - more specific than
-     *    [providerId]'s rule, so it wins when the two disagree and neither is a DENY.
+     *    [providerId]'s rule, so it wins when the two disagree and neither is a DENY - and,
+     *    like the DENY above, only when it speaks for [providerId]: a rule another provider
+     *    earned is not this tool's to inherit.
      * 5. [providerId]'s own ALLOW - "trust every tool this plugin contributes."
      * 6. The risk-based default: HIGH risk or mutating classification picks
      *    [McpToolPolicyConfig.defaultMutatingAction], everything else the read-only default.
      *
      * [providerId] is optional so existing callers that only ever checked a tool name (tests,
      * anything resolving policy before a provider is known) keep compiling; omitting it just
-     * means step 2 and 5 never apply. [declaredReadOnly] is the same story for the tool's own
+     * means step 2 and 5 never apply, and a tool rule scoped to a specific provider still
+     * answers the read name-wide: a caller with no provider in hand cannot be the provider a
+     * scoped rule speaks for, so that read returns the operator's standing decision for the
+     * name, exactly like a hand-written rule. [declaredReadOnly] is the same story for the tool's own
      * read-only declaration: when the caller has the definition in hand it passes
      * `definition.readOnly` and a tool that declared side effects classifies as mutating
      * whatever its name says (#804); without it the name-only catalog decides, as before.
@@ -219,7 +227,8 @@ class McpPolicyEngine(
     ): McpPolicyAction {
         if (_fault.value is McpPolicyFault.PersistedPolicyUnreadable) return McpPolicyAction.DENY
         val configuredTool = _config.value.rules[toolName]
-        if (configuredTool == McpPolicyAction.DENY) {
+        val toolRuleSpeaksHere = ruleSpeaksForProvider(toolName, providerId)
+        if (configuredTool == McpPolicyAction.DENY && toolRuleSpeaksHere) {
             return McpPolicyAction.DENY
         }
         val configuredProvider = providerId?.let { _config.value.providerRules[it] }
@@ -229,7 +238,7 @@ class McpPolicyEngine(
         if (providerId != null && McpSessionTrust(providerId, toolName) in _sessionTrustedTools.value) {
             return McpPolicyAction.ALLOW
         }
-        if (configuredTool != null) return configuredTool
+        if (configuredTool != null && toolRuleSpeaksHere) return configuredTool
         if (configuredProvider == McpPolicyAction.ALLOW) return McpPolicyAction.ALLOW
         val risk = DefaultMcpRiskEvaluator().evaluateRisk(toolName, McpToolArgs(emptyMap())).level
         return if (risk >= McpRiskLevel.HIGH || McpMutatingToolCatalog.isMutating(toolName, declaredReadOnly)) {
@@ -238,6 +247,64 @@ class McpPolicyEngine(
             _config.value.defaultReadOnlyAction
         }
     }
+
+    /**
+     * Whether the name-keyed rule recorded for [toolName] was decided for [providerId]'s tool -
+     * the persisted-rules half of the identity argument [McpSessionTrust] already makes for
+     * session grants: a second provider shipping a same-named tool is a *different* tool, so a
+     * rule it did not earn must not answer its calls, in either direction. An ALLOW it did not
+     * earn would let it ride another provider's approval; a DENY it did not earn would block it
+     * from even being considered. Rules written before scopes were recorded - by an older
+     * version or by hand - have no [McpToolPolicyConfig.ruleProviders] entry and keep their
+     * old meaning: they speak for the NAME, whichever provider ships it, because silently
+     * downgrading an operator's standing decision on upgrade would trade a real grant for a
+     * hypothetical (a Reset re-earns the rule scoped). A null [providerId] - a caller with no
+     * provider in hand - matches every rule for the name: it cannot be the provider a scoped
+     * rule speaks for, so it is not making a dispatch, and the read returns the operator's
+     * standing decision for the name the way a hand-written rule does.
+     */
+    private fun ruleSpeaksForProvider(
+        toolName: String,
+        providerId: String?,
+    ): Boolean {
+        val decidedFor = _config.value.ruleProviders[toolName] ?: return true
+        // A caller with no provider in hand reads the operator's standing decision for the
+        // name: it cannot be the provider a scoped rule speaks for, so the scoped rule still
+        // answers that read, exactly like a hand-written name-wide rule does.
+        return providerId == null || decidedFor == providerId
+    }
+
+    /**
+     * [McpToolPolicyConfig] with [toolName]'s rule set to [action], scoped the way this write
+     * decided it: with [providerId] in hand the rule speaks for that provider's tool only,
+     * while a name-only write (no provider in hand - the call surface this engine has always
+     * had) records no scope, so the rule answers the name as it did before scopes existed.
+     */
+    private fun configWithToolRule(
+        toolName: String,
+        action: McpPolicyAction,
+        providerId: String?,
+    ): McpToolPolicyConfig {
+        val base = _config.value.copy(rules = _config.value.rules + (toolName to action))
+        return if (providerId == null) {
+            base.copy(ruleProviders = base.ruleProviders - toolName)
+        } else {
+            base.copy(ruleProviders = base.ruleProviders + (toolName to providerId))
+        }
+    }
+
+    /**
+     * [McpToolPolicyConfig] with every reviewed section change applied, each rule scoped to
+     * the provider whose section carried it - the same one-rule-per-name write
+     * [setSectionPolicies] has always made, now recording who the decision was made for.
+     */
+    private fun configWithSectionRules(changes: List<McpSectionPolicyChange>): McpToolPolicyConfig =
+        _config.value.copy(
+            rules = _config.value.rules + changes.associate { it.toolName to it.action },
+            ruleProviders =
+                (_config.value.ruleProviders - changes.map { it.toolName }.toSet()) +
+                    changes.associate { it.toolName to it.providerId },
+        )
 
     /**
      * Trust [toolName], contributed by [providerId], for the duration of this session only.
@@ -378,15 +445,39 @@ class McpPolicyEngine(
                 return@synchronized false
             }
             if (preserveDeny && policyFor(toolName, providerId) == McpPolicyAction.DENY) return@synchronized false
+            // A scoped DENY earned by ANOTHER provider is invisible to the policyFor guard
+            // above (ruleSpeaksForProvider is false for this caller), but this write would
+            // still erase it: configWithToolRule replaces the rule AND re-scopes the name,
+            // so the earlier provider's tool would fall through to the risk default - ALLOW
+            // for a read-only-classified name. Refuse and leave the earlier decision in
+            // force; overwriting another provider's persisted decision is a deliberate act
+            // that belongs in the policy dialog, not in a queued approval's write.
+            if (preserveDeny &&
+                action != McpPolicyAction.DENY &&
+                persistedDenyEarnedByOtherProvider(toolName, providerId)
+            ) {
+                return@synchronized false
+            }
             applyConfig(
                 key = toolName,
                 logKey = "tool",
-                updated = _config.value.copy(rules = _config.value.rules + (toolName to action)),
+                updated = configWithToolRule(toolName, action, providerId),
                 successMessage = "Updated tool policy: ${action.name}",
                 failureMessage = "Failed to persist MCP policy update",
                 faultFor = { k, e -> McpPolicyFault.PolicyPersistFailed(k, e) },
             )
         }
+
+    /**
+     * A persisted [toolName] rule that is a DENY earned by a provider other than [providerId]:
+     * invisible to [policyFor] for this caller, yet a write here would replace and re-scope it.
+     */
+    private fun persistedDenyEarnedByOtherProvider(
+        toolName: String,
+        providerId: String?,
+    ): Boolean =
+        _config.value.rules[toolName] == McpPolicyAction.DENY &&
+            _config.value.ruleProviders[toolName]?.let { it != providerId } == true
 
     /**
      * The proactive path's write: set a persistent rule for [toolName], but only while it still
@@ -423,7 +514,7 @@ class McpPolicyEngine(
             writeConfig(
                 key = toolName,
                 logKey = "tool",
-                updated = _config.value.copy(rules = _config.value.rules + (toolName to action)),
+                updated = configWithToolRule(toolName, action, providerId),
                 successMessage = "Updated tool policy: ${action.name}",
                 failureMessage = "Failed to persist MCP policy update",
                 faultFor = { k, e -> McpPolicyFault.PolicyPersistFailed(k, e) },
@@ -457,10 +548,7 @@ class McpPolicyEngine(
                 writeConfig(
                     key = "${changes.size} tools",
                     logKey = "section",
-                    updated =
-                        _config.value.copy(
-                            rules = _config.value.rules + changes.associate { it.toolName to it.action },
-                        ),
+                    updated = configWithSectionRules(changes),
                     successMessage = "Updated section tool policies",
                     failureMessage = "Failed to persist MCP section policies",
                     faultFor = { k, e -> McpPolicyFault.PolicyPersistFailed(k, e) },
@@ -638,7 +726,11 @@ class McpPolicyEngine(
                 applyConfig(
                     key = toolName,
                     logKey = "tool",
-                    updated = _config.value.copy(rules = _config.value.rules - toolName),
+                    updated =
+                        _config.value.copy(
+                            rules = _config.value.rules - toolName,
+                            ruleProviders = _config.value.ruleProviders - toolName,
+                        ),
                     successMessage = "Revoked persisted tool policy",
                     failureMessage = "Failed to persist MCP policy revocation",
                     faultFor = { k, e -> McpPolicyFault.PolicyPersistFailed(k, e) },

@@ -97,6 +97,22 @@ data class McpToolPolicyConfig(
      * either direction. See [ai.rever.boss.mcp.McpPolicyEngine.policyFor] for the full precedence.
      */
     val providerRules: Map<String, McpPolicyAction> = emptyMap(),
+    /**
+     * The provider each name-keyed entry in [rules] was decided for: tool name -> provider id.
+     *
+     * [rules] predates provider identity, so its key alone cannot tell "the operator approved
+     * THIS plugin's `data_fetch`" from "the operator approved every `data_fetch` that will ever
+     * register" - and the registry's first-wins dedup only stops two same-named tools from
+     * coexisting, not from following each other (trusted provider uninstalled, a successor
+     * ships the same name). Without this map, a plugin that names its tool like one another
+     * provider already earned a standing ALLOW for inherits that ALLOW without ever being
+     * prompted: the exact name-squat [McpSessionTrust] scopes session grants against. An entry
+     * here narrows its rule to that provider's tool, in both directions - an ALLOW another
+     * provider did not earn must not authorize its tool, and a DENY it did not earn must not
+     * block one either. Rules with no entry here (written before this field existed, or by
+     * hand) keep the name-wide meaning they always had.
+     */
+    val ruleProviders: Map<String, String> = emptyMap(),
 )
 
 /**
