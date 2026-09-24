@@ -4,7 +4,7 @@
 
 `build.yml`, `authenticated-ipc.yml`, `native-file-boundaries.yml`,
 `filesystem-limits.yml`, and `edge-functions.yml` validate pull requests and
-post-merge pushes to `main`. PRs targeting `main`, `dev`, or `develop` are covered;
+post-merge pushes to `main`; `build.yml` also runs on pushes to `dev` (see below). PRs targeting `main`, `dev`, or `develop` are covered;
 filesystem limits retains its existing coverage of PRs to any branch. Existing
 path filters on the specialized workflows are unchanged. The required Build &
 Test workflow has no path filter, including for documentation-only PRs.
@@ -17,17 +17,18 @@ conditionally skips required jobs. Main pushes still validate the actual merged
 tree, and manual runs remain available on any branch.
 
 `build.yml` does run on pushes to `dev`, on the Linux legs only. That run exists to
-seed the shared Gradle caches: pull requests restore caches from their base branch
-but never write them (`cache-read-only` is true on `pull_request`), because
-PR-scoped caches can't be read by any other PR and, at about 1 GB each, kept the
+seed the shared Gradle caches: only pushes write the shared caches;
+pull requests and manual runs restore from their base or default branch but never
+write (`cache-read-only` is true for every event except `push`), because PR- and
+dispatch-scoped caches can't be read by any other run and, at about 1 GB each, kept the
 repository over GitHub's 10 GB cache cap and evicted the shared entries. Before
 this change 14 of 20 sampled PR runs of `build-test (ubuntu-latest)` started from
 an empty Gradle User Home (313 of 313 tasks executed, about 830 s) against about
-250-490 s when a cache was restored. The dev push run skips macOS and Windows, so
+256-594 s (about 430 s) when a cache was restored. The dev push run skips macOS and Windows, so
 it adds no load to the hosted runners the original routing change protected.
 
-Only superseded runs of the same PR are cancelled. Main push and manual runs
-keep unique run-id concurrency groups, so a newer commit cannot cancel work
+Only superseded runs of the same PR are cancelled. Main push, dev push and manual
+runs keep unique run-id concurrency groups, so a newer commit cannot cancel work
 needed for release validation. Filesystem resource limits and Edge Functions now
 use the same PR cancellation policy as the other three workflows.
 
@@ -156,6 +157,9 @@ as a fresh security fix. This CI patch does not rewrite or merge either branch.
 - Sixty routing scenarios cover PRs to main/dev/develop, pushes, manual runs,
   and one validation event per dev-to-main/develop-to-dev update. PR base
   filtering also admits fork PRs. Cancellation remains PR-only.
+  (This records the earlier routing change. Since `build.yml` gained the dev push
+  trigger for cache seeding, an update into `dev` produces two `build.yml` runs:
+  the PR run and the ubuntu-only post-merge seeding run.)
 - Every unedited workflow is byte-identical to the base, including release,
   publishing, and Chromium branding. `git diff --check` passes.
 
