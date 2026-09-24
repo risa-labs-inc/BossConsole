@@ -289,7 +289,14 @@ browse.openapi(getPluginRoute, async (ctx) => {
       verified: plugin.verified,
       createdAt: plugin.createdAt,
       updatedAt: plugin.updatedAt,
-      latestVersion: plugin.latestVersion,
+      // #912: plugin.latestVersion comes from the get_plugin_with_stats RPC's
+      // own subquery, which orders by published_at with no finalized filter —
+      // so a version row created before its JAR exists would headline the
+      // detail page while being undownloadable (and absent from `versions`
+      // below, which is filtered to finalized rows). The list is newest-first,
+      // so its head is the real latest; null when nothing is finalized yet,
+      // which matches what the download routes report for the same plugin.
+      latestVersion: versions[0]?.version ?? null,
       avgRating: plugin.avgRating,
       ratingCount: plugin.ratingCount,
       downloadCount: plugin.downloadCount,
