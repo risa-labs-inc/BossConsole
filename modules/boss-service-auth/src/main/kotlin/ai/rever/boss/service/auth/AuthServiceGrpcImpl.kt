@@ -73,8 +73,7 @@ class AuthServiceGrpcImpl(
     ): SignInResponse =
         when (val result = client.signInWithEmailPassword(email, password)) {
             is AuthResult.Success -> {
-                val userInfo = result.toUserInfo()
-                updateAuthState(AuthState.AUTH_STATE_AUTHENTICATED, userInfo, emptySet())
+                val userInfo = applySuccess(result)
                 SignInResponse
                     .newBuilder()
                     .setSuccess(true)
@@ -207,8 +206,7 @@ class AuthServiceGrpcImpl(
         val client = supabaseClient ?: return
         when (val result = client.restoreSession()) {
             is AuthResult.Success -> {
-                val userInfo = result.toUserInfo()
-                updateAuthState(AuthState.AUTH_STATE_AUTHENTICATED, userInfo, emptySet())
+                applySuccess(result)
                 logger.info("Auth session restored for user: {}", result.email.take(3) + "***")
             }
 
@@ -216,6 +214,16 @@ class AuthServiceGrpcImpl(
                 logger.debug("No previous auth session to restore")
             }
         }
+    }
+
+    /**
+     * Authenticates as [result] - the one place a sign-in or a restored session reaches the state
+     * the permission and admin RPCs answer from, so both paths carry the token's claims the same way.
+     */
+    internal fun applySuccess(result: AuthResult.Success): UserInfo {
+        val userInfo = result.toUserInfo()
+        updateAuthState(AuthState.AUTH_STATE_AUTHENTICATED, userInfo, result.permissions)
+        return userInfo
     }
 
     /** Update auth state programmatically (called during session restore, sign-in, etc.) */

@@ -129,8 +129,14 @@ object WorkspaceFileManagerCommon {
      *
      * Sanitised the same way, because an id read out of a hand-edited file is arbitrary text and a
      * path separator in it would escape the directory.
+     *
+     * A blank id is refused rather than sanitised: `fileNameForId("")` is the literal file
+     * `.json`, which every id-less Space would resolve to and share.
      */
-    fun fileNameForId(workspaceId: String): String = "${sanitize(workspaceId)}.json"
+    fun fileNameForId(workspaceId: String): String {
+        require(workspaceId.isNotBlank()) { "a workspace file name needs a non-blank id" }
+        return "${sanitize(workspaceId)}.json"
+    }
 
     /**
      * Generate a filename from workspace name.

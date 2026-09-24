@@ -9,10 +9,18 @@ import { getLatestVersion, getVersion } from "../services/versions.ts"
 import { getSignedDownloadUrl } from "../services/storage.ts"
 import { recordDownload, hashIp } from "../services/downloads.ts"
 import { getUserFromToken, validateApiKey } from "../utils/auth.ts"
+import { clientKey, rateLimit } from "../utils/rate-limit.ts"
 import { isAllowedExternalJarUrl } from "../services/github.ts"
 import type { SupabaseClient } from "@supabase/supabase-js"
 
 const download = new OpenAPIHono<{ Variables: PluginStoreContext }>()
+
+// Per-client limit on the public download-info routes, the same in-isolate
+// token bucket as the catalogue routes in browse.ts. A separate key prefix
+// means a burst of downloads cannot lock a client out of browsing, and vice
+// versa; 60/min is generous for real installs and their version checks.
+const DOWNLOAD_INFO_LIMIT = 60
+const DOWNLOAD_INFO_WINDOW_SECONDS = 60
 
 /**
  * Install-permission gate. A plugin's `requiredPermissions` lists the effective
@@ -108,6 +116,14 @@ const downloadLatestRoute = createRoute({
     })
   },
   responses: {
+    429: {
+      description: 'Too many requests from this client',
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
+        }
+      }
+    },
     200: {
       description: 'Download URL generated successfully',
       content: {
@@ -153,6 +169,18 @@ const downloadLatestRoute = createRoute({
 
 download.openapi(downloadLatestRoute, async (ctx) => {
   try {
+    // The brake before the work: these routes are unauthenticated and every
+    // allowed request costs visibility RPCs and a signed URL.
+    const limit = rateLimit(
+      `download-info:${clientKey(ctx.req.raw.headers)}`,
+      DOWNLOAD_INFO_LIMIT,
+      DOWNLOAD_INFO_WINDOW_SECONDS,
+    )
+    if (!limit.allowed) {
+      ctx.header("Retry-After", String(limit.retryAfterSeconds))
+      return ctx.json({ error: 'Too many requests; try again later' }, 429)
+    }
+
     const supabase = ctx.get("supabase")
     const { pluginId } = ctx.req.valid('param')
 
@@ -257,6 +285,14 @@ const downloadVersionRoute = createRoute({
     })
   },
   responses: {
+    429: {
+      description: 'Too many requests from this client',
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
+        }
+      }
+    },
     200: {
       description: 'Download URL generated successfully',
       content: {
@@ -302,6 +338,16 @@ const downloadVersionRoute = createRoute({
 
 download.openapi(downloadVersionRoute, async (ctx) => {
   try {
+    const limit = rateLimit(
+      `download-info:${clientKey(ctx.req.raw.headers)}`,
+      DOWNLOAD_INFO_LIMIT,
+      DOWNLOAD_INFO_WINDOW_SECONDS,
+    )
+    if (!limit.allowed) {
+      ctx.header("Retry-After", String(limit.retryAfterSeconds))
+      return ctx.json({ error: 'Too many requests; try again later' }, 429)
+    }
+
     const supabase = ctx.get("supabase")
     const { pluginId, version: versionStr } = ctx.req.valid('param')
 

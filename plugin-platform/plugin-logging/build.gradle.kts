@@ -66,6 +66,10 @@ kotlin {
         named("desktopTest") {
             dependencies {
                 implementation(kotlin("test"))
+                // The production classpath carries slf4j-api only, so BossLogger's SLF4J
+                // line has no sink here. logback-classic gives tests a ListAppender to
+                // prove the exact string handed to SLF4J is the sanitized one.
+                implementation(libs.logback)
             }
         }
     }

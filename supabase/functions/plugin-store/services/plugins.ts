@@ -137,12 +137,30 @@ export async function getPluginForPublish(
 
 /**
  * Get plugin details by plugin ID string
+ *
+ * The storefront detail page MUST pass the viewer. This client is service
+ * role, so the plain get_plugin_with_stats resolves visibility for
+ * auth.uid() = NULL and user_can_view_plugin_row fails closed: an
+ * organisation member got a 404 for their own organisation's unlisted plugin
+ * on the detail page while /list, which names its viewer, showed it
+ * (issue #852).
  */
 export async function getPlugin(
   supabase: SupabaseClient,
-  pluginId: string
+  pluginId: string,
+  /**
+   * Who is asking, or null for an anonymous lookup. Mirrors listPlugins: the
+   *_for_viewer variant is service_role-only and applies
+   * user_can_view_plugin_row itself; nothing here decides visibility.
+   */
+  viewerId: string | null = null
 ): Promise<PluginWithStats | null> {
-  const { data, error } = await supabase
+  const { data, error } = viewerId
+    ? await supabase.rpc('get_plugin_with_stats_for_viewer', {
+      p_plugin_id: pluginId,
+      p_viewer_id: viewerId
+    })
+    : await supabase
     .rpc('get_plugin_with_stats', {
       p_plugin_id: pluginId
     })

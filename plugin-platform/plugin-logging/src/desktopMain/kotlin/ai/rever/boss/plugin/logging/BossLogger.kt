@@ -423,44 +423,48 @@ object BossLogger {
             return
         }
 
+        // Central redaction. Data maps were previously interpolated raw into
+        // stdout and the log file, so one unmasked call site put a secret on
+        // disk permanently. Sanitising here, once, means every downstream
+        // channel (recentLogs, listeners, SLF4J, the file writer) sees the
+        // same redacted fields instead of relying on each caller to remember.
+        val sanitized =
+            entry.copy(
+                message = LogSanitizer.sanitizeLogMessage(entry.message),
+                data = entry.data?.let { LogSanitizer.sanitizeMap(it) },
+                error = entry.error?.let { sanitizeThrowable(it) },
+            )
+
         // Store in recent logs
         synchronized(recentLogsLock) {
             if (recentLogs.size >= MAX_LOG_ENTRIES) {
                 recentLogs.removeFirst()
             }
-            recentLogs.addLast(entry)
+            recentLogs.addLast(sanitized)
         }
 
-        // Format message for SLF4J
-        val formattedMessage =
-            buildString {
-                append("[${entry.category}]")
-                append(" ${entry.component}: ${entry.message}")
-                if (entry.data != null) {
-                    append(" | ${entry.data}")
-                }
-            }
+        val formattedMessage = formatForSlf4j(sanitized)
 
         // Log to SLF4J (which outputs to stdout, captured by GlobalLogCapture)
-        when (entry.level) {
+        when (sanitized.level) {
             LogLevel.TRACE -> {
-                slf4jLogger.trace(formattedMessage, entry.error)
+                slf4jLogger.trace(formattedMessage)
             }
 
             LogLevel.DEBUG -> {
-                slf4jLogger.debug(formattedMessage, entry.error)
+                slf4jLogger.debug(formattedMessage)
             }
 
             LogLevel.INFO -> {
-                slf4jLogger.info(formattedMessage, entry.error)
+                slf4jLogger.info(formattedMessage)
             }
 
             LogLevel.WARN -> {
-                slf4jLogger.warn(formattedMessage, entry.error)
+                slf4jLogger.warn(formattedMessage)
             }
 
             LogLevel.ERROR -> {
-                slf4jLogger.error(formattedMessage, entry.error)
+                slf4jLogger.error(formattedMessage)
             }
 
             LogLevel.OFF -> { /* no-op */ }
@@ -468,7 +472,7 @@ object BossLogger {
 
         // Queue for async file logging
         if (fileLoggingEnabled) {
-            val result = fileWriteChannel.trySend(entry)
+            val result = fileWriteChannel.trySend(sanitized)
             if (result.isFailure) {
                 val count = droppedLogCount.incrementAndGet()
                 val now = System.currentTimeMillis()
@@ -480,8 +484,26 @@ object BossLogger {
         }
 
         // Notify listeners
-        notifyListeners(entry)
+        notifyListeners(sanitized)
     }
+
+    /**
+     * Format an entry for SLF4J. The throwable is rendered into the text
+     * through the sanitizer rather than passed to SLF4J as an argument:
+     * the backend would print its message and every `Caused by:` line
+     * raw, and those are exactly the places a credential lands.
+     */
+    private fun formatForSlf4j(entry: LogEntry): String =
+        buildString {
+            append("[${entry.category}]")
+            append(" ${entry.component}: ${entry.message}")
+            if (entry.data != null) {
+                append(" | ${entry.data}")
+            }
+            entry.error?.let { error ->
+                append('\n').append(LogSanitizer.sanitizeStackTrace(error.stackTraceToString()))
+            }
+        }
 
     /**
      * Format epoch milliseconds to human-readable timestamp.
@@ -515,19 +537,27 @@ object BossLogger {
                         append(" | ${entry.data}")
                     }
                     if (entry.error != null) {
-                        append("\n  Exception: ${entry.error.message}")
-                        // Use configurable stack trace depth
+                        // Rendered through the sanitizer like the SLF4J path: raw
+                        // frames were appended before, and a `Caused by:` line or a
+                        // filename embedded in a frame can carry the same credential
+                        // a message does.
+                        val traceLines =
+                            LogSanitizer
+                                .sanitizeStackTrace(entry.error.stackTraceToString())
+                                .lines()
+                        append("\n  Exception: ${traceLines.firstOrNull() ?: ""}")
                         val frames =
                             if (stackTraceDepth <= 0) {
-                                entry.error.stackTrace.toList()
+                                traceLines.drop(1)
                             } else {
-                                entry.error.stackTrace.take(stackTraceDepth)
+                                traceLines.drop(1).take(stackTraceDepth)
                             }
                         frames.forEach { frame ->
-                            append("\n    at $frame")
+                            append("\n    ${frame.trim()}")
                         }
-                        if (stackTraceDepth > 0 && entry.error.stackTrace.size > stackTraceDepth) {
-                            append("\n    ... ${entry.error.stackTrace.size - stackTraceDepth} more frames")
+                        val remaining = traceLines.size - 1 - frames.size
+                        if (remaining > 0) {
+                            append("\n    ... $remaining more frames")
                         }
                     }
                     append("\n")
@@ -575,6 +605,24 @@ object BossLogger {
             slf4jLogger.warn("Failed to rotate log files: ${e.message}")
         }
     }
+
+    /**
+     * Rebuilds a throwable with its message - and every `Caused by:` message in
+     * the chain - run through the sanitizer. Listeners receive this copy instead
+     * of the original so `stackTraceToString()` cannot leak a credential embedded
+     * in an exception message. Stack frames are copied verbatim: they are
+     * structural (class/method/line) and are sanitized again at render time.
+     */
+    private fun sanitizeThrowable(error: Throwable): Throwable {
+        val wrapped = SanitizedThrowable(LogSanitizer.sanitizeExceptionMessage(error.message))
+        wrapped.stackTrace = error.stackTrace
+        error.cause?.takeIf { it !== error }?.let { wrapped.initCause(sanitizeThrowable(it)) }
+        return wrapped
+    }
+
+    private class SanitizedThrowable(
+        sanitizedMessage: String,
+    ) : Throwable(sanitizedMessage)
 
     private fun notifyListeners(entry: LogEntry) {
         val listenersCopy =

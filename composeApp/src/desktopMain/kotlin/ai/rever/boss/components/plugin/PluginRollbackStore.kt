@@ -3,9 +3,15 @@ package ai.rever.boss.components.plugin
 import ai.rever.boss.plugin.loader.PluginBundledTrust
 import ai.rever.boss.plugin.loader.PluginManifestReader
 import ai.rever.boss.plugin.loader.PluginSignatureSidecar
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import java.io.File
+import java.io.IOException
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.util.UUID
 
 /**
  * Keeps the jar an update replaced, so there is a way back from a version that will not load.
@@ -39,6 +45,12 @@ internal object PluginRollbackStore {
     private val logger = BossLogger.forComponent("PluginRollbackStore")
 
     private const val DIR_NAME = ".rollback"
+    private const val GENERATIONS_SUFFIX = ".snapshots"
+    private const val POINTER_NAME = "current"
+    private const val GENERATION_SUFFIX = ".snapshot"
+    private const val STAGING_SUFFIX = ".staging"
+    private const val SNAPSHOT_JAR_NAME = "plugin.jar"
+    private const val SNAPSHOT_VERSION_NAME = "version"
 
     /**
      * Plugin ids are dotted reverse-domain strings and reach here from a manifest, so they are
@@ -47,24 +59,87 @@ internal object PluginRollbackStore {
      */
     private fun safeName(pluginId: String) = pluginId.replace(Regex("[^A-Za-z0-9._-]"), "_")
 
-    private fun dir(pluginDir: File) = File(pluginDir, DIR_NAME)
+    private data class SnapshotFiles(
+        val jar: File,
+        val version: File,
+    )
 
-    private fun jarFor(
+    private fun SnapshotFiles.isComplete(): Boolean = jar.isFile && version.isFile
+
+    private fun SnapshotFiles.readVersion(): String? =
+        runCatching {
+            version.readText().trim().takeIf { it.isNotEmpty() }
+        }.getOrNull()
+
+    /** Owns the on-disk layout so publication mechanics stay separate from update coordination. */
+    private class RollbackLayout(
         pluginDir: File,
         pluginId: String,
-    ) = File(dir(pluginDir), safeName(pluginId) + ".jar")
+    ) {
+        val generations = File(File(pluginDir, DIR_NAME), safeName(pluginId) + GENERATIONS_SUFFIX)
+        private val pointer = File(generations, POINTER_NAME)
+        private val legacyJar = File(File(pluginDir, DIR_NAME), safeName(pluginId) + ".jar")
+        private val legacyVersion = File(File(pluginDir, DIR_NAME), safeName(pluginId) + ".version")
 
-    /**
-     * Where the kept version number is written, beside the copy.
-     *
-     * Recorded at snapshot time rather than read back out of the copy on demand. Reading it back
-     * would mean opening a zip on every dialog, and the version is what labels the button, so it
-     * has to be knowable without touching the jar at all.
-     */
-    private fun versionFor(
-        pluginDir: File,
-        pluginId: String,
-    ) = File(dir(pluginDir), safeName(pluginId) + ".version")
+        /**
+         * Resolve the published generation, falling back to the layout used before generations.
+         * A present but invalid pointer fails closed rather than exposing stale legacy bytes.
+         */
+        fun activeSnapshot(): SnapshotFiles? =
+            if (pointer.exists()) {
+                publishedSnapshot()
+            } else {
+                SnapshotFiles(legacyJar, legacyVersion).takeIf { it.isComplete() }
+            }
+
+        private fun publishedSnapshot(): SnapshotFiles? {
+            val generationName =
+                runCatching { pointer.readText().trim() }
+                    .getOrNull()
+                    ?.takeIf { it.endsWith(GENERATION_SUFFIX) && File(it).name == it }
+                    ?: return null
+            val generation = File(generations, generationName)
+            val confined =
+                runCatching {
+                    generation.canonicalFile.parentFile == generations.canonicalFile
+                }.getOrDefault(false)
+            return if (confined) {
+                SnapshotFiles(
+                    jar = File(generation, SNAPSHOT_JAR_NAME),
+                    version = File(generation, SNAPSHOT_VERSION_NAME),
+                ).takeIf { it.isComplete() }
+            } else {
+                null
+            }
+        }
+
+        fun publish(generation: File) {
+            pointer.atomicWriteText(generation.name)
+        }
+
+        fun cleanupSuperseded(keep: File) {
+            generations.listFiles().orEmpty().forEach { candidate ->
+                val isGeneration =
+                    candidate.name.endsWith(GENERATION_SUFFIX) ||
+                        candidate.name.endsWith(STAGING_SUFFIX)
+                if (candidate != keep && candidate != pointer && isGeneration) {
+                    runCatching { candidate.deleteRecursively() }
+                }
+            }
+        }
+
+        fun discardLegacy() {
+            runCatching { legacyJar.delete() }
+            runCatching { legacyVersion.delete() }
+            runCatching { PluginSignatureSidecar.delete(legacyJar.absolutePath) }
+            runCatching { PluginBundledTrust.delete(legacyJar.absolutePath) }
+        }
+
+        fun discardAll() {
+            runCatching { generations.deleteRecursively() }
+            discardLegacy()
+        }
+    }
 
     /**
      * Keep a copy of [sourceJarPath] as the way back for [pluginId].
@@ -78,10 +153,12 @@ internal object PluginRollbackStore {
      * `PluginManifestReader.readFromJar` refuses any path that is not (it reports "File is not a
      * JAR"), so this cannot be deferred until after the copy is made.
      */
+    @Synchronized
     fun snapshot(
         pluginDir: File,
         pluginId: String,
         sourceJarPath: String,
+        beforeCommit: () -> Unit = {},
     ) {
         val source = File(sourceJarPath)
         if (!source.isFile) return
@@ -98,17 +175,35 @@ internal object PluginRollbackStore {
             )
             return
         }
+        val layout = RollbackLayout(pluginDir, pluginId)
+        val generations = layout.generations
+        val generationId = UUID.randomUUID().toString()
+        val staging = File(generations, generationId + STAGING_SUFFIX)
+        val published = File(generations, generationId + GENERATION_SUFFIX)
+        var pointerCommitted = false
+
         runCatching {
-            dir(pluginDir).mkdirs()
-            source.copyTo(jarFor(pluginDir, pluginId), overwrite = true)
-            versionFor(pluginDir, pluginId).writeText(version)
-            // The sidecar travels with it or the restore is unverifiable: a jar whose signature
-            // file belongs to different bytes hard-fails the load, which is worse than unsigned.
-            val target = jarFor(pluginDir, pluginId).absolutePath
-            PluginSignatureSidecar.read(sourceJarPath)?.let { PluginSignatureSidecar.persist(target, it) }
-                ?: PluginSignatureSidecar.delete(target)
-            // An unsigned bundled copy needs its established provenance on an in-session rollback.
-            PluginBundledTrust.copyTrust(sourceJarPath, target)
+            check(generations.mkdirs() || generations.isDirectory) { "Could not create rollback generation directory" }
+            check(staging.mkdir()) { "Could not create rollback staging directory" }
+
+            val stagedJar = File(staging, SNAPSHOT_JAR_NAME)
+            source.copyTo(stagedJar)
+            File(staging, SNAPSHOT_VERSION_NAME).writeText(version)
+
+            // Stage every piece of provenance beside the staged bytes. A signature belongs to
+            // one exact JAR, and bundled trust is content-addressed, so neither may lag behind the
+            // bytes exposed by the commit pointer.
+            PluginSignatureSidecar.persist(stagedJar.absolutePath, PluginSignatureSidecar.read(sourceJarPath))
+            if (PluginBundledTrust.isTrusted(sourceJarPath) &&
+                !PluginBundledTrust.copyTrust(sourceJarPath, stagedJar.absolutePath)
+            ) {
+                throw IOException("Could not preserve bundled trust for rollback snapshot")
+            }
+
+            moveGeneration(staging, published)
+            beforeCommit()
+            layout.publish(published)
+            pointerCommitted = true
         }.onFailure { e ->
             logger.warn(
                 LogCategory.SYSTEM,
@@ -117,21 +212,36 @@ internal object PluginRollbackStore {
                 error = e,
             )
         }
+
+        if (pointerCommitted) {
+            layout.cleanupSuperseded(published)
+            layout.discardLegacy()
+        } else {
+            staging.deleteRecursively()
+            published.deleteRecursively()
+        }
+    }
+
+    private fun moveGeneration(
+        staging: File,
+        published: File,
+    ) {
+        try {
+            Files.move(staging.toPath(), published.toPath(), StandardCopyOption.ATOMIC_MOVE)
+        } catch (_: AtomicMoveNotSupportedException) {
+            Files.move(staging.toPath(), published.toPath())
+        }
     }
 
     /** The version held for [pluginId], or null when there is none or it cannot be named. */
+    @Synchronized
     fun availableVersion(
         pluginDir: File,
         pluginId: String,
     ): String? {
         // BOTH files, because either alone is not a usable offer: bytes with no recorded version
         // cannot label a button, and a version with no bytes cannot be restored.
-        val versionFile = versionFor(pluginDir, pluginId)
-        return if (!jarFor(pluginDir, pluginId).isFile || !versionFile.isFile) {
-            null
-        } else {
-            runCatching { versionFile.readText().trim().takeIf { it.isNotEmpty() } }.getOrNull()
-        }
+        return RollbackLayout(pluginDir, pluginId).activeSnapshot()?.readVersion()
     }
 
     /**
@@ -144,15 +254,18 @@ internal object PluginRollbackStore {
      * The kept copy is not consumed, so a restore interrupted halfway has not destroyed the only
      * good jar and a second attempt is possible.
      */
+    @Synchronized
     fun restore(
         pluginDir: File,
         pluginId: String,
         currentJarPath: String?,
     ): File? {
-        val kept = jarFor(pluginDir, pluginId)
-        // availableVersion already requires the jar to exist, so this is the single guard both
-        // conditions need rather than two returns saying the same thing.
-        val version = availableVersion(pluginDir, pluginId)?.takeIf { kept.isFile } ?: return null
+        val restorable =
+            RollbackLayout(pluginDir, pluginId).activeSnapshot()?.let { snapshot ->
+                snapshot.readVersion()?.let { version -> snapshot to version }
+            } ?: return null
+        val kept = restorable.first.jar
+        val version = restorable.second
         return runCatching {
             val destination = File(pluginDir, "${safeName(pluginId)}-$version.jar")
             kept.copyTo(destination, overwrite = true)
@@ -184,13 +297,11 @@ internal object PluginRollbackStore {
     }
 
     /** Drop the copy. For an uninstall, where the plugin itself is going away. */
+    @Synchronized
     fun discard(
         pluginDir: File,
         pluginId: String,
     ) {
-        runCatching { jarFor(pluginDir, pluginId).delete() }
-        runCatching { versionFor(pluginDir, pluginId).delete() }
-        runCatching { PluginSignatureSidecar.delete(jarFor(pluginDir, pluginId).absolutePath) }
-        runCatching { PluginBundledTrust.delete(jarFor(pluginDir, pluginId).absolutePath) }
+        RollbackLayout(pluginDir, pluginId).discardAll()
     }
 }

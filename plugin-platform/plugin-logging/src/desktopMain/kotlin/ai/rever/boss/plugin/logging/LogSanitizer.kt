@@ -106,7 +106,10 @@ object LogSanitizer {
 
     /**
      * Mask sensitive parameters in URIs.
-     * Redacts: token, access_token, refresh_token, code, error_description
+     * Redacts: token, access_token, refresh_token, code, error_description, id_token,
+     * session_token, api_key, key, secret, sessionId, email — name-matched
+     * case-insensitively, so the passkey ceremony's `sessionId` and the `email`
+     * beside it leave the log with the token names.
      *
      * Example:
      * "boss://auth?token=abc123&type=signup" -> "boss://auth?token=[REDACTED]&type=signup"
@@ -437,7 +440,13 @@ object LogSanitizer {
      * Runs of text that are a credential by their own structure, wherever they
      * appear: a JWT (three base64url segments — the first is the base64url of a
      * JSON header, which is why every JWT begins `eyJ`), a GitHub token prefix,
-     * or a vendor `sk_`/`pk_` key prefix.
+     * a vendor `sk_`/`pk_` key prefix, or a Supabase `sb_publishable_`/`sb_secret_` key.
+     *
+     * The Supabase branch names the two published prefixes rather than any
+     * `sb_`, so an ordinary identifier is not masked. `sb_secret_` is the
+     * service_role replacement and bypasses row-level security. This pattern is the
+     * original: it is duplicated in `McpArgumentSanitizer.credentialShapePattern` and
+     * pinned against this one by `McpArgumentSanitizerCredentialShapeTest`.
      *
      * Each alternative is anchored on the left by a boundary that rules out word
      * characters and `.`, so a name that merely *contains* one of these prefixes
@@ -452,6 +461,7 @@ object LogSanitizer {
                 """eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*""" +
                 "|(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{8,}" +
                 "|(?:sk|pk)[-_][A-Za-z0-9_-]{8,}" +
+                "|sb_(?:publishable|secret)_[A-Za-z0-9_-]{8,}" +
                 ")",
         )
 
@@ -501,8 +511,12 @@ object LogSanitizer {
     private val camelCaseBoundary = Regex("""(?<=[a-z0-9])(?=[A-Z])""")
 
     // Exact URL names stay separate: free-text exit_code and status_code are diagnostics.
+    // `sessionid` is the passkey ceremony's own query name (a UUID handle, not a
+    // `session_token` credential), and `email` rides along on the same WebAuthn URL
+    // the ceremony opens, so both must leave masked-URI log lines too.
     private val sensitiveUriParamNames =
         setOf(
+            "authorization",
             "token",
             "access_token",
             "refresh_token",
@@ -510,9 +524,12 @@ object LogSanitizer {
             "error_description",
             "id_token",
             "session_token",
+            "session",
             "api_key",
             "key",
             "secret",
+            "sessionid",
+            "email",
         )
 
     /**
@@ -523,6 +540,7 @@ object LogSanitizer {
      */
     private val sensitiveValueNames =
         setOf(
+            "authorization",
             "token",
             "access_token",
             "refresh_token",
@@ -532,6 +550,7 @@ object LogSanitizer {
             "key",
             "credential",
             "credential_id",
+            "session",
         )
 
     /**
@@ -540,6 +559,57 @@ object LogSanitizer {
      * `token=null` is a useful thing to read; `token=***` is not.
      */
     private val nonSecretValues = setOf("null", "true", "false")
+
+    /**
+     * Data-map keys whose values are prose diagnostics — error text, reasons,
+     * state descriptions. Their values are sentences, so the value-shape rule
+     * would mangle them (any value past 20 characters "looks like" a secret by
+     * length alone). They get the free-text pass instead, which removes
+     * embedded credentials, paths, URLs and emails but keeps the prose. This
+     * is the allowlist that keeps central sanitisation from eating the fields
+     * a log is written for; it is deliberately a name list, not a value rule.
+     */
+    private val diagnosticTextKeys =
+        setOf(
+            "error",
+            "reason",
+            "message",
+            "description",
+            "detail",
+            "details",
+            "state",
+            "status",
+            "result",
+            "response",
+            "body",
+            "output",
+            "command",
+            "operation",
+            "action",
+            "summary",
+        )
+
+    /**
+     * Data-map keys whose values are locators — URLs, URIs and file paths.
+     * They keep their text (a path the log cannot name is not a diagnostic)
+     * but go through [maskUriParams] so a credential in a query string,
+     * fragment or userinfo does not survive.
+     */
+    private val diagnosticLocatorKeys =
+        setOf(
+            "url",
+            "uri",
+            "path",
+            "jarpath",
+            "file",
+            "filename",
+            "directory",
+            "dir",
+            "endpoint",
+            "deeplink",
+            "redirecturl",
+            "callbackurl",
+        )
 
     /**
      * Check if a string looks like it might be a token/secret.
@@ -574,14 +644,29 @@ object LogSanitizer {
      * A key is matched against [sensitiveValueNames] by substring: the caller
      * named this field deliberately, so `userAccessTokenV2` redacts like `token`.
      * Message text is matched more narrowly — see [nameMarksSecret].
+     *
+     * Values under the allowlisted diagnostic keys ([diagnosticTextKeys],
+     * [diagnosticLocatorKeys]) are sanitised rather than token-masked: prose
+     * keeps its text minus embedded credentials and locators keep their shape
+     * minus credential parameters, so central redaction does not blank out the
+     * fields a log exists to carry. A credential *shape* (a JWT, a vendor key)
+     * is still masked wherever it appears, allowlist or not.
+     *
+     * Length alone does not mask here. [looksLikeSecret] treats any value of
+     * 20+ characters as secret-shaped, which was tolerable when callers opted
+     * in map by map; applied centrally to every entry it eats the diagnostics
+     * a log exists to carry — thread names, resource names, plugin ids.
      */
     fun sanitizeMap(map: Map<String, Any?>?): Map<String, Any?> {
         if (map == null) return emptyMap()
 
         return map.mapValues { (key, value) ->
+            val lowerKey = key.lowercase()
             when {
-                sensitiveValueNames.any { key.contains(it, ignoreCase = true) } -> "[REDACTED]"
-                value is String && looksLikeSecret(value) -> maskToken(value)
+                sensitiveValueNames.any { lowerKey.contains(it) } -> "[REDACTED]"
+                value is String && credentialShapePattern.containsMatchIn(value) -> maskToken(value)
+                value is String && lowerKey in diagnosticTextKeys -> sanitizeLogMessage(value)
+                value is String && lowerKey in diagnosticLocatorKeys -> maskUriParams(value)
                 else -> value
             }
         }
@@ -670,7 +755,7 @@ object LogSanitizer {
      * - URLs
      * - Email addresses
      * - Bare hostnames (no protocol/path around them - DNS and proxy-connect failures)
-     * - Credentials recognisable by shape: JWTs, GitHub tokens, `sk_`/`pk_` keys
+     * - Credentials recognisable by shape: JWTs, GitHub tokens, `sk_`/`pk_` keys, Supabase `sb_` keys
      * - The value of a `name=value` pair whose name marks it sensitive
      *
      * @param message The exception message to sanitize

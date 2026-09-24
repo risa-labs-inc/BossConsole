@@ -55,7 +55,7 @@ jxbrowser = "9.5.0"
 jxbrowser-gradle-plugin = "2.1.0"
 maven-publish = "0.37.0"
 jna = "5.19.1"
-bouncycastle = "1.85"
+bouncycastle = "1.86"
 # Reads the SQLite databases browsers keep their bookmarks and logins in
 # (Chromium "Login Data", Firefox places.sqlite / key4.db). Desktop-only.
 sqlite-jdbc = "3.53.4.0"
@@ -64,7 +64,7 @@ grpc = "1.84.0"
 grpc-kotlin = "1.5.0"
 protobuf = "4.36.1"
 protobuf-gradle-plugin = "0.10.0"
-graalvm-native-plugin = "1.1.12"
+graalvm-native-plugin = "1.1.13"
 # IntelliJ PSI for code navigation
 intellij-platform = "243.21565.199"
 # The plugin API contract (risa-labs-inc/boss-plugin-api releases). This pin

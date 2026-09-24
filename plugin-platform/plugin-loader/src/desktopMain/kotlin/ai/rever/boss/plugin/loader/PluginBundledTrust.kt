@@ -3,6 +3,10 @@ package ai.rever.boss.plugin.loader
 import ai.rever.boss.plugin.logging.BossLogger
 import ai.rever.boss.plugin.logging.LogCategory
 import java.io.File
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.NoSuchFileException
+import java.nio.file.StandardCopyOption
 
 /**
  * Exempts one specific JAR from store-signature enforcement because the HOST itself placed it
@@ -33,12 +37,51 @@ object PluginBundledTrust {
 
     fun pathFor(jarPath: String): String = "$jarPath$SUFFIX"
 
+    /**
+     * Publish a complete marker without exposing truncate-then-write state to [readMarker].
+     * The object monitor also avoids Windows refusing a replacement while this process reads
+     * the destination. External readers still get the atomic-move guarantee where supported.
+     */
+    @Synchronized
+    private fun writeMarker(
+        jarPath: String,
+        sha256: String,
+    ) {
+        val target = File(pathFor(jarPath)).absoluteFile
+        val parent = requireNotNull(target.parentFile) { "Bundled trust marker has no parent" }
+        val tmp = Files.createTempFile(parent.toPath(), target.name, ".tmp").toFile()
+        try {
+            tmp.writeText(sha256)
+            try {
+                Files.move(
+                    tmp.toPath(),
+                    target.toPath(),
+                    StandardCopyOption.REPLACE_EXISTING,
+                    StandardCopyOption.ATOMIC_MOVE,
+                )
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(tmp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
+        } finally {
+            tmp.delete()
+        }
+    }
+
+    /** A complete marker value, or null only when no marker exists. */
+    @Synchronized
+    private fun readMarker(jarPath: String): String? =
+        try {
+            Files.readString(File(pathFor(jarPath)).toPath()).trim().takeIf { it.isNotEmpty() }
+        } catch (_: NoSuchFileException) {
+            null
+        }
+
     /** Mark [jarPath]'s current bytes as trusted. Best-effort. */
     internal fun markTrusted(
         jarPath: String,
         sha256: String,
     ) {
-        runCatching { File(pathFor(jarPath)).writeText(sha256) }
+        runCatching { writeMarker(jarPath, sha256) }
     }
 
     /**
@@ -57,7 +100,7 @@ object PluginBundledTrust {
             if (FileHashing.sha256(File(jarPath)) != bundledDigest) {
                 false
             } else {
-                File(pathFor(jarPath)).writeText(bundledDigest)
+                writeMarker(jarPath, bundledDigest)
                 true
             }
         }.onFailure { error ->
@@ -74,19 +117,14 @@ object PluginBundledTrust {
         destinationPath: String,
     ): Boolean =
         runCatching {
-            val marker = File(pathFor(sourcePath))
             val recorded =
-                marker
-                    .takeIf { it.isFile }
-                    ?.readText()
-                    ?.trim()
-                    ?.takeIf { it.isNotEmpty() }
+                readMarker(sourcePath)
             val matches =
                 recorded != null &&
                     recorded == FileHashing.sha256(File(sourcePath)) &&
                     recorded == FileHashing.sha256(File(destinationPath))
             if (matches) {
-                File(pathFor(destinationPath)).writeText(requireNotNull(recorded))
+                writeMarker(destinationPath, requireNotNull(recorded))
             } else {
                 delete(destinationPath)
             }
@@ -106,14 +144,13 @@ object PluginBundledTrust {
      * after the marker was written (same filename, different content) reads as untrusted.
      */
     fun isTrusted(jarPath: String): Boolean {
-        val marker = File(pathFor(jarPath))
-        if (!marker.exists()) return false
-        val recorded = runCatching { marker.readText().trim() }.getOrNull()
+        val recorded = runCatching { readMarker(jarPath) }.getOrNull()
         val actual = runCatching { FileHashing.sha256(File(jarPath)) }.getOrNull()
         return !recorded.isNullOrEmpty() && recorded == actual
     }
 
     /** Remove the marker (e.g. alongside a deleted/replaced JAR). Best-effort. */
+    @Synchronized
     fun delete(jarPath: String) {
         File(pathFor(jarPath)).delete()
     }

@@ -28,6 +28,7 @@ import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.plugin.ui.BossThemeController
 import ai.rever.boss.plugin.ui.LocalHeavyweightOverlays
 import ai.rever.boss.services.editor.EditorAPIAccess
+import ai.rever.boss.services.importer.BookmarkExport
 import ai.rever.boss.services.terminal.TerminalAPIAccess
 import ai.rever.boss.settings.MicrokernelModePreference
 import ai.rever.boss.settings.microkernelModeMenuLabel
@@ -1048,6 +1049,13 @@ fun ApplicationScope.BossWindow(
                     "Import Passwords & Bookmarks...",
                     onClick = {
                         showImportDialog = true
+                    },
+                )
+
+                Item(
+                    "Export Bookmarks...",
+                    onClick = {
+                        menuScope.launch { BookmarkExport.runFromMenu() }
                     },
                 )
 

@@ -303,7 +303,43 @@ class WorkspaceManager {
                         }
                     workspace?.let {
                         // Ensure workspace has an ID
-                        val withId = if (it.id.isEmpty()) it.copy(id = LayoutWorkspace.generateId()) else it
+                        val withId = it.withStableId()
+                        if (fileInfo.fileName == ".json") {
+                            // A legacy id-less build wrote the literal file ".json" - and that
+                            // file IS a real Space (the last id-less import, the one that
+                            // survived the overwrite). Adopt it: save the Space under its own
+                            // <id>.json and remove the nameless file so it is not re-adopted
+                            // every launch. Never write it back AS ".json".
+                            val adoptedName = WorkspaceFileManagerCommon.fileNameForId(withId.id)
+                            if (fileManager.saveWorkspace(withId, adoptedName) != null) {
+                                runCatching { fileManager.deleteWorkspace(".json") }
+                            } else {
+                                logger.warn(
+                                    LogCategory.WORKSPACE,
+                                    "Could not adopt a legacy nameless workspace file - it will be retried next launch",
+                                )
+                            }
+                            saved.add(withId)
+                            loadedFileNames[withId.id] = adoptedName
+                            return@forEach
+                        }
+                        if (withId !== it) {
+                            // A file carrying no id minted a fresh one on EVERY launch, so the
+                            // Space's identity - session-set membership, preserved-state keys -
+                            // never matched across a relaunch. Write the minted id back into the
+                            // file it came from, once, and the next load reads a stable id. The
+                            // serializer re-emits the model, so a hand-maintained file loses its
+                            // formatting and unknown keys: BOSS takes ownership of the file on
+                            // first launch. If the write fails the next launch would mint yet
+                            // another id - the original bug, silently - so say so.
+                            if (fileManager.saveWorkspace(withId, fileInfo.fileName) == null) {
+                                logger.warn(
+                                    LogCategory.WORKSPACE,
+                                    "Could not persist a minted workspace id - it will be re-minted next launch",
+                                    mapOf("fileName" to fileInfo.fileName),
+                                )
+                            }
+                        }
                         saved.add(withId)
                         // Remember the file it came from, so a legacy path keeps being this
                         // Space's file. A file already named `<id>.json` records the same answer
@@ -367,7 +403,7 @@ class WorkspaceManager {
                 )
             } else {
                 current.copy(
-                    id = current.id.ifEmpty { LayoutWorkspace.generateId() },
+                    id = current.id.ifBlank { mintWorkspaceId() },
                     // A typed name goes through `uniqueWorkspaceName` too, which it used to
                     // bypass entirely - the one path that could still put two identical rows in
                     // the list. Its own name is never "taken" by itself, so re-saving a Space
@@ -543,7 +579,11 @@ class WorkspaceManager {
      */
     fun importWorkspace(jsonString: String): LayoutWorkspace? =
         try {
-            val workspace = WorkspaceSerializer.deserialize(jsonString)
+            // A hand-written or agent-authored file commonly carries no id. Blank used to save
+            // as the literal file ".json", which every id-less import then shared - the second
+            // destroyed the first. The minted id is written back with the Space below, so it
+            // stays stable across launches instead of being re-minted on every load.
+            val workspace = WorkspaceSerializer.deserialize(jsonString).withStableId()
 
             // Save the imported workspace to disk
             scope.launch {
@@ -577,11 +617,17 @@ class WorkspaceManager {
      * directory the manager's own file manager does not see - but still want the Space visible
      * in the picker for this session. [importWorkspace] would double-write the file.
      */
-    fun registerWorkspace(workspace: LayoutWorkspace) {
+    fun registerWorkspace(workspace: LayoutWorkspace): LayoutWorkspace {
+        // Same door as import: an id registered blank would key this list under "" and later
+        // save as ".json". Mint before the workspace enters the list - and hand the registered
+        // Space back, since a minted id exists only inside this list until the caller persists
+        // it through its own file manager.
+        val registered = workspace.withStableId()
         val workspaces = _workspaces.value.toMutableList()
-        val existingIndex = workspaces.indexOfFirst { it.id == workspace.id }
-        if (existingIndex >= 0) workspaces[existingIndex] = workspace else workspaces.add(workspace)
+        val existingIndex = workspaces.indexOfFirst { it.id == registered.id }
+        if (existingIndex >= 0) workspaces[existingIndex] = registered else workspaces.add(registered)
         _workspaces.value = workspaces
+        return registered
     }
 
     /**

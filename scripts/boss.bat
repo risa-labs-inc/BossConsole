@@ -13,7 +13,11 @@ REM   boss folder <path>                # Opens folder in codebase
 REM   boss terminal                     # Opens terminal
 REM   boss terminal -c <command>        # Opens terminal with command
 
-setlocal enabledelayedexpansion
+REM delayed expansion is OFF at the top level: nothing in this script reads
+REM !var!, and EnableDelayedExpansion would let a literal ! in an argument
+REM (e.g. "boss file 'foo!bar.txt'") get eaten by the parser before :urlencode
+REM can hand the value to PowerShell. No function here needs delayed expansion.
+setlocal DisableDelayedExpansion
 
 REM Check if no arguments provided
 if "%~1"=="" (
@@ -197,12 +201,20 @@ goto :eof
 REM URL encode subroutine
 REM Usage: call :urlencode "string to encode" OUTPUT_VAR
 :urlencode
-setlocal enabledelayedexpansion
+REM Never interpolate the value into the PowerShell command line (#1057):
+REM a single quote in the value used to close the PS string literal and
+REM execute whatever followed it. The value now travels through the
+REM environment, which PowerShell reads unexpanded, and delayed expansion
+REM is disabled for this block so ! survives the round-trip.
+setlocal DisableDelayedExpansion
 set "str=%~1"
 set "encoded="
 
-REM PowerShell is more reliable for URL encoding on Windows
-for /f "delims=" %%i in ('powershell -NoProfile -Command "[System.Uri]::EscapeDataString('%str%')"') do set "encoded=%%i"
+REM PowerShell is more reliable for URL encoding on Windows. The value is
+REM cast to [string] so a missing env var reads as '' (not $null), and the
+REM empty-result guard keeps [System.Uri]::EscapeDataString from ever being
+REM called with $null - which throws ArgumentNullException on every input.
+for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "$v = [string][Environment]::GetEnvironmentVariable('str'); if (-not $v) { '' } else { [System.Uri]::EscapeDataString($v) }"`) do set "encoded=%%i"
 
 endlocal & set "%~2=%encoded%"
 goto :eof
@@ -210,7 +222,12 @@ goto :eof
 REM Smart detection for URL, file, or folder
 REM Usage: call :detect_and_route "argument"
 :detect_and_route
-setlocal
+REM Delayed expansion is OFF here too: nothing in this function reads !var!
+REM (the only ! in this script are comments at :17/:18/:143/:208). EnableDelayedExpansion
+REM would re-create the literal-!-eating defect the top-level DisableDelayedExpansion
+REM just fixed, on the auto-detect path and on the %ENCODED% reads at :274/:281.
+REM Exit with the matching endlocal at each branch below.
+setlocal DisableDelayedExpansion
 set "arg=%~1"
 
 REM Check if it's a URL (has http:// or https://)
@@ -231,24 +248,13 @@ if %errorlevel%==0 goto :detect_domain
 echo %arg% | findstr /i "\.dev" >nul
 if %errorlevel%==0 goto :detect_domain
 
-REM Check if it's a file or folder
-if exist "%arg%" (
-    if exist "%arg%\*" (
-        REM It's a directory - expand to full path
-        set "fullpath=%~f1"
-        call :urlencode "%fullpath%" ENCODED
-        start "" "boss://folder?path=%ENCODED%"
-        endlocal
-        goto :eof
-    ) else (
-        REM It's a file - expand to full path
-        set "fullpath=%~f1"
-        call :urlencode "%fullpath%" ENCODED
-        start "" "boss://file?path=%ENCODED%"
-        endlocal
-        goto :eof
-    )
-)
+REM Check if it's a file or folder. Variables read inside a parenthesized
+REM block expand at parse time, before any set/call fills them, so the
+REM file/folder branches goto out of the block the same way :detect_url
+REM and :detect_domain already do and read %fullpath%/%ENCODED% at the
+REM top level instead. Without that, `boss ./file.txt` reaches
+REM boss://file?path= with an empty path.
+if exist "%arg%" goto :detect_file_or_folder
 
 REM Could not detect type
 echo Error: Could not determine type for: %arg%
@@ -273,5 +279,25 @@ goto :eof
 REM Looks like a domain - add https://
 call :urlencode "https://%arg%" ENCODED
 start "" "boss://url?url=%ENCODED%"
+endlocal
+goto :eof
+
+:detect_file_or_folder
+if exist "%arg%\*" goto :detect_folder
+goto :detect_file
+
+:detect_folder
+REM It's a directory - expand to full path
+set "fullpath=%~f1"
+call :urlencode "%fullpath%" ENCODED
+start "" "boss://folder?path=%ENCODED%"
+endlocal
+goto :eof
+
+:detect_file
+REM It's a file - expand to full path
+set "fullpath=%~f1"
+call :urlencode "%fullpath%" ENCODED
+start "" "boss://file?path=%ENCODED%"
 endlocal
 goto :eof

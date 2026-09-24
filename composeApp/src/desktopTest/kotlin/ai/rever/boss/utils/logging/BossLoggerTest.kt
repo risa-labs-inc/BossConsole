@@ -112,7 +112,9 @@ class BossLoggerTest {
         BossLogger.setGlobalLevel(LogLevel.DEBUG)
         BossLogger.clearLogs()
 
-        val testData = mapOf("key1" to "value1", "key2" to 42)
+        // Keys must not contain a sensitive-value name: "key1" would redact via
+        // its "key" substring now that the append path sanitises data centrally.
+        val testData = mapOf("field1" to "value1", "field2" to 42)
         logger.info(LogCategory.SYSTEM, "Test message", data = testData)
 
         val logs = BossLogger.getRecentLogs(limit = 1)
@@ -283,6 +285,55 @@ class BossLoggerTest {
             // File size shouldn't increase after disable
             assertEquals(sizeBeforeDisable, sizeAfterDisable, "File should not grow after disabling")
         }
+
+    // =========================================================================
+    // Central Redaction Tests
+    //
+    // The append path runs every data map through LogSanitizer.sanitizeMap and
+    // renders throwables through the sanitizer, so a call site that forgets to
+    // mask a value cannot put a secret on disk.
+    // =========================================================================
+
+    @Test
+    fun `file logging never receives a raw Authorization header or session id`() =
+        runBlocking {
+            BossLogger.enableFileLogging(testLogFile)
+
+            val logger = BossLogger.forComponent("RedactionTest")
+            val authHeader = "Bearer ghp_${"x".repeat(36)}"
+            val sessionId = "9f8e7d6c-5b4a-4321-9abc-def012345678"
+            logger.info(
+                LogCategory.AUTH,
+                "auth event",
+                mapOf("Authorization" to authHeader, "sessionId" to sessionId),
+            )
+            logger.error(
+                LogCategory.AUTH,
+                "status check failed",
+                error = RuntimeException("GET /passkey/auth/status/$sessionId returned 500"),
+            )
+
+            // Give async writer time to process
+            delay(500)
+
+            val content = testLogFile.readText()
+            assertFalse(content.contains(authHeader), "raw Authorization header reached the log file")
+            assertFalse(content.contains(sessionId), "raw session id reached the log file")
+            assertTrue(content.contains("auth event"), "sanitised entry itself should still be written")
+        }
+
+    @Test
+    fun `recent logs carry the sanitised data map`() {
+        val logger = BossLogger.forComponent("RedactionMemoryTest")
+        BossLogger.setGlobalLevel(LogLevel.DEBUG)
+        BossLogger.clearLogs()
+
+        logger.info(LogCategory.AUTH, "login", mapOf("password" to "hunter2", "user" to "sam"))
+
+        val entry = BossLogger.getRecentLogs(limit = 1).first()
+        assertEquals("[REDACTED]", entry.data?.get("password"))
+        assertEquals("sam", entry.data?.get("user"))
+    }
 
     // =========================================================================
     // Log Listener Tests

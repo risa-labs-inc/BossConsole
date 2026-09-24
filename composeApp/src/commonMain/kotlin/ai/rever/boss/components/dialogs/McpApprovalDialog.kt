@@ -42,6 +42,7 @@ import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -54,6 +55,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
+import kotlinx.coroutines.delay
 
 /**
  * How far an operator's answer in [McpApprovalDialog] reaches, in increasing durability.
@@ -141,6 +143,7 @@ fun McpApprovalDialog(
     pendingQueueSize: Int = 1,
     onApprove: (trustForSession: Boolean, persistPolicy: Boolean, trustProvider: Boolean) -> Unit,
     onDeny: (reason: String, persistPolicy: Boolean) -> Unit,
+    onDenyAllPending: () -> Unit = {},
 ) {
     val colors = BossTheme.colors
     val radii = BossTheme.radius
@@ -153,6 +156,16 @@ fun McpApprovalDialog(
     var rejectionReason by remember(request.id) { mutableStateOf("") }
     var showReasonInput by remember(request.id) { mutableStateOf(false) }
     var scope by remember(request.id) { mutableStateOf(McpApprovalScope.ONCE) }
+    val remainingMs by
+        produceState(
+            initialValue = approvalMillisRemaining(request, System.currentTimeMillis()),
+            key1 = request.id,
+        ) {
+            while (value > 0L) {
+                delay(minOf(APPROVAL_COUNTDOWN_TICK_MS, value))
+                value = approvalMillisRemaining(request, System.currentTimeMillis())
+            }
+        }
 
     BossDialog(
         // onDismissRequest is required by BossDialog; outside-click and back-press are disabled below
@@ -175,7 +188,11 @@ fun McpApprovalDialog(
         ) {
             Column {
                 Column(modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 16.dp)) {
-                    ApprovalHeader(isMutating = isMutating, pendingQueueSize = pendingQueueSize)
+                    ApprovalHeader(
+                        isMutating = isMutating,
+                        pendingQueueSize = pendingQueueSize,
+                        remainingMs = remainingMs,
+                    )
 
                     Spacer(modifier = Modifier.height(16.dp))
                     ToolDetails(request)
@@ -188,6 +205,35 @@ fun McpApprovalDialog(
                     if (riskLines.isNotEmpty()) {
                         Spacer(modifier = Modifier.height(10.dp))
                         RiskBanner(riskLines)
+                    }
+
+                    if (pendingQueueSize > 1) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .background(colors.raised, RoundedCornerShape(radii.card))
+                                    .border(1.dp, colors.line, RoundedCornerShape(radii.card))
+                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text =
+                                    "$pendingQueueSize actions are waiting for approval. " +
+                                        "New requests are unaffected.",
+                                fontSize = 10.sp,
+                                color = colors.textSecondary,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            TextButton(
+                                onClick = onDenyAllPending,
+                                colors = ButtonDefaults.textButtonColors(contentColor = colors.alert),
+                            ) {
+                                Text("Deny All Pending", fontSize = 11.sp)
+                            }
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(16.dp))
@@ -329,6 +375,7 @@ private val DIALOG_BUTTON_PADDING = PaddingValues(horizontal = 14.dp)
 private fun ApprovalHeader(
     isMutating: Boolean,
     pendingQueueSize: Int,
+    remainingMs: Long,
 ) {
     val colors = BossTheme.colors
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -350,6 +397,17 @@ private fun ApprovalHeader(
                 text = "An AI agent requested to invoke a governed tool.",
                 fontSize = 12.sp,
                 color = colors.textSecondary,
+            )
+            Text(
+                text = approvalExpiryLabel(remainingMs),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                color =
+                    if (remainingMs <= APPROVAL_EXPIRY_WARNING_MS) {
+                        colors.alert
+                    } else {
+                        colors.textSecondary
+                    },
             )
         }
         if (pendingQueueSize > 1) {
@@ -406,6 +464,17 @@ private fun ToolDetails(request: McpApprovalRequest) {
             )
         }
 
+        // The tool's own description is the operator's only sight of what it
+        // claims to do - without it an approval is a guess on a bare name.
+        request.toolDescription?.takeIf { it.isNotBlank() }?.let { description ->
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = description,
+                fontSize = 12.sp,
+                color = colors.textPrimary,
+            )
+        }
+
         val sanitizedArguments =
             remember(request.arguments) {
                 McpArgumentSanitizer.sanitize(request.arguments)
@@ -432,6 +501,19 @@ private fun ToolDetails(request: McpApprovalRequest) {
                 }
             }
         }
+
+        // Why the prompt exists and when it expires: the policy that suspended the
+        // call plus the auto-deny countdown, snapshotted once at open.
+        val remainingSeconds =
+            remember(request.id) {
+                ((request.remainingTimeoutMs() + 999L) / 1000L).coerceAtLeast(1L)
+            }
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = "Policy: ${request.policy?.name ?: "ASK"} · auto-denies in ~${remainingSeconds}s",
+            fontSize = 10.sp,
+            color = colors.textSecondary,
+        )
     }
 }
 
