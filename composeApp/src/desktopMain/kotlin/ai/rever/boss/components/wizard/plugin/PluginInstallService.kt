@@ -7,6 +7,7 @@ import ai.rever.boss.plugin.PluginPersistence
 import ai.rever.boss.plugin.PluginStoreSetup
 import ai.rever.boss.plugin.api.PluginManifest
 import ai.rever.boss.plugin.api.PluginState
+import ai.rever.boss.plugin.loader.PluginManifestReader
 import ai.rever.boss.plugin.repository.PluginWithSource
 import ai.rever.boss.utils.atomicMoveFrom
 import ai.rever.boss.utils.logging.BossLogger
@@ -603,7 +604,7 @@ class PluginInstallService(
                     return null
                 }
 
-                val manifestJson = jar.getInputStream(manifestEntry).bufferedReader().readText()
+                val manifestJson = PluginManifestReader.readManifestContent(jar, manifestEntry)
                 val json = Json { ignoreUnknownKeys = true }
                 json.decodeFromString<PluginManifest>(manifestJson)
             }

@@ -2285,7 +2285,7 @@ object PluginStoreSetup {
                 val entry =
                     jar.getJarEntry("META-INF/boss-plugin/plugin.json")
                         ?: return null
-                val content = jar.getInputStream(entry).bufferedReader().readText()
+                val content = PluginManifestReader.readManifestContent(jar, entry)
                 manifestJson.decodeFromString<ai.rever.boss.plugin.api.PluginManifest>(content)
             }
         } catch (e: Exception) {
