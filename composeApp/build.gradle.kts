@@ -2505,6 +2505,16 @@ tasks.withType<Test> {
     // This handles misconfigured test sources or test classes without test methods
     failOnNoDiscoveredTests = false
 
+    // Run test classes in two JVMs. desktopTest is about 2m50s of every CI build-test run, and the
+    // hosted ubuntu runner has 4 cores, so one fork left half of them idle. Capped at 2 so a dev
+    // machine is not flooded, and not higher because the forks share the test-home directory
+    // below (each fork is its own JVM, so process-global state stays private, but files on disk
+    // do not). Flake watch: if timing-sensitive tests start failing intermittently after this,
+    // TerminalLimitsTest (modules/boss-app-terminal) is the known timing flake to check first, and
+    // tests that write recent-projects.json under test-home are the next suspects; drop this
+    // back to 1 rather than retrying.
+    maxParallelForks = (Runtime.getRuntime().availableProcessors() / 2).coerceIn(1, 2)
+
     // Point the test JVM's home at a build directory, so BossDirectories.rootDir resolves to
     // <build>/test-home/.boss instead of the developer's real ~/.boss.
     //
