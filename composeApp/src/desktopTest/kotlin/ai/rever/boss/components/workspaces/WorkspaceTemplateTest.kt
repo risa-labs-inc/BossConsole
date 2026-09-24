@@ -74,14 +74,14 @@ class WorkspaceTemplateTest {
 
     /**
      * **Being a TEMPLATE is identity; needing a project is shape.** The Space picker groups on the
-     * first and the host materialises on the second, and they agree on seven of the eight built-ins
+     * first and the host materialises on the second, and they agree on eight of the nine built-ins
      * and disagree on exactly Browser Only - a single browser panel on a fixed URL, which is one of
      * the layouts we ship and has nothing to parameterise. Conflating them in either direction is
      * the bug: one way files a shipped layout in with the user's own Spaces, the other way tries to
      * name a copy of it after a project the layout does not reference.
      */
     @Test
-    fun `the built-in SET is identity, and only seven of the eight need a project`() {
+    fun `the built-in SET is identity, and only eight of the nine need a project`() {
         val ids = PredefinedWorkspaces.allIds
         val needProject = PredefinedWorkspaces.allWorkspaces.filter { it.requiresProject() }.map { it.id }
 
@@ -124,6 +124,7 @@ class WorkspaceTemplateTest {
             PredefinedWorkspaces.OPENCODE_ID,
             PredefinedWorkspaces.TERMINAL_BROWSER_ID,
             PredefinedWorkspaces.DUAL_TERMINAL_ID,
+            PredefinedWorkspaces.PROJECT_STUDIO_ID,
             PredefinedWorkspaces.BROWSER_ONLY_ID,
         ).forEach { id ->
             assertTrue(id in PredefinedWorkspaces.allIds, "$id is a constant for a layout nobody ships")
@@ -329,6 +330,7 @@ class WorkspaceTemplateTest {
                 "workspace-opencode",
                 "workspace-terminal-browser",
                 "workspace-dual-terminal",
+                "workspace-project-studio",
                 "workspace-browser",
             )
     }

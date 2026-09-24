@@ -97,6 +97,12 @@ val TEMPLATE_SPACE_THEMES: Map<String, String> =
         // Two shells and nothing else: OpenCode's picture without the agent, so it wears OpenCode's
         // amber.
         PredefinedWorkspaces.DUAL_TERMINAL_ID to BossThemes.OPERATOR.id,
+        // The student's Space. It is driven, not read - two terminals and a notebook doing the
+        // building - so it does not want a paper surface like Code Review's; and it is the one
+        // template with no vendor identity to echo, so it takes the platform-default dark theme
+        // a fresh install would meet anyway: the first Space a student materialises looks like
+        // the rest of their machine, and they make it theirs from there.
+        PredefinedWorkspaces.PROJECT_STUDIO_ID to BossThemes.UNIX_DEFAULT_ID,
         // The Windows default layout, on the Windows default theme.
         PredefinedWorkspaces.BROWSER_ONLY_ID to BossThemes.WINDOWS_DEFAULT_ID,
     )

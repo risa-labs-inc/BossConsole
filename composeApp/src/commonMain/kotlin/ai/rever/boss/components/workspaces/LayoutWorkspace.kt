@@ -58,6 +58,9 @@ object PredefinedWorkspaces {
     const val TERMINAL_BROWSER_ID = "workspace-terminal-browser"
     const val DUAL_TERMINAL_ID = "workspace-dual-terminal"
 
+    /** Project Studio: the course-project layout from the Idea Bench (research + plan + build + demo). */
+    const val PROJECT_STUDIO_ID = "workspace-project-studio"
+
     /**
      * Every id BOSS ships a layout for.
      *
@@ -368,6 +371,94 @@ object PredefinedWorkspaces {
                                             ),
                                         ),
                                 ),
+                            ),
+                    ),
+            ),
+            // Project Studio: the student's course-project home. Research on the left
+            // (course page / papers), the plan as a scratch editor beside it, the build
+            // terminal below, and the final demo as a Jupyter notebook - one Space a
+            // student opens for the whole life of an assignment, from brief to demo.
+            // Built entirely from tab types the workspace system already restores.
+            LayoutWorkspace(
+                id = PROJECT_STUDIO_ID,
+                name = "Project Studio",
+                description =
+                    "Research + plan + build + demo: a course project from brief to presentation",
+                layout =
+                    HorizontalSplit(
+                        top =
+                            VerticalSplit(
+                                left =
+                                    SinglePanel(
+                                        PanelConfig(
+                                            id = generatePanelId(),
+                                            tabs =
+                                                listOf(
+                                                    TabConfig(
+                                                        type = "browser",
+                                                        title = "Research",
+                                                        url = "{gitRemoteUrl}",
+                                                    ),
+                                                ),
+                                        ),
+                                    ),
+                                right =
+                                    SinglePanel(
+                                        PanelConfig(
+                                            id = generatePanelId(),
+                                            tabs =
+                                                listOf(
+                                                    TabConfig(
+                                                        type = "editor",
+                                                        title = "PLAN.md",
+                                                        filePath = "{projectPath}/PLAN.md",
+                                                    ),
+                                                    TabConfig(
+                                                        type = "editor",
+                                                        title = "NOTES.md",
+                                                        filePath = "{projectPath}/NOTES.md",
+                                                    ),
+                                                ),
+                                        ),
+                                    ),
+                            ),
+                        bottom =
+                            VerticalSplit(
+                                left =
+                                    SinglePanel(
+                                        PanelConfig(
+                                            id = generatePanelId(),
+                                            tabs =
+                                                listOf(
+                                                    TabConfig(
+                                                        type = "terminal",
+                                                        title = "Build",
+                                                        initialCommand = "cd {projectPath} && clear",
+                                                        workingDirectory = "{projectPath}",
+                                                    ),
+                                                    TabConfig(
+                                                        type = "terminal",
+                                                        title = "Agent",
+                                                        initialCommand = "cd {projectPath} && clear",
+                                                        workingDirectory = "{projectPath}",
+                                                    ),
+                                                ),
+                                        ),
+                                    ),
+                                right =
+                                    SinglePanel(
+                                        PanelConfig(
+                                            id = generatePanelId(),
+                                            tabs =
+                                                listOf(
+                                                    TabConfig(
+                                                        type = "jupyter",
+                                                        title = "Demo notebook",
+                                                        filePath = "{projectPath}/demo.ipynb",
+                                                    ),
+                                                ),
+                                        ),
+                                    ),
                             ),
                     ),
             ),
