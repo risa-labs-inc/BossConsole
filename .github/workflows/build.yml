@@ -2,10 +2,12 @@ name: 🔨 Build & Test
 
 on:
   # PRs validate dev/develop integration; main pushes validate the merged tree.
-  # Do not add dev here: dev -> main would enqueue the same macOS work twice.
+  # dev pushes run ubuntu only (see build-test's matrix): they seed the shared
+  # Gradle caches that PRs into dev restore from, without enqueueing the macOS
+  # and Windows work a later dev -> main push runs anyway.
   # For a branch without a PR, use workflow_dispatch. See docs/ci-validation.md.
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
     branches: [main, dev, develop]
   workflow_dispatch:
@@ -225,9 +227,9 @@ jobs:
     strategy:
       matrix:
         # macOS and Windows run on PRs into main, pushes to main and manual runs.
-        # PRs that don't target main skip them: hosted macOS and Windows runners
-        # run few jobs at once.
-        os: ${{ fromJSON(github.event_name == 'pull_request' && github.base_ref != 'main' && '["ubuntu-latest"]' || '["ubuntu-latest", "macos-latest", "windows-latest"]') }}
+        # PRs that don't target main, and dev pushes (cache seeding), skip them:
+        # hosted macOS and Windows runners run few jobs at once.
+        os: ${{ fromJSON(((github.event_name == 'pull_request' && github.base_ref != 'main') || (github.event_name == 'push' && github.ref == 'refs/heads/dev')) && '["ubuntu-latest"]' || '["ubuntu-latest", "macos-latest", "windows-latest"]') }}
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -252,7 +254,12 @@ jobs:
       - name: 🎯 Setup Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
-          cache-read-only: false
+          # Pull requests restore the shared caches but never write them. PR caches are
+          # scoped to refs/pull/N/merge, so no other PR can read them, and at ~1 GB per
+          # PR they pushed the repo past GitHub's 10 GB cap and evicted the shared
+          # dev/main entries (14 of 20 recent PR runs started from an empty cache).
+          # Pushes and manual runs write, which is what seeds dev and main.
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
 
       - name: 🧹 Stop Kotlin Daemon (Windows)
         if: matrix.os == 'windows-latest'
@@ -325,7 +332,12 @@ jobs:
       - name: 🎯 Setup Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
-          cache-read-only: false
+          # Pull requests restore the shared caches but never write them. PR caches are
+          # scoped to refs/pull/N/merge, so no other PR can read them, and at ~1 GB per
+          # PR they pushed the repo past GitHub's 10 GB cap and evicted the shared
+          # dev/main entries (14 of 20 recent PR runs started from an empty cache).
+          # Pushes and manual runs write, which is what seeds dev and main.
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
 
       - name: 🔍 Static Analysis (detekt + ktlint)
         run: |
@@ -370,6 +382,9 @@ jobs:
 
       - name: 🎯 Setup Gradle
         uses: gradle/actions/setup-gradle@v6
+        with:
+          # Same policy as build-test: PRs read, pushes and manual runs write.
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
 
       - name: 🧪 Test Version System
         run: |
