@@ -3,9 +3,12 @@ package ai.rever.boss.mcp
 import ai.rever.boss.cli.CLISecurityValidator
 import ai.rever.boss.components.window_panel.SplitViewState
 import ai.rever.boss.components.window_panel.SplitViewStateRegistry
+import ai.rever.boss.components.workspaces.LAST_SESSION_ID
+import ai.rever.boss.components.workspaces.LAST_SESSION_SET_FILE
 import ai.rever.boss.components.workspaces.LayoutWorkspace
 import ai.rever.boss.components.workspaces.PanelConfig
 import ai.rever.boss.components.workspaces.PredefinedWorkspaces
+import ai.rever.boss.components.workspaces.SPACE_THEMES_FILE
 import ai.rever.boss.components.workspaces.TabConfig
 import ai.rever.boss.components.workspaces.WorkspaceFileManager
 import ai.rever.boss.components.workspaces.WorkspaceFileManagerCommon
@@ -13,6 +16,7 @@ import ai.rever.boss.components.workspaces.WorkspaceSerializer
 import ai.rever.boss.components.workspaces.applyWorkspace
 import ai.rever.boss.components.workspaces.awaitTabTypes
 import ai.rever.boss.components.workspaces.isSpaceSlot
+import ai.rever.boss.components.workspaces.withStableId
 import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.dashboard.DashboardStatsManager
 import ai.rever.boss.plugin.api.McpToolArgs
@@ -35,10 +39,7 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -229,7 +230,7 @@ object WorkspaceMcpToolProvider : McpToolProvider {
                     "properties": {
                         "path": { "type": "string", "description": "Absolute path of an existing project directory to open as a new Space with its first terminal. A leading ~ is expanded; relative paths are refused." },
                         "workspaceId": { "type": "string", "description": "ID of the workspace to open" },
-                        "workspacePath": { "type": "string", "description": "Path to workspace JSON file" },
+                        "workspacePath": { "type": "string", "description": "Path to a workspace JSON file inside the workspaces directory" },
                         "name": { "type": "string", "description": "Name if creating workspace" },
                         "projectPath": { "type": "string", "description": "Project root directory" },
                         "windowId": { "type": "string", "description": "Target window ID" },
@@ -415,6 +416,24 @@ object WorkspaceMcpToolProvider : McpToolProvider {
         if (!workspacePath.isNullOrBlank() && !CLISecurityValidator.isValidOpenTargetPath(workspacePath)) {
             return McpToolResult("Invalid workspace path (security check failed)", isError = true)
         }
+        // That check is the editor-open contract - any file the user picks. A Space file goes
+        // further: it is parsed and APPLIED as the window's live layout, so the reachable set
+        // is the workspace store, the same directory the workspaceId mode loads from and this
+        // app itself writes. A workspacePath that resolves outside it - `..` traversal, an
+        // absolute path elsewhere, a symlink pointing out - is refused before the file is
+        // probed, read, or parsed. Fails closed (#896).
+        var canonicalWorkspacePath: String? = null
+        if (!workspacePath.isNullOrBlank()) {
+            val containment =
+                checkWorkspacePathContainment(
+                    rawPath = workspacePath,
+                    workspaceDirectory = getFileManager().getDefaultWorkspaceDirectory(),
+                )
+            if (containment.canonicalPath == null) {
+                return McpToolResult(containment.error ?: "Invalid workspace path", isError = true)
+            }
+            canonicalWorkspacePath = containment.canonicalPath
+        }
         // projectPath ends up as a terminal working directory, the same destination the
         // `path` mode serves, so it gets the same gate: absolute, security-checked, and an
         // existing directory.
@@ -458,11 +477,14 @@ object WorkspaceMcpToolProvider : McpToolProvider {
         var workspace: LayoutWorkspace? = null
         var isShippedTemplate = false
 
-        if (!workspacePath.isNullOrBlank()) {
-            val file = File(workspacePath)
+        if (canonicalWorkspacePath != null) {
+            val file = File(canonicalWorkspacePath)
             if (file.exists() && file.canRead()) {
                 val content = withContext(Dispatchers.IO) { file.readText() }
-                workspace = runCatching { WorkspaceSerializer.deserialize(content) }.getOrNull()
+                // Agent-authored JSON commonly carries no id: mint one here too, or the
+                // blank id flows into the applier, which keys the preserved tree under a
+                // throwaway one.
+                workspace = runCatching { WorkspaceSerializer.deserialize(content) }.getOrNull()?.withStableId()
             } else if (!createIfAbsent) {
                 return McpToolResult("Workspace file not found: $workspacePath", isError = true)
             }
@@ -482,7 +504,7 @@ object WorkspaceMcpToolProvider : McpToolProvider {
                     } else {
                         WorkspaceFileManagerCommon.fileNameForId(workspaceId)
                     }
-                workspace = fileManager.loadWorkspace(fileName)
+                workspace = fileManager.loadWorkspace(fileName)?.withStableId()
             }
         }
 
@@ -496,6 +518,17 @@ object WorkspaceMcpToolProvider : McpToolProvider {
                     return McpToolResult(
                         "'$newId' is a reserved slot (a shipped layout or the last-session " +
                             "autosave record), not a workspace id. Pass a different workspaceId.",
+                        isError = true,
+                    )
+                }
+                // And the ids whose FILE would be one of the store's reserved records (#926):
+                // the load scan skips those names, so a save that lands on one never appears
+                // in the Space list while it destroys the record it replaced.
+                reservedWorkspaceStoreFileName(newId)?.let { reserved ->
+                    return McpToolResult(
+                        "'$newId' would save over '$reserved', a reserved workspace-store " +
+                            "record (Space themes or a last-session record), destroying it. " +
+                            "Pass a different workspaceId.",
                         isError = true,
                     )
                 }
@@ -1094,6 +1127,89 @@ private suspend fun checkProjectPath(rawPath: String): ProjectPathCheck {
 }
 
 /**
+ * The outcome of containing a `workspacePath` open_workspace argument to the workspace store:
+ * [canonicalPath] is the path the call may go on to read - the caller's path, canonicalised,
+ * so the file checked is the file read - or [error] is the user-facing refusal. At most one of
+ * the two is set, and every failure mode (a path the filesystem cannot represent, traversal,
+ * an absolute path elsewhere, a symlink out of the store, the store directory itself) is a
+ * refusal: the gate fails closed.
+ */
+internal data class WorkspacePathCheck(
+    val canonicalPath: String?,
+    val error: String?,
+)
+
+/**
+ * Resolves [path] to its real on-disk location, symlinks included. File.canonicalFile resolves
+ * links on Linux and macOS but NOT on Windows, where it only normalises spelling and leaves
+ * reparse points (symlinks, junctions) alone - so a link inside the store pointing out slipped
+ * containment precisely on Windows CI. Path.toRealPath resolves links on every OS (realpath on
+ * Unix, GetFinalPathNameByHandle on Windows) and canonicalises 8.3 short names and separators.
+ * A path that does not exist yet cannot be real-pathed: its containment (a Space file about to
+ * be created via createIfAbsent, a `..` chain over a not-yet-created directory) is decided by
+ * where it would land, so it falls back to lexical canonicalisation. Fails closed: an
+ * unparseable or otherwise unresolvable path returns null and the caller refuses.
+ */
+private fun realPathOrNull(path: String): File? =
+    try {
+        File(path).toPath().toRealPath().toFile()
+    } catch (_: java.nio.file.NoSuchFileException) {
+        try {
+            File(path).canonicalFile
+        } catch (_: java.io.IOException) {
+            null
+        } catch (_: SecurityException) {
+            null
+        }
+    } catch (_: java.io.IOException) {
+        null
+    } catch (_: java.nio.file.InvalidPathException) {
+        null
+    } catch (_: SecurityException) {
+        null
+    }
+
+/**
+ * Containment for the workspacePath mode of open_workspace (#896): the file the mode names is
+ * not merely opened, it is parsed and applied as the window's live Space layout, so the
+ * reachable set is the workspace store [workspaceDirectory] - the same directory the
+ * workspaceId mode loads from and this app itself writes - not any readable file on disk.
+ *
+ * Both sides are resolved to their real on-disk location first, so `..` that stays inside the
+ * store is legal while `..` that escapes is not, and a symlink inside the store pointing out
+ * resolves outside and is refused - [realPathOrNull] follows symlinks on every OS, unlike
+ * File.canonicalFile on Windows. [rawPath] need not exist: containment decides only whether the
+ * call may go on to probe and read it.
+ */
+internal suspend fun checkWorkspacePathContainment(
+    rawPath: String,
+    workspaceDirectory: String,
+): WorkspacePathCheck {
+    val resolved =
+        withContext(Dispatchers.IO) {
+            val storeRoot = realPathOrNull(workspaceDirectory)
+            val requested = realPathOrNull(rawPath)
+            if (storeRoot == null || requested == null) null else Pair(storeRoot, requested)
+        }
+    val (storeRoot, requested) =
+        resolved ?: return WorkspacePathCheck(null, "Invalid workspace path (security check failed)")
+    // Path.startsWith is component-wise: a sibling named to share the store's prefix is not
+    // inside it, and the store directory itself is not a Space file inside the store.
+    val contained = requested != storeRoot && requested.toPath().startsWith(storeRoot.toPath())
+    return if (contained) {
+        WorkspacePathCheck(requested.path, null)
+    } else {
+        WorkspacePathCheck(
+            null,
+            "Refusing to open '$rawPath' as a Space: it resolves to " +
+                "${requested.path}, which is not a file inside the workspaces directory " +
+                "(${storeRoot.path}) - the only directory open_workspace loads and applies " +
+                "Space layouts from. Copy the file there and open it by its path or workspaceId.",
+        )
+    }
+}
+
+/**
  * The bootstrap Space open_workspace opens for a project: one panel, one terminal tab pointed
  * at the project, named for it, so it reads naturally in the Space picker if the user saves it
  * (consolidated from #799).
@@ -1152,6 +1268,57 @@ internal fun matchExistingSpace(
 /** IDs are names in the workspace store, never caller-selected filesystem paths. */
 internal fun isSafeWorkspaceId(id: String): Boolean =
     id.isNotBlank() && id != "." && ".." !in id && id.none { it == '/' || it == '\\' || it == ':' || it.isISOControl() }
+
+/**
+ * The single-Space session record in the name a pre-[WorkspaceFileManagerCommon.fileNameForId]
+ * install wrote it under - the name `RecoveredSpacesRoundTripTest`'s fixture carries, so real
+ * disks hold it. No constant exists for it because the running code reaches the file only
+ * through `WorkspaceManager.loadedFileNames`; this gate needs it directly because it sits in
+ * the same directory the MCP create path writes into - and on a case-insensitive filesystem it
+ * IS the file [WorkspaceFileManagerCommon.fileNameForId] of [LAST_SESSION_ID] resolves to.
+ */
+private const val LEGACY_LAST_SESSION_FILE = "Last_Session.json"
+
+/**
+ * The reserved workspace-store file that saving a Space with caller-chosen id [id] would
+ * overwrite, or null when [id] is an ordinary Space id (#926).
+ *
+ * `WorkspaceManager`'s load scan deliberately skips [LAST_SESSION_SET_FILE] and
+ * [SPACE_THEMES_FILE] by name: they are records that live beside the Spaces without being one.
+ * Those records therefore never deserialize as a Space, so an open_workspace with
+ * `createIfAbsent` and a matching id falls through every lookup into the CREATE branch and
+ * saves `<id>.json` straight over the theme store or the session record - silently, because
+ * the file was never in the Space list to begin with. The session-set record breaks session
+ * restore on the next launch; the themes record wipes every Space theme assignment. The two
+ * single-Space record names are in the set for the same reason from the other direction: they
+ * DO parse as Spaces, but on a case-insensitive filesystem (NTFS, default APFS) a caller-chosen
+ * id differing only in case or underscores-dashes resolves to the record's file anyway.
+ *
+ * The file name is derived with the SAME [WorkspaceFileManagerCommon.fileNameForId] the save
+ * uses, so no id slips past on a technicality: every id that writes a reserved file is caught,
+ * and ids that merely RESEMBLE one (`Space__Themes`, with its double underscore) pass. The
+ * caller's own `.json` suffix is stripped first, because the load path treats a suffixed id as
+ * that file name and the save gate answers the same question rather than the accidental
+ * `<id>.json.json` the raw id would produce. Comparison is case-insensitive for the filesystem
+ * reason above; on a case-SENSITIVE filesystem that makes the gate stricter than the collision,
+ * which is the safe side to err on.
+ *
+ * Extend this set - and the scan's skips - together: a new reserved record is a name collision
+ * here exactly when it is a skip there.
+ */
+internal fun reservedWorkspaceStoreFileName(id: String): String? {
+    val stem = id.removeSuffix(".json")
+    if (stem.isEmpty()) return null
+    val fileName = WorkspaceFileManagerCommon.fileNameForId(stem)
+    val reserved =
+        listOf(
+            LAST_SESSION_SET_FILE,
+            SPACE_THEMES_FILE,
+            LEGACY_LAST_SESSION_FILE,
+            WorkspaceFileManagerCommon.fileNameForId(LAST_SESSION_ID),
+        )
+    return reserved.firstOrNull { it.equals(fileName, ignoreCase = true) }
+}
 
 internal fun SplitConfig.hasInitialCommands(): Boolean =
     when (this) {

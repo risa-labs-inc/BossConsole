@@ -53,4 +53,17 @@ class QueryParameterSanitizerTest {
             LogSanitizer.sanitizeExceptionMessage("Connect to proxy.corp.internal:3128 failed"),
         )
     }
+
+    @Test
+    fun `sessionId and email redact from masked URIs like the other sensitive names`() {
+        // The passkey ceremony's WebAuthn URL carries the live session id and the
+        // user's email as query params, so both names must sit in the redaction set
+        // with the token names. Name-matching is case-insensitive.
+        listOf("sessionId", "SESSIONID", "email", "Email").forEach { name ->
+            assertEquals(
+                "https://host.example/passkey?challenge=abc&$name=[REDACTED]",
+                LogSanitizer.maskUriParams("https://host.example/passkey?challenge=abc&$name=SECRET"),
+            )
+        }
+    }
 }

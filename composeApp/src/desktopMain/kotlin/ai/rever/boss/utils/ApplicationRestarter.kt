@@ -1,5 +1,6 @@
 package ai.rever.boss.utils
 
+import ai.rever.boss.components.workspaces.ShellPathQuoting
 import ai.rever.boss.plugin.browser.FluckEngine
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -160,7 +161,7 @@ object ApplicationRestarter {
     private fun shellQuote(s: String): String = "'" + s.replace("'", "'\\''") + "'"
 
     /** Single-quote a string for safe embedding in a PowerShell command. */
-    private fun psQuote(s: String): String = "'" + s.replace("'", "''") + "'"
+    private fun psQuote(s: String): String = ShellPathQuoting.powershell(s)
 
     /**
      * Locate the running macOS `.app` bundle, or null in dev mode. Mirrors the proven

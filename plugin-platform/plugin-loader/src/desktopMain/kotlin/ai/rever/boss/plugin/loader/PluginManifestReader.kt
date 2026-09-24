@@ -229,8 +229,11 @@ object PluginManifestReader {
 
     /**
      * Check if a plugin ID follows the expected format (reverse domain notation).
+     *
+     * Public so callers that join a plugin id onto a filesystem path (e.g. dev
+     * staging directories) can reject path-shaped ids before resolving anything.
      */
-    private fun isValidPluginId(pluginId: String): Boolean {
+    fun isValidPluginId(pluginId: String): Boolean {
         // Allow alphanumeric, dots, hyphens, and underscores
         // Must have at least one dot (like com.example)
         val pattern = Regex("^[a-zA-Z][a-zA-Z0-9_-]*(?:\\.[a-zA-Z0-9_-]+)+$")

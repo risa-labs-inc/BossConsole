@@ -98,6 +98,63 @@ internal fun realAppPathFor(
 }
 
 /**
+ * The mount point `hdiutil attach` reported for the DMG it just attached, or null
+ * when its output carries no usable `/Volumes` path (Issue #922).
+ *
+ * `hdiutil attach` ends its device table with the mount point of the volume it
+ * mounted: the last tab-delimited field of the last line naming a /Volumes
+ * path - tab-delimited because volume names can contain spaces. That line is
+ * the only authoritative answer to "where did this DMG mount": scanning
+ * /Volumes for a BOSS-named directory instead answers with whatever the
+ * filesystem lists first - a user's own external BOSS drive, or an older BOSS
+ * DMG left mounted - and the updater then verifies and installs whatever app
+ * bundle that unrelated volume happens to hold.
+ *
+ * Parsing is deliberately strict - split on tabs rather than any whitespace,
+ * and require the result to look like a /Volumes path - so a truncated or
+ * malformed line yields null and callers fall back instead of acting on a
+ * half-parsed mount point.
+ */
+internal fun dmgMountPointFromHdiutilOutput(output: String): String? =
+    output
+        .lineSequence()
+        .lastOrNull { it.contains("/Volumes/") }
+        ?.substringAfterLast('\t')
+        ?.trim()
+        ?.takeIf { it.startsWith("/Volumes/") }
+
+/**
+ * Decide which volume a just-attached BOSS DMG mounted at (Issue #922), with
+ * the filesystem injected so the choice stays unit-testable.
+ *
+ * `hdiutil attach`'s own answer wins whenever it is available: it names the
+ * volume this exact attach mounted, where a directory scan can only guess. The
+ * scan exists for callers that captured no output, and as a fallback when the
+ * output could not be parsed, and is stricter than the first-match lookup it
+ * replaces:
+ *
+ * - a candidate must actually hold a BOSS `.app` bundle ([appBundleIn]), not
+ *   merely name itself BOSS, so an unrelated drive sharing the name can no
+ *   longer stand in for the update DMG;
+ * - among candidates that do hold a bundle, the most recently mounted one
+ *   wins - the DMG attached seconds ago, not last year's image the user never
+ *   ejected.
+ */
+internal fun mountedBossDmgVolume(
+    hdiutilAttachOutput: String?,
+    candidateVolumes: List<File>?,
+    appBundleIn: (File) -> File?,
+): File? {
+    val reportedMountPoint = hdiutilAttachOutput?.let(::dmgMountPointFromHdiutilOutput)
+    if (reportedMountPoint != null) return File(reportedMountPoint)
+
+    return candidateVolumes
+        ?.filter { volume -> volume.isDirectory && volume.name.contains("BOSS", ignoreCase = true) }
+        ?.filter { volume -> appBundleIn(volume) != null }
+        ?.maxByOrNull { volume -> volume.lastModified() }
+}
+
+/**
  * Resolve the installed Windows launcher to relaunch after the MSI runs, without
  * touching the filesystem itself so the ordering stays unit-testable.
  *
@@ -510,7 +567,11 @@ object UpdateInstaller {
 
                 logger.debug(LogCategory.SYSTEM, "Target application path", mapOf("path" to currentAppPath))
 
-                // Verify DMG is valid by attempting to mount it
+                // Verify DMG is valid by attempting to mount it. No -quiet: the
+                // device table it suppresses ends with the mount point of the
+                // volume this exact attach mounted, which is what identifies it
+                // below (Issue #922); errors merge into stdout, so a pipe nobody
+                // drains can never block the child mid-checksum.
                 logger.debug(LogCategory.SYSTEM, "Mounting DMG for verification")
                 val mountTest =
                     ProcessBuilder(
@@ -518,18 +579,32 @@ object UpdateInstaller {
                         "attach",
                         downloadFile.absolutePath,
                         "-nobrowse",
-                        "-quiet",
                         "-verify",
-                    ).start()
+                    ).redirectErrorStream(true)
+                        .start()
+
+                // Drain while hdiutil runs - findInstalledAppViaSpotlight uses
+                // the same pattern - so the captured table cannot deadlock the
+                // mount.
+                val mountOutputFuture =
+                    CompletableFuture.supplyAsync {
+                        mountTest.inputStream.bufferedReader().use { it.readText() }
+                    }
                 mountTest.waitFor()
 
                 if (mountTest.exitValue() != 0) {
-                    logger.error(LogCategory.SYSTEM, "DMG mounting failed")
+                    val output = runCatching { mountOutputFuture.get(1, TimeUnit.SECONDS) }.getOrNull()
+                    logger.error(LogCategory.SYSTEM, "DMG mounting failed: ${output?.take(500)}")
                     return@withContext InstallResult.Error("Failed to mount DMG for verification")
                 }
 
-                // Find the mounted volume
-                val mountedVolume = findMountedBossVolume()
+                // Find the mounted volume from what hdiutil itself reported about
+                // this attach, not by grabbing the first BOSS-named directory
+                // under /Volumes (Issue #922).
+                // A drain hiccup must not leak the mount we just attached: get() throws
+                // outside the unmount guard, so degrade to the directory fallback instead.
+                val mountOutput = runCatching { mountOutputFuture.get(1, TimeUnit.SECONDS) }.getOrNull()
+                val mountedVolume = findMountedBossVolume(mountOutput)
                 if (mountedVolume == null) {
                     logger.error(LogCategory.SYSTEM, "Could not find mounted BOSS volume")
                     cleanupDMG(null) // Try to cleanup any stray mounts
@@ -965,14 +1040,21 @@ object UpdateInstaller {
     }
 
     /**
-     * Find the mounted BOSS volume after DMG mount
+     * Find the volume the just-attached BOSS DMG mounted at (Issue #922).
+     *
+     * Delegates to [mountedBossDmgVolume]: the mount point `hdiutil attach`
+     * reported for this attach when the caller captured its output, else the
+     * strictest directory scan - a candidate must hold a BOSS app bundle, and
+     * the most recently mounted candidate wins. The old first-match lookup
+     * answered to whatever BOSS-named volume /Volumes happened to list first,
+     * including volumes this DMG never mounted.
      */
-    private fun findMountedBossVolume(): File? {
-        val volumesDir = File("/Volumes")
-        return volumesDir.listFiles()?.find {
-            it.name.contains("BOSS", ignoreCase = true) && it.isDirectory
-        }
-    }
+    private fun findMountedBossVolume(hdiutilAttachOutput: String? = null): File? =
+        mountedBossDmgVolume(
+            hdiutilAttachOutput = hdiutilAttachOutput,
+            candidateVolumes = File("/Volumes").listFiles()?.toList(),
+            appBundleIn = ::findAppBundleInVolume,
+        )
 
     /**
      * Find the .app bundle in the mounted volume

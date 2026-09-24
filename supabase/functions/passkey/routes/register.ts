@@ -7,6 +7,7 @@ import {
 import { getAllowedOrigins } from "../utils/config.ts"
 import { parseClientDataJSON } from "../utils/webauthn.ts"
 import { requireAuthenticatedCaller, resolveOptionalCaller } from "../utils/authorization.ts"
+import { clientKey, rateLimit } from "../utils/rate-limit.ts"
 import {
   RegisterChallengeRequestSchema,
   RegisterChallengeResponseSchema,
@@ -16,6 +17,24 @@ import {
 } from "../types/schemas.ts"
 
 const register = new OpenAPIHono<{ Variables: PasskeyContext }>()
+
+// Brake on the remaining registration loops. /register/challenge relays the
+// caller's bearer to the Auth API (auth.getUser) before anything else, so a
+// garbage-bearer script turns the route into a free auth-service prober;
+// /register/complete runs ES256 signature verification BEFORE the challenge
+// row is consumed, so one captured challenge replays into unlimited verify
+// CPU. The limiter is consulted first in both handlers, so an over-budget
+// caller costs neither lookup. Per-isolate; see utils/rate-limit.ts for the
+// honest scope of that.
+//
+// Budget: one enrolment is a challenge plus a complete, with a couple of
+// retries for user-visible failure paths (a dismissed security prompt, a
+// locked device). 60/hour on the challenge and 120/hour on the complete
+// leaves generous headroom for real flows while capping the loops at a rate
+// a script actually feels.
+const REGISTER_CHALLENGE_LIMIT = 60
+const REGISTER_COMPLETE_LIMIT = 120
+const REGISTER_WINDOW_SECONDS = 60 * 60
 
 // ============================================================================
 // POST /register/challenge - Generate registration challenge
@@ -69,6 +88,14 @@ const registerChallengeRoute = createRoute({
         }
       }
     },
+    429: {
+      description: 'Too many requests - per-client rate limit exceeded',
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
+        }
+      }
+    },
     500: {
       description: 'Internal server error',
       content: {
@@ -81,6 +108,17 @@ const registerChallengeRoute = createRoute({
 })
 
 register.openapi(registerChallengeRoute, async (ctx) => {
+  // Rate limit first, before the Auth API relay: the probe itself is what is
+  // being braked, not the failure it produces.
+  const limit = rateLimit(
+    `registerchallenge:${clientKey(ctx.req.raw.headers)}`,
+    REGISTER_CHALLENGE_LIMIT,
+    REGISTER_WINDOW_SECONDS,
+  )
+  if (!limit.allowed) {
+    return ctx.json({ error: 'Too many requests' }, 429)
+  }
+
   try {
     const supabase = ctx.get("supabase")
     const { userId, sessionId } = ctx.req.valid('json')
@@ -166,6 +204,14 @@ const registerCompleteRoute = createRoute({
         }
       }
     },
+    429: {
+      description: 'Too many requests - per-client rate limit exceeded',
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
+        }
+      }
+    },
     500: {
       description: 'Internal server error',
       content: {
@@ -178,6 +224,18 @@ const registerCompleteRoute = createRoute({
 })
 
 register.openapi(registerCompleteRoute, async (ctx) => {
+  // Rate limit first, before the ES256 verify: the challenge row is consumed
+  // only after signature verification succeeds, so without this brake one
+  // captured challenge replays into unlimited verification CPU.
+  const limit = rateLimit(
+    `registercomplete:${clientKey(ctx.req.raw.headers)}`,
+    REGISTER_COMPLETE_LIMIT,
+    REGISTER_WINDOW_SECONDS,
+  )
+  if (!limit.allowed) {
+    return ctx.json({ error: 'Too many requests' }, 429)
+  }
+
   try {
     const supabase = ctx.get("supabase")
     const { userId, credential, challenge, displayName } = ctx.req.valid('json')

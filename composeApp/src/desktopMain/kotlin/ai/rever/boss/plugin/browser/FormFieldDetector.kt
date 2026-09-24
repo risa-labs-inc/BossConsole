@@ -63,6 +63,21 @@ object FormFieldDetector {
             val script =
                 """
                 (function() {
+                    // The host re-injects on every main-frame NavigationFinished, which fires for
+                    // a single-page app's pushState/replaceState too - the same document, not a new
+                    // one. Without this flag each route change added another pair of capture-phase
+                    // listeners that nothing ever removes. Matches the started-flag the interaction
+                    // collector and the Cmd+Click handler already use.
+                    if (window.__bossFieldDetectionStarted) {
+                        // A same-document route change can tear the old DOM down without a
+                        // focusout, so the retained field may be a detached node whose value
+                        // nothing else clears. The unguarded code reset it on every injection;
+                        // keep that release or the accessor serves the dead field's value for
+                        // the life of the document.
+                        window.__BOSS_FOCUSED_FIELD = null;
+                        return;
+                    }
+
                     // Store currently focused element
                     window.__BOSS_FOCUSED_FIELD = null;
 
@@ -70,7 +85,6 @@ object FormFieldDetector {
                     document.addEventListener('focusin', function(e) {
                         if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) {
                             window.__BOSS_FOCUSED_FIELD = e.target;
-                            console.log('[BOSS] Field focused:', e.target.type, e.target.name || e.target.id);
                         }
                     }, true);
 
@@ -78,8 +92,13 @@ object FormFieldDetector {
                     document.addEventListener('focusout', function(e) {
                         // Keep reference for a short time after blur (for context menu)
                         setTimeout(function() {
-                            if (document.activeElement.tagName !== 'INPUT' &&
-                                document.activeElement.tagName !== 'TEXTAREA') {
+                            // activeElement is nullable per spec - a detached document, or teardown
+                            // between the blur and this timer. Dereferencing it threw out of the
+                            // clear, which retained the blurred field: the one case this exists for.
+                            // Nothing focused means focus went nowhere, so release it.
+                            var active = document.activeElement;
+                            if (!active ||
+                                (active.tagName !== 'INPUT' && active.tagName !== 'TEXTAREA')) {
                                 window.__BOSS_FOCUSED_FIELD = null;
                             }
                         }, 500);
@@ -110,7 +129,11 @@ object FormFieldDetector {
                         };
                     };
 
-                    console.log('[BOSS] Form field detection script injected');
+                    // Claimed LAST, once the listeners and the accessor exist: the same rule
+                    // BrowserInteractionScript writes down for its own flag. Claimed at the top,
+                    // a throw anywhere in between would leave it standing with no listeners and
+                    // no accessor, and no later navigation could repair the document.
+                    window.__bossFieldDetectionStarted = true;
                 })();
                 """.trimIndent()
 

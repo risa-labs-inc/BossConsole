@@ -115,6 +115,22 @@ class RecentBrowserPagesMergeTest {
     }
 
     @Test
+    fun `a repeated load cannot leave the same url in the list twice`() {
+        // The reload scenario the `mergeRecordedPages` KDoc guards against: the same decoded list
+        // presented as `loaded` a second time, against the state the first merge produced. The
+        // visit counts doubling is the non-idempotence that KDoc already documents; a url in the
+        // list twice is not - groupBy means entry duplication cannot happen, whatever order the
+        // two sides of the merge arrive in.
+        val decoded = listOf(onDisk, page("https://c.dev", 300))
+        val firstLoad = mergeRecordedPages(loaded = decoded, recorded = emptyList(), max = 30)
+
+        val reload = mergeRecordedPages(loaded = decoded, recorded = firstLoad, max = 30)
+
+        assertEquals(firstLoad.map { it.url }, reload.map { it.url })
+        assertEquals(2, reload.size)
+    }
+
+    @Test
     fun `a dismissal recorded while the load was in flight survives the load`() {
         val merged =
             mergeDismissedSuggestions(

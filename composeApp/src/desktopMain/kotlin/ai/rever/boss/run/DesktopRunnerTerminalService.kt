@@ -64,6 +64,12 @@ actual object RunnerTerminalService {
     private val _runningConfigs = MutableStateFlow<Set<String>>(emptySet())
     actual val runningConfigs: StateFlow<Set<String>> = _runningConfigs.asStateFlow()
 
+    private data class ConfigTrackingSnapshot(
+        val terminalId: String?,
+        val windows: Set<String>,
+        val running: Boolean,
+    )
+
     /**
      * Add a config to a terminal's tracking set.
      */
@@ -134,6 +140,26 @@ actual object RunnerTerminalService {
      */
     private fun removeAllWindowsFromConfig(configId: String) {
         _configToWindows.update { it - configId }
+    }
+
+    /**
+     * Release one window's ownership of a run. Terminal and running state are shared by every
+     * window that owns the config, so they may only be removed after the final owner leaves.
+     * Callers must hold [stateLock].
+     */
+    private fun releaseWindowOwnership(
+        configId: String,
+        windowId: String,
+    ) {
+        val terminalId = _configToTerminal.value[configId]
+        removeWindowFromConfig(configId, windowId)
+        if (_configToWindows.value[configId].isNullOrEmpty()) {
+            if (terminalId != null) {
+                _configToTerminal.update { it - configId }
+                removeConfigFromTerminal(terminalId, configId)
+            }
+            _runningConfigs.update { it - configId }
+        }
     }
 
     /**
@@ -226,15 +252,7 @@ actual object RunnerTerminalService {
                     return false
                 }
 
-                // Remove this window from the config's window set
-                removeWindowFromConfig(configId, windowId)
-
-                // Only clean up global state if no more windows are running this config
-                if (_configToWindows.value[configId] == null) {
-                    _configToTerminal.update { it - configId }
-                    removeConfigFromTerminal(id, configId)
-                    _runningConfigs.update { it - configId }
-                }
+                releaseWindowOwnership(configId, windowId)
 
                 id
             }
@@ -567,10 +585,7 @@ actual object RunnerTerminalService {
         stateLock.withLock {
             val terminalId = _configToTerminal.value[configId]
             if (terminalId != null) {
-                _configToTerminal.update { it - configId }
-                removeConfigFromTerminal(terminalId, configId)
-                _runningConfigs.update { it - configId }
-                removeWindowFromConfig(configId, windowId)
+                releaseWindowOwnership(configId, windowId)
                 logger.debug(
                     LogCategory.TERMINAL,
                     "Config removed",
@@ -598,13 +613,7 @@ actual object RunnerTerminalService {
                     .map { it.key }
 
             configsToRemove.forEach { configId ->
-                val terminalId = _configToTerminal.value[configId]
-                if (terminalId != null) {
-                    removeConfigFromTerminal(terminalId, configId)
-                }
-                _configToTerminal.update { it - configId }
-                _runningConfigs.update { it - configId }
-                removeWindowFromConfig(configId, windowId)
+                releaseWindowOwnership(configId, windowId)
             }
 
             if (configsToRemove.isNotEmpty()) {
@@ -616,6 +625,39 @@ actual object RunnerTerminalService {
                         "windowId" to windowId,
                     ),
                 )
+            }
+        }
+    }
+
+    /** Restore the exact state replaced by a sidebar open attempt, if it is still authoritative. */
+    private fun rollbackFailedSidebarOpen(
+        configId: String,
+        windowId: String,
+        previousState: ConfigTrackingSnapshot,
+    ) {
+        stateLock.withLock {
+            val expectedWindows = previousState.windows + windowId
+            val stillOurs =
+                _configToTerminal.value[configId] == SIDEBAR_TERMINAL_ID &&
+                    _configToWindows.value[configId] == expectedWindows
+            if (!stillOurs) return
+
+            removeConfigFromTerminal(SIDEBAR_TERMINAL_ID, configId)
+            if (previousState.terminalId == null) {
+                _configToTerminal.update { it - configId }
+            } else {
+                _configToTerminal.update { it + (configId to previousState.terminalId) }
+                addConfigToTerminal(previousState.terminalId, configId)
+            }
+            _configToWindows.update { windows ->
+                if (previousState.windows.isEmpty()) {
+                    windows - configId
+                } else {
+                    windows + (configId to previousState.windows)
+                }
+            }
+            _runningConfigs.update { running ->
+                if (previousState.running) running + configId else running - configId
             }
         }
     }
@@ -645,12 +687,23 @@ actual object RunnerTerminalService {
     ): Boolean {
         // Update state BEFORE terminal operation (with rollback on failure)
         // This ensures UI updates immediately when user clicks run
-        stateLock.withLock {
-            _configToTerminal.update { it + (configId to SIDEBAR_TERMINAL_ID) }
-            addConfigToTerminal(SIDEBAR_TERMINAL_ID, configId)
-            _runningConfigs.update { it + configId }
-            addWindowToConfig(configId, windowId)
-        }
+        val previousState =
+            stateLock.withLock {
+                val snapshot =
+                    ConfigTrackingSnapshot(
+                        terminalId = _configToTerminal.value[configId],
+                        windows = _configToWindows.value[configId].orEmpty(),
+                        running = configId in _runningConfigs.value,
+                    )
+                snapshot.terminalId
+                    ?.takeIf { it != SIDEBAR_TERMINAL_ID }
+                    ?.let { removeConfigFromTerminal(it, configId) }
+                _configToTerminal.update { it + (configId to SIDEBAR_TERMINAL_ID) }
+                addConfigToTerminal(SIDEBAR_TERMINAL_ID, configId)
+                _runningConfigs.update { it + configId }
+                addWindowToConfig(configId, windowId)
+                snapshot
+            }
 
         val success =
             TerminalAPIAccess.newSidebarTab(
@@ -662,13 +715,9 @@ actual object RunnerTerminalService {
             )
 
         if (!success) {
-            // Roll back state on failure
-            stateLock.withLock {
-                _configToTerminal.update { it - configId }
-                removeConfigFromTerminal(SIDEBAR_TERMINAL_ID, configId)
-                _runningConfigs.update { it - configId }
-                removeWindowFromConfig(configId, windowId)
-            }
+            // Roll back only while this attempt still owns the provisional state. A terminal
+            // callback may have removed or replaced it while newSidebarTab was in progress.
+            rollbackFailedSidebarOpen(configId, windowId, previousState)
             logger.debug(LogCategory.TERMINAL, "Failed to open in sidebar terminal - panel may not be open", mapOf("windowId" to windowId))
         } else {
             logger.debug(

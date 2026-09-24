@@ -103,6 +103,12 @@ class ApiClassLoaderTest {
                 out.closeEntry()
             }
         }
+        // #851: fromPluginDir installs only jars carrying a trust proof.
+        // Give the synthetic api jars a bundled-trust marker, exactly like
+        // the host's bundled-copy install path writes for real bundled api
+        // jars. (Signature-gated selection is pinned separately in
+        // ApiClassLoaderVerificationTest.)
+        PluginBundledTrust.markTrusted(jar.absolutePath, FileHashing.sha256(jar))
         return jar
     }
 

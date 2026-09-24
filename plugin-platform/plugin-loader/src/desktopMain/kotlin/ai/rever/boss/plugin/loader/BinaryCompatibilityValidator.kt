@@ -1,8 +1,12 @@
+@file:Suppress("TooManyFunctions")
+
 package ai.rever.boss.plugin.loader
 
 import ai.rever.boss.plugin.logging.BossLogger
 import ai.rever.boss.plugin.logging.LogCategory
 import java.io.DataInputStream
+import java.io.IOException
+import java.util.jar.JarEntry
 import java.util.jar.JarFile
 
 /**
@@ -19,7 +23,18 @@ import java.util.jar.JarFile
  * would surface as crashes during first UI render.
  */
 object BinaryCompatibilityValidator {
-    private val logger = BossLogger.forComponent("BinaryCompatibilityValidator")
+    /** Classes the host has a contract with; everything else in a plugin JAR is its own runtime. */
+    internal const val OWN_CLASS_PREFIX = "ai.rever.boss.plugin."
+
+    /**
+     * The most bytes one of the plugin's own class files may inflate to before it is refused.
+     *
+     * Generously above any real class file and far below a heap. The value, and the idea of
+     * capping each class before anything loads it, are from BossConsole#1293.
+     */
+    internal const val MAX_CLASS_BYTES: Int = 8 * 1024 * 1024
+
+    internal val logger = BossLogger.forComponent("BinaryCompatibilityValidator")
 
     data class ValidationResult(
         val isCompatible: Boolean,
@@ -41,86 +56,74 @@ object BinaryCompatibilityValidator {
     ): ValidationResult {
         val errors = mutableListOf<String>()
 
-        val classEntries =
+        // The own class being validated when something threw, or null while the JAR was still
+        // being opened and enumerated. Only the null case is a failure to read the archive; a throw
+        // from inside the loop is a class load failing (a sealing violation, a signed-JAR digest
+        // mismatch) and is reported against that class, beside the per-class errors found so far.
+        var validating: String? = null
+
+        // Names for every class, bytes for only the ones actually validated.
+        //
+        // Both were read together before, so the host held a JAR's entire uncompressed class
+        // content at once and used a sliver of it. Measured on shipped plugins:
+        // boss-plugin-terminal-tab 2.5.74 is 9,469 classes, 40.4MB read to validate 0.50MB;
+        // fluck-browser 1.2.29 is 10.3MB read for 2.69MB. A JarEntry is metadata, so carrying
+        // those costs nothing and the names below still cover the whole JAR.
+        //
+        // It also makes this honour the rule stated further down. A bundled third-party class
+        // "must not disable the plugin", but reading one that failed threw into the catch below,
+        // which returns isCompatible=false - and the caller refuses the load on that. Bytes for
+        // those classes are now never read, so they cannot fail a plugin that does not depend on
+        // them.
+        val classCount =
             try {
                 JarFile(jarPath).use { jar ->
-                    jar
-                        .entries()
-                        .asSequence()
-                        .filter { it.name.endsWith(".class") && !it.name.startsWith("META-INF/") }
-                        .map { entry ->
-                            val className = entry.name.removeSuffix(".class").replace('/', '.')
-                            val bytes = jar.getInputStream(entry).use { it.readBytes() }
-                            className to bytes
-                        }.toList()
+                    val classEntries =
+                        jar
+                            .entries()
+                            .asSequence()
+                            .filter { it.name.endsWith(".class") && !it.name.startsWith("META-INF/") }
+                            .map { entry ->
+                                entry.name.removeSuffix(".class").replace('/', '.') to entry
+                            }.toList()
+
+                    // Collect all class names in this JAR — references between them are
+                    // self-consistent (compiled together) and don't need cross-validation.
+                    val jarClassNames = classEntries.mapTo(mutableSetOf()) { it.first }
+
+                    for ((className, entry) in classEntries) {
+                        // Only validate the plugin's OWN classes (ai.rever.boss.plugin.*)
+                        // against the host. Bundled third-party classes (ktor, mcp-sdk,
+                        // kotlin-logging, …) are the plugin's self-contained runtime; their
+                        // internal linkage is not a host-contract concern and must not
+                        // disable the plugin. In particular, libraries ship OPTIONAL adapter
+                        // classes for backends the host doesn't bundle — e.g. kotlin-logging's
+                        // io.github.oshai.kotlinlogging.logback.internal.LogbackLogEvent
+                        // references ch.qos.logback.* which isn't present, so merely LOADING
+                        // that (never-used) class throws NoClassDefFoundError. Skipping
+                        // third-party classes here mirrors the member-ref scoping below.
+                        if (!className.startsWith(OWN_CLASS_PREFIX)) continue
+
+                        validating = className
+                        errors += validateOwnClass(jar, entry, className, classLoader, jarClassNames)
+                    }
+                    classEntries.size
                 }
             } catch (e: Exception) {
+                val failure =
+                    validating?.let { "$it: validation aborted - ${e.javaClass.simpleName}: ${e.message}" }
+                        ?: "Failed to read JAR: ${e.message}"
                 logger.error(
                     LogCategory.SYSTEM,
-                    "Failed to read JAR for validation",
+                    "JAR validation aborted",
                     mapOf(
                         "jarPath" to jarPath,
+                        "stage" to (validating ?: "opening the JAR"),
                         "error" to (e.message ?: "unknown"),
                     ),
                 )
-                return ValidationResult(
-                    isCompatible = false,
-                    errors =
-                        listOf(
-                            "Failed to read JAR: ${e.message}",
-                        ),
-                )
+                return ValidationResult(isCompatible = false, errors = errors + failure)
             }
-
-        // Collect all class names in this JAR — references between them are
-        // self-consistent (compiled together) and don't need cross-validation.
-        val jarClassNames = classEntries.map { it.first }.toSet()
-
-        for ((className, bytes) in classEntries) {
-            // Only validate the plugin's OWN classes (ai.rever.boss.plugin.*)
-            // against the host. Bundled third-party classes (ktor, mcp-sdk,
-            // kotlin-logging, …) are the plugin's self-contained runtime; their
-            // internal linkage is not a host-contract concern and must not
-            // disable the plugin. In particular, libraries ship OPTIONAL adapter
-            // classes for backends the host doesn't bundle — e.g. kotlin-logging's
-            // io.github.oshai.kotlinlogging.logback.internal.LogbackLogEvent
-            // references ch.qos.logback.* which isn't present, so merely LOADING
-            // that (never-used) class throws NoClassDefFoundError. Skipping
-            // third-party classes here mirrors the member-ref scoping below.
-            if (!className.startsWith("ai.rever.boss.plugin.")) continue
-
-            // First, ensure the class itself can be loaded
-            try {
-                Class.forName(className, false, classLoader)
-            } catch (e: LinkageError) {
-                errors.add("$className: ${e.javaClass.simpleName} - ${e.message}")
-                continue
-            } catch (e: ClassNotFoundException) {
-                errors.add("$className: ClassNotFoundException - ${e.message}")
-                continue
-            }
-
-            // Parse constant pool and verify all symbolic references
-            try {
-                val refs = ConstantPoolParser.extractReferences(bytes)
-                for (ref in refs) {
-                    // Skip references to classes within the same JAR — they were
-                    // compiled together and are guaranteed to be consistent.
-                    if (ref.ownerClassName in jarClassNames) continue
-                    verifyReference(ref, classLoader, className, errors)
-                }
-            } catch (e: Exception) {
-                // Malformed class file — not a compatibility issue per se, skip
-                logger.debug(
-                    LogCategory.SYSTEM,
-                    "Failed to parse constant pool",
-                    mapOf(
-                        "className" to className,
-                        "error" to (e.message ?: "unknown"),
-                    ),
-                )
-            }
-        }
 
         if (errors.isNotEmpty()) {
             logger.warn(
@@ -138,7 +141,7 @@ object BinaryCompatibilityValidator {
                 "Binary compatibility validation passed",
                 mapOf(
                     "jarPath" to jarPath,
-                    "classCount" to classEntries.size,
+                    "classCount" to classCount,
                 ),
             )
         }
@@ -149,95 +152,125 @@ object BinaryCompatibilityValidator {
         )
     }
 
-    private fun verifyReference(
+    /**
+     * Validate one of the plugin's own classes, returning what is wrong with it.
+     *
+     * The bytes are read first, and bounded, because the plugin's own class loader reads the
+     * whole entry inside [Class.forName] to define the class. A cap applied after loading is too
+     * late: zeros deflate about 1000:1, so a 573 KiB JAR carried a 576 MiB class and ran a 512 MiB
+     * heap out of memory inside `forName`, before this function's own read was reached. Reading
+     * one class at a time bounds the total; this bounds each one.
+     *
+     * An entry this cannot read is not yet grounds to refuse - the loader still gets its say, and
+     * a class it can load but this cannot read is skipped, as before.
+     */
+    private fun validateOwnClass(
+        jar: JarFile,
+        entry: JarEntry,
+        className: String,
+        classLoader: ClassLoader,
+        jarClassNames: Set<String>,
+    ): List<String> {
+        val bytes = readBoundedOrNull(jar, entry, className)
+        val refusal =
+            if (bytes != null && bytes.size > MAX_CLASS_BYTES) {
+                "$className: class file is larger than $MAX_CLASS_BYTES bytes"
+            } else {
+                // When the bounded read failed (bytes == null), `forName` below reads the entry again
+                // with no bound. That cannot materialise more than the cap: an entry `readNBytes`
+                // cannot read fails inside `forName` at the same offset, before anything past it is
+                // inflated. Refusing here instead would break this function's own rule, stated in
+                // its KDoc: an entry this cannot read is not by itself grounds to refuse.
+                loadFailure(className, classLoader)
+            }
+        return when {
+            refusal != null -> listOf(refusal)
+            bytes == null -> emptyList()
+            else -> referenceErrors(bytes, className, classLoader, jarClassNames)
+        }
+    }
+
+    /** Parse [bytes]' constant pool and verify every symbolic reference it holds. */
+    private fun referenceErrors(
+        bytes: ByteArray,
+        className: String,
+        classLoader: ClassLoader,
+        jarClassNames: Set<String>,
+    ): List<String> {
+        val errors = mutableListOf<String>()
+        try {
+            for (ref in ConstantPoolParser.extractReferences(bytes)) {
+                // Skip references to classes within the same JAR - they were
+                // compiled together and are guaranteed to be consistent.
+                if (ref.ownerClassName in jarClassNames) continue
+                verifyReference(ref, classLoader, className, errors)
+            }
+        } catch (e: Exception) {
+            // Malformed class file - not a compatibility issue per se, skip.
+            logger.debug(
+                LogCategory.SYSTEM,
+                "Failed to parse constant pool",
+                mapOf("className" to className, "error" to (e.message ?: "unknown")),
+            )
+        }
+        return errors
+    }
+
+    internal fun verifyReference(
         ref: ConstantPoolParser.MemberRef,
         classLoader: ClassLoader,
         sourceClass: String,
         errors: MutableList<String>,
     ) {
-        // Skip references to the plugin's own classes (they're already loaded above)
-        // and primitive/array types
-        if (ref.ownerClassName.startsWith("[") || ref.ownerClassName.isEmpty()) return
+        val ownerClass = resolveOwnerClass(ref, classLoader, sourceClass, errors) ?: return
+        if (!ref.ownerClassName.startsWith(OWN_CLASS_PREFIX)) return
 
-        val ownerClass =
-            try {
-                Class.forName(ref.ownerClassName, false, classLoader)
-            } catch (e: LinkageError) {
-                errors.add("$sourceClass -> ${ref.ownerClassName}: ${e.javaClass.simpleName} - ${e.message}")
-                return
-            } catch (e: ClassNotFoundException) {
-                // Only flag missing classes from the shared API packages, not JDK/Kotlin stdlib.
-                //
-                // `ai.rever.boss.plugin.runtime.*` classes live only on OOP plugin
-                // child-JVM classpaths (via boss-microkernel-runtime's fatJar), not
-                // on the host. OOP-aware plugins legitimately reference these from
-                // their main class so the child runtime can find them reflectively.
-                // Treat references into that package as soft — the host doesn't
-                // need to resolve them — but log so a later debug session can
-                // find the trail if the plugin actually does fail at child-JVM load.
-                if (isSoftFailReference(ref.ownerClassName)) {
-                    logger.debug(
-                        LogCategory.SYSTEM,
-                        "Soft-skipping runtime-package ref",
-                        mapOf(
-                            "sourceClass" to sourceClass,
-                            "ref" to ref.ownerClassName,
-                            "error" to e.toString(),
-                        ),
-                    )
-                } else if (ref.ownerClassName.startsWith("ai.rever.boss.plugin.")) {
-                    errors.add("$sourceClass -> ${ref.ownerClassName}: class not found")
-                }
-                return
-            }
-
-        // Only enforce member-level binary compatibility for the actual
-        // plugin<->host CONTRACT (ai.rever.boss.plugin.*). References into
-        // bundled third-party libraries (io.ktor, kotlinx.*, io.modelcontextprotocol,
-        // …) are the plugin's own concern: a plugin bundles its own copy, and the
-        // only ones resolved here against the HOST are parent-first shared libs
-        // (e.g. kotlinx-serialization), whose version can legitimately drift from
-        // what the plugin's bundled deps were compiled against. A signature
-        // mismatch there is NOT a contract violation and must not disable the
-        // whole plugin — it degrades at the actual call site at runtime (handled
-        // by the plugin's own error handling), if that path is ever hit. Class
-        // resolution above is already scoped this way; mirror it for members.
-        if (!ref.ownerClassName.startsWith("ai.rever.boss.plugin.")) {
-            return
-        }
-
-        // Verify the specific member exists
         when (ref.type) {
             ConstantPoolParser.RefType.METHOD,
             ConstantPoolParser.RefType.INTERFACE_METHOD,
             -> {
                 if (ref.name == "<init>") {
-                    // Constructor — verify parameter types match
-                    val paramTypes = ref.parseParameterTypes(classLoader) ?: return
-                    try {
-                        ownerClass.getDeclaredConstructor(*paramTypes)
-                    } catch (_: NoSuchMethodException) {
-                        errors.add("$sourceClass -> ${ref.ownerClassName}.<init>(${ref.descriptor}): constructor not found")
-                    }
-                } else if (ref.name != "<clinit>") {
-                    // Regular method — check name + parameter types
-                    val paramTypes = ref.parseParameterTypes(classLoader) ?: return
-                    if (!hasMethod(ownerClass, ref.name, paramTypes)) {
-                        errors.add("$sourceClass -> ${ref.ownerClassName}.${ref.name}(${ref.descriptor}): method not found")
-                    }
+                    verifyConstructor(ref, ownerClass, classLoader, sourceClass, errors)
+                } else {
+                    verifyMethod(ref, ownerClass, classLoader, sourceClass, errors)
                 }
             }
 
             ConstantPoolParser.RefType.FIELD -> {
-                if (!hasField(ownerClass, ref.name)) {
-                    errors.add(
-                        "$sourceClass -> ${ref.ownerClassName}.${ref.name}: field not found" +
-                            hintFor(ref.name),
-                    )
-                }
+                verifyField(ref, ownerClass, sourceClass, errors)
             }
         }
     }
+
+    internal fun extractCandidateMethods(
+        clazz: Class<*>,
+        methodName: String,
+    ): List<String> =
+        try {
+            val candidates =
+                (clazz.methods.asSequence() + clazz.declaredMethods.asSequence())
+                    .filter { it.name == methodName }
+                    .mapNotNull { method ->
+                        try {
+                            val params = method.parameterTypes.joinToString(",") { it.simpleName }
+                            "${method.name}($params): ${method.returnType.simpleName}"
+                        } catch (_: LinkageError) {
+                            null
+                        } catch (_: RuntimeException) {
+                            null
+                        }
+                    }.distinct()
+                    .toList()
+            if (candidates.size > 8) {
+                candidates.take(8) + "... (${candidates.size - 8} more)"
+            } else {
+                candidates
+            }
+        } catch (_: LinkageError) {
+            emptyList()
+        } catch (_: RuntimeException) {
+            emptyList()
+        }
 
     /**
      * `ai.rever.boss.plugin.runtime.*` classes ship in the OOP plugin
@@ -302,28 +335,31 @@ object BinaryCompatibilityValidator {
         }
     }
 
-    /** Check the class and its superclasses for the field. */
-    private fun hasField(
-        clazz: Class<*>,
-        name: String,
-    ): Boolean {
-        return try {
-            clazz.getField(name)
-            true
-        } catch (_: NoSuchFieldException) {
-            var current: Class<*>? = clazz
-            while (current != null) {
-                try {
-                    current.getDeclaredField(name)
-                    return true
-                } catch (_: NoSuchFieldException) {
-                    // continue
-                }
-                current = current.superclass
-            }
-            false
-        }
+    internal sealed interface FieldResolutionResult {
+        data object Found : FieldResolutionResult
+
+        data class TypeMismatch(
+            val actualDescriptor: String,
+        ) : FieldResolutionResult
+
+        data object NotFound : FieldResolutionResult
     }
+
+    /** Computes standard JVM type descriptor for a Class. */
+    internal fun typeDescriptor(clazz: Class<*>): String =
+        when {
+            clazz == java.lang.Byte.TYPE -> "B"
+            clazz == java.lang.Character.TYPE -> "C"
+            clazz == java.lang.Double.TYPE -> "D"
+            clazz == java.lang.Float.TYPE -> "F"
+            clazz == java.lang.Integer.TYPE -> "I"
+            clazz == java.lang.Long.TYPE -> "J"
+            clazz == java.lang.Short.TYPE -> "S"
+            clazz == java.lang.Boolean.TYPE -> "Z"
+            clazz == java.lang.Void.TYPE -> "V"
+            clazz.isArray -> "[${typeDescriptor(clazz.componentType)}"
+            else -> "L${clazz.name.replace('.', '/')};"
+        }
 
     /**
      * Extra context for field names whose absence has a known, non-obvious cause.
@@ -350,6 +386,299 @@ object BinaryCompatibilityValidator {
             ""
         }
 }
+
+private val logger get() = BinaryCompatibilityValidator.logger
+
+/**
+ * Up to [BinaryCompatibilityValidator.MAX_CLASS_BYTES] + 1 bytes of [entry], or null when it
+ * cannot be read at all. One byte past the cap is enough to know the cap was passed, and never
+ * more than that is held.
+ */
+private fun readBoundedOrNull(
+    jar: JarFile,
+    entry: JarEntry,
+    className: String,
+): ByteArray? {
+    val failure =
+        try {
+            return jar.getInputStream(entry).use {
+                it.readNBytes(BinaryCompatibilityValidator.MAX_CLASS_BYTES + 1)
+            }
+        } catch (e: IOException) {
+            e
+        } catch (e: SecurityException) {
+            // A signed JAR whose entry does not match its digest.
+            e
+        }
+    logger.debug(
+        LogCategory.SYSTEM,
+        "Failed to read class file",
+        mapOf("className" to className, "error" to (failure.message ?: "unknown")),
+    )
+    return null
+}
+
+/** Why [className] cannot be loaded, or null when it can. */
+private fun loadFailure(
+    className: String,
+    classLoader: ClassLoader,
+): String? =
+    try {
+        Class.forName(className, false, classLoader)
+        null
+    } catch (e: LinkageError) {
+        "$className: ${e.javaClass.simpleName} - ${e.message}"
+    } catch (e: ClassNotFoundException) {
+        "$className: ClassNotFoundException - ${e.message}"
+    }
+
+private fun resolveOwnerClass(
+    ref: ConstantPoolParser.MemberRef,
+    classLoader: ClassLoader,
+    sourceClass: String,
+    errors: MutableList<String>,
+): Class<*>? {
+    if (ref.ownerClassName.startsWith("[") || ref.ownerClassName.isEmpty()) return null
+
+    return try {
+        Class.forName(ref.ownerClassName, false, classLoader)
+    } catch (e: LinkageError) {
+        // Gate on the contract prefix, the way the ClassNotFoundException branch already does:
+        // a bundled third-party owner whose supertype is absent on the host must not disable the
+        // plugin, and `Class.forName` resolves supertypes, so this is reachable, not theoretical.
+        if (BinaryCompatibilityValidator.isSoftFailReference(ref.ownerClassName)) {
+            logger.debug(
+                LogCategory.SYSTEM,
+                "Soft-skipping runtime-package ref",
+                mapOf(
+                    "sourceClass" to sourceClass,
+                    "ref" to ref.ownerClassName,
+                    "error" to e.toString(),
+                ),
+            )
+        } else if (ref.ownerClassName.startsWith(BinaryCompatibilityValidator.OWN_CLASS_PREFIX)) {
+            errors.add("$sourceClass -> ${ref.ownerClassName}: ${e.javaClass.simpleName} - ${e.message}")
+        } else {
+            logger.debug(
+                LogCategory.SYSTEM,
+                "Soft-skipping non-contract LinkageError",
+                mapOf(
+                    "sourceClass" to sourceClass,
+                    "ref" to ref.ownerClassName,
+                    "error" to e.toString(),
+                ),
+            )
+        }
+        null
+    } catch (e: ClassNotFoundException) {
+        handleClassNotFound(ref, sourceClass, e, errors)
+        null
+    }
+}
+
+private fun handleClassNotFound(
+    ref: ConstantPoolParser.MemberRef,
+    sourceClass: String,
+    exception: ClassNotFoundException,
+    errors: MutableList<String>,
+) {
+    if (BinaryCompatibilityValidator.isSoftFailReference(ref.ownerClassName)) {
+        logger.debug(
+            LogCategory.SYSTEM,
+            "Soft-skipping runtime-package ref",
+            mapOf(
+                "sourceClass" to sourceClass,
+                "ref" to ref.ownerClassName,
+                "error" to exception.toString(),
+            ),
+        )
+    } else if (ref.ownerClassName.startsWith(BinaryCompatibilityValidator.OWN_CLASS_PREFIX)) {
+        errors.add("$sourceClass -> ${ref.ownerClassName}: class not found")
+    }
+}
+
+private fun extractCandidateConstructors(clazz: Class<*>): List<String> =
+    try {
+        val candidates =
+            clazz.declaredConstructors
+                .asSequence()
+                .mapNotNull { ctor ->
+                    try {
+                        "<init>(${ctor.parameterTypes.joinToString(",") { it.simpleName }})"
+                    } catch (_: LinkageError) {
+                        null
+                    } catch (_: RuntimeException) {
+                        null
+                    }
+                }.distinct()
+                .toList()
+        if (candidates.size > 8) {
+            candidates.take(8) + "... (${candidates.size - 8} more)"
+        } else {
+            candidates
+        }
+    } catch (_: LinkageError) {
+        emptyList()
+    } catch (_: RuntimeException) {
+        emptyList()
+    }
+
+@Suppress("SpreadOperator")
+private fun verifyConstructor(
+    ref: ConstantPoolParser.MemberRef,
+    ownerClass: Class<*>,
+    classLoader: ClassLoader,
+    sourceClass: String,
+    errors: MutableList<String>,
+) {
+    val paramTypes = ref.parseParameterTypes(classLoader) ?: return
+    val constructorExists =
+        try {
+            ownerClass.getDeclaredConstructor(*paramTypes)
+            true
+        } catch (_: NoSuchMethodException) {
+            false
+        }
+    if (!constructorExists) {
+        val available = extractCandidateConstructors(ownerClass)
+        val candidatesSuffix =
+            if (available.isNotEmpty()) {
+                ", available constructors: [${available.joinToString("; ")}]"
+            } else {
+                ""
+            }
+        errors.add(
+            "$sourceClass -> ${ref.ownerClassName}.<init>${ref.descriptor}: constructor not found" +
+                candidatesSuffix,
+        )
+    }
+}
+
+private fun verifyMethod(
+    ref: ConstantPoolParser.MemberRef,
+    ownerClass: Class<*>,
+    classLoader: ClassLoader,
+    sourceClass: String,
+    errors: MutableList<String>,
+) {
+    if (ref.name == "<clinit>") return
+    val paramTypes = ref.parseParameterTypes(classLoader) ?: return
+    if (!BinaryCompatibilityValidator.hasMethod(ownerClass, ref.name, paramTypes)) {
+        val available = BinaryCompatibilityValidator.extractCandidateMethods(ownerClass, ref.name)
+        val candidatesSuffix =
+            if (available.isNotEmpty()) {
+                ", available candidates: [${available.joinToString("; ")}]"
+            } else {
+                ""
+            }
+        errors.add(
+            "$sourceClass -> ${ref.ownerClassName}.${ref.name}${ref.descriptor}: method not found" +
+                candidatesSuffix,
+        )
+    }
+}
+
+private fun verifyField(
+    ref: ConstantPoolParser.MemberRef,
+    ownerClass: Class<*>,
+    sourceClass: String,
+    errors: MutableList<String>,
+) {
+    when (val result = resolveField(ownerClass, ref.name, ref.descriptor)) {
+        BinaryCompatibilityValidator.FieldResolutionResult.Found -> {
+            // Valid resolution per JVMS §5.4.3.2
+        }
+
+        is BinaryCompatibilityValidator.FieldResolutionResult.TypeMismatch -> {
+            errors.add(
+                "$sourceClass -> ${ref.ownerClassName}.${ref.name}:${ref.descriptor}: field type mismatch " +
+                    "(expected ${ref.descriptor}, found ${result.actualDescriptor})" +
+                    BinaryCompatibilityValidator.hintFor(ref.name),
+            )
+        }
+
+        BinaryCompatibilityValidator.FieldResolutionResult.NotFound -> {
+            errors.add(
+                "$sourceClass -> ${ref.ownerClassName}.${ref.name}:${ref.descriptor}: field not found" +
+                    BinaryCompatibilityValidator.hintFor(ref.name),
+            )
+        }
+    }
+}
+
+/**
+ * Resolves a field reference according to JVMS §5.4.3.2:
+ * 1. Search for exact (name, descriptor) match in clazz, its superinterfaces, then superclasses.
+ * 2. If missing, search for name-only match to diagnose field type mismatch.
+ * 3. Otherwise, report NotFound.
+ */
+@Suppress("TooGenericExceptionCaught")
+internal fun resolveField(
+    clazz: Class<*>,
+    name: String,
+    descriptor: String,
+): BinaryCompatibilityValidator.FieldResolutionResult =
+    try {
+        val exact = findFieldExact(clazz, name, descriptor)
+        if (exact != null) {
+            BinaryCompatibilityValidator.FieldResolutionResult.Found
+        } else {
+            val nameMatch = findFieldNameOnly(clazz, name)
+            if (nameMatch != null) {
+                BinaryCompatibilityValidator.FieldResolutionResult.TypeMismatch(
+                    BinaryCompatibilityValidator.typeDescriptor(nameMatch.type),
+                )
+            } else {
+                BinaryCompatibilityValidator.FieldResolutionResult.NotFound
+            }
+        }
+    } catch (e: LinkageError) {
+        // `declaredFields` resolves every declared field's TYPE on the class and the whole
+        // hierarchy, so an owner with any field whose type is absent on this host throws
+        // NoClassDefFoundError-class errors here - and the owner was loaded with
+        // initialize=false through a plugin classloader, exactly where that happens.
+        // `validate` only catches Exception, so an uncaught Error would escape plugin load;
+        // report it as a miss with the linkage evidence instead of disabling by crash.
+        logger.warn(
+            LogCategory.SYSTEM,
+            "Field resolution hit a linkage failure",
+            mapOf("owner" to clazz.name, "field" to name, "error" to e.toString()),
+        )
+        BinaryCompatibilityValidator.FieldResolutionResult.NotFound
+    } catch (e: RuntimeException) {
+        logger.warn(
+            LogCategory.SYSTEM,
+            "Field resolution hit a runtime failure",
+            mapOf("owner" to clazz.name, "field" to name, "error" to e.toString()),
+        )
+        BinaryCompatibilityValidator.FieldResolutionResult.NotFound
+    }
+
+/** Find a field matching both name and descriptor per JVMS §5.4.3.2. */
+internal fun findFieldExact(
+    clazz: Class<*>,
+    name: String,
+    descriptor: String,
+): java.lang.reflect.Field? =
+    clazz.declaredFields.firstOrNull { field ->
+        field.name == name && (
+            descriptor.isEmpty() ||
+                BinaryCompatibilityValidator.typeDescriptor(field.type) == descriptor
+        )
+    } ?: clazz.interfaces.firstNotNullOfOrNull {
+        findFieldExact(it, name, descriptor)
+    } ?: clazz.superclass?.let {
+        findFieldExact(it, name, descriptor)
+    }
+
+/** Find any field matching name only across class, interfaces, and superclasses. */
+internal fun findFieldNameOnly(
+    clazz: Class<*>,
+    name: String,
+): java.lang.reflect.Field? =
+    clazz.declaredFields.firstOrNull { it.name == name }
+        ?: clazz.interfaces.firstNotNullOfOrNull { findFieldNameOnly(it, name) }
+        ?: clazz.superclass?.let { findFieldNameOnly(it, name) }
 
 /**
  * Minimal JVM constant pool parser that extracts MethodRef, FieldRef,

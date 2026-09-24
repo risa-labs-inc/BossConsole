@@ -601,7 +601,19 @@ fun BossDraggableComponent.BossTopLeftBar(
                     isLoading = isGitLoading,
                     onCheckout = { branchName ->
                         scope.launch {
-                            val result = GitService.checkout(branchName, windowId = windowId)
+                            // The one write verb that already took a
+                            // projectPathOverride and wasn't passing it: the
+                            // global belongs to whichever window aligned it last,
+                            // so a second window's checkout could act on the
+                            // other window's repository. The stash verbs below
+                            // still run on the global - their signatures take
+                            // no override, which is a follow-up, not this fix.
+                            val result =
+                                GitService.checkout(
+                                    branchName,
+                                    windowId = windowId,
+                                    projectPathOverride = windowProjectPath,
+                                )
                             when (result) {
                                 is GitSuccess -> gitSuccessMessage = "Switched to '$branchName'"
                                 is GitError -> gitErrorMessage = result.message

@@ -57,14 +57,16 @@ object PerformanceMonitor {
         )
     val currentHealth: StateFlow<PerformanceHealth> = _currentHealth.asStateFlow()
 
-    // Max history entries based on retention and sample interval
-    // At 1s intervals: 10,000 entries = ~167 minutes (~2.8 hours)
-    // At 5s intervals: 10,000 entries = ~833 minutes (~14 hours)
-    // This provides a reasonable balance between memory usage and practical retention
-    private const val MAX_HISTORY_SIZE = 10_000
+    // Max history entries, bounding retained snapshots regardless of the retention
+    // setting. Entries are appended on every significant change, so at the 1s floor
+    // for the memory tick this is one hour of history; the age cap in
+    // PerformanceSettings.MAX_HISTORY_RETENTION_MINUTES bounds it the other way.
+    internal const val MAX_HISTORY_SIZE = 3_600
 
     // Use ArrayDeque as a circular buffer for efficient history management
-    // Memory implications: Each PerformanceSnapshot is ~200-300 bytes, so 10K entries ≈ 2-3 MB
+    // Memory implications: entries are compacted via PerformanceSnapshot.forHistory
+    // before they land here, so a full buffer is bounded megabytes, not the tens of
+    // megabytes a full top-thread list per entry used to cost.
     // The historyBuffer is the source of truth; _history StateFlow is updated every 10 seconds
     // to avoid excessive allocations. Each StateFlow update creates an immutable list copy.
     // For UI charts that need real-time data, use currentSnapshot instead of history.
@@ -80,11 +82,6 @@ object PerformanceMonitor {
     private var panelCountProvider: (() -> Int)? = null
     private var windowCountProvider: (() -> Int)? = null
 
-    // Detailed resource providers (registered by BossApp)
-    private var browserTabsProvider: (() -> List<BrowserTabInfo>)? = null
-    private var terminalsProvider: (() -> List<TerminalInfo>)? = null
-    private var editorTabsProvider: (() -> List<EditorTabResourceInfo>)? = null
-
     private var monitoringJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
@@ -92,6 +89,14 @@ object PerformanceMonitor {
     private var lastHistoryUpdate: Long = 0
     private var historyModified: Boolean = false // Track if buffer changed since last StateFlow update
     private const val HISTORY_UPDATE_INTERVAL_MS = 10_000L // Update history StateFlow every 10 seconds
+
+    // Thread detail and memory-pool detail refresh on their own slow cadences rather
+    // than on their metrics' ticks: both build per-entry metadata lists that only the
+    // panel's detail views read, so refreshing them every 1-2s paid full price for
+    // data nobody looks at between redraws.
+    private val threadSampler = TopThreadSampler(threadMXBean)
+    private var lastMemoryPoolScanMs: Long = 0
+    private const val MEMORY_POOL_SAMPLE_INTERVAL_MS = 10_000L
 
     private val json =
         Json {
@@ -135,9 +140,16 @@ object PerformanceMonitor {
                     var gc = _currentSnapshot.value?.gc ?: collectGcMetrics()
                     var resources = _currentSnapshot.value?.resources ?: collectResourceMetrics()
 
-                    // Sample memory
+                    // Sample memory. Pool metadata refreshes on its own slower cadence;
+                    // between scans the previous pool list is carried forward.
                     if (now - memoryTick >= settings.memorySampleIntervalMs) {
-                        memory = collectMemoryMetrics()
+                        memory =
+                            if (now - lastMemoryPoolScanMs >= MEMORY_POOL_SAMPLE_INTERVAL_MS) {
+                                lastMemoryPoolScanMs = now
+                                collectMemoryMetrics()
+                            } else {
+                                collectMemoryMetrics(memoryPools = memory.memoryPools)
+                            }
                         memoryTick = now
                     }
 
@@ -180,7 +192,12 @@ object PerformanceMonitor {
                     val shouldAddToHistory = current == null || hasSignificantChange(current, snapshot)
 
                     if (shouldAddToHistory) {
-                        val cutoff = now - (settings.historyRetentionMinutes * 60 * 1000)
+                        val retentionMinutes =
+                            minOf(
+                                settings.historyRetentionMinutes,
+                                PerformanceSettings.MAX_HISTORY_RETENTION_MINUTES,
+                            )
+                        val cutoff = now - (retentionMinutes * 60 * 1000)
 
                         // Remove old entries from front
                         while (historyBuffer.isNotEmpty() && historyBuffer.first().timestamp < cutoff) {
@@ -188,8 +205,8 @@ object PerformanceMonitor {
                             historyModified = true
                         }
 
-                        // Add new snapshot
-                        historyBuffer.addLast(snapshot)
+                        // Add the compacted form - the full snapshot stays live-only
+                        historyBuffer.addLast(snapshot.forHistory())
                         historyModified = true
 
                         // Enforce max size (shouldn't happen often with proper retention)
@@ -249,20 +266,6 @@ object PerformanceMonitor {
     }
 
     /**
-     * Register detailed resource providers from BossApp.
-     * These provide detailed information about each resource for the Resources tab.
-     */
-    fun registerDetailedResourceProviders(
-        browserTabs: () -> List<BrowserTabInfo>,
-        terminals: () -> List<TerminalInfo>,
-        editorTabs: () -> List<EditorTabResourceInfo>,
-    ) {
-        browserTabsProvider = browserTabs
-        terminalsProvider = terminals
-        editorTabsProvider = editorTabs
-    }
-
-    /**
      * Clear resource providers to prevent memory leaks.
      * Should be called when BossApp is disposed.
      */
@@ -272,27 +275,23 @@ object PerformanceMonitor {
         editorTabCountProvider = null
         panelCountProvider = null
         windowCountProvider = null
-        browserTabsProvider = null
-        terminalsProvider = null
-        editorTabsProvider = null
     }
 
-    private fun collectMemoryMetrics(): MemoryMetrics {
+    private fun collectMemoryPools(): List<MemoryPoolInfo> =
+        memoryPoolMXBeans.map { pool ->
+            val usage = pool.usage
+            MemoryPoolInfo(
+                name = pool.name,
+                type = pool.type.name,
+                usedBytes = usage?.used ?: 0L,
+                maxBytes = usage?.max ?: -1L,
+                committedBytes = usage?.committed ?: 0L,
+            )
+        }
+
+    private fun collectMemoryMetrics(memoryPools: List<MemoryPoolInfo> = collectMemoryPools()): MemoryMetrics {
         val heapUsage = memoryMXBean.heapMemoryUsage
         val nonHeapUsage = memoryMXBean.nonHeapMemoryUsage
-
-        // Collect memory pool details
-        val memoryPools =
-            memoryPoolMXBeans.map { pool ->
-                val usage = pool.usage
-                MemoryPoolInfo(
-                    name = pool.name,
-                    type = pool.type.name,
-                    usedBytes = usage?.used ?: 0L,
-                    maxBytes = usage?.max ?: -1L,
-                    committedBytes = usage?.committed ?: 0L,
-                )
-            }
 
         // Both of these are cached behind their own TTLs (ProcessFootprint.CACHE_TTL_MS and
         // SystemMemory.CACHE_TTL_MS), so sampling them on every memory tick does not spawn a
@@ -321,38 +320,8 @@ object PerformanceMonitor {
         val processLoad = sunOSBean?.processCpuLoad ?: -1.0
         val systemLoad = sunOSBean?.cpuLoad ?: osMXBean.systemLoadAverage
 
-        // Collect thread details - top 20 by CPU time
-        val threadIds = threadMXBean.allThreadIds
-        val threadInfos = threadMXBean.getThreadInfo(threadIds)
-
-        val threads =
-            threadIds
-                .zip(threadInfos.toList())
-                .filter { it.second != null }
-                .map { (id, info) ->
-                    val cpuTime =
-                        if (threadMXBean.isThreadCpuTimeSupported) {
-                            threadMXBean.getThreadCpuTime(id) / 1_000_000 // nanoseconds to milliseconds
-                        } else {
-                            0L
-                        }
-                    val userTime =
-                        if (threadMXBean.isThreadCpuTimeSupported) {
-                            threadMXBean.getThreadUserTime(id) / 1_000_000
-                        } else {
-                            0L
-                        }
-                    ThreadInfo(
-                        id = id,
-                        name = info!!.threadName,
-                        state = info.threadState.name,
-                        cpuTimeMs = cpuTime,
-                        userTimeMs = userTime,
-                        blockedCount = info.blockedCount,
-                        waitedCount = info.waitedCount,
-                    )
-                }.sortedByDescending { it.cpuTimeMs }
-                .take(20)
+        // Top threads refresh on the sampler's slower cadence, not every CPU tick.
+        val threads = threadSampler.sample()
 
         return CpuMetrics(
             processLoad = if (processLoad >= 0) processLoad else 0.0,
@@ -412,9 +381,6 @@ object PerformanceMonitor {
             editorTabCount = safeInvoke(editorTabCountProvider) { 0 },
             panelCount = safeInvoke(panelCountProvider) { 0 },
             windowCount = safeInvoke(windowCountProvider) { 0 },
-            browserTabs = safeInvoke(browserTabsProvider) { emptyList() },
-            terminals = safeInvoke(terminalsProvider) { emptyList() },
-            editorTabs = safeInvoke(editorTabsProvider) { emptyList() },
         )
 
     /**

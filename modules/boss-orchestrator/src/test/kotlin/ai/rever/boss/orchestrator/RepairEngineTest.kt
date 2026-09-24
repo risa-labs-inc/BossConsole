@@ -215,7 +215,6 @@ class RepairEngineTest {
     fun `a state reset restarts the process and names its latest snapshot`() =
         runTest {
             snapshots.save("p6", "old state".toByteArray())
-            Thread.sleep(SNAPSHOT_TIMESTAMP_GAP_MS)
             val newest = snapshots.save("p6", "newer state".toByteArray())
             val restarted = mutableListOf<String>()
 
@@ -231,7 +230,6 @@ class RepairEngineTest {
     fun `a state reset leaves every snapshot in place for a later rollback`() =
         runTest {
             val first = snapshots.save("p7", "first".toByteArray())
-            Thread.sleep(SNAPSHOT_TIMESTAMP_GAP_MS)
             val second = snapshots.save("p7", "second".toByteArray())
 
             engine().handleFailure(report("p7", RepairStrategy.REPAIR_STRATEGY_RESET_STATE))
@@ -284,9 +282,4 @@ class RepairEngineTest {
             assertEquals(emptyMap(), ai.sourceFiles)
             assertNull(AllowedRoots.of(absentRoot).resolve(File(projectRoot, "Good.kt")))
         }
-
-    private companion object {
-        /** Snapshot ordering is by millisecond timestamp, so two saves must not share one. */
-        const val SNAPSHOT_TIMESTAMP_GAP_MS = 5L
-    }
 }

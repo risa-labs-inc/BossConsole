@@ -5,6 +5,9 @@ import ai.rever.boss.ipc.BossIpcServer
 import ai.rever.boss.ipc.IpcAddressResolver
 import ai.rever.boss.ipc.auth.IpcTlsIdentity
 import ai.rever.boss.ipc.auth.ProcessTokenRegistry
+import ai.rever.boss.ipc.proto.CapabilityServiceGrpcKt
+import ai.rever.boss.ipc.proto.InvokeCapabilityRequest
+import ai.rever.boss.ipc.proto.InvokeCapabilityResponse
 import ai.rever.boss.ipc.proto.OrchestratorServiceGrpcKt
 import ai.rever.boss.ipc.proto.ProcessFailureReport
 import ai.rever.boss.ipc.proto.ProcessState
@@ -456,17 +459,17 @@ class KernelBootstrap(
                     val process = registry.getProcess(id)
                     if (process != null) {
                         if (force) process.destroyForcibly() else process.destroy()
-                        // Don't unregister — for a SERVICE/APP/ORCHESTRATOR the process monitor
-                        // will detect the exit and trigger auto-respawn if
-                        // restartPolicy == ON_FAILURE.
-                        //
-                        // PLUGIN is the exception: it is not health-supervised, so nothing
-                        // respawns it despite its config also saying ON_FAILURE, and the global
-                        // monitor prunes the dead entry instead.
+                        // Don't unregister here. SERVICE/APP/ORCHESTRATOR exits are handled by the
+                        // global monitor, which may auto-respawn when restartPolicy == ON_FAILURE.
+                        // PLUGIN exits are supervised per window by PluginProcessMonitor, while the
+                        // global monitor only prunes their dead registry entries.
                         true
                     } else {
                         false
                     }
+                },
+                onCapabilityInvocation = { request ->
+                    invokeRegisteredCapability(registry, request)
                 },
             )
         eventBusService = EventBusServiceImpl()
@@ -523,6 +526,38 @@ class KernelBootstrap(
     }
 
     /**
+     * Broker a capability invocation for a child process, through the registry this
+     * kernel actually populates (#1061): the spawner registers every child and
+     * RegisterProcess completes each manifest, so this is the only place a plugin id
+     * can resolve to a live process. The per-child local registries the mastery
+     * orchestrator once built were never populated, so every mastery execution
+     * failed "Process not found".
+     */
+    private suspend fun invokeRegisteredCapability(
+        registry: ProcessRegistry,
+        request: InvokeCapabilityRequest,
+    ): InvokeCapabilityResponse {
+        val process = registry.getProcess(request.pluginId)
+        val ipcClient = process?.ipcClient
+        if (ipcClient != null) {
+            return CapabilityServiceGrpcKt
+                .CapabilityServiceCoroutineStub(ipcClient.channel)
+                .invokeCapability(request)
+        }
+        val reason =
+            if (process == null) {
+                "Process not found: ${request.pluginId}"
+            } else {
+                "No IPC client for process: ${request.pluginId}"
+            }
+        return InvokeCapabilityResponse
+            .newBuilder()
+            .setSuccess(false)
+            .setErrorMessage(reason)
+            .build()
+    }
+
+    /**
      * Decide what to do about a crashed child, and do it.
      *
      * The orchestrator gets first say — it runs the analyzer, the escalation ladder and the
@@ -540,6 +575,12 @@ class KernelBootstrap(
         spawner: ProcessSpawner,
         failure: ProcessFailure,
     ) {
+        // The dead child's registration in the kernel service must go now: it is otherwise
+        // removed only on a successful requestShutdown, so a dead id would keep reporting
+        // RUNNING and every later child would keep receiving its stale ipcAddress (#1180).
+        // Evicted before any respawn so the replacement's fresh registration is never dropped.
+        kernelService?.deregisterProcess(failure.processId)
+
         val process = registry.getProcess(failure.processId)
         if (process == null || process.config.restartPolicy != RestartPolicy.ON_FAILURE) {
             logger.error(

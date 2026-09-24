@@ -152,7 +152,11 @@ export const PublishPluginRequestSchema = z.object({
   pluginId: z.string().min(3).max(100).regex(/^[a-z0-9.-]+$/i, 'Plugin ID must contain only alphanumeric characters, dots, and hyphens'),
   displayName: z.string().min(1).max(100),
   description: z.string().max(5000).optional().default(''),
-  authorName: z.string().min(1).max(100).optional(), // Optional custom author name, defaults to email username
+  // Accepted but IGNORED: the stored author name is always derived from the
+  // authenticated user, because a self-asserted name lets a publisher claim
+  // an org or "BOSS Team" it does not belong to. Kept in the schema so
+  // existing clients do not have to stop sending it.
+  authorName: z.string().min(1).max(100).optional(),
   homepageUrl: z.string().url('homepageUrl must be a valid URL (required for publishing)'),
   iconUrl: z.union([z.string().url(), z.literal('')]).optional().default(''),
   type: PluginTypeSchema.optional().default('panel'),

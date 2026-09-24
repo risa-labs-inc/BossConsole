@@ -37,6 +37,12 @@ enum class AuthScreen {
 fun AuthScreenContainer(onLoginSuccess: () -> Unit) {
     // Use a stable key to prevent ViewModel recreation during AuthState changes
     val viewModel = remember("login_viewmodel") { LoginViewModel() }
+    // The ViewModel owns coroutine scopes that must not outlive this screen: without this, an
+    // in-flight sign-in could run its onSuccess (navigation) or mutate state after the screen is
+    // gone, and every sign-out/sign-in cycle would leak the scopes.
+    DisposableEffect(viewModel) {
+        onDispose { viewModel.dispose() }
+    }
     var currentScreen by remember { mutableStateOf(AuthScreen.LOGIN) }
     var magicLinkEmail by remember { mutableStateOf("") }
     var passkeyEmail by remember { mutableStateOf("") }
@@ -75,7 +81,8 @@ fun AuthScreenContainer(onLoginSuccess: () -> Unit) {
     val deepLink by DeepLinkHandler.deepLinkFlow.collectAsState()
     LaunchedEffect(deepLink, currentScreen) {
         val link = deepLink
-        if (currentScreen == AuthScreen.MAGIC_LINK_WAITING && link != null && link.contains("auth/verify")) {
+        val isMagicLinkCallback = link != null && AuthDeepLinks.parse(link) is AuthDeepLink.MagicLinkVerify
+        if (currentScreen == AuthScreen.MAGIC_LINK_WAITING && isMagicLinkCallback) {
             logger.debug(LogCategory.AUTH, "Received deep link while on waiting screen")
             // Deep link will be processed by BossAppWithAuth, just clear it here to avoid reprocessing
             DeepLinkHandler.clearDeepLink()

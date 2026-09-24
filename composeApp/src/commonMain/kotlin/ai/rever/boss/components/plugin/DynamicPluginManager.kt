@@ -30,6 +30,7 @@ import ai.rever.boss.plugin.sandbox.SandboxConfig
 import ai.rever.boss.plugin.sandbox.ui.PluginCrashRegistry
 import ai.rever.boss.plugin.sandbox.ui.PluginRecoveryQuarantine
 import ai.rever.boss.services.auth.AuthStateManager
+import ai.rever.boss.services.supabase.models.UserInfo
 import ai.rever.boss.utils.AppVersion
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -97,6 +98,11 @@ interface OutOfProcessPluginSpawner {
      * Terminate the child process for the given plugin.
      */
     suspend fun terminate(pluginId: String): Result<Unit>
+
+    /**
+     * Stop background supervision owned by this spawner.
+     */
+    fun dispose() = Unit
 }
 
 /**
@@ -121,6 +127,7 @@ class DynamicPluginManager(
     internal val sandboxManager: PluginSandboxManager,
     private val createSandboxedContext: (pluginId: String, config: SandboxConfig) -> PluginContext,
     private val outOfProcessSpawner: OutOfProcessPluginSpawner? = null,
+    private val accessUsers: StateFlow<UserInfo?> = AuthStateManager.currentUser,
 ) {
     private val logger = BossLogger.forComponent("DynamicPluginManager")
 
@@ -133,6 +140,12 @@ class DynamicPluginManager(
      * Mutex for plugin operations to prevent race conditions.
      */
     private val mutex = Mutex()
+
+    private val oopLifecycleLocks = ConcurrentHashMap<String, Mutex>()
+
+    private val initialOopSpawnTickets = ConcurrentHashMap<String, Any>()
+
+    private fun oopLifecycleLock(pluginId: String): Mutex = oopLifecycleLocks.computeIfAbsent(pluginId) { Mutex() }
 
     /**
      * The underlying plugin loader.
@@ -771,7 +784,7 @@ class DynamicPluginManager(
         // reconcile plugin visibility whenever either changes.
         managerScope.launch(Dispatchers.Main) {
             val transitions = PluginAccessTransitions()
-            AuthStateManager.currentUser
+            accessUsers
                 .map { user ->
                     PluginAccessSnapshot(user?.id, user?.isAdmin == true, user?.permissions?.toSet() ?: emptySet())
                 }.distinctUntilChanged()
@@ -897,6 +910,41 @@ class DynamicPluginManager(
                     ai.rever.boss.plugin.api.Version
                         .parse(incoming.version)
                 if (installed != null && candidate != null && candidate > installed) {
+                    // Pre-check the trust gate BEFORE paying for the swap: it
+                    // unloads every plugin in every manager and re-runs
+                    // fromPluginDir, which now refuses unverifiable jars. A
+                    // swap triggered by this jar's manifest version that the
+                    // gate cannot verify would tear everything down and land
+                    // on an older jar or an empty layer - strictly worse
+                    // than the layer we just unloaded (BossConsole#851).
+                    val swapDir = java.io.File(jarPath).parentFile ?: java.io.File(".")
+                    // selectApiJar owns the enforce/rollback lever, so this
+                    // pre-check agrees with what the swap's fromPluginDir will
+                    // actually install; with the lever off, the pre-gate swap
+                    // behaviour is restored end-to-end (round-3 review).
+                    val verified =
+                        ai.rever.boss.plugin.loader.ApiClassLoader
+                            .selectApiJar(swapDir)
+                    val gateEnforced =
+                        ai.rever.boss.plugin.loader.ApiClassLoader
+                            .isGateEnforced()
+                    if (verified == null || (gateEnforced && verified.version < candidate)) {
+                        logger.warn(
+                            LogCategory.SYSTEM,
+                            "Newer api jar has no trust proof that verifies over its " +
+                                "claimed identity - refusing the hot swap rather than " +
+                                "degrading the live API layer",
+                            mapOf(
+                                "incomingVersion" to candidate.toString(),
+                                "newestVerifiedVersion" to (verified?.version?.toString() ?: "none"),
+                            ),
+                        )
+                        return Result.failure(
+                            IllegalStateException(
+                                "api jar $candidate cannot be verified; the API layer was not swapped",
+                            ),
+                        )
+                    }
                     logger.info(
                         LogCategory.SYSTEM,
                         "Newer api plugin installed - hot-swapping the API layer",
@@ -905,15 +953,17 @@ class DynamicPluginManager(
                             "to" to candidate.toString(),
                         ),
                     )
-                    hotSwapApiLayer(java.io.File(jarPath).parentFile ?: java.io.File(".")).onFailure {
+                    hotSwapApiLayer(swapDir).onFailure {
                         return Result.failure(it)
                     }
                     // If the swap's snapshot contained the api plugin, it was
-                    // already reloaded — return that entry. The update bridge
-                    // however UNINSTALLS the api plugin before handing us the
-                    // new jar, so the snapshot may have lacked it: fall through
-                    // to a normal install (versions are now equal, so the
-                    // trigger won't re-fire) to (re)create the plugin entry.
+                    // already reloaded - return that entry. Store updates can no
+                    // longer reach this route (the update bridge never offers a
+                    // protected id, and UpdateJarIdentityVet refuses such a jar),
+                    // but a deferred-restart snapshot may still lack the api
+                    // plugin: fall through to a normal install (versions are now
+                    // equal, so the trigger won't re-fire) to (re)create the
+                    // plugin entry.
                     getPluginInfo(ai.rever.boss.plugin.loader.ApiClassLoader.API_PLUGIN_ID)
                         ?.let { return Result.success(it) }
                 }
@@ -1021,38 +1071,19 @@ class DynamicPluginManager(
                                 )
                             trackingContexts[manifest.pluginId] = trackingContext
 
-                            try {
-                                loadedPlugin.instance.register(trackingContext)
-                            } catch (e: Exception) {
-                                logger.error(
-                                    LogCategory.SYSTEM,
-                                    "Plugin registration failed in split-brain mode",
-                                    mapOf(
-                                        "pluginId" to manifest.pluginId,
-                                    ),
-                                    e,
-                                )
-                            }
+                            val shouldActivate = enabled && canAccess(manifest)
 
-                            // Spawn child process in background — don't block plugin loading
-                            managerScope.launch {
-                                val spawnResult = spawner.spawn(manifest, jarPath)
-                                if (spawnResult.isFailure) {
-                                    logger.warn(
+                            if (shouldActivate) {
+                                try {
+                                    loadedPlugin.instance.register(trackingContext)
+                                } catch (e: Exception) {
+                                    logger.error(
                                         LogCategory.SYSTEM,
-                                        "Background OOP spawn failed",
-                                        mapOf(
-                                            "pluginId" to manifest.pluginId,
-                                            "error" to (spawnResult.exceptionOrNull()?.message ?: "unknown"),
-                                        ),
-                                    )
-                                } else {
-                                    logger.info(
-                                        LogCategory.SYSTEM,
-                                        "Background OOP spawn succeeded",
+                                        "Plugin registration failed in split-brain mode",
                                         mapOf(
                                             "pluginId" to manifest.pluginId,
                                         ),
+                                        e,
                                     )
                                 }
                             }
@@ -1061,11 +1092,73 @@ class DynamicPluginManager(
                                 DynamicPluginInfo(
                                     manifest = manifest,
                                     jarPath = jarPath,
-                                    state = if (enabled) PluginState.LOADED else PluginState.DISABLED,
+                                    state = if (shouldActivate) PluginState.LOADED else PluginState.DISABLED,
                                     loadedAt = System.currentTimeMillis(),
                                     enabled = enabled,
                                 )
+
+                            if (enabled && !shouldActivate) {
+                                hiddenPlugins[manifest.pluginId] = info
+                                val missing = missingPermissions(manifest)
+                                logger.info(
+                                    LogCategory.SYSTEM,
+                                    "Plugin hidden (insufficient access)",
+                                    mapOf(
+                                        "pluginId" to manifest.pluginId,
+                                        "requiresAdmin" to manifest.requiresAdmin,
+                                        "requiredPermissions" to
+                                            manifest.requiredPermissions.joinToString(","),
+                                        "missingPermissions" to missing.joinToString(","),
+                                        "hint" to
+                                            if (missing.isNotEmpty()) {
+                                                "Ask an admin to grant: ${missing.joinToString(", ")}"
+                                            } else {
+                                                "Requires admin"
+                                            },
+                                    ),
+                                )
+                            }
+
                             updatePluginState(manifest.pluginId, info)
+                            if (shouldActivate) {
+                                val spawnTicket = Any()
+                                initialOopSpawnTickets[manifest.pluginId] = spawnTicket
+
+                                // Spawn child process in background — don't block plugin loading
+                                // Serialize this plugin's spawn with Disable without blocking other plugins.
+                                managerScope.launch {
+                                    oopLifecycleLock(manifest.pluginId).withLock {
+                                        if (!initialOopSpawnTickets.remove(manifest.pluginId, spawnTicket)) {
+                                            return@withLock
+                                        }
+                                        val current = _pluginStates.value[manifest.pluginId]
+                                        if (current?.state != PluginState.LOADED ||
+                                            !current.enabled ||
+                                            !canAccess(manifest)
+                                        ) {
+                                            return@withLock
+                                        }
+
+                                        val spawnResult = spawner.spawn(manifest, jarPath)
+                                        if (spawnResult.isFailure) {
+                                            logger.warn(
+                                                LogCategory.SYSTEM,
+                                                "Background OOP spawn failed",
+                                                mapOf(
+                                                    "pluginId" to manifest.pluginId,
+                                                    "error" to (spawnResult.exceptionOrNull()?.message ?: "unknown"),
+                                                ),
+                                            )
+                                        } else {
+                                            logger.info(
+                                                LogCategory.SYSTEM,
+                                                "Background OOP spawn succeeded",
+                                                mapOf("pluginId" to manifest.pluginId),
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                             notifyListeners { it.pluginLoaded(manifest) }
                             emitPluginLifecycle(manifest.pluginId, PluginLifecycleState.LOADED)
 
@@ -1540,9 +1633,18 @@ class DynamicPluginManager(
                     // Complete teardown before reload can create a replacement sandbox for this ID.
                     sandboxManager.removeSandbox(pluginId)
 
-                    // Terminate out-of-process child if applicable
+                    // Terminate the out-of-process child before unloading its plugin.
                     if (manifest.isolationMode == "out-of-process") {
-                        outOfProcessSpawner?.terminate(pluginId)
+                        outOfProcessSpawner
+                            ?.terminate(pluginId)
+                            ?.onFailure { error ->
+                                logger.warn(
+                                    LogCategory.SYSTEM,
+                                    "Failed to terminate out-of-process plugin",
+                                    mapOf("pluginId" to pluginId),
+                                    error = error,
+                                )
+                            }
                     }
 
                     // Unload the plugin
@@ -1612,6 +1714,12 @@ class DynamicPluginManager(
                         trackingContexts[pluginId]
                             ?: return@withLock Result.failure(Exception("No context for plugin: $pluginId"))
 
+                    if (!canAccess(loadedPlugin.manifest)) {
+                        return@withLock Result.failure(
+                            IllegalStateException("Insufficient access to enable plugin: $pluginId"),
+                        )
+                    }
+
                     // Keyed off the `enabled` flag, same as before this PR: the only case
                     // where the flag is set while the plugin is not actually running is the
                     // RBAC hide (state = DISABLED, `enabled` left true) - and that path must
@@ -1634,6 +1742,8 @@ class DynamicPluginManager(
                     // Enable sandbox
                     sandboxManager.enablePlugin(pluginId)
 
+                    spawnOopOnEnable(pluginId, wasAlreadyEnabled)
+
                     // Clear prior crash state on successful re-enable, on BOTH axes.
                     //
                     // clearIncompatible alone left hasCrashed(pluginId) true, so a
@@ -1655,17 +1765,7 @@ class DynamicPluginManager(
                     PluginCrashRegistry.clearCrash(pluginId)
                     PluginRecoveryQuarantine.clear(pluginId)
 
-                    // Update state
-                    val currentInfo = _pluginStates.value[pluginId]
-                    if (currentInfo != null) {
-                        updatePluginState(
-                            pluginId,
-                            currentInfo.copy(
-                                state = PluginState.LOADED,
-                                enabled = true,
-                            ),
-                        )
-                    }
+                    publishEnabledState(pluginId)
 
                     Result.success(Unit)
                 } catch (e: Throwable) {
@@ -1682,6 +1782,7 @@ class DynamicPluginManager(
                     // providers already registered) before throwing — tear those down so a
                     // "disabled" plugin can't leave agent-callable MCP tools live.
                     runCatching { trackingContexts[pluginId]?.unregisterAll() }
+                    rollbackFailedOopEnable(pluginId, wasAlreadyEnabled)
                     Result.failure(e)
                 }
             }
@@ -1703,6 +1804,52 @@ class DynamicPluginManager(
             notifyPluginActivated(activatedManifest)
         }
         return result
+    }
+
+    private suspend fun rollbackFailedOopEnable(
+        pluginId: String,
+        wasAlreadyEnabled: Boolean,
+    ) {
+        // Restores the sandbox to disabled. It does not terminate an OOP child that a
+        // step after spawnOopOnEnable orphaned - today nothing between the spawn and
+        // publishEnabledState suspends or throws, so that window is empty; if a
+        // suspending step is ever added there, the rollback must stop the child too.
+        if (!wasAlreadyEnabled &&
+            _pluginStates.value[pluginId]?.manifest?.isolationMode == "out-of-process"
+        ) {
+            withContext(NonCancellable) {
+                runCatching { sandboxManager.disablePlugin(pluginId).getOrThrow() }
+                    .onFailure { rollbackError ->
+                        logger.error(
+                            LogCategory.SYSTEM,
+                            "Failed to restore disabled OOP sandbox",
+                            mapOf("pluginId" to pluginId),
+                            rollbackError,
+                        )
+                    }
+            }
+        }
+    }
+
+    private fun publishEnabledState(pluginId: String) {
+        val currentInfo = _pluginStates.value[pluginId] ?: return
+        updatePluginState(
+            pluginId,
+            currentInfo.copy(
+                state = PluginState.LOADED,
+                enabled = true,
+            ),
+        )
+    }
+
+    private suspend fun spawnOopOnEnable(
+        pluginId: String,
+        wasAlreadyEnabled: Boolean,
+    ) {
+        val info = _pluginStates.value[pluginId]
+        if (!wasAlreadyEnabled && info?.manifest?.isolationMode == "out-of-process") {
+            outOfProcessSpawner?.spawn(info.manifest, info.jarPath)?.getOrThrow()
+        }
     }
 
     /**
@@ -1819,6 +1966,22 @@ class DynamicPluginManager(
         // `as? InProcessPluginSandbox` silently did nothing at all for an
         // out-of-process sandbox. disablePlugin does all three and stops the
         // watchdog.
+        if (info.manifest.isolationMode == "out-of-process") {
+            oopLifecycleLock(pluginId).withLock {
+                initialOopSpawnTickets.remove(pluginId)
+                val stopped = outOfProcessSpawner?.terminate(pluginId)
+                if (stopped?.isFailure == true) {
+                    logger.warn(
+                        LogCategory.SYSTEM,
+                        "Failed to stop OOP child after re-registration failure",
+                        mapOf(
+                            "pluginId" to pluginId,
+                            "error" to (stopped.exceptionOrNull()?.message ?: "unknown"),
+                        ),
+                    )
+                }
+            }
+        }
         sandboxManager.disablePlugin(pluginId)
         updatePluginState(pluginId, info.copy(state = PluginState.DISABLED, enabled = false))
     }
@@ -1868,40 +2031,69 @@ class DynamicPluginManager(
      */
     suspend fun disablePlugin(pluginId: String): Result<Unit> {
         return mutex.withLock {
-            try {
-                val trackingContext =
-                    trackingContexts[pluginId]
-                        ?: return@withLock Result.failure(Exception("No context for plugin: $pluginId"))
+            oopLifecycleLock(pluginId).withLock lifecycle@{
+                // The real spawner's terminate() disarms the restart monitor and kills
+                // the child at entry, so once it has been INVOKED the child is stopped
+                // even when the call reports failure - and a plugin recorded LOADED
+                // would never be re-monitored (monitor() only runs from a spawn),
+                // leaving supervision silently off. The flag is set before the call
+                // for exactly that reason: every failure at or after it must land the
+                // plugin in the DISABLED state.
+                var oopChildStopped = false
+                try {
+                    val trackingContext =
+                        trackingContexts[pluginId]
+                            ?: return@lifecycle Result.failure(Exception("No context for plugin: $pluginId"))
 
-                // Unregister all panels and tabs
-                trackingContext.unregisterAll()
+                    val info = _pluginStates.value[pluginId]
+                    if (info?.manifest?.isolationMode == "out-of-process") {
+                        initialOopSpawnTickets.remove(pluginId)
+                        oopChildStopped = true
+                        outOfProcessSpawner?.terminate(pluginId)?.getOrThrow()
+                    }
 
-                // Disable sandbox
-                sandboxManager.disablePlugin(pluginId)
+                    // Unregister all panels and tabs
+                    trackingContext.unregisterAll()
 
-                // Update state
-                val currentInfo = _pluginStates.value[pluginId]
-                if (currentInfo != null) {
-                    updatePluginState(
-                        pluginId,
-                        currentInfo.copy(
-                            state = PluginState.DISABLED,
-                            enabled = false,
+                    // Disable sandbox
+                    sandboxManager.disablePlugin(pluginId)
+
+                    // Update state
+                    val currentInfo = _pluginStates.value[pluginId]
+                    if (currentInfo != null) {
+                        updatePluginState(
+                            pluginId,
+                            currentInfo.copy(
+                                state = PluginState.DISABLED,
+                                enabled = false,
+                            ),
+                        )
+                    }
+
+                    Result.success(Unit)
+                } catch (e: Exception) {
+                    logger.error(
+                        LogCategory.SYSTEM,
+                        "Failed to disable plugin",
+                        mapOf(
+                            "pluginId" to pluginId,
                         ),
+                        e,
                     )
+                    if (oopChildStopped) {
+                        val currentInfo = _pluginStates.value[pluginId]
+                        if (currentInfo != null) {
+                            updatePluginState(
+                                pluginId,
+                                currentInfo.copy(
+                                    state = PluginState.DISABLED,
+                                    enabled = false,
+                                ),
+                            )
+                        }
+                    }
+                    Result.failure(e)
                 }
-
-                Result.success(Unit)
-            } catch (e: Exception) {
-                logger.error(
-                    LogCategory.SYSTEM,
-                    "Failed to disable plugin",
-                    mapOf(
-                        "pluginId" to pluginId,
-                    ),
-                    e,
-                )
-                Result.failure(e)
             }
         }
     }
@@ -2050,6 +2242,20 @@ class DynamicPluginManager(
      * Check if a plugin is installed.
      */
     fun isInstalled(pluginId: String): Boolean = _pluginStates.value.containsKey(pluginId)
+
+    /**
+     * Whether the loader still holds this plugin's classes, which is NOT what [isInstalled] asks.
+     *
+     * [isInstalled] reports whether a manager entry exists. This reports whether the id is resident
+     * in [pluginLoader], and the two diverge in the case that matters: `disablePlugin` unregisters
+     * panels and flips the state to DISABLED but never unloads, so a user-disabled plugin keeps its
+     * id in the loader. Any later `loadPlugin` for that id is refused with
+     * `PluginLoadException.ALREADY_LOADED_PREFIX`, however the manager state reads.
+     *
+     * The wizard asks this before it touches an installed artifact, because a refusal that arrives
+     * afterwards cannot undo what the install already overwrote.
+     */
+    fun isPluginResident(pluginId: String): Boolean = pluginLoader.isLoaded(pluginId)
 
     /**
      * Get installed plugins visible to the current user.
@@ -2381,6 +2587,9 @@ class DynamicPluginManager(
             ),
         )
 
+        // Stop OOP supervision before teardown starts so a crash cannot race shutdown.
+        outOfProcessSpawner?.dispose()
+
         // Uninstall all plugins
         for (pluginId in _pluginStates.value.keys.toList()) {
             uninstallPlugin(
@@ -2421,31 +2630,38 @@ class DynamicPluginManager(
                 val trackingContext = trackingContexts[pluginId]
                 val loadedPlugin = pluginLoader.getPlugin(pluginId)
                 if (trackingContext != null && loadedPlugin != null) {
-                    try {
-                        loadedPlugin.instance.register(trackingContext)
-                        updatePluginState(pluginId, info.copy(state = PluginState.LOADED))
-                        hiddenPlugins.remove(pluginId)
-                        reactivated += info.manifest
-                        logger.info(
-                            LogCategory.SYSTEM,
-                            "Re-registered plugin after access gained",
-                            mapOf(
-                                "pluginId" to pluginId,
-                            ),
-                        )
-                    } catch (e: Throwable) {
-                        logger.error(
-                            LogCategory.SYSTEM,
-                            "Failed to re-register plugin",
-                            mapOf(
-                                "pluginId" to pluginId,
-                                "errorType" to e.javaClass.simpleName,
-                            ),
-                            e,
-                        )
-                        // Partial register() must not leave stray registrations (incl.
-                        // agent-callable MCP tool providers) for a plugin still hidden.
-                        runCatching { trackingContext.unregisterAll() }
+                    oopLifecycleLock(pluginId).withLock {
+                        try {
+                            loadedPlugin.instance.register(trackingContext)
+                            if (info.manifest.isolationMode == "out-of-process") {
+                                outOfProcessSpawner
+                                    ?.spawn(info.manifest, info.jarPath)
+                                    ?.getOrThrow()
+                            }
+                            updatePluginState(pluginId, info.copy(state = PluginState.LOADED))
+                            hiddenPlugins.remove(pluginId)
+                            reactivated += info.manifest
+                            logger.info(
+                                LogCategory.SYSTEM,
+                                "Re-registered plugin after access gained",
+                                mapOf(
+                                    "pluginId" to pluginId,
+                                ),
+                            )
+                        } catch (e: Throwable) {
+                            logger.error(
+                                LogCategory.SYSTEM,
+                                "Failed to re-register plugin",
+                                mapOf(
+                                    "pluginId" to pluginId,
+                                    "errorType" to e.javaClass.simpleName,
+                                ),
+                                e,
+                            )
+                            // Partial register() must not leave stray registrations (incl.
+                            // agent-callable MCP tool providers) for a plugin still hidden.
+                            runCatching { trackingContext.unregisterAll() }
+                        }
                     }
                 }
             }
@@ -2456,26 +2672,29 @@ class DynamicPluginManager(
                     info.enabled && !hiddenPlugins.containsKey(pluginId) && !canAccess(info.manifest)
                 }
             for ((pluginId, info) in nowHidden) {
-                val trackingContext = trackingContexts[pluginId]
-                if (trackingContext != null) {
-                    trackingContext.unregisterAll()
-                    hiddenPlugins[pluginId] = info
-                    updatePluginState(pluginId, info.copy(state = PluginState.DISABLED))
-                    val missing = missingPermissions(info.manifest)
-                    logger.info(
-                        LogCategory.SYSTEM,
-                        "Hid plugin after access lost",
-                        mapOf(
-                            "pluginId" to pluginId,
-                            "missingPermissions" to missing.joinToString(","),
-                            "hint" to
-                                if (missing.isNotEmpty()) {
-                                    "Ask an admin to grant: ${missing.joinToString(", ")}"
-                                } else {
-                                    "Requires admin"
-                                },
-                        ),
-                    )
+                oopLifecycleLock(pluginId).withLock {
+                    val trackingContext = trackingContexts[pluginId]
+                    if (trackingContext != null) {
+                        terminateOopAfterAccessLoss(pluginId, info)
+                        trackingContext.unregisterAll()
+                        hiddenPlugins[pluginId] = info
+                        updatePluginState(pluginId, info.copy(state = PluginState.DISABLED))
+                        val missing = missingPermissions(info.manifest)
+                        logger.info(
+                            LogCategory.SYSTEM,
+                            "Hid plugin after access lost",
+                            mapOf(
+                                "pluginId" to pluginId,
+                                "missingPermissions" to missing.joinToString(","),
+                                "hint" to
+                                    if (missing.isNotEmpty()) {
+                                        "Ask an admin to grant: ${missing.joinToString(", ")}"
+                                    } else {
+                                        "Requires admin"
+                                    },
+                            ),
+                        )
+                    }
                 }
             }
         }
@@ -2483,6 +2702,26 @@ class DynamicPluginManager(
         // the successfully registered manifests, outside the lock and off the UI thread.
         if (reportMissingDependencies) {
             for (manifest in reactivated) notifyPluginActivated(manifest)
+        }
+    }
+
+    private suspend fun terminateOopAfterAccessLoss(
+        pluginId: String,
+        info: DynamicPluginInfo,
+    ) {
+        if (info.manifest.isolationMode != "out-of-process") return
+
+        initialOopSpawnTickets.remove(pluginId)
+        val stopped = outOfProcessSpawner?.terminate(pluginId)
+        if (stopped?.isFailure == true) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Failed to stop OOP child after access lost",
+                mapOf(
+                    "pluginId" to pluginId,
+                    "error" to (stopped.exceptionOrNull()?.message ?: "unknown"),
+                ),
+            )
         }
     }
 

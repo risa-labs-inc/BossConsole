@@ -1,5 +1,12 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { hashApiKey, isValidApiKeyFormat, type ApiKeyScope } from "./api-key.ts"
+import {
+  auditAction,
+  auditClientIp,
+  auditErrorMessage,
+  auditPluginId,
+  auditUserAgent,
+} from "./audit-shape.ts"
 import { permissionDeniedMessage } from "./permissions.ts"
 
 /**
@@ -381,13 +388,23 @@ export async function getAuthenticatedUser(
 /**
  * Log an API key action for audit trail
  *
+ * plugin_api_key_logs is an audit table: every field is allowlist-shaped at
+ * this single persistence boundary before it reaches the database
+ * (utils/audit-shape.ts). The client address comes only from a hop the edge
+ * trusts (cf-connecting-ip, else the RIGHTMOST x-forwarded-for entry - the
+ * leftmost is whatever the caller typed); the user agent is bounded and
+ * control-char free; the plugin id persists only when id-shaped; the action
+ * must be a server word; error text is bounded. A client with a valid key
+ * can no longer park arbitrary caller-chosen content in the audit trail
+ * through headers or ids.
+ *
  * @param supabase - Supabase client with service role
  * @param apiKeyId - The API key ID (from AuthResult.apiKeyId)
- * @param action - The action being performed
- * @param pluginId - Optional plugin ID being acted on
- * @param request - Optional request for IP/user-agent extraction
+ * @param action - The action being performed (server constant; shaped)
+ * @param pluginId - Optional plugin ID being acted on (shaped; null when non-id)
+ * @param request - Optional request for IP/user-agent extraction (trusted hops only)
  * @param success - Whether the action succeeded
- * @param errorMessage - Optional error message if action failed
+ * @param errorMessage - Optional error message if action failed (bounded)
  */
 export async function logApiKeyAction(
   supabase: SupabaseClient,
@@ -399,19 +416,20 @@ export async function logApiKeyAction(
   errorMessage?: string
 ): Promise<void> {
   try {
-    const ipAddress = request?.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-      request?.headers.get("cf-connecting-ip") ||
-      null
-    const userAgent = request?.headers.get("user-agent") || null
+    const ipAddress = auditClientIp(
+      request?.headers.get("cf-connecting-ip"),
+      request?.headers.get("x-forwarded-for"),
+    )
+    const userAgent = auditUserAgent(request?.headers.get("user-agent"))
 
     await supabase.rpc("log_api_key_action", {
       p_api_key_id: apiKeyId,
-      p_action: action,
-      p_plugin_id: pluginId || null,
+      p_action: auditAction(action),
+      p_plugin_id: auditPluginId(pluginId),
       p_ip_address: ipAddress,
       p_user_agent: userAgent,
       p_success: success,
-      p_error_message: errorMessage || null,
+      p_error_message: auditErrorMessage(errorMessage),
     })
   } catch (e) {
     // Don't fail the request if logging fails

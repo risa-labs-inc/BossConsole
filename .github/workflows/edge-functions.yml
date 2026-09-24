@@ -9,8 +9,11 @@ name: ⚡ Edge Functions
 # job existed, which is the argument for having it.
 
 on:
+  # PRs validate dev/develop integration; main pushes validate the merged tree.
+  # Do not add dev here: dev -> main would enqueue the same macOS work twice.
+  # For a branch without a PR, use workflow_dispatch. See docs/ci-validation.md.
   push:
-    branches: [ main, dev ]
+    branches: [main]
     paths:
       - 'supabase/functions/**'
       # The function's behaviour is coupled to the passkey migrations (columns,
@@ -18,12 +21,17 @@ on:
       - 'supabase/migrations/**'
       - '.github/workflows/edge-functions.yml'
   pull_request:
-    branches: [ main, dev ]
+    branches: [main, dev, develop]
     paths:
       - 'supabase/functions/**'
       - 'supabase/migrations/**'
       - '.github/workflows/edge-functions.yml'
   workflow_dispatch:
+
+# Cancel only obsolete PR validation; never cancel main or manual validation.
+concurrency:
+  group: edge-functions-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   passkey:

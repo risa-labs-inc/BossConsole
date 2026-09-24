@@ -155,7 +155,7 @@ class PluginRenderRecoveryTest {
     }
 
     @Test
-    fun `settling survives the boundary unmounting before queued work fails`() {
+    fun `settling survives boundary unmounting but releases the suspect after grace`() {
         val unmount = PluginRenderRecovery.registerMounted("plugin.a")
         PluginRenderRecovery.onUnattributedRenderException(error, now = 1_000)
         PluginRenderRecovery.onUnattributedRenderException(error, now = 2_000)
@@ -169,6 +169,30 @@ class PluginRenderRecoveryTest {
             "disposed mount bookkeeping must not turn an in-flight plugin fault into a host fault",
         )
         assertTrue(PluginCrashRegistry.hasCrashed("plugin.a"), "the quarantined culprit must remain held")
+
+        // Still inside the rebuild grace of the quarantine: this could be a straggler
+        // from the suspect's own draining subtree, so it must not un-quarantine it.
+        assertIs<PluginRenderRecovery.Outcome.NotPluginRelated>(
+            PluginRenderRecovery.onUnattributedRenderException(error, now = 2_251),
+        )
+        assertTrue(
+            PluginCrashRegistry.hasCrashed("plugin.a"),
+            "a fault inside the rebuild grace must not release the suspect it could belong to",
+        )
+
+        // Past the grace, the next fault is its own incident: the held suspect was
+        // innocent and must be released, or it would stay paused forever. Anchor
+        // the grace period on the quarantine at 2_000, which re-stamps lastRebuildAt.
+        assertIs<PluginRenderRecovery.Outcome.NotPluginRelated>(
+            PluginRenderRecovery.onUnattributedRenderException(
+                error,
+                now = 2_000 + PluginRenderRecovery.REBUILD_GRACE_MILLIS + 1,
+            ),
+        )
+        assertFalse(
+            PluginCrashRegistry.hasCrashed("plugin.a"),
+            "an unmounted suspect must not remain paused after its rebuild grace expires",
+        )
     }
 
     @Test

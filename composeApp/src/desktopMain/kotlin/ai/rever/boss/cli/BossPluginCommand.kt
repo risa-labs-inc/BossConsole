@@ -247,7 +247,7 @@ class BossPluginLinkCommand : CliktCommand(name = "link") {
         val pluginId = manifest.pluginId
 
         // Version-rotated staging to prevent Windows file locking collisions
-        val pluginDevBase = File(DevPluginArtifacts.stagingRoot(), pluginId)
+        val pluginDevBase = DevPluginArtifacts.pluginDevDir(pluginId)
         val timestamp = System.currentTimeMillis()
         val versionDir = File(pluginDevBase, "v$timestamp")
         if (!versionDir.exists() && !versionDir.mkdirs()) {

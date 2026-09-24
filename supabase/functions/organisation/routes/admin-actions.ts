@@ -310,11 +310,16 @@ adminActionRoutes.post("/o/:slug/admin/invites/create", async (ctx) => {
   const token = typeof result.data.token === "string" ? result.data.token : null
   if (!token) return redirectTo(facts, session.slug, { err: "rejected" })
 
-  // An ABSOLUTE url: this one is copied out of the browser and sent to someone else, so a bare
-  // path is unusable, and the token is shown exactly once.
-  const inviteUrl = `${
-    publicBaseUrl(ctx.req.url, ctx.req.header("x-forwarded-host") ?? ctx.req.header("host") ?? null, facts.secure)
-  }/join/${encodeURIComponent(token)}`
+  // The invite link. Absolute ONLY when ORG_PUBLIC_BASE_URL is configured --
+  // publicBaseUrl() deliberately takes no request headers any more: Host and
+  // X-Forwarded-Host are client-suppliable wherever the edge is not behind a
+  // strict proxy that overwrites them, and this URL embeds the one-time join
+  // token. The old builder preferred x-forwarded-host, so a poisoned header
+  // minted `https://attacker.example/join/<token>` and handed the token over.
+  // With the env var unset the card shows the relative path, which still works
+  // pasted into the origin the admin is reading and cannot be pointed at
+  // anyone else's host. The token is shown exactly once either way.
+  const inviteUrl = `${publicBaseUrl()}/join/${encodeURIComponent(token)}`
 
   // A FRESH session, so reloading this page cannot mint a second invite.
   //
@@ -352,8 +357,9 @@ adminActionRoutes.post("/o/:slug/admin/invites/create", async (ctx) => {
     )
   }
 
-  // An ABSOLUTE url: this one is copied out of the browser and sent to someone else, so a bare
-  // path is unusable, and the token is shown exactly once.
+  // Rendered inline rather than redirected: this response is the only place the
+  // plaintext token will ever exist -- in the URL publicBaseUrl() just built,
+  // absolute when ORG_PUBLIC_BASE_URL is configured and relative otherwise.
   return htmlResponse((nonce) =>
     adminPage({
       nonce,

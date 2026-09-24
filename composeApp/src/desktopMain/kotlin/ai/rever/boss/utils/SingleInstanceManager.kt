@@ -134,6 +134,16 @@ internal const val PLUGIN_DEV_RELOAD_TIMEOUT_MS = 45_000L
  */
 internal const val MAX_REQUEST_BYTES = 1024 * 1024
 
+/**
+ * Longest URL a [VERB_OPEN] request may carry, in UTF-8 bytes.
+ *
+ * Well past a fully percent-encoded maximum-length file path (~100 KB), yet far
+ * under [MAX_REQUEST_BYTES]: the URL is untrusted input from any program that
+ * can ask the OS to open a link, so it gets its own bound rather than the whole
+ * request budget.
+ */
+internal const val MAX_FORWARD_URL_BYTES = 256 * 1024
+
 // Reserve 1368 wire bytes for the protocol, token and up to 256 UTF-8 tool-name characters.
 internal const val MAX_ARGUMENT_BYTES = 768 * 1024 - 1024
 internal const val MAX_TOOL_NAME_LENGTH = 256
@@ -267,7 +277,11 @@ internal fun parseRequestLine(line: String): SingleInstanceRequest? {
         }
 
         VERB_OPEN -> {
-            if (parts.size == 5) {
+            // The URL is the rest of the line, so it can never itself contain a
+            // line break — but a raw control character can still arrive mid-line
+            // (a hand-rolled sender, a stray CR). A well-formed URL carries none:
+            // anything needing one arrives percent-encoded.
+            if (parts.size == 5 && parts[4].none { it.isISOControl() }) {
                 SingleInstanceRequest(token, VERB_OPEN, DeepLinkOrigin.fromWireLabel(parts[3]), parts[4])
             } else {
                 null
@@ -329,12 +343,38 @@ private fun decodeBase64Args(base64Payload: String): String? {
     }
 }
 
-/** Builds the line [parseRequestLine] reads. Never log the result: it carries the token. */
+/**
+ * Whether [url] can occupy one framed [VERB_OPEN] line.
+ *
+ * The framing is `\n`-delimited, so a URL containing a raw newline or carriage
+ * return would smuggle a second line into the stream. Rejecting is the safe
+ * answer — a legitimate URL is already percent-encoded, so refusing control
+ * characters loses no real link. The byte cap bounds what the framing writes
+ * into a single request.
+ *
+ * The answer does not depend on the channel token, so a caller can check before
+ * it has even read the descriptor — e.g. to keep a refused URL out of a retry
+ * loop it could never pass.
+ */
+internal fun canFrameOpenUrl(url: String): Boolean =
+    url.isNotBlank() &&
+        url.none { it.isISOControl() } &&
+        url.toByteArray(StandardCharsets.UTF_8).size <= MAX_FORWARD_URL_BYTES
+
+/**
+ * Builds the line [parseRequestLine] reads, or null when [canFrameOpenUrl]
+ * refuses [url]. Never log the result: it carries the token.
+ */
 internal fun formatOpenRequest(
     token: String,
     origin: DeepLinkOrigin,
     url: String,
-): String = "$PROTOCOL_VERSION $token $VERB_OPEN ${origin.name} $url"
+): String? {
+    if (!canFrameOpenUrl(url)) {
+        return null
+    }
+    return "$PROTOCOL_VERSION $token $VERB_OPEN ${origin.name} $url"
+}
 
 /** Builds a liveness probe line. Never log the result: it carries the token. */
 internal fun formatPingRequest(token: String): String = "$PROTOCOL_VERSION $token $VERB_PING"
@@ -1011,6 +1051,8 @@ private fun acceptNextClient(
     }
 
 private fun pluginActionResponse(verdict: kotlinx.coroutines.Deferred<Boolean>?): String {
+    // Null is the queued verdict for an external action held for confirmation. Nothing has run,
+    // but the running instance accepted responsibility for asking the operator.
     if (verdict == null) return RESPONSE_OK
     val handled = kotlinx.coroutines.runBlocking { awaitPluginAction(verdict, OPEN_ACTION_TIMEOUT_MS) }
     return when (handled) {
@@ -1086,6 +1128,16 @@ object SingleInstanceManager {
     /** The descriptor this process published, or null when it is not the owner. */
     @Volatile
     private var published: InstanceDescriptor? = null
+
+    /**
+     * Whether this process holds the single-instance claim - it won
+     * [acquireLock] and has not been [release]d. Destructive startup cleanup
+     * (FluckEngine's stale-Chromium sweep) consults this: the sweep matches
+     * processes by shared data-dir paths, so a process that lost - or never
+     * took - the claim must not run it against the owning instance's tree.
+     */
+    val isInstanceOwner: Boolean
+        get() = published != null
 
     /** Runtime directory override for tests; see [SingleInstanceFiles.runtimeDirOverride]. */
     internal var runtimeDirOverride: File?
@@ -1501,11 +1553,20 @@ object SingleInstanceManager {
      *   process from the OS.
      * @return true if the running instance acknowledged it. For most links this
      *   still means only "queued" (fire-and-forget, as before); for a
-     *   `boss://plugin?id=…&action=…` link it now means the registered handler
-     *   reported the action handled. An unregistered handler id, a declined
-     *   action, or an unknown outcome at timeout returns false. This is not a
-     *   guarantee that asynchronous work started by a handler has completed.
+     *   `boss://plugin?id=…&action=…` link from [DeepLinkOrigin.OPERATOR_CLI] it
+     *   means the registered handler reported the action handled. For the default
+     *   external origin it means the action was queued for confirmation and has not
+     *   run. A refused action, an unregistered handler on the operator path, or an
+     *   unknown outcome at timeout returns false. This is not a guarantee that
+     *   asynchronous work started by a handler has completed.
+     *
+     *   False also covers two cases a caller may want to tell apart: a URL
+     *   [canFrameOpenUrl] refuses is rejected before any connection attempt,
+     *   while any other false means the running instance could not be reached
+     *   or did not accept. A retrying caller can check [canFrameOpenUrl] once,
+     *   up front, to keep a refusal out of a retry loop it could never pass.
      */
+    @Suppress("ReturnCount")
     fun sendToExistingInstance(
         url: String,
         origin: DeepLinkOrigin = DeepLinkOrigin.EXTERNAL,
@@ -1517,12 +1578,24 @@ object SingleInstanceManager {
 
         val response =
             SingleInstanceFiles.read()?.let { target ->
+                val request = formatOpenRequest(target.token, origin, url)
+                if (request == null) {
+                    // A URL that cannot occupy one line is refused here, before
+                    // the connection opens: sending it would inject a second
+                    // framed line the peer only partially reads.
+                    logger.warn(
+                        LogCategory.SYSTEM,
+                        "Refusing to forward a URL that cannot be framed safely",
+                        mapOf("urlBytes" to url.toByteArray(StandardCharsets.UTF_8).size),
+                    )
+                    return false
+                }
                 logger.debug(
                     LogCategory.SYSTEM,
                     "Attempting to connect to existing instance",
                     mapOf("transport" to target.transport.name, "endpoint" to target.endpoint),
                 )
-                SingleInstanceWire.exchange(target, formatOpenRequest(target.token, origin, url))
+                SingleInstanceWire.exchange(target, request)
             }
 
         if (response == RESPONSE_OK) {
