@@ -19,6 +19,7 @@ import ai.rever.boss.ipc.proto.NodeFailed
 import ai.rever.boss.ipc.proto.NodeSkipped
 import ai.rever.boss.ipc.proto.NodeStarted
 import ai.rever.boss.mastery.MasteryExecutor
+import ai.rever.boss.mastery.TopologicalSort
 import io.grpc.Status
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -412,6 +413,73 @@ private fun validateDefinition(request: PMasteryDef) {
             "them, so a conditioned edge would run its target node unconditionally. " +
             "Remove the condition or split the workflow (#1060)"
     }
+    validateDagStructure(request)
+}
+
+/**
+ * Rejects structurally invalid DAGs: blank, reserved ("INPUT") or duplicate node ids,
+ * unknown edge endpoints, and cycles.
+ */
+
+/** First few offenders, capped: this text rides the percent-encoded grpc-message trailer. */
+private fun Collection<String>.asOffenders(): String = take(5).joinToString().take(200)
+
+private fun validateDagStructure(request: PMasteryDef) {
+    val nodeIds = request.nodesList.map { it.id }
+    validateArgument(nodeIds.all { it.isNotBlank() }) { "Mastery node ids must not be blank" }
+    validateArgument(nodeIds.none { it == "INPUT" }) {
+        "Mastery node id \"INPUT\" is reserved for the mastery input and cannot be used"
+    }
+    validateArgument(nodeIds.all { it.length <= 200 }) {
+        "Mastery node ids exceed the size limit"
+    }
+    // inputMapping sources split at the first dot, so a dotted id could never be named as a
+    // data source: accepted at create, silently unmapped at execute.
+    validateArgument(nodeIds.none { '.' in it }) {
+        "Mastery node ids must not contain '.'"
+    }
+    val duplicateIds =
+        nodeIds
+            .groupingBy { it }
+            .eachCount()
+            .filterValues { it > 1 }
+            .keys
+    validateArgument(duplicateIds.isEmpty()) {
+        "Duplicate mastery node ids: ${duplicateIds.asOffenders()}"
+    }
+    val unknownSources =
+        request.edgesList
+            .map { it.fromNode }
+            .filter { it != "INPUT" && it !in nodeIds }
+            .distinct()
+    validateArgument(unknownSources.isEmpty()) {
+        "Mastery edges reference unknown source node ids: ${unknownSources.asOffenders()}"
+    }
+    val unknownTargets =
+        request.edgesList
+            .map { it.toNode }
+            .filter { it !in nodeIds }
+            .distinct()
+    validateArgument(unknownTargets.isEmpty()) {
+        "Mastery edges reference unknown target node ids: ${unknownTargets.asOffenders()}"
+    }
+    val dagError: String? =
+        try {
+            TopologicalSort.sort(
+                nodes = request.nodesList,
+                getId = { it.id },
+                getDeps = { node ->
+                    request.edgesList
+                        .filter { it.toNode == node.id }
+                        .map { it.fromNode }
+                        .filter { it != "INPUT" }
+                },
+            )
+            null
+        } catch (e: IllegalArgumentException) {
+            e.message?.take(200) ?: "Mastery definition contains a cycle"
+        }
+    validateArgument(dagError == null) { "Mastery definition is not a valid DAG: $dagError" }
 }
 
 private fun masteryLimit(message: String) = Status.RESOURCE_EXHAUSTED.withDescription(message).asRuntimeException()

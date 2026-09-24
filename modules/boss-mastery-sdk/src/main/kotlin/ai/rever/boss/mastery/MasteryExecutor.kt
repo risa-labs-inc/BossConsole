@@ -58,9 +58,20 @@ class MasteryExecutor(
             val outputBudget = AtomicLong()
             val slots = Semaphore(8)
 
+            // Backstop for a structurally invalid DAG (cycle, dangling references): fail the
+            // execution with a verdict, never kill the stream. Narrowed to the sort itself -
+            // an IAE from reserveOutput, the level loop or collectFinalOutput is a runtime
+            // fault and must not be relabelled "Invalid mastery definition".
+            val levels =
+                try {
+                    topoLevels(mastery)
+                } catch (e: IllegalArgumentException) {
+                    send(MasteryProgress.Failed("Invalid mastery definition: ${e.message}", ""))
+                    return@channelFlow
+                }
+
             try {
                 reserveOutput("INPUT", input, outputBudget)
-                val levels = topoLevels(mastery)
 
                 for (level in levels) {
                     // All nodes in a level are independent — execute in parallel
