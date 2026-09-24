@@ -286,7 +286,8 @@ actual object CLIInstaller {
     /**
      * Update shell configuration to add PATH
      */
-    private fun updateShellConfig(): ShellConfigResult {
+    @Suppress("LongMethod", "ReturnCount")
+    internal fun updateShellConfig(homeDir: String = this.homeDir): ShellConfigResult {
         // Detect shell configuration files
         val shellConfigs =
             listOf(
@@ -299,12 +300,38 @@ actual object CLIInstaller {
         val pathExport = "export PATH=\"\$HOME/.local/bin:\$PATH\""
         val fishPathExport = "set -gx PATH \$HOME/.local/bin \$PATH"
 
+        // Last symlinked candidate we refused, for the post-loop "every existing
+        // candidate was a symlink" case. Without it, returning nothing would lose
+        // the reason the install refused, and the existing test pins that contract.
+        var lastSymlinkPath: String? = null
+
         // Find first existing config file
         for ((configPath, shell) in shellConfigs) {
             val configFile = File(configPath)
             if (!configFile.exists()) continue
 
             try {
+                // Refuse to write through a symlink. `File.writeText` and `File.readText`
+                // both follow symlinks, so a `~/.zshrc` pointing at, say, a notes file
+                // would have that notes file overwritten with a shell config on the next
+                // CLI install. The check is on the candidate, not the resolved target,
+                // because the resolved target is exactly what we are refusing to touch.
+                //
+                // `continue`, not `return`: a symlinked `.zshrc` (common with dotfile
+                // managers that symlink the rc into a repo) must not prevent the
+                // remaining candidates - a perfectly writable plain `~/.bashrc` - from
+                // being considered. The post-loop fallback reports the symlink so the
+                // refusal is observable end-to-end.
+                if (Files.isSymbolicLink(configFile.toPath())) {
+                    logger.warn(
+                        LogCategory.SYSTEM,
+                        "Refusing to update a symlinked shell config; add the PATH export by hand",
+                        mapOf("configPath" to configPath, "target" to configFile.toPath().toAbsolutePath()),
+                    )
+                    lastSymlinkPath = configPath
+                    continue
+                }
+
                 // Read current content
                 val content = configFile.readText()
 
@@ -315,34 +342,55 @@ actual object CLIInstaller {
                         success = true,
                         configPath = configPath,
                         alreadyConfigured = true,
+                        skippedReason = null,
                     )
                 }
 
-                // Append PATH export
+                // Append PATH export through atomic write so a crash mid-write leaves
+                // the previous content intact rather than a truncated shell rc.
                 val updatedContent =
                     content.trimEnd() + "\n\n" +
                         "# Added by BOSS CLI installer\n" +
                         exportLine + "\n"
 
-                configFile.writeText(updatedContent)
+                configFile.atomicWriteText(updatedContent)
 
                 return ShellConfigResult(
                     success = true,
                     configPath = configPath,
                     alreadyConfigured = false,
+                    skippedReason = null,
                 )
             } catch (e: Exception) {
-                logger.warn(LogCategory.SYSTEM, "Failed to update shell config", mapOf("configPath" to configPath), error = e)
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Failed to update shell config",
+                    mapOf("configPath" to configPath),
+                    error = e,
+                )
                 continue
             }
         }
 
-        // No config file found or all failed
-        return ShellConfigResult(
-            success = false,
-            configPath = null,
-            alreadyConfigured = false,
-        )
+        // No candidate was written. If every existing candidate was a symlink we
+        // refused, surface that rather than a generic "nothing to write", so the
+        // caller and the test can distinguish "no rc on disk" from "all candidates
+        // were symlinked". Otherwise nothing existed and skippedReason stays null.
+        return if (lastSymlinkPath != null) {
+            ShellConfigResult(
+                success = false,
+                configPath = lastSymlinkPath,
+                alreadyConfigured = false,
+                skippedReason = "symlink",
+            )
+        } else {
+            ShellConfigResult(
+                success = false,
+                configPath = null,
+                alreadyConfigured = false,
+                skippedReason = null,
+            )
+        }
     }
 
     /**
@@ -376,9 +424,26 @@ actual object CLIInstaller {
         }
     }
 
-    private data class ShellConfigResult(
+    internal data class ShellConfigResult(
         val success: Boolean,
         val configPath: String?,
         val alreadyConfigured: Boolean,
+        /**
+         * Why a candidate rc was skipped rather than written to. `null` means
+         * "wrote" or "already configured"; `"symlink"` means the candidate was a
+         * symlink and we refused to follow it. Surfaced for tests so the symlink
+         * refusal is observable end-to-end.
+         */
+        val skippedReason: String? = null,
     )
+
+    /**
+     * Test seam: drives [updateShellConfig] against a chosen home directory
+     * without touching the developer's real `~/.bashrc`. The class-level
+     * [homeDir] field is captured at object init from `System.getProperty`, and
+     * the `desktopTest` redirect of `user.home` runs after that init, which is
+     * why an explicit parameter is needed for tests that want a different home.
+     */
+    @Suppress("unused", "ktlint:standard:max-line-length", "MaxLineLength")
+    internal fun testUpdateShellConfigForHome(homeDir: File): ShellConfigResult = updateShellConfig(homeDir.absolutePath)
 }
