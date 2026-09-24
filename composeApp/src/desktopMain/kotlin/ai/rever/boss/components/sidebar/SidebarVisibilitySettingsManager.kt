@@ -1,8 +1,11 @@
 package ai.rever.boss.components.sidebar
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
+import ai.rever.boss.utils.backupCorrupt
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -47,7 +50,7 @@ actual object SidebarVisibilitySettingsManager {
                         SidebarVisibilitySettings.serializer(),
                         _currentSettings.value,
                     )
-                settingsFile.writeText(content)
+                settingsFile.atomicWriteText(content)
             } catch (e: Exception) {
                 // Log the in-memory state's distinguishing fields so the
                 // user's report of "my preferences didn't stick" is
@@ -84,7 +87,10 @@ actual object SidebarVisibilitySettingsManager {
             } else {
                 _currentSettings.value = SidebarVisibilitySettings()
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
+            settingsFile.backupCorrupt(logger, LogCategory.SYSTEM, e)
             logger.warn(LogCategory.SYSTEM, "Failed to load sidebar visibility, using defaults", error = e)
             _currentSettings.value = SidebarVisibilitySettings()
         }

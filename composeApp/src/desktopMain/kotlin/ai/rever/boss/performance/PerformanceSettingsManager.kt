@@ -1,8 +1,11 @@
 package ai.rever.boss.performance
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
+import ai.rever.boss.utils.backupCorrupt
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -46,7 +49,10 @@ actual object PerformanceSettingsManager {
             } else {
                 _currentSettings.value = PerformanceSettings()
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
+            settingsFile.backupCorrupt(logger, LogCategory.SYSTEM, e)
             logger.warn(LogCategory.SYSTEM, "Failed to load performance settings - using defaults", error = e)
             _currentSettings.value = PerformanceSettings()
         }
@@ -56,7 +62,7 @@ actual object PerformanceSettingsManager {
         withContext(Dispatchers.IO) {
             try {
                 val content = json.encodeToString(PerformanceSettings.serializer(), _currentSettings.value)
-                settingsFile.writeText(content)
+                settingsFile.atomicWriteText(content)
             } catch (e: Exception) {
                 // Settings save failed - not critical, will use in-memory settings
                 logger.warn(
