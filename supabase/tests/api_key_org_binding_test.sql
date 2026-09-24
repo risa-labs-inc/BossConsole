@@ -93,14 +93,17 @@ select (select id from public.organisations where slug = 'acmeone') as acmeone,
 
 -- The keys. Deliberately mixed: NULL-bound and boss-bound must both be candidates,
 -- because the backfill produced the second and key creation produced the first.
+-- key_hash/key_prefix fixtures carry the storage-form values 20260923172000
+-- constrains (64-hex digest; 16-char mask), so this suite keeps passing with the
+-- constraints in force; nothing here asserts on the specific values.
 insert into public.plugin_api_keys (user_id, name, key_prefix, key_hash, scopes, org_id) values
-    ('c0000000-0000-4000-8000-000000000001', 'sole-null',  'bpk_a', 'hash-a', array['publish'], null),
-    ('c0000000-0000-4000-8000-000000000001', 'sole-boss',  'bpk_b', 'hash-b', array['publish'],
+    ('c0000000-0000-4000-8000-000000000001', 'sole-null',  'boss_pk_orgbind1', '9fd1eed316827de40b20eb908422bcccc2e84dbe7698f98d192c9febbcbab217', array['publish'], null),
+    ('c0000000-0000-4000-8000-000000000001', 'sole-boss',  'boss_pk_orgbind2', 'cf39c07223209020190d01f6c2e14b4e1c26285fa78cf6d65316d8ec279d2836', array['publish'],
         (select boss from t_org)),
-    ('c0000000-0000-4000-8000-000000000002', 'multi',      'bpk_c', 'hash-c', array['publish'], null),
-    ('c0000000-0000-4000-8000-000000000003', 'nomember',   'bpk_d', 'hash-d', array['publish'], null),
-    ('c0000000-0000-4000-8000-000000000004', 'nopublish',  'bpk_e', 'hash-e', array['publish'], null),
-    ('c0000000-0000-4000-8000-000000000005', 'already',    'bpk_f', 'hash-f', array['publish'],
+    ('c0000000-0000-4000-8000-000000000002', 'multi',      'boss_pk_orgbind3', '6c7678f24e8c6577a526f2d2a6dab110e21abb41feb0c68aec5362a91ee7a224', array['publish'], null),
+    ('c0000000-0000-4000-8000-000000000003', 'nomember',   'boss_pk_orgbind4', '68c8dd45c96866c41db890faa92689f0447418739bab6c63233a4ef784fe8930', array['publish'], null),
+    ('c0000000-0000-4000-8000-000000000004', 'nopublish',  'boss_pk_orgbind5', 'ba48c1cd909a87fa31979a62586f16c56aab13a129189ff4cf4c34f1499467d0', array['publish'], null),
+    ('c0000000-0000-4000-8000-000000000005', 'already',    'boss_pk_orgbind6', '17f8aaead8011022ab65eded84377a05fc56885c1c3c3cb159cf7f64fccd5d43', array['publish'],
         (select twoa from t_org));
 
 
