@@ -18,6 +18,7 @@ import ai.rever.boss.ipc.proto.NodeCompleted
 import ai.rever.boss.ipc.proto.NodeFailed
 import ai.rever.boss.ipc.proto.NodeSkipped
 import ai.rever.boss.ipc.proto.NodeStarted
+import ai.rever.boss.ipc.proto.NodeStatus
 import ai.rever.boss.mastery.MasteryExecutor
 import io.grpc.Status
 import kotlinx.coroutines.CancellationException
@@ -59,6 +60,13 @@ class MasteryServiceImpl(
     private val definitions = linkedMapOf<String, KMasteryDef>()
     private val runningJobs = mutableMapOf<String, Job>()
     private val execStatus = linkedMapOf<String, MasteryStatus>()
+    private val executionStats = mutableMapOf<String, ExecutionStats>()
+
+    /** Per-mastery execution tally backing the [MasterySummary] history fields. */
+    private data class ExecutionStats(
+        val lastExecutedAt: Long,
+        val count: Int,
+    )
 
     override suspend fun createMastery(request: PMasteryDef): MasteryId {
         validateDefinition(request)
@@ -81,6 +89,7 @@ class MasteryServiceImpl(
             }
             coroutineScope {
                 val executionId = UUID.randomUUID().toString()
+                val nodeStatuses = LinkedHashMap<String, NodeStatus>()
                 val def =
                     synchronized(stateLock) {
                         val definition =
@@ -91,7 +100,21 @@ class MasteryServiceImpl(
                         }
                         // Register admission before the first progress event can be observed.
                         runningJobs[executionId] = checkNotNull(coroutineContext[Job])
-                        updateStatus(executionId, request.masteryId, "running")
+                        definition.nodes.forEach { node ->
+                            nodeStatuses[node.id] =
+                                NodeStatus
+                                    .newBuilder()
+                                    .setNodeId(node.id)
+                                    .setState("pending")
+                                    .build()
+                        }
+                        recordExecution(request.masteryId)
+                        updateStatus(
+                            executionId,
+                            request.masteryId,
+                            "running",
+                            nodeStatuses.values.toList(),
+                        )
                         definition
                     }
                 var finalState = "failed"
@@ -102,6 +125,7 @@ class MasteryServiceImpl(
                             is KProgress.Failed -> finalState = "failed"
                             else -> Unit
                         }
+                        trackNodeProgress(executionId, request.masteryId, progress, nodeStatuses)
                         emit(progress.toProto(executionId))
                     }
                 } catch (e: CancellationException) {
@@ -159,8 +183,10 @@ class MasteryServiceImpl(
 
     override suspend fun listMasteries(request: ListMasteriesRequest): ListMasteriesResponse {
         validateArgument(request.offset >= 0 && request.limit >= 0) { "Pagination must be nonnegative" }
+        val (stored, stats) =
+            synchronized(stateLock) { definitions.values.toList() to executionStats.toMap() }
         val all: List<KMasteryDef> =
-            synchronized(stateLock) { definitions.values.toList() }
+            stored
                 .filter { def ->
                     request.filter.isBlank() ||
                         def.name.contains(request.filter, ignoreCase = true) ||
@@ -178,6 +204,7 @@ class MasteryServiceImpl(
             .newBuilder()
             .addAllMasteries(
                 paginated.map { def ->
+                    val tally = stats[def.id]
                     MasterySummary
                         .newBuilder()
                         .setId(def.id)
@@ -185,6 +212,8 @@ class MasteryServiceImpl(
                         .setDescription(def.description)
                         .setNodeCount(def.nodes.size)
                         .setAuthor(def.author)
+                        .setLastExecutedAt(tally?.lastExecutedAt ?: 0L)
+                        .setExecutionCount(tally?.count ?: 0)
                         .build()
                 },
             ).setTotalCount(all.size)
@@ -192,15 +221,84 @@ class MasteryServiceImpl(
     }
 
     override suspend fun deleteMastery(request: MasteryId): Empty {
-        synchronized(stateLock) { definitions.remove(request.id) }
+        synchronized(stateLock) {
+            definitions.remove(request.id)
+            executionStats.remove(request.id)
+        }
+
         logger.info("Mastery deleted: id={}", request.id)
         return Empty.getDefaultInstance()
+    }
+
+    /** Requires [stateLock]. Counts one admitted execution per mastery for [MasterySummary]. */
+    private fun recordExecution(masteryId: String) {
+        executionStats[masteryId] =
+            ExecutionStats(
+                lastExecutedAt = System.currentTimeMillis(),
+                count = (executionStats[masteryId]?.count ?: 0) + 1,
+            )
+    }
+
+    /** Mirrors live per-node state into the execution status that GetMasteryStatus returns. */
+    private fun trackNodeProgress(
+        executionId: String,
+        masteryId: String,
+        progress: KProgress,
+        nodeStatuses: MutableMap<String, NodeStatus>,
+    ) {
+        when (progress) {
+            is KProgress.NodeStarted -> {
+                nodeStatuses[progress.nodeId] =
+                    NodeStatus
+                        .newBuilder()
+                        .setNodeId(progress.nodeId)
+                        .setState("running")
+                        .setStartedAt(System.currentTimeMillis())
+                        .build()
+            }
+
+            is KProgress.NodeCompleted -> {
+                val builder =
+                    nodeStatuses[progress.nodeId]?.toBuilder()
+                        ?: NodeStatus.newBuilder().setNodeId(progress.nodeId)
+                nodeStatuses[progress.nodeId] =
+                    builder
+                        .setState("completed")
+                        .setCompletedAt(System.currentTimeMillis())
+                        .clearErrorMessage()
+                        .build()
+            }
+
+            is KProgress.NodeFailed -> {
+                val builder =
+                    nodeStatuses[progress.nodeId]?.toBuilder()
+                        ?: NodeStatus.newBuilder().setNodeId(progress.nodeId)
+                nodeStatuses[progress.nodeId] =
+                    builder
+                        // A failed ATTEMPT is not a failed node: while willRetry
+                        // is true the executor is in backoff (up to 5s) and the
+                        // node is still running. Marking it failed here would
+                        // contradict the overall "running" status for any poller
+                        // watching during the delay.
+                        .setState(if (progress.willRetry) "running" else "failed")
+                        .setErrorMessage(progress.error)
+                        .build()
+            }
+
+            else -> {
+                return
+            }
+        }
+        synchronized(stateLock) {
+            updateStatus(executionId, masteryId, "running", nodeStatuses.values.toList())
+        }
     }
 
     private fun updateStatus(
         executionId: String,
         masteryId: String,
         state: String,
+        nodeStatuses: List<NodeStatus>? = null,
     ) {
         val builder =
             execStatus[executionId]?.toBuilder()
@@ -210,6 +308,10 @@ class MasteryServiceImpl(
                     .setMasteryId(masteryId)
                     .setStartedAt(System.currentTimeMillis())
         builder.setState(state)
+        if (nodeStatuses != null) {
+            builder.clearNodeStatuses()
+            builder.addAllNodeStatuses(nodeStatuses)
+        }
         if (state in setOf("completed", "failed", "cancelled")) {
             builder.setCompletedAt(System.currentTimeMillis())
         }
@@ -316,6 +418,7 @@ internal fun KProgress.toProto(executionId: String): PProgress {
                 MasteryStarted
                     .newBuilder()
                     .setMasteryId(masteryId)
+                    .setMasteryName(masteryName)
                     .setTotalNodes(totalNodes)
                     .build(),
             )
@@ -327,6 +430,8 @@ internal fun KProgress.toProto(executionId: String): PProgress {
                     .newBuilder()
                     .setNodeId(nodeId)
                     .setDisplayName(displayName)
+                    .setPluginId(pluginId)
+                    .setAction(action)
                     .build(),
             )
         }
@@ -349,6 +454,7 @@ internal fun KProgress.toProto(executionId: String): PProgress {
                     .setNodeId(nodeId)
                     .setErrorMessage(error)
                     .setWillRetry(willRetry)
+                    .setRetryAttempt(retryAttempt)
                     .build(),
             )
         }
@@ -369,6 +475,7 @@ internal fun KProgress.toProto(executionId: String): PProgress {
                     .newBuilder()
                     .putAllOutput(output)
                     .setTotalDurationMs(totalDurationMs)
+                    .setNodesExecuted(nodesExecuted)
                     .build(),
             )
         }
@@ -379,6 +486,7 @@ internal fun KProgress.toProto(executionId: String): PProgress {
                     .newBuilder()
                     .setErrorMessage(error)
                     .setFailedNodeId(failedNodeId)
+                    .setTotalDurationMs(totalDurationMs)
                     .build(),
             )
         }

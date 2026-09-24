@@ -47,11 +47,11 @@ class MasteryExecutor(
             // so a hostile document is refused before a single capability invocation.
             val violation = structuralViolation(mastery)
             if (violation != null) {
-                send(MasteryProgress.Failed(violation, mastery.id))
+                send(MasteryProgress.Failed(violation, mastery.id, 0L))
                 return@channelFlow
             }
             val startTime = System.currentTimeMillis()
-            send(MasteryProgress.Started(mastery.id, mastery.nodes.size))
+            send(MasteryProgress.Started(mastery.id, mastery.name, mastery.nodes.size))
 
             // Accumulates node outputs; "INPUT" is the virtual source node
             val nodeOutputs = mutableMapOf<String, Map<String, String>>("INPUT" to input)
@@ -82,9 +82,21 @@ class MasteryExecutor(
                 }
 
                 val finalOutput = collectFinalOutput(mastery, nodeOutputs)
-                send(MasteryProgress.Completed(finalOutput, System.currentTimeMillis() - startTime))
+                send(
+                    MasteryProgress.Completed(
+                        finalOutput,
+                        System.currentTimeMillis() - startTime,
+                        nodeOutputs.size - 1,
+                    ),
+                )
             } catch (e: NodeExecutionException) {
-                send(MasteryProgress.Failed(e.message ?: "Node execution failed", e.nodeId))
+                send(
+                    MasteryProgress.Failed(
+                        e.message ?: "Node execution failed",
+                        e.nodeId,
+                        System.currentTimeMillis() - startTime,
+                    ),
+                )
             }
         }
 
@@ -179,6 +191,8 @@ class MasteryExecutor(
             MasteryProgress.NodeStarted(
                 node.id,
                 node.displayName.ifEmpty { "${node.pluginId}/${node.action}" },
+                node.pluginId,
+                node.action,
             ),
         )
 
@@ -209,7 +223,14 @@ class MasteryExecutor(
             } catch (e: Exception) {
                 lastError = e.message?.take(2048)
                 val willRetry = attempt < node.maxRetries
-                emit(MasteryProgress.NodeFailed(node.id, e.message?.take(2048) ?: "Unknown error", willRetry))
+                emit(
+                    MasteryProgress.NodeFailed(
+                        node.id,
+                        e.message?.take(2048) ?: "Unknown error",
+                        willRetry,
+                        attempt + 1,
+                    ),
+                )
                 logger.warn(
                     "Node {} attempt {}/{} failed: {}",
                     node.id,
@@ -321,12 +342,15 @@ class MasteryExecutor(
 sealed class MasteryProgress {
     data class Started(
         val masteryId: String,
+        val masteryName: String,
         val totalNodes: Int,
     ) : MasteryProgress()
 
     data class NodeStarted(
         val nodeId: String,
         val displayName: String,
+        val pluginId: String,
+        val action: String,
     ) : MasteryProgress()
 
     data class NodeCompleted(
@@ -339,6 +363,13 @@ sealed class MasteryProgress {
         val nodeId: String,
         val error: String,
         val willRetry: Boolean,
+        /**
+         * 1-based ordinal of the failed attempt, ranging 1..maxRetries+1: a
+         * maxRetries = 5 node can emit 6. The denominator (maxRetries + 1 total
+         * attempts) is not carried on the wire, so clients that want to render
+         * "attempt 2 of 6" need maxRetries from the definition.
+         */
+        val retryAttempt: Int,
     ) : MasteryProgress()
 
     data class NodeSkipped(
@@ -349,10 +380,12 @@ sealed class MasteryProgress {
     data class Completed(
         val output: Map<String, String>,
         val totalDurationMs: Long,
+        val nodesExecuted: Int,
     ) : MasteryProgress()
 
     data class Failed(
         val error: String,
         val failedNodeId: String,
+        val totalDurationMs: Long,
     ) : MasteryProgress()
 }
