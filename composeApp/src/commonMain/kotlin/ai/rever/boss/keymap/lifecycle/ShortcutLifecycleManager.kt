@@ -92,7 +92,10 @@ object ShortcutLifecycleManager {
     fun unregisterCondition(actionId: String) {
         conditions.remove(actionId)
 
-        _states.value = _states.value.filterKeys { it != actionId }
+        // update { } is the atomic CAS loop; the bare read-then-write lost updates when an
+        // evaluateSingle for the same actionId raced. The cleanupWindow helper below uses the
+        // same form on the conditions map for the same reason.
+        _states.update { it - actionId }
 
         if (debugMode) {
             logger.debug(LogCategory.UI, "Unregistered condition", mapOf("actionId" to actionId))
@@ -218,7 +221,10 @@ object ShortcutLifecycleManager {
                     condition = condition,
                 )
 
-            _states.value = _states.value + (actionId to newState)
+            // update { } is the atomic CAS loop; the bare read-then-write lost updates when
+            // two evaluateSingle coroutines for the same actionId raced, or when a concurrent
+            // unregisterCondition clobbered the state.
+            _states.update { it + (actionId to newState) }
 
             if (debugMode) {
                 logger.debug(
@@ -234,15 +240,17 @@ object ShortcutLifecycleManager {
         } catch (e: Exception) {
             logger.warn(LogCategory.UI, "Error evaluating condition", mapOf("actionId" to actionId), error = e)
 
-            _states.value = _states.value + (
-                actionId to
-                    ShortcutLifecycleState(
-                        actionId = actionId,
-                        enabled = false,
-                        reason = "Error: ${e.message}",
-                        condition = condition,
-                    )
-            )
+            _states.update {
+                it + (
+                    actionId to
+                        ShortcutLifecycleState(
+                            actionId = actionId,
+                            enabled = false,
+                            reason = "Error: ${e.message}",
+                            condition = condition,
+                        )
+                )
+            }
         }
     }
 
