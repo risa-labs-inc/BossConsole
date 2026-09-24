@@ -1,15 +1,17 @@
 package ai.rever.boss.components.dialogs
 
 import ai.rever.boss.mcp.McpApprovalRequest
-import ai.rever.boss.mcp.McpArgumentSanitizer
 import ai.rever.boss.mcp.McpMutatingToolCatalog
 import ai.rever.boss.mcp.secrets.SecretDescriptor
 import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -20,8 +22,9 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.wrapContentHeight
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -49,10 +52,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
@@ -220,6 +223,13 @@ fun McpApprovalDialog(
             }
         }
 
+    // Bounded by the window the prompt belongs to, read here rather than inside the dialog so the
+    // heavyweight overlay's own window cannot answer. The card used to be wrapContentHeight with no
+    // cap and nothing scrolled, so a long description or argument list pushed the actions below
+    // the window edge: Allow and Deny were unreachable and the prompt could only time out.
+    val (maxWidth, maxHeight) = approvalDialogBounds()
+    val bodyScroll = remember(request.id) { ScrollState(0) }
+
     BossDialog(
         // onDismissRequest is required by BossDialog; outside-click and back-press are disabled below
         // to enforce deliberate operator approval or denial.
@@ -233,135 +243,126 @@ fun McpApprovalDialog(
         Surface(
             modifier =
                 Modifier
-                    .width(520.dp)
-                    .wrapContentHeight()
+                    .widthIn(max = maxWidth)
+                    .width(APPROVAL_DIALOG_WIDTH)
+                    .heightIn(max = maxHeight)
                     .border(1.dp, colors.line, RoundedCornerShape(radii.dialog)),
             shape = RoundedCornerShape(radii.dialog),
             color = colors.panel,
         ) {
+            // Three bands: the header (with the one countdown) and the actions are pinned, and only
+            // the body between them scrolls, so the answer is reachable at any window height.
             Column {
-                Column(modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 16.dp)) {
+                Column(modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 12.dp)) {
                     ApprovalHeader(
                         isMutating = isMutating,
                         pendingQueueSize = pendingQueueSize,
                         remainingMs = remainingMs,
                     )
+                }
 
-                    Spacer(modifier = Modifier.height(16.dp))
-                    ToolDetails(request)
+                Divider(color = colors.line, thickness = 1.dp)
 
-                    // What the tool would be handed from the vault. Metadata only - the request
-                    // carries descriptors, never values - and above the risk line because it is
-                    // the one fact this dialog exists to put in front of the operator here.
-                    if (request.secretRefs.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(10.dp))
-                        SecretReferencesSection(request.secretRefs)
-                    }
+                Box(modifier = Modifier.weight(1f, fill = false)) {
+                    Column(
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .testTag(APPROVAL_BODY_TAG)
+                                .verticalScroll(bodyScroll)
+                                .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 16.dp),
+                    ) {
+                        ToolDetails(request)
 
-                    val riskLines =
-                        buildList {
-                            request.riskAssessment?.let { add("${it.level}: ${it.reason}") }
-                            if (isMutating) add("This tool performs mutations or external execution.")
+                        // What the tool would be handed from the vault. Metadata only - the request
+                        // carries descriptors, never values - and above the risk line because it is
+                        // the one fact this dialog exists to put in front of the operator here.
+                        if (request.secretRefs.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            SecretReferencesSection(request.secretRefs)
                         }
-                    if (riskLines.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(10.dp))
-                        RiskBanner(riskLines)
-                    }
 
-                    if (pendingQueueSize > 1) {
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Row(
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .background(colors.raised, RoundedCornerShape(radii.card))
-                                    .border(1.dp, colors.line, RoundedCornerShape(radii.card))
-                                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                text =
-                                    "$pendingQueueSize actions are waiting for approval. " +
-                                        "New requests are unaffected.",
-                                fontSize = 10.sp,
-                                color = colors.textSecondary,
-                                modifier = Modifier.weight(1f),
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            TextButton(
-                                onClick = onDenyAllPending,
-                                colors = ButtonDefaults.textButtonColors(contentColor = colors.alert),
+                        val riskLines =
+                            buildList {
+                                request.riskAssessment?.let { add("${it.level}: ${it.reason}") }
+                                if (isMutating) add("This tool performs mutations or external execution.")
+                            }
+                        if (riskLines.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            RiskBanner(riskLines)
+                        }
+
+                        if (pendingQueueSize > 1) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Row(
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .background(colors.raised, RoundedCornerShape(radii.card))
+                                        .border(1.dp, colors.line, RoundedCornerShape(radii.card))
+                                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Text("Deny All Pending", fontSize = 11.sp)
+                                Text(
+                                    text =
+                                        "$pendingQueueSize actions are waiting for approval. " +
+                                            "New requests are unaffected.",
+                                    fontSize = 10.sp,
+                                    color = colors.textSecondary,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                TextButton(
+                                    onClick = onDenyAllPending,
+                                    colors = ButtonDefaults.textButtonColors(contentColor = colors.alert),
+                                ) {
+                                    Text("Deny All Pending", fontSize = 11.sp)
+                                }
                             }
                         }
-                    }
 
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        text = "Remember this decision",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = colors.textSecondary,
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    val scopes = McpPromptChoices.scopesFor(request)
-                    Column(modifier = Modifier.selectableGroup()) {
-                        if (McpApprovalScope.ONCE in scopes) {
-                            ScopeOption(
-                                title = "Just this call",
-                                description = "Ask again next time.",
-                                selected = scope == McpApprovalScope.ONCE,
-                                onSelect = { scope = McpApprovalScope.ONCE },
-                            )
-                        }
-                        if (McpApprovalScope.SESSION in scopes) {
-                            ScopeOption(
-                                title = "This session",
-                                description = "Allow this tool until BOSS quits. Deny still applies once.",
-                                selected = scope == McpApprovalScope.SESSION,
-                                onSelect = { scope = McpApprovalScope.SESSION },
-                            )
-                        }
-                        if (McpApprovalScope.ALWAYS_TOOL in scopes) {
-                            val (alwaysTitle, alwaysDescription) = McpPromptChoices.alwaysToolText(request)
-                            ScopeOption(
-                                title = alwaysTitle,
-                                description = alwaysDescription,
-                                selected = scope == McpApprovalScope.ALWAYS_TOOL,
-                                onSelect = { scope = McpApprovalScope.ALWAYS_TOOL },
-                            )
-                        }
-                        if (McpApprovalScope.ALWAYS_PLUGIN in scopes) {
-                            ScopeOption(
-                                title = "Always, for every tool from this plugin",
-                                description =
-                                    "Trusts everything \"${request.providerId}\" provides, now and in later versions.",
-                                selected = scope == McpApprovalScope.ALWAYS_PLUGIN,
-                                titleColor = colors.warn,
-                                onSelect = { scope = McpApprovalScope.ALWAYS_PLUGIN },
-                            )
-                        }
-                    }
-                    if (request.escalated) {
+                        Spacer(modifier = Modifier.height(16.dp))
                         Text(
-                            text =
-                                "This call is asked every time, even though this tool is allowed: it looks " +
-                                    "destructive, and no saved rule can approve that in advance - only deny it.",
+                            text = "Remember this decision",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = colors.textSecondary,
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        ScopeOptions(request = request, selected = scope, onSelect = { scope = it })
+                        if (request.escalated) {
+                            Text(
+                                text =
+                                    "This call is asked every time, even though this tool is allowed: it looks " +
+                                        "destructive, and no saved rule can approve that in advance - only deny it.",
+                                fontSize = 11.sp,
+                                color = colors.warn,
+                                modifier = Modifier.padding(top = 6.dp),
+                            )
+                        }
+                        Text(
+                            text = "Saved rules and trusted plugins can be reviewed from MCP access in the bottom bar.",
                             fontSize = 11.sp,
-                            color = colors.warn,
+                            color = colors.textMuted,
                             modifier = Modifier.padding(top = 6.dp),
                         )
                     }
-                    Text(
-                        text = "Saved rules and trusted plugins can be reviewed from MCP access in the bottom bar.",
-                        fontSize = 11.sp,
-                        color = colors.textMuted,
-                        modifier = Modifier.padding(top = 6.dp),
+                    VerticalScrollbar(
+                        adapter = rememberScrollbarAdapter(bodyScroll),
+                        modifier =
+                            Modifier
+                                .matchParentSize()
+                                .wrapContentWidth(Alignment.End)
+                                .padding(vertical = 2.dp, horizontal = 2.dp),
                     )
+                }
 
-                    if (showReasonInput) {
-                        Spacer(modifier = Modifier.height(12.dp))
+                Divider(color = colors.line, thickness = 1.dp)
+
+                // The denial note sits with the actions it belongs to, outside the scrolling body,
+                // so opening it never lands the field somewhere the operator has to scroll to.
+                if (showReasonInput) {
+                    Column(modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 12.dp)) {
                         OutlinedTextField(
                             value = rejectionReason,
                             onValueChange = { rejectionReason = it },
@@ -380,8 +381,6 @@ fun McpApprovalDialog(
                         )
                     }
                 }
-
-                Divider(color = colors.line, thickness = 1.dp)
 
                 // Footer: one secondary text action on the left, and exactly two answers on the
                 // right - both the same height, shape and type size, so neither reads as the
@@ -451,6 +450,8 @@ fun McpApprovalDialog(
     }
 }
 
+internal val APPROVAL_DIALOG_WIDTH = 520.dp
+
 private val DIALOG_BUTTON_HEIGHT = 32.dp
 private val DIALOG_BUTTON_PADDING = PaddingValues(horizontal = 14.dp)
 
@@ -510,97 +511,6 @@ private fun ApprovalHeader(
 }
 
 @Composable
-@Suppress("LongMethod") // Declarative Compose layout.
-private fun ToolDetails(request: McpApprovalRequest) {
-    val colors = BossTheme.colors
-    val radii = BossTheme.radius
-    Column(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .background(colors.raised, RoundedCornerShape(radii.card))
-                .border(1.dp, colors.line, RoundedCornerShape(radii.card))
-                .padding(12.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = request.toolName,
-                fontSize = 13.sp,
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.Bold,
-                color = colors.signalText,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                text = request.providerId,
-                fontSize = 11.sp,
-                color = colors.textSecondary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier =
-                    Modifier
-                        .padding(start = 8.dp)
-                        .border(1.dp, colors.line, RoundedCornerShape(radii.input))
-                        .padding(horizontal = 6.dp, vertical = 1.dp),
-            )
-        }
-
-        // The tool's own description is the operator's only sight of what it
-        // claims to do - without it an approval is a guess on a bare name.
-        request.toolDescription?.takeIf { it.isNotBlank() }?.let { description ->
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = description,
-                fontSize = 12.sp,
-                color = colors.textPrimary,
-            )
-        }
-
-        val sanitizedArguments =
-            remember(request.arguments) {
-                McpArgumentSanitizer.sanitize(request.arguments)
-            }
-
-        if (sanitizedArguments.isNotEmpty()) {
-            Spacer(modifier = Modifier.height(8.dp))
-            Column(
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 140.dp)
-                        .background(colors.ink, RoundedCornerShape(radii.input))
-                        .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
-            ) {
-                sanitizedArguments.forEach { (k, v) ->
-                    Text(
-                        text = "$k = $v",
-                        fontSize = 12.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = colors.textPrimary,
-                    )
-                }
-            }
-        }
-
-        // Why the prompt exists and when it expires: the policy that suspended the
-        // call plus the auto-deny countdown, snapshotted once at open.
-        val remainingSeconds =
-            remember(request.id) {
-                ((request.remainingTimeoutMs() + 999L) / 1000L).coerceAtLeast(1L)
-            }
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = "Policy: ${request.policy?.name ?: "ASK"} · auto-denies in ~${remainingSeconds}s",
-            fontSize = 10.sp,
-            color = colors.textSecondary,
-        )
-    }
-}
-
-@Composable
 private fun RiskBanner(lines: List<String>) {
     val colors = BossTheme.colors
     val radii = BossTheme.radius
@@ -615,6 +525,52 @@ private fun RiskBanner(lines: List<String>) {
     ) {
         lines.forEach { line ->
             Text(text = line, fontSize = 12.sp, color = colors.alert)
+        }
+    }
+}
+
+/** The scopes [McpPromptChoices.scopesFor] offers for [request], as one radio group. */
+@Composable
+private fun ScopeOptions(
+    request: McpApprovalRequest,
+    selected: McpApprovalScope,
+    onSelect: (McpApprovalScope) -> Unit,
+) {
+    val scopes = McpPromptChoices.scopesFor(request)
+    Column(modifier = Modifier.selectableGroup()) {
+        if (McpApprovalScope.ONCE in scopes) {
+            ScopeOption(
+                title = "Just this call",
+                description = "Ask again next time.",
+                selected = selected == McpApprovalScope.ONCE,
+                onSelect = { onSelect(McpApprovalScope.ONCE) },
+            )
+        }
+        if (McpApprovalScope.SESSION in scopes) {
+            ScopeOption(
+                title = "This session",
+                description = "Allow this tool until BOSS quits. Deny still applies once.",
+                selected = selected == McpApprovalScope.SESSION,
+                onSelect = { onSelect(McpApprovalScope.SESSION) },
+            )
+        }
+        if (McpApprovalScope.ALWAYS_TOOL in scopes) {
+            val (alwaysTitle, alwaysDescription) = McpPromptChoices.alwaysToolText(request)
+            ScopeOption(
+                title = alwaysTitle,
+                description = alwaysDescription,
+                selected = selected == McpApprovalScope.ALWAYS_TOOL,
+                onSelect = { onSelect(McpApprovalScope.ALWAYS_TOOL) },
+            )
+        }
+        if (McpApprovalScope.ALWAYS_PLUGIN in scopes) {
+            ScopeOption(
+                title = "Always, for every tool from this plugin",
+                description = "Trusts everything \"${request.providerId}\" provides, now and in later versions.",
+                selected = selected == McpApprovalScope.ALWAYS_PLUGIN,
+                titleColor = BossTheme.colors.warn,
+                onSelect = { onSelect(McpApprovalScope.ALWAYS_PLUGIN) },
+            )
         }
     }
 }

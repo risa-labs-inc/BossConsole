@@ -90,7 +90,8 @@ data class McpApprovalRequest(
 ) {
     /**
      * Milliseconds left before this request auto-denies, relative to [requestedAt].
-     * The dialog renders the snapshot it took at open; nothing here ticks.
+     * Nothing here ticks. The dialog's one countdown is `approvalMillisRemaining`, which reads
+     * the same `requestedAt + timeoutMs` deadline that [McpApprovalBus.requestApproval] enforces.
      */
     fun remainingTimeoutMs(): Long = (timeoutMs - (System.currentTimeMillis() - requestedAt)).coerceAtLeast(0)
 }
