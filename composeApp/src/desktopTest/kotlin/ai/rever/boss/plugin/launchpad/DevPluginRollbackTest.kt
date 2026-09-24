@@ -347,16 +347,15 @@ class DevPluginRollbackTest {
             assertNotNull(initialManager2Info)
 
             var manager1Unloaded = false
-            manager1.registerUnloadAware(
+            val unloadAware1 =
                 object : PluginUnloadAware {
                     override fun checkCanUnload(pluginId: String): CanUnloadResult = CanUnloadResult.Ok
 
                     override fun prepareForUnload(pluginId: String) {
                         manager1Unloaded = true
                     }
-                },
-            )
-            manager2.registerUnloadAware(
+                }
+            val unloadAware2 =
                 object : PluginUnloadAware {
                     override fun checkCanUnload(pluginId: String): CanUnloadResult =
                         if (!manager1Unloaded) {
@@ -368,13 +367,17 @@ class DevPluginRollbackTest {
                     override fun prepareForUnload(pluginId: String) {
                         // No preparation needed; manager doesn't hold unloadable resources
                     }
-                },
-            )
+                }
+            manager1.registerUnloadAware(unloadAware1)
+            manager2.registerUnloadAware(unloadAware2)
 
             createDevTestJar(stagingRoot, pluginId, "v2000", "2.0.0")
 
             val result = DevPluginReloader.reload(pluginId, stagingRoot)
             assertTrue(result.isFailure, "Reload must fail when manager 2 refuses unload")
+            assertNotNull(unloadAware1)
+            assertNotNull(unloadAware2)
+            assertTrue(manager1Unloaded, "Manager 1 must have prepared for unload before Manager 2 refused")
 
             // Manager 1 had unloaded, so rollback cleanly restores its prior v1.jar
             assertRestoredToV1(manager1, pluginId, v1Jar)
