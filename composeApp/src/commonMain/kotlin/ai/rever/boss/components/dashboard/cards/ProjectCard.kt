@@ -38,8 +38,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import java.text.SimpleDateFormat
-import java.util.Date
 
 /**
  * Card displaying a recent project.
@@ -159,17 +157,25 @@ fun ProjectCard(
 /**
  * Format timestamp as relative time (e.g., "2h ago", "Yesterday").
  */
-private fun formatRelativeTime(timestamp: Long): String {
+internal fun formatRelativeTime(
+    timestamp: Long,
+    now: Long = System.currentTimeMillis(),
+    zoneId: java.time.ZoneId = java.time.ZoneId.systemDefault(),
+    locale: java.util.Locale = java.util.Locale.getDefault(),
+): String {
     if (timestamp == 0L) return "Never"
 
-    val now = System.currentTimeMillis()
     val diff = now - timestamp
+    val timestampDate = java.time.Instant.ofEpochMilli(timestamp).atZone(zoneId).toLocalDate()
+    val today = java.time.Instant.ofEpochMilli(now).atZone(zoneId).toLocalDate()
+    val absoluteDate = { java.time.format.DateTimeFormatter.ofPattern("MMM d", locale).format(timestampDate) }
 
     return when {
+        diff < 0 -> absoluteDate()
+        timestampDate == today.minusDays(1) -> "Yesterday"
+        timestampDate != today -> absoluteDate()
         diff < 60_000 -> "Just now"
         diff < 3600_000 -> "${diff / 60_000}m ago"
-        diff < 86400_000 -> "${diff / 3600_000}h ago"
-        diff < 172800_000 -> "Yesterday"
-        else -> SimpleDateFormat("MMM d").format(Date(timestamp))
+        else -> "${diff / 3600_000}h ago"
     }
 }

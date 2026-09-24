@@ -349,6 +349,11 @@ internal fun ComponentContext.rememberBossAppState(
         remember(splitViewState, windowId) {
             SplitViewOperationsImpl(splitViewState, windowId)
         }
+    DisposableEffect(splitViewOperations) {
+        onDispose {
+            splitViewOperations.dispose()
+        }
+    }
 
     // Create workspace data provider wrapper for plugins
     val workspaceDataProvider =

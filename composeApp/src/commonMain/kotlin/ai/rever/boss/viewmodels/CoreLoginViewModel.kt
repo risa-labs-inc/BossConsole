@@ -6,6 +6,7 @@ import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -75,5 +76,9 @@ class CoreLoginViewModel {
     fun setMagicLinkVerificationError(errorMessage: String) {
         logger.debug(LogCategory.AUTH, "Setting magic link verification error", mapOf("error" to errorMessage))
         _errorMessage.value = errorMessage
+    }
+
+    fun dispose() {
+        viewModelScope.cancel()
     }
 }

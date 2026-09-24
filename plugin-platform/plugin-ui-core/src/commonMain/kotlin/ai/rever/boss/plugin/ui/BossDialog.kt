@@ -587,9 +587,6 @@ internal fun anchorRectInDp(
     )
 }
 
-/** Guards against the Unspecified/NaN offset a detached or not-yet-placed layout reports. */
-private fun Offset.isValid(): Boolean = !x.isNaN() && !y.isNaN()
-
 /**
  * Where a [BossPopup] places itself on the heavyweight path.
  *

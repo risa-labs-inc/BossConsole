@@ -37,6 +37,11 @@ enum class AuthScreen {
 fun AuthScreenContainer(onLoginSuccess: () -> Unit) {
     // Use a stable key to prevent ViewModel recreation during AuthState changes
     val viewModel = remember("login_viewmodel") { LoginViewModel() }
+    DisposableEffect(viewModel) {
+        onDispose {
+            viewModel.dispose()
+        }
+    }
     var currentScreen by remember { mutableStateOf(AuthScreen.LOGIN) }
     var magicLinkEmail by remember { mutableStateOf("") }
     var passkeyEmail by remember { mutableStateOf("") }
