@@ -221,7 +221,10 @@ object MenuActionsHandler {
         windowId: String,
         enabled: Boolean,
     ) {
-        _splitEnabledState.value = _splitEnabledState.value + (windowId to enabled)
+        // update { } is the atomic CAS loop; the bare read-then-write lost updates when two
+        // callers raced on the same window id (the keyboard interceptor and the menu, for
+        // instance, can both publish in the same frame). Same shape as the rest of the file.
+        _splitEnabledState.update { it + (windowId to enabled) }
     }
 
     /**
@@ -267,7 +270,9 @@ object MenuActionsHandler {
         windowId: String,
         count: Int,
     ) {
-        _panelCountState.value = _panelCountState.value + (windowId to count)
+        // update { } is the atomic CAS loop; the bare read-then-write lost updates when two
+        // callers raced on the same window id. Same shape as the rest of the file.
+        _panelCountState.update { it + (windowId to count) }
     }
 
     /**
