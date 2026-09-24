@@ -147,8 +147,15 @@ class WorkspaceManager {
      * for the same reason: a launch that half-wrote would be worse than any naming.
      *
      * Populated by the load scan, which already reads every file's id out of its contents.
+     *
+     * A `ConcurrentHashMap`, not a plain `mutableMapOf`. The init load on `Dispatchers.IO` writes
+     * here (line 311) while `fileNameFor` reads on `Dispatchers.Main` (line 155), and a plain
+     * `HashMap` corrupts its bucket table under that overlap - silent lost entries, and on a
+     * resize during an in-flight read the documented infinite-loop. `WorkspaceDirtyStateTest`
+     * pins the count of saved-and-still-present files after a concurrent save; restoring
+     * `mutableMapOf` breaks it.
      */
-    private val loadedFileNames = mutableMapOf<String, String>()
+    private val loadedFileNames = java.util.concurrent.ConcurrentHashMap<String, String>()
 
     /** Where [workspace] should be written: the file it came from, or `<id>.json`. */
     private fun fileNameFor(workspace: LayoutWorkspace): String =
