@@ -1,3 +1,4 @@
+import { authFailureDetails } from "../utils/logging.ts"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { withErrorHandler } from "../utils/error-handler.ts"
 import { normalizeBase64Url } from "../utils/base64.ts"
@@ -27,7 +28,7 @@ export const generateMobileRegistrationPage = withErrorHandler(
       .single()
 
     if (challengeError || !challengeData) {
-      console.error('❌ Invalid or expired challenge:', challengeError)
+      console.error('❌ Invalid or expired challenge:', authFailureDetails(challengeError))
       return {
         success: false,
         error: 'Invalid or expired registration link'
@@ -96,7 +97,7 @@ export const generateMobileAuthenticationPage = withErrorHandler(
       .single()
 
     if (challengeError || !challengeData) {
-      console.error('❌ Invalid or expired challenge:', challengeError)
+      console.error('❌ Invalid or expired challenge:', authFailureDetails(challengeError))
       return {
         success: false,
         error: 'Invalid or expired authentication challenge'
@@ -128,7 +129,7 @@ export const generateMobileAuthenticationPage = withErrorHandler(
       .single()
 
     if (passkeyError || !passkey) {
-      console.error('❌ Credential not found:', passkeyError)
+      console.error('❌ Credential not found:', authFailureDetails(passkeyError))
       return {
         success: false,
         error: 'Authentication credential not found'

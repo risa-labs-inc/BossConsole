@@ -1,3 +1,4 @@
+import { authFailureDetails } from "./logging.ts"
 import type { SupabaseClient } from "@supabase/supabase-js"
 
 /**
@@ -58,7 +59,7 @@ export async function generateSupabaseAccessToken(
     })
 
     if (linkError || !linkData) {
-      console.error('❌ Failed to generate magic link:', linkError)
+      console.error('❌ Failed to generate magic link:', authFailureDetails(linkError))
       throw new Error(`Failed to generate session link: ${linkError?.message || 'Unknown error'}`)
     }
 
@@ -75,15 +76,13 @@ export async function generateSupabaseAccessToken(
     })
 
     if (sessionError || !sessionData?.session) {
-      console.error('❌ Failed to verify OTP and create session:', sessionError)
+      console.error('❌ Failed to verify OTP and create session:', authFailureDetails(sessionError))
       throw new Error(`Failed to create session: ${sessionError?.message || 'Unknown error'}`)
     }
 
     const session = sessionData.session
     console.log('✅ Created Supabase session with proper refresh token')
     console.log(`   Session expires in: ${session.expires_in} seconds`)
-    console.log(`   Access token length: ${session.access_token.length}`)
-    console.log(`   Refresh token format: ${session.refresh_token.substring(0, 20)}... (unique string)`)
 
     // Calculate expiration timestamp
     const now = Math.floor(Date.now() / 1000)
@@ -96,7 +95,7 @@ export async function generateSupabaseAccessToken(
       expiresIn: session.expires_in
     }
   } catch (error) {
-    console.error('❌ Exception in generateSupabaseAccessToken:', error)
+    console.error('❌ Exception in generateSupabaseAccessToken:', authFailureDetails(error))
     throw error
   }
 }

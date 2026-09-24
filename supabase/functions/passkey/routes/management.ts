@@ -1,5 +1,6 @@
 import { createRoute, OpenAPIHono } from "@hono/zod-openapi"
 import type { PasskeyContext } from "../types/context.ts"
+import { authFailureDetails } from "../utils/logging.ts"
 import { requireAuthenticatedCaller } from "../utils/authorization.ts"
 import { listUserPasskeys, deleteUserPasskey, updatePasskeyDisplayName } from "../services/management.ts"
 import {
@@ -124,7 +125,7 @@ management.openapi(listPasskeysRoute, async (ctx) => {
 
     return ctx.json(result, 200)
   } catch (error) {
-    console.error('Route error:', error)
+    console.error('Route error:', authFailureDetails(error))
     return ctx.json({ error: 'Internal server error' }, 500)
   }
 })
@@ -210,7 +211,7 @@ management.openapi(deletePasskeyRoute, async (ctx) => {
 
     return ctx.json(result, 200)
   } catch (error) {
-    console.error('Route error:', error)
+    console.error('Route error:', authFailureDetails(error))
     return ctx.json({ error: 'Internal server error' }, 500)
   }
 })
@@ -301,7 +302,7 @@ management.openapi(updatePasskeyRoute, async (ctx) => {
 
     return ctx.json(result, 200)
   } catch (error) {
-    console.error('Route error:', error)
+    console.error('Route error:', authFailureDetails(error))
     return ctx.json({ error: 'Internal server error' }, 500)
   }
 })

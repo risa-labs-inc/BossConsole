@@ -1,3 +1,4 @@
+import { authFailureDetails } from "../utils/logging.ts"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { PasskeyContext } from "../types/context.ts"
 import {
@@ -110,7 +111,7 @@ auth.openapi(authChallengeRoute, async (ctx) => {
 
     return ctx.json(result, 200)
   } catch (error) {
-    console.error('Route error:', error)
+    console.error('Route error:', authFailureDetails(error))
     return ctx.json({ error: 'Internal server error' }, 500)
   }
 })
@@ -181,7 +182,7 @@ auth.openapi(authCompleteRoute, async (ctx) => {
     try {
       clientData = parseClientDataJSON(credential.response.clientDataJSON).data
     } catch (error) {
-      console.error('❌ Malformed clientDataJSON on auth/complete:', (error as Error).message)
+      console.error('❌ Malformed clientDataJSON on auth/complete:', authFailureDetails(error))
       return ctx.json({ error: 'Invalid clientDataJSON' }, 400)
     }
 
@@ -197,7 +198,7 @@ auth.openapi(authCompleteRoute, async (ctx) => {
 
     return ctx.json(result, 200)
   } catch (error) {
-    console.error('Route error:', error)
+    console.error('Route error:', authFailureDetails(error))
     return ctx.json({ error: 'Internal server error' }, 500)
   }
 })
@@ -254,7 +255,7 @@ auth.openapi(authStatusRoute, async (ctx) => {
 
     return ctx.json(result, 200)
   } catch (error) {
-    console.error('Route error:', error)
+    console.error('Route error:', authFailureDetails(error))
     return ctx.json({ error: 'Internal server error' }, 500)
   }
 })

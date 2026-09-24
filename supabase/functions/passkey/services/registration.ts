@@ -4,6 +4,7 @@ import { verifyAndConsumeChallenge, storePasskeyInDB } from "../utils/database.t
 import { extractCredentialFromAttestation } from "../utils/crypto.ts"
 import { ChallengeType } from "../types/challenge.ts"
 import { withErrorHandler } from "../utils/error-handler.ts"
+import { authFailureDetails } from "../utils/logging.ts"
 import { ALLOWED_ORIGINS, getAllowedOrigins, getAllowedRpIds, getRpId, rpIdMatchesOrigin } from "../utils/config.ts"
 import { encodedValuesMatch, normalizeBase64Url } from "../utils/base64.ts"
 import {
@@ -52,7 +53,7 @@ export interface RegistrationCredential {
  */
 export const generateRegistrationChallenge = withErrorHandler(
   async (supabase: SupabaseClient, userId: string, sessionId?: string) => {
-    console.log('🔑 Generating registration challenge for user:', userId, 'sessionId:', sessionId)
+    console.log('🔑 Generating registration challenge for user:', userId)
 
     // Generate and store challenge
     const challenge = generateChallenge()
@@ -64,7 +65,12 @@ export const generateRegistrationChallenge = withErrorHandler(
     if (!storeResult.success) {
       return {
         success: false,
-        error: storeResult.error || 'Failed to store challenge'
+        // The raw database message stays server-side; the client gets a
+        // generic failure with a code it can act on. storeChallenge's code is a
+        // raw Postgres value, so it passes the same allowlist the logs use -
+        // one definition of "safe code" for both sinks (and the false branch of
+        // the old ternary was dead: every failure return sets a code).
+        error: `Failed to store challenge (${authFailureDetails({ code: storeResult.code }).code ?? 'unknown'})`
       }
     }
 

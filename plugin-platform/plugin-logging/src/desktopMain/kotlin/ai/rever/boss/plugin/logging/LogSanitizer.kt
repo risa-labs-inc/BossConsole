@@ -66,20 +66,8 @@ object LogSanitizer {
         }
     }
 
-    /**
-     * Mask a token for logging.
-     * Shows first 3 and last 3 characters only.
-     * Example: "abc123def456ghi789" -> "abc...789"
-     */
-    fun maskToken(token: String?): String {
-        if (token.isNullOrBlank()) return "[empty]"
-
-        return if (token.length <= 6) {
-            "***"
-        } else {
-            "${token.take(3)}...${token.takeLast(3)}"
-        }
-    }
+    /** Redact the complete credential, including prefixes and suffixes. */
+    fun maskToken(token: String?): String = if (token.isNullOrBlank()) "[empty]" else "[REDACTED]"
 
     /**
      * Mask a credential ID for logging.
@@ -258,19 +246,8 @@ object LogSanitizer {
         return uri.substring(0, startIndex) + maskedSegment + uri.substring(endIndex)
     }
 
-    /**
-     * Mask a session ID for logging.
-     * Shows first 8 characters only.
-     */
-    fun maskSessionId(sessionId: String?): String {
-        if (sessionId.isNullOrBlank()) return "[empty]"
-
-        return if (sessionId.length <= 8) {
-            "****"
-        } else {
-            "${sessionId.take(8)}..."
-        }
-    }
+    /** Session IDs can be bearer capabilities in cross-device authentication. */
+    fun maskSessionId(sessionId: String?): String = maskToken(sessionId)
 
     /**
      * Describe a URI safely without exposing sensitive parameters.
@@ -510,6 +487,12 @@ object LogSanitizer {
             "error_description",
             "id_token",
             "session_token",
+            "challenge",
+            "email",
+            "credentialId",
+            "credential_id",
+            "sessionId",
+            "session_id",
             "api_key",
             "key",
             "secret",
@@ -532,6 +515,8 @@ object LogSanitizer {
             "key",
             "credential",
             "credential_id",
+            "sessionid",
+            "session_id",
         )
 
     /**
@@ -580,7 +565,7 @@ object LogSanitizer {
 
         return map.mapValues { (key, value) ->
             when {
-                sensitiveValueNames.any { key.contains(it, ignoreCase = true) } -> "[REDACTED]"
+                sensitiveValueNames.any { key.contains(it, ignoreCase = true) } || nameMarksSecret(key) -> "[REDACTED]"
                 value is String && looksLikeSecret(value) -> maskToken(value)
                 else -> value
             }
@@ -600,13 +585,18 @@ object LogSanitizer {
      *
      * The multi-word entries of [sensitiveValueNames] ("access_token",
      * "credential_id", ...) can never equal a single word; their "token", "key"
-     * and "credential" words do, so nothing is left uncovered.
+     * and "credential" words do. Session IDs are matched as adjacent words so
+     * prefixed and separator-delimited names retain the same protection.
      */
-    private fun nameMarksSecret(name: String): Boolean =
-        name
-            .replace(camelCaseBoundary, "_")
-            .split('_', '-', '.')
-            .any { word -> word.isNotEmpty() && sensitiveValueNames.any { word.equals(it, ignoreCase = true) } }
+    private fun nameMarksSecret(name: String): Boolean {
+        val words = name.replace(camelCaseBoundary, "_").split('_', '-', '.')
+        return words.any { word ->
+            word.isNotEmpty() && sensitiveValueNames.any { word.equals(it, ignoreCase = true) }
+        } ||
+            words.zipWithNext().any { (first, second) ->
+                first.equals("session", ignoreCase = true) && second.equals("id", ignoreCase = true)
+            }
+    }
 
     /**
      * The shared body of [sanitizeExceptionMessage] and [sanitizeStackTrace].
@@ -620,7 +610,7 @@ object LogSanitizer {
      * it.
      *
      * The passes compose in either order because [maskToken] is a fixed point on
-     * its own output at these lengths (`ghp...345` masks to `ghp...345`), so a
+     * its own redacted output, so a
      * value both of them match is masked once in effect.
      *
      * [sensitiveQueryParamPattern] runs before all of that, for a narrower

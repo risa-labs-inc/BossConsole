@@ -1,3 +1,4 @@
+import { authFailureDetails } from "../utils/logging.ts"
 import { createRoute, OpenAPIHono } from "@hono/zod-openapi"
 import type { PasskeyContext } from "../types/context.ts"
 import {
@@ -109,7 +110,7 @@ register.openapi(registerChallengeRoute, async (ctx) => {
 
     return ctx.json(result, 200)
   } catch (error) {
-    console.error('Route error:', error)
+    console.error('Route error:', authFailureDetails(error))
     return ctx.json({ error: 'Internal server error' }, 500)
   }
 })
@@ -188,7 +189,7 @@ register.openapi(registerCompleteRoute, async (ctx) => {
     try {
       clientData = parseClientDataJSON(credential.response.clientDataJSON).data
     } catch (error) {
-      console.error('❌ Malformed clientDataJSON on register/complete:', (error as Error).message)
+      console.error('❌ Malformed clientDataJSON on register/complete:', authFailureDetails(error))
       return ctx.json({ error: 'Invalid clientDataJSON' }, 400)
     }
 
@@ -217,7 +218,7 @@ register.openapi(registerCompleteRoute, async (ctx) => {
 
     return ctx.json(result, 200)
   } catch (error) {
-    console.error('Route error:', error)
+    console.error('Route error:', authFailureDetails(error))
     return ctx.json({ error: 'Internal server error' }, 500)
   }
 })
