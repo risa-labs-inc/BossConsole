@@ -56,6 +56,17 @@ class PrimaryModifierRuleTest {
         assertFalse(pressed(hasCtrl = true, metaDown = true, isMacOS = true))
     }
 
+    @Test
+    fun `on macOS an unrequested primary modifier cancels the match`() {
+        // A single-primary chord must not fire when the OTHER primary key is also held. Otherwise
+        // Cmd+Ctrl+W triggers a plain Cmd+W binding, and a more specific Cmd+Ctrl+W binding can be
+        // shadowed by Cmd+W depending on iteration order.
+        assertFalse(pressed(hasCmd = true, metaDown = true, controlDown = true, isMacOS = true))
+        assertFalse(pressed(hasCtrl = true, metaDown = true, controlDown = true, isMacOS = true))
+        // Requesting BOTH primaries still matches when both are down.
+        assertTrue(pressed(hasCmd = true, hasCtrl = true, metaDown = true, controlDown = true, isMacOS = true))
+    }
+
     // ---------------------------------------------------------------------
     // Windows and Linux: both spellings are the Control key.
     // ---------------------------------------------------------------------

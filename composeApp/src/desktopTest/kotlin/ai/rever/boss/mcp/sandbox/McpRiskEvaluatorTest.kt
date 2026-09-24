@@ -91,6 +91,20 @@ class McpRiskEvaluatorTest {
             "plugins_list",
             "list_tabs",
             "read_scrollback",
+            "list_workspaces",
+            "workspace_list",
+        )
+
+    // The v9.5.21 workspace lifecycle tools: mutating by name, but with no
+    // `command` argument, so a flat HIGH (no shell escalation) is the tier.
+    private val workspaceMutationTools =
+        setOf(
+            "open_workspace",
+            "workspace_open",
+            "create_workspace",
+            "workspace_create",
+            "close_workspace",
+            "workspace_close",
         )
 
     // Every wording the destructive heuristic pins today. Commands deliberately avoid JSON
@@ -107,15 +121,6 @@ class McpRiskEvaluatorTest {
             "chmod -r 777 /srv/app",
         )
     private val benignCommands = listOf("ls -la", "git status", "pwd", "echo hello")
-    private val knownLowRiskMutatingTools =
-        setOf(
-            "open_workspace",
-            "workspace_open",
-            "create_workspace",
-            "workspace_create",
-            "close_workspace",
-            "workspace_close",
-        )
 
     /** Map and raw JSON stay in sync for either representation read by `McpToolArgs.string`. */
     @Suppress("MaxLineLength")
@@ -265,6 +270,10 @@ class McpRiskEvaluatorTest {
         assertEquals(McpRiskLevel.CRITICAL, evaluator.evaluateRisk("secret_get", destructive).level)
         assertEquals(McpRiskLevel.HIGH, evaluator.evaluateRisk("file_write", destructive).level)
         assertEquals(McpRiskLevel.LOW, evaluator.evaluateRisk("codebase_read", destructive).level)
+        // The workspace lifecycle tier is the argument-insensitivity itself: a
+        // destructive `command` string must not escalate a tool that cannot
+        // execute anything - the reason it is its own set, not SHELL_TOOLS.
+        assertEquals(McpRiskLevel.HIGH, evaluator.evaluateRisk("open_workspace", destructive).level)
     }
 
     // ---------------------------------------------------------------------
@@ -306,13 +315,28 @@ class McpRiskEvaluatorTest {
     }
 
     @Test
-    fun `the mutating catalog and risk evaluator mismatch stays explicit`() {
+    fun `every mutating catalog tool rates at least HIGH in the risk evaluator`() {
         val mismatches =
             McpMutatingToolCatalog.KNOWN_MUTATING_TOOLS.filterTo(mutableSetOf()) { name ->
                 evaluator.evaluateRisk(name, emptyArgs).level < McpRiskLevel.HIGH
             }
 
-        assertEquals(knownLowRiskMutatingTools, mismatches)
+        assertTrue(mismatches.isEmpty(), "mutating catalog tools rated below HIGH: $mismatches")
+    }
+
+    @Test
+    fun `no read-only evaluator tool is classified mutating by the catalog`() {
+        // The reverse of the sync pin above: the catalog's MUTATING_SUFFIXES
+        // grows by name pattern (and a read-only tool can be renamed), so a
+        // future _stop/_delete suffix or rename could make the catalog call a
+        // tool mutating while the evaluator rates it read-only LOW - a silent
+        // contradiction between the two classification points.
+        val contradictions =
+            readOnlyTools.filterTo(mutableSetOf()) { name ->
+                McpMutatingToolCatalog.isMutating(name, declaredReadOnly = true)
+            }
+
+        assertTrue(contradictions.isEmpty(), "catalog/evaluator read-only contradictions: $contradictions")
     }
 
     // ---------------------------------------------------------------------
@@ -374,6 +398,7 @@ class McpRiskEvaluatorTest {
                 "k8s_logs" to "k8s_apply",
                 // k8s_exec is a shell tool: even its no-arg HIGH floor sits above k8s_logs.
                 "k8s_logs" to "k8s_exec",
+                "list_workspaces" to "create_workspace",
             )
         for ((readOnly, mutating) in pairs) {
             val readOnlyLevel = evaluator.evaluateRisk(readOnly, emptyArgs).level
@@ -399,7 +424,7 @@ class McpRiskEvaluatorTest {
         }
 
         val destructiveArgs = commandArgs("rm -rf /tmp/cache")
-        for (name in dockerMutatingTools + k8sMutatingTools + fileWriteTools + readOnlyTools) {
+        for (name in dockerMutatingTools + k8sMutatingTools + fileWriteTools + workspaceMutationTools + readOnlyTools) {
             assertEquals(
                 evaluator.evaluateRisk(name, emptyArgs).level,
                 evaluator.evaluateRisk(name, destructiveArgs).level,
@@ -415,6 +440,7 @@ class McpRiskEvaluatorTest {
         // emission would change which tools stop hitting the approval default.
         val surface =
             shellTools + secretVaultTools + dockerMutatingTools + k8sMutatingTools + fileWriteTools +
+                workspaceMutationTools +
                 readOnlyTools + setOf("secret_get") +
                 shellTools.map { "mcp__boss__$it" } +
                 setOf("custom_unknown_tool", "", "mcp__vault__secret_get", "secret_get_all")

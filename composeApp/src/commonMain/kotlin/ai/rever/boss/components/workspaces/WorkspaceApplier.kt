@@ -56,8 +56,10 @@ suspend fun applyWorkspace(
     restoreProject: Boolean = true,
     warmEngine: () -> Unit = ::warmBrowserEngineForTabs,
 ) {
-    // Generate ID if missing
-    val workspaceId = workspace.id.ifEmpty { LayoutWorkspace.generateId() }
+    // Generate ID if missing. Blank, not just empty, and the collision-safe mint:
+    // a timestamp-only id is throwaway the moment two Spaces share a millisecond,
+    // and the preserved tree below is keyed under whatever lands here.
+    val workspaceId = workspace.id.ifBlank { mintWorkspaceId() }
 
     // Restore project if workspace has one and restoreProject is true
     if (restoreProject && windowProjectState != null) {

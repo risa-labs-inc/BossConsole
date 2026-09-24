@@ -28,6 +28,20 @@ enum class DeepLinkOrigin {
      * itself this way. Also the default for an unstated origin.
      */
     EXTERNAL,
+
+    /**
+     * The operator asked the OS to open a file or folder with BOSS: a file
+     * association, Open With, or dropping it on the app. BOSS turns that into a
+     * `boss://file` or `boss://folder` link itself.
+     *
+     * This is not [OPERATOR_CLI] and grants nothing to run: it is not
+     * [isOperatorInitiated], so a terminal command or a Space's commands are still
+     * confirmed. It exists for one distinction. A path that came from `boss://` text
+     * can be chosen by any web page, so a network path in it must not be touched;
+     * a path the user double-clicked is already the user's own choice, and refusing
+     * it would break opening a file that lives on a company share.
+     */
+    OS_FILE_OPEN,
     ;
 
     /** True when the request is known to be the operator acting on their own machine. */

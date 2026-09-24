@@ -266,10 +266,6 @@ object RoleService {
     // Get user roles
     suspend fun getUserRoles(userId: String): Result<List<UserRole>>
 
-    // Check if user has role
-    suspend fun userHasRole(userId: String, roleName: String): Result<Boolean>
-    suspend fun isUserAdmin(userId: String): Result<Boolean>
-
     // Assign/remove roles (admin only)
     suspend fun assignRoleByName(targetUserId: String, roleName: String): Result<Unit>
     suspend fun removeRoleByName(targetUserId: String, roleName: String): Result<Unit>
@@ -491,11 +487,11 @@ SELECT public.remove_role_from_user(
 
 ### Query Functions
 
-#### `check_user_has_role(target_user_id, role_name)`
+#### `user_has_role(check_user_id, check_role)`
 Check if a user has a specific role by role name.
 
 ```sql
-SELECT public.check_user_has_role(
+SELECT public.user_has_role(
     'user-uuid'::uuid,
     'admin'::text
 );

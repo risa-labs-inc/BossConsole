@@ -28,10 +28,7 @@ import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.consumePendingInitialProject
 import ai.rever.boss.consumePendingInitialTab
 import ai.rever.boss.health.WorkspaceHealthSources
-import ai.rever.boss.performance.BrowserTabInfo
-import ai.rever.boss.performance.EditorTabResourceInfo
 import ai.rever.boss.performance.PerformanceState
-import ai.rever.boss.performance.TerminalInfo
 import ai.rever.boss.plugin.api.Panel.Companion.bottom
 import ai.rever.boss.plugin.api.Panel.Companion.left
 import ai.rever.boss.plugin.api.Panel.Companion.right
@@ -245,7 +242,7 @@ internal fun BossAppStartupEffects(state: BossAppState) {
     // Use DisposableEffect to clean up on disposal and prevent memory leaks
     DisposableEffect(splitViewState, state.draggablePanelComponent) {
         // Cache for getAllPanels() to avoid repeated tree traversals
-        // All 6 providers are called within milliseconds of each other every 5 seconds
+        // The count providers are called within milliseconds of each other every 5 seconds
         // Using synchronized block for thread-safe access from provider lambdas
         val cacheLock = Any()
         var cachedPanels: List<SplitNode.Panel>? = null
@@ -297,51 +294,6 @@ internal fun BossAppStartupEffects(state: BossAppState) {
             },
             windows = {
                 SplitViewStateRegistry.states.value.size
-            },
-        )
-
-        // Register detailed resource providers for the Resources tab
-        PerformanceState.registerDetailedResourceProviders(
-            browserTabs = {
-                getCachedPanels().flatMap { panel ->
-                    val tabsState = panel.tabsComponent.tabsState.value
-                    val activeTabId = tabsState.activeTab?.id
-                    tabsState.tabs.filterIsInstance<FluckTabInfo>().map { tab ->
-                        BrowserTabInfo(
-                            id = tab.id,
-                            title = tab.title,
-                            url = tab.currentUrl,
-                            isActive = tab.id == activeTabId,
-                        )
-                    }
-                }
-            },
-            terminals = {
-                getCachedPanels().flatMap { panel ->
-                    val tabsState = panel.tabsComponent.tabsState.value
-                    val activeTabId = tabsState.activeTab?.id
-                    tabsState.tabs.filterIsInstance<TerminalTabInfo>().map { tab ->
-                        TerminalInfo(
-                            id = tab.id,
-                            title = tab.title,
-                            isActive = tab.id == activeTabId,
-                        )
-                    }
-                }
-            },
-            editorTabs = {
-                getCachedPanels().flatMap { panel ->
-                    val tabsState = panel.tabsComponent.tabsState.value
-                    val activeTabId = tabsState.activeTab?.id
-                    tabsState.tabs.filterIsInstance<EditorTabInfo>().map { tab ->
-                        EditorTabResourceInfo(
-                            id = tab.id,
-                            fileName = tab.title,
-                            filePath = tab.filePath,
-                            isActive = tab.id == activeTabId,
-                        )
-                    }
-                }
             },
         )
 

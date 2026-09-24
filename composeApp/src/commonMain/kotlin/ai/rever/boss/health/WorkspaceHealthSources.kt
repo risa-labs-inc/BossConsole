@@ -43,7 +43,7 @@ internal object WorkspaceHealthSources {
         windowId: String,
         source: () -> PluginHealthSnapshot,
     ) {
-        pluginSources.remove(windowId, source)
+        if (pluginSources.remove(windowId, source)) HealthSourceWarnings.recovered(sourceKey(windowId))
     }
 
     /**
@@ -62,6 +62,7 @@ internal object WorkspaceHealthSources {
         for ((windowId, source) in pluginSources) {
             try {
                 snapshots += source()
+                HealthSourceWarnings.recovered(sourceKey(windowId))
             } catch (e: Exception) {
                 failedSources++
                 logUnreadable(windowId, e)
@@ -76,12 +77,15 @@ internal object WorkspaceHealthSources {
     /** For tests. */
     fun clear() {
         pluginSources.clear()
+        HealthSourceWarnings.clear()
     }
 
+    /** Logged once per failing window until it reads cleanly again; see [HealthSourceWarnings]. */
     private fun logUnreadable(
         windowId: String,
         error: Throwable,
     ) {
+        if (!HealthSourceWarnings.failed(sourceKey(windowId))) return
         logger.warn(
             LogCategory.SYSTEM,
             "Plugin health source could not be read for one window",
@@ -89,3 +93,5 @@ internal object WorkspaceHealthSources {
         )
     }
 }
+
+private fun sourceKey(windowId: String) = "plugins:$windowId"

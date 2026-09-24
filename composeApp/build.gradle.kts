@@ -1126,6 +1126,9 @@ kotlin {
                 "**/plugin/PluginProcessIdTest.kt",
                 // The source-isolation guard rejects this test's IPC package import.
                 "**/run/DesktopRunnerTerminalServiceTest.kt",
+                // Same IpcEventBridge dependency - the capture seam it uses lives in
+                // the boss-ipc module dropped on this platform.
+                "**/git/GitRunInTerminalQuotingTest.kt",
             )
         }
     }

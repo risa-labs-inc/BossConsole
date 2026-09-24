@@ -3,15 +3,22 @@ package ai.rever.boss.components.plugin.providers
 import ai.rever.boss.plugin.api.PluginStorageFactory
 import ai.rever.boss.plugin.api.PluginStorageProvider
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicMoveFrom
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.nio.file.Files
 import java.util.Properties
 import java.util.concurrent.ConcurrentHashMap
 
@@ -40,8 +47,10 @@ class PluginStorageFactoryImpl private constructor() : PluginStorageFactory {
     // Cache of storage providers per plugin
     private val storageCache = ConcurrentHashMap<String, PluginStorageProviderImpl>()
 
+    // Construct once per key: init reads disk and sweeps orphan temps under the map's bin lock.
+    // The mapping function must never call back into this factory.
     override fun createStorage(pluginId: String): PluginStorageProvider =
-        storageCache.getOrPut(pluginId) {
+        storageCache.computeIfAbsent(pluginId) {
             PluginStorageProviderImpl(pluginId)
         }
 }
@@ -49,28 +58,32 @@ class PluginStorageFactoryImpl private constructor() : PluginStorageFactory {
 /**
  * Desktop implementation of PluginStorageProvider.
  * Stores data in ~/.boss/plugin-data/{pluginId}/storage.properties
+ *
+ * The factory shares one provider per plugin across windows. Mutations serialize the entire
+ * read-modify-persist-publish transaction; readers see only committed, immutable snapshots.
+ * Persistence errors propagate to the caller without publishing a value or change event.
+ * Cancellation while queued commits nothing; cancellation during a commit can still report
+ * cancellation to the caller after disk and cache have both committed. This is process-local
+ * coordination: a second process or an external editor is not part of the transaction.
+ * [storageDirOverride] and [writeProperties] are test seams; production uses the default path/writer.
  */
-class PluginStorageProviderImpl(
+internal class PluginStorageProviderImpl(
     private val pluginId: String,
+    private val storageDirOverride: File? = null,
+    private val writeProperties: (File, Properties) -> Unit = ::writePluginProperties,
 ) : PluginStorageProvider {
     companion object {
         private val logger = BossLogger.forComponent("PluginStorage")
     }
 
     private val storageDir: File by lazy {
-        val dir = BossDirectories.resolve("plugin-data/$pluginId")
-        if (!dir.exists()) {
-            dir.mkdirs()
-        }
-        dir
+        storageDirOverride ?: BossDirectories.resolve("plugin-data/$pluginId")
     }
+    private val storageFile: File by lazy { File(storageDir, "storage.properties") }
 
-    private val storageFile: File by lazy {
-        File(storageDir, "storage.properties")
-    }
-
-    // In-memory cache
-    private val cache = ConcurrentHashMap<String, String>()
+    @Volatile
+    private var cache: Map<String, String> = emptyMap()
+    private val mutationMutex = Mutex()
 
     // Change notification
     private val _changes = MutableSharedFlow<String>(extraBufferCapacity = 64)
@@ -88,9 +101,7 @@ class PluginStorageProviderImpl(
         key: String,
         value: String,
     ) {
-        cache[key] = value
-        saveToDisk()
-        _changes.tryEmit(key)
+        mutate(key) { it + (key to value) }
     }
 
     override suspend fun getString(
@@ -170,17 +181,13 @@ class PluginStorageProviderImpl(
     override suspend fun contains(key: String): Boolean = cache.containsKey(key)
 
     override suspend fun remove(key: String) {
-        cache.remove(key)
-        saveToDisk()
-        _changes.tryEmit(key)
+        mutate(key, skipUnchanged = true) { it - key }
     }
 
     override suspend fun getAllKeys(): Set<String> = cache.keys.toSet()
 
     override suspend fun clear() {
-        cache.clear()
-        saveToDisk()
-        _changes.tryEmit("*")
+        mutate("*", skipUnchanged = true) { emptyMap() }
     }
 
     override fun observeString(key: String): Flow<String?> =
@@ -199,13 +206,16 @@ class PluginStorageProviderImpl(
     // ============ Disk Operations ============
 
     private fun loadFromDisk() {
+        // computeIfAbsent constructs one provider per id, before any of its writes can start.
+        val tempPrefix = tempPrefixFor(storageFile)
+        storageDir
+            .listFiles { file -> file.name.startsWith(tempPrefix) }
+            ?.forEach { orphan -> orphan.delete() }
         try {
             if (storageFile.exists()) {
                 val properties = Properties()
                 storageFile.inputStream().use { properties.load(it) }
-                properties.forEach { key, value ->
-                    cache[key.toString()] = value.toString()
-                }
+                cache = properties.entries.associate { (key, value) -> key.toString() to value.toString() }
                 logger.debug(
                     LogCategory.SYSTEM,
                     "Loaded plugin storage",
@@ -227,26 +237,80 @@ class PluginStorageProviderImpl(
         }
     }
 
-    private suspend fun saveToDisk() {
+    private suspend fun mutate(
+        changedKey: String,
+        skipUnchanged: Boolean = false,
+        transform: (Map<String, String>) -> Map<String, String>,
+    ) {
         withContext(Dispatchers.IO) {
-            try {
-                val properties = Properties()
-                cache.forEach { (key, value) ->
-                    properties[key] = value
+            mutationMutex.withLock {
+                currentCoroutineContext().ensureActive()
+                // Waiting callers remain cancellable. Once admitted, a blocking file commit and
+                // cache publication must finish together even if the caller cancels during I/O.
+                withContext(NonCancellable) {
+                    val updated = transform(cache)
+                    if (!skipUnchanged || updated != cache) {
+                        persistSnapshot(updated, changedKey)
+                    }
                 }
-                storageFile.outputStream().use {
-                    properties.store(it, "Plugin storage for $pluginId")
-                }
-            } catch (e: Exception) {
-                logger.error(
-                    LogCategory.SYSTEM,
-                    "Failed to save plugin storage",
-                    mapOf(
-                        "pluginId" to pluginId,
-                    ),
-                    e,
-                )
             }
         }
+    }
+
+    private fun persistSnapshot(
+        updated: Map<String, String>,
+        changedKey: String,
+    ) {
+        val properties = Properties().apply { putAll(updated) }
+        try {
+            writeProperties(storageFile, properties)
+        } catch (e: Exception) {
+            logger.error(
+                LogCategory.SYSTEM,
+                "Failed to save plugin storage",
+                mapOf("pluginId" to pluginId),
+                e,
+            )
+            throw e
+        }
+        // Publication is outside the persistence catch: a notification failure
+        // must not be reported as a failed file commit.
+        cache = updated
+        if (!_changes.tryEmit(changedKey)) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Plugin storage change notification buffer full",
+                mapOf("pluginId" to pluginId),
+            )
+        }
+    }
+}
+
+/**
+ * Writes a unique sibling file and syncs its content before replacement. On the atomic path,
+ * a surviving rename after power loss points at complete content. The parent directory is not
+ * synced, so power loss can lose the rename itself; the shared move helper's non-atomic fallback
+ * cannot promise atomic replacement. A process crash does not lose the kernel's page cache.
+ */
+internal fun tempPrefixFor(file: File) = "${file.name}.tmp."
+
+internal fun writePluginProperties(
+    file: File,
+    properties: Properties,
+) {
+    val target = file.absoluteFile
+    target.parentFile.mkdirs()
+    val temporary = Files.createTempFile(target.parentFile.toPath(), tempPrefixFor(target), ".tmp").toFile()
+    try {
+        // Keep OutputStream encoding: Properties.load(InputStream) expects Latin-1 with escaped
+        // Unicode, not the unescaped Unicode emitted by Properties.store(Writer).
+        // Files.createTempFile deliberately uses restrictive permissions on POSIX stores.
+        temporary.outputStream().use { out ->
+            properties.store(out, "Plugin storage")
+            out.fd.sync()
+        }
+        target.atomicMoveFrom(temporary)
+    } finally {
+        temporary.delete()
     }
 }

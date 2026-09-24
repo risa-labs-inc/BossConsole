@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package boss.ipc.v1;
 
+import "boss/ipc/v1/capability.proto";
 import "boss/ipc/v1/common.proto";
 
 option java_package = "ai.rever.boss.ipc.proto";
@@ -24,6 +25,14 @@ service KernelService {
 
   // List all registered processes
   rpc ListProcesses(Empty) returns (ListProcessesResponse);
+
+  // Invoke a capability exposed by a registered plugin process. Child processes
+  // cannot reach each other directly, so the kernel - the only side that owns the
+  // real process registry - brokers every capability invocation (#1061).
+  rpc InvokeCapability(InvokeCapabilityRequest) returns (InvokeCapabilityResponse);
+
+  // List every capability the registered processes currently advertise.
+  rpc ListCapabilities(Empty) returns (ListCapabilitiesResponse);
 }
 
 // ---- Process Manifest (Quine Self-Description) ----

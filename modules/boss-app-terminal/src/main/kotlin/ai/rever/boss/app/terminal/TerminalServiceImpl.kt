@@ -47,22 +47,34 @@ class TerminalServiceImpl(
                             .asRuntimeException()
                     }
                     currentCoroutineContext().ensureActive()
-                    // Shutdown cannot overlook an admitted launch between process creation and registration.
+                    // Admission stays atomic with shutdown, but the spawn runs outside the
+                    // service-global lock: the caller-controlled working directory can take the
+                    // OS a long time to resolve (dead UNC share, stale NFS mount), and holding
+                    // [lock] across it would stall every owner's RPC behind one bad launch.
                     synchronized(lock) {
                         reserveSlot()
                         admitted = true
-                        val launched = TerminalSession.launch(request, ownerInstance)
-                        session = launched
+                    }
+                    val launched = TerminalSession.launch(request, ownerInstance)
+                    session = launched
+                    synchronized(lock) {
+                        // A shutdown that raced the spawn must not overlook this launch either:
+                        // reject the registration so the cleanup below reaps the orphaned process.
+                        if (closed) {
+                            throw Status.UNAVAILABLE
+                                .withDescription("Terminal service is closed")
+                                .asRuntimeException()
+                        }
                         retain(launched)
                         launched.startPump { activeSlots.release() }
                         pumping = true
-                        logger.info("Created terminal session: {}", launched.id)
-                        CreateSessionResponse
-                            .newBuilder()
-                            .setSuccess(true)
-                            .setSessionId(launched.id)
-                            .build()
                     }
+                    logger.info("Created terminal session: {}", launched.id)
+                    CreateSessionResponse
+                        .newBuilder()
+                        .setSuccess(true)
+                        .setSessionId(launched.id)
+                        .build()
                 }
             // The return dispatch can discard a withContext result on cancellation. Ownership stays
             // here until that dispatch succeeds, so a discarded response also terminates its process.

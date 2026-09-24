@@ -88,7 +88,11 @@ class PerformanceMonitorTest {
 
         val settingsHigh = PerformanceSettings(historyRetentionMinutes = 10000)
         val validatedHigh = settingsHigh.validated()
-        assertEquals(180, validatedHigh.historyRetentionMinutes, "Should clamp to 180 minutes (3h) max")
+        assertEquals(
+            PerformanceSettings.MAX_HISTORY_RETENTION_MINUTES,
+            validatedHigh.historyRetentionMinutes,
+            "Should clamp to the history retention ceiling",
+        )
     }
 
     @Test
@@ -316,6 +320,65 @@ class PerformanceMonitorTest {
             )
 
         assertEquals(128f, poolInfo.maxMB, 0.1f, "Max MB should fall back to committed MB")
+    }
+
+    // ==================== HISTORY SNAPSHOT TESTS ====================
+
+    @Test
+    fun `test history snapshot retains a bounded thread list`() {
+        val fatThreads =
+            (1L..50L).map { id ->
+                ThreadInfo(
+                    id = id,
+                    name = "thread-$id",
+                    state = "RUNNABLE",
+                    cpuTimeMs = id * 1000,
+                    userTimeMs = id * 500,
+                    blockedCount = 0,
+                    waitedCount = 0,
+                )
+            }
+        val snapshot =
+            createSnapshot(memoryUsagePercent = 50f, cpuUsagePercent = 40f)
+                .copy(cpu = CpuMetrics(0.4, 0.5, 8, 50, threads = fatThreads))
+
+        val retained = snapshot.forHistory()
+
+        assertEquals(
+            PerformanceSnapshot.HISTORY_THREAD_LIMIT,
+            retained.cpu.threads.size,
+            "History entries must cap retained thread detail",
+        )
+        // The live snapshot is untouched - the full list is for the panel's thread table.
+        assertEquals(50, snapshot.cpu.threads.size, "forHistory must not mutate the source snapshot")
+    }
+
+    @Test
+    fun `test history snapshot is smaller than the live snapshot`() {
+        val fatThreads =
+            (1L..50L).map { id ->
+                ThreadInfo(
+                    id = id,
+                    name = "a-very-long-thread-name-for-worker-$id",
+                    state = "RUNNABLE",
+                    cpuTimeMs = id,
+                    userTimeMs = id,
+                    blockedCount = id,
+                    waitedCount = id,
+                )
+            }
+        val snapshot =
+            createSnapshot(memoryUsagePercent = 50f, cpuUsagePercent = 40f)
+                .copy(cpu = CpuMetrics(0.4, 0.5, 8, 50, threads = fatThreads))
+
+        val json = kotlinx.serialization.json.Json
+        val liveSize = json.encodeToString(PerformanceSnapshot.serializer(), snapshot).length
+        val retainedSize = json.encodeToString(PerformanceSnapshot.serializer(), snapshot.forHistory()).length
+
+        assertTrue(
+            retainedSize < liveSize,
+            "Retained snapshot ($retainedSize bytes) should be smaller than the live one ($liveSize bytes)",
+        )
     }
 
     // ==================== LAST GC INFO TESTS ====================

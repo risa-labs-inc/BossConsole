@@ -1011,6 +1011,8 @@ private fun acceptNextClient(
     }
 
 private fun pluginActionResponse(verdict: kotlinx.coroutines.Deferred<Boolean>?): String {
+    // Null is the queued verdict for an external action held for confirmation. Nothing has run,
+    // but the running instance accepted responsibility for asking the operator.
     if (verdict == null) return RESPONSE_OK
     val handled = kotlinx.coroutines.runBlocking { awaitPluginAction(verdict, OPEN_ACTION_TIMEOUT_MS) }
     return when (handled) {
@@ -1086,6 +1088,16 @@ object SingleInstanceManager {
     /** The descriptor this process published, or null when it is not the owner. */
     @Volatile
     private var published: InstanceDescriptor? = null
+
+    /**
+     * Whether this process holds the single-instance claim - it won
+     * [acquireLock] and has not been [release]d. Destructive startup cleanup
+     * (FluckEngine's stale-Chromium sweep) consults this: the sweep matches
+     * processes by shared data-dir paths, so a process that lost - or never
+     * took - the claim must not run it against the owning instance's tree.
+     */
+    val isInstanceOwner: Boolean
+        get() = published != null
 
     /** Runtime directory override for tests; see [SingleInstanceFiles.runtimeDirOverride]. */
     internal var runtimeDirOverride: File?
@@ -1501,10 +1513,12 @@ object SingleInstanceManager {
      *   process from the OS.
      * @return true if the running instance acknowledged it. For most links this
      *   still means only "queued" (fire-and-forget, as before); for a
-     *   `boss://plugin?id=…&action=…` link it now means the registered handler
-     *   reported the action handled. An unregistered handler id, a declined
-     *   action, or an unknown outcome at timeout returns false. This is not a
-     *   guarantee that asynchronous work started by a handler has completed.
+     *   `boss://plugin?id=…&action=…` link from [DeepLinkOrigin.OPERATOR_CLI] it
+     *   means the registered handler reported the action handled. For the default
+     *   external origin it means the action was queued for confirmation and has not
+     *   run. A refused action, an unregistered handler on the operator path, or an
+     *   unknown outcome at timeout returns false. This is not a guarantee that
+     *   asynchronous work started by a handler has completed.
      */
     fun sendToExistingInstance(
         url: String,

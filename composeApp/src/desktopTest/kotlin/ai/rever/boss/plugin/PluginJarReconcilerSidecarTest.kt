@@ -1,5 +1,6 @@
 package ai.rever.boss.plugin
 
+import ai.rever.boss.plugin.loader.ApiClassLoader
 import ai.rever.boss.plugin.loader.PluginBundledTrust
 import ai.rever.boss.plugin.loader.PluginSignatureSidecar
 import kotlinx.coroutines.runBlocking
@@ -144,6 +145,47 @@ class PluginJarReconcilerSidecarTest {
         PluginJarReconciler.reconcilePluginDir(dir, pluginIds = null)
         assertFalse(old.exists(), "the next startup can remove the superseded artifact")
         assertFalse(File(PluginSignatureSidecar.pathFor(old.absolutePath)).exists())
+    }
+
+    @Test
+    fun `an unverifiable api jar never wins over the verified one`() {
+        // Reconcile runs BEFORE the load-time trust gate. An unverifiable newer
+        // api jar that shadows the verified older one must lose here too - the
+        // gate would refuse it at load and the host would be left with no API.
+        val dir = tempPluginDir()
+        val id = ApiClassLoader.API_PLUGIN_ID
+        val verifiedOld = manifestJar(dir, "boss-plugin-api-1.0.0.jar", id, "1.0.0")
+        val unverifiableNew = manifestJar(dir, "boss-plugin-api-2.0.0.jar", id, "2.0.0")
+
+        val result =
+            PluginJarReconciler.reconcilePluginDir(
+                dir,
+                pluginIds = null,
+                selectVerifiedApiJar = { verifiedOld },
+            )
+
+        assertTrue(verifiedOld.exists(), "the verified api jar must survive reconciliation")
+        assertFalse(unverifiableNew.exists(), "the unverifiable api jar is cleaned up as a loser")
+        assertTrue(result.deleted.contains(unverifiableNew.name))
+    }
+
+    @Test
+    fun `no verifiable api jar means the reconciler touches nothing`() {
+        val dir = tempPluginDir()
+        val id = ApiClassLoader.API_PLUGIN_ID
+        val first = manifestJar(dir, "boss-plugin-api-1.0.0.jar", id, "1.0.0")
+        val second = manifestJar(dir, "boss-plugin-api-2.0.0.jar", id, "2.0.0")
+
+        val result =
+            PluginJarReconciler.reconcilePluginDir(
+                dir,
+                pluginIds = null,
+                selectVerifiedApiJar = { null },
+            )
+
+        assertTrue(result.deleted.isEmpty())
+        assertTrue(first.exists())
+        assertTrue(second.exists())
     }
 
     @Test

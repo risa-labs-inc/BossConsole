@@ -5,6 +5,7 @@ import ai.rever.boss.components.plugin.DynamicPluginInfo
 import ai.rever.boss.components.plugin.DynamicPluginManager
 import ai.rever.boss.components.plugin.HotReloadPolicy
 import ai.rever.boss.components.plugin.PersistedPluginEntry
+import ai.rever.boss.components.plugin.UpdateJarIdentityVet
 import ai.rever.boss.config.GitHubConfig
 import ai.rever.boss.config.SupabaseClientConfig
 import ai.rever.boss.plugin.api.PluginState
@@ -308,6 +309,15 @@ object PluginStoreSetup {
                     // and PluginUpdateManager needs that distinct from the empty string it
                     // publishes when it resolved and found no api jar.
                     hostApiVersion = { System.getProperty("boss.api.version") },
+                    // Vet the downloaded jar's declared identity before the swap
+                    // force-unloads the running plugin (BossConsole#927): the store
+                    // row's bytes are anchored, the manifest inside them is not, so a
+                    // mismatched jar must not uninstall - or become - the plugin the
+                    // user chose to update. The vet enforces the store installers' two
+                    // conditions (the row's id, and nothing protected) and discards a
+                    // refused jar with its `.sig` sidecar itself, so the gate does not
+                    // lean on this call site's failure path to clean the bytes up.
+                    verifyDownloadedJar = UpdateJarIdentityVet::vet,
                 )
 
             // Create and start realtime service for live updates

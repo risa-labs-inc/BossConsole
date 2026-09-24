@@ -15,12 +15,22 @@ private val bossAppLogger = BossLogger.forComponent("DesktopBossApp")
  * Called when BossApp initializes on desktop platform.
  */
 actual fun setupDownloadTabCloseCallback(splitViewState: SplitViewState) {
-    FluckEngine.setCloseMostRecentTabCallback {
-        bossAppLogger.debug(LogCategory.UI, "Received request to close most recent tab")
-        // Close most recent tab in all panels
-        splitViewState.getAllPanels().forEach { panel ->
-            val tabsComp = splitViewState.getPanelTabsComponent(panel.id)
-            tabsComp?.closeMostRecentTab()
+    FluckEngine.setCloseRecentTabsCallback { count ->
+        bossAppLogger.debug(LogCategory.UI, "Received request to close recent tabs", mapOf("count" to count))
+        // Close up to `count` tabs total, most-recent-first. A redirect burst opens several
+        // tabs before the first download lands, so the number to close comes from the engine's
+        // pending count rather than always being one. The burst lands in one panel, so each
+        // panel is exhausted before moving on - a per-panel round robin would guarantee a
+        // collateral close in every panel that received no burst tab.
+        var remaining = count
+        val panels = splitViewState.getAllPanels()
+        var panelIndex = 0
+        while (remaining > 0 && panelIndex < panels.size) {
+            val tabsComp = splitViewState.getPanelTabsComponent(panels[panelIndex].id)
+            while (remaining > 0 && tabsComp?.closeMostRecentTab() == true) {
+                remaining--
+            }
+            panelIndex++
         }
     }
 }

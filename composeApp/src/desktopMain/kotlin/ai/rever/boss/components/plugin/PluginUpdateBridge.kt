@@ -33,16 +33,20 @@ actual object PluginUpdateBridge {
     private val updates = ExclusivePluginUpdates()
 
     actual suspend fun refreshAll(installed: List<InstalledPluginRef>) {
-        if (installed.isEmpty()) return
+        // Never offer an update for a protected id: UpdateJarIdentityVet can only
+        // refuse such a jar, so the button would re-offer forever, paying a
+        // download each press. Same filter as HomeToolCatalog.
+        val offerable = installed.filterNot { it.pluginId in PluginDependencyResolution.NOT_USER_INSTALLABLE }
+        if (offerable.isEmpty()) return
         val mgr = PluginStoreSetup.updateManager ?: return
-        val byId = installed.associateBy { it.pluginId }
+        val byId = offerable.associateBy { it.pluginId }
         // Use the check's own result rather than reading mgr.availableUpdates afterwards:
         // that shared flow is replaced wholesale by every checkForUpdates() call, so a
         // concurrent single-plugin checkOne() could shrink it to one entry between our
         // check and the read.
         val result =
             try {
-                mgr.checkForUpdates(installed.associate { it.pluginId to it.version })
+                mgr.checkForUpdates(offerable.associate { it.pluginId to it.version })
             } catch (e: Exception) {
                 logger.warn(LogCategory.SYSTEM, "Plugin update check failed: ${e.message}")
                 return
@@ -59,7 +63,16 @@ actual object PluginUpdateBridge {
         )
     }
 
+    // Guard returns preserve the protected-id short-circuit and the uninitialized-store
+    // failure as distinct outcomes before any store traffic.
+    @Suppress("ReturnCount")
     actual suspend fun checkOne(ref: InstalledPluginRef): UpdateCheckOutcome {
+        if (ref.pluginId in PluginDependencyResolution.NOT_USER_INSTALLABLE) {
+            // A protected id can never take a store update (the vet refuses the
+            // jar), so report up-to-date and clear any stale offer.
+            PluginUpdateRegistry.clear(ref.pluginId)
+            return UpdateCheckOutcome.UpToDate
+        }
         val mgr =
             PluginStoreSetup.updateManager
                 ?: return UpdateCheckOutcome.Error("Plugin store not initialized")
