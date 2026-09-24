@@ -1,8 +1,5 @@
 package ai.rever.boss.mcp
 
-import ai.rever.boss.mcp.sandbox.DefaultMcpRiskEvaluator
-import ai.rever.boss.mcp.sandbox.McpRiskLevel
-import ai.rever.boss.plugin.api.McpToolArgs
 import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -231,8 +228,7 @@ class McpPolicyEngine(
         }
         if (configuredTool != null) return configuredTool
         if (configuredProvider == McpPolicyAction.ALLOW) return McpPolicyAction.ALLOW
-        val risk = DefaultMcpRiskEvaluator().evaluateRisk(toolName, McpToolArgs(emptyMap())).level
-        return if (risk >= McpRiskLevel.HIGH || McpMutatingToolCatalog.isMutating(toolName, declaredReadOnly)) {
+        return if (McpMutatingToolCatalog.isMutationClassified(toolName, declaredReadOnly)) {
             _config.value.defaultMutatingAction
         } else {
             _config.value.defaultReadOnlyAction

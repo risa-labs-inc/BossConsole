@@ -232,6 +232,7 @@
     <ID>LargeClass:DynamicPluginManager.kt$DynamicPluginManager</ID>
     <ID>LargeClass:FluckEngine.kt$FluckEngine</ID>
     <ID>LargeClass:KeymapPresets.kt$KeymapPresets</ID>
+    <ID>LargeClass:McpToolRegistryImpl.kt$McpToolRegistryCore</ID>
     <ID>LargeClass:PluginStoreSetup.kt$PluginStoreSetup</ID>
     <ID>LargeClass:SplitView.kt$SplitViewState</ID>
     <ID>LargeClass:UpdateScriptGenerator.kt$UpdateScriptGenerator</ID>

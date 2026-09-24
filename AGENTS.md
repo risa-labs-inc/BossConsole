@@ -2176,6 +2176,22 @@ POLICY_PERSIST_FAILED and withhold the current execution. A queued approval cann
 replace a newer DENY or reset: each reset invalidates older authorizations before their
 final approval boundary, including queued once/session/persistent grants. Calls already
 authorized to execute are not cancelled. Reset remains host UI only, not an MCP tool.
+
+The activity log's **Session Action Guard** is a process-wide, session-scoped emergency brake for
+new mutating calls. It classifies through the SAME predicate as policy classification
+(`McpMutatingToolCatalog.isMutationClassified`: assessed risk HIGH-or-worse, or the fail-closed
+name/declaration catalog), so the paused bucket and the ASK bucket cannot drift apart - a tool like
+`docker_run` that is CRITICAL by name but matches no catalog entry is still braked, a provider
+cannot bypass the guard by marking `k8s_delete` read-only, and an honestly declared mutation with
+an innocent name is still covered. An already-paused call is refused before policy authorization so it
+does not open an approval prompt; the registry checks again after any queued approval, immediately
+before handler admission, so pausing while a dialog is open still wins. Admission and pause share
+one monitor. Calls that acquired a permit before pause are reported as in-flight and may finish;
+plugin code never runs under the monitor, and pause never claims those handlers were cancelled.
+Read-only tools remain usable for diagnosis. `SESSION_GUARD_BLOCKED` records each refusal in the
+operation ledger as withheld. The guard does not persist or rewrite policies/kill-switches and starts
+unpaused on the next process launch.
+
 “Trust plugin” (the “Always, for every tool from this plugin” scope) persists a provider-wide ALLOW covering every tool that provider
 contributes - weaker than an explicit tool-specific rule, reviewed and reset from
 “Trusted plugins” in the MCP access menu rather than “Tool policies”. The same

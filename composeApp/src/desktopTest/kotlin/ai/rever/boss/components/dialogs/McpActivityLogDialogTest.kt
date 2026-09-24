@@ -3,6 +3,7 @@ package ai.rever.boss.components.dialogs
 import ai.rever.boss.mcp.McpApprovalDisposition
 import ai.rever.boss.mcp.McpOperationRecord
 import ai.rever.boss.mcp.McpPolicyAction
+import ai.rever.boss.mcp.McpSessionGuardState
 import java.util.Locale
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -50,6 +51,25 @@ class McpActivityLogDialogTest {
         assertEquals(
             McpUnsuccessfulCategory.WITHHELD,
             McpApprovalDisposition.POLICY_PERSIST_FAILED.unsuccessfulCategory,
+        )
+    }
+
+    @Test
+    fun `a session guard refusal is withheld and its detail distinguishes in-flight work`() {
+        assertEquals(
+            McpUnsuccessfulCategory.WITHHELD,
+            McpApprovalDisposition.SESSION_GUARD_BLOCKED.unsuccessfulCategory,
+        )
+        assertEquals(
+            "New mutating calls are blocked; read-only inspection still works. " +
+                "2 already running will finish. 7 blocked this session.",
+            sessionGuardDetail(
+                McpSessionGuardState(
+                    mutatingActionsPaused = true,
+                    inFlightMutatingActions = 2,
+                    blockedMutatingActions = 7,
+                ),
+            ),
         )
     }
 

@@ -539,16 +539,30 @@ private fun McpActivityStatusItem() {
     val recentOps by McpToolRegistryImpl.ledger.recentOperations.collectAsState()
     var showActivityLog by remember { mutableStateOf(false) }
     val tools by McpToolRegistryImpl.tools.collectAsState()
-    if (recentOps.isEmpty() && tools.isEmpty() && !showActivityLog) return
+    val sessionGuardState by McpToolRegistryImpl.sessionGuardState.collectAsState()
+    val hasNoActivitySurface = recentOps.isEmpty() && tools.isEmpty() && !showActivityLog
+    if (hasNoActivitySurface && !sessionGuardState.mutatingActionsPaused) return
     // The most recent CALL: a YOLO on/off marker is in the ledger for audit but is not a call.
     val lastOp = recentOps.firstOrNull { !it.approvalDisposition.isGovernanceEvent }
     val statusText =
-        if (lastOp != null) {
+        if (sessionGuardState.mutatingActionsPaused) {
+            "MCP: mutating actions paused" +
+                if (sessionGuardState.inFlightMutatingActions > 0) {
+                    " (${sessionGuardState.inFlightMutatingActions} finishing)"
+                } else {
+                    ""
+                }
+        } else if (lastOp != null) {
             "MCP: ${lastOp.toolName} (${formatMcpDuration(lastOp.durationMs)}) ${if (lastOp.isError) "✕" else "✓"}"
         } else {
             "MCP: no activity yet"
         }
-    val statusColor = if (lastOp?.isError == true) BossTheme.colors.alert else BossTheme.colors.textSecondary
+    val statusColor =
+        if (sessionGuardState.mutatingActionsPaused || lastOp?.isError == true) {
+            BossTheme.colors.alert
+        } else {
+            BossTheme.colors.textSecondary
+        }
     StatusBarTextButton(
         text = statusText,
         color = statusColor,
@@ -564,9 +578,11 @@ private fun McpActivityStatusItem() {
             operations = recentOps,
             totalCalls = totalCalls,
             totalErrors = totalErrors,
+            sessionGuardState = sessionGuardState,
             ledgerPath = McpToolRegistryImpl.ledger.persistencePath,
             pendingWriteIds = pendingWriteIds,
             droppedWrites = droppedWrites,
+            onSetMutatingActionsPaused = McpToolRegistryImpl::setMutatingActionsPaused,
             onDismiss = { showActivityLog = false },
         )
     }

@@ -1,5 +1,8 @@
 package ai.rever.boss.mcp
 
+import ai.rever.boss.mcp.sandbox.DefaultMcpRiskEvaluator
+import ai.rever.boss.mcp.sandbox.McpRiskLevel
+import ai.rever.boss.plugin.api.McpToolArgs
 import kotlinx.serialization.Serializable
 
 /**
@@ -37,6 +40,7 @@ enum class McpApprovalDisposition {
     CANCELLED_AWAITING_APPROVAL,
     CANCELLED_IN_FLIGHT,
     QUEUE_FULL,
+    SESSION_GUARD_BLOCKED,
 
     /**
      * The operator chose "Trust this plugin" and the persisted, provider-wide grant actually
@@ -184,6 +188,23 @@ object McpMutatingToolCatalog {
      * definition is not available to it - and the name-only answer stands, exactly as before
      * this parameter existed.
      */
+
+    /**
+     * The ONE mutation classification, shared by the policy engine and the session guard: a
+     * tool counts as mutating when its assessed risk is HIGH or worse OR the name/declaration
+     * catalog ([isMutating]) says so. The policy engine's ASK bucket has always used both
+     * signals; a consumer classifying with only [isMutating] is strictly narrower, because
+     * docker_run, k8s_use_context, secret_create and secret_update are HIGH/CRITICAL by name
+     * yet match no catalog entry or suffix - they would execute while the operator believes
+     * mutations are paused. Every classification site calls this, so the buckets cannot drift.
+     */
+    fun isMutationClassified(
+        toolName: String,
+        declaredReadOnly: Boolean?,
+    ): Boolean =
+        DefaultMcpRiskEvaluator().evaluateRisk(toolName, McpToolArgs(emptyMap())).level >= McpRiskLevel.HIGH ||
+            isMutating(toolName, declaredReadOnly)
+
     fun isMutating(
         toolName: String,
         declaredReadOnly: Boolean? = null,

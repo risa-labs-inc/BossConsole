@@ -4,6 +4,7 @@ import ai.rever.boss.components.overlays.resetOverlayFieldForTest
 import ai.rever.boss.mcp.McpApprovalDisposition
 import ai.rever.boss.mcp.McpOperationRecord
 import ai.rever.boss.mcp.McpPolicyAction
+import ai.rever.boss.mcp.McpSessionGuardState
 import ai.rever.boss.plugin.ui.BossBlueprintColorScheme
 import ai.rever.boss.plugin.ui.BossBlueprintLightColorScheme
 import ai.rever.boss.plugin.ui.BossOverlayHost
@@ -144,6 +145,29 @@ class McpActivityLogLayoutTest {
         show(windowSize = IntSize.Zero) { McpActivityLogDialog(emptyList(), 0, 0, onDismiss = {}) }
         closeIsInsideWindow()
         rule.onNodeWithText("Disk persistence is not configured", substring = true).assertExists()
+    }
+
+    @Test fun `session action guard control pauses and resumes live`() {
+        val guard = mutableStateOf(McpSessionGuardState())
+        show {
+            McpActivityLogDialog(
+                operations = emptyList(),
+                totalCalls = 0,
+                totalErrors = 0,
+                sessionGuardState = guard.value,
+                onSetMutatingActionsPaused = { paused ->
+                    guard.value = guard.value.copy(mutatingActionsPaused = paused)
+                },
+                onDismiss = {},
+            )
+        }
+
+        rule.onNodeWithText("Pause Actions").performScrollTo().performClick()
+        rule.onNodeWithText("Mutating actions paused").assertExists()
+        rule.runOnIdle { assertTrue(guard.value.mutatingActionsPaused) }
+        rule.onNodeWithText("Resume Actions").performScrollTo().performClick()
+        rule.onNodeWithText("Session Action Guard").assertExists()
+        rule.runOnIdle { assertTrue(!guard.value.mutatingActionsPaused) }
     }
 
     @Test fun `narrow window keeps close horizontally inside the viewport`() {

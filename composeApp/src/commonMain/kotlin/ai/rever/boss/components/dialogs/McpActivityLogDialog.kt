@@ -3,6 +3,7 @@ package ai.rever.boss.components.dialogs
 import ai.rever.boss.mcp.McpApprovalDisposition
 import ai.rever.boss.mcp.McpOperationRecord
 import ai.rever.boss.mcp.McpPolicyAction
+import ai.rever.boss.mcp.McpSessionGuardState
 import ai.rever.boss.plugin.ui.BossColorScheme
 import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
@@ -61,9 +62,11 @@ fun McpActivityLogDialog(
     operations: List<McpOperationRecord>,
     totalCalls: Long,
     totalErrors: Long,
+    sessionGuardState: McpSessionGuardState = McpSessionGuardState(),
     ledgerPath: String? = null,
     pendingWriteIds: Set<String> = emptySet(),
     droppedWrites: Long = 0,
+    onSetMutatingActionsPaused: (Boolean) -> Unit = {},
     onDismiss: () -> Unit,
 ) {
     val windowSize = LocalWindowInfo.current.containerSize
@@ -147,6 +150,12 @@ fun McpActivityLogDialog(
                             color = colors.alert,
                         )
                     }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    SessionActionGuardControl(
+                        state = sessionGuardState,
+                        colors = colors,
+                        onSetPaused = onSetMutatingActionsPaused,
+                    )
                     Spacer(modifier = Modifier.height(16.dp))
 
                     if (operations.isEmpty()) {
@@ -185,6 +194,69 @@ fun McpActivityLogDialog(
         }
     }
 }
+
+@Composable
+private fun SessionActionGuardControl(
+    state: McpSessionGuardState,
+    colors: BossColorScheme,
+    onSetPaused: (Boolean) -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(BossTheme.radius.card),
+        color = if (state.mutatingActionsPaused) colors.alert.copy(alpha = 0.12f) else colors.raised,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = if (state.mutatingActionsPaused) "Mutating actions paused" else "Session Action Guard",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (state.mutatingActionsPaused) colors.alert else colors.textPrimary,
+                )
+                Text(
+                    text = sessionGuardDetail(state),
+                    fontSize = 10.sp,
+                    color = colors.textSecondary,
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Button(
+                onClick = { onSetPaused(!state.mutatingActionsPaused) },
+                colors =
+                    ButtonDefaults.buttonColors(
+                        backgroundColor = if (state.mutatingActionsPaused) colors.signal else colors.alert,
+                        contentColor = colors.onSignal,
+                    ),
+            ) {
+                Text(
+                    text = if (state.mutatingActionsPaused) "Resume Actions" else "Pause Actions",
+                    fontSize = 11.sp,
+                )
+            }
+        }
+    }
+}
+
+internal fun sessionGuardDetail(state: McpSessionGuardState): String =
+    buildString {
+        append(
+            if (state.mutatingActionsPaused) {
+                "New mutating calls are blocked; read-only inspection still works."
+            } else {
+                "Pause new mutating calls from every agent without changing saved policies."
+            },
+        )
+        if (state.inFlightMutatingActions > 0) {
+            append(" ${state.inFlightMutatingActions} already running will finish.")
+        }
+        if (state.blockedMutatingActions > 0) {
+            append(" ${state.blockedMutatingActions} blocked this session.")
+        }
+    }
 
 @Composable
 private fun McpOperationRow(
@@ -385,6 +457,7 @@ internal val McpApprovalDisposition.unsuccessfulCategory: McpUnsuccessfulCategor
 
             McpApprovalDisposition.QUEUE_FULL,
             McpApprovalDisposition.POLICY_PERSIST_FAILED,
+            McpApprovalDisposition.SESSION_GUARD_BLOCKED,
             -> McpUnsuccessfulCategory.WITHHELD
 
             McpApprovalDisposition.AUTO_ALLOWED,

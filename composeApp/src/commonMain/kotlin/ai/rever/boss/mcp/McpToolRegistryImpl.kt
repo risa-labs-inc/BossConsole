@@ -148,6 +148,11 @@ object McpToolRegistryImpl : McpToolRegistry {
     /** Non-null when the policy engine degraded to fail-closed state. */
     val policyFault: StateFlow<McpPolicyFault?> get() = core.policyEngine.fault
 
+    /** Live, session-scoped emergency brake for mutating MCP actions. */
+    val sessionGuardState: StateFlow<McpSessionGuardState> get() = core.sessionGuardState
+
+    fun setMutatingActionsPaused(paused: Boolean) = core.setMutatingActionsPaused(paused)
+
     /** See `Core.permittedTools`. */
     fun permittedTools(): List<RegisteredMcpTool> = core.permittedTools()
 
@@ -443,6 +448,17 @@ internal class McpToolRegistryCore(
      * user toggle, or the Main-dispatcher auth collector behind [updateAccess].
      */
     private val mutationLock = Any()
+    private val sessionGuard = McpSessionGuard()
+    val sessionGuardState: StateFlow<McpSessionGuardState> = sessionGuard.state
+
+    fun setMutatingActionsPaused(paused: Boolean) {
+        if (!sessionGuard.setPaused(paused)) return
+        logger.info(
+            LogCategory.SYSTEM,
+            if (paused) "Operator paused mutating MCP actions" else "Operator resumed mutating MCP actions",
+            mapOf("inFlightMutatingActions" to sessionGuard.state.value.inFlightMutatingActions),
+        )
+    }
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -786,7 +802,9 @@ internal class McpToolRegistryCore(
     /** Mirrors host RBAC. The rule itself is [mcpToolPermitted], which is where it is tested. */
     private fun permitted(def: McpToolDefinition): Boolean = mcpToolPermitted(def, isAdmin, permissions)
 
-    @Suppress("LongMethod") // Keep authorization and execution inside the same cancellation audit boundary.
+    // Keep authorization and execution inside the same cancellation audit boundary. The early
+    // returns are the two registry admission guards plus the single audited execution outcome.
+    @Suppress("LongMethod", "ReturnCount")
     suspend fun invoke(
         toolName: String,
         arguments: String,
@@ -806,7 +824,13 @@ internal class McpToolRegistryCore(
         var disposition = McpApprovalDisposition.AUTO_ALLOWED
         var result: McpToolResult? = null
         var executionStarted = false
+        var guardPermit: McpSessionGuardPermit? = null
         try {
+            if (sessionGuard.blockIfPaused(toolName, tool.definition.readOnly)) {
+                disposition = McpApprovalDisposition.SESSION_GUARD_BLOCKED
+                result = McpToolResult(SESSION_GUARD_BLOCK_MESSAGE, isError = true)
+                return requireNotNull(result)
+            }
             val authorization = authorizeInvocation(tool, args, policy, revocation)
             disposition = authorization.first
             val denial = authorization.second
@@ -822,8 +846,14 @@ internal class McpToolRegistryCore(
                     }
 
                     else -> {
-                        executionStarted = true
-                        executeAuthorized(tool, args)
+                        guardPermit = sessionGuard.tryAcquire(toolName, tool.definition.readOnly)
+                        if (guardPermit == null) {
+                            disposition = McpApprovalDisposition.SESSION_GUARD_BLOCKED
+                            McpToolResult(SESSION_GUARD_BLOCK_MESSAGE, isError = true)
+                        } else {
+                            executionStarted = true
+                            executeAuthorized(tool, args)
+                        }
                     }
                 }
             return requireNotNull(result)
@@ -836,6 +866,7 @@ internal class McpToolRegistryCore(
                 }
             throw cancelled
         } finally {
+            guardPermit?.close()
             // NonCancellable because a cancelled invoke is still an event the audit journal
             // must capture; Dispatchers.IO because invoke() is callable from any dispatcher
             // (including Main), and record() still runs argument sanitization plus the queue
@@ -1108,6 +1139,11 @@ internal class McpToolRegistryCore(
         tool: RegisteredMcpTool,
         args: McpToolArgs,
     ): McpToolResult = capResult(tool.definition.name, executeUncapped(tool, args))
+
+    private companion object {
+        const val SESSION_GUARD_BLOCK_MESSAGE =
+            "MCP mutating actions are paused by the operator; read-only tools remain available"
+    }
 
     /**
      * Bound the text a plugin answers with, whatever it asked to say.
