@@ -44,6 +44,10 @@ internal class TerminalSession(
     // Set once a stdin write fails or stalls; later sends fail fast on a closed pipe.
     @Volatile private var inputClosed = false
 
+    // Set when a caller delivered EOF through [closeStdin]. Kept apart from [inputClosed] so a
+    // send after a deliberate close says so, rather than reading like a broken pipe.
+    @Volatile private var inputClosedByCaller = false
+
     @Volatile var active = true
         private set
 
@@ -108,7 +112,7 @@ internal class TerminalSession(
         // outwait the bound are shed with a retry-after instead.
         val ticket = kotlin.Any()
         if (!acquireInputLock(ticket)) {
-            throw inputBusy()
+            throw inputBusy(inputQueueTimeoutMillis)
         }
         try {
             currentCoroutineContext().ensureActive()
@@ -134,33 +138,17 @@ internal class TerminalSession(
     }
 
     private fun requireUsableInput() {
-        if (!active || !process.isAlive) {
-            throw Status.FAILED_PRECONDITION.withDescription("Terminal has exited").asRuntimeException()
-        }
-        if (inputClosed) {
-            throw Status.FAILED_PRECONDITION.withDescription("Terminal input pipe is closed").asRuntimeException()
+        val refusal =
+            when {
+                !active || !process.isAlive -> "Terminal has exited"
+                inputClosedByCaller -> "Terminal input has been closed"
+                inputClosed -> "Terminal input pipe is closed"
+                else -> null
+            }
+        if (refusal != null) {
+            throw Status.FAILED_PRECONDITION.withDescription(refusal).asRuntimeException()
         }
     }
-
-    private fun inputBusy(): StatusRuntimeException =
-        StatusProto.toStatusRuntimeException(
-            com.google.rpc.Status
-                .newBuilder()
-                .setCode(Status.Code.RESOURCE_EXHAUSTED.value())
-                .setMessage("Terminal input is busy")
-                .addDetails(
-                    Any.pack(
-                        RetryInfo
-                            .newBuilder()
-                            .setRetryDelay(
-                                Duration
-                                    .newBuilder()
-                                    .setSeconds(inputQueueTimeoutMillis / 1_000)
-                                    .setNanos(((inputQueueTimeoutMillis % 1_000) * 1_000_000).toInt()),
-                            ).build(),
-                    ),
-                ).build(),
-        )
 
     private fun writeInput(bytes: ByteArray) {
         val output = process.outputStream
@@ -207,6 +195,40 @@ internal class TerminalSession(
             output.close()
         } catch (_: IOException) {
             // The pipe may already be broken; the input path is closed either way.
+        }
+    }
+
+    /**
+     * Deliver EOF on stdin without touching the process otherwise - the one thing [terminate]
+     * cannot be asked to do, since it forcibly kills the child rather than letting it notice
+     * input has ended. A stdin-consuming one-shot command (`sort`, `grep`, `cat` with no args, a
+     * pipeline ending in one of those) blocks on read() forever without this: nothing else in
+     * this class closes the write end while the child is healthy, so the process can never reach
+     * the exit chunk [CreateSessionRequest]'s `run_command` schema advertises.
+     *
+     * Takes the same input mutex as [send], so a close never races a write on the same fd, and
+     * waits for it on the same bounded queue: a caller behind a stalled writer is answered
+     * RESOURCE_EXHAUSTED "Terminal input is busy" with a retry-after, exactly as a queued send is.
+     *
+     * Idempotent and safe after exit: a second call, or one after the process has died or a
+     * failed write already closed the pipe, finds nothing left to close rather than throwing.
+     */
+    suspend fun closeStdin() {
+        val ticket = kotlin.Any()
+        if (!acquireInputLock(ticket)) {
+            throw inputBusy(inputQueueTimeoutMillis)
+        }
+        try {
+            if (inputClosedByCaller) return
+            inputClosedByCaller = true
+            inputClosed = true
+            try {
+                process.outputStream.close()
+            } catch (_: IOException) {
+                // Already broken (process gone, pipe torn) - EOF is the state we wanted anyway.
+            }
+        } finally {
+            inputMutex.unlock(ticket)
         }
     }
 
@@ -290,3 +312,28 @@ internal class TerminalSession(
         }
     }
 }
+
+/**
+ * RESOURCE_EXHAUSTED "Terminal input is busy", with a retry-after of [retryAfterMillis]: the answer
+ * for a caller that outwaited the input queue. File scope because [TerminalSession] is at detekt's
+ * `TooManyFunctions` ceiling.
+ */
+private fun inputBusy(retryAfterMillis: Long): StatusRuntimeException =
+    StatusProto.toStatusRuntimeException(
+        com.google.rpc.Status
+            .newBuilder()
+            .setCode(Status.Code.RESOURCE_EXHAUSTED.value())
+            .setMessage("Terminal input is busy")
+            .addDetails(
+                Any.pack(
+                    RetryInfo
+                        .newBuilder()
+                        .setRetryDelay(
+                            Duration
+                                .newBuilder()
+                                .setSeconds(retryAfterMillis / 1_000)
+                                .setNanos(((retryAfterMillis % 1_000) * 1_000_000).toInt()),
+                        ).build(),
+                ),
+            ).build(),
+    )

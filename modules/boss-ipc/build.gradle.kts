@@ -34,7 +34,7 @@ tasks.register<JavaExec>("nativeSmokeJvm") {
 }
 
 group = "ai.rever.boss.ipc"
-version = "1.2.0"
+version = "1.4.0"
 
 java {
     toolchain {
