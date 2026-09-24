@@ -64,6 +64,7 @@ fun McpActivityLogDialog(
     ledgerPath: String? = null,
     pendingWriteIds: Set<String> = emptySet(),
     droppedWrites: Long = 0,
+    onOpenFlightPlan: (() -> Unit)? = null,
     onDismiss: () -> Unit,
 ) {
     val windowSize = LocalWindowInfo.current.containerSize
@@ -174,6 +175,15 @@ fun McpActivityLogDialog(
                 }
                 Spacer(modifier = Modifier.height(16.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    if (onOpenFlightPlan != null) {
+                        Button(
+                            onClick = onOpenFlightPlan,
+                            colors = ButtonDefaults.buttonColors(backgroundColor = colors.raised),
+                        ) {
+                            Text("Flight Plan", color = colors.textPrimary, fontSize = 12.sp)
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
                     Button(
                         onClick = onDismiss,
                         colors = ButtonDefaults.buttonColors(backgroundColor = colors.signal),

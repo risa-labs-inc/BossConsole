@@ -6,6 +6,7 @@ import ai.rever.boss.components.bars.horizontalScrollWithScrollbar
 import ai.rever.boss.components.bars.rememberBarContextMenuItems
 import ai.rever.boss.components.buttons.BossActionButton
 import ai.rever.boss.components.dialogs.McpActivityLogDialog
+import ai.rever.boss.components.dialogs.McpFlightPlanLauncher
 import ai.rever.boss.components.dialogs.McpPolicyManagerDialog
 import ai.rever.boss.components.dialogs.McpProviderTrustDialog
 import ai.rever.boss.components.dialogs.McpSessionTrustDialog
@@ -538,8 +539,11 @@ internal fun mcpProactivePolicyCandidates(
 private fun McpActivityStatusItem() {
     val recentOps by McpToolRegistryImpl.ledger.recentOperations.collectAsState()
     var showActivityLog by remember { mutableStateOf(false) }
-    val tools by McpToolRegistryImpl.tools.collectAsState()
-    if (recentOps.isEmpty() && tools.isEmpty() && !showActivityLog) return
+    var showFlightPlan by remember { mutableStateOf(false) }
+    val allTools by McpToolRegistryImpl.allTools.collectAsState()
+    val shouldRender =
+        mcpActivityStatusShowsFor(allTools, recentOps.isNotEmpty(), showActivityLog, showFlightPlan)
+    if (!shouldRender) return
     // The most recent CALL: a YOLO on/off marker is in the ledger for audit but is not a call.
     val lastOp = recentOps.firstOrNull { !it.approvalDisposition.isGovernanceEvent }
     val statusText =
@@ -567,8 +571,15 @@ private fun McpActivityStatusItem() {
             ledgerPath = McpToolRegistryImpl.ledger.persistencePath,
             pendingWriteIds = pendingWriteIds,
             droppedWrites = droppedWrites,
+            onOpenFlightPlan = {
+                showActivityLog = false
+                showFlightPlan = true
+            },
             onDismiss = { showActivityLog = false },
         )
+    }
+    if (showFlightPlan) {
+        McpFlightPlanLauncher(onDismiss = { showFlightPlan = false })
     }
 }
 

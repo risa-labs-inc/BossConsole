@@ -136,6 +136,14 @@ object McpToolRegistryImpl : McpToolRegistry {
     override val tools: StateFlow<List<RegisteredMcpTool>> get() = core.tools
 
     /**
+     * See `Core.permittedToolNames` — registered tools the CURRENT user may run, the
+     * user-disabled set deliberately NOT applied, keyed `"providerId/toolName"`. The
+     * flight plan reads this so a switched-off tool the operator is allowed to run
+     * blames the kill-switch checkpoint, not permissions (review on #1380).
+     */
+    val permittedToolNames: StateFlow<Set<String>> get() = core.permittedToolNames
+
+    /**
      * Non-null while the kill-switch's persisted state cannot be trusted — a
      * damaged file on disk, or a toggle that could not be written. Rendered by
      * `BossRightBottomBar` for as long as it stays set, which is until a write
@@ -544,6 +552,18 @@ internal class McpToolRegistryCore(
     private val _tools = MutableStateFlow<List<RegisteredMcpTool>>(emptyList())
     val tools: StateFlow<List<RegisteredMcpTool>> = _tools.asStateFlow()
 
+    /**
+     * Registered tools the CURRENT user may run — [tools]'s permission filter WITHOUT
+     * the user-disabled set, so a forecast surface can tell the two gates apart: the
+     * flight plan blames a switched-off tool on the kill-switch, not on RBAC,
+     * precisely because this set still contains it (review on #1380). Elements are
+     * `"providerId/toolName"` keys — the identity the flight-plan dialog selects by —
+     * recomputed in [applyExposed] from [permitted], so it moves with every access
+     * change, registration and toggle.
+     */
+    private val _permittedToolNames = MutableStateFlow<Set<String>>(emptySet())
+    val permittedToolNames: StateFlow<Set<String>> = _permittedToolNames.asStateFlow()
+
     fun registerProvider(provider: McpToolProvider) {
         // Query the plugin's tools() OUTSIDE the lock — see mutationLock KDoc.
         // A throwing provider registers with an empty tool set (and a warning)
@@ -770,6 +790,14 @@ internal class McpToolRegistryCore(
         }
         val disabled = _disabled.value
         _tools.value = _all.value.filter { it.definition.name !in disabled && permitted(it.definition) }
+        // The permission-only view of the same snapshot: no disabled filter, same
+        // [permitted] rule, keyed for the flight plan's selection (see
+        // [permittedToolNames]).
+        _permittedToolNames.value =
+            _all.value
+                .filter { permitted(it.definition) }
+                .map { "${it.providerId}/${it.definition.name}" }
+                .toSet()
     }
 
     /**
