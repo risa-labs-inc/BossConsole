@@ -139,6 +139,10 @@ object McpMutatingToolCatalog {
             "secret_get",
             // File & OS Execution
             "codebase_write",
+            // editor_write_file ends in "_file", so the suffix list cannot see it (#1329
+            // review): without this literal its name says nothing and a plugin that never
+            // declares readOnly = false would write files without a prompt.
+            "editor_write_file",
             "run_command",
             "run_in_sidebar",
             "run_in_panel",

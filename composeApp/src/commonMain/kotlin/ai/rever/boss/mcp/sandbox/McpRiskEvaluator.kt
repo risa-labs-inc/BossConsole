@@ -243,6 +243,10 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
                 "file_delete",
                 "file_write",
                 "project_replace",
+                // The editor-tab plugin's write door. Its name ends in "_file", so no
+                // suffix heuristic sees it, and leaving it unclassified rated a file
+                // write LOW while McpMutatingToolCatalog already names it (#1329 review).
+                "editor_write_file",
             )
 
         /**

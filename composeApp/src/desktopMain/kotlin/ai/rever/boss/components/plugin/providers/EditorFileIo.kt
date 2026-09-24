@@ -9,9 +9,35 @@ private val fileIoLogger = BossLogger.forComponent("EditorFileIo")
 actual fun readFileContentSafe(
     filePath: String,
     maxSize: Long,
+): FileReadOutcome {
+    val check = EditorFileIoPathPolicy.confine(filePath)
+    return when {
+        check.refusal != null -> {
+            FileReadOutcome.Error(check.refusal)
+        }
+
+        check.path == null -> {
+            // Unreachable while confine keeps its at-most-one-field invariant; fail closed
+            // anyway rather than read a path the gate never cleared.
+            FileReadOutcome.Error("Path could not be resolved")
+        }
+
+        else -> {
+            readContainedFile(check.path.toFile(), maxSize)
+        }
+    }
+}
+
+/**
+ * The size-validated read itself, for a path the containment gate has already cleared.
+ * Kept at the depth budget of the version this replaced: the OOM catch around readText is
+ * the innermost block the house style allows here.
+ */
+private fun readContainedFile(
+    file: File,
+    maxSize: Long,
 ): FileReadOutcome =
     try {
-        val file = File(filePath)
         when {
             !file.exists() || !file.isFile -> {
                 FileReadOutcome.FileNotFound
@@ -36,7 +62,23 @@ actual fun readFileContentSafe(
 actual fun writeFileContentSafe(
     filePath: String,
     content: String,
-): Boolean = guardedWrite(filePath, content)
+): Boolean {
+    val check = EditorFileIoPathPolicy.confine(filePath)
+    val target = check.path?.toFile()
+    if (check.refusal != null || target == null) {
+        fileIoLogger.warn(
+            LogCategory.EDITOR,
+            "Refused an editor file write",
+            mapOf(
+                "path" to filePath,
+                "reason" to (check.refusal ?: "path could not be resolved"),
+            ),
+        )
+        return false
+    }
+    // Write the file the gate cleared, not the spelling the caller sent.
+    return guardedWrite(target.absolutePath, content)
+}
 
 /**
  * Contains ordinary I/O exceptions and stack overflow inside the write operation.

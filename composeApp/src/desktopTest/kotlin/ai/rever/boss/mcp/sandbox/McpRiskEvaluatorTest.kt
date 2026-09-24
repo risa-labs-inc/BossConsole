@@ -77,7 +77,14 @@ class McpRiskEvaluatorTest {
             "k8s_use_context",
             "k8s_port_forward_stop",
         )
-    private val fileWriteTools = setOf("codebase_write", "file_delete", "file_write", "project_replace")
+    private val fileWriteTools =
+        setOf(
+            "codebase_write",
+            "file_delete",
+            "file_write",
+            "project_replace",
+            "editor_write_file",
+        )
     private val readOnlyTools =
         setOf(
             "codebase_read",
