@@ -1,6 +1,7 @@
 package ai.rever.boss.app.terminal
 
 import ai.rever.boss.ipc.proto.services.TerminalOutputChunk
+import com.google.protobuf.ByteString
 import io.grpc.Status
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -37,6 +38,36 @@ internal class TerminalOutputBuffer {
             bytes += chunk.serializedSize
             while (entries.size > 256 || bytes > 1_048_576) bytes -= entries.removeFirst().chunk.serializedSize
             finished = chunk.isExit
+            updates.value = nextSequence
+        }
+    }
+
+    /**
+     * Mark the buffer finished with an exit chunk carrying [exitCode]. Safe to call
+     * multiple times and safe to call after a real exit chunk has already been appended
+     * (the latter is a no-op so the pump's outer finally can call it unconditionally -
+     * a throw on `process.onExit().join()` cannot leak the buffer into a hang, which
+     * the previous behaviour allowed - see issue #1314).
+     *
+     * Synthesises one last exit chunk so every collector parked on `stream()` sees
+     * the closure even when the pump itself never appended one.
+     */
+    fun close(exitCode: Int = 0) {
+        synchronized(lock) {
+            if (finished) return
+            entries.addLast(
+                Entry(
+                    nextSequence++,
+                    TerminalOutputChunk
+                        .newBuilder()
+                        .setData(ByteString.EMPTY)
+                        .setTimestamp(System.currentTimeMillis())
+                        .setIsExit(true)
+                        .setExitCode(exitCode)
+                        .build(),
+                ),
+            )
+            finished = true
             updates.value = nextSequence
         }
     }

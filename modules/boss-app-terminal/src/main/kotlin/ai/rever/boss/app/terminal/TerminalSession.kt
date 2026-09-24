@@ -60,8 +60,10 @@ internal class TerminalSession(
                 output.append(chunk("\r\n[Terminal output pipe closed]\r\n"))
             } finally {
                 // Capacity includes the pump and process lifetime, including cancellation cleanup.
+                var exitCode = -1
                 try {
                     val code = process.onExit().join().exitValue()
+                    exitCode = code
                     // Keep the read end open until exit: closing on a read fault can SIGPIPE a live child.
                     try {
                         input.close()
@@ -75,7 +77,18 @@ internal class TerminalSession(
                             .setExitCode(code)
                             .build(),
                     )
+                } catch (_: Throwable) {
+                    // onExit().join() can throw if the process was destroyed before we
+                    // reached the finally, or if a hook aborted. Either way the buffer
+                    // MUST be marked finished so every subscriber's stream() can return -
+                    // see issue #1314. close() is a no-op if a real exit chunk already
+                    // landed, so a thrown onExit() leaves the buffer in the same state
+                    // a clean exit would.
                 } finally {
+                    // Always mark the buffer finished. close() is a no-op when the real
+                    // exit chunk already landed, so this is the only path that matters
+                    // when onExit().join() threw out - otherwise stream() waits forever.
+                    output.close(exitCode = exitCode)
                     active = false
                     onStopped()
                 }
