@@ -54,6 +54,18 @@ class RemotePluginRepository(
 ) : PluginRepository {
     private val logger = BossLogger.forComponent("RemotePluginRepository")
 
+    /**
+     * Hard upper bound on the bytes `downloadPlugin` will accept from the store.
+     *
+     * The signed store row's `size` is the trusted upper bound in the normal case, but a
+     * compromised or hostile store can still answer with whatever Content-Length it likes and
+     * a stream of whatever length it likes. This cap is what protects the host from a DoS
+     * via disk-fill or heap pressure when the row, the header, and the body disagree. Set
+     * generously above any plausible plugin jar so the normal case is unaffected, and below
+     * anything that could plausibly exhaust the user's disk.
+     */
+    private val maxJarBytes: Long = 256L * 1024L * 1024L
+
     // Cache availability must never decide whether a verified download succeeds.
     private fun <T> cacheOrNull(
         operation: String,
@@ -420,7 +432,12 @@ class RemotePluginRepository(
                     // Download with progress tracking
                     downloadHttpClient.prepareGet(downloadInfo.downloadUrl).execute { response ->
                         val channel = response.bodyAsChannel()
-                        val totalBytes = response.headers[io.ktor.http.HttpHeaders.ContentLength]?.toLongOrNull() ?: downloadInfo.size
+                        // Trust the store row's size as the upper bound when the server omits
+                        // Content-Length, and reject the response the moment either is exceeded.
+                        // The hard `maxJarBytes` cap catches a row or header that lies outright
+                        // and would otherwise have us buffer or stream GBs.
+                        val headerSize = response.headers[io.ktor.http.HttpHeaders.ContentLength]?.toLongOrNull()
+                        val totalBytes = (headerSize ?: downloadInfo.size).coerceAtLeast(0)
                         var downloadedBytes = 0L
                         // The callback drives UI state that is copied on every write,
                         // and an 8KB buffer means thousands of writes for one jar - so
@@ -433,6 +450,22 @@ class RemotePluginRepository(
                             while (!channel.isClosedForRead) {
                                 val bytes = channel.readAvailable(buffer)
                                 if (bytes > 0) {
+                                    if (downloadedBytes + bytes > maxJarBytes) {
+                                        throw DownloadException(
+                                            "Download exceeds $maxJarBytes bytes - " +
+                                                "refusing to write unbounded response",
+                                            pluginId,
+                                            id,
+                                        )
+                                    }
+                                    if (totalBytes > 0 && downloadedBytes + bytes > totalBytes) {
+                                        throw DownloadException(
+                                            "Download exceeds advertised size of $totalBytes bytes - " +
+                                                "refusing to trust Content-Length",
+                                            pluginId,
+                                            id,
+                                        )
+                                    }
                                     output.write(buffer, 0, bytes)
                                     downloadedBytes += bytes
                                     if (totalBytes > 0) {

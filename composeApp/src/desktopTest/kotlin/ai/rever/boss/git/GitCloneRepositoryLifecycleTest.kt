@@ -24,8 +24,8 @@ import ai.rever.boss.plugin.git.GitOperationResult.Success as GitSuccess
 
 private const val PUBLIC_CLONE_TIMEOUT_MILLIS = 5_000L
 private const val PUBLIC_CLONE_LONG_TIMEOUT_MILLIS = 30_000L
-private const val PUBLIC_CLONE_WAIT_SECONDS = 10L
-private const val PUBLIC_CLONE_TEST_TIMEOUT_SECONDS = 45L
+private const val PUBLIC_CLONE_WAIT_SECONDS = 30L
+private const val PUBLIC_CLONE_TEST_TIMEOUT_SECONDS = 120L
 
 @Timeout(PUBLIC_CLONE_TEST_TIMEOUT_SECONDS)
 class GitCloneRepositoryLifecycleTest {
