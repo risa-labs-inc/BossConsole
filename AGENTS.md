@@ -2166,7 +2166,11 @@ grant would hand an unvetted plugin the approval its sibling earned, and trustin
 meant is the fail-closed direction. Revocation stays name-wide as the operator escape hatch:
 revokeSessionTrust(toolName, providerId = null) still clears every provider's trust for that name, and
 over-removing trust fails closed. The approval dialog's “Always, for this tool” scope (Always allow / Always deny) saves
-a tool-wide rule for all agents and arguments across restarts. Saved rules can be
+a tool-wide rule for all agents and arguments across restarts - with one carve-out (#895): an argument
+set that raises the tool's risk rating to CRITICAL, a shell tool handed a destructive command pattern,
+re-asks even under a saved ALLOW. Tools rated CRITICAL whatever their arguments carry (`secret_get`,
+the docker/k8s/helm destructive sets) are not carved out - their baseline rating is exactly what the
+operator granted against, so the saved rule governs every call. Saved rules can be
 reviewed and reset from “Tool policies” in the bottom bar's MCP access menu; a reset removes
 the rule and clears that tool's session trust, so the tool uses the configured default
 policy (ASK for known mutations in the shipped defaults). Unrelated DENYs remain intact.
@@ -2243,8 +2247,10 @@ create_workspace, open_terminal, close_workspace and their aliases) are declared
 `readOnly = false`, so the ASK default above is their confirmation layer - the role the
 `DeepLinkOrigin` prompt plays for `boss://terminal?command=`. An operator "Always Allow"
 on `open_terminal` therefore runs later invocations unconfirmed, i.e. as strong as an
-unconfirmed external deep link; the command still passes the shape check and the shell
-risk evaluation (HIGH, CRITICAL for destructive patterns) on every call.
+unconfirmed external deep link, except that a destructive command pattern - the one thing
+that raises `open_terminal` from HIGH to CRITICAL - re-asks even under the Always Allow
+(#895); the command still passes the shape check and the shell risk evaluation
+(HIGH, CRITICAL for destructive patterns) on every call.
 
 ## Process log authority and lifetime
 

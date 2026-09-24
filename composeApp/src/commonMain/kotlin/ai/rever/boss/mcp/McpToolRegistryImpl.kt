@@ -367,6 +367,55 @@ private fun truncationMarker(
         "gone, including any note it appended about content it had already left out. Re-run " +
         "with a narrower query, a filter, or a smaller range to get the rest.]"
 
+private fun isMutatingOrShellTool(
+    name: String,
+    declaredReadOnly: Boolean?,
+): Boolean =
+    McpMutatingToolCatalog.isMutating(name, declaredReadOnly) ||
+        DefaultMcpRiskEvaluator.isShellTool(name)
+
+/**
+ * Whether an invocation that already holds a standing ALLOW - a persisted tool rule, provider
+ * trust, session trust, or a permissive default - must still ask before it runs (#895).
+ *
+ * The operator granted the ALLOW before these arguments existed, and the risk evaluator rates
+ * some argument sets CRITICAL where it rates the bare tool HIGH - a `run_command` or
+ * `open_terminal` carrying a destructive command pattern. Those CRITICAL findings used to be
+ * computed for display on the ASK path only: [McpPolicyEngine.policyFor] resolved standing
+ * policy without the invocation's arguments, and the ALLOW branch of the core's
+ * authorization path never evaluated risk at all, so one "Always Allow" executed them
+ * unattended.
+ *
+ * Only tools the mutating catalog already classifies - [McpMutatingToolCatalog.isMutating]
+ * over the same name signals and provider read-only declaration every other gate uses - can
+ * re-ask off this gate, keeping the escalation an explicit catalog rather than a blanket
+ * rule: read-only tools keep their standing ALLOWs and permissive defaults untouched, and a
+ * CRITICAL rating outside the catalog cannot fire it at all. The shell tools join through
+ * [DefaultMcpRiskEvaluator.isShellTool], the evaluator's own name normalization (#1577), so
+ * this one predicate also carries the destructive-shell re-ask #1613 introduced for them:
+ * a shell tool rates HIGH bare and CRITICAL only on destructive command wording, so for the
+ * shell case the escalation is always argument-raised. The rating comparison is
+ * >= CRITICAL, so a tier above CRITICAL the enum might grow later stays fail-closed.
+ *
+ * And within that catalog, only the ARGUMENTS can trip it: the invocation's rating is
+ * compared against the same evaluator run on the bare tool name, and a tool that already
+ * rates CRITICAL empty-handed - `secret_get`, the docker/k8s/helm destructive sets - keeps
+ * every standing ALLOW. Those grants were made against a baseline the approval dialog
+ * already displays when it offers Always Allow, so they keep meaning what the policy UIs
+ * and AGENTS.md say they mean instead of resetting to a prompt on the very next call.
+ */
+
+internal fun requiresCriticalReask(
+    toolName: String,
+    declaredReadOnly: Boolean?,
+    args: McpToolArgs,
+): Boolean =
+    isMutatingOrShellTool(toolName, declaredReadOnly) &&
+        DefaultMcpRiskEvaluator().evaluateRisk(toolName, args).level >= McpRiskLevel.CRITICAL &&
+        // ...and the arguments are what raised it there; a bare CRITICAL keeps the grant.
+        DefaultMcpRiskEvaluator().evaluateRisk(toolName, McpToolArgs(emptyMap())).level <
+        McpRiskLevel.CRITICAL
+
 /**
  * Testable core behind [McpToolRegistryImpl]. Extracted so unit tests can
  * exercise the registration/permission/persistence/dispatch logic against a
@@ -796,18 +845,28 @@ internal class McpToolRegistryCore(
                 ?: return McpToolResult("Unknown or disabled MCP tool: $toolName", isError = true)
         val args = parseArgs(arguments)
         val revocation = policyEngine.revocationVersion(toolName, tool.providerId)
-        // The definition's own readOnly declaration rides along on every policy consult for
-        // this invocation: a tool that declared side effects classifies as mutating whatever
-        // its name says (#804), so it gets the mutating default - ASK under the factory
-        // config - rather than being auto-allowed for avoiding the catalog's name patterns.
-        val savedPolicy = policyEngine.policyFor(toolName, tool.providerId, tool.definition.readOnly)
-        val policy = askBeforeDestructiveShell(toolName, args, savedPolicy)
+        // The definition's own readOnly declaration and the invocation's real arguments ride
+        // along on every policy consult for this call: a tool that declared side effects
+        // classifies as mutating whatever its name says (#804), so it gets the mutating
+        // default - ASK under the factory config - rather than being auto-allowed for avoiding
+        // the catalog's name patterns, and the risk-based default resolves against what the
+        // tool is actually being asked to do rather than an empty argument bag (#895).
+        val policy =
+            policyEngine.policyFor(toolName, tool.providerId, tool.definition.readOnly, args)
+        // A standing ALLOW is a grant to the tool, not to every argument set it can carry:
+        // an argument-raised CRITICAL rating escalates this call to ASK (#895) right here,
+        // so both the authorization below and the ledger entry below describe the policy
+        // that actually governed the invocation, not the pre-escalation grant. This is the
+        // single escalation step for every ALLOW source, and it subsumes the shell case
+        // (#1577): the mutating catalog already classifies every shell tool, so a saved
+        // ALLOW on run_command & co re-asks on destructive wording exactly as #1613 had it.
+        val effectivePolicy = escalatedPolicy(tool, args, policy)
         val startTime = System.nanoTime()
         var disposition = McpApprovalDisposition.AUTO_ALLOWED
         var result: McpToolResult? = null
         var executionStarted = false
         try {
-            val authorization = authorizeInvocation(tool, args, policy, revocation)
+            val authorization = authorizeInvocation(tool, args, effectivePolicy, revocation)
             disposition = authorization.first
             val denial = authorization.second
             result =
@@ -844,7 +903,7 @@ internal class McpToolRegistryCore(
                 ledger.record(
                     toolName = toolName,
                     providerId = tool.providerId,
-                    policyApplied = policy,
+                    policyApplied = effectivePolicy,
                     approvalDisposition = disposition,
                     durationMs = (System.nanoTime() - startTime) / 1_000_000L,
                     isError = result?.isError ?: true,
@@ -1002,30 +1061,28 @@ internal class McpToolRegistryCore(
         }
 
     /**
-     * A saved ALLOW on a shell tool means "don't ask for routine calls", not "run anything" (#1577).
+     * The policy this invocation is actually governed by. A standing ALLOW is a grant to
+     * the tool, not to every argument set it can carry: when the invocation's arguments
+     * are what raised the risk rating to CRITICAL the call escalates to ASK (#895), so
+     * the operator sees - and can stop - the very commands the CRITICAL rating exists to
+     * catch.
      *
-     * Every shell call already rates HIGH - arbitrary command execution - so HIGH cannot be the
-     * line, or "Always Allow" would ask every time and mean nothing. CRITICAL is: the evaluator
-     * reserves it for destructive command wording (`rm -rf`, `git push --force`, `mkfs`, ...), and
-     * those calls go back to ASK, where the operator sees the same assessment on the prompt.
-     *
-     * The assessment is of the very [args] this invocation executes - parsed once in [invoke] and
-     * never re-read - so the arguments cannot change between this check and the call. Tool names
-     * are matched through [DefaultMcpRiskEvaluator.isShellTool], the evaluator's own
-     * normalization, so the two cannot disagree about which calls are shell calls. DENY and ASK
-     * pass through untouched, and so does ALLOW for every non-shell tool, whose risk is fixed by
-     * its name and already weighed when the policy was saved. The ALLOW may be a tool rule or a
-     * provider-wide "Trust This Plugin" rule; both are covered.
+     * This is the one escalation step in [invoke], and it also answers the shell question
+     * (#1577) the way #1613 did before the fold: every shell tool is in the mutating
+     * catalog and rates HIGH bare, so a saved ALLOW on a shell tool re-asks exactly on the
+     * destructive command wording the evaluator rates CRITICAL - tool rule, provider-wide
+     * "Trust This Plugin" and session trust alike. DENY and ASK pass through untouched,
+     * non-CRITICAL ratings keep the standing ALLOW's promise of no prompt, and so do the
+     * catalog tools whose CRITICAL rating never depended on the arguments - their Always
+     * Allow means what the dialog said.
      */
-    private fun askBeforeDestructiveShell(
-        toolName: String,
+    private fun escalatedPolicy(
+        tool: RegisteredMcpTool,
         args: McpToolArgs,
         policy: McpPolicyAction,
     ): McpPolicyAction =
-        if (
-            policy == McpPolicyAction.ALLOW &&
-            DefaultMcpRiskEvaluator.isShellTool(toolName) &&
-            DefaultMcpRiskEvaluator().evaluateRisk(toolName, args).level >= McpRiskLevel.CRITICAL
+        if (policy == McpPolicyAction.ALLOW &&
+            requiresCriticalReask(tool.definition.name, tool.definition.readOnly, args)
         ) {
             McpPolicyAction.ASK
         } else {

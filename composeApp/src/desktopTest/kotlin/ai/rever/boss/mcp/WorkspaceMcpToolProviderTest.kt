@@ -10,6 +10,7 @@ import ai.rever.boss.components.workspaces.WorkspaceFileManager
 import ai.rever.boss.components.workspaces.WorkspaceFileManagerCommon
 import ai.rever.boss.components.workspaces.WorkspaceSerializer
 import ai.rever.boss.components.workspaces.extractCurrentWorkspace
+import ai.rever.boss.mcp.sandbox.McpRiskLevel
 import ai.rever.boss.plugin.api.McpToolResult
 import ai.rever.boss.plugin.api.TabComponentWithUI
 import ai.rever.boss.plugin.api.TabInfo
@@ -22,6 +23,7 @@ import ai.rever.boss.plugin.workspace.SplitConfig
 import ai.rever.boss.plugin.workspace.TabConfig
 import androidx.compose.runtime.Composable
 import com.arkivanov.decompose.ComponentContext
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -611,11 +613,20 @@ class WorkspaceMcpToolProviderTest {
     fun `open_terminal rejects command with newlines or control characters`() =
         runBlocking {
             val core = createTestCore()
-            // A benign second line: a destructive one (`rm -rf /`) is now stopped earlier, at the
-            // approval gate, even under this provider-wide ALLOW (#1577), so it would no longer
-            // reach the tool's own newline check that this test is about.
-            val args = """{"command":"echo hello\necho world"}"""
-            val result = core.invoke("open_terminal", args)
+
+            val args = """{"command":"echo hello\nrm -rf /"}"""
+            // The command rates CRITICAL (destructive pattern), so the provider-wide ALLOW
+            // the fixture grants still re-asks (#895) instead of running it unconfirmed.
+            val call = async { core.invoke("open_terminal", args) }
+            val request =
+                core.approvalBus.pendingList
+                    .first { it.isNotEmpty() }
+                    .first()
+            assertEquals(McpRiskLevel.CRITICAL, request.riskAssessment?.level)
+            core.approvalBus.approve(request.id)
+            val result = call.await()
+
+            // Even operator-approved, the provider's own validation still refuses it.
             assertTrue(result.isError)
             assertTrue(result.text.contains("security check failed"))
         }
