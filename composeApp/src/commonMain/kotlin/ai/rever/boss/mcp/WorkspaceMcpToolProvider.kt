@@ -3,6 +3,7 @@ package ai.rever.boss.mcp
 import ai.rever.boss.cli.CLISecurityValidator
 import ai.rever.boss.components.window_panel.SplitViewState
 import ai.rever.boss.components.window_panel.SplitViewStateRegistry
+import ai.rever.boss.components.window_panel.TabPaths
 import ai.rever.boss.components.workspaces.LAST_SESSION_ID
 import ai.rever.boss.components.workspaces.LAST_SESSION_SET_FILE
 import ai.rever.boss.components.workspaces.LayoutWorkspace
@@ -544,13 +545,7 @@ object WorkspaceMcpToolProvider : McpToolProvider {
 
         // Persisted commands were not visible in this MCP invocation's approval arguments.
         // Require a separate open_terminal call so its command receives normal risk review.
-        if (!isShippedTemplate && workspace.layout.hasInitialCommands()) {
-            return McpToolResult(
-                "Workspace contains terminal startup commands. Open it through the workspace UI, " +
-                    "or remove the startup commands and invoke open_terminal with each command explicitly.",
-                isError = true,
-            )
-        }
+        initialCommandsRefusal(workspace, isShippedTemplate)?.let { return it }
 
         // Awaited only once there is a workspace to open, so a wrong id is reported at once rather
         // than after the UI-state wait. A window that never registers is an error, as it is in
@@ -623,6 +618,35 @@ object WorkspaceMcpToolProvider : McpToolProvider {
     }
 
     /**
+     * The one refusal both open_workspace modes share, so the id mode's gate cannot be walked
+     * around by asking for the path mode instead (#920).
+     *
+     * A saved Space's terminal `initialCommand`s are arbitrary shell lines stored in its
+     * layout, and they were not visible in this invocation's approval arguments - so an MCP
+     * open cannot have approved them, and applying the Space types them into a shell. The id
+     * mode has always refused such a Space; the path mode re-enters the same saved Spaces (see
+     * matchExistingSpace), so it refuses them too. Shipped templates are exempt, exactly as in
+     * the id mode handler: their commands are BOSS's own, not a file's.
+     *
+     * The operator keeps the doors the message names: the workspace UI loads a command-carrying
+     * Space behind its confirmation prompt (see spaceLoadDisposition), and open_terminal types
+     * one command an invocation the risk gate has actually seen.
+     */
+    private fun initialCommandsRefusal(
+        space: LayoutWorkspace,
+        isShippedTemplate: Boolean,
+    ): McpToolResult? {
+        if (isShippedTemplate || !space.layout.hasInitialCommands()) {
+            return null
+        }
+        return McpToolResult(
+            "Workspace contains terminal startup commands. Open it through the workspace UI, " +
+                "or remove the startup commands and invoke open_terminal with each command explicitly.",
+            isError = true,
+        )
+    }
+
+    /**
      * Path-based bootstrap mode of open_workspace (consolidated from #799): open [rawPath] as a
      * Space in a window, creating its first terminal panel for the panel-scoped terminal tools
      * (`run_in_panel` and friends). Re-opening a path that is already running re-enters the
@@ -655,6 +679,16 @@ object WorkspaceMcpToolProvider : McpToolProvider {
         pruneClosedWindows()
         val runningIds = workspaceManager.windowWorkspaces.value[targetWindowId].orEmpty()
         val (space, reused) = resolveBootstrapSpace(targetWindowId, projectPath, runningIds)
+
+        // Path mode re-enters the SAME saved Spaces the id mode resolves above -
+        // matchExistingSpace's rule 3 applies any saved Space for this project path exactly as
+        // picking it in the Space switcher would - so the two modes must share one gate: a
+        // Space whose stored terminal commands the id mode refuses must not have them typed
+        // into a shell because the caller reached for a path instead of an id (#920). The gate
+        // sits before the reuse fast path for the same reason the id mode's gate sits before
+        // its already-active return: entering the Space through this tool at all is what is
+        // refused, not only the apply.
+        initialCommandsRefusal(space, space.id in PredefinedWorkspaces.allIds)?.let { return it }
 
         // Fast path: the window already shows this Space, so the live terminal is left alone.
         if (splitViewState.currentWorkspaceId == space.id) {
@@ -1329,9 +1363,25 @@ internal fun matchExistingSpace(
     projectPath: String,
 ): LayoutWorkspace? =
     remembered?.takeIf { it.id in runningIdsInWindow }
-        ?: savedSpaces.firstOrNull { it.id in runningIdsInWindow && it.projectPath == projectPath }
-        ?: savedSpaces.firstOrNull { it.projectPath == projectPath }
+        ?: savedSpaces.firstOrNull { it.id in runningIdsInWindow && matchesProjectPath(it, projectPath) }
+        ?: savedSpaces.firstOrNull { matchesProjectPath(it, projectPath) }
         ?: remembered
+
+/**
+ * Path identity for the saved-Space lookup, not string identity. The request arrives
+ * canonicalized (see [WorkspaceMcpToolProvider.checkProjectPath]) while a saved Space
+ * stores whatever spelling its save flow used, and the two legitimately differ for the
+ * same directory: on Windows the canonical form is `C:\dir` while a Space saved through
+ * any other surface - or on another OS, in a synced workspace file - commonly spells it
+ * `C:/dir`. Raw equality then missed the Space, silently minting a duplicate and, because
+ * the #920 startup-command refusal rides on this lookup, bypassing that refusal for the
+ * same directory spelled differently. [TabPaths.pathsMatch] is the house's definition of
+ * same-file, already trusted for "is this file already open in a tab?".
+ */
+internal fun matchesProjectPath(
+    space: LayoutWorkspace,
+    projectPath: String,
+): Boolean = space.projectPath?.let { TabPaths.pathsMatch(it, projectPath) } == true
 
 /** IDs are names in the workspace store, never caller-selected filesystem paths. */
 internal fun isSafeWorkspaceId(id: String): Boolean =

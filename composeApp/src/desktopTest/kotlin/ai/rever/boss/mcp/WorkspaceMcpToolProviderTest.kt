@@ -8,8 +8,10 @@ import ai.rever.boss.components.workspaces.LayoutWorkspace
 import ai.rever.boss.components.workspaces.PredefinedWorkspaces
 import ai.rever.boss.components.workspaces.WorkspaceFileManager
 import ai.rever.boss.components.workspaces.WorkspaceFileManagerCommon
+import ai.rever.boss.components.workspaces.WorkspaceManager
 import ai.rever.boss.components.workspaces.WorkspaceSerializer
 import ai.rever.boss.components.workspaces.extractCurrentWorkspace
+import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.plugin.api.McpToolResult
 import ai.rever.boss.plugin.api.TabComponentWithUI
 import ai.rever.boss.plugin.api.TabInfo
@@ -23,9 +25,11 @@ import ai.rever.boss.plugin.workspace.TabConfig
 import androidx.compose.runtime.Composable
 import com.arkivanov.decompose.ComponentContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
@@ -47,6 +51,9 @@ import kotlin.test.assertTrue
 class WorkspaceMcpToolProviderTest {
     private val tempDirs = mutableListOf<File>()
     private val createdSplitViewStates = mutableListOf<SplitViewState>()
+
+    /** Ids registered into the process-wide [workspaceManager] singleton, for tearDown. */
+    private val registeredManagerIds = mutableListOf<String>()
     private var windowCreatorCalls = 0
     private lateinit var workspaceDir: File
     private lateinit var fileManager: WorkspaceFileManager
@@ -82,6 +89,8 @@ class WorkspaceMcpToolProviderTest {
         WorkspaceMcpToolProvider.splitViewStateResolver = null
         WorkspaceMcpToolProvider.terminalTabOpener = null
         WorkspaceMcpToolProvider.splitViewWaitTimeoutMs = 5000L
+        registeredManagerIds.forEach { unregisterFromManager(it) }
+        registeredManagerIds.clear()
         SplitViewStateRegistry.getAllStates().keys.forEach {
             SplitViewStateRegistry.unregister(it)
         }
@@ -89,6 +98,22 @@ class WorkspaceMcpToolProviderTest {
         createdSplitViewStates.clear()
         tempDirs.forEach { it.deleteRecursively() }
         tempDirs.clear()
+    }
+
+    /**
+     * Drop [workspaceId] from the singleton's picker list, so later test classes in this
+     * JVM inherit no fixture they never registered. [WorkspaceManager] has no unregister
+     * door: `deleteWorkspaceById` removes a row only when its own file manager deleted the
+     * Space's FILE, and a test registers through `registerWorkspace` precisely because the
+     * file lives where the singleton's file manager cannot see it. Reach the backing flow
+     * directly, the same way other desktop tests reset otherwise-final private state.
+     */
+    private fun unregisterFromManager(workspaceId: String) {
+        val listField = WorkspaceManager::class.java.getDeclaredField("_workspaces")
+        listField.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val workspaces = listField.get(workspaceManager) as MutableStateFlow<List<LayoutWorkspace>>
+        workspaces.value = workspaces.value.filterNot { it.id == workspaceId }
     }
 
     private fun createTestCore(): McpToolRegistryCore {
@@ -1018,6 +1043,128 @@ class WorkspaceMcpToolProviderTest {
         }
 
     @Test
+    fun `open_workspace path mode refuses a saved Space carrying terminal startup commands`() =
+        runBlocking {
+            val windowId = "ws-path-startup-commands-window"
+            val state = SplitViewState(stubTabRegistry, windowId)
+            createdSplitViewStates.add(state)
+            SplitViewStateRegistry.register(windowId, state)
+
+            val project = Files.createTempDirectory("ws-path-startup-commands-project").toFile()
+            tempDirs.add(project)
+            val projectPath = project.canonicalPath.replace('\\', '/')
+            val marker = File(project, "pwned-marker")
+
+            // The issue's hostile shape: a saved Space for this project whose terminal types a
+            // command that writes a marker file. Registered in the manager, because that list
+            // is what path mode matches against, and saved to the file manager so the id mode
+            // resolves it too. The id is unique and the project path is a per-test temp
+            // directory, so the entry cannot collide with any later test in this JVM.
+            val hostile =
+                LayoutWorkspace(
+                    id = "workspace-path-marker",
+                    name = "Marker command",
+                    description = "test",
+                    layout =
+                        SplitConfig.SinglePanel(
+                            PanelConfig(
+                                "shell",
+                                listOf(
+                                    TabConfig(
+                                        type = "terminal",
+                                        title = "Shell",
+                                        initialCommand = "touch ${marker.absolutePath.replace('\\', '/')}",
+                                    ),
+                                ),
+                            ),
+                        ),
+                    projectPath = projectPath,
+                )
+            // The manager singleton loads its list asynchronously once per process, and that
+            // first load REPLACES the whole list - a registration landing before it completes
+            // is swapped out (the Windows CI flake: matchExistingSpace then saw nothing for
+            // the project path and minted a fresh Space). Waiting for a non-empty list is not
+            // enough: the create_workspace tests in this class register into the same
+            // singleton with no wait and JUnit method order is not fixed, so a pre-load
+            // registration can satisfy that wait while the load is still pending. Only the
+            // merged post-load list holds every shipped layout, so wait for all of them
+            // before registering.
+            withTimeout(5_000L) {
+                workspaceManager.workspaces.first { list ->
+                    PredefinedWorkspaces.allIds.all { id -> list.any { it.id == id } }
+                }
+            }
+            workspaceManager.registerWorkspace(hostile)
+            registeredManagerIds.add(hostile.id)
+            fileManager.saveWorkspace(hostile)
+
+            val core = createTestCore()
+            val byPath =
+                core.invoke(
+                    "open_workspace",
+                    """{"path":"$projectPath","windowId":"$windowId"}""",
+                )
+            assertTrue(byPath.isError, byPath.text)
+
+            // Gated exactly like the id mode: the same refusal, word for word.
+            val byId =
+                core.invoke(
+                    "open_workspace",
+                    """{"workspaceId":"workspace-path-marker","windowId":"$windowId"}""",
+                )
+            assertTrue(byId.isError, byId.text)
+            assertEquals(byId.text, byPath.text)
+
+            // The gate fired before the Space was entered: nothing was loaded into the
+            // window, so no terminal carrying the command was applied and no shell ran it.
+            assertEquals(null, state.currentWorkspaceId)
+            assertFalse(marker.exists(), "the startup command must not have been typed")
+        }
+
+    @Test
+    fun `open_workspace path mode still re-enters a saved Space without startup commands`() =
+        runBlocking {
+            val windowId = "ws-path-benign-window"
+            val state = SplitViewState(stubTabRegistry, windowId)
+            createdSplitViewStates.add(state)
+            SplitViewStateRegistry.register(windowId, state)
+
+            val project = Files.createTempDirectory("ws-path-benign-project").toFile()
+            tempDirs.add(project)
+            val projectPath = project.canonicalPath.replace('\\', '/')
+
+            // A Space the operator saved for this project, terminal and all, but with no
+            // startup command: the restore path the gate must leave alone.
+            val benign = savedSpaceFixture("workspace-path-benign", projectPath)
+            // Same one-shot load race as the refusal test above: the first load replaces the
+            // whole list, so register only after the merged post-load list has landed (every
+            // shipped layout present, which a pre-load registration alone cannot satisfy).
+            withTimeout(5_000L) {
+                workspaceManager.workspaces.first { list ->
+                    PredefinedWorkspaces.allIds.all { id -> list.any { it.id == id } }
+                }
+            }
+            workspaceManager.registerWorkspace(benign)
+            registeredManagerIds.add(benign.id)
+
+            val result =
+                createTestCore().invoke(
+                    "open_workspace",
+                    """{"path":"$projectPath","windowId":"$windowId"}""",
+                )
+            assertFalse(result.isError, result.text)
+
+            val json = Json.parseToJsonElement(result.text).jsonObject
+            assertEquals("reused", json["status"]?.jsonPrimitive?.content)
+            assertEquals("workspace-path-benign", json["workspaceId"]?.jsonPrimitive?.content)
+
+            // Its terminal really was applied, so the refusal above is a gate and not a
+            // blanket "path mode never re-enters saved Spaces".
+            val onScreen = extractCurrentWorkspace(state, projectPath = project.canonicalPath)
+            assertEquals(1, (onScreen.layout as SplitConfig.SinglePanel).panel.tabs.size)
+        }
+
+    @Test
     fun `open_workspace path mode refuses a relative path`() =
         runBlocking {
             val core = createTestCore()
@@ -1179,6 +1326,21 @@ class WorkspaceMcpToolProviderTest {
             )
 
         assertEquals(remembered.id, match?.id)
+    }
+
+    @Test
+    fun `matchExistingSpace matches a saved Space whose project path is spelled differently`() {
+        val trailingSeparator = savedSpaceFixture("workspace-trailing", "/work/p/")
+
+        val match =
+            matchExistingSpace(
+                remembered = null,
+                savedSpaces = listOf(trailingSeparator),
+                runningIdsInWindow = emptySet(),
+                projectPath = "/work/p",
+            )
+
+        assertEquals("workspace-trailing", match?.id)
     }
 
     @Test
