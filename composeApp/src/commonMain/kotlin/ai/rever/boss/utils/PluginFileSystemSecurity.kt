@@ -205,13 +205,13 @@ object PluginFileSystemSecurity {
 
             return canonicalPath.toString()
         } catch (e: InvalidPathException) {
-            throw SecurityException("Invalid filesystem path for $operation: ${e.message}")
+            throw SecurityException("Invalid filesystem path for $operation: ${e.message}", e)
         } catch (e: SecurityException) {
             // Re-throw our security exceptions
             throw e
         } catch (e: Exception) {
             logger.warn(LogCategory.FILE, "Path validation failed", mapOf("path" to rawPath, "error" to e.toString()))
-            throw SecurityException("Path validation failed for $operation: ${e.message}")
+            throw SecurityException("Path validation failed for $operation: ${e.message}", e)
         }
     }
 

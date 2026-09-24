@@ -47,7 +47,12 @@ class FileSystemDataProviderImpl : FileSystemDataProvider {
                 val validatedPath = PluginFileSystemSecurity.validateAndNormalizePath(path, "scanDirectoryWithDepth")
                 platformScanDirectoryWithDepth(validatedPath, maxDepth, startDepth)
             } catch (e: SecurityException) {
-                logger.warn(LogCategory.FILE, "Scan directory with depth denied by security policy", mapOf("path" to path), e)
+                logger.warn(
+                    LogCategory.FILE,
+                    "Scan directory with depth denied by security policy",
+                    mapOf("path" to path),
+                    e,
+                )
                 null
             }
         }
@@ -58,7 +63,12 @@ class FileSystemDataProviderImpl : FileSystemDataProvider {
             ai.rever.boss.components.plugin.panels.left_top
                 .directoryHasChildren(validatedPath)
         } catch (e: SecurityException) {
-            logger.warn(LogCategory.FILE, "Directory has children check denied by security policy", mapOf("path" to path), e)
+            logger.warn(
+                LogCategory.FILE,
+                "Directory has children check denied by security policy",
+                mapOf("path" to path),
+                e,
+            )
             false
         }
     }
@@ -94,7 +104,12 @@ class FileSystemDataProviderImpl : FileSystemDataProvider {
                 val validatedPath = PluginFileSystemSecurity.validateAndNormalizePath(path, "scanDirectoryWithDepth")
                 platformScanDirectoryWithDepth(validatedPath, maxDepth, startDepth, showHidden)
             } catch (e: SecurityException) {
-                logger.warn(LogCategory.FILE, "Scan directory with depth denied by security policy", mapOf("path" to path), e)
+                logger.warn(
+                    LogCategory.FILE,
+                    "Scan directory with depth denied by security policy",
+                    mapOf("path" to path),
+                    e,
+                )
                 null
             }
         }
@@ -108,7 +123,12 @@ class FileSystemDataProviderImpl : FileSystemDataProvider {
             ai.rever.boss.components.plugin.panels.left_top
                 .directoryHasChildren(validatedPath, showHidden)
         } catch (e: SecurityException) {
-            logger.warn(LogCategory.FILE, "Directory has children check denied by security policy", mapOf("path" to path), e)
+            logger.warn(
+                LogCategory.FILE,
+                "Directory has children check denied by security policy",
+                mapOf("path" to path),
+                e,
+            )
             false
         }
     }
@@ -138,11 +158,15 @@ class FileSystemDataProviderImpl : FileSystemDataProvider {
 
                 val parentDir = newFile.parentFile
                 if (parentDir != null && (!parentDir.exists() || !parentDir.isDirectory)) {
-                    return@withContext Result.failure(IllegalArgumentException("Parent directory does not exist: $parentPath"))
+                    return@withContext Result.failure(
+                        IllegalArgumentException("Parent directory does not exist: $parentPath")
+                    )
                 }
 
                 if (newFile.exists()) {
-                    return@withContext Result.failure(IllegalStateException("File already exists: ${newFile.absolutePath}"))
+                    return@withContext Result.failure(
+                        IllegalStateException("File already exists: ${newFile.absolutePath}")
+                    )
                 }
 
                 val created = newFile.createNewFile()
@@ -168,11 +192,15 @@ class FileSystemDataProviderImpl : FileSystemDataProvider {
 
                 val parentDir = newFolder.parentFile
                 if (parentDir != null && (!parentDir.exists() || !parentDir.isDirectory)) {
-                    return@withContext Result.failure(IllegalArgumentException("Parent directory does not exist: $parentPath"))
+                    return@withContext Result.failure(
+                        IllegalArgumentException("Parent directory does not exist: $parentPath")
+                    )
                 }
 
                 if (newFolder.exists()) {
-                    return@withContext Result.failure(IllegalStateException("Folder already exists: ${newFolder.absolutePath}"))
+                    return@withContext Result.failure(
+                        IllegalStateException("Folder already exists: ${newFolder.absolutePath}")
+                    )
                 }
 
                 val created = newFolder.mkdir()
@@ -229,11 +257,14 @@ class FileSystemDataProviderImpl : FileSystemDataProvider {
                     file.parentFile
                         ?: return@withContext Result.failure(IllegalStateException("Cannot determine parent directory"))
 
-                val validatedNewPath = PluginFileSystemSecurity.validateChildPath(parentDir.absolutePath, newName, "rename")
+                val validatedNewPath =
+                    PluginFileSystemSecurity.validateChildPath(parentDir.absolutePath, newName, "rename")
                 val newFile = java.io.File(validatedNewPath)
 
                 if (newFile.exists()) {
-                    return@withContext Result.failure(IllegalStateException("A file or folder with that name already exists"))
+                    return@withContext Result.failure(
+                        IllegalStateException("A file or folder with that name already exists")
+                    )
                 }
 
                 val renamed = file.renameTo(newFile)

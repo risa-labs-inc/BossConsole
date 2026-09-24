@@ -105,7 +105,10 @@ class PluginFileSystemSecurityTest {
             val exception = assertFailsWith<SecurityException> {
                 PluginFileSystemSecurity.validateAndNormalizePath(pattern, "test")
             }
-            assertTrue(exception.message!!.contains("outside all allowed filesystem roots"), "Failed for pattern: $pattern")
+            assertTrue(
+                exception.message!!.contains("outside all allowed filesystem roots"),
+                "Failed for pattern: $pattern",
+            )
         }
     }
 

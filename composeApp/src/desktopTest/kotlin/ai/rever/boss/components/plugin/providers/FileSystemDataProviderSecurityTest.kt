@@ -299,7 +299,8 @@ class FileSystemDataProviderSecurityTest {
         val siblingFile = File(siblingDir, "secret.txt").apply { writeText("secret content") }
 
         // Try to access sibling directory through similar path
-        val maliciousPath = File(testDir.parentFile, "filesystem-provider-security-test-sibling/secret.txt").absolutePath
+        val maliciousPath =
+            File(testDir.parentFile, "filesystem-provider-security-test-sibling/secret.txt").absolutePath
 
         // This should be denied since it's outside the allowed root
         val result = runBlocking { provider.readFile(maliciousPath) }
@@ -408,7 +409,7 @@ class FileSystemDataProviderSecurityTest {
         val testFile = File(testDir, "toctou-test.txt").apply { writeText("original content") }
 
         // Read the file - validation happens at operation boundary
-        val result1 = provider.readFile(testFile.absolutePath)
+        val result1 = runBlocking { provider.readFile(testFile.absolutePath) }
         assertTrue(result1.isSuccess, "Should successfully read file")
 
         // Now move the file outside allowed directory (simulating TOCTOU)
@@ -417,7 +418,7 @@ class FileSystemDataProviderSecurityTest {
         testFile.renameTo(movedFile)
 
         // Try to read the file again at the old path
-        val result2 = provider.readFile(testFile.absolutePath)
+        val result2 = runBlocking { provider.readFile(testFile.absolutePath) }
         assertFalse(result2.isSuccess, "Should fail to read file that was moved outside allowed roots")
 
         // Cleanup

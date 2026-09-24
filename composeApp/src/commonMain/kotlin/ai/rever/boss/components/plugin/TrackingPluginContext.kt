@@ -162,7 +162,8 @@ class PluginRegistrationTracker {
     /**
      * Get all MCP tool provider ids registered by a plugin.
      */
-    fun getMcpToolProvidersForPlugin(pluginId: String): Set<String> = mcpToolProvidersByPlugin[pluginId]?.toSet() ?: emptySet()
+    fun getMcpToolProvidersForPlugin(pluginId: String): Set<String> =
+        mcpToolProvidersByPlugin[pluginId]?.toSet() ?: emptySet()
 
     /**
      * Get all tab types registered by a plugin.
@@ -341,7 +342,8 @@ class TrackingPluginContext(
     override val llmProvider: LlmProvider? get() = delegate.llmProvider
     override val brokeredCredentialProvider: BrokeredCredentialProvider?
         get() = delegate.brokeredCredentialProvider
-    override val runConfigurationDataProvider: RunConfigurationDataProvider? get() = delegate.runConfigurationDataProvider
+    override val runConfigurationDataProvider: RunConfigurationDataProvider?
+        get() = delegate.runConfigurationDataProvider
     override val activeTabsProvider: ActiveTabsProvider? get() = delegate.activeTabsProvider
     override val windowId: String? get() = delegate.windowId
     override val projectPath: String? get() = delegate.projectPath
