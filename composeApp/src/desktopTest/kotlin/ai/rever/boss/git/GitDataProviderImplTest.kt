@@ -434,6 +434,7 @@ class GitDataProviderImplTest {
         assertFalse(GitService.isSafeRefName("-n1"))
         assertFalse(GitService.isSafeRefName("has space"))
         assertFalse(GitService.isSafeRefName("has\nnewline"))
+        assertFalse(GitService.isSafeRefName("has\u0085nel"))
         assertFalse(GitService.isSafeRefName("a".repeat(256)))
     }
 

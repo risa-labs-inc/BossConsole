@@ -1837,7 +1837,7 @@ actual object GitService {
         if (ref.isBlank()) return false
         if (ref.startsWith("-")) return false
         if (ref.length > MAX_REF_LENGTH) return false
-        return ref.none { it.isWhitespace() || it.code < 0x20 || it == '\u007F' }
+        return ref.none { it.isWhitespace() || it.code < 0x20 || it == '\u007F' || it == '\u0085' }
     }
 
     private const val MAX_REF_LENGTH = 255
