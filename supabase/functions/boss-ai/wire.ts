@@ -37,6 +37,16 @@ function functionCall(value: unknown): Obj {
     call.type !== "function" || typeof call.id !== "string" ||
     typeof f.name !== "string" || typeof f.arguments !== "string"
   ) throw invalid()
+  // BossConsole#1251: tool-call `arguments` must be parseable JSON. A
+  // string that does not parse is a malformed request that the upstream
+  // would reject, but only after the reservation has been charged for
+  // the full context length. Fail closed here so the bad call never
+  // reaches the dispatch path.
+  try {
+    JSON.parse(f.arguments)
+  } catch {
+    throw invalid()
+  }
   return call
 }
 
@@ -183,6 +193,12 @@ export function requestBody(input: Obj, model: Model, type: Connection["api_type
       m.tool_calls !== undefined &&
       (!Array.isArray(m.tool_calls) || !model.capabilities.includes("tools"))
     ) throw invalid()
+    // BossConsole#1251: cap tool_calls per message. A single message
+    // with thousands of tool_calls multiplies the JSON.parse cost
+    // in `functionCall` (now mandatory) and produces a request the
+    // upstream would reject at the wire size anyway. 16 matches the
+    // OpenAI request shape limit and stops the obvious amplifier.
+    if (Array.isArray(m.tool_calls) && m.tool_calls.length > 16) throw invalid()
     if (Array.isArray(m.tool_calls)) m.tool_calls.forEach(functionCall)
     if (
       m.role === "tool" && (m.content === null ||
@@ -215,7 +231,14 @@ export function requestBody(input: Obj, model: Model, type: Connection["api_type
       const f = object(t.function)
       onlyKeys(t, ["type", "function"])
       onlyKeys(f, ["name", "description", "parameters", "strict"])
-      if (f.description !== undefined && typeof f.description !== "string") throw invalid()
+      // BossConsole#1251: cap the per-tool description. A multi-MB
+      // description is forwarded verbatim into the upstream payload,
+      // and the only sane upper bound on a tool description is the
+      // request body cap - well below that. 4 KB matches the OpenAI
+      // documented limit and stops an obvious amplification vector.
+      if (f.description !== undefined) {
+        if (typeof f.description !== "string" || f.description.length > 4_096) throw invalid()
+      }
       if (f.strict !== undefined && typeof f.strict !== "boolean") throw invalid()
       if (f.parameters !== undefined) object(f.parameters)
       if (

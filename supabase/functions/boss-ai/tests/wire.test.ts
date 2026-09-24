@@ -339,3 +339,61 @@ Deno.test("all stream frames carry a stable created timestamp", () => {
     assertEquals(first.created, second.created)
   }
 })
+
+// BossConsole#1251: tool call arguments must be parseable JSON, tool
+// descriptions must be length-bounded, and a single message must not carry
+// an unbounded number of tool_calls.
+
+Deno.test("tool call arguments must be parseable JSON (BossConsole#1251)", () => {
+  const input = {
+    messages: [{
+      role: "assistant",
+      tool_calls: [{
+        id: "call-1",
+        type: "function",
+        function: { name: "lookup", arguments: "not-json{{{" },
+      }],
+    }],
+  }
+  assertThrows(
+    () => requestBody(input, model, "openai_chat"),
+    HttpError,
+  )
+  assertThrows(
+    () => requestBody(input, model, "openai_responses"),
+    HttpError,
+  )
+})
+
+Deno.test("a tool description over 4 KB is rejected (BossConsole#1251)", () => {
+  const input = {
+    ...{ messages: [{ role: "user", content: "hi" }] },
+    tools: [{
+      type: "function",
+      function: {
+        name: "lookup",
+        description: "x".repeat(5_000),
+        parameters: { type: "object" },
+      },
+    }],
+  }
+  assertThrows(
+    () => requestBody(input, model, "openai_chat"),
+    HttpError,
+  )
+})
+
+Deno.test("a message with more than 16 tool_calls is rejected (BossConsole#1251)", () => {
+  const tool_calls = Array.from({ length: 17 }, (_, i) => ({
+    id: `call-${i}`,
+    type: "function",
+    function: { name: "lookup", arguments: "{}" },
+  }))
+  const input = {
+    messages: [{ role: "assistant", tool_calls }],
+  }
+  assertThrows(
+    () => requestBody(input, model, "openai_chat"),
+    HttpError,
+  )
+})
