@@ -269,3 +269,41 @@ internal fun withKnownNames(
     val namesById = known.associate { it.id to it.name }
     return spaces.map { space -> namesById[space.id]?.let { space.copy(name = it) } ?: space }
 }
+
+/**
+ * The startup scan's answer, merged INTO a registry that mutations may already have moved.
+ *
+ * The scan is a SEED, like the theme read beside it, and a seed must not land on top of a
+ * decision. It reads disk without the mutation lock - holding the lock across the whole read
+ * would stall every Space action behind the scan - so by the time it publishes, a save, a delete
+ * or an MCP `registerWorkspace` may have committed under the lock. Replacing the list wholesale
+ * then overwrote the newer change: a save was rolled back to the scan's stale copy of the file,
+ * and a REGISTERED Space vanished for good, because its file sits where the scan never looks.
+ * Merged by id instead, so that:
+ *
+ * - **a Space a mutation has since moved keeps the mutation's row.** The registry entry is the
+ *   newer intent; the scan's copy of that file is a snapshot from before it.
+ * - **a Space only the scan found is added.** The ordinary startup case, where the registry is
+ *   still empty and the scan IS the news.
+ * - **a Space deleted while the scan ran stays deleted.** [deletedSinceScanStarted] carries the
+ *   delete past the publish, so the scan's copy cannot resurrect a row whose file is gone.
+ *
+ * The scan's order is kept as the backbone - the shipped layouts first, then the saved files in
+ * scan order - and rows only a mutation added follow at the end. With no mutation landing
+ * mid-scan the result is exactly [scanned], so nothing changes for the launch that races
+ * nothing.
+ */
+internal fun mergeScanIntoCurrent(
+    current: List<LayoutWorkspace>,
+    scanned: List<LayoutWorkspace>,
+    deletedSinceScanStarted: Set<String>,
+): List<LayoutWorkspace> {
+    val currentById = current.associateBy { it.id }
+    val scannedIds = scanned.map { it.id }.toHashSet()
+    return scanned
+        .filter { it.id !in deletedSinceScanStarted }
+        // A mutation that landed while the scan was reading is the newer intent for this id.
+        .map { scannedSpace -> currentById[scannedSpace.id] ?: scannedSpace } +
+        // And what only a mutation added - a register, whose file the scan never looks at - stays.
+        current.filter { it.id !in scannedIds }
+}

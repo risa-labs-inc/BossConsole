@@ -20,10 +20,10 @@ import kotlin.test.assertTrue
  * the defect was in the seam between writing and reading: the write was fine and the read threw it
  * away. A test on either half alone passes against the bug.
  *
- * `WorkspaceManager` itself cannot be driven from a test - it is a singleton on a
- * `Dispatchers.Main` scope writing to the user's real Documents folder - so the two rules it now
- * calls are the pure functions [savedCopyOfSlot] and [mergeSavedWorkspaces], and these exercise
- * them either side of the file manager exactly as it does.
+ * `WorkspaceManager` CAN now be driven from a test on a scratch directory - see
+ * [WorkspaceManagerRaceTest], which pins its serialized-mutation invariants - but these tests
+ * keep to what they were written for, the pure functions [savedCopyOfSlot] and
+ * [mergeSavedWorkspaces], exercising them either side of the file manager exactly as it does.
  */
 class SavedSpaceMergeTest {
     private fun layout(vararg titles: String) =

@@ -3,6 +3,7 @@ package ai.rever.boss.plugin.workspace
 import androidx.compose.runtime.Immutable
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.time.Clock
 
 /**
@@ -199,9 +200,31 @@ data class LayoutWorkspace(
 ) {
     companion object {
         /**
-         * Generate a unique workspace ID based on current timestamp.
+         * The last millisecond [generateId] handed out. It only moves forward, so two mints
+         * inside one clock millisecond can no longer hand out one ID between them.
          */
-        fun generateId(): String = "workspace-${Clock.System.now().toEpochMilliseconds()}"
+        private val lastMintedMillis = AtomicLong(Long.MIN_VALUE)
+
+        /**
+         * Generate a unique workspace ID based on the current timestamp.
+         *
+         * The timestamp alone is not unique: two mints inside one clock millisecond used to
+         * produce one ID, and the second registration then silently replaced the first
+         * record. Each mint instead receives a strictly increasing millisecond, the previous
+         * mint plus one when the clock has not ticked, which keeps every ID unique while
+         * preserving the documented `workspace-<digits>` shape that adopted ids rely on to
+         * stay distinguishable (they end in `-saved`).
+         */
+        fun generateId(): String = "workspace-${nextUniqueMillis()}"
+
+        private fun nextUniqueMillis(): Long {
+            val now = Clock.System.now().toEpochMilliseconds()
+            while (true) {
+                val minted = lastMintedMillis.get()
+                val next = if (now > minted) now else minted + 1
+                if (lastMintedMillis.compareAndSet(minted, next)) return next
+            }
+        }
     }
 }
 

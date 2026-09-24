@@ -200,6 +200,23 @@ class WorkspaceServiceImpl(
             }
         }
 
+    /** Clock seam for tests: pinning it makes a same-millisecond mint deterministic. */
+    internal var nowMillis: () -> Long = { System.currentTimeMillis() }
+
+    /**
+     * A millisecond value whose `workspace-<millis>` ID is not already a record. Called only
+     * inside [mutate], so this containsKey cannot interleave with another create's - the check
+     * and the save that follows it are one serialized step. Two paths opened in the same
+     * millisecond used to mint one ID, and the second record silently replaced the first on
+     * disk and in memory. The registry mirrors disk under the same lock, so the map alone is a
+     * complete answer.
+     */
+    private fun uniqueNowMillis(): Long {
+        var now = nowMillis()
+        while (workspaces.containsKey("workspace-$now")) now += 1
+        return now
+    }
+
     // ---- gRPC method implementations ----
 
     override suspend fun getWorkspaces(request: Empty): WorkspacesResponse =
@@ -272,8 +289,10 @@ class WorkspaceServiceImpl(
             }
 
             if (request.projectPath.isNotBlank()) {
-                // Auto-create workspace for unknown path
-                val now = System.currentTimeMillis()
+                // Auto-create workspace for unknown path. uniqueNowMillis re-checks the minted
+                // ID under this method's mutation lock, so a same-millisecond second open cannot
+                // land on the first record's ID and replace it.
+                val now = uniqueNowMillis()
                 val newWs =
                     WorkspaceInfo
                         .newBuilder()

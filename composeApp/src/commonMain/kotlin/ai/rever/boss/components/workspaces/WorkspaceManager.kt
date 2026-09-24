@@ -15,13 +15,20 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlin.time.Clock
 
 /**
  * Manages layout workspaces with file-based storage
+ *
+ * [directoryOverride] is for tests, with the same meaning it has on [WorkspaceFileManager]: a
+ * manager pointed at a scratch directory is how the mutation-race tests keep real homes untouched.
  */
-class WorkspaceManager {
+class WorkspaceManager(
+    directoryOverride: String? = null,
+) {
     private val logger = BossLogger.forComponent("WorkspaceManager")
     private val _currentWorkspace = MutableStateFlow<LayoutWorkspace?>(null)
     val currentWorkspace: StateFlow<LayoutWorkspace?> = _currentWorkspace.asStateFlow()
@@ -134,8 +141,40 @@ class WorkspaceManager {
      */
     fun savedCopyOf(workspaceId: String): LayoutWorkspace? = _workspaces.value.firstOrNull { it.id == workspaceId }
 
-    private val fileManager = WorkspaceFileManager()
+    private val fileManager = WorkspaceFileManager(directoryOverride)
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+
+    /**
+     * Serializes every workspace MUTATION - save, import, rename, delete and the session-record
+     * write - so each one commits its disk file and its registry rows as ONE indivisible step.
+     *
+     * **The bug this closes.** Mutations were fire-and-forget coroutines whose disk I/O ran on
+     * the multi-threaded IO pool: a delete issued alongside a save or rename of the same Space
+     * could remove the file while the save's write was in flight, and each then updated the
+     * registry on its own - ending with a Space the picker still lists whose file is gone, or a
+     * file on disk no registry row points at that comes back as a "deleted" Space after the next
+     * launch. One lock held across both halves makes every interleaving apply the mutations in
+     * issue order and atomically, so the registry and the directory can never disagree.
+     *
+     * One lock for everything, not a per-path lock: the registry is a single list every operation
+     * rewrites, so mutations must be serialized against each other to be atomic at all, and the
+     * rate is a handful of user-paced actions a session. [saveLastSessionBlocking] deliberately
+     * does NOT take it: its callers are on the shutdown path, where suspending on a lock against
+     * a dispatcher that may never run again is a deadlock, and the LastSessionCoordinator already
+     * claims the session write for one window.
+     */
+    internal val mutations = Mutex()
+
+    /**
+     * Whether the startup scan has published. Until it has, a delete that lands records its id in
+     * [idsDeletedBeforeScanPublish]: the scan may already have read that Space's file, and without
+     * the record the publish would list the Space again beside a file that is gone. See
+     * `mergeScanIntoCurrent`.
+     */
+    private var startupScanPublished = false
+
+    /** Ids deleted under [mutations] while the startup scan was still reading. */
+    private val idsDeletedBeforeScanPublish = mutableSetOf<String>()
 
     /**
      * The file each Space was LOADED from, by id, for the ones whose path predates
@@ -357,7 +396,31 @@ class WorkspaceManager {
             // Space was a built-in - which is the Save button not working. See
             // `mergeSavedWorkspaces`, which also says what becomes of a legacy file whose id IS a
             // built-in's.
-            _workspaces.value = mergeSavedWorkspaces(PredefinedWorkspaces.allWorkspaces, saved)
+            // And the scan's answer is merged INTO the registry under the lock, not written over
+            // it: a save, delete or MCP register admitted while the scan was reading disk is the
+            // newer decision and must survive the seed. See `mergeScanIntoCurrent`, which also
+            // says what becomes of a Space deleted mid-scan.
+            publishScanIntoRegistry(saved)
+        }
+    }
+
+    /**
+     * The startup scan's publish: its answer lands under the mutation lock, merged INTO a
+     * registry that mutations may already have moved rather than written over it. See
+     * `mergeScanIntoCurrent` for what each kind of racer contributes; the publish flag and the
+     * recorded deletes it reads are the [WorkspaceManager] side of that contract.
+     */
+    private suspend fun publishScanIntoRegistry(saved: List<LayoutWorkspace>) {
+        mutations.withLock {
+            startupScanPublished = true
+            val deletedSinceScanStarted = idsDeletedBeforeScanPublish.toHashSet()
+            idsDeletedBeforeScanPublish.clear()
+            _workspaces.value =
+                mergeScanIntoCurrent(
+                    _workspaces.value,
+                    mergeSavedWorkspaces(PredefinedWorkspaces.allWorkspaces, saved),
+                    deletedSinceScanStarted,
+                )
         }
     }
 
@@ -417,13 +480,16 @@ class WorkspaceManager {
             }
 
         scope.launch {
-            // Save to disk (on IO thread)
-            val fileName = fileNameFor(savedWorkspace)
-            val filePath =
-                withContext(Dispatchers.IO) {
-                    fileManager.saveWorkspace(savedWorkspace, fileName)
-                }
-            if (filePath != null) {
+            mutations.withLock {
+                // Save to disk (on IO thread)
+                val fileName = fileNameFor(savedWorkspace)
+                val filePath =
+                    withContext(Dispatchers.IO) {
+                        fileManager.saveWorkspace(savedWorkspace, fileName)
+                    }
+                // Disk first, registry second, and only when the disk write answered: a save
+                // that failed must not leave a row in the picker for a file that does not exist.
+                if (filePath == null) return@withLock
                 loadedFileNames[savedWorkspace.id] = fileName
                 // Update workspaces list (on Main thread), keyed by ID for the reason
                 // `mergeSavedWorkspaces` is: by NAME, saving a Space of the user's that happens to
@@ -460,27 +526,28 @@ class WorkspaceManager {
      * disk" and the unsaved flag is derived from the answer - an entry left stale would say the
      * Last Session record needs saving when it had just been written.
      */
-    suspend fun saveLastSessionRecord(record: LayoutWorkspace): Boolean {
-        val fileName = fileNameFor(record)
-        val filePath =
-            withContext(Dispatchers.IO) {
-                fileManager.saveWorkspace(record, fileName)
+    suspend fun saveLastSessionRecord(record: LayoutWorkspace): Boolean =
+        mutations.withLock {
+            val fileName = fileNameFor(record)
+            val filePath =
+                withContext(Dispatchers.IO) {
+                    fileManager.saveWorkspace(record, fileName)
+                }
+            if (filePath == null) {
+                logger.warn(LogCategory.WORKSPACE, "Last Session record write failed")
+                return@withLock false
             }
-        if (filePath == null) {
-            logger.warn(LogCategory.WORKSPACE, "Last Session record write failed")
-            return false
+            loadedFileNames[record.id] = fileName
+            _workspaces.value =
+                _workspaces.value.toMutableList().also { workspaces ->
+                    // By ID. By NAME this wrote over whatever row happened to be called "Last
+                    // Session", which after the merge stopped keying on names can be a Space of the
+                    // user's that is merely CALLED that.
+                    val existingIndex = workspaces.indexOfFirst { it.id == record.id }
+                    if (existingIndex >= 0) workspaces[existingIndex] = record else workspaces.add(record)
+                }
+            true
         }
-        loadedFileNames[record.id] = fileName
-        _workspaces.value =
-            _workspaces.value.toMutableList().also { workspaces ->
-                // By ID. By NAME this wrote over whatever row happened to be called "Last
-                // Session", which after the merge stopped keying on names can be a Space of the
-                // user's that is merely CALLED that.
-                val existingIndex = workspaces.indexOfFirst { it.id == record.id }
-                if (existingIndex >= 0) workspaces[existingIndex] = record else workspaces.add(record)
-            }
-        return true
-    }
 
     /**
      * Persist [layout] as the "Last Session" workspace, blocking until the file
@@ -587,21 +654,35 @@ class WorkspaceManager {
             // would save over a reserved record - see withImportableId for what that destroyed.
             val workspace = WorkspaceSerializer.deserialize(jsonString).withImportableId()
 
-            // Save the imported workspace to disk
+            // Save the imported workspace to disk, then list it: in that order, under the
+            // mutation lock, and only when the disk write answered. The write's result used to
+            // be ignored, so a failed import still put a row in the picker for a file that did
+            // not exist, and the Space silently vanished on the next launch.
             scope.launch {
-                val fileName = fileNameFor(workspace)
-                withContext(Dispatchers.IO) {
-                    fileManager.saveWorkspace(workspace, fileName)
-                }
-                loadedFileNames[workspace.id] = fileName
+                mutations.withLock {
+                    val fileName = fileNameFor(workspace)
+                    val filePath =
+                        withContext(Dispatchers.IO) {
+                            fileManager.saveWorkspace(workspace, fileName)
+                        }
+                    if (filePath == null) {
+                        logger.warn(
+                            LogCategory.WORKSPACE,
+                            "Imported workspace could not be written to disk",
+                            mapOf("workspace" to workspace.id),
+                        )
+                        return@withLock
+                    }
+                    loadedFileNames[workspace.id] = fileName
 
-                // Update workspaces list (on Main thread), by ID. By NAME an import whose name
-                // matched anything already listed wrote the file and then declined to add the row,
-                // so the user pressed Open from File and saw nothing happen at all.
-                val workspaces = _workspaces.value.toMutableList()
-                val existingIndex = workspaces.indexOfFirst { it.id == workspace.id }
-                if (existingIndex >= 0) workspaces[existingIndex] = workspace else workspaces.add(workspace)
-                _workspaces.value = workspaces
+                    // Update workspaces list (on Main thread), by ID. By NAME an import whose name
+                    // matched anything already listed wrote the file and then declined to add the row,
+                    // so the user pressed Open from File and saw nothing happen at all.
+                    val workspaces = _workspaces.value.toMutableList()
+                    val existingIndex = workspaces.indexOfFirst { it.id == workspace.id }
+                    if (existingIndex >= 0) workspaces[existingIndex] = workspace else workspaces.add(workspace)
+                    _workspaces.value = workspaces
+                }
             }
 
             workspace
@@ -625,10 +706,19 @@ class WorkspaceManager {
         // Space back, since a minted id exists only inside this list until the caller persists
         // it through its own file manager.
         val registered = workspace.withStableId()
-        val workspaces = _workspaces.value.toMutableList()
-        val existingIndex = workspaces.indexOfFirst { it.id == registered.id }
-        if (existingIndex >= 0) workspaces[existingIndex] = registered else workspaces.add(registered)
-        _workspaces.value = workspaces
+        // Under the same lock as every other registry mutation: an MCP create racing a
+        // delete or rename would otherwise read a stale list and write it back over the change.
+        // The mint and the returned Space stay synchronous - the caller persists the file
+        // through its own file manager and needs the id now - but the list update itself goes
+        // through the lock, so it cannot overwrite a concurrent mutation.
+        scope.launch {
+            mutations.withLock {
+                val workspaces = _workspaces.value.toMutableList()
+                val existingIndex = workspaces.indexOfFirst { it.id == registered.id }
+                if (existingIndex >= 0) workspaces[existingIndex] = registered else workspaces.add(registered)
+                _workspaces.value = workspaces
+            }
+        }
         return registered
     }
 
@@ -657,26 +747,34 @@ class WorkspaceManager {
     /** Delete the Space with [workspaceId]. Refuses a shipped layout, which has no file to delete. */
     fun deleteWorkspaceById(workspaceId: String) {
         scope.launch {
-            val workspace = _workspaces.value.find { it.id == workspaceId } ?: return@launch
-            // By ID, not by name: a Space merely CALLED "Codex" is the user's and is deletable,
-            // where the shipped Codex is not. By name the veto refused both.
-            if (!isUserOwnedSpace(workspaceId)) return@launch
+            mutations.withLock {
+                // Re-resolved UNDER the lock: a save or rename admitted ahead of this delete has
+                // changed the registry since this was issued, and the delete must act on the Space
+                // as it is now - or on nothing, if another delete already removed it.
+                val workspace = _workspaces.value.find { it.id == workspaceId } ?: return@withLock
+                // By ID, not by name: a Space merely CALLED "Codex" is the user's and is deletable,
+                // where the shipped Codex is not. By name the veto refused both.
+                if (!isUserOwnedSpace(workspaceId)) return@withLock
 
-            val deleted =
-                withContext(Dispatchers.IO) {
-                    fileManager.deleteWorkspace(fileNameFor(workspace))
-                }
-            if (deleted) {
-                // Update state on Main thread
-                _workspaces.value = _workspaces.value.filter { it.id != workspaceId }
-                loadedFileNames.remove(workspaceId)
+                val deleted =
+                    withContext(Dispatchers.IO) {
+                        fileManager.deleteWorkspace(fileNameFor(workspace))
+                    }
+                if (deleted) {
+                    // Update state on Main thread
+                    _workspaces.value = _workspaces.value.filter { it.id != workspaceId }
+                    loadedFileNames.remove(workspaceId)
+                    // Recorded until the startup scan publishes: that scan may have read this
+                    // Space's file before the delete removed it, and must not list it again.
+                    if (!startupScanPublished) idsDeletedBeforeScanPublish.add(workspaceId)
 
-                // Notify that workspace was deleted (this will cleanup tabs)
-                onWorkspaceDeleted?.invoke(workspaceId)
+                    // Notify that workspace was deleted (this will cleanup tabs)
+                    onWorkspaceDeleted?.invoke(workspaceId)
 
-                // If current workspace was deleted, reset
-                if (_currentWorkspace.value?.id == workspaceId) {
-                    resetToDefault()
+                    // If current workspace was deleted, reset
+                    if (_currentWorkspace.value?.id == workspaceId) {
+                        resetToDefault()
+                    }
                 }
             }
         }
@@ -705,43 +803,52 @@ class WorkspaceManager {
         workspaceId: String,
         newName: String,
     ) {
-        val existing = _workspaces.value.find { it.id == workspaceId }
-        val taken = _workspaces.value.any { it.id != workspaceId && it.name == newName }
-        if (taken) {
-            logger.debug(LogCategory.WORKSPACE, "Workspace with name already exists", mapOf("name" to newName))
-        }
-        // Nothing to do for an unknown Space, a name another Space holds, an empty name, or the
-        // name it already has.
-        val nameIsNew = newName.isNotEmpty() && newName != existing?.name
-        if (existing == null || taken || !nameIsNew) return
-
         scope.launch {
-            // By ID: a Space merely CALLED "Codex" is renameable where the shipped Codex is not.
-            if (!isUserOwnedSpace(workspaceId)) return@launch
-
-            val renamedWorkspace =
-                existing.copy(
-                    name = newName,
-                    timestamp = Clock.System.now().toEpochMilliseconds(),
-                )
-
-            val fileName = fileNameFor(renamedWorkspace)
-            val success =
-                withContext(Dispatchers.IO) {
-                    fileManager.saveWorkspace(renamedWorkspace, fileName) != null
+            mutations.withLock {
+                // Resolved UNDER the lock, not at issue time: two renames onto one name used to
+                // both inspect a registry in which neither had landed, both pass the taken check,
+                // and both commit - two Spaces wearing one name. Serialized, the second admission
+                // sees the first rename's row and refuses.
+                val existing = _workspaces.value.find { it.id == workspaceId } ?: return@withLock
+                // By ID: a Space merely CALLED "Codex" is renameable where the shipped Codex is not.
+                if (!isUserOwnedSpace(workspaceId)) return@withLock
+                val taken = _workspaces.value.any { it.id != workspaceId && it.name == newName }
+                if (taken) {
+                    logger.debug(
+                        LogCategory.WORKSPACE,
+                        "Workspace with name already exists",
+                        mapOf("name" to newName),
+                    )
                 }
+                // Nothing to do for a name another Space holds, an empty name, or the name it
+                // already has.
+                val nameIsNew = newName.isNotEmpty() && newName != existing.name
+                if (taken || !nameIsNew) return@withLock
 
-            if (success) {
-                loadedFileNames[workspaceId] = fileName
-                // Update state on Main thread
-                _workspaces.value =
-                    _workspaces.value.map {
-                        if (it.id == workspaceId) renamedWorkspace else it
+                val renamedWorkspace =
+                    existing.copy(
+                        name = newName,
+                        timestamp = Clock.System.now().toEpochMilliseconds(),
+                    )
+
+                val fileName = fileNameFor(renamedWorkspace)
+                val success =
+                    withContext(Dispatchers.IO) {
+                        fileManager.saveWorkspace(renamedWorkspace, fileName) != null
                     }
 
-                // If current workspace was renamed, update it
-                if (_currentWorkspace.value?.id == workspaceId) {
-                    _currentWorkspace.value = renamedWorkspace
+                if (success) {
+                    loadedFileNames[workspaceId] = fileName
+                    // Update state on Main thread
+                    _workspaces.value =
+                        _workspaces.value.map {
+                            if (it.id == workspaceId) renamedWorkspace else it
+                        }
+
+                    // If current workspace was renamed, update it
+                    if (_currentWorkspace.value?.id == workspaceId) {
+                        _currentWorkspace.value = renamedWorkspace
+                    }
                 }
             }
         }
