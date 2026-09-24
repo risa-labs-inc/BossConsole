@@ -454,6 +454,7 @@ class PluginUpdateManager(
      *   the plugin unloaded.
      * @return Result indicating success or failure
      */
+    @Suppress("LongParameterList", "ReturnCount")
     suspend fun updatePlugin(
         pluginId: String,
         downloadPath: String,
@@ -461,6 +462,15 @@ class PluginUpdateManager(
         loadPlugin: suspend (String) -> Result<Unit>,
         onProgress: ((Float) -> Unit)? = null,
         onInstalling: (() -> Unit)? = null,
+        /**
+         * Invoked with the plugin id when a freshly downloaded version fails to load. Without
+         * it, `swapPlugin` cannot recover the previous install: the unload has already
+         * succeeded by the time loadPlugin returns failure, so the only path back to a working
+         * plugin is re-loading the previous jar. The default is a no-op so the public signature
+         * does not break callers who never override the host's update path; the host's own
+         * update bridge supplies one backed by `PluginRollbackStore.restore`.
+         */
+        rollback: suspend (pluginId: String) -> Result<Unit> = { Result.success(Unit) },
     ): Result<Unit> {
         val update =
             _availableUpdates.value.find { it.pluginId == pluginId }
@@ -495,7 +505,9 @@ class PluginUpdateManager(
         // the plugin unloaded with nothing in its place - exactly the harm the caller
         // withdraws its Cancel button to prevent. Withdrawing the button is necessary
         // and not sufficient: the button is UI state, this is the work.
-        return withContext(NonCancellable) { swapPlugin(pluginId, update, downloadedPath, unloadPlugin, loadPlugin) }
+        return withContext(NonCancellable) {
+            swapPlugin(pluginId, update, downloadedPath, unloadPlugin, loadPlugin, rollback)
+        }
     }
 
     /**
@@ -504,12 +516,14 @@ class PluginUpdateManager(
      * Split out so the whole swap can run under `NonCancellable` in one expression;
      * see the comment at the call site for why it must.
      */
+    @Suppress("LongParameterList", "ReturnCount")
     private suspend fun swapPlugin(
         pluginId: String,
         update: UpdateInfo,
         downloadedPath: String,
         unloadPlugin: suspend (String) -> Result<Unit>,
         loadPlugin: suspend (String) -> Result<Unit>,
+        rollback: suspend (oldJarPath: String) -> Result<Unit>,
     ): Result<Unit> {
         // Unload old version
         val unloadResult = unloadPlugin(pluginId)
@@ -523,7 +537,6 @@ class PluginUpdateManager(
         // Load new version
         val loadResult = loadPlugin(downloadedPath)
         if (loadResult.isFailure) {
-            // Rollback - try to reload the old version
             logger.warn(
                 LogCategory.SYSTEM,
                 "Update failed, attempting rollback",
@@ -532,12 +545,25 @@ class PluginUpdateManager(
                 ),
             )
 
-            // Note: Actual rollback would require keeping track of the old JAR path
-            // For now, we just report the failure
+            // The plugin id is what the unload lambda was told, so it is the loader's
+            // key into its own registry. We don't know the old jar's *path* on disk here
+            // - that is the host's snapshot - but rollback in this codebase means
+            // re-loading by id, which the host bridge wires through PluginRollbackStore.
+            val rollbackResult = rollback(pluginId)
+            if (rollbackResult.isFailure) {
+                val rollbackError = rollbackResult.exceptionOrNull()?.message ?: "Rollback failed"
+                logger.error(
+                    LogCategory.SYSTEM,
+                    "Rollback after failed update also failed",
+                    mapOf("pluginId" to pluginId, "error" to rollbackError),
+                )
+            }
 
             val error = loadResult.exceptionOrNull()?.message ?: "Install failed"
             _state.value = UpdateState.Failed(pluginId, error)
             listeners.forEach { it.onUpdateFailed(pluginId, error) }
+            // Surface the original load failure: rollback is a recovery, not a promise
+            // that succeeded, and the caller's button has already been withdrawn.
             return loadResult
         }
 

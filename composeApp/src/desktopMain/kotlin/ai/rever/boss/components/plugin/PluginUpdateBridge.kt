@@ -153,7 +153,12 @@ actual object PluginUpdateBridge {
         //
         // Taken here rather than inside `mgr.updatePlugin` so it happens once, before the unload
         // closes the classloader, and so a failure to keep the copy cannot fail the update.
-        val runningJarPath = manager.getPluginInfo(pluginId)?.jarPath
+        // `enabled` is captured alongside the jar so the rollback path can put the plugin back
+        // in the same state it was in before the failed update - a plugin the user had disabled
+        // is one they do NOT want to come back enabled.
+        val existingInfo = manager.getPluginInfo(pluginId)
+        val runningJarPath = existingInfo?.jarPath
+        val wasEnabled = existingInfo?.enabled ?: true
         runningJarPath?.let { installedJar ->
             PluginRollbackStore.snapshot(pluginDir, pluginId, installedJar)
         }
@@ -176,6 +181,33 @@ actual object PluginUpdateBridge {
                     onInstalling = {
                         swapStarted = true
                         DownloadCenter.phase(pluginId, TransferPhase.INSTALLING)
+                    },
+                    // Wire the bridge to the snapshot taken above. The default rollback is
+                    // a no-op, which left a successful snapshot on disk that nothing ever
+                    // restored - the plugin id is the right key because the rollback store
+                    // keys by id rather than by jar path (the path is gone after reconcile).
+                    // `wasEnabled` is closed over so the restore brings the plugin back in
+                    // its original enabled/disabled state, not whatever the new install left it
+                    // in. `currentJarPath` is the path the failed jar landed at - the rollback
+                    // store uses it to delete the failed bytes rather than leave them on disk
+                    // pointing at the plugin id.
+                    rollback = { id ->
+                        val restored = PluginRollbackStore.restore(
+                            pluginDir = pluginDir,
+                            pluginId = id,
+                            currentJarPath = runningJarPath,
+                        )
+                        if (restored == null) {
+                            Result.failure(Exception("No rollback available for $id"))
+                        } else {
+                            // PluginPersistence writes the enabled flag back into
+                            // installed.json - the manager's own state model tracks the
+                            // active instance, but a restore puts the plugin back on disk
+                            // and the next launch will read installed.json before deciding
+                            // what to load.
+                            PluginPersistence.setPluginEnabled(id, wasEnabled)
+                            Result.success(Unit)
+                        }
                     },
                 )
             } catch (e: CancellationException) {
