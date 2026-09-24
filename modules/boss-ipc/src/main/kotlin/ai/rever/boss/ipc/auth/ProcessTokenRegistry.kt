@@ -1,5 +1,6 @@
 package ai.rever.boss.ipc.auth
 
+import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.HexFormat
 import java.util.UUID
@@ -52,7 +53,8 @@ class ProcessTokenRegistry {
     ) {
         val removed =
             synchronized(this) {
-                if (token != null && tokenByProcessId[processId] == token) {
+                val current = tokenByProcessId[processId]
+                if (token != null && current != null && MessageDigest.isEqual(current.toByteArray(), token.toByteArray())) {
                     tokenByProcessId.remove(processId)
                     credentials.remove(token)
                 } else {

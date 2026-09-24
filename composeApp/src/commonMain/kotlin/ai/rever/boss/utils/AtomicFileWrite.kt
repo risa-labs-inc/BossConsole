@@ -64,7 +64,8 @@ fun File.atomicMoveFrom(temp: File) {
  */
 fun File.atomicWriteText(text: String) {
     parentFile?.mkdirs()
-    val tmp = File.createTempFile("$name.", ".tmp", parentFile)
+    val tempPrefix = "$name.".padEnd(3, '_')
+    val tmp = File.createTempFile(tempPrefix, ".tmp", parentFile)
     try {
         if (Files.getFileAttributeView(tmp.toPath(), PosixFileAttributeView::class.java) != null) {
             // Fail closed if a filesystem advertises POSIX permissions but refuses the

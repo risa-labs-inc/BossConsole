@@ -282,7 +282,12 @@ class OrchestratorServiceImpl(
             is RepairOutcome.Restarted -> {
                 builder
                     .setDescription("Process ${outcome.processId} restarted")
-                    .setRestart(RestartAction.getDefaultInstance())
+                    .setRestart(
+                        RestartAction
+                            .newBuilder()
+                            .addAllJvmArgsOverride(outcome.jvmArgs)
+                            .build(),
+                    )
             }
 
             is RepairOutcome.StateReset -> {

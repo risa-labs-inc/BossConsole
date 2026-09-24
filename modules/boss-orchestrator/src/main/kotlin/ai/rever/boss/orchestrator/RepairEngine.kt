@@ -134,9 +134,10 @@ class RepairEngine(
 
             RepairStrategy.REPAIR_STRATEGY_RESTART_TUNED -> {
                 try {
-                    onRequestRestart(processId, listOf("-Xmx512m"))
+                    val jvmArgs = listOf("-Xmx512m")
+                    onRequestRestart(processId, jvmArgs)
                     logger.info("Tuned restart requested for process: {}", processId)
-                    RepairOutcome.Restarted(processId)
+                    RepairOutcome.Restarted(processId, jvmArgs)
                 } catch (e: CancellationException) {
                     // Before the Exception arm: CancellationException *is* an Exception, so
                     // catching it here would turn "the caller hung up" into a repair failure
@@ -319,6 +320,7 @@ class RepairEngine(
 sealed class RepairOutcome {
     data class Restarted(
         val processId: String,
+        val jvmArgs: List<String> = emptyList(),
     ) : RepairOutcome()
 
     data class StateReset(
