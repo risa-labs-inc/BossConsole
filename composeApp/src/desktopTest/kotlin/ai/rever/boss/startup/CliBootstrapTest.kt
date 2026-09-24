@@ -1,5 +1,6 @@
 package ai.rever.boss.startup
 
+import ai.rever.boss.cli.createBossCLI
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -24,6 +25,24 @@ class CliBootstrapTest {
         assertFalse(CliBootstrap.isHeadlessCli(arrayOf("boss://auth/callback")))
         assertFalse(CliBootstrap.isHeadlessCli(arrayOf("C:\\path\\to\\file.txt")))
         assertFalse(CliBootstrap.isHeadlessCli(arrayOf("run", "something")))
+    }
+
+    @Test
+    fun isHeadlessCliCoversEveryRegisteredNonGuiSubcommand() {
+        // Pin the headless set against the CLI itself, the way OsOpenArgumentsTest pins
+        // its command list: a registered subcommand that is not GUI-only must be
+        // dispatched headlessly, or a running BOSS swallows the command with no output
+        // at all (the boss context bug).
+        val guiOnlySubcommands = setOf("url", "workspace", "file", "folder", "terminal")
+        val nonGuiSubcommands =
+            createBossCLI()
+                .registeredSubcommands()
+                .map { it.commandName }
+                .filter { it !in guiOnlySubcommands }
+        assertTrue(nonGuiSubcommands.isNotEmpty())
+        nonGuiSubcommands.forEach { subcommand ->
+            assertTrue(CliBootstrap.isHeadlessCli(arrayOf(subcommand)), "$subcommand must dispatch headlessly")
+        }
     }
 
     @Test

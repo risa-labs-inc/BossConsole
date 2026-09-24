@@ -25,6 +25,7 @@ You can install or update the CLI symlinks inside BossConsole via **Toolbox → 
 | `boss terminal` | Opens a new integrated BossTerm pane | `boss terminal` |
 | `boss status` | Checks running BossConsole health and status | `boss status --json` |
 | `boss doctor` | Reports health problems with suggested next steps (exit `2` when degraded) | `boss doctor --json` |
+| `boss context` | Creates a bounded, agent-ready briefing of the active workspace and MCP surface | `boss context --json` |
 | `boss mcp <action>` | Discovers and invokes MCP tools | `boss mcp list` |
 | `boss pack <action>` | Plans and applies plugin packs (exit `2` when an apply is partial) | `boss pack plan team.json` |
 | `boss plugin <action>` | Developer CLI: scaffold, validate, and link plugins | `boss plugin init my-tool` |
@@ -107,6 +108,33 @@ boss doctor --json
 - `unchecked` lists areas whose state could not be read at all, including `plugins` while no BOSS window is open. They are neither healthy nor degraded and do not affect the exit code.
 - `partial` lists areas that were read from several sources where some of those sources failed. Today only `plugins` can appear, because it has one source per open window: if one window's source fails, the other windows' findings are still reported and `plugins` is listed here instead of being dropped into `unchecked`. Findings in a partial area are real, but the area is not fully covered, so an empty result there is not a clean bill of health. Like `unchecked`, it does not affect the exit code. An area is never in both `unchecked` and `partial`. The field is additive: a BOSS that predates it simply omits it, and both `boss status` and `boss doctor` treat an absent `partial` as empty.
 - Plugin health covers every open window that could be read. A plugin you disabled, or one your role cannot access, is not reported as a problem.
+
+#### Agent handoff: `boss context`
+
+`boss context` is the compact briefing for terminal coding agents that need to orient themselves in
+an already-running BOSS session. It combines the current workspace, runtime and health state with a
+bounded list of accessible MCP tool identifiers, grouped by provider. It makes two authenticated,
+read-only local IPC requests (`status` and MCP discovery); it never invokes an MCP tool, modifies a
+workspace, or changes BOSS state.
+
+```bash
+# Paste-ready Markdown briefing (at most 20 tool identifiers)
+boss context
+
+# Stable JSON for an agent harness or script
+boss context --json
+
+# Show a smaller or larger bounded slice of the tool catalog
+boss context --max-tools 40
+```
+
+The default output intentionally excludes plugin-supplied tool descriptions and input schemas.
+Those fields are arbitrary plugin prose and can be large or untrusted; use `boss mcp list --json`
+when an agent explicitly needs the full catalog. The briefing normalizes provider and tool labels to
+identifier characters and tells the agent to treat them as data. If MCP discovery is unavailable,
+the workspace and health briefing still prints and says the catalog is unavailable rather than
+pretending the agent has no tools. The JSON schema has `schemaVersion: 1`; unavailable health or MCP
+data is represented explicitly with `available: false`.
 
 ---
 

@@ -45,6 +45,7 @@ internal object OsOpenArguments {
             "terminal",
             "status",
             "doctor",
+            "context",
             "mcp",
             "pack",
             "completion",
