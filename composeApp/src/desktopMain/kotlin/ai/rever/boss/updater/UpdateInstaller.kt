@@ -5,13 +5,16 @@ import ai.rever.boss.utils.BOSS_MACOS_APP_BUNDLE_NAME
 import ai.rever.boss.utils.BOSS_MACOS_BUNDLE_ID
 import ai.rever.boss.utils.Version
 import ai.rever.boss.utils.WindowsProtocolCleanup
+import ai.rever.boss.utils.atomicMoveFrom
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
+import java.nio.file.Files
 import java.nio.file.Paths
+import java.nio.file.StandardCopyOption
 import java.util.Locale
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
@@ -647,37 +650,182 @@ object UpdateInstaller {
      * Install JAR update (Linux/other platforms)
      * JAR files can be replaced while running, so no restart needed
      */
-    private suspend fun installJarUpdate(downloadFile: File): InstallResult {
-        return withContext(Dispatchers.IO) {
+    private suspend fun installJarUpdate(downloadFile: File): InstallResult =
+        withContext(Dispatchers.IO) {
             try {
                 logger.info(LogCategory.SYSTEM, "Starting JAR update installation")
-
-                // Validate download file for security (early check)
                 validateDownloadFile(downloadFile, ".jar")
-
-                // Get current JAR path
-                val currentJar = getCurrentJarPath()
-                if (currentJar == null) {
-                    logger.error(LogCategory.SYSTEM, "Could not determine current JAR path")
-                    return@withContext InstallResult.Error("Could not locate current JAR")
-                }
-
-                // Backup current JAR
-                val backupJar = File(currentJar.parentFile, "${currentJar.name}.backup")
-                currentJar.copyTo(backupJar, overwrite = true)
-                logger.debug(LogCategory.SYSTEM, "Backed up current JAR", mapOf("backup" to backupJar.absolutePath))
-
-                // Replace current JAR
-                downloadFile.copyTo(currentJar, overwrite = true)
-
-                logger.info(LogCategory.SYSTEM, "JAR updated successfully")
-                InstallResult.Success("Update installed. Restart the app to use the new version.")
-            } catch (e: Exception) {
+                val paths = resolveJarSwapPaths()
+                val staged = paths?.staged
+                val backup = paths?.backup
+                val live = paths?.live
+                val result = runJarSwap(downloadFile, staged, backup, live)
+                if (result != null) result else successAfterSwap(backup)
+            } catch (e: IOException) {
                 logger.error(LogCategory.SYSTEM, "Failed to update JAR", error = e)
                 InstallResult.Error(e.message ?: "Unknown error")
+            } catch (e: SecurityException) {
+                logger.error(LogCategory.SYSTEM, "Refused to update JAR", error = e)
+                InstallResult.Error(e.message ?: "Refused to update JAR")
             }
         }
+
+    /**
+     * Drives the four-step swap. Returns null when every step succeeded so the
+     * caller can clean up the backup and report success; any non-null return
+     * is an error to surface as the final result. Extracted so
+     * `installJarUpdate` itself stays under the `LongMethod` ceiling.
+     */
+    private fun runJarSwap(
+        downloadFile: File,
+        staged: File?,
+        backup: File?,
+        live: File?,
+    ): InstallResult? {
+        if (staged == null || backup == null || live == null) {
+            logger.error(LogCategory.SYSTEM, "Could not determine current JAR path")
+            return InstallResult.Error("Could not locate current JAR")
+        }
+        val stageError = stageDownload(downloadFile, staged)
+        val backupError = stageError ?: backupLiveJar(live, backup, staged)
+        val promoteError = backupError ?: promoteStagedJar(live, backup, staged)
+        return promoteError
     }
+
+    private fun successAfterSwap(backup: File?): InstallResult {
+        backup?.delete()
+        logger.info(LogCategory.SYSTEM, "JAR updated successfully")
+        return InstallResult.Success("Update installed. Restart the app to use the new version.")
+    }
+
+    /**
+     * Path triple for the JAR swap: the live jar, its sibling backup, and the sibling
+     * part file the stage step writes to. Both siblings are intentionally NOT `.jar`
+     * suffixes so a kill-during-install cannot leave either looking like a usable
+     * jar to the directory scan, AND so the reconcile pass does not have to
+     * second-guess which one to keep.
+     */
+    private data class JarSwapPaths(
+        val live: File,
+        val backup: File,
+        val staged: File,
+    )
+
+    private fun resolveJarSwapPaths(): JarSwapPaths? {
+        val currentJar = getCurrentJarPath()
+        val parent = currentJar?.parentFile
+        return when {
+            currentJar == null -> {
+                logger.error(LogCategory.SYSTEM, "Could not determine current JAR path")
+                null
+            }
+            parent == null -> {
+                logger.error(LogCategory.SYSTEM, "Current JAR has no parent directory")
+                null
+            }
+            else ->
+                JarSwapPaths(
+                    live = currentJar,
+                    backup = File(parent, "${currentJar.name}.backup"),
+                    staged = File(parent, "${currentJar.name}.part"),
+                )
+        }
+    }
+
+    /**
+     * Stage the download as a sibling. The live jar is still in place -
+     * a stage failure leaves the install untouched.
+     */
+    private fun stageDownload(
+        download: File,
+        staged: File,
+    ): InstallResult.Error? =
+        try {
+            Files.copy(
+                download.toPath(),
+                staged.toPath(),
+                StandardCopyOption.REPLACE_EXISTING,
+            )
+            null
+        } catch (e: IOException) {
+            logger.error(LogCategory.SYSTEM, "Failed to stage the downloaded JAR", error = e)
+            InstallResult.Error("Failed to stage the downloaded JAR: ${e.message ?: "Unknown error"}")
+        }
+
+    /**
+     * Back up the live JAR with a copy, NOT a move. A move would empty the live
+     * slot, and between here and step 3 the only thing keeping the slot populated
+     * is the OS not killing the process - a crash, OOM or power loss in that
+     * window leaves the next launch with an empty JAR slot and only `.backup` /
+     * `.part` beside it, with no restore code running. `copyTo(overwrite = true)`
+     * cannot truncate-and-restart on its own, so a partially-written backup just
+     * leaves a broken copy the reconcile pass would discard, while the live jar
+     * stays intact.
+     */
+    private fun backupLiveJar(
+        live: File,
+        backup: File,
+        staged: File,
+    ): InstallResult.Error? {
+        if (backup.exists()) backup.delete()
+        return try {
+            live.copyTo(backup, overwrite = true)
+            null
+        } catch (e: IOException) {
+            logger.error(LogCategory.SYSTEM, "Failed to back up the live JAR", error = e)
+            staged.delete()
+            InstallResult.Error("Failed to back up the live JAR: ${e.message ?: "Unknown error"}")
+        }
+    }
+
+    /**
+     * Promote the staged download to the live JAR slot. If this fails, restore
+     * the live jar from the backup so the install leaves a runnable JAR rather
+     * than an empty slot. Without this restore (and that was the bug the
+     * previous fix missed), a failure here returned Error with no live jar
+     * and no usable recovery path.
+     */
+    private fun promoteStagedJar(
+        live: File,
+        backup: File,
+        staged: File,
+    ): InstallResult.Error? =
+        try {
+            live.atomicMoveFrom(staged)
+            null
+        } catch (e: IOException) {
+            logger.error(
+                LogCategory.SYSTEM,
+                "Failed to promote staged JAR - restoring live JAR from backup",
+                error = e,
+            )
+            val restored = restoreLiveFromBackup(live, backup)
+            staged.delete()
+            if (restored) backup.delete()
+            InstallResult.Error("Failed to install the JAR update: ${e.message ?: "Unknown error"}")
+        }
+
+    /**
+     * Attempt to restore the live jar from the backup after a promote failure.
+     * Returns true if the restore succeeded and the backup's bytes now live in
+     * the live slot; the caller can then drop the backup. If the restore itself
+     * fails, the backup stays on disk as the user's only path to a runnable JAR.
+     */
+    private fun restoreLiveFromBackup(
+        live: File,
+        backup: File,
+    ): Boolean =
+        try {
+            live.atomicMoveFrom(backup)
+            true
+        } catch (restoreError: IOException) {
+            logger.error(
+                LogCategory.SYSTEM,
+                "Failed to restore live JAR from backup",
+                error = restoreError,
+            )
+            false
+        }
 
     /**
      * Install Linux DEB update using helper script pattern
