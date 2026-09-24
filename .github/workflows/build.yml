@@ -254,12 +254,12 @@ jobs:
       - name: 🎯 Setup Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
-          # Pull requests restore the shared caches but never write them. PR caches are
-          # scoped to refs/pull/N/merge, so no other PR can read them, and at ~1 GB per
-          # PR they pushed the repo past GitHub's 10 GB cap and evicted the shared
-          # dev/main entries (14 of 20 recent PR runs started from an empty cache).
-          # Pushes and manual runs write, which is what seeds dev and main.
-          cache-read-only: ${{ github.event_name == 'pull_request' }}
+          # Only pushes (main, dev) write the shared caches; PRs and manual runs restore
+          # them but never write. PR and dispatch caches are scoped to their own ref, so
+          # no other run can read them, and at ~1 GB each they pushed the repo past
+          # GitHub's 10 GB cap and evicted the shared dev/main entries (14 of 20 recent
+          # PR runs started from an empty cache).
+          cache-read-only: ${{ github.event_name != 'push' }}
 
       - name: 🧹 Stop Kotlin Daemon (Windows)
         if: matrix.os == 'windows-latest'
@@ -332,12 +332,12 @@ jobs:
       - name: 🎯 Setup Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
-          # Pull requests restore the shared caches but never write them. PR caches are
-          # scoped to refs/pull/N/merge, so no other PR can read them, and at ~1 GB per
-          # PR they pushed the repo past GitHub's 10 GB cap and evicted the shared
-          # dev/main entries (14 of 20 recent PR runs started from an empty cache).
-          # Pushes and manual runs write, which is what seeds dev and main.
-          cache-read-only: ${{ github.event_name == 'pull_request' }}
+          # Only pushes (main, dev) write the shared caches; PRs and manual runs restore
+          # them but never write. PR and dispatch caches are scoped to their own ref, so
+          # no other run can read them, and at ~1 GB each they pushed the repo past
+          # GitHub's 10 GB cap and evicted the shared dev/main entries (14 of 20 recent
+          # PR runs started from an empty cache).
+          cache-read-only: ${{ github.event_name != 'push' }}
 
       - name: 🔍 Static Analysis (detekt + ktlint)
         run: |
@@ -383,8 +383,8 @@ jobs:
       - name: 🎯 Setup Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
-          # Same policy as build-test: PRs read, pushes and manual runs write.
-          cache-read-only: ${{ github.event_name == 'pull_request' }}
+          # Same policy as build-test: pushes write, PRs and manual runs only read.
+          cache-read-only: ${{ github.event_name != 'push' }}
 
       - name: 🧪 Test Version System
         run: |
