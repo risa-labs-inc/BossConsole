@@ -211,6 +211,52 @@ class TabDragSurvivesTabChangeTest {
         }
 
     @Test
+    fun `disposing an idle button copy does not cancel another button gesture`() =
+        runComposeUiTest {
+            val component = TabDraggableComponent()
+            var showCopy by mutableStateOf(true)
+            var showSource by mutableStateOf(true)
+            setContent {
+                Row {
+                    if (showSource) {
+                        Row(Modifier.testTag(CHIP_TAG)) {
+                            BossTabButton(
+                                fileName = "tab-1",
+                                onClick = {},
+                                tabInfo = DragTestTab("tab-1"),
+                                panelId = "panel-1",
+                                tabIndex = 0,
+                                tabDragComponent = component,
+                            )
+                        }
+                    }
+                    if (showCopy) {
+                        BossTabButton(
+                            fileName = "tab-1",
+                            onClick = {},
+                            tabInfo = DragTestTab("tab-1"),
+                            panelId = "panel-2",
+                            tabIndex = 0,
+                            tabDragComponent = component,
+                        )
+                    }
+                }
+            }
+            onNodeWithTag(CHIP_TAG).performTouchInput {
+                down(center)
+                moveBy(Offset(160f, 0f))
+            }
+            assertNotNull(component.draggingTab)
+            showCopy = false
+            waitForIdle()
+            assertNotNull(component.draggingTab, "a button which never started this drag cannot cancel it")
+            showSource = false
+            waitForIdle()
+            assertNull(component.draggingTab, "disposing the owner clears the ghost")
+        }
+
+
+    @Test
     fun `changing a button identity cancels only its old gesture`() =
         runComposeUiTest {
             val component = TabDraggableComponent()
