@@ -462,6 +462,10 @@ jobs:
         timeout-minutes: 2
         run: python3 scripts/test/test-boss-ai-ticket-concurrency.py
 
+      - name: Verify plugin rating upsert single-row across PostgreSQL sessions
+        timeout-minutes: 2
+        run: python3 scripts/test/test-plugin-rating-concurrency.py
+
       - name: 🧹 Stop Supabase
         if: always()
         run: supabase stop --no-backup || true

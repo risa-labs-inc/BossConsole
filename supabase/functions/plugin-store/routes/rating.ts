@@ -50,6 +50,14 @@ const rateRoute = createRoute({
         }
       }
     },
+    403: {
+      description: 'Plugin authors cannot rate their own plugin',
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
+        }
+      }
+    },
     404: {
       description: 'Plugin not found',
       content: {
@@ -98,6 +106,15 @@ rating.openapi(rateRoute, async (ctx) => {
       created: result.created
     }, 200)
   } catch (error) {
+    // A self-rating refusal is the caller's own policy violation, not a server
+    // fault: surface it as 403 with the real reason instead of a generic 500.
+    const message = error instanceof Error ? error.message : String(error)
+    if (message.includes('Plugin authors cannot rate their own plugin')) {
+      return ctx.json({
+        success: false,
+        error: 'Plugin authors cannot rate their own plugin'
+      }, 403)
+    }
     console.error('Error rating plugin:', error)
     return ctx.json({ 
       success: false, 
