@@ -15,6 +15,7 @@ async function fixture(options: {
   lookupMisconfigured?: boolean
   failFetch?: boolean
   hang?: boolean
+  hangSettlement?: boolean
   stallStream?: boolean
   removeToolsAfterPreflight?: boolean
   keyName?: string
@@ -41,6 +42,11 @@ async function fixture(options: {
       }
       if (name === "boss_ai_settle" && options.failAllSettlements) {
         throw new Error("database unavailable")
+      }
+      // BossConsole#1252: a settlement RPC that never resolves. The fix
+      // bounds the call so the edge function does not hang.
+      if (name === "boss_ai_settle" && options.hangSettlement) {
+        await new Promise<void>(() => {/* never resolves */})
       }
       if (name === "boss_ai_settle" && options.failFirstSettlement && ++settlements === 1) {
         throw new Error("private database detail")
@@ -455,4 +461,22 @@ Deno.test("RPC tickets exchange for AI tokens without a BOSS session", async () 
   )
   assertEquals(metadata.status, 200)
   assertEquals((await exchange(ticket)).status, 401)
+})
+
+// BossConsole#1252: settlement must be bounded by a timeout, not a hung DB.
+// Without it, a slow settlement RPC hangs the whole edge function - the
+// upstream response has already been streamed, but the request cannot
+// return until the settle() call resolves.
+
+Deno.test("a hung settlement does not block the response (BossConsole#1252)", async () => {
+  const f = await fixture({ hangSettlement: true })
+  const start = Date.now()
+  const response = await f.handler(f.request(body))
+  const elapsed = Date.now() - start
+  assertEquals(response.status, 200)
+  assert((await response.json()).choices[0].message.content === "hello")
+  // The response must arrive in bounded time even though the settlement
+  // RPC never resolves. Allow a generous bound for CI jitter, but anything
+  // that takes more than a few seconds means the function hung on settle.
+  assert(elapsed < 10_000, `response took ${elapsed}ms; settlement hung the function`)
 })

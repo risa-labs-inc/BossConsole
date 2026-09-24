@@ -196,7 +196,23 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           audit("usage_exceeds_configured_context")
         }
         phase = "settlement"
-        await deps.rpc("boss_ai_settle", { p_request_id: requestId, p_tokens: tokens })
+        // BossConsole#1252: bound the settlement RPC so a slow database
+        // cannot wedge the edge function. The upstream response has already
+        // been (or is about to be) streamed to the client; the settlement
+        // is a side write that must not block returning. The 2 second
+        // budget is generous for PostgREST in healthy operation and short
+        // enough to keep the function within Supabase's edge time budget,
+        // even across the retry path.
+        const settleRpc = deps.rpc("boss_ai_settle", {
+          p_request_id: requestId,
+          p_tokens: tokens,
+        })
+        await Promise.race([
+          settleRpc,
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("settlement_timeout")), 2_000)
+          ),
+        ])
       }
       const settleWithRetry = async (tokens: number | null) => {
         await settle(tokens).catch(async () => {
