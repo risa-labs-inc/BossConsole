@@ -198,6 +198,15 @@ object LinuxDefaultBrowserHandler {
                     add("application/xhtml+xml")
                 }.distinct().joinToString(";", postfix = ";")
 
+            // Exec= must quote the app path: the Desktop Entry Specification requires
+            // paths with whitespace (or any other shell-special character) to be
+            // wrapped in double quotes, and the XDG desktop parser splits on
+            // whitespace otherwise. A BOSS install under "/opt/BOSS with space/"
+            // would otherwise produce a malformed Exec line and clicking the
+            // resulting .desktop entry would launch nothing.
+            val escapedAppPath = appPath.replace("\\", "\\\\").replace("\"", "\\\"")
+            val quotedAppPath = "\"$escapedAppPath\""
+
             val desktopContent =
                 """
                 [Desktop Entry]
@@ -205,7 +214,7 @@ object LinuxDefaultBrowserHandler {
                 Type=Application
                 Name=BOSS Console
                 Comment=Business Operating System + Simulation - Intelligent service automation platform
-                Exec=$appPath %U
+                Exec=$quotedAppPath %U
                 Icon=$iconPath
                 Terminal=false
                 Categories=Network;WebBrowser;Development;TextEditor;
@@ -217,8 +226,11 @@ object LinuxDefaultBrowserHandler {
             // Ensure directory exists
             DESKTOP_FILE_PATH.parentFile.mkdirs()
 
-            // Write .desktop file
-            DESKTOP_FILE_PATH.writeText(desktopContent)
+            // Write .desktop file atomically: this is the user's MIME-association
+            // state for the entire desktop session, and a crash mid-write would
+            // leave an unparseable .desktop file until the next install. Use the
+            // shared atomic-write helper rather than File.writeText.
+            DESKTOP_FILE_PATH.atomicWriteText(desktopContent)
 
             // Make executable
             DESKTOP_FILE_PATH.setExecutable(true, false)
