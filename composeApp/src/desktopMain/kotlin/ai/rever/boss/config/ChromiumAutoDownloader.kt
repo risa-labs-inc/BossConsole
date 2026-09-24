@@ -1,6 +1,7 @@
 package ai.rever.boss.config
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.plugin.pathutils.ManagedDirectories
 import ai.rever.boss.utils.VersionConstants
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -493,8 +494,9 @@ object ChromiumAutoDownloader {
             )
 
             try {
-                // Create parent directories
-                Files.createDirectories(targetDir.parent)
+                // Create the parent (~/.boss) owner-only: a planted or
+                // other-user-writable dir here poisons everything extracted below.
+                ManagedDirectories.createOwnerOnlyDir(targetDir.parent.toFile())
 
                 // Download to temp file with progress
                 val tempFile = Files.createTempFile("boss-chromium-", ".zip")
@@ -740,7 +742,7 @@ object ChromiumAutoDownloader {
         targetDir: Path,
     ) {
         logger.debug(LogCategory.BROWSER, "Extracting Chromium", mapOf("targetDir" to targetDir.toString()))
-        Files.createDirectories(targetDir)
+        ManagedDirectories.createOwnerOnlyDir(targetDir.toFile())
 
         if (System.getProperty("os.name").lowercase().contains("mac")) {
             extractWithDitto(zipPath, targetDir)

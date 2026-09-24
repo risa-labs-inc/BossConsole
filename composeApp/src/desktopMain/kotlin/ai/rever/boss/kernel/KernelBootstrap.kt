@@ -20,6 +20,7 @@ import ai.rever.boss.kernel.services.*
 import ai.rever.boss.kernel.ui.RemoteUiPlacement
 import ai.rever.boss.kernel.ui.RemoteUiSurfaceRegistry
 import ai.rever.boss.plugin.api.*
+import ai.rever.boss.plugin.pathutils.ManagedDirectories
 import ai.rever.boss.process.ManagedProcess
 import ai.rever.boss.process.ProcessConfig
 import ai.rever.boss.process.ProcessFailure
@@ -56,10 +57,14 @@ internal fun serviceJarIn(
     if (!dir.isDirectory) return null
 
     val prefix = jarName.removeSuffix("-all.jar")
-    return File(dir, jarName).takeIf { it.isFile }
-        ?: dir
-            .listFiles { f -> f.isFile && f.name.startsWith("$prefix-") && f.name.endsWith("-all.jar") }
-            ?.maxByOrNull { it.lastModified() }
+    // $BOSS_DATA_DIR/services is operator-populated: a symlinked or escaping
+    // entry would be spawned as a service process, so scan it guarded.
+    val exact = File(dir, jarName)
+    return exact.takeIf { ManagedDirectories.isContainedRegularFile(it, dir) }
+        ?: ManagedDirectories
+            .listContainedRegularFiles(dir) { f ->
+                f.name.startsWith("$prefix-") && f.name.endsWith("-all.jar")
+            }.maxByOrNull { it.lastModified() }
 }
 
 /**

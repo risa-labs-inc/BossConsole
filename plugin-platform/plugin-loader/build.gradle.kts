@@ -40,6 +40,9 @@ kotlin {
 
                 // Logging
                 implementation(projects.pluginPlatform.pluginLogging)
+
+                // Managed-directory guards (NOFOLLOW scans, owner-only dirs)
+                implementation(projects.pluginPlatform.pluginPathUtils)
             }
         }
 

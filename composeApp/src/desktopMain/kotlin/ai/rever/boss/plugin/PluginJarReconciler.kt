@@ -7,6 +7,7 @@ import ai.rever.boss.plugin.loader.PluginBundledTrust
 import ai.rever.boss.plugin.loader.PluginClassLoader
 import ai.rever.boss.plugin.loader.PluginManifestReader
 import ai.rever.boss.plugin.loader.PluginSignatureSidecar
+import ai.rever.boss.plugin.pathutils.ManagedDirectories
 import ai.rever.boss.utils.Version
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -75,11 +76,13 @@ object PluginJarReconciler {
         pluginIds: Set<String>?,
         selectVerifiedApiJar: (File) -> File? = { ApiClassLoader.selectApiJar(it)?.jar },
     ): ReconcileResult {
+        // The scan is the gatekeeper for what becomes a winner: a symlinked
+        // jar or an entry escaping the plugins root must never be selected -
+        // it would repoint installed.json at an outside path.
         val jars =
-            pluginDir
-                .listFiles { file ->
-                    file.isFile && file.name.endsWith(".jar") && !isMicrokernelRuntimeName(file.name)
-                }?.toList() ?: emptyList()
+            ManagedDirectories.listContainedRegularFiles(pluginDir) { file ->
+                file.name.endsWith(".jar") && !isMicrokernelRuntimeName(file.name)
+            }
 
         val skipped = mutableListOf<String>()
         val candidates = readCandidates(jars, pluginIds, skipped)

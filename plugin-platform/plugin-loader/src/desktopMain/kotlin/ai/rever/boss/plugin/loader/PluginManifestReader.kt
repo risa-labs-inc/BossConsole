@@ -4,6 +4,7 @@ import ai.rever.boss.plugin.api.PluginManifest
 import ai.rever.boss.plugin.api.PluginManifestConstants
 import ai.rever.boss.plugin.logging.BossLogger
 import ai.rever.boss.plugin.logging.LogCategory
+import ai.rever.boss.plugin.pathutils.ManagedDirectories
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.io.InputStream
@@ -310,9 +311,12 @@ object PluginManifestReader {
             return emptyList()
         }
 
-        return dir
-            .listFiles { file -> file.extension == "jar" }
-            ?.mapNotNull { file ->
+        // The directory is scanned, not trusted: File.isFile follows links, so
+        // without the guard a symlinked jar would be read - and later loaded -
+        // from outside the managed root.
+        return ManagedDirectories
+            .listContainedRegularFiles(dir) { file -> file.extension == "jar" }
+            .mapNotNull { file ->
                 try {
                     val manifest = readFromJar(file.absolutePath)
                     file.absolutePath to manifest
@@ -328,6 +332,5 @@ object PluginManifestReader {
                     null
                 }
             }
-            ?: emptyList()
     }
 }

@@ -5,6 +5,7 @@ import ai.rever.boss.plugin.PluginStoreSetup
 import ai.rever.boss.plugin.api.Version
 import ai.rever.boss.plugin.loader.ApiClassLoader
 import ai.rever.boss.plugin.loader.PluginManifestReader
+import ai.rever.boss.plugin.pathutils.ManagedDirectories
 import ai.rever.boss.updater.UpdateManager
 import ai.rever.boss.updater.UpdateState
 import ai.rever.boss.utils.logging.BossLogger
@@ -323,9 +324,9 @@ private fun refusedJarFor(
     pluginDir: java.io.File,
     pluginId: String,
 ): java.io.File? =
-    pluginDir
-        .listFiles { f: java.io.File -> f.isFile && f.name.endsWith(".jar") }
-        ?.firstOrNull { jar ->
+    ManagedDirectories
+        .listContainedRegularFiles(pluginDir) { f: java.io.File -> f.name.endsWith(".jar") }
+        .firstOrNull { jar ->
             runCatching {
                 ai.rever.boss.plugin.loader.PluginManifestReader
                     .readFromJar(jar.absolutePath)
@@ -407,14 +408,14 @@ internal fun dropRefusedArtifacts(
     if (keep == null) return
     val keepPath = runCatching { File(keep).absolutePath }.getOrNull() ?: return
     val jars =
-        pluginDir
-            .listFiles { f: File -> f.isFile && f.name.endsWith(".jar") }
-            ?.filter { jar ->
+        ManagedDirectories
+            .listContainedRegularFiles(pluginDir) { f: File -> f.name.endsWith(".jar") }
+            .filter { jar ->
                 jar.absolutePath != keepPath &&
                     runCatching {
                         PluginManifestReader.readFromJar(jar.absolutePath).pluginId
                     }.getOrNull() == pluginId
-            }.orEmpty()
+            }
     for (jar in jars) {
         val sidecar = File("${jar.absolutePath}.sig")
         val jarGone = runCatching { jar.delete() }.getOrDefault(false)

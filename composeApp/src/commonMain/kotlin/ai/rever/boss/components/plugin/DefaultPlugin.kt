@@ -88,6 +88,7 @@ import ai.rever.boss.plugin.browser.BrowserService
 import ai.rever.boss.plugin.launchpad.DevPluginArtifacts
 import ai.rever.boss.plugin.loader.PluginLoadException
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.plugin.pathutils.ManagedDirectories
 import ai.rever.boss.plugin.sandbox.PluginSandboxManager
 import ai.rever.boss.plugin.sandbox.PluginSandboxManagerImpl
 import ai.rever.boss.plugin.sandbox.SandboxConfig
@@ -1323,17 +1324,27 @@ class DefaultPlugin(
                 // List the directory only NOW: the background system-plugin
                 // updater can replace jars while startup is in flight — a listing
                 // captured at init would try already-deleted files and never see
-                // freshly downloaded ones.
+                // freshly downloaded ones. The scan refuses symlinks and any
+                // entry whose real path escapes the plugins root — a planted
+                // link must not be loadable just by sitting in the directory.
                 val standardJars =
-                    pluginDir.listFiles { file ->
-                        file.isFile && file.extension == "jar" &&
+                    ManagedDirectories.listContainedRegularFiles(pluginDir) { file ->
+                        file.extension == "jar" &&
                             // Skip microkernel runtime — it's a classpath dependency for OOP plugins, not a loadable plugin
                             !file.name.startsWith(MicrokernelRuntime.ARTIFACT_PREFIX)
-                    } ?: emptyArray()
+                    }
 
-                val devJars = findActiveDevJars(DevPluginArtifacts.stagingRoot())
+                // The dev staging tree is nested under the plugins root, so the
+                // flat scan guard cannot see its entries - confine each result
+                // instead: a symlinked dev jar escaping the staging root must
+                // not load either.
+                val devRoot = DevPluginArtifacts.stagingRoot()
+                val devJars =
+                    findActiveDevJars(devRoot).filter { jar ->
+                        ManagedDirectories.isContainedRegularFile(jar, devRoot)
+                    }
                 val jarFiles =
-                    deduplicateJars(standardJars.toList() + devJars) { pluginId ->
+                    deduplicateJars(standardJars + devJars) { pluginId ->
                         manager.isSystemPlugin(pluginId) ||
                             isAuthoritativeSystemPlugin(pluginId) ||
                             HotReloadPolicy.requiresRestartInsteadOfHotReload(pluginId)

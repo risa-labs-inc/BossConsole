@@ -2,6 +2,7 @@ package ai.rever.boss.plugin
 
 import ai.rever.boss.plugin.loader.PluginBundledTrust
 import ai.rever.boss.plugin.loader.PluginSignatureSidecar
+import ai.rever.boss.plugin.pathutils.ManagedDirectories
 import java.io.File
 
 /**
@@ -47,11 +48,9 @@ internal fun purgeJarsFor(
     },
 ): Boolean {
     fun jars() =
-        pluginDir
-            .takeIf { it.isDirectory }
-            ?.listFiles()
-            ?.filter { it.isFile && it.name.endsWith(".jar") && manifestIdOf(it) == pluginId }
-            ?: emptyList()
+        ManagedDirectories
+            .listContainedRegularFiles(pluginDir) { it.name.endsWith(".jar") }
+            .filter { manifestIdOf(it) == pluginId }
 
     jars().forEach { jar ->
         deleteSidecar(jar)

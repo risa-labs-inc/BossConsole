@@ -2,6 +2,7 @@ package ai.rever.boss.plugin
 
 import ai.rever.boss.plugin.api.PluginManifest
 import ai.rever.boss.plugin.loader.PluginManifestReader
+import ai.rever.boss.plugin.pathutils.ManagedDirectories
 import ai.rever.boss.utils.Version
 import java.io.File
 
@@ -15,9 +16,8 @@ internal fun readDeferredPluginManifest(
     val siblings =
         File(jarPath)
             .parentFile
-            ?.listFiles()
+            ?.let { ManagedDirectories.listContainedRegularFiles(it) { f -> f.extension == "jar" } }
             .orEmpty()
-            .filter { it.isFile && it.extension == "jar" }
             .mapNotNull { runCatching { PluginManifestReader.readFromJar(it.absolutePath) }.getOrNull() }
     requireDeferredVersion(manifest, siblings)
     return manifest

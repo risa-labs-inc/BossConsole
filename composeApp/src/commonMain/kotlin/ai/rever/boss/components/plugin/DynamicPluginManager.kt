@@ -20,6 +20,7 @@ import ai.rever.boss.plugin.loader.PluginBinaryIncompatibilityException
 import ai.rever.boss.plugin.loader.PluginBossVersionException
 import ai.rever.boss.plugin.loader.PluginManifestReader
 import ai.rever.boss.plugin.loader.PluginUnloadException
+import ai.rever.boss.plugin.pathutils.ManagedDirectories
 import ai.rever.boss.plugin.sandbox.InProcessPluginSandbox
 import ai.rever.boss.plugin.sandbox.PluginErrorClassifier
 import ai.rever.boss.plugin.sandbox.PluginExecutionBoundary
@@ -2687,7 +2688,7 @@ internal fun findRelocatedPluginJar(
     pluginId: String,
 ): java.io.File? =
     dir
-        ?.listFiles { f -> f.isFile && f.extension == "jar" }
+        ?.let { ManagedDirectories.listContainedRegularFiles(it) { f -> f.extension == "jar" } }
         ?.mapNotNull { jar ->
             val manifest =
                 runCatching {

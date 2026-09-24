@@ -16,6 +16,7 @@ import ai.rever.boss.plugin.loader.PluginSignatureEnforcement
 import ai.rever.boss.plugin.loader.PluginSignatureSidecar
 import ai.rever.boss.plugin.loader.PluginStoreTrust
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.plugin.pathutils.ManagedDirectories
 import ai.rever.boss.plugin.repository.LocalPluginRepository
 import ai.rever.boss.plugin.repository.PluginRepositoryManager
 import ai.rever.boss.plugin.repository.remote.PluginDownloadCache
@@ -99,13 +100,12 @@ internal suspend fun finishBackgroundSystemPluginUpdate(update: BackgroundSystem
     // Download-only runtime artifacts are neither loaded as plugins nor handled
     // by PluginJarReconciler. Keep their established single-artifact lifecycle so
     // a later in-session check cannot select an arbitrary stale version.
-    update.pluginDir
-        .listFiles()
-        ?.filter {
-            it.name.endsWith(".jar") &&
-                it.name != update.promotedJar.name &&
+    ManagedDirectories
+        .listContainedRegularFiles(update.pluginDir) { it.name.endsWith(".jar") }
+        .filter {
+            it.name != update.promotedJar.name &&
                 update.manifestIdOf(it) == update.plugin.pluginId
-        }?.forEach { oldFile ->
+        }.forEach { oldFile ->
             val deleted = oldFile.delete()
             // A signature belongs to exactly one JAR. Do not remove it if a
             // Windows lock left the JAR in place.
@@ -132,14 +132,14 @@ object PluginStoreSetup {
      * Local plugin directory (installed plugins).
      */
     private val _pluginDir: File by lazy {
-        BossDirectories.resolve("plugins").apply { mkdirs() }
+        ManagedDirectories.createOwnerOnlyDir(BossDirectories.resolve("plugins"))
     }
 
     /**
      * Download cache directory.
      */
     private val _cacheDir: File by lazy {
-        BossDirectories.resolve("plugin-cache").apply { mkdirs() }
+        ManagedDirectories.createOwnerOnlyDir(BossDirectories.resolve("plugin-cache"))
     }
 
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
@@ -511,8 +511,8 @@ object PluginStoreSetup {
                 // For download-only plugins, check if JAR exists on disk (not in persistence)
                 if (systemPlugin.downloadOnly) {
                     val existingJar =
-                        _pluginDir.listFiles()?.firstOrNull {
-                            it.name.startsWith("${systemPlugin.artifactPrefix}-") && it.name.endsWith(".jar")
+                        managedPluginJars().firstOrNull {
+                            it.name.startsWith("${systemPlugin.artifactPrefix}-")
                         }
                     if (existingJar != null) {
                         // Runtime is already on disk — proceed with startup immediately.
@@ -1099,11 +1099,20 @@ object PluginStoreSetup {
 
     /** Match the manifest identity; artifact prefixes can also prefix a different plugin's name. */
     private fun installedJarFor(plugin: SystemPluginInfo): File? =
-        _pluginDir.listFiles()?.firstOrNull { file ->
-            file.name.endsWith(".jar") &&
-                runCatching {
-                    PluginManifestReader.readFromJar(file.absolutePath).pluginId == plugin.pluginId
-                }.getOrDefault(false)
+        managedPluginJars().firstOrNull { file ->
+            runCatching {
+                PluginManifestReader.readFromJar(file.absolutePath).pluginId == plugin.pluginId
+            }.getOrDefault(false)
+        }
+
+    /**
+     * JARs directly inside [_pluginDir] that are safe to scan or install:
+     * plain regular files whose real path stays inside the root — a symlinked
+     * or escaping jar must never count as an installed plugin.
+     */
+    private fun managedPluginJars(): List<File> =
+        ManagedDirectories.listContainedRegularFiles(_pluginDir) { file ->
+            file.name.endsWith(".jar")
         }
 
     /** JARs the GitHub path could not supply, to retry through the store. */
@@ -2081,9 +2090,9 @@ object PluginStoreSetup {
                 // operate on a *different* plugin's JARs.
                 // This handles cases where user manually added a newer version with different filename.
                 val existingJarsInPluginDir =
-                    _pluginDir.listFiles()?.filter {
-                        it.name.endsWith(".jar") && readPluginManifest(it)?.pluginId == pluginId
-                    } ?: emptyList()
+                    managedPluginJars().filter {
+                        readPluginManifest(it)?.pluginId == pluginId
+                    }
 
                 logger.info(
                     LogCategory.SYSTEM,

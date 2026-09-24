@@ -5,6 +5,7 @@ import ai.rever.boss.plugin.PluginPersistence
 import ai.rever.boss.plugin.api.PluginManifest
 import ai.rever.boss.plugin.loader.PluginManifestReader
 import ai.rever.boss.plugin.loader.PluginSignatureSidecar
+import ai.rever.boss.plugin.pathutils.ManagedDirectories
 import ai.rever.boss.plugin.repository.PluginRepository
 import ai.rever.boss.plugin.requireDeferredVersion
 import ai.rever.boss.utils.atomicMoveFrom
@@ -171,10 +172,8 @@ internal class StoreVersionInstaller(
             runCatching {
                 requireDeferredVersion(
                     declared,
-                    pluginDir()
-                        .listFiles()
-                        .orEmpty()
-                        .filter { it.isFile && it.extension == "jar" }
+                    ManagedDirectories
+                        .listContainedRegularFiles(pluginDir()) { it.extension == "jar" }
                         .mapNotNull { hooks.readManifest(it.absolutePath) },
                 )
             }

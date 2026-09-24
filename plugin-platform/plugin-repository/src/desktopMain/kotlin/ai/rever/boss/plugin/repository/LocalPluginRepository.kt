@@ -5,11 +5,16 @@ import ai.rever.boss.plugin.api.PluginManifestConstants
 import ai.rever.boss.plugin.loader.PluginManifestReader
 import ai.rever.boss.plugin.logging.BossLogger
 import ai.rever.boss.plugin.logging.LogCategory
+import ai.rever.boss.plugin.pathutils.ManagedDirectories
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.LinkOption
+import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
 import java.util.jar.JarFile
 
 /**
@@ -42,7 +47,9 @@ class LocalPluginRepository(
     override val isLocal: Boolean = true
 
     override val isAvailable: Boolean
-        get() = pluginDirectory.exists() && pluginDirectory.isDirectory
+        get() =
+            !Files.isSymbolicLink(pluginDirectory.toPath()) &&
+                Files.isDirectory(pluginDirectory.toPath(), LinkOption.NOFOLLOW_LINKS)
 
     override suspend fun listPlugins(): Result<List<PluginInfo>> =
         withContext(Dispatchers.IO) {
@@ -59,12 +66,7 @@ class LocalPluginRepository(
                 }
 
                 val plugins =
-                    pluginDirectory
-                        .listFiles { file ->
-                            file.isFile && file.extension == "jar"
-                        }?.mapNotNull { jarFile ->
-                            readPluginFromJar(jarFile)
-                        } ?: emptyList()
+                    managedJars(pluginDirectory).mapNotNull { jarFile -> readPluginFromJar(jarFile) }
 
                 cachedPlugins = plugins
                 logger.info(
@@ -144,15 +146,31 @@ class LocalPluginRepository(
             runCatching {
                 // For local repository, find the JAR and copy it
                 val sourceJar =
-                    pluginDirectory
-                        .listFiles { file ->
-                            file.isFile && file.extension == "jar"
-                        }?.find { jarFile ->
-                            readPluginId(jarFile) == pluginId
-                        } ?: throw PluginNotFoundException(pluginId, id)
+                    managedJars(pluginDirectory).find { jarFile ->
+                        readPluginId(jarFile) == pluginId
+                    } ?: throw PluginNotFoundException(pluginId, id)
 
                 val targetFile = File(targetPath)
-                sourceJar.copyTo(targetFile, overwrite = true)
+                // Write a sibling .part file and verify its hash against the
+                // source before it lands on the target name: a bare
+                // copyTo(overwrite = true) destroys the existing jar on open
+                // and could leave unverified bytes at a scannable path.
+                val sourceHash = sha256Hex(sourceJar)
+                val tempFile = File.createTempFile(".local-copy-", ".part", targetFile.absoluteFile.parentFile)
+                try {
+                    sourceJar.copyTo(tempFile, overwrite = true)
+                    check(sha256Hex(tempFile) == sourceHash) {
+                        "Copied plugin JAR failed integrity check: $targetPath"
+                    }
+                    Files.move(
+                        tempFile.toPath(),
+                        targetFile.toPath(),
+                        StandardCopyOption.ATOMIC_MOVE,
+                        StandardCopyOption.REPLACE_EXISTING,
+                    )
+                } finally {
+                    tempFile.delete()
+                }
 
                 // A local copy is instant, but a caller showing progress still
                 // needs to be told it finished: without this its row would sit
@@ -248,10 +266,31 @@ class LocalPluginRepository(
      * Get the path for a plugin JAR in this repository.
      */
     fun getJarPath(pluginId: String): String? =
-        pluginDirectory
-            .listFiles { file ->
-                file.isFile && file.extension == "jar"
-            }?.find { jarFile ->
+        managedJars(pluginDirectory)
+            .find { jarFile ->
                 readPluginId(jarFile) == pluginId
             }?.absolutePath
+}
+
+/**
+ * The JARs directly inside [dir] that are safe to scan: plain regular files
+ * whose real path stays inside the directory's own real path. Symlinked or
+ * escaping entries are skipped, not followed.
+ */
+private fun managedJars(dir: File): List<File> =
+    ManagedDirectories.listContainedRegularFiles(dir) { file ->
+        file.extension == "jar"
+    }
+
+private fun sha256Hex(file: File): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    file.inputStream().use { input ->
+        val buffer = ByteArray(64 * 1024)
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) break
+            digest.update(buffer, 0, read)
+        }
+    }
+    return digest.digest().joinToString("") { "%02x".format(it) }
 }
