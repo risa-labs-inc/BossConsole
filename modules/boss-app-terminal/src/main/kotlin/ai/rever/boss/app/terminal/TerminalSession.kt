@@ -34,17 +34,18 @@ internal class TerminalSession(
             try {
                 run {
                     val buffer = ByteArray(4096)
-                    // Never block on EOF: a reparented descendant may still own the pipe's write end.
-                    // Only this thread reads, so reading at most available bytes cannot wait for more.
-                    while (process.isAlive) {
-                        val available = input.available()
-                        if (available == 0) {
-                            Thread.sleep(10)
-                        } else {
-                            val count = input.read(buffer, 0, minOf(available, buffer.size))
-                            if (count > 0) output.append(chunk(ByteString.copyFrom(buffer, 0, count)))
-                        }
-                    }
+                    // Blocking read parks the pump on the pipe until the first byte arrives or
+                    // the process closes its end of the pipe; a quiet child costs one thread
+                    // park for the full idle duration, not the 100 wakeups/sec the
+                    // available() + Thread.sleep(10) loop used to issue (#1312).
+                    drainWhileAlive(
+                        input = input,
+                        buffer = buffer,
+                        onChunk = { buf, count ->
+                            output.append(chunk(ByteString.copyFrom(buf, 0, count)))
+                        },
+                        isAlive = { process.isAlive },
+                    )
                     // Drain a bounded snapshot after process death, even if a descendant keeps writing.
                     var remaining = minOf(input.available(), 65_536)
                     while (remaining > 0) {
@@ -171,6 +172,38 @@ internal class TerminalSession(
                 rows,
                 ownerInstance,
             )
+        }
+    }
+}
+
+/**
+ * Drain [input] into [buffer] until [isAlive] returns false or the pipe hits EOF.
+ *
+ * The previous read loop polled `available()` and `Thread.sleep(10)` on every idle
+ * child, which burned ~100 wakeups/sec per idle session (#1312). A blocking read
+ * parks the pump on the pipe instead: the first byte (or EOF) wakes the thread.
+ * `onReadAttempt` is fired once per read so a test can prove the loop is parked
+ * and not spinning.
+ */
+internal fun drainWhileAlive(
+    input: java.io.InputStream,
+    buffer: ByteArray,
+    onChunk: (ByteArray, Int) -> Unit,
+    onReadAttempt: () -> Unit = {},
+    isAlive: () -> Boolean,
+) {
+    while (isAlive()) {
+        onReadAttempt()
+        val available = input.available()
+        if (available > 0) {
+            val count = input.read(buffer, 0, minOf(available, buffer.size))
+            if (count > 0) {
+                onChunk(buffer, count)
+            } else if (count < 0) {
+                break
+            }
+        } else {
+            Thread.sleep(50)
         }
     }
 }
