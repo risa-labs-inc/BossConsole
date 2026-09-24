@@ -298,11 +298,19 @@ const getPluginRatingsRoute = createRoute({
       pluginId: z.string()
     }),
     query: z.object({
-      // Raw strings on purpose: the handler below owns the coercion and the bounds check, so
-      // an out-of-range value gets this route's fixed 400 envelope (issue #915) rather than
-      // whatever a library-default validation failure happens to be shaped as.
-      page: z.string().optional().default('1'),
-      pageSize: z.string().optional().default('20')
+      // Same family bound as /list and /search (#915): the worst-case single
+      // request stays a 25,000-row window; whitespace-padded and scientific
+      // notation forms refuse instead of passing a bare Number() transform.
+      page: z.coerce.number({ invalid_type_error: 'page must be an integer from 1 to 500' })
+        .int('page must be an integer from 1 to 500')
+        .min(1, 'page must be an integer from 1 to 500')
+        .max(500, 'page must be an integer from 1 to 500')
+        .optional().default(1),
+      pageSize: z.coerce.number({ invalid_type_error: 'pageSize must be an integer from 1 to 50' })
+        .int('pageSize must be an integer from 1 to 50')
+        .min(1, 'pageSize must be an integer from 1 to 50')
+        .max(50, 'pageSize must be an integer from 1 to 50')
+        .optional().default(20)
     })
   },
   responses: {

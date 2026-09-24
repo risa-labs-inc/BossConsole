@@ -11,8 +11,21 @@ export const PluginTypeSchema = z.enum(['panel', 'tab', 'hybrid', 'mixed', 'serv
 // ============================================================================
 
 export const ListPluginsQuerySchema = z.object({
-  page: z.string().optional().default('1').transform(Number),
-  pageSize: z.string().optional().default('20').transform(Number),
+  // Bounded to match the /search contract's cap (#915): page is a 1..500
+  // integer and pageSize a 1..50 integer, so the worst-case single request
+  // stays a 25,000-row window instead of the unbounded deep-scan the open
+  // shape allowed (scientific notation and whitespace-padded numbers also
+  // refuse now - Number(' 5 ') and Number('1e2') previously passed).
+  page: z.coerce.number({ invalid_type_error: 'page must be an integer from 1 to 500' })
+    .int('page must be an integer from 1 to 500')
+    .min(1, 'page must be an integer from 1 to 500')
+    .max(500, 'page must be an integer from 1 to 500')
+    .optional().default(1),
+  pageSize: z.coerce.number({ invalid_type_error: 'pageSize must be an integer from 1 to 50' })
+    .int('pageSize must be an integer from 1 to 50')
+    .min(1, 'pageSize must be an integer from 1 to 50')
+    .max(50, 'pageSize must be an integer from 1 to 50')
+    .optional().default(20),
   sortBy: z.enum(['name', 'downloads', 'rating', 'newest', 'updated']).optional().default('downloads')
 })
 
