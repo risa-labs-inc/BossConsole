@@ -21,13 +21,14 @@ keep unique run-id concurrency groups, so a newer commit cannot cancel work
 needed for release validation. Filesystem resource limits and Edge Functions now
 use the same PR cancellation policy as the other three workflows.
 
-PRs that don't target `main` skip the macOS legs of `build.yml`,
+PRs that don't target `main` skip the macOS and Windows legs of `build.yml`,
 `authenticated-ipc.yml`, `native-file-boundaries.yml`, and `filesystem-limits.yml`
-and gate on the remaining OSes. PRs into `main`, pushes to `main`, and
+and gate on the Linux legs. PRs into `main`, pushes to `main`, and
 `workflow_dispatch` runs keep the full matrix, so `main`'s required
-`build-test (macos-latest)` context is still reported where it is required. A
-macOS-only break on `dev` surfaces on the next `dev` to `main` PR; run
-`workflow_dispatch` on a branch to check macOS sooner.
+`build-test (macos-latest)` and `build-test (windows-latest)` contexts are still
+reported where they are required. A macOS-only or Windows-only break on `dev`
+surfaces on the next `dev` to `main` PR; run `workflow_dispatch` on a branch to
+check macOS or Windows sooner.
 
 All jobs, Gradle tasks, path filters, runner labels, artifacts, and dependencies
 are retained. In particular, the following live `main` branch-protection contexts
