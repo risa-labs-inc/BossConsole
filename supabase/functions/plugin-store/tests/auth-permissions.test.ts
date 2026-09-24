@@ -437,40 +437,48 @@ Deno.test("permissionGateError gates API-key management on api_key.create", () =
   )
 })
 
-Deno.test("both download handlers gate on organisation visibility before anything else", () => {
+Deno.test("both download handlers resolve the plugin through the serve RPC before anything else", () => {
   const src = routeSource("download.ts")
 
   // Two handlers: latest, and a specific version.
   const handlers = src.match(/download\.openapi\(/g)?.length ?? 0
   assertEquals(handlers, 2, "the two download handlers")
 
-  const gated = src.match(/await canInstall\(supabase,/g)?.length ?? 0
-  assertEquals(
-    gated,
-    handlers,
-    "an ungated download handler serves another organisation's private plugin to anyone " +
-      "who can guess a plugin id",
-  )
+  // The serve RPC (get_plugin_for_download, migration 20260923150000) is where
+  // publication state and organisation entitlements are enforced: its WHERE
+  // clause IS user_can_install_plugin, so a row the caller may not have never
+  // reaches this route. An ungated download handler serves another
+  // organisation's private plugin to anyone who can guess a plugin id.
+  const gated = src.match(/await getPluginForDownload\(supabase,/g)?.length ?? 0
+  assertEquals(gated, handlers, "every download handler resolves the plugin through the serve RPC")
 
-  // Order is the property, not just presence. The visibility gate must precede
-  // BOTH the permission gate and recordDownload in each handler: a plugin the
-  // caller may not see must not reach a 403 that confirms it exists, and must
-  // not appear in its download counts.
+  // Order is the property, not just presence. The serve RPC must precede BOTH
+  // the permission gate and recordDownload in each handler: a plugin the caller
+  // may not have must not reach a 403 that confirms it exists, and must not
+  // appear in its download counts. And the viewer must be resolved BEFORE the
+  // serve RPC, or the RPC sees auth.uid() (NULL under the service-role client)
+  // and org/unlisted rows 404 for exactly the members they belong to -- the
+  // bug this file used to paper over with a dead canInstall probe.
   for (const [index, chunk] of src.split(/download\.openapi\(/).slice(1).entries()) {
-    const gate = chunk.indexOf("canInstall(")
+    const viewer = chunk.indexOf("gateSubject(")
+    const gate = chunk.indexOf("getPluginForDownload(")
     const permission = chunk.indexOf("installGateError(")
     const record = chunk.indexOf("recordDownload(")
-    assertEquals(gate >= 0, true, `handler ${index} has no visibility gate`)
+    assertEquals(viewer >= 0, true, `handler ${index} never resolves the viewer`)
+    assertEquals(gate >= 0, true, `handler ${index} has no serve RPC lookup`)
+    assertEquals(viewer < gate, true, `handler ${index} resolves the plugin before the viewer`)
     assertEquals(gate < permission, true, `handler ${index} gates permissions before visibility`)
     assertEquals(gate < record, true, `handler ${index} records a download before gating it`)
   }
 })
 
-Deno.test("a plugin the caller cannot see is 404, never 403", () => {
+Deno.test("a plugin the caller cannot have is 404, never 403", () => {
   const src = routeSource("download.ts")
 
   // 403 would confirm the plugin exists, which is how an endpoint becomes an
   // enumeration surface for other organisations' private plugin ids.
-  const gateBlocks = src.match(/if \(!await canInstall\([^)]*\)\) \{\s*return ctx\.json\(\{ error: 'Plugin not found' \}, 404\)/g)
-  assertEquals(gateBlocks?.length ?? 0, 2, "both gates must deny with the same 404 a missing plugin gets")
+  const gateBlocks = src.match(
+    /getPluginForDownload\(supabase, pluginId, viewerId\)\s*if \(!plugin\) \{\s*return ctx\.json\(\{ error: 'Plugin not found' \}, 404\)/g,
+  )
+  assertEquals(gateBlocks?.length ?? 0, 2, "both handlers must deny with the same 404 a missing plugin gets")
 })

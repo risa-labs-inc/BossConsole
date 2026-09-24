@@ -4,7 +4,7 @@ import {
   DownloadInfoResponseSchema,
   ErrorResponseSchema
 } from "../types/schemas.ts"
-import { getPlugin, getPluginById } from "../services/plugins.ts"
+import { getPluginForDownload } from "../services/plugins.ts"
 import { getLatestVersion, getVersion } from "../services/versions.ts"
 import { getSignedDownloadUrl } from "../services/storage.ts"
 import { recordDownload, hashIp } from "../services/downloads.ts"
@@ -42,41 +42,15 @@ function installGateError(
 }
 
 /**
- * Organisation-visibility gate.
- *
- * Every plugin is owned by an organisation and carries a visibility
- * (`public` / `org` / `unlisted`). The store's LISTING paths are already gated
- * by `user_can_view_plugin_row`, so a private organisation's plugins do not
- * appear in search -- but a download URL is guessable from a plugin id, and
- * without this the listing gate was decoration: anyone who learned an id could
- * fetch the jar.
- *
- * `user_can_install_plugin`, not `user_can_view_plugin`: `unlisted` means
- * "absent from listings", NOT "un-installable", so the install predicate is
- * wider by exactly that case. See 20260805000000.
- *
- * FAILS CLOSED. A transport error, a missing function or any non-`true` answer
- * denies. The cost of a false deny is a retry; the cost of a false allow is
- * handing out another organisation's private plugin.
- *
- * Returns true when the caller may download.
+ * Organisation visibility and publication state are enforced inside the serve
+ * RPC (get_plugin_for_download, migration 20260923150000): its WHERE clause
+ * is user_can_install_plugin, so no row means this caller may not have the
+ * artifact, and the route answers the same 404 it would for a missing plugin.
+ * The route-level canInstall probe that used to live here ran only on rows the
+ * anonymous-view plugin lookup had already returned, so it could never fire
+ * for the org/unlisted rows it existed for -- and a route-side check the serve
+ * RPC does not enforce can silently drift away.
  */
-async function canInstall(
-  supabase: SupabaseClient,
-  pluginRowId: string,
-  userId: string | null
-): Promise<boolean> {
-  const { data, error } = await supabase.rpc('user_can_install_plugin', {
-    p_user_id: userId,
-    p_plugin_id: pluginRowId
-  })
-  if (error) {
-    console.error('user_can_install_plugin failed:', error.message)
-    return false
-  }
-  return data === true
-}
-
 /**
  * The caller's user id for the visibility gate, from a JWT or a plugin API key.
  *
@@ -184,25 +158,20 @@ download.openapi(downloadLatestRoute, async (ctx) => {
     const supabase = ctx.get("supabase")
     const { pluginId } = ctx.req.valid('param')
 
-    // Get plugin
-    const plugin = await getPlugin(supabase, pluginId)
-    if (!plugin) {
-      return ctx.json({ error: 'Plugin not found' }, 404)
-    }
-
-    const { userId: gateUserId, user } = await gateSubject(
+    // Resolve the caller first, then the plugin through the serve RPC. The
+    // RPC's WHERE clause IS user_can_install_plugin, so publication state and
+    // organisation entitlements are checked inside the same statement that
+    // returns the row -- the route cannot forget, reorder or bypass them.
+    // No row => 404, deliberately indistinguishable from "no such plugin",
+    // so this endpoint cannot enumerate other organisations' plugin ids.
+    const { userId: viewerId, user } = await gateSubject(
       supabase,
       ctx.req.header('Authorization'),
       ctx.req.header('x-api-key') ?? ctx.req.header('X-API-Key'),
     )
 
-    // Organisation visibility, BEFORE the permission gate and before any
-    // download is recorded. 404 rather than 403, deliberately: a plugin the
-    // caller may not see has to be indistinguishable from one that does not
-    // exist, or this endpoint enumerates other organisations' private plugin
-    // ids. The permission gate below can safely say 403, because by then the
-    // caller is known to be allowed to see the plugin at all.
-    if (!await canInstall(supabase, plugin.id, gateUserId)) {
+    const plugin = await getPluginForDownload(supabase, pluginId, viewerId)
+    if (!plugin) {
       return ctx.json({ error: 'Plugin not found' }, 404)
     }
 
@@ -241,6 +210,11 @@ download.openapi(downloadLatestRoute, async (ctx) => {
       console.error('Error tracking download:', e)
       // Don't fail the request if tracking fails
     }
+
+    // PRIVATE when the answer depends on who asked. The same URL hands an entitled
+    // member a signed download URL and everybody else a 404, so a shared cache
+    // holding one reader's copy would leak it to the next caller. Mirrors browse.ts.
+    ctx.header("Cache-Control", "private, no-store")
 
     return ctx.json({
       downloadUrl,
@@ -351,25 +325,20 @@ download.openapi(downloadVersionRoute, async (ctx) => {
     const supabase = ctx.get("supabase")
     const { pluginId, version: versionStr } = ctx.req.valid('param')
 
-    // Get plugin
-    const plugin = await getPlugin(supabase, pluginId)
-    if (!plugin) {
-      return ctx.json({ error: 'Plugin not found' }, 404)
-    }
-
-    const { userId: gateUserId, user } = await gateSubject(
+    // Resolve the caller first, then the plugin through the serve RPC. The
+    // RPC's WHERE clause IS user_can_install_plugin, so publication state and
+    // organisation entitlements are checked inside the same statement that
+    // returns the row -- the route cannot forget, reorder or bypass them.
+    // No row => 404, deliberately indistinguishable from "no such plugin",
+    // so this endpoint cannot enumerate other organisations' plugin ids.
+    const { userId: viewerId, user } = await gateSubject(
       supabase,
       ctx.req.header('Authorization'),
       ctx.req.header('x-api-key') ?? ctx.req.header('X-API-Key'),
     )
 
-    // Organisation visibility, BEFORE the permission gate and before any
-    // download is recorded. 404 rather than 403, deliberately: a plugin the
-    // caller may not see has to be indistinguishable from one that does not
-    // exist, or this endpoint enumerates other organisations' private plugin
-    // ids. The permission gate below can safely say 403, because by then the
-    // caller is known to be allowed to see the plugin at all.
-    if (!await canInstall(supabase, plugin.id, gateUserId)) {
+    const plugin = await getPluginForDownload(supabase, pluginId, viewerId)
+    if (!plugin) {
       return ctx.json({ error: 'Plugin not found' }, 404)
     }
 
@@ -405,6 +374,11 @@ download.openapi(downloadVersionRoute, async (ctx) => {
     } catch (e) {
       console.error('Error tracking download:', e)
     }
+
+    // PRIVATE when the answer depends on who asked. The same URL hands an entitled
+    // member a signed download URL and everybody else a 404, so a shared cache
+    // holding one reader's copy would leak it to the next caller. Mirrors browse.ts.
+    ctx.header("Cache-Control", "private, no-store")
 
     return ctx.json({
       downloadUrl,

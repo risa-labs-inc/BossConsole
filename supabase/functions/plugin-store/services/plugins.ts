@@ -419,3 +419,57 @@ export async function updatePlugin(
     throw new Error(`Failed to update plugin: ${error.message}`)
   }
 }
+
+/**
+ * Resolve a plugin for the DOWNLOAD path, gated by the install predicate.
+ *
+ * get_plugin_for_download (migration 20260923150000) returns a row only when
+ * user_can_install_plugin(p_viewer_id, id) admits the caller, so publication
+ * state and organisation entitlements are enforced inside the RPC and a
+ * refused caller is indistinguishable from a missing plugin. The viewer is
+ * the route-resolved caller (JWT user or API-key owner), NOT auth.uid(): this
+ * client is the service-role one, under which auth.uid() is NULL and every
+ * lookup would resolve as an anonymous stranger -- the bug that made an
+ * organisation member get 404 for their own organisation's plugin.
+ */
+export interface DownloadablePlugin {
+  id: string
+  pluginId: string
+  displayName: string
+  published: boolean
+  requiredPermissions: string[]
+  visibility: string
+  orgId: string | null
+}
+
+export async function getPluginForDownload(
+  supabase: SupabaseClient,
+  pluginId: string,
+  viewerId: string | null
+): Promise<DownloadablePlugin | null> {
+  const { data, error } = await supabase.rpc('get_plugin_for_download', {
+    p_plugin_id: pluginId,
+    p_viewer_id: viewerId
+  })
+
+  if (error) {
+    console.error('Error resolving plugin for download:', error)
+    throw new Error(`Failed to resolve plugin for download: ${error.message}`)
+  }
+
+  if (!data || data.length === 0) {
+    return null
+  }
+
+  const row = data[0]
+
+  return {
+    id: row.id,
+    pluginId: row.plugin_id,
+    displayName: row.display_name,
+    published: row.published,
+    requiredPermissions: row.required_permissions || [],
+    visibility: row.visibility,
+    orgId: row.org_id ?? null
+  }
+}
