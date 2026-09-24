@@ -102,7 +102,7 @@ class BossPluginInitCommand : CliktCommand(name = "init") {
                     }
                 echo(errPayload.toString())
             } else {
-                echo("Error: $errorMsg", err = true)
+                echo(formatErrorLine(errorMsg), err = true)
             }
             throw ProgramResult(1)
         }
@@ -138,7 +138,7 @@ class BossPluginValidateCommand : CliktCommand(name = "validate") {
             echo("Validating plugin at ${target.absolutePath}...")
             result.checks.forEach { check ->
                 val mark = if (check.passed) "[✓]" else "[✗]"
-                echo("$mark ${check.name}: ${check.message}")
+                echo(formatCheckLine(mark, check.name, check.message))
             }
             if (report.success) {
                 echo("\n[✓] Validation passed (${report.checksPassed}/${report.totalChecks} checks passed)")
@@ -148,7 +148,7 @@ class BossPluginValidateCommand : CliktCommand(name = "validate") {
                     "Validation failed with ${report.failures.size} errors at ${target.absolutePath}",
                 )
                 echo("\nValidation failed with ${report.failures.size} errors:", err = true)
-                report.failures.forEach { echo("  [✗] ${it.checkName}: ${it.message}", err = true) }
+                report.failures.forEach { echo(formatCheckLine("  [✗]", it.checkName, it.message), err = true) }
                 throw ProgramResult(1)
             }
         }
@@ -184,7 +184,7 @@ class BossPluginLinkCommand : CliktCommand(name = "link") {
                     }.toString(),
                 )
             } else {
-                echo("Error: $msg", err = true)
+                echo(formatErrorLine(msg), err = true)
             }
             throw ProgramResult(1)
         }
@@ -203,7 +203,7 @@ class BossPluginLinkCommand : CliktCommand(name = "link") {
                         }.toString(),
                     )
                 } else {
-                    echo("Error: $msg", err = true)
+                    echo(formatErrorLine(msg), err = true)
                 }
                 throw ProgramResult(1)
             }
@@ -217,9 +217,12 @@ class BossPluginLinkCommand : CliktCommand(name = "link") {
             if (json) {
                 echo(launchpadJson.encodeToString(report))
             } else {
-                echo("$errMsg:", err = true)
+                // errMsg embeds a filename discovered inside the cloned plugin repo - ESC/CR/LF
+                // are legal in POSIX names, so this line goes through TerminalText like every
+                // other error path in this command.
+                echo(formatErrorLine("$errMsg:"), err = true)
                 validation.checks.filter { !it.passed }.forEach {
-                    echo("  [✗] ${it.name}: ${it.message}", err = true)
+                    echo(formatCheckLine("  [✗]", it.name, it.message), err = true)
                 }
             }
             throw ProgramResult(1)
@@ -240,7 +243,7 @@ class BossPluginLinkCommand : CliktCommand(name = "link") {
                         }.toString(),
                     )
                 } else {
-                    echo("Error: $msg", err = true)
+                    echo(formatErrorLine(msg), err = true)
                 }
                 throw ProgramResult(1)
             }
@@ -261,7 +264,7 @@ class BossPluginLinkCommand : CliktCommand(name = "link") {
                     }.toString(),
                 )
             } else {
-                echo("Error: $msg", err = true)
+                echo(formatErrorLine(msg), err = true)
             }
             throw ProgramResult(1)
         }
@@ -302,7 +305,7 @@ class BossPluginLinkCommand : CliktCommand(name = "link") {
                     }.toString(),
                 )
             } else {
-                echo("Error: $msg", err = true)
+                echo(formatErrorLine(msg), err = true)
             }
             throw ProgramResult(1)
         }
@@ -321,7 +324,7 @@ class BossPluginLinkCommand : CliktCommand(name = "link") {
                     echo(payload.toString())
                 } else {
                     echo(
-                        "[✓] Plugin '$pluginId' staged at ${stagedJar.absolutePath} " +
+                        "[✓] Plugin '${TerminalText.safe(pluginId)}' staged at ${stagedJar.absolutePath} " +
                             "and reload signal confirmed by BossConsole.",
                     )
                 }
@@ -340,7 +343,7 @@ class BossPluginLinkCommand : CliktCommand(name = "link") {
                     echo(payload.toString())
                 } else {
                     echo(
-                        "[✓] Plugin '$pluginId' staged at ${stagedJar.absolutePath}. " +
+                        "[✓] Plugin '${TerminalText.safe(pluginId)}' staged at ${stagedJar.absolutePath}. " +
                             "BossConsole is offline; plugin staged for next launch.",
                     )
                 }
@@ -359,8 +362,8 @@ class BossPluginLinkCommand : CliktCommand(name = "link") {
                     echo(payload.toString())
                 } else {
                     echo(
-                        "[~] Plugin '$pluginId' staged at ${stagedJar.absolutePath}. " +
-                            "${reloadResult.message}. It is picked up at the next launch.",
+                        "[~] Plugin '${TerminalText.safe(pluginId)}' staged at ${stagedJar.absolutePath}. " +
+                            "${TerminalText.safe(reloadResult.message)}. It is picked up at the next launch.",
                     )
                 }
             }
@@ -380,10 +383,26 @@ class BossPluginLinkCommand : CliktCommand(name = "link") {
                     echo(payload.toString())
                     throw ProgramResult(1)
                 } else {
-                    echo(msg, err = true)
+                    echo(TerminalText.safe(msg), err = true)
                     throw ProgramResult(1)
                 }
             }
         }
     }
 }
+
+/**
+ * One line of `boss plugin` check output: a mark, the check's name, and its message.
+ *
+ * A check's text quotes the plugin being validated - a malformed `plugin.json` is reported with the
+ * offending JSON in the message - and validating a plugin you did not write is the point of the
+ * command, so the text goes through [TerminalText]: one check, one line, and no escape sequence.
+ */
+internal fun formatCheckLine(
+    mark: String,
+    name: String,
+    message: String,
+): String = "$mark ${TerminalText.safe(name)}: ${TerminalText.safe(message)}"
+
+/** An `Error:` line of `boss plugin` output. Exception messages can quote the plugin's own files. */
+internal fun formatErrorLine(message: String?): String = "Error: ${TerminalText.safe(message.toString())}"

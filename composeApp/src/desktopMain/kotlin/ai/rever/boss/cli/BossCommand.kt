@@ -169,34 +169,6 @@ class BossStatusCommand : CliktCommand(name = "status") {
             },
         )
     }
-
-    private fun formatHumanStatus(rawJson: String): String =
-        buildString {
-            appendLine("BOSS Console Status")
-            appendLine("-------------------")
-            try {
-                val element = Json.parseToJsonElement(rawJson).jsonObject
-                appendLine("  Running:        ${element["running"]?.jsonPrimitive?.contentOrNull ?: "true"}")
-                appendLine("  Version:        ${element["version"]?.jsonPrimitive?.contentOrNull ?: "unknown"}")
-                val osName = element["os"]?.jsonPrimitive?.contentOrNull ?: "unknown"
-                val osArch = element["arch"]?.jsonPrimitive?.contentOrNull ?: ""
-                appendLine("  OS:             $osName ($osArch)")
-                val project = element["activeProject"]?.jsonPrimitive?.contentOrNull
-                if (!project.isNullOrBlank()) {
-                    appendLine("  Active Project: $project")
-                }
-                val mem = element["memory"]?.jsonObject
-                if (mem != null) {
-                    val used = mem["usedMb"]?.jsonPrimitive?.contentOrNull ?: "?"
-                    val max = mem["maxMb"]?.jsonPrimitive?.contentOrNull ?: "?"
-                    val heapPct = mem["heapPercent"]?.jsonPrimitive?.contentOrNull ?: "?"
-                    appendLine("  JVM Memory:     ${used}MB / ${max}MB ($heapPct%)")
-                }
-                healthSummaryOf(element)?.let { appendLine("  Health:         $it") }
-            } catch (_: Exception) {
-                appendLine(rawJson)
-            }
-        }
 }
 
 /**
@@ -530,95 +502,6 @@ class BossMcpCommand : CliktCommand(name = "mcp") {
             content.ifEmpty { "{}" }
         }
     }
-
-    private fun formatHumanToolsList(
-        rawJson: String,
-        filterQuery: String?,
-    ): String =
-        buildString {
-            if (filterQuery.isNullOrBlank()) {
-                appendLine("Available MCP Tools in BOSS Console")
-                appendLine("===================================")
-            } else {
-                appendLine("Available MCP Tools in BOSS Console (filtered by: '$filterQuery')")
-                appendLine("================================================================")
-            }
-            try {
-                val array = Json.parseToJsonElement(rawJson).jsonArray
-                val filtered =
-                    if (filterQuery.isNullOrBlank()) {
-                        array
-                    } else {
-                        array.filter { item ->
-                            val obj = item.jsonObject
-                            val name = obj["name"]?.jsonPrimitive?.contentOrNull.orEmpty()
-                            val desc = obj["description"]?.jsonPrimitive?.contentOrNull.orEmpty()
-                            val pluginId = obj["pluginId"]?.jsonPrimitive?.contentOrNull.orEmpty()
-                            name.contains(filterQuery, ignoreCase = true) ||
-                                desc.contains(filterQuery, ignoreCase = true) ||
-                                pluginId.contains(filterQuery, ignoreCase = true)
-                        }
-                    }
-
-                if (filtered.isEmpty()) {
-                    if (filterQuery.isNullOrBlank()) {
-                        appendLine("No MCP tools currently registered.")
-                    } else {
-                        appendLine("No MCP tools matching '$filterQuery'.")
-                    }
-                } else {
-                    for (item in filtered) {
-                        val obj = item.jsonObject
-                        val name = obj["name"]?.jsonPrimitive?.contentOrNull ?: "unknown"
-                        val desc = obj["description"]?.jsonPrimitive?.contentOrNull ?: ""
-                        val pluginId = obj["pluginId"]?.jsonPrimitive?.contentOrNull ?: ""
-                        appendLine("• $name ($pluginId)")
-                        if (desc.isNotBlank()) {
-                            appendLine("    $desc")
-                        }
-                    }
-                    appendLine()
-                    if (filterQuery.isNullOrBlank()) {
-                        appendLine("Total tools: ${array.size}")
-                    } else {
-                        appendLine("Matching tools: ${filtered.size} (of ${array.size} total)")
-                    }
-                }
-            } catch (_: Exception) {
-                appendLine(rawJson)
-            }
-        }
-
-    private fun formatHumanToolDetail(obj: JsonObject): String =
-        buildString {
-            val name = obj["name"]?.jsonPrimitive?.contentOrNull ?: "unknown"
-            val pluginId = obj["pluginId"]?.jsonPrimitive?.contentOrNull ?: "unknown"
-            val desc = obj["description"]?.jsonPrimitive?.contentOrNull ?: "No description provided."
-            val requiresAdmin = obj["requiresAdmin"]?.jsonPrimitive?.booleanOrNull ?: false
-            val perms =
-                obj["requiredPermissions"]
-                    ?.jsonArray
-                    ?.mapNotNull { it.jsonPrimitive.contentOrNull }
-                    ?: emptyList()
-
-            appendLine("MCP Tool: $name")
-            appendLine("Plugin:   $pluginId")
-            if (requiresAdmin) {
-                appendLine("Access:   Requires Administrator")
-            } else if (perms.isNotEmpty()) {
-                appendLine("Access:   Permissions: [${perms.joinToString(", ")}]")
-            } else {
-                appendLine("Access:   Standard")
-            }
-            appendLine()
-            appendLine("Description:")
-            appendLine(desc.prependIndent("  "))
-            obj["inputSchema"]?.let {
-                appendLine()
-                appendLine("Input schema:")
-                appendLine(it.toString().prependIndent("  "))
-            }
-        }
 }
 
 /**
