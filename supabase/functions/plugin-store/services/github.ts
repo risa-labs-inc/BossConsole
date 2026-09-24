@@ -93,6 +93,27 @@ const MAX_HASHABLE_BYTES = 500 * 1024 * 1024 // 500 MB
 export const LARGE_JAR_THRESHOLD = 50 * 1024 * 1024 // 50 MB
 
 /**
+ * Maximum size (in bytes) we trust the ZIP End-of-Central-Directory record to
+ * declare for the central directory itself. A well-formed JAR's central
+ * directory is a few hundred KB even for fat JARs; 16 MB is generous enough
+ * to cover every realistic plugin JAR (including the ~100 MB microkernel
+ * runtime). Above this cap, we refuse the archive - the declared size came
+ * from an attacker-controlled EOCD record and would otherwise be used
+ * unvalidated as a range-fetch bound and a buffer allocation. Fixes #914.
+ */
+export const MAX_CENTRAL_DIR_BYTES = 16 * 1024 * 1024 // 16 MB
+
+/**
+ * Maximum size (in bytes) we trust the ZIP central-directory entry to declare
+ * for a single compressed file. plugin.json is tiny by design (a few KB), and
+ * we never need more than ~64 KB to read any one entry's compressed payload.
+ * Above this cap, we refuse the entry - the declared compressedSize came from
+ * an attacker-controlled central directory record and would otherwise be used
+ * unvalidated to allocate the range response buffer. Fixes #914.
+ */
+export const MAX_ENTRY_FETCH_BYTES = 64 * 1024 // 64 KB
+
+/**
  * Stream-compute the SHA-256 of a remote JAR without buffering it in memory.
  *
  * Used by /github/metadata to derive the authoritative hash server-side
@@ -423,12 +444,30 @@ async function readBoundedArrayBuffer(resp: Response, label: string): Promise<Ar
 /**
  * Download a byte range from a URL.
  * Returns the bytes and the total file size (from Content-Range header).
+ *
+ * `maxBytes` is a HARD cap on the bytes we are willing to read into memory
+ * from the response body, applied both to the declared byte range and to the
+ * bytes actually returned. A misbehaving server may honour the `Range` header
+ * or return the entire body instead (status 200 with no `Content-Range`),
+ * and we MUST not buffer whatever it chose to send - the per-call byte
+ * counts here are attacker-controlled (EOCD-declared central-directory size,
+ * central-directory-declared compressedSize, ZIP64 uint64 sizes). Without
+ * this cap a crafted JAR's central directory can name a ~2 GB range and the
+ * `arrayBuffer()` below would OOM the edge isolate. See #914.
  */
 async function downloadRange(
   url: string,
   start: number,
-  end: number
+  end: number,
+  maxBytes: number
 ): Promise<{ data: Uint8Array; totalSize: number }> {
+  if (end < start) {
+    throw new Error(`Invalid range: ${start}-${end}`)
+  }
+  const declared = end - start + 1
+  if (declared > maxBytes) {
+    throw new Error(`Requested range ${declared} bytes exceeds ${maxBytes}-byte cap`)
+  }
   const response = await fetch(url, {
     headers: {
       "User-Agent": "BOSS-Plugin-Store/1.0",
@@ -440,7 +479,23 @@ async function downloadRange(
     throw new Error(`Range request failed: ${response.status}`)
   }
 
+  // Hard cap on the bytes we buffer regardless of what the server returns.
+  // `arrayBuffer()` would otherwise read the entire response body for any
+  // server that ignored the Range header (returning 200 + full content),
+  // which is the exact pre-fix failure mode #914 describes.
+  const contentLength = Number(response.headers.get("content-length") || "0")
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw new Error(
+      `Range response declares ${contentLength} bytes, over the ${maxBytes}-byte cap`
+    )
+  }
+
   const data = new Uint8Array(await response.arrayBuffer())
+  if (data.length > maxBytes) {
+    throw new Error(
+      `Range response delivered ${data.length} bytes, over the ${maxBytes}-byte cap`
+    )
+  }
 
   // Parse total size from Content-Range: bytes 0-999/12345
   let totalSize = data.length
@@ -524,6 +579,19 @@ export async function extractManifestFromRemoteJar(
   let cdOffset: number = tailView.getUint32(eocdPos + 16, true) // absolute offset in file
   let entryCount: number = tailView.getUint16(eocdPos + 10, true)
 
+  // Reject EOCD-reported values that exceed our hard caps BEFORE they are
+  // used as range-fetch bounds or buffer sizes. cdSize and cdOffset here
+  // come straight from the attacker-controlled EOCD record. cdOffset must
+  // also be a valid offset inside the file we HEADed for earlier.
+  if (cdSize > MAX_CENTRAL_DIR_BYTES) {
+    throw new Error(
+      `EOCD declares cdSize ${cdSize}, over the ${MAX_CENTRAL_DIR_BYTES}-byte cap`
+    )
+  }
+  if (cdOffset >= totalSize) {
+    throw new Error(`EOCD declares cdOffset ${cdOffset}, past end of file (${totalSize})`)
+  }
+
   // ZIP64 detection — any of these sentinel values means the real numbers
   // live in the ZIP64 EOCD record reachable via the ZIP64 EOCD locator
   // (20 bytes immediately before the standard EOCD).
@@ -548,13 +616,21 @@ export async function extractManifestFromRemoteJar(
     const zip64EocdAbs = zip64EocdHi * 0x1_0000_0000 + zip64EocdLo
 
     // ZIP64 EOCD may live in the tail we already fetched. If not, pull it.
+    // The ZIP64 EOCD record is 56 bytes of fixed fields plus a fixed signature
+    // (20 bytes for the locator, 56 bytes for the record itself), so a single
+    // 56-byte window covers everything we read.
     let z64Data: Uint8Array
     let z64Base: number
     if (zip64EocdAbs >= tailOffset) {
       z64Data = tailData
       z64Base = zip64EocdAbs - tailOffset
     } else {
-      const { data } = await downloadRange(downloadUrl, zip64EocdAbs, zip64EocdAbs + 55)
+      const { data } = await downloadRange(
+        downloadUrl,
+        zip64EocdAbs,
+        zip64EocdAbs + 55,
+        MAX_CENTRAL_DIR_BYTES
+      )
       z64Data = data
       z64Base = 0
     }
@@ -574,6 +650,18 @@ export async function extractManifestFromRemoteJar(
     entryCount = readU64(32)
     cdSize = readU64(40)
     cdOffset = readU64(48)
+
+    // Same validation as the non-ZIP64 path: ZIP64 cdSize / cdOffset are also
+    // attacker-controlled uint64 fields and must be capped before they are
+    // used to allocate a range-fetch buffer.
+    if (cdSize > MAX_CENTRAL_DIR_BYTES) {
+      throw new Error(
+        `ZIP64 EOCD declares cdSize ${cdSize}, over the ${MAX_CENTRAL_DIR_BYTES}-byte cap`
+      )
+    }
+    if (cdOffset >= totalSize) {
+      throw new Error(`ZIP64 EOCD declares cdOffset ${cdOffset}, past end of file (${totalSize})`)
+    }
   }
 
   // Step 2: fetch the central directory (if not already in tail)
@@ -586,8 +674,15 @@ export async function extractManifestFromRemoteJar(
     cdData = tailData.slice(relStart, relStart + cdSize)
     cdBaseOffset = 0
   } else {
-    // Need a separate range request for the central directory
-    const { data } = await downloadRange(downloadUrl, cdOffset, cdOffset + cdSize - 1)
+    // Need a separate range request for the central directory. cdSize and
+    // cdOffset have been capped at MAX_CENTRAL_DIR_BYTES above so the
+    // downloadRange call below cannot OOM. #914
+    const { data } = await downloadRange(
+      downloadUrl,
+      cdOffset,
+      cdOffset + cdSize - 1,
+      MAX_CENTRAL_DIR_BYTES
+    )
     cdData = data
     cdBaseOffset = 0
   }
@@ -607,6 +702,18 @@ export async function extractManifestFromRemoteJar(
     const extraFieldLength = cdView.getUint16(offset + 30, true)
     const commentLength = cdView.getUint16(offset + 32, true)
     let localHeaderOffset: number = cdView.getUint32(offset + 42, true)
+
+    // Early bounds check on the main-record compressedSize: a crafted JAR
+    // can declare a 4 GB entry here, which would otherwise flow into the
+    // range-fetch bound below and OOM the edge isolate. plugin.json is a
+    // small JSON document by design, so MAX_ENTRY_FETCH_BYTES is enough.
+    // The ZIP64 path below applies the same cap after resolving the real
+    // value out of the extra field.
+    if (compressedSize !== 0xffffffff && compressedSize > MAX_ENTRY_FETCH_BYTES) {
+      throw new Error(
+        `central directory entry declares compressedSize ${compressedSize}, over the ${MAX_ENTRY_FETCH_BYTES}-byte cap`
+      )
+    }
 
     const fnBytes = cdData.slice(offset + 46, offset + 46 + fileNameLength)
     const fileName = new TextDecoder().decode(fnBytes)
@@ -658,6 +765,15 @@ export async function extractManifestFromRemoteJar(
       if (!resolved) {
         throw new Error("plugin.json entry has ZIP64 sentinel without a ZIP64 extra field")
       }
+      // Same cap as the non-ZIP64 path above, applied AFTER the ZIP64 extra
+      // field resolved the real compressedSize. A crafted ZIP64 entry could
+      // otherwise name a 4 GB compressed payload that lands in
+      // downloadRange as the range-fetch bound.
+      if (compressedSize > MAX_ENTRY_FETCH_BYTES) {
+        throw new Error(
+          `ZIP64 central directory entry declares compressedSize ${compressedSize}, over the ${MAX_ENTRY_FETCH_BYTES}-byte cap`
+        )
+      }
     }
 
     offset = entryEnd
@@ -665,12 +781,15 @@ export async function extractManifestFromRemoteJar(
     if (fileName !== manifestPath) continue
 
     // Step 3: fetch just this file's local header + data
-    // Local header is 30 bytes + filename + extra, then compressed data
+    // Local header is 30 bytes + filename + extra, then compressed data.
+    // Capped by MAX_ENTRY_FETCH_BYTES because compressedSize came from the
+    // attacker-controlled central directory record. #914
     const fetchSize = 30 + fileNameLength + 256 + compressedSize // 256 extra for safety
     const { data: localData } = await downloadRange(
       downloadUrl,
       localHeaderOffset,
-      localHeaderOffset + fetchSize - 1
+      localHeaderOffset + fetchSize - 1,
+      MAX_ENTRY_FETCH_BYTES
     )
     const localView = new DataView(localData.buffer, localData.byteOffset, localData.byteLength)
     const lhFnLen = localView.getUint16(26, true)
@@ -780,12 +899,35 @@ async function extractFileFromZip(
   const cdSize = view.getUint32(eocdOffset + 12, true)
   const cdOffset = view.getUint32(eocdOffset + 16, true)
 
+  // Mirror the remote path's cap so an in-memory JAR cannot bypass the
+  // EOCD-reported bound either. The remote path checks first; this matches.
+  if (cdSize > MAX_CENTRAL_DIR_BYTES) {
+    throw new Error(
+      `EOCD declares cdSize ${cdSize}, over the ${MAX_CENTRAL_DIR_BYTES}-byte cap`
+    )
+  }
+
   // ZIP64 — sentinel values indicate the real fields live in a ZIP64 EOCD
   // record. JARs that hit this path in memory are rare (50 MB+ goes through
   // the range-request path), but fail loudly instead of silently corrupting.
   if (cdEntries === 0xffff || cdSize === 0xffffffff || cdOffset === 0xffffffff) {
     throw new Error(
       "JAR uses ZIP64 format; use extractManifestFromRemoteJar (range-request path) instead"
+    )
+  }
+
+  // Same validation as the remote path: the JAR's overall size is already
+  // bounded by LARGE_JAR_THRESHOLD, but a crafted in-memory JAR could still
+  // declare an out-of-range cdOffset that would walk us off the end of the
+  // buffer. #914
+  if (cdOffset >= zipData.length) {
+    throw new Error(
+      `EOCD declares cdOffset ${cdOffset}, past end of in-memory JAR (${zipData.length})`
+    )
+  }
+  if (cdOffset + cdSize > zipData.length) {
+    throw new Error(
+      `EOCD central directory ${cdOffset}..${cdOffset + cdSize} extends past end of in-memory JAR (${zipData.length})`
     )
   }
 
@@ -809,6 +951,15 @@ async function extractFileFromZip(
     offset += 46 + fileNameLength + extraFieldLength + commentLength
 
     if (fileName !== targetPath) continue
+
+    // Cap the declared compressedSize before any data is read; mirrors the
+    // remote path. A crafted in-memory JAR could otherwise declare an
+    // arbitrary size and walk the slice past the buffer.
+    if (compressedSize > MAX_ENTRY_FETCH_BYTES) {
+      throw new Error(
+        `central directory entry declares compressedSize ${compressedSize}, over the ${MAX_ENTRY_FETCH_BYTES}-byte cap`
+      )
+    }
 
     // --- Read from the local file header to get the actual data ---
     const lhOffset = localHeaderOffset
