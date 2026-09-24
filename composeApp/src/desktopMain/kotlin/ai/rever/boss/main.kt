@@ -401,6 +401,12 @@ fun main(args: Array<String>) {
     // Configure MCP workspace tool window creator
     ai.rever.boss.mcp.WorkspaceMcpToolProvider.windowCreator = { WindowManager.createNewWindow().id }
 
+    // Agent coordination tools (agent_*). BOSS runs several agents at once, and nothing told any
+    // of them that the others existed; these let them declare what they are working on and see
+    // overlap. Registered here because the provider is desktopMain.
+    ai.rever.boss.mcp.McpToolRegistryImpl
+        .registerProvider(ai.rever.boss.mcp.coordination.CoordinationMcpToolProvider)
+
     // Create initial window BEFORE application{} to prevent auto-recreation
     if (!chromiumNeedsDownload) {
         WindowManager.createNewWindow()
