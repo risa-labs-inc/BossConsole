@@ -24,12 +24,6 @@ Deno.test("generateMobileRegistrationPage - should generate valid registration p
     error: null
   }, 'select')
 
-  // Mock user lookup from auth.users table
-  mockClient.mockResponse('auth.users', {
-    data: { id: 'user-456', email: 'test@example.com' },
-    error: null
-  }, 'select')
-
   // Mock update challenge with session
   mockClient.mockResponse('passkey_challenges', {
     data: [{ id: 'challenge-789' }],
@@ -149,12 +143,6 @@ Deno.test("generateMobileRegistrationPage - should update challenge status to in
     error: null
   }, 'select')
 
-  // Mock user lookup
-  mockClient.mockResponse('auth.users', {
-    data: { id: 'user-456', email: 'test@example.com' },
-    error: null
-  }, 'select')
-
   // Mock update with in_progress status
   mockClient.mockResponse('passkey_challenges', {
     data: [{ id: 'challenge-789', status: 'in_progress' }],
@@ -178,6 +166,137 @@ Deno.test("generateMobileRegistrationPage - should update challenge status to in
   assertExists(updateCall)
 })
 
+Deno.test("generateMobileAuthenticationPage - should reject when users lookup errors", async () => {
+  // Regression for BossConsole#1282: a users-row lookup error used to fall back
+  // to the attacker-controlled URL `email` parameter. The fallback is now
+  // removed; the caller must see the same generic error any other challenge
+  // failure produces, and the challenge must NOT be updated to in_progress
+  // (its sessionId stays unbound).
+  const mockClient = createMockSupabaseClient()
+
+  mockClient.mockResponse('passkey_challenges', {
+    data: {
+      ...mockChallenge,
+      type: 'authentication',
+      expires_at: new Date(Date.now() + 60000).toISOString()
+    },
+    error: null
+  }, 'select')
+
+  // Simulated lookup error - the row may have been deleted between challenge
+  // creation and the page render, or the table may be momentarily unavailable.
+  mockClient.mockResponse('users', {
+    data: null,
+    error: { code: 'PGRST500', message: 'database unavailable' }
+  }, 'select')
+
+  // If the lookup error is ignored and the fix is wrong, an update would land
+  // here. Stub it so a passing test cannot silently mean "update happened".
+  mockClient.mockResponse('passkey_challenges', {
+    data: [{ id: 'challenge-789' }],
+    error: null
+  }, 'update')
+
+  const result = await generateMobileAuthenticationPage(
+    mockClient as unknown as SupabaseClient,
+    'mock-challenge-base64',
+    'attacker@evil.example', // would be shown if the fallback returned it
+    'session-123',
+    'credential-abc',
+    'api.risaboss.com'
+  )
+
+  assertEquals(result.success, false)
+  if (!result.success) {
+    assertEquals(result.error, 'Invalid authentication challenge')
+  }
+  const updateCalls = mockClient.getQueryHistory().filter(h => h.operation === 'update')
+  assertEquals(updateCalls.length, 0, 'challenge must not be updated on lookup failure')
+})
+
+Deno.test("generateMobileAuthenticationPage - should reject when users lookup returns no row", async () => {
+  // Regression for BossConsole#1282: a missing user row used to fall back to
+  // the URL `email` parameter. The fix makes that fall-through impossible.
+  const mockClient = createMockSupabaseClient()
+
+  mockClient.mockResponse('passkey_challenges', {
+    data: {
+      ...mockChallenge,
+      type: 'authentication',
+      expires_at: new Date(Date.now() + 60000).toISOString()
+    },
+    error: null
+  }, 'select')
+
+  // Single-row query with no row found returns data:null, error: PGRST116
+  mockClient.mockResponse('users', {
+    data: null,
+    error: { code: 'PGRST116', message: 'No rows found' }
+  }, 'select')
+
+  mockClient.mockResponse('passkey_challenges', {
+    data: [{ id: 'challenge-789' }],
+    error: null
+  }, 'update')
+
+  const result = await generateMobileAuthenticationPage(
+    mockClient as unknown as SupabaseClient,
+    'mock-challenge-base64',
+    'attacker@evil.example',
+    'session-123',
+    'credential-abc',
+    'api.risaboss.com'
+  )
+
+  assertEquals(result.success, false)
+  if (!result.success) {
+    assertEquals(result.error, 'Invalid authentication challenge')
+  }
+  const updateCalls = mockClient.getQueryHistory().filter(h => h.operation === 'update')
+  assertEquals(updateCalls.length, 0)
+})
+
+Deno.test("generateMobileAuthenticationPage - should reject when stored email is blank", async () => {
+  // Regression for BossConsole#1282: a stored email of "" or whitespace used
+  // to fall through to the URL `email` parameter. The fix refuses blank.
+  const mockClient = createMockSupabaseClient()
+
+  mockClient.mockResponse('passkey_challenges', {
+    data: {
+      ...mockChallenge,
+      type: 'authentication',
+      expires_at: new Date(Date.now() + 60000).toISOString()
+    },
+    error: null
+  }, 'select')
+
+  mockClient.mockResponse('users', {
+    data: { id: 'user-456', email: '' },
+    error: null
+  }, 'select')
+
+  mockClient.mockResponse('passkey_challenges', {
+    data: [{ id: 'challenge-789' }],
+    error: null
+  }, 'update')
+
+  const result = await generateMobileAuthenticationPage(
+    mockClient as unknown as SupabaseClient,
+    'mock-challenge-base64',
+    'attacker@evil.example',
+    'session-123',
+    'credential-abc',
+    'api.risaboss.com'
+  )
+
+  assertEquals(result.success, false)
+  if (!result.success) {
+    assertEquals(result.error, 'Invalid authentication challenge')
+  }
+  const updateCalls = mockClient.getQueryHistory().filter(h => h.operation === 'update')
+  assertEquals(updateCalls.length, 0)
+})
+
 // ============================================================================
 // Mobile Authentication Tests
 // ============================================================================
@@ -196,7 +315,7 @@ Deno.test("generateMobileAuthenticationPage - should generate valid authenticati
   }, 'select')
 
   // Mock user lookup
-  mockClient.mockResponse('auth.users', {
+  mockClient.mockResponse('users', {
     data: { id: 'user-456', email: 'test@example.com' },
     error: null
   }, 'select')
@@ -328,7 +447,7 @@ Deno.test("generateMobileAuthenticationPage - should reject non-existent credent
   }, 'select')
 
   // Mock user lookup
-  mockClient.mockResponse('auth.users', {
+  mockClient.mockResponse('users', {
     data: { id: 'user-456', email: 'test@example.com' },
     error: null
   }, 'select')
@@ -369,7 +488,7 @@ Deno.test("generateMobileAuthenticationPage - should reject inactive credential"
   }, 'select')
 
   // Mock user lookup
-  mockClient.mockResponse('auth.users', {
+  mockClient.mockResponse('users', {
     data: { id: 'user-456', email: 'test@example.com' },
     error: null
   }, 'select')
@@ -410,7 +529,7 @@ Deno.test("generateMobileAuthenticationPage - should update challenge status to 
   }, 'select')
 
   // Mock user lookup
-  mockClient.mockResponse('auth.users', {
+  mockClient.mockResponse('users', {
     data: { id: 'user-456', email: 'test@example.com' },
     error: null
   }, 'select')
@@ -458,7 +577,7 @@ Deno.test("generateMobileAuthenticationPage - should return credential metadata"
   }, 'select')
 
   // Mock user lookup
-  mockClient.mockResponse('auth.users', {
+  mockClient.mockResponse('users', {
     data: { id: 'user-456', email: 'test@example.com' },
     error: null
   }, 'select')
