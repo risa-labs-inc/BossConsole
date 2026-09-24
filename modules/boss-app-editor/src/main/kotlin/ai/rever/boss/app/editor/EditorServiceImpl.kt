@@ -26,7 +26,7 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * Provides real file I/O using the host filesystem:
  * - OpenFile: reads file from disk, detects language by extension
- * - SaveFile: writes content back to disk
+ * - SaveFile: writes content back to disk atomically and reports IO failures on the wire
  * - DetectMainFunctions: regex-based scan for entry points across multiple languages
  * - GetTokens / NavigateToDefinition: require PSI (in composeApp) — return empty
  */
@@ -281,7 +281,7 @@ class EditorServiceImpl(
             }
         }
 
-    override suspend fun saveFile(request: SaveFileRequest): Empty =
+    override suspend fun saveFile(request: SaveFileRequest): SaveFileResponse =
         withContext(Dispatchers.IO) {
             logger.info("saveFile: path={}", request.path)
             // Validate BEFORE any mkdirs: a save may target a new file (validatePath
@@ -290,21 +290,29 @@ class EditorServiceImpl(
             // save still create directories outside the confinement root.
             val file = validatePath(request.path)
             // A failed save must not read as success: the client marks the buffer
-            // clean on an Empty response, so a disk-full or permission-denied save
-            // that returns Empty loses the edit with no signal.
+            // clean on a success response, so a disk-full or permission-denied save
+            // that reads as success loses the edit with no signal. The failure is
+            // reported through SaveFileResponse - the shape the write_file
+            // capability's OutputSchemaJson declares - so an IO failure is
+            // success=false with a message, never a swallowed Empty (BossConsole#1157).
             try {
                 atomicWrite(file, request.content)
                 openFiles[request.path] = false
             } catch (e: CancellationException) {
                 throw e
             } catch (e: IOException) {
-                logger.error("saveFile failed for {}: {}", request.path, e.message)
-                throw Status.INTERNAL
-                    .withDescription("Save failed for ${request.path}: ${e.message}")
-                    .withCause(e)
-                    .asRuntimeException()
+                val message = "Save failed for ${request.path}: ${e.message ?: e::class.java.simpleName}"
+                logger.error("saveFile failed for {}: {}", request.path, message)
+                return@withContext SaveFileResponse
+                    .newBuilder()
+                    .setSuccess(false)
+                    .setErrorMessage(message)
+                    .build()
             }
-            Empty.getDefaultInstance()
+            SaveFileResponse
+                .newBuilder()
+                .setSuccess(true)
+                .build()
         }
 
     override suspend fun getTokens(request: GetTokensRequest): GetTokensResponse {

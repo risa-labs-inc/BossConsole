@@ -198,22 +198,23 @@ class EditorServiceImplSaveTest {
     }
 
     @Test
-    fun `a failed save propagates on the wire instead of reading as success`() {
+    fun `a failed save reports failure on the wire instead of reading as success`() {
         // The old code caught every exception and returned the same Empty a
-        // successful save returns; the client marks the buffer clean on Empty,
-        // so a disk-full save lost the edit silently. A write failure must
-        // surface as an INTERNAL error. Portable failure injection: a parent
-        // path component that is a REGULAR FILE - mkdirs/createTempFile fail
-        // with IOException on every platform (a read-only directory would not
-        // stop createTempFile on Windows, where the DOS read-only bit does
-        // not block file creation).
+        // successful save returns; the client marks the buffer clean on a
+        // success response, so a disk-full save lost the edit silently. A
+        // write failure must surface through SaveFileResponse - success=false
+        // with an error message, the shape the write_file capability's
+        // OutputSchemaJson declares (BossConsole#1157) - instead of a
+        // Status error the capability's schema does not describe. Portable
+        // failure injection: a parent path component that is a REGULAR FILE -
+        // mkdirs/createTempFile fail with IOException on every platform (a
+        // read-only directory would not stop createTempFile on Windows, where
+        // the DOS read-only bit does not block file creation).
         val blocker = File(tempDir, "ro").apply { writeText("not a directory\n") }
         val target = File(blocker, "file.kt")
-        val e =
-            assertFailsWith<StatusRuntimeException> {
-                runBlocking { impl().saveFile(saveRequest(target)) }
-            }
-        assertEquals(Status.Code.INTERNAL, e.status.code)
+        val response = runBlocking { impl().saveFile(saveRequest(target)) }
+        assertFalse(response.success, "a failed save must not read as success")
+        assertTrue(response.errorMessage.isNotEmpty(), "the failure must carry a wire-visible message")
         assertEquals("not a directory\n", blocker.readText(), "the blocker must be untouched")
         assertFalse(target.exists(), "a failed save must not create the target")
     }
@@ -225,7 +226,7 @@ class EditorServiceImplSaveTest {
         // shape fails: createTempFile in a read-only DIRECTORY (POSIX -
         // clearing the directory's write bit still lets a plain writeText
         // REOPEN the existing 644 target, so writeText fully succeeds and
-        // assertFailsWith finds no exception - that is how this test catches
+        // the response reads as success - that is how this test catches
         // the revert, not via a torn target). The atomic path fails BEFORE
         // writing any byte, so the previous-content assertion is trivially
         // true here; the stronger property - a write that dies PARTWAY
@@ -257,11 +258,8 @@ class EditorServiceImplSaveTest {
         target.writeText("precious complete content\n")
         target.parentFile.setWritable(false)
         try {
-            val e =
-                assertFailsWith<StatusRuntimeException> {
-                    runBlocking { impl().saveFile(saveRequest(target)) }
-                }
-            assertEquals(Status.Code.INTERNAL, e.status.code)
+            val response = runBlocking { impl().saveFile(saveRequest(target)) }
+            assertFalse(response.success, "a failed save must not read as success")
         } finally {
             target.parentFile.setWritable(true)
         }
