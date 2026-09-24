@@ -669,6 +669,7 @@ fun createBossCLI(): BossCommand =
         BossDoctorCommand(),
         BossMcpCommand(),
         BossCompletionCommand(),
+        BossPortDoctorCommand(),
         BossPluginCommand().subcommands(
             BossPluginInitCommand(),
             BossPluginValidateCommand(),
