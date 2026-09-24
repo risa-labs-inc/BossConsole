@@ -251,7 +251,7 @@ object FluckEngine {
         proactiveCleanupDone = true
 
         val selectedProfile = BrowserSettings.currentProfile
-        val profileDirPath = BossDirectories.resolve(selectedProfile).toPath()
+        val profileDirPath = BrowserProfilePaths.resolve(selectedProfile)
 
         // First, kill any stale Chromium processes from previous sessions
         killStaleChromiumProcesses()
@@ -277,7 +277,7 @@ object FluckEngine {
             // Use explicit paths for more precise matching (security: avoid killing unrelated processes)
             val bossChromiumDir = BossDirectories.resolve("jxbrowser-chromium").absolutePath
             val bossBrandedChromiumDir = BossDirectories.resolve("boss-chromium").absolutePath
-            val bossProfileDir = BossDirectories.resolve("browser-profile").absolutePath
+            val bossProfileDir = BrowserProfilePaths.resolve(BrowserProfilePaths.DEFAULT_PROFILE_ID).toString()
             val currentPid = ProcessHandle.current().pid()
             val currentTimeMs = System.currentTimeMillis()
 
@@ -1065,7 +1065,7 @@ object FluckEngine {
                 force = force,
                 engineRunning = { _engine != null && isEngineHealthy() },
                 engineUsable = { hasUsableEngine(cacheIsHealthy()) },
-                profileExists = { BossDirectories.resolve(BrowserSettings.currentProfile).exists() },
+                profileExists = { BrowserProfilePaths.resolve(BrowserSettings.currentProfile).toFile().exists() },
             )
         if (decision != PrewarmDecision.RUN) {
             // The reason, not a guess at it, and as a field rather than interpolated into the
@@ -1778,7 +1778,7 @@ object FluckEngine {
 
     /**
      * Clean up old temporary profiles to prevent disk space accumulation.
-     * Deletes browser-profile-* directories older than 24 hours.
+     * Deletes browser-profile-<timestamp> directories older than 24 hours.
      * Called during engine initialization (may run alongside active engine).
      */
     private fun cleanupOldTemporaryProfiles() {
@@ -1790,11 +1790,10 @@ object FluckEngine {
                 .listFiles()
                 ?.filter {
                     it.isDirectory &&
-                        it.name.startsWith("browser-profile-") &&
-                        it.name != "browser-profile" &&
+                        BrowserProfilePaths.isTemporaryId(it.name) &&
                         it.lastModified() < oneDayAgo
                 }?.forEach { dir ->
-                    dir.deleteRecursively()
+                    BrowserProfilePaths.delete(dir.name)
                 }
         } catch (e: Exception) {
             // Housekeeping only - old temp profiles are retried next startup
@@ -1816,10 +1815,9 @@ object FluckEngine {
                 .listFiles()
                 ?.filter {
                     it.isDirectory &&
-                        it.name.startsWith("browser-profile-") &&
-                        it.name != "browser-profile"
+                        BrowserProfilePaths.isTemporaryId(it.name)
                 }?.forEach { dir ->
-                    if (dir.deleteRecursively()) {
+                    if (BrowserProfilePaths.delete(dir.name)) {
                         cleanedCount++
                     }
                 }
@@ -1846,7 +1844,7 @@ object FluckEngine {
 
     private fun createEngineWithProfile(chromiumDir: java.nio.file.Path): Engine {
         val selectedProfile = BrowserSettings.currentProfile
-        val profileDirPath = BossDirectories.resolve(selectedProfile).toPath()
+        val profileDirPath = BrowserProfilePaths.resolve(selectedProfile)
         profileDirPath.toFile().mkdirs()
 
         return try {
@@ -1873,7 +1871,7 @@ object FluckEngine {
 
             // Profile is genuinely in use by another process, use temporary
             val tempProfile = "browser-profile-${System.currentTimeMillis()}"
-            val tempProfilePath = BossDirectories.resolve(tempProfile).toPath()
+            val tempProfilePath = BrowserProfilePaths.resolve(tempProfile)
             tempProfilePath.toFile().mkdirs()
 
             try {
@@ -3488,6 +3486,15 @@ object FluckEngine {
             var profileDeleted = false
             var tempProfilesCleaned = false
 
+            val selectedProfile = BrowserSettings.currentProfile
+            if (!BrowserProfilePaths.isValidId(selectedProfile)) {
+                return@withContext ResetResult(
+                    success = false,
+                    errorMessage = "Invalid browser profile identifier. Reset was refused.",
+                    failedStep = "Validate profile",
+                )
+            }
+
             try {
                 // Step 1: Close current engine if it exists
                 _engine?.let { engine ->
@@ -3528,25 +3535,17 @@ object FluckEngine {
                 }
 
                 // Step 4: Delete browser profile directory
-                val selectedProfile = BrowserSettings.currentProfile
-                val profileDir = BossDirectories.resolve(selectedProfile)
-
-                if (profileDir.exists()) {
-                    profileDeleted = profileDir.deleteRecursively()
-                    if (profileDeleted) {
-                    } else {
-                        // This is a partial failure - return with details
-                        return@withContext ResetResult(
-                            success = false,
-                            engineClosed = engineClosed,
-                            profileDeleted = false,
-                            tempProfilesCleaned = false,
-                            errorMessage = "Could not delete all files in profile directory. Some files may be locked.",
-                            failedStep = "Delete profile directory",
-                        )
-                    }
-                } else {
-                    profileDeleted = true // Nothing to delete is success
+                profileDeleted = BrowserProfilePaths.delete(selectedProfile)
+                if (!profileDeleted) {
+                    // This is a partial failure - return with details
+                    return@withContext ResetResult(
+                        success = false,
+                        engineClosed = engineClosed,
+                        profileDeleted = false,
+                        tempProfilesCleaned = false,
+                        errorMessage = "Could not delete all files in profile directory. Some files may be locked.",
+                        failedStep = "Delete profile directory",
+                    )
                 }
 
                 // Step 5: Also clean up temporary profiles

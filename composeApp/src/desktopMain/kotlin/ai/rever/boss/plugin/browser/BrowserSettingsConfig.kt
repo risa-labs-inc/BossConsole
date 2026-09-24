@@ -7,8 +7,8 @@ import java.awt.Window
 object BrowserSettings {
     var userAgent: String? = null
     var customUserAgent: String? = null
-    var currentProfile: String = "browser-profile"
-    val availableProfiles = mutableListOf("browser-profile")
+    var currentProfile: String = BrowserProfilePaths.DEFAULT_PROFILE_ID
+    val availableProfiles = mutableListOf(BrowserProfilePaths.DEFAULT_PROFILE_ID)
 
     // Browser initialization retry settings (configurable via Settings)
     var maxInitRetries: Int = 3

@@ -1,6 +1,7 @@
 package ai.rever.boss.components.settings.sections
 
 import ai.rever.boss.components.settings.shared.SettingsSection
+import ai.rever.boss.plugin.browser.BrowserProfilePaths
 import ai.rever.boss.plugin.browser.BrowserSettings
 import ai.rever.boss.plugin.browser.BrowserSettingsManager
 import ai.rever.boss.plugin.ui.BossAlertDialog
@@ -39,6 +40,7 @@ fun ProfileManagementSection(
     var showSwitchProfileMenu by remember { mutableStateOf(false) }
     var showNewProfileDialog by remember { mutableStateOf(false) }
     var newProfileName by remember { mutableStateOf("") }
+    val newProfileId = BrowserProfilePaths.idForDisplayName(newProfileName)
 
     val availableProfiles =
         remember {
@@ -203,8 +205,8 @@ fun ProfileManagementSection(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        if (newProfileName.isNotBlank()) {
-                            val profileName = "browser-profile-${newProfileName.replace(" ", "-").lowercase()}"
+                        if (newProfileId != null) {
+                            val profileName = newProfileId
                             availableProfiles.add(profileName)
                             BrowserSettings.availableProfiles.add(profileName)
                             onProfileChange(profileName)
@@ -217,12 +219,12 @@ fun ProfileManagementSection(
                             }
                         }
                     },
-                    enabled = newProfileName.isNotBlank(),
+                    enabled = newProfileId != null,
                 ) {
                     Text(
                         "Create",
                         color =
-                            if (newProfileName.isNotBlank()) {
+                            if (newProfileId != null) {
                                 BossTheme.colors.signal
                             } else {
                                 BossTheme.colors.textSecondary
