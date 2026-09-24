@@ -11,6 +11,7 @@ import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import java.io.File
+import java.nio.file.Files
 import java.security.MessageDigest
 import javax.imageio.ImageIO
 
@@ -18,6 +19,7 @@ import javax.imageio.ImageIO
  * File-based cache for browser tab favicons.
  * Stores favicons as PNG files in the application's cache directory.
  */
+@Suppress("TooManyFunctions")
 object FaviconCache {
     private val logger = BossLogger.forComponent("FaviconCache")
     private const val MAX_FAVICON_SIZE_BYTES = 100 * 1024 // 100KB limit
@@ -172,11 +174,7 @@ object FaviconCache {
      * Useful for cleanup or troubleshooting.
      */
     fun clearCache() {
-        try {
-            cacheDir.listFiles()?.forEach { it.delete() }
-        } catch (e: Exception) {
-            logger.warn(LogCategory.BROWSER, "Error clearing cache", error = e)
-        }
+        clearCacheIn(cacheDir)
     }
 
     /**
@@ -184,14 +182,63 @@ object FaviconCache {
      * @param daysOld Remove files older than this many days (default: 30)
      */
     fun cleanupStaleEntries(daysOld: Int = 30) {
+        cleanupStaleEntriesIn(cacheDir, daysOld)
+    }
+
+    /**
+     * Gets the total size of the favicon cache in bytes.
+     */
+    fun getCacheSize(): Long =
+        cacheDir
+            .listFiles()
+            ?.filter { !Files.isSymbolicLink(it.toPath()) }
+            ?.sumOf { it.length() } ?: 0L
+
+    /**
+     * Gets the number of cached favicons.
+     */
+    fun getCacheCount(): Int = cacheDir.listFiles()?.count { !Files.isSymbolicLink(it.toPath()) } ?: 0
+
+    /**
+     * Clears all entries inside [dir]. Symlinks are deliberately skipped: `File.delete`
+     * follows symlinks, so a planted link would have its *target* deleted. Real cache
+     * entries under the directory are still removed.
+     */
+    internal fun clearCacheIn(dir: File) {
+        try {
+            dir.listFiles()?.forEach { entry ->
+                if (!Files.isSymbolicLink(entry.toPath())) {
+                    entry.delete()
+                }
+            }
+        } catch (e: Exception) {
+            logger.warn(LogCategory.BROWSER, "Error clearing cache", error = e)
+        }
+    }
+
+    /**
+     * Test seam: drives [clearCacheIn] against an explicit directory rather than the
+     * production cache root, so a symlink planted in a temp directory can be observed.
+     */
+    @Suppress("unused")
+    internal fun clearCacheInDirectoryForTest(dir: File) = clearCacheIn(dir)
+
+    /**
+     * Removes stale entries (older than [daysOld] days) inside [dir]. Symlinks are
+     * skipped for the same reason as [clearCacheIn] - `File.delete` follows them, so
+     * a sweep that did not check would delete whatever the link points at.
+     */
+    internal fun cleanupStaleEntriesIn(
+        dir: File,
+        daysOld: Int,
+    ) {
         try {
             val cutoffTime = System.currentTimeMillis() - (daysOld * 24 * 60 * 60 * 1000L)
-            var removedCount = 0
 
-            cacheDir.listFiles()?.forEach { file ->
+            dir.listFiles()?.forEach { file ->
+                if (Files.isSymbolicLink(file.toPath())) return@forEach
                 if (file.lastModified() < cutoffTime) {
                     file.delete()
-                    removedCount++
                 }
             }
         } catch (e: Exception) {
@@ -200,12 +247,11 @@ object FaviconCache {
     }
 
     /**
-     * Gets the total size of the favicon cache in bytes.
+     * Test seam: drives [cleanupStaleEntriesIn] against an explicit directory.
      */
-    fun getCacheSize(): Long = cacheDir.listFiles()?.sumOf { it.length() } ?: 0L
-
-    /**
-     * Gets the number of cached favicons.
-     */
-    fun getCacheCount(): Int = cacheDir.listFiles()?.size ?: 0
+    @Suppress("unused")
+    internal fun cleanupStaleEntriesInDirectoryForTest(
+        dir: File,
+        daysOld: Int,
+    ) = cleanupStaleEntriesIn(dir, daysOld)
 }

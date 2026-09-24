@@ -11,6 +11,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.awt.image.BufferedImage
 import java.io.File
+import java.nio.file.Files
 import java.security.MessageDigest
 import javax.imageio.ImageIO
 
@@ -182,10 +183,19 @@ internal object HqFaviconDiskCache {
      *
      * Under the same lock as [save] and [delete]: without it this could land between a write's
      * temp file and its move and take one or the other with it.
+     *
+     * Symlinks are deliberately skipped: `File.delete` follows symlinks, so a planted
+     * link would have its *target* deleted, not the cache entry. The same check [entriesIn]
+     * already runs on the read path; doing it here means a cache directory cannot lose
+     * anything outside it regardless of which surface runs.
      */
     suspend fun clear(dir: File = defaultDir) {
         mutex.withLock {
-            dir.listFiles()?.forEach { it.delete() }
+            dir.listFiles()?.forEach { entry ->
+                if (!Files.isSymbolicLink(entry.toPath())) {
+                    entry.delete()
+                }
+            }
         }
     }
 
@@ -195,9 +205,23 @@ internal object HqFaviconDiskCache {
         return Pair(files.size, files.sumOf { it.length() })
     }
 
-    /** The cache's own entries, i.e. not a `.part` file some concurrent write is still filling. */
+    /**
+     * The cache's own entries, i.e. not a `.part` file some concurrent write is still filling
+     * and not a symlink - symlinks inside the cache directory would have their target read
+     * by `ImageIO.read`, which is a different failure mode than a deletion but the same
+     * data-loss pattern (cache reads through a link that points outside it).
+     */
     private fun entriesIn(dir: File): List<File> {
         val files = dir.listFiles() ?: return emptyList()
-        return files.filter { it.isFile && it.name.endsWith(".png") }
+        return files.filter { it.isFile && !Files.isSymbolicLink(it.toPath()) && it.name.endsWith(".png") }
+    }
+
+    /**
+     * Test seam: drives [clear] against an explicit directory without touching the
+     * production cache root. Symlink behavior is identical to [clear].
+     */
+    @Suppress("unused")
+    suspend fun clearInDirectoryForTest(dir: File) {
+        clear(dir)
     }
 }
