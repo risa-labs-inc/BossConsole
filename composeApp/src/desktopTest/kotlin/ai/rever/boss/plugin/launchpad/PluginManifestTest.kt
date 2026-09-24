@@ -16,10 +16,12 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class PluginManifestTest {
@@ -153,7 +155,7 @@ class PluginManifestTest {
     @Test
     fun `findActiveDevJar resolves newest timestamp directory`() {
         val devRoot = Files.createDirectory(tempDir.resolve("dev-root"))
-        val pluginDir = Files.createDirectory(devRoot.resolve("my-tool"))
+        val pluginDir = Files.createDirectory(devRoot.resolve("com.example.mytool"))
         val timestamps = listOf(1000L, 2000L, 5000L, 3000L)
 
         for (ts in timestamps) {
@@ -161,13 +163,46 @@ class PluginManifestTest {
             Files.writeString(vDir.resolve("my-tool.jar"), "content-$ts")
         }
 
-        val activeJar = DevPluginArtifacts.findActiveDevJar("my-tool", devRoot.toFile())
+        val activeJar = DevPluginArtifacts.findActiveDevJar("com.example.mytool", devRoot.toFile())
         assertTrue(activeJar != null, "Active dev jar should be found")
         assertTrue(activeJar.toString().contains("v5000"), "Active dev jar must be newest timestamp (v5000)")
 
         val allActive = DevPluginArtifacts.findAllActiveDevJars(devRoot.toFile())
         assertEquals(1, allActive.size)
         assertEquals(activeJar, allActive.first())
+    }
+
+    @Test
+    fun `dev staging refuses path traversal plugin ids before touching the filesystem`() {
+        val devRoot = Files.createDirectory(tempDir.resolve("dev-root"))
+
+        // A directory outside devRoot that a traversal id would otherwise resolve to
+        val outsideDir = Files.createDirectory(tempDir.resolve("etc"))
+        val escapedVersionDir = Files.createDirectories(outsideDir.resolve("v1000"))
+        val escapedJar = Files.writeString(escapedVersionDir.resolve("evil.jar"), "content")
+
+        // "../etc" resolves to outsideDir: without the guard it would list the v* dirs
+        assertNull(
+            DevPluginArtifacts.findActiveDevJar("../etc", devRoot.toFile()),
+            "Traversal plugin id must not resolve a dev JAR outside devRoot",
+        )
+        assertNull(DevPluginArtifacts.findActiveDevJar("../../etc", devRoot.toFile()))
+        assertNull(DevPluginArtifacts.findActiveDevJar("..", devRoot.toFile()))
+        assertNull(DevPluginArtifacts.findActiveDevJar("no-dots", devRoot.toFile()))
+
+        assertFailsWith<IllegalArgumentException> {
+            DevPluginArtifacts.pluginDevDir("../../etc", devRoot.toFile())
+        }
+        assertFailsWith<IllegalArgumentException> {
+            DevPluginArtifacts.pluginDevDir("..\\..\\etc", devRoot.toFile())
+        }
+
+        // Nothing outside devRoot was listed or deleted
+        assertTrue(escapedJar.toFile().exists())
+        assertTrue(
+            devRoot.toFile().listFiles().isNullOrEmpty(),
+            "devRoot must not gain directories for refused plugin ids",
+        )
     }
 
     @Test
@@ -242,13 +277,13 @@ class PluginManifestTest {
 
             // 1. Standard installed JAR
             val standardJar = File(pluginsDir, "my-plugin.jar")
-            writeSyntheticJar(standardJar, "my-plugin")
+            writeSyntheticJar(standardJar, "com.example.myplugin")
 
-            // 2. Version-rotated dev JAR in staging root: my-plugin/v1000/my-plugin.jar
-            val versionDir = File(stagingBase, "my-plugin/v1000")
+            // 2. Version-rotated dev JAR in staging root: com.example.myplugin/v1000/my-plugin.jar
+            val versionDir = File(stagingBase, "com.example.myplugin/v1000")
             versionDir.mkdirs()
             val versionJar = File(versionDir, "my-plugin.jar")
-            writeSyntheticJar(versionJar, "my-plugin")
+            writeSyntheticJar(versionJar, "com.example.myplugin")
 
             val discoveredDevJars = DefaultPlugin.findActiveDevJars(stagingBase)
             assertEquals(1, discoveredDevJars.size)

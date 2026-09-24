@@ -7,6 +7,7 @@ import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -16,9 +17,11 @@ import kotlinx.coroutines.launch
  * Authentication options manager handling user existence checks and option coordination
  * Responsible for: checking user existence, determining available authentication options
  */
-class AuthOptionsManager {
+class AuthOptionsManager(
+    // Default preserves production behavior; injectable so a test can assert the scope is cancelled.
+    private val viewModelScope: CoroutineScope = CoroutineScope(Dispatchers.Main + SupervisorJob()),
+) {
     private val logger = BossLogger.forComponent("AuthOptionsManager")
-    private val viewModelScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
@@ -89,6 +92,14 @@ class AuthOptionsManager {
                 },
             )
         }
+    }
+
+    /**
+     * Cancel the view-model scope so an in-flight user-existence check cannot run its callback
+     * after the auth screen has left composition. Call from the owning composable's onDispose.
+     */
+    fun dispose() {
+        viewModelScope.cancel()
     }
 }
 

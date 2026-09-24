@@ -2180,8 +2180,18 @@ private class DefaultCacheProvider : CacheProvider {
  * Default implementation of BackgroundTaskProvider.
  * Launches tasks on the plugin scope with tracking.
  */
-private class DefaultBackgroundTaskProvider(
+internal class DefaultBackgroundTaskProvider(
     private val scope: kotlinx.coroutines.CoroutineScope,
+    /**
+     * Test seam: mints the `activeTasks` key, so a test can force two launches onto one key.
+     *
+     * Production passes nothing. The collision this exists to reproduce is real but not
+     * reproducible on demand, because it needs two launches inside one clock millisecond, and a
+     * test that waits for that covers the case only sometimes and says nothing when it does not.
+     * Two earlier versions of the sibling test below passed against the very mutation they were
+     * written to catch, for exactly that reason.
+     */
+    private val taskIdOverride: ((String) -> String)? = null,
 ) : BackgroundTaskProvider {
     private val taskLogger = BossLogger.forComponent("DefaultBackgroundTaskProvider")
     private val activeTasks = java.util.concurrent.ConcurrentHashMap<String, DefaultBackgroundTaskHandle>()
@@ -2191,22 +2201,37 @@ private class DefaultBackgroundTaskProvider(
         task: suspend () -> Unit,
     ): BackgroundTaskHandle? =
         try {
-            val taskId = "$name-${System.currentTimeMillis()}"
-            val job =
-                scope.launch {
-                    try {
-                        task()
-                    } finally {
-                        activeTasks.remove(taskId)
-                    }
-                }
+            val taskId = taskIdOverride?.invoke(name) ?: "$name-${System.currentTimeMillis()}"
+            val job = scope.launch { task() }
             val handle = DefaultBackgroundTaskHandle(name, job)
+            // Register first, release second. The release used to be a `finally` inside the
+            // coroutine, which runs before this line whenever the body reaches its end before the
+            // launching thread gets here - then the removal finds nothing and the entry that lands
+            // afterwards is never released. `invokeOnCompletion` cannot lose that race: registered
+            // after the entry exists, and invoked immediately when the job is already complete.
             activeTasks[taskId] = handle
+            // Value-matched, so a completing task can only ever evict its OWN handle. `taskId` is
+            // `name` plus the millisecond, so two same-named tasks launched inside one millisecond
+            // share a key; a key-only remove would then let the first to finish drop the second,
+            // still-running task out of `getRunningTasks` and out of `cancelAll`. That inverts the
+            // defect being fixed here, from retaining a dead handle to losing a live one.
+            // `DefaultBackgroundTaskHandle` overrides no `equals`, so this is an identity match.
+            job.invokeOnCompletion { activeTasks.remove(taskId, handle) }
             handle
         } catch (e: Exception) {
             taskLogger.warn(LogCategory.SYSTEM, "Failed to launch background task", mapOf("task" to name), error = e)
             null
         }
+
+    /**
+     * How many handles are still tracked, including any the provider failed to release.
+     *
+     * Visible for tests. A handle that outlives its task is invisible through this interface:
+     * [getRunningTasks] filters it out because it is no longer active, and [cancelAll] does not
+     * count it for the same reason, so the only symptom is a map that grows for the lifetime of
+     * the window. This is the seam that makes that growth assertable.
+     */
+    internal fun trackedTaskCount(): Int = activeTasks.size
 
     override fun getRunningTasks(): List<BackgroundTaskHandle> = activeTasks.values.filter { it.isActive }.toList()
 

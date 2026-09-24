@@ -2,6 +2,8 @@ package ai.rever.boss.startup
 
 import ai.rever.boss.app.LastSessionCoordinator
 import ai.rever.boss.cache.HighQualityFaviconService
+import ai.rever.boss.components.plugin.panels.left_top.ProjectState
+import ai.rever.boss.dashboard.DashboardStatsManager
 import ai.rever.boss.dashboard.RecentBrowserPagesManager
 import ai.rever.boss.dashboard.RecentFilesManager
 import ai.rever.boss.performance.PerformanceMonitor
@@ -51,6 +53,8 @@ object ShutdownSequence {
                     RecentFilesManager.flushPendingSaves()
                     RecentBrowserPagesManager.flushPendingSaves()
                     UserDataStorage.flushPendingSaves()
+                    ProjectState.flushPendingSaves()
+                    DashboardStatsManager.flushPendingSaves()
                 }
             },
             ShutdownStep("stopping performance monitor") {

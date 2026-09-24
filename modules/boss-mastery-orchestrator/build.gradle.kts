@@ -35,7 +35,6 @@ graalvmNative {
 dependencies {
     api(project(":boss-ipc"))
     api(project(":boss-mastery-sdk"))
-    api(project(":boss-process-manager"))
     api(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.slf4j.api)

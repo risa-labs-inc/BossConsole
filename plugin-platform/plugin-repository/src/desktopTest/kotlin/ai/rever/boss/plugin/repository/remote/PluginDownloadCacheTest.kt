@@ -21,6 +21,11 @@ class PluginDownloadCacheTest {
         return digest.joinToString("") { "%02x".format(it) }
     }
 
+    private fun sha256Hex(value: String): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(it) }
+    }
+
     @Test
     fun rejectsPathSyntaxWithoutTouchingOutsideFiles() {
         val root = File(temporary, "cache")
@@ -120,6 +125,67 @@ class PluginDownloadCacheTest {
         assertEquals(0, cache.cleanOldEntries(0))
         cache.clearCache()
         assertEquals("sentinel", sentinel.readText())
+    }
+
+    @Test
+    fun queriesAreServedFromTheIndexWithoutRescanningTheTree() {
+        val root = File(temporary, "cache")
+        val cache = PluginDownloadCache(root)
+        val source = File(temporary, "source.jar").also { it.writeText("jar") }
+
+        // Enough entries that a per-query Files.walk would be the dominant cost.
+        repeat(100) { cache.cacheJar("plugin-$it", "1.0.0", source) }
+        val size = cache.getCacheSize()
+        assertEquals(100, cache.getCachedFileCount())
+
+        // A fully valid entry written behind the cache's back - same on-disk shape
+        // cacheJar produces - stays invisible to later queries. A tree walk would pick
+        // it up; the maintained index must not.
+        val plantedDir = File(root, "p-" + sha256Hex("planted-plugin")).also { it.mkdirs() }
+        val plantedName = "v-" + sha256Hex("9.9.9")
+        File(plantedDir, "$plantedName.jar").writeBytes(source.readBytes())
+        File(plantedDir, "$plantedName.json").writeText("""{"pluginId":"planted-plugin","version":"9.9.9"}""")
+
+        assertEquals(size, cache.getCacheSize())
+        assertEquals(100, cache.getCachedFileCount())
+        assertNull(cache.listCachedPlugins()["planted-plugin"])
+    }
+
+    @Test
+    fun indexTracksInsertsAndEvictionsWithoutRescanning() {
+        val cache = PluginDownloadCache(File(temporary, "cache"))
+        val source = File(temporary, "source.jar").also { it.writeText("jar") }
+        cache.cacheJar("plugin-a", "1.0.0", source)
+
+        // First query builds nothing lazily - the index exists from construction - but
+        // every mutation below must land in it without the directory being walked again.
+        val sizeAfterOne = cache.getCacheSize()
+        cache.cacheJar("plugin-b", "1.0.0", source)
+        assertEquals(sizeAfterOne + source.length(), cache.getCacheSize())
+        assertEquals(setOf("plugin-a", "plugin-b"), cache.listCachedPlugins().keys)
+
+        assertTrue(cache.removeCachedJar("plugin-a", "1.0.0"))
+        assertEquals(source.length(), cache.getCacheSize())
+        assertNull(cache.listCachedPlugins()["plugin-a"])
+
+        assertEquals(1, cache.removeAllVersions("plugin-b"))
+        assertEquals(0, cache.getCachedFileCount())
+        assertEquals(0L, cache.getCacheSize())
+    }
+
+    @Test
+    fun expiredEntriesLeaveTheIndexWhenCleaned() {
+        val cache = PluginDownloadCache(File(temporary, "cache"))
+        val source = File(temporary, "source.jar").also { it.writeText("jar") }
+        val stale = cache.cacheJar("plugin-a", "1.0.0", source)
+        cache.cacheJar("plugin-b", "1.0.0", source)
+        Files.setLastModifiedTime(stale.toPath(), FileTime.fromMillis(0))
+
+        assertEquals(1, cache.cleanOldEntries(30))
+        assertNull(cache.getCachedJar("plugin-a", "1.0.0", hash(source)))
+        assertNotNull(cache.getCachedJar("plugin-b", "1.0.0", hash(source)))
+        assertEquals(1, cache.getCachedFileCount())
+        assertEquals(setOf("plugin-b"), cache.listCachedPlugins().keys)
     }
 
     @Test

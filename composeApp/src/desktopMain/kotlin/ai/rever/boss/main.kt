@@ -157,7 +157,20 @@ private fun containRenderFault(
     val outcome = PluginRenderRecovery.onUnattributedRenderException(throwable)
     // Shared with the seam test so both exercise the same pairing — see
     // noteRecoveryOutcome.
-    val visibleProgress = noteRecoveryOutcome(policy, outcome)
+    val recoveryEffect = noteRecoveryOutcome(policy, outcome)
+    if (outcome !is PluginRenderRecovery.Outcome.Unexplained &&
+        outcome !is PluginRenderRecovery.Outcome.NotPluginRelated &&
+        !recoveryEffect.faultRefunded
+    ) {
+        logger.warn(
+            LogCategory.UI,
+            "Render recovery allowance expired - fault remains counted",
+            mapOf(
+                "outcome" to outcome::class.simpleName.orEmpty(),
+                "recentFailures" to policy.recentFailureCount().toString(),
+            ),
+        )
+    }
 
     // Telling the user and un-counting the fault are separate decisions; every
     // attempt to derive one from the other has regressed the other. The toaster
@@ -168,7 +181,7 @@ private fun containRenderFault(
     // The repaint stays on progress only: it is a full sweep of every window, and
     // during a storm it arguably feeds the fault it is responding to. Nothing to
     // repaint for a verdict that changed nothing.
-    if (visibleProgress) {
+    if (recoveryEffect.visibleProgress) {
         Window.getWindows().forEach { it.repaint() }
     }
 }
@@ -346,6 +359,8 @@ fun main(args: Array<String>) {
     PasskeyPlatformInit.initialize()
     SettingsSearchIndex.registerWithGlobalSearch()
     PluginStoreSetup.initialize()
+    ai.rever.boss.plugin.packs.PluginPacks
+        .registerMcpTools()
 
     startupScope.launch {
         AppUpdateRealtimeService.instance.apply {
@@ -400,6 +415,20 @@ fun main(args: Array<String>) {
 
     // Configure MCP workspace tool window creator
     ai.rever.boss.mcp.WorkspaceMcpToolProvider.windowCreator = { WindowManager.createNewWindow().id }
+
+    // Both sources are desktop-only; the provider is commonMain, so it reads them
+    // through suppliers wired here - the same shape as windowCreator above.
+    ai.rever.boss.mcp.IntrospectionMcpToolProvider.healthSupplier = {
+        ai.rever.boss.health
+            .WorkspaceHealthCollector()
+            .collect()
+    }
+    ai.rever.boss.mcp.IntrospectionMcpToolProvider.performanceSupplier = {
+        ai.rever.boss.mcp.PerformanceReading(
+            snapshot = ai.rever.boss.performance.PerformanceMonitor.currentSnapshot.value,
+            health = ai.rever.boss.performance.PerformanceMonitor.currentHealth.value,
+        )
+    }
 
     // Create initial window BEFORE application{} to prevent auto-recreation
     if (!chromiumNeedsDownload) {

@@ -30,59 +30,51 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
                 evaluateShellCommand(normalizedName, args)
             }
 
+            // Workspace lifecycle mutations
+            normalizedName in WORKSPACE_MUTATION_TOOLS -> {
+                McpRiskAssessment(McpRiskLevel.HIGH, "Workspace lifecycle mutation '$toolName'")
+            }
+
             // Secrets access
             normalizedName == "secret_get" -> {
-                McpRiskAssessment(
-                    level = McpRiskLevel.CRITICAL,
-                    reason = "Accessing plaintext secret credentials via '$toolName'",
-                )
+                McpRiskAssessment(McpRiskLevel.CRITICAL, "Accessing plaintext secret credentials via '$toolName'")
             }
 
             normalizedName in SECRET_MANAGEMENT_TOOLS -> {
-                McpRiskAssessment(
-                    level = McpRiskLevel.HIGH,
-                    reason = "Credential vault operation via '$toolName'",
-                )
+                McpRiskAssessment(McpRiskLevel.HIGH, "Credential vault operation via '$toolName'")
             }
 
             // Docker infrastructure mutations
             normalizedName in DOCKER_DESTRUCTIVE_TOOLS -> {
-                McpRiskAssessment(
-                    level = McpRiskLevel.CRITICAL,
-                    reason = "Docker infrastructure mutation '$toolName'",
-                )
+                McpRiskAssessment(McpRiskLevel.CRITICAL, "Docker infrastructure mutation '$toolName'")
             }
 
             // Destructive Kubernetes / Helm infrastructure operations
             normalizedName in K8S_DESTRUCTIVE_TOOLS -> {
-                McpRiskAssessment(
-                    level = McpRiskLevel.CRITICAL,
-                    reason = "Kubernetes/Helm mutation '$toolName'",
-                )
+                McpRiskAssessment(McpRiskLevel.CRITICAL, "Kubernetes/Helm mutation '$toolName'")
             }
 
             // File / Codebase write or delete operations
             normalizedName in FILE_WRITE_TOOLS -> {
+                McpRiskAssessment(McpRiskLevel.HIGH, "File system write operation via '$toolName'")
+            }
+
+            // Installs code and writes durable MCP policy in one call
+            normalizedName in POLICY_WRITING_TOOLS -> {
                 McpRiskAssessment(
                     level = McpRiskLevel.HIGH,
-                    reason = "File system write operation via '$toolName'",
+                    reason = "Installs plugins and writes durable MCP policy via '$toolName'",
                 )
             }
 
             // Read-only / safe tools
             normalizedName in READ_ONLY_TOOLS -> {
-                McpRiskAssessment(
-                    level = McpRiskLevel.LOW,
-                    reason = "Read-only tool (returned data may be sensitive) '$toolName'",
-                )
+                McpRiskAssessment(McpRiskLevel.LOW, "Read-only tool (returned data may be sensitive) '$toolName'")
             }
 
             // Unknown / unclassified tools default to LOW
             else -> {
-                McpRiskAssessment(
-                    level = McpRiskLevel.LOW,
-                    reason = "Unclassified tool '$toolName' - defaulting to low risk",
-                )
+                McpRiskAssessment(McpRiskLevel.LOW, "Unclassified tool '$toolName' - defaulting to low risk")
             }
         }
     }
@@ -139,6 +131,20 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
                 "terminal_open",
             )
 
+        // The workspace provider's lifecycle tools are family siblings of the terminal
+        // tools above: they mutate the workspace catalog (opening windows, persisting or
+        // deleting workspace state) but take no `command` argument, so unlike the shell
+        // tools they carry a flat HIGH instead of a command-inspection floor.
+        private val WORKSPACE_MUTATION_TOOLS =
+            setOf(
+                "open_workspace",
+                "workspace_open",
+                "create_workspace",
+                "workspace_create",
+                "close_workspace",
+                "workspace_close",
+            )
+
         private val SECRET_MANAGEMENT_TOOLS =
             setOf(
                 "secret_create",
@@ -183,6 +189,24 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
                 "project_replace",
             )
 
+        /**
+         * Tools that install executable code and write durable policy in one approved call.
+         *
+         * HIGH rather than the unclassified default of LOW, and the level is doing real work
+         * here: the gate itself is unchanged (`pack_apply` is mutating by name and by
+         * declaration, so `policyFor` already reaches `defaultMutatingAction`), but the host
+         * requires Review-then-Confirm before a HIGH/CRITICAL tool can be granted a *durable*
+         * ALLOW. Left at LOW, one "Always Allow" - or one "Trust This Plugin" on the pack
+         * plugin - hands any agent the operator's own policy authority, unattended and for
+         * good: `pack_apply` installs plugins from the network and writes ALLOW rules for
+         * arbitrary tools and providers. The parser's pack-tool guard stops a pack from
+         * bootstrapping that; it cannot stop the one-click grant that reaches it directly.
+         */
+        private val POLICY_WRITING_TOOLS =
+            setOf(
+                "pack_apply",
+            )
+
         private val READ_ONLY_TOOLS =
             setOf(
                 "codebase_read",
@@ -197,6 +221,9 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
                 "plugins_list",
                 "list_tabs",
                 "read_scrollback",
+                // The workspace provider's listing tools are pure reads.
+                "list_workspaces",
+                "workspace_list",
             )
     }
 }

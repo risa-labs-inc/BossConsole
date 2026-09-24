@@ -7,8 +7,11 @@ import ai.rever.boss.ipc.proto.*
 import com.google.protobuf.ByteString
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.onSubscription
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.slf4j.LoggerFactory
@@ -50,22 +53,31 @@ class StateServiceImpl : StateServiceGrpcKt.StateServiceCoroutineImplBase() {
         return entry.toStateValue()
     }
 
+    /**
+     * Streams the current value of [request.key] (when present), then every subsequent
+     * value. The change flow is collected before the snapshot is read, so the subscription
+     * slot buffers any update emitted while the snapshot is read or delivered and no
+     * change can slip between the snapshot and the subscription (replay=0 drops an emit
+     * with no subscriber for good). Consecutive equal versions mean the snapshot and a
+     * buffered change are the same update, so they are collapsed and every update is
+     * delivered exactly once.
+     */
     override fun watchState(request: StateKey): Flow<StateValue> =
-        flow {
-            val caller = IpcCall.current()
-            stateStore[request.key]?.let {
-                authorizeRead(it, caller)
-                emit(it.toStateValue())
-            }
-
-            // Then stream changes
-            stateChanges
-                .filter { it.key == request.key }
-                .collect {
-                    authorizeRead(it, IpcCall.current())
-                    emit(it.toStateValue())
+        stateChanges
+            .onSubscription {
+                // Subscribe before snapshotting: the slot this collector just registered
+                // in the shared flow buffers updates emitted while the snapshot below is
+                // read or delivered, so no change can slip between the snapshot and the
+                // subscription (replay=0 drops an emit with no subscriber for good).
+                val caller = IpcCall.current()
+                stateStore[request.key]?.let {
+                    authorizeRead(it, caller)
+                    emit(it)
                 }
-        }
+            }.filter { it.key == request.key }
+            .onEach { authorizeRead(it, IpcCall.current()) }
+            .distinctUntilChanged { previous, next -> previous.version == next.version }
+            .map { it.toStateValue() }
 
     override suspend fun setState(request: StateUpdate): StateValue {
         val caller = IpcCall.current()

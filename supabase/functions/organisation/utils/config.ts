@@ -56,32 +56,37 @@ export function publicPath(route: string): string {
 }
 
 /**
- * Absolute, browser-usable base for links that LEAVE this browser.
+ * Browser-usable base for links that LEAVE this browser: absolute when the
+ * deployment has configured its public origin, otherwise the RELATIVE path.
  *
- * publicBasePath() returns a path, which is right for a Location header or a form action and
- * wrong for anything copied and sent to someone else: an invite link rendered as
- * `/functions/v1/organisation/join/...` has no host and is useless the moment it is pasted
- * anywhere. Since the invite token is shown exactly once, getting this wrong costs a revoke and
- * a re-mint.
+ * publicBasePath() returns a path, which is right for a Location header or a form
+ * action and wrong for anything copied and sent to someone else: an invite link
+ * rendered as `/functions/v1/organisation/join/...` has no host and is useless
+ * the moment it is pasted anywhere. Since the invite token is shown exactly
+ * once, getting this wrong costs a revoke and a re-mint.
  *
- * ORG_PUBLIC_BASE_URL overrides; otherwise the request's own origin, which is correct because
- * the admin is reading the page at that origin.
+ * ORG_PUBLIC_BASE_URL is the ONLY source of that host, deliberately. The
+ * alternative is the request's own Host/X-Forwarded-Host, and a header the
+ * CLIENT can set cannot carry the authority of a credential-bearing URL:
+ * wherever the edge is not behind a strict proxy that overwrites them, a
+ * poisoned `X-Forwarded-Host: attacker.example` used to mint
+ * `https://attacker.example/join/<one-time token>` and hand the join token to
+ * the attacker's host. "The admin is reading the page at that origin" is true of
+ * the BROWSER, but the host the function sees is client-suppliable and says
+ * nothing about where the admin is.
+ *
+ * UNSET therefore fails CLOSED, not to the header: with no configured origin
+ * there is no absolute link to mint, and the return value drops to the relative
+ * publicBasePath(). A relative `/join/<token>` still works pasted into the
+ * origin the admin is reading, and -- unlike the header-derived host -- it
+ * carries no authority for anyone to poison. An unconfigured deployment
+ * costing a re-mint is the right failure; a leaked token is not.
  */
-export function publicBaseUrl(requestUrl: string, forwardedHost: string | null, secure: boolean): string {
+export function publicBaseUrl(): string {
   const configured = Deno.env.get("ORG_PUBLIC_BASE_URL")?.trim()
   if (configured) return configured.replace(/\/+$/, "") + publicBasePath()
 
-  const host = forwardedHost?.split(",")[0]?.trim() ||
-    (() => {
-      try {
-        return new URL(requestUrl).host
-      } catch {
-        return ""
-      }
-    })()
-
-  const scheme = secure ? "https" : "http"
-  return host ? `${scheme}://${host}${publicBasePath()}` : publicBasePath()
+  return publicBasePath()
 }
 
 export function deepLinkScheme(): string {

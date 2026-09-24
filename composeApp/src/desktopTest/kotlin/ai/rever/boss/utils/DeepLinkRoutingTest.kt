@@ -126,6 +126,10 @@ class DeepLinkRoutingTest {
         // handler for X even existed. processDeepLink now hands back a Deferred
         // for exactly this route, so SingleInstanceManager can await the real
         // outcome instead.
+        //
+        // The verdict belongs to a dispatched action, so these links are the
+        // operator's own invocation. An externally delivered action is held for
+        // confirmation and has no verdict at all — see PluginActionOriginTest.
         val handlerId = "test-deep-link-handler-${System.nanoTime()}"
         DeepLinkActionRegistryImpl.register(
             object : DeepLinkActionHandler {
@@ -157,7 +161,7 @@ class DeepLinkRoutingTest {
 
     private fun awaitPluginActionVerdict(uri: String): Boolean =
         runBlocking {
-            requireNotNull(DeepLinkHandler.processDeepLink(uri, DeepLinkOrigin.EXTERNAL)).await()
+            requireNotNull(DeepLinkHandler.processDeepLink(uri, DeepLinkOrigin.OPERATOR_CLI)).await()
         }
 
     @Test
@@ -171,6 +175,10 @@ class DeepLinkRoutingTest {
         assertNull(DeepLinkHandler.processDeepLink("boss://split?orientation=horizontal", DeepLinkOrigin.EXTERNAL))
         // A plugin link with no action (opens a panel) is also still fire-and-forget.
         assertNull(DeepLinkHandler.processDeepLink("boss://plugin?id=bookmarks", DeepLinkOrigin.EXTERNAL))
+        // An externally delivered action link is not dispatched either — it is
+        // held for the operator, or refused when there is no window to ask in,
+        // which is this JVM's case. Either way it never reaches a handler; see
+        // PluginActionOriginTest.
     }
 
     @Test

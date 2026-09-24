@@ -16,7 +16,7 @@ Bring your own agent - Claude Code, Codex, Gemini, or OpenCode - and give it a r
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-blue.svg)](https://github.com/risa-labs-inc/BossConsole-Releases/releases/latest)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-[**⬇ Download**](#downloads) · [📊 Compare](#how-boss-compares) · [⚡ Browser benchmark](#browser-performance) · [🤖 Run an agent](#run-any-ai-coding-agent) · [🔐 Governance](#you-decide-what-your-agents-can-touch) · [🧰 Toolbox](#toolbox--an-app-store-inside-the-app) · [🖥️ BossTerm](#bossterm--a-terminal-you-can-share-to-any-device)
+[**⬇ Download**](#downloads) · [**🛠 Contributing**](CONTRIBUTING.md) · [📊 Compare](#how-boss-compares) · [⚡ Browser benchmark](#browser-performance) · [🤖 Run an agent](#run-any-ai-coding-agent) · [🔐 Governance](#you-decide-what-your-agents-can-touch) · [🧰 Toolbox](#toolbox--an-app-store-inside-the-app) · [🖥️ BossTerm](#bossterm--a-terminal-you-can-share-to-any-device)
 
 </div>
 

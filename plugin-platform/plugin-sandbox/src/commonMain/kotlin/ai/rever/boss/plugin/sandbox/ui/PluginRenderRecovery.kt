@@ -56,9 +56,17 @@ import java.util.concurrent.ConcurrentHashMap
  * interval keep the same suspect held and report [Outcome.Settling], which is not
  * visible quarantine progress. If the fault recurs after the interval, that
  * suspect was innocent: it is released and the next one is tried. The host crash
- * policy bounds how long settling faults may be refunded across the whole burst,
- * so a large candidate set cannot make honest escalation unreachable. The cycle
+ * policy bounds how long any recovery outcome may be refunded across the incident,
+ * so a large or slow candidate set cannot make honest escalation unreachable. The cycle
  * ends when the exceptions stop, which leaves exactly the culprit quarantined.
+ *
+ * Queued work can outlive the suspect's final mounted boundary, so settling takes
+ * precedence over an empty mounted set for the same 250 ms. A coincident host fault
+ * may inherit that plugin-shaped verdict briefly. The stale suspect is released only
+ * once the next fault is its own incident - past the rebuild grace - because a
+ * straggler from the suspect's own draining subtree can still be in flight right
+ * after the settle bound, and releasing on that one would un-quarantine the culprit
+ * with nothing mounted to self-correct.
  *
  * Quarantining everything at once was the first attempt and it was wrong in
  * practice, not just in theory. Against the real crash it disabled four plugins
@@ -216,6 +224,22 @@ object PluginRenderRecovery {
             }
 
             affected.isEmpty() -> {
+                // If the last boundary disappeared because its suspect fell back,
+                // reaching this branch means the fixed settle interval has expired.
+                // Removal did not cure the scene, so do not strand an innocent plugin
+                // in its fallback while subsequent host faults keep arriving.
+                //
+                // But only once the fault is its own incident. Quarantining the last
+                // content-rendering plugin empties the mounted set, so a straggler
+                // from the suspect's own draining subtree - one GC pause past the
+                // settle bound - can arrive here while it is still within
+                // [REBUILD_GRACE_MILLIS] of the quarantine rebuild. Releasing the
+                // suspect then would un-quarantine the actual culprit, and with
+                // nothing mounted there is no next candidate to self-correct: the
+                // same loop would re-quarantine and re-release it until the policy
+                // escalates. A fault past the grace is a separate incident, and
+                // that is the moment the held suspect is proven innocent.
+                if (!recentlyRebuilt) releaseSuspectAsInnocent()
                 notPluginRelated(error)
             }
 

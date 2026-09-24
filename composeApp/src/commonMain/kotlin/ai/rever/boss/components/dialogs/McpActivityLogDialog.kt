@@ -6,7 +6,9 @@ import ai.rever.boss.mcp.McpPolicyAction
 import ai.rever.boss.plugin.ui.BossColorScheme
 import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -19,17 +21,24 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.Button
 import androidx.compose.material.ButtonDefaults
 import androidx.compose.material.Surface
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -147,7 +156,10 @@ fun McpActivityLogDialog(
                                     .fillMaxWidth(),
                         ) {
                             operations.forEach { op ->
-                                McpOperationRow(op, timeFormat, colors)
+                                // recentOperations is live and newest-first, so a new call
+                                // prepends: without a stable key each row's remembered
+                                // expansion state resets at its new position.
+                                key(op.id) { McpOperationRow(op, timeFormat, colors) }
                             }
                         }
                     }
@@ -172,17 +184,94 @@ private fun McpOperationRow(
     timeFormat: SimpleDateFormat,
     colors: BossColorScheme,
 ) {
+    var expanded by remember(op.id) { mutableStateOf(false) }
+    // A row expands when it has anything worth a second look: the sanitized args are never
+    // otherwise reachable from this view, and a long error is clipped to two lines.
+    val hasDetail = op.sanitizedArgs.isNotEmpty() || op.errorSnippet != null
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-        McpOperationHeaderRow(op, timeFormat, colors)
+        McpOperationHeaderRow(
+            op = op,
+            timeFormat = timeFormat,
+            colors = colors,
+            expanded = expanded,
+            onToggle = if (hasDetail) ({ expanded = !expanded }) else null,
+        )
         McpOperationMetaRow(op, colors)
-        op.errorSnippet?.let { snippet ->
+        if (expanded) {
+            McpOperationDetail(op, colors)
+        } else {
+            op.errorSnippet?.let { snippet ->
+                Text(
+                    text = snippet,
+                    fontSize = 11.sp,
+                    color = colors.alert,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The part of a ledger row that did not fit the list: the sanitized argument map the call was
+ * recorded with, and the full error. Everything sits inside one [SelectionContainer] so an
+ * operator can copy either out without re-running the tool, and the error lives in a bounded
+ * scrollable box so a long stack trace cannot stretch the row.
+ */
+@Composable
+private fun McpOperationDetail(
+    op: McpOperationRecord,
+    colors: BossColorScheme,
+) {
+    SelectionContainer(modifier = Modifier.testTag("mcp-op-detail").fillMaxWidth()) {
+        Column(modifier = Modifier.padding(top = 4.dp)) {
             Text(
-                text = snippet,
-                fontSize = 11.sp,
-                color = colors.alert,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
+                text = "Arguments",
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Medium,
+                color = colors.textSecondary,
             )
+            if (op.sanitizedArgs.isEmpty()) {
+                Text(
+                    text = "(no arguments recorded)",
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = colors.textSecondary,
+                )
+            } else {
+                op.sanitizedArgs.forEach { (key, value) ->
+                    Text(
+                        text = "$key: $value",
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = colors.textPrimary,
+                    )
+                }
+            }
+            op.errorSnippet?.let { snippet ->
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Error",
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = colors.textSecondary,
+                )
+                Box(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 160.dp)
+                            .verticalScroll(rememberScrollState()),
+                ) {
+                    Text(
+                        text = snippet,
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = colors.alert,
+                    )
+                }
+            }
         }
     }
 }
@@ -192,8 +281,28 @@ private fun McpOperationHeaderRow(
     op: McpOperationRecord,
     timeFormat: SimpleDateFormat,
     colors: BossColorScheme,
+    expanded: Boolean,
+    onToggle: (() -> Unit)?,
 ) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .then(
+                    if (onToggle != null) {
+                        Modifier.clickable(
+                            onClickLabel = if (expanded) "Hide details" else "Show details",
+                            role = Role.Button,
+                            onClick = onToggle,
+                        )
+                    } else {
+                        Modifier
+                    },
+                ),
+    ) {
+        // Fixed-width slot so the timestamp column stays aligned whether or not a row expands.
+        McpExpandChevron(expandable = onToggle != null, expanded = expanded, colors = colors)
         Text(
             text = timeFormat.format(Date(op.timestamp)),
             fontSize = 11.sp,
@@ -227,6 +336,25 @@ private fun McpOperationHeaderRow(
             color = if (op.isError) colors.alert else colors.signalText,
         )
     }
+}
+
+@Composable
+private fun McpExpandChevron(
+    expandable: Boolean,
+    expanded: Boolean,
+    colors: BossColorScheme,
+) {
+    Text(
+        text =
+            when {
+                !expandable -> ""
+                expanded -> "▾"
+                else -> "▸"
+            },
+        fontSize = 11.sp,
+        color = colors.textSecondary,
+        modifier = Modifier.width(12.dp),
+    )
 }
 
 @Composable

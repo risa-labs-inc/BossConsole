@@ -215,7 +215,7 @@ class SpotlightCommandCoverageTest {
         // so each step must be followed by an explicit commit in the same call. Dispatchers.
         // Unconfined runs the collector synchronously up to its first suspension point before
         // `launch` returns, so it is guaranteed attached before the dispatch below emits -
-        // the same pattern ShortcutKeyUpSemanticsTest uses for this exact flow.
+        // the same pattern ShortcutKeySemanticsTest uses for this exact flow.
         val windowId = "commit-test-window"
         MenuActionsHandler.updateActivePanelTabCount(windowId, 2)
         val scope = CoroutineScope(Dispatchers.Unconfined)

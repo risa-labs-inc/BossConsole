@@ -206,7 +206,8 @@ class SupabaseAuthClient(
             client.auth.currentSessionOrNull()
                 ?: return AuthResult.Failure("No session available after auth operation")
         val user = session.user
-        return AuthResult.Success(
+        return successFrom(
+            accessToken = session.accessToken,
             userId = user?.id ?: "",
             email = user?.email ?: fallbackEmail ?: "",
             displayName =
@@ -215,14 +216,6 @@ class SupabaseAuthClient(
                     ?.get("full_name")
                     ?.jsonPrimitive
                     ?.contentOrNull ?: "",
-            isAdmin =
-                user
-                    ?.userMetadata
-                    ?.get("is_admin")
-                    ?.jsonPrimitive
-                    ?.contentOrNull == "true",
-            sessionToken = session.accessToken,
-            sessionCreatedAt = System.currentTimeMillis() / 1000,
         )
     }
 
@@ -261,6 +254,7 @@ sealed class AuthResult {
         val email: String,
         val displayName: String,
         val isAdmin: Boolean,
+        val permissions: Set<String>,
         val sessionToken: String,
         val sessionCreatedAt: Long,
     ) : AuthResult()
@@ -272,4 +266,35 @@ sealed class AuthResult {
     data class Failure(
         val message: String,
     ) : AuthResult()
+}
+
+/**
+ * The [AuthResult.Success] for a session holding [accessToken]. Admin status and permissions come
+ * from the token's claims and nowhere else - there is deliberately no parameter through which
+ * `user_metadata` could reach them. Split out of `SupabaseAuthClient.buildSuccessResult`, which
+ * needs a live session, so the mapping can be asserted with a crafted token. File scope because
+ * the class is at detekt's `TooManyFunctions` ceiling.
+ */
+internal fun successFrom(
+    accessToken: String,
+    userId: String,
+    email: String,
+    displayName: String,
+): AuthResult.Success {
+    val claims =
+        accessTokenClaims(accessToken) ?: run {
+            LoggerFactory
+                .getLogger(SupabaseAuthClient::class.java)
+                .warn("Could not read role claims from the access token; granting no admin status or permissions")
+            AccessTokenClaims.NONE
+        }
+    return AuthResult.Success(
+        userId = userId,
+        email = email,
+        displayName = displayName,
+        isAdmin = claims.isAdmin,
+        permissions = claims.permissions,
+        sessionToken = accessToken,
+        sessionCreatedAt = System.currentTimeMillis() / 1000,
+    )
 }

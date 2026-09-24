@@ -8,8 +8,8 @@ insert into auth.users (id, email, email_confirmed_at)
 values ('d0488000-0000-0000-0000-000000000001', 'download-rls@pgtap.test', now());
 insert into public.plugins (id, plugin_id, display_name, author_name, published, visibility)
 values ('d0488000-0000-0000-0000-000000000002', 'test.download.rls', 'Download RLS', 'tester', true, 'public');
-insert into public.plugin_versions (id, plugin_id, version, jar_path, sha256)
-values ('d0488000-0000-0000-0000-000000000003', 'd0488000-0000-0000-0000-000000000002', '1.0.0', 'test/download.jar', repeat('a', 64));
+insert into public.plugin_versions (id, plugin_id, version, jar_path, sha256, jar_size)
+values ('d0488000-0000-0000-0000-000000000003', 'd0488000-0000-0000-0000-000000000002', '1.0.0', 'test/download.jar', repeat('a', 64), 2048);
 
 select ok(not has_table_privilege('anon', 'public.plugin_downloads', 'SELECT'), 'anon has no direct SELECT privilege');
 

@@ -2,9 +2,12 @@
  * Tests for Mobile Service
  */
 
-import { assertEquals, assertExists } from "jsr:@std/assert"
+import { assertEquals, assertExists, assertStringIncludes } from "jsr:@std/assert"
+import { OpenAPIHono } from "@hono/zod-openapi"
 import type { SupabaseClient } from "@supabase/supabase-js"
+import type { PasskeyContext } from "../types/context.ts"
 import { generateMobileRegistrationPage, generateMobileAuthenticationPage } from "../services/mobile.ts"
+import mobile from "../routes/mobile.ts"
 import { createMockSupabaseClient, mockChallenge, mockPasskey } from "./helpers/mocks.ts"
 
 // ============================================================================
@@ -41,8 +44,7 @@ Deno.test("generateMobileRegistrationPage - should generate valid registration p
     'mock-challenge-base64',
     'test@example.com',
     'session-123',
-    'api.risaboss.com',
-    'BOSS'
+    'api.risaboss.com'
   )
 
   assertEquals(result.success, true)
@@ -70,8 +72,7 @@ Deno.test("generateMobileRegistrationPage - should reject expired challenge", as
     'expired-challenge',
     'test@example.com',
     'session-123',
-    'api.risaboss.com',
-    'BOSS'
+    'api.risaboss.com'
   )
 
   assertEquals(result.success, false)
@@ -96,8 +97,7 @@ Deno.test("generateMobileRegistrationPage - should reject wrong challenge type",
     'mock-challenge-base64',
     'test@example.com',
     'session-123',
-    'api.risaboss.com',
-    'BOSS'
+    'api.risaboss.com'
   )
 
   assertEquals(result.success, false)
@@ -125,8 +125,7 @@ Deno.test("generateMobileRegistrationPage - should reject challenge without user
     'mock-challenge-base64',
     'test@example.com',
     'session-123',
-    'api.risaboss.com',
-    'BOSS'
+    'api.risaboss.com'
   )
 
   assertEquals(result.success, false)
@@ -166,8 +165,7 @@ Deno.test("generateMobileRegistrationPage - should update challenge status to in
     'mock-challenge-base64',
     'test@example.com',
     'session-123',
-    'api.risaboss.com',
-    'BOSS'
+    'api.risaboss.com'
   )
 
   assertEquals(result.success, true)
@@ -493,4 +491,40 @@ Deno.test("generateMobileAuthenticationPage - should return credential metadata"
     assertEquals(result.credentialDisplayName, 'iPhone 15 Pro')
     assertEquals(result.credentialCreatedAt, '2024-10-01T12:00:00Z')
   }
+})
+
+Deno.test("GET /register/mobile - a request-supplied rpName cannot spoof the relying party name", async () => {
+  const mockClient = createMockSupabaseClient()
+
+  mockClient.mockResponse('passkey_challenges', {
+    data: {
+      ...mockChallenge,
+      type: 'registration',
+      expires_at: new Date(Date.now() + 60000).toISOString()
+    },
+    error: null
+  }, 'select')
+  mockClient.mockResponse('passkey_challenges', {
+    data: [{ id: 'challenge-789' }],
+    error: null
+  }, 'update')
+
+  const app = new OpenAPIHono<{ Variables: PasskeyContext }>()
+  app.use("*", async (ctx, next) => {
+    // deno-lint-ignore no-explicit-any
+    ctx.set("supabase", mockClient as any)
+    await next()
+  })
+  app.route("/", mobile)
+
+  const response = await app.request(
+    "/register/mobile?challenge=mock-challenge-base64&email=test@example.com" +
+    "&sessionId=session-123&rpId=api.risaboss.com&rpName=Microsoft%20Security"
+  )
+
+  assertEquals(response.status, 200)
+  const body = await response.text()
+  // The OS passkey prompt renders rp.name; it must be the server-derived name.
+  assertEquals(body.includes("Microsoft Security"), false)
+  assertStringIncludes(body, "const rpName = 'BOSS'")
 })
