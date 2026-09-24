@@ -413,12 +413,30 @@ Deno.test("long plugin ids truncate labels from the tail, not the head", async (
 Deno.test("clientIp ignores the client-controlled leftmost XFF entry", () => {
   // cf-connecting-ip (trusted edge) wins outright.
   assertEquals(clientIp("203.0.113.9", "spoofed, 198.51.100.7"), "203.0.113.9")
-  // Otherwise the RIGHTMOST XFF entry — appended by the trusted proxy — is used.
-  assertEquals(clientIp(undefined, "spoofed-a, spoofed-b, 198.51.100.7"), "198.51.100.7")
-  assertEquals(clientIp(undefined, "198.51.100.7"), "198.51.100.7")
-  // No usable header → shared bucket, not a per-request unique key.
+  // No usable header -> shared bucket, not a per-request unique key.
   assertEquals(clientIp(undefined, undefined), "unknown")
   assertEquals(clientIp("", "  "), "unknown")
+})
+
+Deno.test("clientIp uses a shared bucket when cf-connecting-ip is absent and XFF trust is not opted in", () => {
+  // Without cf-connecting-ip, the rightmost XFF entry is spoofable on any
+  // deployment that does not front this function with a server-controlled proxy
+  // chain. The default is fail-closed - a shared bucket - so an attacker rotating
+  // the rightmost entry cannot mint a fresh bucket per attempt.
+  Deno.env.delete("CRASH_REPORT_TRUST_XFF")
+  assertEquals(clientIp(undefined, "203.0.113.9"), "unknown")
+  assertEquals(clientIp(undefined, "203.0.113.9, 198.51.100.7"), "unknown")
+  assertEquals(clientIp("", "203.0.113.9, 198.51.100.7"), "unknown")
+})
+
+Deno.test("clientIp honours XFF rightmost only when CRASH_REPORT_TRUST_XFF is set", () => {
+  Deno.env.set("CRASH_REPORT_TRUST_XFF", "true")
+  try {
+    assertEquals(clientIp(undefined, "spoofed-a, spoofed-b, 198.51.100.7"), "198.51.100.7")
+    assertEquals(clientIp(undefined, "198.51.100.7"), "198.51.100.7")
+  } finally {
+    Deno.env.delete("CRASH_REPORT_TRUST_XFF")
+  }
 })
 
 Deno.test("rotating the leftmost XFF entry does not evade the rate limit", async () => {

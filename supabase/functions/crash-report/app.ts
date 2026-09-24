@@ -85,15 +85,23 @@ export function allowRequest(ip: string, now: number = Date.now()): boolean {
 
 /**
  * Rate-limit key from headers the TRUSTED edge controls, never the client.
- * X-Forwarded-For is "client, proxy1, …" — the LEFTMOST entry is whatever the
+ * X-Forwarded-For is "client, proxy1, …" - the LEFTMOST entry is whatever the
  * caller typed and rotating it would fully evade the limiter (and spray unique
- * keys to bloat the bucket map); trusted proxies append on the RIGHT. So:
- * cf-connecting-ip (Cloudflare-set on the api.risaboss.com route) first, else
- * the rightmost XFF entry (appended by the Supabase edge for *.supabase.co
- * calls), else a shared "unknown" bucket.
+ * keys to bloat the bucket map); trusted proxies append on the RIGHT.
+ *
+ * The rightmost entry is only safe when a trusted proxy actually appended it.
+ * Without cf-connecting-ip and without an explicit opt-in via
+ * `CRASH_REPORT_TRUST_XFF`, the rightmost entry is spoofable: a deployment that
+ * fronts this function with anything other than Cloudflare + Supabase edge (a
+ * self-hosted build, a direct invocation, a third proxy that does not overwrite
+ * XFF) hands an attacker the rate-limit key. The default is therefore fail-closed
+ * - a shared "unknown" bucket - so an attacker rotating the rightmost entry
+ * cannot mint a fresh bucket per attempt. Opt in only on deployments that have
+ * verified the rightmost entry is server-controlled.
  */
 export function clientIp(cfConnectingIp?: string, xff?: string): string {
   if (cfConnectingIp?.trim()) return cfConnectingIp.trim()
+  if (Deno.env.get("CRASH_REPORT_TRUST_XFF") !== "true") return "unknown"
   const parts = xff?.split(",") ?? []
   return parts[parts.length - 1]?.trim() || "unknown"
 }
