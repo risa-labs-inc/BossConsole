@@ -85,8 +85,16 @@ object PerformanceMonitor {
     private var terminalsProvider: (() -> List<TerminalInfo>)? = null
     private var editorTabsProvider: (() -> List<EditorTabResourceInfo>)? = null
 
+    // @Volatile so the check-then-act in start() and stop() sees the latest reference
+    // across the IO dispatcher boundary; without it, two concurrent start() calls can both
+    // observe null and both launch a monitor loop. The supervisor above means a crashed
+    // child does not cancel the scope; this flag is what stops two loops from racing.
+    @Volatile
     private var monitoringJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    /** Test-only accessor for the currently active monitor job, or null if none. */
+    internal val monitoringJobForTest: Job? get() = monitoringJob
 
     private var lastGcTime: Long = 0
     private var lastHistoryUpdate: Long = 0
