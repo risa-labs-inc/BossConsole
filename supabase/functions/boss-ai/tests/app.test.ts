@@ -19,6 +19,7 @@ async function fixture(options: {
   removeToolsAfterPreflight?: boolean
   keyName?: string
   apiType?: "openai_chat" | "openai_responses"
+  eligible?: boolean
 } = {}) {
   const calls: { name: string; params: Obj }[] = []
   const requests: Request[] = []
@@ -47,6 +48,9 @@ async function fixture(options: {
       }
       if (name === "boss_ai_catalog") {
         return [{ id: "boss-test", allowance: { day: { remaining: 1024 } } }]
+      }
+      if (name === "boss_ai_token_eligible") {
+        return options.eligible !== false
       }
       if (name === "boss_ai_reserve" || name === "boss_ai_lookup") {
         return options.deny && name === "boss_ai_reserve" ? { error: options.deny } : {
@@ -155,6 +159,22 @@ Deno.test("broker accepts a BOSS session but not an AI token", async () => {
   const response = await f.handler(req("boss-session"))
   assertEquals(response.status, 200)
   assertEquals((await response.json()).refresh_after_seconds, 180)
+})
+
+Deno.test("/auth/token refuses sessions that /auth/exchange would also refuse", async () => {
+  // /auth/exchange already runs the banned / anonymous / ai.use-less predicate
+  // through boss_ai_consume_exchange_ticket. /auth/token previously only checked
+  // the session was valid - so a banned or anonymous session got a 200 + a token,
+  // a distinguishable probe result. The RPC keeps both halves honest.
+  const f = await fixture({ eligible: false })
+  const req = new Request("https://api.example/boss-ai/auth/token", {
+    method: "POST",
+    headers: { Authorization: "Bearer boss-session" },
+  })
+  const response = await f.handler(req)
+  assertEquals(response.status, 401)
+  assertEquals(f.calls.some((c) => c.name === "boss_ai_token_eligible"), true)
+  assertEquals(f.calls.some((c) => c.name === "boss_ai_consume_exchange_ticket"), false)
 })
 
 Deno.test("permission and allowance denials never dispatch upstream", async () => {
