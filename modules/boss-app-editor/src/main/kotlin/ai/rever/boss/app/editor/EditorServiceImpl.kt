@@ -19,6 +19,7 @@ import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.PosixFileAttributeView
+import java.nio.file.attribute.PosixFilePermission
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -188,6 +189,18 @@ class EditorServiceImpl(
         val prefix = target.name.take(64).takeIf { it.length >= 2 } ?: "ed."
         val tmp = File.createTempFile("$prefix.", ".part", target.parentFile)
         try {
+            // java.io's temp file inherits the umask (often 0644). Restrict it
+            // before writing any document bytes: a private 0600 document must
+            // never be briefly readable through its sibling temp file. Keep the
+            // inherited mode so a brand-new document retains its old behavior.
+            val tempView = Files.getFileAttributeView(tmp.toPath(), PosixFileAttributeView::class.java)
+            val inheritedMode = tempView?.readAttributes()?.permissions()
+            if (tempView != null) {
+                Files.setPosixFilePermissions(
+                    tmp.toPath(),
+                    setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE),
+                )
+            }
             tmp.writeText(content, Charsets.UTF_8)
             // Preserve the target's existing POSIX mode: createTempFile takes
             // the umask-derived 0644, and the moved temp file BECOMES the
@@ -199,11 +212,17 @@ class EditorServiceImpl(
             // target would otherwise make the freshly-created temp unwritable
             // by its own owner and the save would fail inside the very write
             // it is trying to make atomic.
-            if (target.exists()) {
-                val view = Files.getFileAttributeView(target.toPath(), PosixFileAttributeView::class.java)
-                if (view != null) {
-                    Files.setPosixFilePermissions(tmp.toPath(), view.readAttributes().permissions())
-                }
+            if (tempView != null) {
+                val targetView =
+                    if (target.exists()) {
+                        Files.getFileAttributeView(target.toPath(), PosixFileAttributeView::class.java)
+                    } else {
+                        null
+                    }
+                Files.setPosixFilePermissions(
+                    tmp.toPath(),
+                    targetView?.readAttributes()?.permissions() ?: checkNotNull(inheritedMode),
+                )
             }
             Files.move(
                 tmp.toPath(),

@@ -434,4 +434,22 @@ class EditorServiceImplSaveTest {
             "the executable bit must survive an atomic re-save, got $perms",
         )
     }
+
+    @Test
+    fun `a new file keeps the process umask mode after the private temp write`() {
+        if (Files.getFileAttributeView(
+                tempDir.toPath(),
+                PosixFileAttributeView::class.java,
+            ) == null
+        ) {
+            return
+        }
+        val probe = File.createTempFile("editor-mode-probe-", ".tmp", tempDir)
+        val inheritedMode = Files.getPosixFilePermissions(probe.toPath())
+        probe.delete()
+
+        val target = File(tempDir, "new-source.kt")
+        runBlocking { impl().saveFile(saveRequest(target)) }
+        assertEquals(inheritedMode, Files.getPosixFilePermissions(target.toPath()))
+    }
 }
