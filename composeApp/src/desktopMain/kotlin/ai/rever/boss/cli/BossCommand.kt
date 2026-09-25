@@ -679,6 +679,7 @@ fun createBossCLI(): BossCommand =
             BossPluginInitCommand(),
             BossPluginValidateCommand(),
             BossPluginLinkCommand(),
+            BossPluginInspectCommand(),
         ),
     )
 
