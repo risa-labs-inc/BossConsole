@@ -9,9 +9,11 @@ import ai.rever.boss.components.overlays.OverlayConfig
 import ai.rever.boss.plugin.api.TabIcon
 import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.tabs.TabColorRegistry
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -157,6 +159,9 @@ fun BossTabButton(
             icon != null -> rememberVectorPainter(icon)
             else -> null
         }
+
+    val tabTags by TabColorRegistry.tagsFlow.collectAsState()
+    val colorTag = tabInfo?.id?.let { tabTags[it] }
 
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
@@ -477,6 +482,23 @@ fun BossTabButton(
                     softWrap = false,
                 )
                 titleBadge?.invoke()
+
+                colorTag?.let { tag ->
+                    Surface(
+                        color = tag.color.copy(alpha = 0.2f),
+                        shape = RoundedCornerShape(4.dp),
+                        border = BorderStroke(1.dp, tag.color.copy(alpha = 0.6f)),
+                    ) {
+                        Text(
+                            text = tag.displayLabel,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = tag.color,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                            maxLines = 1,
+                        )
+                    }
+                }
 
                 // Always drawn, unlike the close icon beside it: a tab is pinned whether or not
                 // the pointer is anywhere near it, and an indicator you have to hover to see
