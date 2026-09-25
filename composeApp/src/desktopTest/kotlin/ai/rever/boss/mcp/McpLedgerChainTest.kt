@@ -65,10 +65,16 @@ class McpLedgerChainTest {
         val entry = storedRecords(file).single()
         val descriptor = McpOperationRecord.serializer().descriptor
         val fields = (0 until descriptor.elementsCount).map { descriptor.getElementName(it) }.toSet()
-        // secretRefs and escalated are emitted only when set, so a record without them keeps the
-        // pre-feature hash (see the two `preserve the pre-feature canonical hash` tests); coverage
-        // of those fields is asserted on a record that carries both.
-        val withRefs = entry.copy(secretRefs = listOf("id.password"), escalated = true)
+        // secretRefs, escalated and the colony attribution are emitted only when set, so a record
+        // without them keeps the pre-feature hash (see the `preserve the pre-feature canonical
+        // hash` tests); coverage of those fields is asserted on a record that carries all of them.
+        val withRefs =
+            entry.copy(
+                secretRefs = listOf("id.password"),
+                escalated = true,
+                colonyThreadId = "thread-1",
+                colonyMessageId = "message-1",
+            )
         val canonical = Json.parseToJsonElement(withRefs.canonicalFormForHashing()) as JsonObject
         assertEquals(fields - setOf("hash", "parentHash"), canonical.keys)
     }
@@ -172,6 +178,34 @@ class McpLedgerChainTest {
             record.canonicalFormForHashing(),
         )
         assertTrue("\"escalated\":true" in record.copy(escalated = true).canonicalFormForHashing())
+    }
+
+    @Test
+    fun `colony attribution is hashed when set and absent when it is not`() {
+        val record =
+            McpOperationRecord(
+                id = "colony-hashed",
+                timestamp = 1L,
+                toolName = "colony_propose",
+                providerId = "boss-colony",
+                policyApplied = McpPolicyAction.ASK,
+                approvalDisposition = McpApprovalDisposition.AUTO_ALLOWED,
+                durationMs = 1L,
+                isError = false,
+                sanitizedArgs = emptyMap(),
+            )
+
+        // Attribution is part of the audit trail, so a record carrying it must hash the values -
+        // otherwise a colony record could be edited into a different thread without breaking the
+        // chain.
+        val attributed = record.copy(colonyThreadId = "thread-1", colonyMessageId = "message-1")
+        assertTrue("\"colonyThreadId\":\"thread-1\"" in attributed.canonicalFormForHashing())
+        assertTrue("\"colonyMessageId\":\"message-1\"" in attributed.canonicalFormForHashing())
+
+        // And a record with neither must hash exactly as it did before the fields existed, which is
+        // what keeps an existing ledger intact instead of reading as altered.
+        assertTrue("colonyThreadId" !in record.canonicalFormForHashing())
+        assertTrue("colonyMessageId" !in record.canonicalFormForHashing())
     }
 
     @Test

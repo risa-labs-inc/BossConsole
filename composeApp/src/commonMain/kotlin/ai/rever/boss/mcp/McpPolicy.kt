@@ -211,6 +211,17 @@ object McpMutatingToolCatalog {
             "terminal_open",
             "close_workspace",
             "workspace_close",
+            // BOSS Colony agent-to-agent negotiation. Each of these changes coordination state that
+            // another worktree then acts on, and the handoff also moves work between worktrees, so
+            // each one is governed like any other mutation. `colony_brain_read` is deliberately
+            // absent: it reads the shared scratchpad and mutates nothing, and listing it here would
+            // make an operator approve a read.
+            "colony_propose",
+            "colony_accept",
+            "colony_reject",
+            "colony_counter",
+            "colony_handoff",
+            "colony_brain_write",
         )
 
     private val MUTATING_SUFFIXES =

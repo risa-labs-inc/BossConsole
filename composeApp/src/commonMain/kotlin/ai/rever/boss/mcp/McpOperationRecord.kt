@@ -24,6 +24,23 @@ data class McpOperationRecord(
     val durationMs: Long,
     val isError: Boolean,
     val sanitizedArgs: Map<String, String>,
+    /**
+     * The BOSS Colony negotiation thread this call belongs to, or `null` when the call is not a
+     * colony negotiation.
+     *
+     * Stored rather than derived at read time, so a record always lands in the thread it was
+     * written into even if a reader would derive a different id. `null` for every non-colony call,
+     * and for a colony call that named no thread - see `ColonyLedgerAttribution.from`, which
+     * refuses to group those under a blank id rather than merging every malformed call into one.
+     */
+    val colonyThreadId: String? = null,
+    /**
+     * The Colony message this call created, or `null` when it created none.
+     *
+     * Derived from the call itself (`ColonyProtocol.messageIdFor`), so a retried call names the
+     * same message and replaying the ledger cannot invent a second one for one request.
+     */
+    val colonyMessageId: String? = null,
     val errorSnippet: String? = null,
     /**
      * The secret references the call carried, as `<id>.<field>` - what the tool was allowed to
@@ -82,6 +99,14 @@ data class McpOperationRecord(
  * would silently change every historical hash the day someone set `encodeDefaults = true`. Here
  * keys are emitted in a fixed order, map keys are sorted, and an absent snippet is written as an
  * explicit `null`, so a record's canonical form depends on the record and nothing else.
+ *
+ * Every field except [McpOperationRecord.hash] and [McpOperationRecord.parentHash] is covered here,
+ * and `McpLedgerChainTest` pins that by deriving the expected key set from the serializer
+ * descriptor rather than from a hand-kept list. Coverage does not mean unconditional emission: a
+ * field that is only meaningful sometimes is written only when it is set, so a record that does not
+ * carry it hashes exactly as it did before the field existed. That is the rule that keeps a ledger
+ * written by an older build verifying as *intact* rather than reading every retained record as
+ * *altered*, and it is why an optional field is added here behind that condition.
  */
 internal fun McpOperationRecord.canonicalFormForHashing(): String =
     buildJsonObject {
@@ -98,6 +123,17 @@ internal fun McpOperationRecord.canonicalFormForHashing(): String =
             buildJsonObject { sanitizedArgs.toSortedMap().forEach { (key, value) -> put(key, value) } },
         )
         put("errorSnippet", errorSnippet)
+        // Optional fields are written only when set, so a record that does not carry them hashes
+        // exactly as it did before the field existed. That is what keeps an existing audit trail
+        // verifying: emitting a field unconditionally would change the canonical form of every
+        // historical record and make a ledger written by an older build read as *altered* rather
+        // than as intact, so a new field is only ever appended here behind this rule.
+        if (colonyThreadId != null) {
+            put("colonyThreadId", colonyThreadId)
+        }
+        if (colonyMessageId != null) {
+            put("colonyMessageId", colonyMessageId)
+        }
         if (secretRefs.isNotEmpty()) {
             put("secretRefs", JsonArray(secretRefs.map(::JsonPrimitive)))
         }

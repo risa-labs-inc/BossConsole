@@ -61,6 +61,14 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
                 McpRiskAssessment(McpRiskLevel.CRITICAL, "Kubernetes/Helm mutation '$toolName'")
             }
 
+            // Cross-worktree agent coordination mutations
+            normalizedName in AGENT_COORDINATION_TOOLS -> {
+                McpRiskAssessment(
+                    level = McpRiskLevel.HIGH,
+                    reason = "Cross-worktree agent coordination mutation via '$toolName'",
+                )
+            }
+
             // File / Codebase write or delete operations
             normalizedName in FILE_WRITE_TOOLS -> {
                 McpRiskAssessment(McpRiskLevel.HIGH, "File system write operation via '$toolName'")
@@ -347,6 +355,24 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
                 "k8s_rollout_restart",
                 "k8s_use_context",
                 "k8s_port_forward_stop",
+            )
+
+        /**
+         * BOSS Colony coordination mutations. Listed so their risk is stated rather than inherited
+         * from the unclassified fallback: a proposal, a handoff or a brain write changes state that
+         * another worktree acts on, which is [McpRiskLevel.HIGH]'s definition ("state-modifying")
+         * and never [McpRiskLevel.LOW]'s ("safe read-only operations"). `colony_brain_read` is
+         * absent because it reads. This does not change any tool's policy action: `policyFor`
+         * already ORs this level with the mutating catalog, and the catalog lists the same six.
+         */
+        private val AGENT_COORDINATION_TOOLS =
+            setOf(
+                "colony_propose",
+                "colony_accept",
+                "colony_reject",
+                "colony_counter",
+                "colony_handoff",
+                "colony_brain_write",
             )
 
         private val FILE_WRITE_TOOLS =
