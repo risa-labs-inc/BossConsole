@@ -69,17 +69,18 @@ class PasskeyAuthViewModelSessionLifecycleTest {
                 val currentAttempt = pendingAttempts.removeFirst()
                 assertEquals("user@example.com", currentAttempt.email)
                 assertEquals("cred-1", currentAttempt.credentialId)
+                assertTrue(pendingAttempts.isEmpty())
 
-                // The current attempt must still be allowed to complete successfully.
-                currentAttempt.gate.complete(Result.success(Unit))
+                // The abandoned attempt completes first and must remain inert.
+                superseded.gate.complete(Result.success(Unit))
                 advanceUntilIdle()
 
                 assertEquals(0, firstSuccess)
-                assertEquals(1, secondSuccess)
-                assertFalse(viewModel.isLoading.value)
+                assertEquals(0, secondSuccess)
+                assertTrue(viewModel.isLoading.value)
 
-                // The abandoned attempt may complete late, but it must remain inert.
-                superseded.gate.complete(Result.success(Unit))
+                // The current attempt must still be allowed to complete successfully.
+                currentAttempt.gate.complete(Result.success(Unit))
                 advanceUntilIdle()
 
                 assertEquals(0, firstSuccess)
