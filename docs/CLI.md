@@ -249,6 +249,20 @@ boss plugin link
 boss plugin link . --json
 ```
 
+### 4. `boss plugin scan <jar>`
+Reports what a plugin JAR can do **before it is loaded**: which processes, network, file, native-code and reflection capabilities its classes reference, which sensitive host APIs it reaches (secret vault, brokered credentials, the authenticated backend proxy, the project rewrite, the event bus, ...), plus manifest, signature and archive findings. It is a static, read-only scan of each class's constant pool: nothing is loaded or run, and every read is bounded.
+```bash
+boss plugin scan build/libs/my-plugin-0.1.0.jar
+boss plugin scan build/libs/my-plugin-0.2.0.jar --against build/libs/my-plugin-0.1.0.jar
+boss plugin scan build/libs/my-plugin-0.2.0.jar --json --fail-on high
+```
+
+- `--against <older.jar>` compares two builds and reports what the newer one **gained** or dropped (capabilities, hosts named in its code, findings, `requiredPermissions`). Capabilities are compared by id, so moving a call between classes is not a change.
+- `--fail-on high|medium|low` is a CI gate: exit `1` when the risk reaches that level (with `--against`, the risk of what was **added**). An unreadable JAR always exits `1`.
+- `--json` prints one object with `topRisk`, `capabilities`, `findings`, `hosts` and `limits` (`addedRisk` and the added and removed lists with `--against`).
+
+It reports what classes **reference**, not proof of behaviour, and it never says "safe": the best verdict is that no risky capabilities were found in the constant pools, followed by the limits (code built or loaded at run time, nested JARs and native libraries are not analysed). Every name taken from the JAR is escaped before it is printed.
+
 ---
 
 ## Plugin Packs (`boss pack`)
