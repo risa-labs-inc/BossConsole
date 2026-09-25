@@ -4,6 +4,7 @@ import ai.rever.boss.components.plugin.DependencyInstallPlan
 import ai.rever.boss.components.plugin.MissingDependencyInstaller
 import ai.rever.boss.components.plugin.PluginDependencyResolution
 import ai.rever.boss.downloads.DownloadCenter
+import ai.rever.boss.mcp.ApprovedArtifact
 import ai.rever.boss.plugin.api.PluginManifest
 import ai.rever.boss.plugin.api.TransferKind
 import ai.rever.boss.plugin.api.TransferPhase
@@ -159,6 +160,65 @@ class StoreMissingDependencyInstaller(
         }
     }
 
+    override suspend fun installAllArtifacts(artifacts: List<ApprovedArtifact>): Result<Unit> {
+        val acceptedArtifacts = artifacts.toList()
+        return DETACHED_PLANS.run(
+            key = acceptedArtifacts.map { it.pluginId },
+            onDetachedFailure = { error ->
+                logger.error(
+                    LogCategory.SYSTEM,
+                    "Detached dependency plan failed",
+                    mapOf("plan" to acceptedArtifacts.map { it.pluginId }.joinToString(",")),
+                    error = error,
+                )
+            },
+        ) {
+            val root = acceptedArtifacts.lastOrNull()
+            for (artifact in acceptedArtifacts) {
+                val error = installArtifact(artifact).exceptionOrNull() ?: continue
+                val reported =
+                    if (artifact == root) {
+                        error
+                    } else {
+                        val message =
+                            error.message?.let { "Could not install ${root?.pluginId}: $it" }
+                                ?: "Could not install ${root?.pluginId}."
+                        IllegalStateException(message, error)
+                    }
+                return@run Result.failure(reported)
+            }
+            Result.success(Unit)
+        }
+    }
+
+    override suspend fun installArtifact(artifact: ApprovedArtifact): Result<Unit> =
+        DETACHED_INSTALLS.run(
+            key = artifact.pluginId,
+            onDetachedFailure = { error ->
+                logger.error(LogCategory.SYSTEM, "Detached dependency install failed", error = error)
+            },
+        ) {
+            val store = repository()
+            when {
+                isInstalled(artifact.pluginId) -> {
+                    Result.success(Unit)
+                }
+
+                store == null -> {
+                    failure("The plugin store is not available. Check your connection and try again.")
+                }
+
+                else -> {
+                    installFromStore(
+                        store,
+                        artifact.pluginId,
+                        expectedVersion = artifact.version,
+                        expectedSha256 = artifact.sha256,
+                    )
+                }
+            }
+        }
+
     override suspend fun install(pluginId: String): Result<Unit> =
         DETACHED_INSTALLS.run(
             key = pluginId,
@@ -187,6 +247,8 @@ class StoreMissingDependencyInstaller(
     private suspend fun installFromStore(
         store: PluginRepository,
         pluginId: String,
+        expectedVersion: String? = null,
+        expectedSha256: String? = null,
     ): Result<Unit> {
         // "Could not ask the store" is not "the store does not have it", and telling the user the
         // second when the first happened is what sent the Flow diagnosis after a missing row that was
@@ -210,6 +272,26 @@ class StoreMissingDependencyInstaller(
                     ?.let { "Could not look up $pluginId in the plugin store: ${shortFailureReason(it)}" }
                     ?: "$pluginId was not found in the plugin store.",
             )
+
+        if (expectedVersion != null && expectedVersion.isNotBlank() && info.version != expectedVersion) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Store version mismatch for plugin",
+                mapOf("pluginId" to pluginId, "storeVersion" to info.version, "expectedVersion" to expectedVersion),
+            )
+            return failure("Store version for $pluginId (${info.version}) does not match approved version $expectedVersion.")
+        }
+
+        if (expectedSha256 != null && expectedSha256.isNotBlank() &&
+            info.sha256.isNotBlank() && !info.sha256.equals(expectedSha256, ignoreCase = true)
+        ) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Store SHA-256 mismatch for plugin",
+                mapOf("pluginId" to pluginId, "storeSha256" to info.sha256, "expectedSha256" to expectedSha256),
+            )
+            return failure("Store SHA-256 for $pluginId (${info.sha256}) does not match approved hash $expectedSha256.")
+        }
 
         // `<id_with_underscores>_<version>.jar` in the plugins directory, so a later directory
         // scan picks it up like any other install. Both parts are sanitised because both come

@@ -1,5 +1,6 @@
 package ai.rever.boss.plugin.packs
 
+import ai.rever.boss.mcp.ApprovedArtifact
 import ai.rever.boss.mcp.McpPolicyAction
 
 /**
@@ -25,10 +26,12 @@ internal class FakePackEffects(
     val closures = mutableMapOf<String, InstallClosure>()
 
     val calls = mutableListOf<String>()
+    val installedArtifacts = mutableListOf<ApprovedArtifact>()
     var snapshots = 0
     val failures = mutableMapOf<String, Throwable>()
     val ruleWrites = mutableMapOf<String, RuleWrite>()
     var beforeSnapshot: suspend () -> Unit = {}
+    var beforeInstall: suspend () -> Unit = {}
 
     override suspend fun snapshot(pack: PluginPack): PackSnapshot {
         beforeSnapshot()
@@ -49,7 +52,10 @@ internal class FakePackEffects(
         version: String,
         latest: Boolean,
         approvedOrder: List<String>,
+        approvedArtifacts: List<ApprovedArtifact>,
     ): Result<Unit> {
+        beforeInstall()
+        installedArtifacts += approvedArtifacts
         // The order is appended only when there is one, so rows with no closure keep reading the
         // way every existing assertion spells them.
         val order = if (approvedOrder.isEmpty()) "" else " order=${approvedOrder.joinToString("+")}"

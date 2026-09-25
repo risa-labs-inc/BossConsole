@@ -1,5 +1,6 @@
 package ai.rever.boss.components.plugin
 
+import ai.rever.boss.mcp.ApprovedArtifact
 import ai.rever.boss.plugin.api.PluginDependency
 import ai.rever.boss.plugin.api.PluginManifest
 import ai.rever.boss.plugin.api.PluginState
@@ -462,6 +463,27 @@ interface MissingDependencyInstaller {
                     error
                 } else {
                     val message = error.message?.let { "Could not install $root: $it" } ?: "Could not install $root."
+                    IllegalStateException(message, error)
+                }
+            return Result.failure(reported)
+        }
+        return Result.success(Unit)
+    }
+
+    suspend fun installArtifact(artifact: ApprovedArtifact): Result<Unit> = install(artifact.pluginId)
+
+    suspend fun installAllArtifacts(artifacts: List<ApprovedArtifact>): Result<Unit> {
+        val root = artifacts.lastOrNull()
+        for (artifact in artifacts) {
+            val error = installArtifact(artifact).exceptionOrNull() ?: continue
+            val reported =
+                if (artifact == root) {
+                    error
+                } else {
+                    val message =
+                        error.message?.let {
+                            "Could not install ${root?.pluginId}: $it"
+                        } ?: "Could not install ${root?.pluginId}."
                     IllegalStateException(message, error)
                 }
             return Result.failure(reported)

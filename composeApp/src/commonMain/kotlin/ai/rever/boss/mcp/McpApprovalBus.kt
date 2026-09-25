@@ -85,6 +85,10 @@ data class McpApprovalRequest(
      * show them by accident. Empty for every call without references.
      */
     val secretRefs: List<SecretDescriptor> = emptyList(),
+    /** Optional display model passed by a prepared invocation for rich preview in the dialog. */
+    val displayModel: Any? = null,
+    /** Whether the dialog may offer standing trust (session trust or persistent allow). */
+    val allowStandingTrust: Boolean = true,
     val requestedAt: Long = System.currentTimeMillis(),
     val deferred: CompletableDeferred<McpApprovalDecision> = CompletableDeferred(),
 ) {
@@ -95,6 +99,40 @@ data class McpApprovalRequest(
      */
     fun remainingTimeoutMs(): Long = (timeoutMs - (System.currentTimeMillis() - requestedAt)).coerceAtLeast(0)
 }
+
+/** An exact artifact to install: plugin ID, exact version, and SHA-256 hash from the store. */
+data class ApprovedArtifact(
+    val pluginId: String,
+    val version: String,
+    val sha256: String,
+)
+
+/** One plugin row in the prepared pack preview. */
+data class PackPluginDisplay(
+    val pluginId: String,
+    val action: String,
+    val targetVersion: String?,
+    val targetSha256: String?,
+    val installedVersion: String?,
+    val optional: Boolean,
+    val extraDependencies: List<ApprovedArtifact> = emptyList(),
+)
+
+/** One policy rule in the prepared pack preview. */
+data class PackRuleDisplay(
+    val scope: String,
+    val subject: String,
+    val action: String,
+    val outcome: String,
+    val existing: String? = null,
+)
+
+/** The display model shown in the approval dialog for a prepared pack_apply invocation. */
+data class PreparedPackDisplayModel(
+    val packId: String,
+    val plugins: List<PackPluginDisplay>,
+    val rules: List<PackRuleDisplay>,
+)
 
 /**
  * Central event bus for routing interactive tool approval requests to the UI.
@@ -137,12 +175,14 @@ open class McpApprovalBus(
         policy: McpPolicyAction? = null,
         escalated: Boolean = false,
         secretRefs: List<SecretDescriptor> = emptyList(),
+        displayModel: Any? = null,
+        allowStandingTrust: Boolean = true,
     ): McpApprovalDecision {
         val request =
-            McpApprovalRequest(
+            approvalRequest(
                 toolName = toolName,
                 providerId = providerId,
-                arguments = McpArgumentSanitizer.sanitize(arguments),
+                arguments = arguments,
                 timeoutMs = timeoutMs,
                 riskAssessment = riskAssessment,
                 declaredReadOnly = declaredReadOnly,
@@ -150,6 +190,8 @@ open class McpApprovalBus(
                 policy = policy,
                 escalated = escalated,
                 secretRefs = secretRefs,
+                displayModel = displayModel,
+                allowStandingTrust = allowStandingTrust,
             )
 
         synchronized(lock) {
@@ -285,6 +327,36 @@ open class McpApprovalBus(
         }
         return denied
     }
+
+    @Suppress("LongParameterList")
+    private fun approvalRequest(
+        toolName: String,
+        providerId: String,
+        arguments: Map<String, Any?>,
+        timeoutMs: Long,
+        riskAssessment: McpRiskAssessment?,
+        declaredReadOnly: Boolean?,
+        toolDescription: String?,
+        policy: McpPolicyAction?,
+        escalated: Boolean,
+        secretRefs: List<SecretDescriptor>,
+        displayModel: Any?,
+        allowStandingTrust: Boolean,
+    ): McpApprovalRequest =
+        McpApprovalRequest(
+            toolName = toolName,
+            providerId = providerId,
+            arguments = McpArgumentSanitizer.sanitize(arguments),
+            timeoutMs = timeoutMs,
+            riskAssessment = riskAssessment,
+            declaredReadOnly = declaredReadOnly,
+            toolDescription = toolDescription,
+            policy = policy,
+            escalated = escalated,
+            secretRefs = secretRefs,
+            displayModel = displayModel,
+            allowStandingTrust = allowStandingTrust,
+        )
 }
 
 /** Each delivered request belongs to one window until answered, timed out or that window closes. */

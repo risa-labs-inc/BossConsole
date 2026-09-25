@@ -1,5 +1,6 @@
 package ai.rever.boss.plugin.packs
 
+import ai.rever.boss.mcp.ApprovedArtifact
 import ai.rever.boss.mcp.McpPolicyAction
 
 /** What the host knows about one plugin when a pack is planned. */
@@ -19,6 +20,8 @@ sealed interface StoreListing {
     data class Published(
         val latest: String,
         val versions: Set<String>,
+        val latestSha256: String? = null,
+        val versionArtifacts: Map<String, ApprovedArtifact> = emptyMap(),
     ) : StoreListing
 
     data object NotPublished : StoreListing
@@ -81,6 +84,7 @@ data class InstallClosure(
     val unresolved: Set<String>,
     val cyclic: Boolean,
     val truncated: Boolean,
+    val artifacts: List<ApprovedArtifact> = emptyList(),
 ) {
     /** Whether the closure is known to be incomplete, so a caller can say so rather than imply it is exact. */
     val partial: Boolean get() = unresolved.isNotEmpty() || cyclic || truncated
@@ -135,6 +139,7 @@ data class PluginStep(
      * therefore installs exactly the one plugin named.
      */
     val closure: InstallClosure? = null,
+    val targetSha256: String? = null,
 ) {
     val needsWork: Boolean
         get() = kind == PluginStepKind.ENABLE || kind == PluginStepKind.INSTALL || kind == PluginStepKind.CHANGE_VERSION
@@ -266,6 +271,7 @@ object PluginPackPlanner {
     ): PluginStep {
         val wanted = step.plugin.version
         val target = wanted ?: listing.latest
+        val targetSha = listing.versionArtifacts[target]?.sha256 ?: if (target == listing.latest) listing.latestSha256 else null
         val installed = step.installed
         return when {
             wanted != null && wanted !in listing.versions -> {
@@ -276,7 +282,13 @@ object PluginPackPlanner {
             }
 
             installed == null -> {
-                step.make(PluginStepKind.INSTALL, "Install $target from the plugin store.", target, listing.latest)
+                step.make(
+                    PluginStepKind.INSTALL,
+                    "Install $target from the plugin store.",
+                    target,
+                    listing.latest,
+                    targetSha,
+                )
             }
 
             else -> {
@@ -285,6 +297,7 @@ object PluginPackPlanner {
                     "Replace ${installed.version} with $target from the plugin store.",
                     target,
                     listing.latest,
+                    targetSha,
                 )
             }
         }
@@ -300,6 +313,7 @@ object PluginPackPlanner {
             detail: String,
             target: String? = null,
             latest: String? = null,
+            targetSha256: String? = null,
         ) = PluginStep(
             plugin = plugin,
             kind = kind,
@@ -307,6 +321,8 @@ object PluginPackPlanner {
             installedVersion = installed?.version,
             detail = detail,
             targetIsLatest = target != null && target == latest,
+            closure = null,
+            targetSha256 = targetSha256,
         )
     }
 
