@@ -1,10 +1,15 @@
 name: 🔨 Build & Test
 
 on:
+  # PRs validate dev/develop integration; main pushes validate the merged tree.
+  # dev pushes run ubuntu only (see build-test's matrix): they seed the shared
+  # Gradle caches that PRs into dev restore from, without enqueueing the macOS
+  # and Windows work a later dev -> main push runs anyway.
+  # For a branch without a PR, use workflow_dispatch. See docs/ci-validation.md.
   push:
-    branches: [ main, develop, dev ]
+    branches: [main, dev]
   pull_request:
-    branches: [ main, dev ]
+    branches: [main, dev, develop]
   workflow_dispatch:
 
 # Only superseded PR validation is disposable. Push/manual runs get unique
@@ -47,6 +52,13 @@ jobs:
 
       - name: Headless CLI launcher tests
         run: bash scripts/test/test-headless-cli.sh
+
+      - name: 🧪 boss.bat :urlencode injection regression (#1057)
+        # The shipped Windows CLI shim interpolated the CLI argument into a
+        # single-quoted PowerShell string; one quote in any argument executed
+        # attacker PowerShell. Source-shape checks run everywhere; the live
+        # probes need cmd.exe and skip where it is absent.
+        run: pwsh -NoProfile -File scripts/test/test-boss-bat-urlencode.ps1
 
       - name: 🧪 Release publish — TUS slice tests
         # Guards the byte-accurate chunk slicing in the release publish path
@@ -214,12 +226,24 @@ jobs:
     needs: version-check
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # macOS and Windows run on PRs into main, pushes to main and manual runs.
+        # PRs that don't target main, and dev pushes (cache seeding), skip them:
+        # hosted macOS and Windows runners run few jobs at once.
+        os: ${{ fromJSON(((github.event_name == 'pull_request' && github.base_ref != 'main') || (github.event_name == 'push' && github.ref == 'refs/heads/dev')) && '["ubuntu-latest"]' || '["ubuntu-latest", "macos-latest", "windows-latest"]') }}
     runs-on: ${{ matrix.os }}
 
     steps:
       - name: 📥 Checkout Repository
         uses: actions/checkout@v7
+
+      - name: 🧪 boss.bat live cmd.exe probes (Windows)
+        # The script-tests job runs this script on Ubuntu, where only its
+        # source-shape checks can run. Here the live probes and their mutation
+        # checks run on the real cmd.exe (#1617). A few seconds, and it
+        # runs before JDK and Gradle setup so a failure reports first.
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: ./scripts/test/test-boss-bat-urlencode.ps1
 
       - name: ☕ Setup JDK
         uses: actions/setup-java@v6.0.0
@@ -230,7 +254,12 @@ jobs:
       - name: 🎯 Setup Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
-          cache-read-only: false
+          # Only pushes (main, dev) write the shared caches; PRs and manual runs restore
+          # them but never write. PR and dispatch caches are scoped to their own ref, so
+          # no other run can read them, and at ~1 GB each they pushed the repo past
+          # GitHub's 10 GB cap and evicted the shared dev/main entries (14 of 20 recent
+          # PR runs started from an empty cache).
+          cache-read-only: ${{ github.event_name != 'push' }}
 
       - name: 🧹 Stop Kotlin Daemon (Windows)
         if: matrix.os == 'windows-latest'
@@ -303,7 +332,12 @@ jobs:
       - name: 🎯 Setup Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
-          cache-read-only: false
+          # Only pushes (main, dev) write the shared caches; PRs and manual runs restore
+          # them but never write. PR and dispatch caches are scoped to their own ref, so
+          # no other run can read them, and at ~1 GB each they pushed the repo past
+          # GitHub's 10 GB cap and evicted the shared dev/main entries (14 of 20 recent
+          # PR runs started from an empty cache).
+          cache-read-only: ${{ github.event_name != 'push' }}
 
       - name: 🔍 Static Analysis (detekt + ktlint)
         run: |
@@ -348,6 +382,9 @@ jobs:
 
       - name: 🎯 Setup Gradle
         uses: gradle/actions/setup-gradle@v6
+        with:
+          # Same policy as build-test: pushes write, PRs and manual runs only read.
+          cache-read-only: ${{ github.event_name != 'push' }}
 
       - name: 🧪 Test Version System
         run: |
@@ -402,6 +439,31 @@ jobs:
           # Pinning skips that lookup. Bump as needed.
           version: 2.109.0
 
+      # `supabase db start` pulls postgres plus the realtime, storage and auth init images, and
+      # `supabase test db` pulls pg_prove. `supabase/setup-cli` pins the CLI to ghcr.io
+      # (SUPABASE_INTERNAL_IMAGE_REGISTRY), and when GitHub's shared runner pool is busy ghcr.io
+      # refuses those pulls with `toomanyrequests` (a pool-wide limit, so signing in doesn't help,
+      # see #1583 / #1585). Pull the same images from ECR Public first and tag them with the
+      # ghcr.io names the CLI resolves. The CLI checks the local image cache before pulling, so it
+      # never touches ghcr.io. Needs no secrets, so fork PRs get it too.
+      # The tags below match the images pinned by CLI 2.109.0 and the services enabled in
+      # supabase/config.toml (db major_version, realtime, storage, auth). Revisit the list when
+      # either changes. If it drifts, or ECR Public is down, the CLI pulls whatever is missing
+      # itself, which is no worse than before.
+      - name: 📦 Pre-pull Supabase images from ECR Public
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          for img in postgres:17.6.1.140 realtime:v2.112.1 storage-api:v1.61.7 gotrue:v2.192.0 pg_prove:3.36; do
+            src="public.ecr.aws/supabase/$img"
+            for attempt in 1 2 3 4; do
+              if docker pull --quiet "$src"; then break; fi
+              if [ "$attempt" = 4 ]; then echo "::warning::could not pull $src; the CLI will fall back to ghcr.io"; continue 2; fi
+              sleep $((attempt * 15))
+            done
+            docker tag "$src" "ghcr.io/supabase/$img"
+          done
+
       - name: 🚀 Start local Postgres (applies migrations)
         run: supabase db start
 
@@ -421,6 +483,13 @@ jobs:
       - name: Verify BOSS AI admission across PostgreSQL sessions
         timeout-minutes: 2
         run: python3 scripts/test/test-boss-ai-concurrency.py
+
+      - name: Verify domain quota across PostgreSQL sessions
+        timeout-minutes: 2
+        run: python3 scripts/test/test-domain-claim-concurrency.py
+      - name: Verify BOSS AI ticket single-spend across PostgreSQL sessions
+        timeout-minutes: 2
+        run: python3 scripts/test/test-boss-ai-ticket-concurrency.py
 
       - name: 🧹 Stop Supabase
         if: always()

@@ -4,6 +4,7 @@ import ai.rever.boss.plugin.browser.ActiveBrowserRegistry
 import ai.rever.boss.plugin.browser.BrowserHandle
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.window.LocalWindowId
+import ai.rever.boss.window.WindowAppearanceSettingsManager
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -73,6 +74,9 @@ fun isNonDefaultZoom(zoomLevel: Double): Boolean = abs(zoomLevel - 1.0) > 0.01
  */
 @Composable
 fun BrowserZoomBadge(modifier: Modifier = Modifier) {
+    val appearance by WindowAppearanceSettingsManager.currentSettings.collectAsState()
+    if (!appearance.showBrowserZoomBadge) return
+
     val windowId = LocalWindowId.current ?: return
     val activeHandleIds by ActiveBrowserRegistry.activeHandleIdByWindow.collectAsState()
     val activeHandleId = activeHandleIds[windowId]

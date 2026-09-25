@@ -37,7 +37,7 @@ import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.launch
 
 /**
- * Lets an operator see and undo every persisted "Trust This Plugin" grant made from
+ * Lets an operator see and undo every persisted "Trust plugin" grant made from
  * [McpApprovalDialog] - each one is an ALLOW for an entire provider's tools, not a single tool,
  * so this is the only path back short of hand-editing `~/.boss/mcp-tool-policy.json`.
  *
@@ -81,7 +81,7 @@ fun McpProviderTrustDialog(
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text =
-                        "Saved from \"Trust This Plugin\" in the tool approval dialog. Removing " +
+                        "Saved from \"Trust plugin\" in the tool approval dialog. Removing " +
                             "one returns every tool from that plugin to its own rule or the " +
                             "default policy - not necessarily to asking again.",
                     fontSize = 12.sp,

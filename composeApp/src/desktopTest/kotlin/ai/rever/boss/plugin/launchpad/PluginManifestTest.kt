@@ -3,6 +3,11 @@ package ai.rever.boss.plugin.launchpad
 import ai.rever.boss.components.plugin.DefaultPlugin
 import ai.rever.boss.utils.ReloadResult
 import ai.rever.boss.utils.SingleInstanceManager
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.LogEntry
+import ai.rever.boss.utils.logging.LogLevel
+import ai.rever.boss.utils.logging.LogListener
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import java.nio.file.Files
@@ -11,9 +16,12 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class PluginManifestTest {
@@ -147,7 +155,7 @@ class PluginManifestTest {
     @Test
     fun `findActiveDevJar resolves newest timestamp directory`() {
         val devRoot = Files.createDirectory(tempDir.resolve("dev-root"))
-        val pluginDir = Files.createDirectory(devRoot.resolve("my-tool"))
+        val pluginDir = Files.createDirectory(devRoot.resolve("com.example.mytool"))
         val timestamps = listOf(1000L, 2000L, 5000L, 3000L)
 
         for (ts in timestamps) {
@@ -155,13 +163,46 @@ class PluginManifestTest {
             Files.writeString(vDir.resolve("my-tool.jar"), "content-$ts")
         }
 
-        val activeJar = DevPluginArtifacts.findActiveDevJar("my-tool", devRoot.toFile())
+        val activeJar = DevPluginArtifacts.findActiveDevJar("com.example.mytool", devRoot.toFile())
         assertTrue(activeJar != null, "Active dev jar should be found")
         assertTrue(activeJar.toString().contains("v5000"), "Active dev jar must be newest timestamp (v5000)")
 
         val allActive = DevPluginArtifacts.findAllActiveDevJars(devRoot.toFile())
         assertEquals(1, allActive.size)
         assertEquals(activeJar, allActive.first())
+    }
+
+    @Test
+    fun `dev staging refuses path traversal plugin ids before touching the filesystem`() {
+        val devRoot = Files.createDirectory(tempDir.resolve("dev-root"))
+
+        // A directory outside devRoot that a traversal id would otherwise resolve to
+        val outsideDir = Files.createDirectory(tempDir.resolve("etc"))
+        val escapedVersionDir = Files.createDirectories(outsideDir.resolve("v1000"))
+        val escapedJar = Files.writeString(escapedVersionDir.resolve("evil.jar"), "content")
+
+        // "../etc" resolves to outsideDir: without the guard it would list the v* dirs
+        assertNull(
+            DevPluginArtifacts.findActiveDevJar("../etc", devRoot.toFile()),
+            "Traversal plugin id must not resolve a dev JAR outside devRoot",
+        )
+        assertNull(DevPluginArtifacts.findActiveDevJar("../../etc", devRoot.toFile()))
+        assertNull(DevPluginArtifacts.findActiveDevJar("..", devRoot.toFile()))
+        assertNull(DevPluginArtifacts.findActiveDevJar("no-dots", devRoot.toFile()))
+
+        assertFailsWith<IllegalArgumentException> {
+            DevPluginArtifacts.pluginDevDir("../../etc", devRoot.toFile())
+        }
+        assertFailsWith<IllegalArgumentException> {
+            DevPluginArtifacts.pluginDevDir("..\\..\\etc", devRoot.toFile())
+        }
+
+        // Nothing outside devRoot was listed or deleted
+        assertTrue(escapedJar.toFile().exists())
+        assertTrue(
+            devRoot.toFile().listFiles().isNullOrEmpty(),
+            "devRoot must not gain directories for refused plugin ids",
+        )
     }
 
     @Test
@@ -236,13 +277,13 @@ class PluginManifestTest {
 
             // 1. Standard installed JAR
             val standardJar = File(pluginsDir, "my-plugin.jar")
-            writeSyntheticJar(standardJar, "my-plugin")
+            writeSyntheticJar(standardJar, "com.example.myplugin")
 
-            // 2. Version-rotated dev JAR in staging root: my-plugin/v1000/my-plugin.jar
-            val versionDir = File(stagingBase, "my-plugin/v1000")
+            // 2. Version-rotated dev JAR in staging root: com.example.myplugin/v1000/my-plugin.jar
+            val versionDir = File(stagingBase, "com.example.myplugin/v1000")
             versionDir.mkdirs()
             val versionJar = File(versionDir, "my-plugin.jar")
-            writeSyntheticJar(versionJar, "my-plugin")
+            writeSyntheticJar(versionJar, "com.example.myplugin")
 
             val discoveredDevJars = DefaultPlugin.findActiveDevJars(stagingBase)
             assertEquals(1, discoveredDevJars.size)
@@ -277,7 +318,7 @@ class PluginManifestTest {
             writeSyntheticJar(versionJar, "protected-plugin")
             versionJar.setLastModified(5000L)
 
-            // When isProtectedPredicate is true, dev JAR is penalized so standardJar wins even if older
+            // Protected dev JARs are removed before grouping, regardless of timestamps.
             val deduplicated =
                 DefaultPlugin.deduplicateJars(listOf(standardJar, versionJar)) { pluginId ->
                     pluginId == "protected-plugin"
@@ -309,6 +350,70 @@ class PluginManifestTest {
                 }
             assertTrue(deduplicated.isEmpty(), "Lone dev JAR claiming protected plugin ID must be dropped")
         } finally {
+            DevPluginArtifacts.stagingRootOverride = null
+        }
+    }
+
+    @Test
+    fun `DefaultPlugin deduplicateJars logs diagnostic messages when dropping or superseding JARs`() {
+        val stagingBase = File(tempDir.toFile(), "logging-staging-root")
+        stagingBase.mkdirs()
+        DevPluginArtifacts.stagingRootOverride = stagingBase
+
+        val logs = java.util.concurrent.CopyOnWriteArrayList<LogEntry>()
+        val listener = LogListener { entry -> logs.add(entry) }
+        val previousLevel = BossLogger.globalLevel
+        BossLogger.setGlobalLevel(LogLevel.TRACE)
+        BossLogger.addListener(listener)
+
+        try {
+            val pluginsDir = File(tempDir.toFile(), "logging-plugins-dir")
+            pluginsDir.mkdirs()
+
+            // 1. Test dropping protected dev JAR
+            val protectedDevJar = File(stagingBase, "protected-plugin/v1000/protected-plugin.jar")
+            writeSyntheticJar(protectedDevJar, "protected-plugin")
+
+            val deduplicatedProtected =
+                DefaultPlugin.deduplicateJars(listOf(protectedDevJar)) { id ->
+                    id == "protected-plugin"
+                }
+            assertTrue(deduplicatedProtected.isEmpty())
+
+            val dropWarn =
+                logs.firstOrNull { entry ->
+                    entry.level == LogLevel.WARN &&
+                        entry.category == LogCategory.SYSTEM &&
+                        entry.message.contains("Dropped dev JAR claiming protected plugin ID: protected-plugin")
+                }
+            assertNotNull(dropWarn, "Must log warning when dropping dev JAR claiming protected plugin ID")
+            assertEquals("protected-plugin", dropWarn.data?.get("pluginId"))
+
+            // 2. Test superseding duplicate JAR
+            logs.clear()
+            val standardJar = File(pluginsDir, "sample-plugin.jar")
+            writeSyntheticJar(standardJar, "sample-plugin")
+
+            val devJar = File(stagingBase, "sample-plugin/v1000/sample-plugin.jar")
+            writeSyntheticJar(devJar, "sample-plugin")
+
+            val deduplicatedSample = DefaultPlugin.deduplicateJars(listOf(standardJar, devJar))
+            assertEquals(1, deduplicatedSample.size)
+            assertEquals(devJar.absolutePath, deduplicatedSample.single().absolutePath)
+
+            val dedupInfo =
+                logs.firstOrNull { entry ->
+                    entry.level == LogLevel.INFO &&
+                        entry.category == LogCategory.SYSTEM &&
+                        entry.message.contains("Deduplicating plugin 'sample-plugin'")
+                }
+            assertNotNull(dedupInfo, "Must log info when deduplicating multiple JARs for a plugin")
+            assertEquals("sample-plugin", dedupInfo.data?.get("pluginId"))
+            assertEquals(devJar.absolutePath, dedupInfo.data?.get("selected"))
+            assertEquals(standardJar.absolutePath, dedupInfo.data?.get("dropped"))
+        } finally {
+            BossLogger.removeListener(listener)
+            BossLogger.setGlobalLevel(previousLevel)
             DevPluginArtifacts.stagingRootOverride = null
         }
     }

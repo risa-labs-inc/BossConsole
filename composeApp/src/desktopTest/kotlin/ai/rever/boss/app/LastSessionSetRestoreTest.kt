@@ -95,6 +95,34 @@ class LastSessionSetRestoreTest {
         }
 
     @Test
+    fun `a refused first Space is never claimed and the next successful Space restores its project`() =
+        runBlocking {
+            val refused =
+                space("missing").copy(
+                    layout =
+                        SplitConfig.SinglePanel(
+                            PanelConfig("missing", listOf(TabConfig(type = "unknown", title = "missing"))),
+                        ),
+                )
+            val state = SplitViewState(tabRegistry, windowId = "refused-restore")
+            val project = WindowProjectState(windowId = "refused-restore")
+            val loaded = mutableListOf<String>()
+            val restored =
+                restoreLastSessionSet(
+                    LastSessionSet("good", listOf(refused, space("good"))),
+                    state,
+                    project,
+                    onLoad = { loaded += it.id },
+                    knownSpaces = emptyList(),
+                )
+
+            assertEquals(listOf("good"), loaded)
+            assertEquals(listOf("good"), restored.map { it.id })
+            assertEquals("good", state.currentWorkspaceId)
+            assertEquals(PROJECT, project.selectedProject.value.path)
+        }
+
+    @Test
     fun `every Space in the set comes back as a live Space this window is running`() {
         // The point of the whole feature. Before it, a restart brought back one Space and dropped
         // the rest, and `liveWorkspaceIds` would hold a single id here.

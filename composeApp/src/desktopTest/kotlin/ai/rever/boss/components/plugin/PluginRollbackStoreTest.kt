@@ -3,6 +3,7 @@ package ai.rever.boss.components.plugin
 import ai.rever.boss.plugin.loader.DynamicPluginLoaderImpl
 import ai.rever.boss.plugin.loader.PluginBundledTrust
 import ai.rever.boss.plugin.loader.PluginClassException
+import ai.rever.boss.plugin.loader.PluginManifestReader
 import ai.rever.boss.plugin.loader.PluginSignatureEnforcement
 import ai.rever.boss.plugin.loader.PluginSignatureSidecar
 import kotlinx.coroutines.runBlocking
@@ -171,6 +172,61 @@ class PluginRollbackStoreTest {
     }
 
     @Test
+    fun `an interrupted replacement preserves one complete previous generation`() {
+        val previous = writeJar("com.example.rollback-1.2.20.jar", "1.2.20")
+        val previousSignature = "cHJldmlvdXMtc2lnbmF0dXJl"
+        PluginSignatureSidecar.persist(previous.absolutePath, previousSignature)
+        PluginRollbackStore.snapshot(dir, pluginId, previous.absolutePath)
+
+        val replacement = writeJar("com.example.rollback-1.2.21.jar", "1.2.21")
+        PluginSignatureSidecar.persist(replacement.absolutePath, "cmVwbGFjZW1lbnQtc2lnbmF0dXJl")
+        PluginRollbackStore.snapshot(dir, pluginId, replacement.absolutePath) {
+            throw java.io.IOException("simulated power loss before commit")
+        }
+
+        assertEquals("1.2.20", PluginRollbackStore.availableVersion(dir, pluginId))
+        val restored = assertNotNull(PluginRollbackStore.restore(dir, pluginId, null))
+        assertEquals("1.2.20", PluginManifestReader.readFromJar(restored.absolutePath).version)
+        assertEquals(previousSignature, PluginSignatureSidecar.read(restored.absolutePath))
+        val generationRoot = File(dir, ".rollback/$pluginId.snapshots")
+        assertEquals(
+            1,
+            generationRoot.listFiles().orEmpty().count { it.name.endsWith(".snapshot") },
+            "the failed replacement left an unpublished generation behind",
+        )
+        assertFalse(
+            generationRoot.listFiles().orEmpty().any { it.name.endsWith(".staging") },
+            "the failed replacement left staging data behind",
+        )
+    }
+
+    @Test
+    fun `a legacy fixed-layout snapshot remains restorable`() {
+        val source = writeJar("legacy-source.jar", "1.2.19")
+        val rollbackDir = File(dir, ".rollback")
+        assertTrue(rollbackDir.mkdirs())
+        val legacyJar = File(rollbackDir, "$pluginId.jar")
+        source.copyTo(legacyJar)
+        File(rollbackDir, "$pluginId.version").writeText("1.2.19")
+        PluginSignatureSidecar.persist(legacyJar.absolutePath, "bGVnYWN5LXNpZ25hdHVyZQ==")
+
+        assertEquals("1.2.19", PluginRollbackStore.availableVersion(dir, pluginId))
+        val restored = assertNotNull(PluginRollbackStore.restore(dir, pluginId, null))
+        assertEquals("1.2.19", PluginManifestReader.readFromJar(restored.absolutePath).version)
+        assertEquals("bGVnYWN5LXNpZ25hdHVyZQ==", PluginSignatureSidecar.read(restored.absolutePath))
+    }
+
+    @Test
+    fun `a corrupted generation pointer fails closed`() {
+        val source = writeJar("plugin-1.2.21.jar", "1.2.21")
+        PluginRollbackStore.snapshot(dir, pluginId, source.absolutePath)
+        File(dir, ".rollback/$pluginId.snapshots/current").writeText("missing.snapshot")
+
+        assertNull(PluginRollbackStore.availableVersion(dir, pluginId))
+        assertNull(PluginRollbackStore.restore(dir, pluginId, null))
+    }
+
+    @Test
     fun `the signature sidecar travels with the copy and back`() {
         // A jar whose signature file belongs to different bytes hard-fails the load, which is worse
         // than being unsigned. So the sidecar has to follow the jar in both directions.
@@ -274,15 +330,21 @@ class PluginRollbackStoreTest {
         // One generation deep, on purpose: a history is a directory of multi-megabyte jars nobody
         // prunes, and recovery only needs the state immediately before the change that broke it.
         val first = writeJar("com.example.rollback-1.2.20.jar", "1.2.20")
+        PluginSignatureSidecar.persist(first.absolutePath, "Zmlyc3Qtc2lnbmF0dXJl")
         PluginRollbackStore.snapshot(dir, pluginId, first.absolutePath)
         val second = writeJar("com.example.rollback-1.2.21.jar", "1.2.21")
+        val secondSignature = "c2Vjb25kLXNpZ25hdHVyZQ=="
+        PluginSignatureSidecar.persist(second.absolutePath, secondSignature)
         PluginRollbackStore.snapshot(dir, pluginId, second.absolutePath)
         assertEquals("1.2.21", PluginRollbackStore.availableVersion(dir, pluginId))
         assertEquals(
             1,
-            File(dir, ".rollback").listFiles { f: File -> f.name.endsWith(".jar") }?.size,
+            File(dir, ".rollback").walkTopDown().count { it.isFile && it.name.endsWith(".jar") },
             "the rollback directory is accumulating jars",
         )
+        val restored = assertNotNull(PluginRollbackStore.restore(dir, pluginId, null))
+        assertEquals("1.2.21", PluginManifestReader.readFromJar(restored.absolutePath).version)
+        assertEquals(secondSignature, PluginSignatureSidecar.read(restored.absolutePath))
     }
 
     @Test
@@ -317,7 +379,7 @@ class PluginRollbackStoreTest {
                 }
             }
             PluginRollbackStore.discard(dir, pluginId)
-            assertFalse(File(dir, ".rollback").listFiles().orEmpty().any { it.name.endsWith(".bundled-trust") })
+            assertFalse(File(dir, ".rollback").walkTopDown().any { it.name.endsWith(".bundled-trust") })
         }
 
     @Test

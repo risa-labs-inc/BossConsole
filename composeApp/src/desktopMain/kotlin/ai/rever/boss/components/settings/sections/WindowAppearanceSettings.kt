@@ -73,6 +73,8 @@ fun WindowAppearanceSettings() {
 
         BarsSection()
 
+        BrowserZoomSection()
+
         NativeContextMenuSection()
 
         TabBarSection()
@@ -345,3 +347,25 @@ private val TabWidthMode.displayName: String
             TabWidthMode.SHRINK_TO_FIT -> "Shrink to Fit"
             TabWidthMode.FIXED -> "Fixed Width"
         }
+
+@Composable
+private fun BrowserZoomSection() {
+    val settings by WindowAppearanceSettingsManager.currentSettings.collectAsState()
+    val coroutineScope = rememberCoroutineScope()
+    SettingsSection(title = "Browser Zoom") {
+        SettingsToggle(
+            label = "Show Browser Zoom Badge",
+            checked = settings.showBrowserZoomBadge,
+            onCheckedChange = { enabled ->
+                coroutineScope.launch {
+                    WindowAppearanceSettingsManager.updateSettings(
+                        WindowAppearanceSettingsManager.currentSettings.value.copy(showBrowserZoomBadge = enabled),
+                    )
+                }
+            },
+            description =
+                "Show zoom controls in the BOSS top bar when browser zoom is not 100%. " +
+                    "Requires Show Top Bar.",
+        )
+    }
+}

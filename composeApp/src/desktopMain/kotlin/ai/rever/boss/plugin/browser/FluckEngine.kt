@@ -15,6 +15,7 @@ import ai.rever.boss.platform.pickSaveFile
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.plugin.ui.BossThemeController
 import ai.rever.boss.plugin.ui.BossThemes
+import ai.rever.boss.utils.SingleInstanceManager
 import ai.rever.boss.utils.SystemUtils
 import ai.rever.boss.utils.WindowFocusManager
 import ai.rever.boss.utils.logging.BossLogger
@@ -267,73 +268,68 @@ object FluckEngine {
         cleanupAllTemporaryProfiles()
     }
 
+    /** Processes younger than this are never swept: a just-spawned Chromium is by definition not stale. */
+    private const val STALE_PROCESS_MIN_AGE_MS = 5000L
+
+    /** Bound on the ancestor walk in [hasLiveForeignOwner]; a chain deeper than this counts as owned. */
+    private const val MAX_OWNER_ANCESTOR_HOPS = 16
+
     /**
      * Kill stale Chromium processes that were spawned by previous BOSS sessions.
      * These zombie processes can prevent profile reuse even without lock files.
+     *
+     * Runs only in the process that holds the single-instance claim: the sweep
+     * selects by shared data-dir paths, so a launch that lost - or never took -
+     * the claim would otherwise kill the running instance's live browser tree.
+     * The per-process foreign-owner check is the second layer, for the window
+     * where this instance holds the claim but the previous one has not exited.
      */
     private fun killStaleChromiumProcesses() {
+        if (!SingleInstanceManager.isInstanceOwner) {
+            logger.debug(
+                LogCategory.BROWSER,
+                "Skipping stale Chromium sweep - this process does not hold the single-instance claim",
+            )
+            return
+        }
+
         var killedAny = false
         try {
             // Use explicit paths for more precise matching (security: avoid killing unrelated processes)
-            val bossChromiumDir = BossDirectories.resolve("jxbrowser-chromium").absolutePath
-            val bossBrandedChromiumDir = BossDirectories.resolve("boss-chromium").absolutePath
-            val bossProfileDir = BossDirectories.resolve("browser-profile").absolutePath
+            val instanceMarkers =
+                listOf(
+                    BossDirectories.resolve("jxbrowser-chromium").absolutePath,
+                    BossDirectories.resolve("boss-chromium").absolutePath,
+                    BossDirectories.resolve("browser-profile").absolutePath,
+                )
             val currentPid = ProcessHandle.current().pid()
             val currentTimeMs = System.currentTimeMillis()
 
-            // Find all processes that match JxBrowser's Chromium
-            // Also catch chrome_crashpad orphans whose parent is dead
+            // Find all stale Chromium processes that belong to this instance's
+            // engine/profile dirs and are not owned by a live foreign process.
             val staleProcesses =
                 ProcessHandle
                     .allProcesses()
                     .filter { process ->
                         try {
-                            val command = process.info().command().orElse("")
-                            val commandLine = process.info().commandLine().orElse("")
-
-                            // Security: First verify it's actually a Chromium/Chrome executable
-                            val isChromiumExecutable =
-                                command.contains("chrome", ignoreCase = true) ||
-                                    command.contains("chromium", ignoreCase = true) ||
-                                    command.contains("jxbrowser", ignoreCase = true)
-
-                            if (!isChromiumExecutable) return@filter false
-
-                            // Security: Check if it's from our JxBrowser installation
-                            // Use explicit full paths to avoid false positives
-                            val isFromBossDir =
-                                command.contains(bossChromiumDir) ||
-                                    command.contains(bossBrandedChromiumDir) ||
-                                    commandLine.contains(bossChromiumDir) ||
-                                    commandLine.contains(bossBrandedChromiumDir) ||
-                                    commandLine.contains(bossProfileDir)
-
-                            // Also detect orphaned chrome_crashpad processes:
-                            // These are helper processes whose parent (the main Chromium) has died.
-                            // They have "chrome_crashpad" in the command but may not reference BOSS dirs.
-                            // Safe to kill if their parent process is dead (orphaned to PID 1/launchd).
-                            val isCrashpadOrphan =
-                                command.contains("chrome_crashpad") &&
-                                    !process.parent().isPresent
-
-                            val isJxBrowserChromium = isFromBossDir || isCrashpadOrphan
-
-                            // Don't kill processes that belong to current BOSS instance
-                            val parentPid = process.parent().map { it.pid() }.orElse(-1L)
-                            val isOurChild = parentPid == currentPid
-
-                            // Security: Don't kill processes started less than 5 seconds ago
-                            // This prevents killing newly spawned legitimate processes
-                            val startTimeMs =
-                                process
-                                    .info()
-                                    .startInstant()
-                                    .map { it.toEpochMilli() }
-                                    .orElse(currentTimeMs)
-                            val processAgeMs = currentTimeMs - startTimeMs
-                            val isTooRecent = processAgeMs < 5000
-
-                            isJxBrowserChromium && !isOurChild && !isTooRecent
+                            val info = process.info()
+                            isStaleChromiumCandidate(
+                                process =
+                                    ChromiumProcessSnapshot(
+                                        command = info.command().orElse(""),
+                                        commandLine = info.commandLine().orElse(""),
+                                        parentPid = process.parent().map { it.pid() }.orElse(-1L),
+                                        startTimeMs =
+                                            info
+                                                .startInstant()
+                                                .map { it.toEpochMilli() }
+                                                .orElse(currentTimeMs),
+                                    ),
+                                nowMs = currentTimeMs,
+                                currentPid = currentPid,
+                                instanceMarkers = instanceMarkers,
+                                hasForeignOwner = { hasLiveForeignOwner(process, currentPid) },
+                            )
                         } catch (e: Exception) {
                             // Process may have exited mid-inspection - skip it
                             logger.debug(
@@ -402,6 +398,100 @@ object FluckEngine {
         }
     }
 
+    /** The fields of a scanned process the sweep's decision reads, split out so the decision is testable. */
+    internal data class ChromiumProcessSnapshot(
+        val command: String,
+        val commandLine: String,
+        val parentPid: Long,
+        val startTimeMs: Long,
+    )
+
+    /**
+     * Whether a scanned process is a stale Chromium of THIS instance that the
+     * sweep may kill. Split from [killStaleChromiumProcesses] so the decision
+     * can be tested without real BOSS or Chromium processes.
+     *
+     * A candidate must reference this instance's own directories - a Chromium
+     * binary dir, or the `browser-profile` prefix in its command line (which
+     * also covers `browser-profile-<millis>` temp profiles). That scoping is
+     * what keeps the sweep off another install's tree: the previous behaviour
+     * also killed any parentless `chrome_crashpad` on the box, whatever it
+     * belonged to. A stale crashpad of ours still qualifies - its binary lives
+     * under this instance's engine dir.
+     *
+     * [hasForeignOwner] is a lambda so the ancestor walk it wraps runs only for
+     * a process that already looks like one of ours and is old enough - it is
+     * the expensive check, evaluated last.
+     */
+    @Suppress("ReturnCount")
+    internal fun isStaleChromiumCandidate(
+        process: ChromiumProcessSnapshot,
+        nowMs: Long,
+        currentPid: Long,
+        instanceMarkers: List<String>,
+        hasForeignOwner: () -> Boolean,
+    ): Boolean {
+        // Security: only ever consider a Chromium/Chrome executable.
+        if (!isChromiumExecutableCommand(process.command)) return false
+
+        // Security: only consider a process that references this instance's own
+        // engine or profile directories - full paths, to avoid false positives.
+        val isFromInstanceDir =
+            instanceMarkers.any { process.command.contains(it) || process.commandLine.contains(it) }
+        if (!isFromInstanceDir) return false
+
+        // Don't kill processes that belong to this BOSS instance.
+        if (process.parentPid == currentPid) return false
+
+        // Don't kill processes started less than STALE_PROCESS_MIN_AGE_MS ago -
+        // the window that keeps a just-spawned legitimate process safe.
+        if (nowMs - process.startTimeMs < STALE_PROCESS_MIN_AGE_MS) return false
+
+        // Never touch a tree whose owner is alive: that is a second live
+        // instance's Chromium, whatever its command line says.
+        return !hasForeignOwner()
+    }
+
+    /**
+     * Whether [process] sits in a tree whose owning process is alive and is not
+     * this JVM - the shape of a second live instance's Chromium.
+     *
+     * Helpers chain up to the browser process, whose parent is the JVM (or
+     * packaged launcher) that spawned it. When that owner is dead the topmost
+     * Chromium is reparented to pid 1 on POSIX, or its recorded parent no
+     * longer exists on Windows - either way the walk ends without meeting a
+     * live non-Chromium ancestor, and the tree is stale. A live second
+     * instance's tree does have such an ancestor, and killing it is the
+     * cross-instance kill this guard exists to prevent.
+     *
+     * Fails closed: a chain too deep to resolve counts as a live owner, and an
+     * unexpected failure inspecting any link propagates to the caller's
+     * per-process catch, which skips the process rather than killing it.
+     */
+    @Suppress("ReturnCount")
+    internal fun hasLiveForeignOwner(
+        process: ProcessHandle,
+        currentPid: Long,
+    ): Boolean {
+        var ancestor = process.parent().orElse(null) ?: return false
+        repeat(MAX_OWNER_ANCESTOR_HOPS) {
+            // Ourselves, init/launchd, or a dead recorded parent: no live owner.
+            if (ancestor.pid() == currentPid || ancestor.pid() <= 1L || !ancestor.isAlive) {
+                return false
+            }
+            // A live non-Chromium ancestor owns this tree; any Chromium ancestor
+            // is another helper, so keep walking toward the root.
+            if (!isChromiumExecutableCommand(ancestor.info().command().orElse(""))) return true
+            ancestor = ancestor.parent().orElse(null) ?: return false
+        }
+        return true
+    }
+
+    private fun isChromiumExecutableCommand(command: String): Boolean =
+        command.contains("chrome", ignoreCase = true) ||
+            command.contains("chromium", ignoreCase = true) ||
+            command.contains("jxbrowser", ignoreCase = true)
+
     /**
      * Clean up ALL lock-related files in the profile directory.
      * JxBrowser/Chromium uses multiple files for locking.
@@ -445,12 +535,8 @@ object FluckEngine {
     // Track URLs that are being downloaded to prevent popup handler from opening tabs
     private val activeDownloadUrls = Collections.synchronizedSet(mutableSetOf<String>())
 
-    // Track recently opened tabs that might be download redirects
-    // Store tab IDs opened in the last few seconds
-    private val recentlyOpenedTabIds = Collections.synchronizedList(mutableListOf<Pair<Long, String>>())
-
-    // Callback to close most recent tab
-    private var onCloseMostRecentTab: (() -> Unit)? = null
+    // Admission only: timestamps do not identify which tab owns a download.
+    private val popupTabTracker = PopupTabTracker()
 
     // Download manager for tracking all downloads
     val downloadManager = DownloadManager()
@@ -471,44 +557,8 @@ object FluckEngine {
      */
     fun isActiveDownload(url: String): Boolean = activeDownloadUrls.contains(url)
 
-    /**
-     * Notify that a tab was just opened via popup handler.
-     * This tab might be a download redirect and should be auto-closed if download starts soon.
-     */
-    fun notifyTabOpened() {
-        val now = System.currentTimeMillis()
-        recentlyOpenedTabIds.add(now to "")
-
-        // Clean up old entries (older than 5 seconds)
-        val cutoff = now - 5_000
-        recentlyOpenedTabIds.removeIf { it.first < cutoff }
-    }
-
-    /**
-     * Set callback to close the most recently opened tab.
-     * Called by BossApp or tab management system.
-     */
-    fun setCloseMostRecentTabCallback(callback: () -> Unit) {
-        onCloseMostRecentTab = callback
-    }
-
-    /**
-     * Auto-close the most recently opened tab if it was opened within the last 3 seconds.
-     * Called when a download starts.
-     */
-    private fun autoCloseDownloadTab() {
-        val now = System.currentTimeMillis()
-        val recentCutoff = now - 3_000 // Tabs opened in last 3 seconds
-
-        // Find tabs opened in the last 3 seconds
-        val recentTabs = recentlyOpenedTabIds.filter { it.first >= recentCutoff }
-
-        if (recentTabs.isNotEmpty()) {
-            onCloseMostRecentTab?.invoke()
-            // Clear the entries
-            recentlyOpenedTabIds.removeIf { it.first >= recentCutoff }
-        }
-    }
+    /** Refuse popup opens beyond the burst cap. Downloads do not reset this budget. */
+    fun notifyTabOpened(): Boolean = popupTabTracker.tryRecordOpened()
 
     /**
      * Pause an active download.
@@ -2640,6 +2690,11 @@ object FluckEngine {
      * dispatches through [ai.rever.boss.window.MenuActionsHandler] (zoom, N/T/W and
      * Shift+F/Shift+S) must be gated on this value; a new one added later must be too.
      *
+     * Print is a deliberate direct-browser exception: manual macOS testing found Cmd+P
+     * did not open preview through AWT alone. Its callback cancels a pending AWT print
+     * before invoking the page. This is best-effort suppression, not an ordering guarantee
+     * if the AWT release wins the native callback race. Do not copy it for other actions.
+     *
      * [JxBrowserConfig.renderingMode] is a `lazy` val, so this resolves once per process. That is
      * the right granularity: changing the mode needs the engine rebuilt, so it cannot change under
      * a running browser anyway.
@@ -2898,6 +2953,22 @@ object FluckEngine {
 
                 // Intercept main modifier + key shortcuts
                 if (isMainModifierDown && !modifiers.isShiftDown && !modifiers.isAltDown) {
+                    // The native page also receives Cmd+P on macOS without a usable AWT
+                    // accelerator event. Handle it here on every platform, like reload below.
+                    if (keyCode == com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_P &&
+                        usesNativePrintChord(ai.rever.boss.keymap.KeymapSettingsManager.currentSettings.value)
+                    ) {
+                        shortcutWindowId?.let {
+                            ai.rever.boss.window.AWTKeyboardInterceptor
+                                .cancelPendingNativePrint(it)
+                        }
+                        if (!browser.isClosed) {
+                            browser.mainFrame().ifPresent { it.executeJavaScript<Any>(PRINT_BROWSER_SCRIPT) }
+                        }
+                        return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response
+                            .suppress()
+                    }
+
                     // Reload is BROWSER-scoped and this callback already fires for the browser that
                     // received the key, so reload it directly instead of routing through the
                     // focused WINDOW. MenuActionsHandler.triggerReloadBrowser only emits an event
@@ -3215,8 +3286,9 @@ object FluckEngine {
                 val downloadUrl = target.url()
                 activeDownloadUrls.add(downloadUrl)
 
-                // Auto-close any tabs that were recently opened (likely download redirects)
-                autoCloseDownloadTab()
+                // No recency-based tab closure: popup callbacks carry no tab identity.
+                // Leave redirect shells open rather than closing unrelated work in another
+                // panel/window. Cleanup requires exact ownership, not a global timestamp.
 
                 val suggestedFileName = target.suggestedFileName()
                 val sanitizedFileName = FileNameSanitizer.sanitize(suggestedFileName)

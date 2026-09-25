@@ -1,8 +1,10 @@
 package ai.rever.boss.components.dialogs
 
+import ai.rever.boss.app.ProjectOpenRequests
 import ai.rever.boss.components.plugin.panels.left_top.ProjectState
 import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.window.LocalWindowId
 import ai.rever.boss.window.LocalWindowProjectState
 import ai.rever.boss.window.Project
 import ai.rever.boss.window.WindowProjectState
@@ -39,6 +41,7 @@ fun ProjectSelectionDialog(
 ) {
     // Get window project state from composition local for multi-window support
     val windowProjectState = LocalWindowProjectState.current
+    val windowId = LocalWindowId.current
     val recentProjects by ProjectState.recentProjects.collectAsState()
 
     // If no recent projects, skip dialog and open directory picker directly
@@ -106,7 +109,11 @@ fun ProjectSelectionDialog(
                         ProjectListItem(
                             project = project,
                             onClick = {
-                                selectProjectInWindow(windowProjectState, project)
+                                // Asked where it goes by the window's one dialog; straight in
+                                // only when there is no window to ask in.
+                                if (!ProjectOpenRequests.ask(windowId, project)) {
+                                    selectProjectInWindow(windowProjectState, project)
+                                }
                                 onDismiss()
                             },
                         )

@@ -81,14 +81,14 @@ private fun defaultWorkspaceOptions(): List<WorkspaceOption> =
             WorkspaceOption(
                 id = WorkspaceSettings.ASK_WORKSPACE_ID,
                 name = "Ask",
-                description = "Start with no space, then ask which one when a project is selected",
+                description = "Ask where each project opens: this space, a new space, or a new window",
             ),
         )
         add(
             WorkspaceOption(
                 id = WorkspaceSettings.NO_WORKSPACE_ID,
                 name = "None",
-                description = "Never apply a space, and never ask",
+                description = "Open each project in the current space, and never ask",
             ),
         )
         PredefinedWorkspaces.allWorkspaces.forEach { workspace ->

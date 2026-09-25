@@ -12,12 +12,20 @@ import {
   upstreamKey,
 } from "./wire.ts"
 
+class SettlementTimeoutError extends Error {
+  constructor() {
+    super("settlement_timeout")
+    this.name = "SettlementTimeoutError"
+  }
+}
+
 export interface Dependencies {
   sessionUser(token: string): Promise<string | null>
   rpc(name: string, params: Obj): Promise<unknown>
   secret(name: string): string | undefined
   fetch: typeof fetch
   upstreamTimeoutMs?: number
+  settlementTimeoutMs?: number
   audit?: (event: string, requestId: string) => void
 }
 const headers = { "Content-Type": "application/json", "Cache-Control": "no-store" }
@@ -28,6 +36,42 @@ function failure(error: unknown, requestId: string): Response {
     ? error
     : new HttpError(503, "unavailable", "BOSS AI is temporarily unavailable.")
   return json({ error: { code: e.code, message: e.message } }, e.status, requestId)
+}
+
+async function settleReservation(
+  deps: Dependencies,
+  requestId: string,
+  tokens: number | null,
+  audit: (event: string) => void,
+): Promise<void> {
+  // boss_ai_settle updates only WHERE NOT settled. Retrying the same request ID is safe
+  // even if a timed-out first attempt commits late. Two bounded attempts cost at most
+  // four seconds by default, on success, streaming cleanup, AND upstream failure paths.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([
+        deps.rpc("boss_ai_settle", { p_request_id: requestId, p_tokens: tokens }),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new SettlementTimeoutError()),
+            deps.settlementTimeoutMs ?? 2_000,
+          )
+        }),
+      ])
+      return
+    } catch (error) {
+      if (error instanceof SettlementTimeoutError) audit("settlement_timeout")
+      if (attempt === 1) {
+        // Reservation accounting is conservative: the full reserved allowance remains
+        // charged, not unbilled. Alert operators for reconciliation by this request ID.
+        audit("settlement_failed_reservation_retained")
+        audit("settlement_failed")
+      }
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }
 }
 
 export function createHandler(deps: Dependencies): (request: Request) => Promise<Response> {
@@ -67,6 +111,16 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
       if (request.method === "POST" && path === "/auth/token") {
         const user = await deps.sessionUser(token)
         if (!user) throw new HttpError(401, "unauthorized", "Sign in to BOSS to use AI.")
+        // Same predicate /auth/exchange applies via boss_ai_consume_exchange_ticket:
+        // banned, anonymous, or ai.use-less sessions do not get an AI token at all.
+        // Without this, a banned user holding a token could probe /v1/models and
+        // /v1/usage (downstream refused them anyway) - the token-mint was a
+        // distinguishable signal. The RPC keeps both halves of the function
+        // honest about who is allowed.
+        const eligible = await deps.rpc("boss_ai_token_eligible", { p_user_id: user })
+        if (eligible !== true) {
+          throw new HttpError(403, "forbidden", "This account is not permitted to use BOSS AI.")
+        }
         return json(await mintToken(user, key), 200, requestId)
       }
       const user = await verifyToken(token, key)
@@ -190,18 +244,13 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           "The model is temporarily unavailable. Please try again.",
         )
       }
-      const settle = async (tokens: number | null) => {
+      const settleWithRetry = async (tokens: number | null) => {
         if (tokens === null) audit("usage_unknown_reservation_retained")
         if (tokens !== null && tokens > result.model.context_length) {
           audit("usage_exceeds_configured_context")
         }
         phase = "settlement"
-        await deps.rpc("boss_ai_settle", { p_request_id: requestId, p_tokens: tokens })
-      }
-      const settleWithRetry = async (tokens: number | null) => {
-        await settle(tokens).catch(async () => {
-          await settle(tokens).catch(() => audit("settlement_failed"))
-        })
+        await settleReservation(deps, requestId, tokens, audit)
       }
       if (input.stream !== true) {
         try {
@@ -294,13 +343,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
       if (!(error instanceof HttpError) || error.status >= 500) audit(`${phase}_failed`)
       if (reservation) {
         if (dispatched && measuredTokens === null) audit("usage_unknown_reservation_retained")
-        const settlement = {
-          p_request_id: reservation,
-          p_tokens: dispatched ? measuredTokens : 0,
-        }
-        await deps.rpc("boss_ai_settle", settlement).catch(async () => {
-          await deps.rpc("boss_ai_settle", settlement).catch(() => audit("settlement_failed"))
-        })
+        await settleReservation(deps, reservation, dispatched ? measuredTokens : 0, audit)
       }
       return failure(error, requestId)
     }

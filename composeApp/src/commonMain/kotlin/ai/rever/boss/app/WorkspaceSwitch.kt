@@ -34,6 +34,7 @@ internal class WorkspaceSwitch internal constructor(
 )
 
 @Composable
+@Suppress("CyclomaticComplexMethod") // Keep/close, same-Space reopen, and refusal each preserve distinct ownership.
 internal fun rememberWorkspaceSwitch(
     state: BossAppState,
     splitViewState: SplitViewState,
@@ -44,17 +45,18 @@ internal fun rememberWorkspaceSwitch(
     val resolve: (LayoutWorkspace, Boolean) -> Unit = { workspace, keepLeaving ->
         scope.launch {
             val leaving = workspaceManager.currentWorkspace.value
-            if (leaving != null && leaving.id.isNotEmpty()) {
-                if (keepLeaving) {
-                    splitViewState.preserveCurrentState(leaving.id, leaving.name)
-                } else {
-                    splitViewState.closeCurrentWorkspace()
-                    // The unsaved mark goes with the layout it was about. Closing destroys this
-                    // window's copy of the Space - preserved state dropped, panels cleared - so
-                    // after this there is nothing here that differs from the file, and a mark left
-                    // behind would point at work that no longer exists and could never be saved.
-                    workspaceManager.setWorkspaceUnsaved(state.windowId, leaving.id, false)
-                }
+            val leavingId = leaving?.id?.takeIf { it.isNotEmpty() }
+
+            // Preserve whatever the answer to keep-or-close was: the leaving tree has to still
+            // be in the map if the incoming Space turns out to be unbuildable, because nothing
+            // on the refusal path can rebuild it. A close the user asked for happens below,
+            // once the apply has actually landed - closing here cleared the live tabs first and
+            // a refused apply then left an emptied window, the wipe this ordering exists for.
+            if (leavingId != null && (keepLeaving || leavingId != workspace.id)) {
+                splitViewState.preserveCurrentState(leavingId, leaving?.name.orEmpty())
+            } else if (leavingId != null) {
+                // Reopening this Space with discard must rebuild its saved definition.
+                splitViewState.discardPreservedState(leavingId)
             }
 
             // A TEMPLATE picked here becomes a Space first: substituted, named for the project and
@@ -63,10 +65,37 @@ internal fun rememberWorkspaceSwitch(
             // project selected (which says so and applies as before). See `spaceToOpen`.
             val opened = spaceToOpen(workspace, state.windowProjectState.selectedProject.value.path)
 
-            // Load first to reset dirty state, then apply - which may restore state preserved
-            // for the workspace being entered.
-            workspaceManager.loadWorkspace(opened)
-            applyWorkspace(opened, splitViewState, state.windowProjectState)
+            if (applyWorkspace(opened, splitViewState, state.windowProjectState)) {
+                // The apply landed, so the manager can enter the Space (which is also what
+                // re-skins the app) - and only then does a close destroy anything.
+                workspaceManager.loadWorkspace(opened)
+                if (leavingId != null && !keepLeaving && leavingId != opened.id) {
+                    splitViewState.closeWorkspace(leavingId)
+                    // The unsaved mark goes with the layout it was about. Closing destroys this
+                    // window's copy of the Space - preserved state dropped, panels cleared - so
+                    // after this there is nothing here that differs from the file, and a mark left
+                    // behind would point at work that no longer exists and could never be saved.
+                    workspaceManager.setWorkspaceUnsaved(state.windowId, leavingId, false)
+                }
+            } else {
+                // Refused: nothing was built and nothing was destroyed. Put the leaving tree
+                // back on screen and drop the snapshot just taken of it - it is the same tree,
+                // and a preserved copy of the workspace currently shown would be written into
+                // the next session record as a second running Space.
+                if (leavingId != null) {
+                    splitViewState.restorePreservedState(leavingId)
+                    splitViewState.discardPreservedState(leavingId)
+                }
+                // `spaceToOpen` enters a materialised template itself - the loadWorkspace inside
+                // it is how the save lands under the right identity - so a refusal can leave the
+                // manager claiming a Space that was never applied. Point it back at what is on
+                // screen, which also re-applies that Space's theme over the one just set.
+                if (leaving == null) {
+                    workspaceManager.resetToDefault()
+                } else if (workspaceManager.currentWorkspace.value?.id != leaving.id) {
+                    workspaceManager.loadWorkspace(leaving)
+                }
+            }
         }
     }
 

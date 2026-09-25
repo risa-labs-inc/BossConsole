@@ -11,15 +11,18 @@ export const PluginTypeSchema = z.enum(['panel', 'tab', 'hybrid', 'mixed', 'serv
 // ============================================================================
 
 export const ListPluginsQuerySchema = z.object({
-  page: z.string().optional().default('1').transform(Number),
-  pageSize: z.string().optional().default('20').transform(Number),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
   sortBy: z.enum(['name', 'downloads', 'rating', 'newest', 'updated']).optional().default('downloads')
 })
 
 export const SearchPluginsRequestSchema = z.object({
-  query: z.string().optional().default(''),
+  query: z.string().max(200).optional().default(''),
   type: PluginTypeSchema.optional(),
-  tags: z.array(z.string()).optional(),
+  // Cap the array AND each tag, mirroring the 50-char per-tag cap on the
+  // Publish* schemas. BossConsole#1249: an unbounded `tags` array was
+  // concatenated into the SQL ILIKE filter and could amplify a DoS.
+  tags: z.array(z.string().max(50)).max(20).optional(),
   minRating: z.number().min(0).max(5).optional().default(0),
   verifiedOnly: z.boolean().optional().default(false),
   page: z.number().min(1).optional().default(1),
@@ -152,7 +155,11 @@ export const PublishPluginRequestSchema = z.object({
   pluginId: z.string().min(3).max(100).regex(/^[a-z0-9.-]+$/i, 'Plugin ID must contain only alphanumeric characters, dots, and hyphens'),
   displayName: z.string().min(1).max(100),
   description: z.string().max(5000).optional().default(''),
-  authorName: z.string().min(1).max(100).optional(), // Optional custom author name, defaults to email username
+  // Accepted but IGNORED: the stored author name is always derived from the
+  // authenticated user, because a self-asserted name lets a publisher claim
+  // an org or "BOSS Team" it does not belong to. Kept in the schema so
+  // existing clients do not have to stop sending it.
+  authorName: z.string().min(1).max(100).optional(),
   homepageUrl: z.string().url('homepageUrl must be a valid URL (required for publishing)'),
   iconUrl: z.union([z.string().url(), z.literal('')]).optional().default(''),
   type: PluginTypeSchema.optional().default('panel'),
@@ -213,6 +220,24 @@ export const FinalizeVersionResponseSchema = z.object({
 // Simplified GitHub Publish Schema
 // ============================================================================
 
+/**
+ * GitHub URL guard. BossConsole#1250: the previous `url.includes('github.com')`
+ * accepted any URL whose text contained the substring (query string, fragment,
+ * `github.com.evil.example` subdomain), because it was a substring check on
+ * the URL text rather than a parse of the hostname. The data layer
+ * (`parseGitHubUrl`) would refuse those URLs anyway, but the schema-level
+ * check is what the publisher's UI sees, and a wrong schema answer fails the
+ * whole validation step. Parse the URL and require the host to be exactly
+ * `github.com`.
+ */
+function isGitHubHost(url: string): boolean {
+  try {
+    return new URL(url).hostname === "github.com"
+  } catch {
+    return false
+  }
+}
+
 export const PublishFromGitHubRequestSchema = z.object({
   /**
    * Organisation to publish under. Optional, and AUTHORISED server-side against
@@ -222,7 +247,7 @@ export const PublishFromGitHubRequestSchema = z.object({
    */
   orgId: z.string().uuid('orgId must be a UUID').optional(),
   githubUrl: z.string().url('Must be a valid GitHub URL').refine(
-    (url) => url.includes('github.com'),
+    isGitHubHost,
     'URL must be a GitHub repository URL'
   ),
   changelog: z.string().max(5000).optional(),
@@ -251,7 +276,7 @@ export const PublishFromGitHubMetadataRequestSchema = z.object({
    */
   orgId: z.string().uuid('orgId must be a UUID').optional(),
   githubUrl: z.string().url('Must be a valid GitHub URL').refine(
-    (url) => url.includes('github.com'),
+    isGitHubHost,
     'URL must be a GitHub repository URL'
   ),
   // Client-provided SHA-256 of the JAR (hex, 64 chars). The server does not

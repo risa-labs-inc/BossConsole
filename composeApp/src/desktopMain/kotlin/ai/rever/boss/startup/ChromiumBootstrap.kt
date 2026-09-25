@@ -1,6 +1,7 @@
 package ai.rever.boss.startup
 
 import ai.rever.boss.config.ChromiumAutoDownloader
+import ai.rever.boss.plugin.browser.ChromiumToolkitPreload
 import ai.rever.boss.plugin.browser.FluckEngine
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -69,6 +70,17 @@ object ChromiumBootstrap {
             FluckEngine.EngineStartupAction.Boot -> {
                 Unit
             }
+        }
+
+        // Load JxBrowser's native toolkit HERE, on the main thread, before the pre-warm thread
+        // exists: loading it swaps the process's malloc zones, and a free() on another thread
+        // during that swap is an uncatchable SIGTRAP. Same directory the engine will boot from,
+        // so JxBrowser's own System.load later is a no-op. See ChromiumToolkitPreload.
+        // Boot only: on Download the engine is not on disk yet, and the boot that follows a
+        // first-run download happens once the app is running, where loading here would be no
+        // quieter than JxBrowser's own load - that path keeps the original window, knowingly.
+        if (engineAction == FluckEngine.EngineStartupAction.Boot) {
+            ChromiumToolkitPreload.preload(FluckEngine.resolveEngineDir(cacheHealthy))
         }
 
         // Pre-warm the browser engine off the UI thread so the first browser tab opens quickly

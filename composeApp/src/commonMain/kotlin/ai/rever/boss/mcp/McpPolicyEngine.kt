@@ -75,6 +75,21 @@ data class McpSectionPolicyChange(
 )
 
 /**
+ * One operator grant of session trust: [providerId]'s [toolName] runs without prompting
+ * until it is revoked, a policy reset lands, or the app restarts. The provider is part of
+ * the identity because a second provider shipping a same-named tool is a *different* tool:
+ * a name-only grant would hand an unvetted plugin the approval its sibling earned, the same
+ * tool-name squat the provider rules and the mutating catalog already defend against.
+ */
+data class McpSessionTrust(
+    val providerId: String,
+    val toolName: String,
+) {
+    /** `providerId/toolName`, for display wherever trusted tools are listed. */
+    override fun toString(): String = "$providerId/$toolName"
+}
+
+/**
  * Manages MCP tool execution policies (ALLOW / ASK / DENY).
  *
  * Persisted to `~/.boss/mcp-tool-policy.json`. A damaged or unreadable file
@@ -108,14 +123,24 @@ class McpPolicyEngine(
     private val _config = MutableStateFlow(loadConfig())
     val config: StateFlow<McpToolPolicyConfig> = _config.asStateFlow()
 
-    private val _sessionTrustedTools = MutableStateFlow<Set<String>>(emptySet())
-    val sessionTrustedTools: StateFlow<Set<String>> = _sessionTrustedTools.asStateFlow()
+    private val _sessionTrustedTools = MutableStateFlow<Set<McpSessionTrust>>(emptySet())
+    val sessionTrustedTools: StateFlow<Set<McpSessionTrust>> = _sessionTrustedTools.asStateFlow()
 
     /** Capture before reading policy; a reset invalidates every older authorization. */
     internal fun revocationVersion(
         toolName: String,
         providerId: String? = null,
     ): Long = (revocations[toolName] ?: 0L) + (providerId?.let { providerRevocations[it] } ?: 0L)
+
+    /**
+     * The reset counter for a provider rule's own subject.
+     *
+     * [revocationVersion] sums a tool's counter with its provider's, which is right for a tool
+     * invocation but has no tool to name when the subject IS a provider. A caller that captured a
+     * provider stamp before suspending (a plugin pack between approval and its detached write)
+     * needs exactly this number to tell whether the operator reset that provider in between.
+     */
+    internal fun providerRevocationVersion(providerId: String): Long = providerRevocations[providerId] ?: 0L
 
     /**
      * Final authorization boundary. Session grants and operator resets use the same lock.
@@ -140,7 +165,20 @@ class McpPolicyEngine(
             ) {
                 false
             } else {
-                if (grantSessionTrust) trustForSession(toolName)
+                if (grantSessionTrust) {
+                    if (providerId != null) {
+                        trustForSession(toolName, providerId)
+                    } else {
+                        // The call itself proceeds - the operator answered for it - but the
+                        // trust does not stick: a name-only grant is exactly the cross-provider
+                        // leak the scoped key exists to close, so trust waits for a provider.
+                        logger.warn(
+                            LogCategory.SYSTEM,
+                            "Session trust not granted - no provider in hand",
+                            mapOf("tool" to toolName),
+                        )
+                    }
+                }
                 true
             }
         }
@@ -157,7 +195,9 @@ class McpPolicyEngine(
      *    punch a hole through it would reopen exactly the access the wide DENY was meant to
      *    close - the same "most restrictive wins" posture DENY already has everywhere else in
      *    this engine (it already beats session trust the same unconditional way).
-     * 3. Session trust for this exact tool.
+     * 3. Session trust for this exact tool, granted to the provider the operator approved -
+     *    a same-named tool from a different provider does not inherit it, and with no
+     *    provider in hand session trust never applies.
      * 4. An explicit tool-specific rule that is not DENY (ALLOW or ASK) - more specific than
      *    [providerId]'s rule, so it wins when the two disagree and neither is a DENY.
      * 5. [providerId]'s own ALLOW - "trust every tool this plugin contributes."
@@ -186,7 +226,7 @@ class McpPolicyEngine(
         if (configuredProvider == McpPolicyAction.DENY) {
             return McpPolicyAction.DENY
         }
-        if (toolName in _sessionTrustedTools.value) {
+        if (providerId != null && McpSessionTrust(providerId, toolName) in _sessionTrustedTools.value) {
             return McpPolicyAction.ALLOW
         }
         if (configuredTool != null) return configuredTool
@@ -200,27 +240,44 @@ class McpPolicyEngine(
     }
 
     /**
-     * Trust [toolName] for the duration of this session only.
-     * Session trust is not written to disk and clears upon app restart.
+     * Trust [toolName], contributed by [providerId], for the duration of this session only.
+     * Session trust is not written to disk and clears upon app restart. [providerId] has no
+     * default on purpose: a caller that cannot name the provider cannot grant trust without
+     * giving the same grant to every plugin that ships a same-named tool.
      */
-    fun trustForSession(toolName: String) {
-        _sessionTrustedTools.update { it + toolName }
+    fun trustForSession(
+        toolName: String,
+        providerId: String,
+    ) {
+        _sessionTrustedTools.update { it + McpSessionTrust(providerId, toolName) }
         logger.info(
             LogCategory.SYSTEM,
             "Tool trusted for current session",
-            mapOf("tool" to toolName),
+            mapOf("tool" to toolName, "provider" to providerId),
         )
     }
 
     /**
-     * Revoke session trust for [toolName].
+     * Revoke session trust for [toolName]. [providerId] narrows the revoke to one provider's
+     * grant; left null it revokes the tool for *every* provider at once - the direction a
+     * persisted-rule reset needs, since the rules on disk are name-keyed and cannot know
+     * which provider a session trust was granted for. Over-removing trust fails closed;
+     * keeping it would not.
      */
-    fun revokeSessionTrust(toolName: String) {
-        _sessionTrustedTools.update { it - toolName }
+    fun revokeSessionTrust(
+        toolName: String,
+        providerId: String? = null,
+    ) {
+        _sessionTrustedTools.update { trusted ->
+            trusted
+                .filterNot {
+                    it.toolName == toolName && (providerId == null || it.providerId == providerId)
+                }.toSet()
+        }
         logger.info(
             LogCategory.SYSTEM,
             "Revoked session trust for tool",
-            mapOf("tool" to toolName),
+            mapOf("tool" to toolName, "provider" to (providerId ?: "<all>")),
         )
     }
 
@@ -229,6 +286,31 @@ class McpPolicyEngine(
      */
     fun clearSessionTrusts() {
         _sessionTrustedTools.value = emptySet()
+    }
+
+    private val _yoloMode = MutableStateFlow(false)
+
+    /**
+     * YOLO mode: while true, a call whose policy resolves to ASK runs without prompting, recorded
+     * as [McpApprovalDisposition.YOLO_ALLOWED]. It covers every tool and provider, including ones
+     * registered after it was turned on, and CRITICAL-risk calls too - that is the operator's
+     * explicit choice, made through a confirmation that says so.
+     *
+     * It replaces only the PROMPT. [policyFor] is untouched, so everything decided before a
+     * prompt still decides: an explicit tool or provider DENY, an unreadable policy file, the
+     * kill switch and RBAC (both refuse before the policy engine is consulted). In memory only,
+     * never persisted: every launch starts with it off. Prompts already queued when it is
+     * turned on still ask.
+     */
+    val yoloMode: StateFlow<Boolean> = _yoloMode.asStateFlow()
+
+    fun setYoloMode(enabled: Boolean) {
+        if (_yoloMode.value == enabled) return
+        _yoloMode.value = enabled
+        logger.warn(
+            LogCategory.SYSTEM,
+            if (enabled) "MCP YOLO mode enabled for this session" else "MCP YOLO mode disabled",
+        )
     }
 
     /**
@@ -385,7 +467,15 @@ class McpPolicyEngine(
                 )
             if (outcome == McpProactivePolicyOutcome.Saved) {
                 changes.forEach { revocations[it.toolName] = revocationVersion(it.toolName) + 1 }
-                _sessionTrustedTools.update { trusted -> trusted - changes.map { it.toolName }.toSet() }
+                // A section change speaks for one provider's tool, so it drops only that
+                // provider's session grant. Same-named trust held for other providers must
+                // survive: their calls still answer to the rules this write did not touch.
+                _sessionTrustedTools.update { trusted ->
+                    trusted
+                        .filterNot { trust ->
+                            changes.any { it.toolName == trust.toolName && it.providerId == trust.providerId }
+                        }.toSet()
+                }
             }
             outcome
         }
@@ -396,7 +486,7 @@ class McpPolicyEngine(
      * time. Weaker than an explicit tool-specific rule: see [policyFor].
      *
      * [preserveDeny]/[expectedRevocation]/[toolName] mirror [setToolPolicy]'s own guards: a
-     * queued "Trust This Plugin" click is answering for the *tool* that prompted it, so its
+     * queued "Trust plugin" click is answering for the *tool* that prompted it, so its
      * write must recheck that tool's revocation/DENY state under this same lock, not only at
      * the caller's pre-check - otherwise a reset landing between the pre-check and the write
      * (BossConsole#542 review) persists a provider-wide grant the reset was supposed to
@@ -431,6 +521,45 @@ class McpPolicyEngine(
         }
 
     /**
+     * [setToolPolicyIfAbsent] for a provider rule: write [action] for [providerId] only while that
+     * provider has no rule of its own, checked under the same [lock] the write takes.
+     *
+     * For callers that did not come through an approval prompt for this provider and so must never
+     * replace a choice the operator made, such as a plugin pack. Any existing provider rule, in
+     * either direction, refuses the write. Tool-scoped rules need no check here: they already
+     * outrank provider rules in [policyFor], so adding a provider rule cannot loosen one.
+     *
+     * [expectedRevocation] is the caller's [providerRevocationVersion] stamp, captured before it
+     * suspended. A write whose stamp is stale is refused: the operator reset this provider after
+     * the work was authorized, and a reset removes the rule, so the absent-rule check alone would
+     * wave the detached write straight through. Null for callers that cannot have raced a reset.
+     */
+    fun setProviderPolicyIfAbsent(
+        providerId: String,
+        action: McpPolicyAction,
+        expectedRevocation: Long? = null,
+    ): McpProactivePolicyOutcome =
+        synchronized(lock) {
+            if (_fault.value is McpPolicyFault.PersistedPolicyUnreadable) {
+                return@synchronized McpProactivePolicyOutcome.PolicyUnreadable
+            }
+            if (expectedRevocation != null && providerRevocationVersion(providerId) != expectedRevocation) {
+                return@synchronized McpProactivePolicyOutcome.Refused
+            }
+            if (providerId in _config.value.providerRules) {
+                return@synchronized McpProactivePolicyOutcome.Refused
+            }
+            writeConfig(
+                key = providerId,
+                logKey = "provider",
+                updated = _config.value.copy(providerRules = _config.value.providerRules + (providerId to action)),
+                successMessage = "Updated provider policy: ${action.name}",
+                failureMessage = "Failed to persist MCP provider policy update",
+                faultFor = { k, e -> McpPolicyFault.ProviderPolicyPersistFailed(k, e) },
+            )
+        }
+
+    /**
      * True when [providerId]'s own rule is DENY, or [toolName] (when this call has one in mind)
      * has a more specific DENY of its own - either one is what [setProviderPolicy]'s
      * `preserveDeny` guard exists to protect from being overwritten.
@@ -452,7 +581,7 @@ class McpPolicyEngine(
      *
      * Does not touch session trust for the provider's tools, unlike
      * [revokePersistedPolicy] for a single tool: session trust is a separate, in-session grant
-     * the operator manages from the "Revoke MCP session trust" control, and revoking a
+     * the operator manages from "Session trust" in the MCP access menu, and revoking a
      * durable provider rule must not silently withdraw grants the operator made per tool.
      */
     fun revokeProviderPolicy(providerId: String): Boolean =
@@ -480,7 +609,7 @@ class McpPolicyEngine(
      * calling `setToolPolicy(toolName, ASK)`, which - because [setToolPolicy] always writes
      * `rules + (toolName to action)` - left the key in the map forever, just holding ASK instead
      * of its old value. Three consequences that all trace back to that one line: the bottom bar's
-     * "Persisted MCP policies (n)" count never dropped after a revoke, because the row was still
+     * "Tool policies (n)" count never dropped after a revoke, because the row was still
      * there; the policy manager dialog kept listing the "revoked" tool with a Reset button that
      * rewrote the same value and reported success; and on a config with `defaultMutatingAction =
      * DENY`, the explicit ASK a revoke left behind was *weaker* than the operator's own configured

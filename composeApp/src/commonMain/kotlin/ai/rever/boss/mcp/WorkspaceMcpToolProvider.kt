@@ -3,9 +3,13 @@ package ai.rever.boss.mcp
 import ai.rever.boss.cli.CLISecurityValidator
 import ai.rever.boss.components.window_panel.SplitViewState
 import ai.rever.boss.components.window_panel.SplitViewStateRegistry
+import ai.rever.boss.components.window_panel.TabPaths
+import ai.rever.boss.components.workspaces.LAST_SESSION_ID
+import ai.rever.boss.components.workspaces.LAST_SESSION_SET_FILE
 import ai.rever.boss.components.workspaces.LayoutWorkspace
 import ai.rever.boss.components.workspaces.PanelConfig
 import ai.rever.boss.components.workspaces.PredefinedWorkspaces
+import ai.rever.boss.components.workspaces.SPACE_THEMES_FILE
 import ai.rever.boss.components.workspaces.TabConfig
 import ai.rever.boss.components.workspaces.WorkspaceFileManager
 import ai.rever.boss.components.workspaces.WorkspaceFileManagerCommon
@@ -13,6 +17,8 @@ import ai.rever.boss.components.workspaces.WorkspaceSerializer
 import ai.rever.boss.components.workspaces.applyWorkspace
 import ai.rever.boss.components.workspaces.awaitTabTypes
 import ai.rever.boss.components.workspaces.isSpaceSlot
+import ai.rever.boss.components.workspaces.reservedWorkspaceStoreFileName
+import ai.rever.boss.components.workspaces.withStableId
 import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.dashboard.DashboardStatsManager
 import ai.rever.boss.plugin.api.McpToolArgs
@@ -35,10 +41,7 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -54,11 +57,17 @@ import kotlin.time.Clock
  * from a cold start (zero active workspaces or terminals) without manual UI actions.
  *
  * Tools exposed:
- * - list_workspaces / workspace_list
- * - open_workspace / workspace_open
- * - create_workspace / workspace_create
- * - open_terminal / terminal_open
- * - close_workspace / workspace_close
+ * - list_workspaces
+ * - open_workspace
+ * - create_workspace
+ * - open_terminal
+ * - close_workspace
+ *
+ * The reversed legacy names (workspace_list, workspace_open, workspace_create,
+ * terminal_open, workspace_close) remain invocable as invoke-only aliases via
+ * [toolAliases] but are not advertised in list_tools, the bridge mirror, or
+ * search - advertising both spellings paid a second name + description +
+ * schema per action on every listing.
  *
  * Every tool that mutates on-screen state or runs a command declares
  * `readOnly = false`, so the mutating gate's fail-closed OR classifies it as
@@ -72,7 +81,7 @@ import kotlin.time.Clock
  */
 // One cohesive MCP tool provider; handlers stay beside their tool definitions.
 @Suppress("TooManyFunctions", "LargeClass")
-object WorkspaceMcpToolProvider : McpToolProvider {
+object WorkspaceMcpToolProvider : McpToolProvider, McpToolAliasProvider {
     private val logger = BossLogger.forComponent("WorkspaceMcpToolProvider")
 
     /** Panel id of the terminal panel the bootstrap Space builds. */
@@ -182,18 +191,22 @@ object WorkspaceMcpToolProvider : McpToolProvider {
         )
     }
 
+    override val toolAliases: Map<String, String> =
+        mapOf(
+            "workspace_list" to "list_workspaces",
+            "workspace_open" to "open_workspace",
+            "workspace_create" to "create_workspace",
+            "terminal_open" to "open_terminal",
+            "workspace_close" to "close_workspace",
+        )
+
     override fun tools(): List<McpToolDefinition> =
         listOf(
             createListWorkspacesTool("list_workspaces"),
-            createListWorkspacesTool("workspace_list"),
             createOpenWorkspaceTool("open_workspace"),
-            createOpenWorkspaceTool("workspace_open"),
             createCreateWorkspaceTool("create_workspace"),
-            createCreateWorkspaceTool("workspace_create"),
             createOpenTerminalTool("open_terminal"),
-            createOpenTerminalTool("terminal_open"),
             createCloseWorkspaceTool("close_workspace"),
-            createCloseWorkspaceTool("workspace_close"),
         )
 
     private fun createListWorkspacesTool(name: String): McpToolDefinition =
@@ -229,7 +242,7 @@ object WorkspaceMcpToolProvider : McpToolProvider {
                     "properties": {
                         "path": { "type": "string", "description": "Absolute path of an existing project directory to open as a new Space with its first terminal. A leading ~ is expanded; relative paths are refused." },
                         "workspaceId": { "type": "string", "description": "ID of the workspace to open" },
-                        "workspacePath": { "type": "string", "description": "Path to workspace JSON file" },
+                        "workspacePath": { "type": "string", "description": "Path to a workspace JSON file inside the workspaces directory" },
                         "name": { "type": "string", "description": "Name if creating workspace" },
                         "projectPath": { "type": "string", "description": "Project root directory" },
                         "windowId": { "type": "string", "description": "Target window ID" },
@@ -415,6 +428,24 @@ object WorkspaceMcpToolProvider : McpToolProvider {
         if (!workspacePath.isNullOrBlank() && !CLISecurityValidator.isValidOpenTargetPath(workspacePath)) {
             return McpToolResult("Invalid workspace path (security check failed)", isError = true)
         }
+        // That check is the editor-open contract - any file the user picks. A Space file goes
+        // further: it is parsed and APPLIED as the window's live layout, so the reachable set
+        // is the workspace store, the same directory the workspaceId mode loads from and this
+        // app itself writes. A workspacePath that resolves outside it - `..` traversal, an
+        // absolute path elsewhere, a symlink pointing out - is refused before the file is
+        // probed, read, or parsed. Fails closed (#896).
+        var canonicalWorkspacePath: String? = null
+        if (!workspacePath.isNullOrBlank()) {
+            val containment =
+                checkWorkspacePathContainment(
+                    rawPath = workspacePath,
+                    workspaceDirectory = getFileManager().getDefaultWorkspaceDirectory(),
+                )
+            if (containment.canonicalPath == null) {
+                return McpToolResult(containment.error ?: "Invalid workspace path", isError = true)
+            }
+            canonicalWorkspacePath = containment.canonicalPath
+        }
         // projectPath ends up as a terminal working directory, the same destination the
         // `path` mode serves, so it gets the same gate: absolute, security-checked, and an
         // existing directory.
@@ -452,17 +483,19 @@ object WorkspaceMcpToolProvider : McpToolProvider {
                 is TargetWindowResolution.Failure -> return McpToolResult(targetResolution.errorMessage, isError = true)
             }
 
-        val splitViewState = awaitSplitViewState(targetWindowId)
-
         // Locate or create workspace
         var workspace: LayoutWorkspace? = null
         var isShippedTemplate = false
+        var persisted = false
 
-        if (!workspacePath.isNullOrBlank()) {
-            val file = File(workspacePath)
+        if (canonicalWorkspacePath != null) {
+            val file = File(canonicalWorkspacePath)
             if (file.exists() && file.canRead()) {
                 val content = withContext(Dispatchers.IO) { file.readText() }
-                workspace = runCatching { WorkspaceSerializer.deserialize(content) }.getOrNull()
+                // Agent-authored JSON commonly carries no id: mint one here too, or the
+                // blank id flows into the applier, which keys the preserved tree under a
+                // throwaway one.
+                workspace = runCatching { WorkspaceSerializer.deserialize(content) }.getOrNull()?.withStableId()
             } else if (!createIfAbsent) {
                 return McpToolResult("Workspace file not found: $workspacePath", isError = true)
             }
@@ -476,19 +509,21 @@ object WorkspaceMcpToolProvider : McpToolProvider {
             // Check saved workspaces
             if (workspace == null) {
                 val fileManager = getFileManager()
-                val fileName =
-                    if (workspaceId.endsWith(".json")) {
-                        workspaceId
-                    } else {
-                        WorkspaceFileManagerCommon.fileNameForId(workspaceId)
-                    }
-                workspace = fileManager.loadWorkspace(fileName)
+                workspace = fileManager.loadWorkspace(workspaceFileNameFor(workspaceId))?.withStableId()
             }
         }
 
         if (workspace == null) {
             if (createIfAbsent || !name.isNullOrBlank()) {
-                val newId = workspaceId?.takeIf { it.isNotBlank() } ?: LayoutWorkspace.generateId()
+                // The same `.json` the read path strips (see workspaceFileNameFor): an agent that
+                // echoes a file name back from a listing as the id must create the Space the next
+                // open will find. Without this the id kept its suffix, saveWorkspace derived
+                // `<id>.json` from it, and `foo.json` was written to `foo.json.json` while every
+                // later read looked in `foo.json` - not found, and a second createIfAbsent silently
+                // replaced the first layout.
+                val newId =
+                    workspaceId?.removeSuffix(".json")?.takeIf { it.isNotBlank() }
+                        ?: LayoutWorkspace.generateId()
                 // Slot ids (the shipped layouts and the last-session autosave record) are
                 // identities the watcher and startup restore key on; a file carrying one is
                 // the legacy shape the merge cleans up, and it is silently dropped next launch.
@@ -499,11 +534,17 @@ object WorkspaceMcpToolProvider : McpToolProvider {
                         isError = true,
                     )
                 }
+                // And the reserved store files the id resolves onto BY NAME - the document
+                // records (Space_Themes, Last_Session_Set) and the single-Space session
+                // record's spellings - through the one gate shared with the import path
+                // (#926, #964, #1643). Fail-closed before anything is created or applied.
+                refusalForReservedStoreFile(newId)?.let { return McpToolResult(it, isError = true) }
                 val wsName = name?.takeIf { it.isNotBlank() } ?: "Workspace $newId"
                 val rootPath = canonicalProjectPath ?: DefaultWorkingDirectory.nominalPath()
                 workspace = createDefaultWorkspace(newId, wsName, rootPath, openTerminal = openTerminal)
                 // Persist
                 getFileManager().saveWorkspace(workspace)
+                persisted = true
             } else {
                 return McpToolResult(
                     "Workspace '$workspaceId' not found. Specify createIfAbsent=true to create it.",
@@ -514,16 +555,23 @@ object WorkspaceMcpToolProvider : McpToolProvider {
 
         // Persisted commands were not visible in this MCP invocation's approval arguments.
         // Require a separate open_terminal call so its command receives normal risk review.
-        if (!isShippedTemplate && workspace.layout.hasInitialCommands()) {
-            return McpToolResult(
-                "Workspace contains terminal startup commands. Open it through the workspace UI, " +
-                    "or remove the startup commands and invoke open_terminal with each command explicitly.",
-                isError = true,
-            )
-        }
+        initialCommandsRefusal(workspace, isShippedTemplate)?.let { return it }
+
+        // Awaited only once there is a workspace to open, so a wrong id is reported at once rather
+        // than after the UI-state wait. A window that never registers is an error, as it is in
+        // path mode: nothing below can run without it, and a "success" that applied nothing would
+        // send the agent on to open_terminal in a window that shows no Space.
+        val splitViewState =
+            awaitSplitViewState(targetWindowId)
+                ?: return McpToolResult(
+                    "Window '$targetWindowId' did not register its UI state in time, so workspace " +
+                        "'${workspace.id}' was not opened; retry." +
+                        if (persisted) " The new workspace file was saved." else "",
+                    isError = true,
+                )
 
         // Idempotency: Reopening an existing workspace does not duplicate it or disturb unrelated windows
-        if (splitViewState != null && splitViewState.currentWorkspaceId == workspace.id) {
+        if (splitViewState.currentWorkspaceId == workspace.id) {
             logger.debug(
                 LogCategory.WORKSPACE,
                 "Workspace already active in target window",
@@ -547,17 +595,30 @@ object WorkspaceMcpToolProvider : McpToolProvider {
         // WorkspaceEventBus collector re-applies every load event aimed at it, so the
         // provider - which is itself the actor here - must not emit one; doing both would
         // apply the layout twice and tear down what the first apply just built.
-        if (splitViewState != null) {
-            switchWindowToSpace(
+        if (
+            !switchWindowToSpace(
                 splitViewState,
                 WindowProjectStateRegistry.getOrCreate(targetWindowId),
                 workspace,
+            )
+        ) {
+            return McpToolResult(
+                "Workspace '${workspace.name}' could not be applied - none of its tabs can be " +
+                    "built. The plugin that provides its tab types may have been removed; the " +
+                    "window was left on whatever it was already showing.",
+                isError = true,
             )
         }
 
         var terminalInfo: JsonObject? = null
         if (openTerminal) {
-            terminalInfo = doOpenTerminal(targetWindowId, workspace.id, workspace.projectPath, command = null)
+            terminalInfo =
+                doOpenTerminal(targetWindowId, workspace.id, workspace.projectPath, command = null)
+                    ?: return McpToolResult(
+                        "Workspace '${workspace.id}' is open in window '$targetWindowId', but the terminal " +
+                            "tab it asked for could not be opened; call open_terminal to retry.",
+                        isError = true,
+                    )
         }
 
         val resultObj =
@@ -573,6 +634,35 @@ object WorkspaceMcpToolProvider : McpToolProvider {
             }
 
         return McpToolResult(resultObj.toString())
+    }
+
+    /**
+     * The one refusal both open_workspace modes share, so the id mode's gate cannot be walked
+     * around by asking for the path mode instead (#920).
+     *
+     * A saved Space's terminal `initialCommand`s are arbitrary shell lines stored in its
+     * layout, and they were not visible in this invocation's approval arguments - so an MCP
+     * open cannot have approved them, and applying the Space types them into a shell. The id
+     * mode has always refused such a Space; the path mode re-enters the same saved Spaces (see
+     * matchExistingSpace), so it refuses them too. Shipped templates are exempt, exactly as in
+     * the id mode handler: their commands are BOSS's own, not a file's.
+     *
+     * The operator keeps the doors the message names: the workspace UI loads a command-carrying
+     * Space behind its confirmation prompt (see spaceLoadDisposition), and open_terminal types
+     * one command an invocation the risk gate has actually seen.
+     */
+    private fun initialCommandsRefusal(
+        space: LayoutWorkspace,
+        isShippedTemplate: Boolean,
+    ): McpToolResult? {
+        if (isShippedTemplate || !space.layout.hasInitialCommands()) {
+            return null
+        }
+        return McpToolResult(
+            "Workspace contains terminal startup commands. Open it through the workspace UI, " +
+                "or remove the startup commands and invoke open_terminal with each command explicitly.",
+            isError = true,
+        )
     }
 
     /**
@@ -609,6 +699,16 @@ object WorkspaceMcpToolProvider : McpToolProvider {
         val runningIds = workspaceManager.windowWorkspaces.value[targetWindowId].orEmpty()
         val (space, reused) = resolveBootstrapSpace(targetWindowId, projectPath, runningIds)
 
+        // Path mode re-enters the SAME saved Spaces the id mode resolves above -
+        // matchExistingSpace's rule 3 applies any saved Space for this project path exactly as
+        // picking it in the Space switcher would - so the two modes must share one gate: a
+        // Space whose stored terminal commands the id mode refuses must not have them typed
+        // into a shell because the caller reached for a path instead of an id (#920). The gate
+        // sits before the reuse fast path for the same reason the id mode's gate sits before
+        // its already-active return: entering the Space through this tool at all is what is
+        // refused, not only the apply.
+        initialCommandsRefusal(space, space.id in PredefinedWorkspaces.allIds)?.let { return it }
+
         // Fast path: the window already shows this Space, so the live terminal is left alone.
         if (splitViewState.currentWorkspaceId == space.id) {
             return McpToolResult(
@@ -624,7 +724,16 @@ object WorkspaceMcpToolProvider : McpToolProvider {
 
         // applyWorkspace awaits the tab types this layout needs (terminal among them), so the
         // check below is a verification of that wait, not a race against plugin registration.
-        switchWindowToSpace(splitViewState, WindowProjectStateRegistry.getOrCreate(targetWindowId), space)
+        if (
+            !switchWindowToSpace(splitViewState, WindowProjectStateRegistry.getOrCreate(targetWindowId), space)
+        ) {
+            return McpToolResult(
+                "The Space for '$projectPath' could not be applied - none of its tabs can be " +
+                    "built. The plugin that provides its tab types may have been removed; the " +
+                    "window was left on whatever it was already showing.",
+                isError = true,
+            )
+        }
 
         if (!splitViewState.tabRegistry.isRegistered(TerminalTabType.typeId)) {
             return McpToolResult(
@@ -671,23 +780,35 @@ object WorkspaceMcpToolProvider : McpToolProvider {
     }
 
     /**
-     * Preserve, load, apply: the same three steps the Space switcher takes, so re-entering a
+     * Preserve, apply, load: the same three steps the Space switcher takes, so re-entering a
      * previously running Space restores its preserved tree when the window holds one.
+     *
+     * @return false when the apply was refused - the window is left showing whatever it showed
+     *   before, and the manager is left pointing at it too, rather than at a Space that was
+     *   never applied.
      */
     private suspend fun switchWindowToSpace(
         splitViewState: SplitViewState,
         windowProjectState: WindowProjectState,
         space: LayoutWorkspace,
-    ) {
+    ): Boolean =
         withContext(Dispatchers.Main) {
             val currentWorkspace = workspaceManager.currentWorkspace.value
-            if (currentWorkspace != null && currentWorkspace.id.isNotEmpty()) {
-                splitViewState.preserveCurrentState(currentWorkspace.id, currentWorkspace.name)
+            val leavingId = currentWorkspace?.id?.takeIf { it.isNotEmpty() }
+            if (leavingId != null) {
+                splitViewState.preserveCurrentState(leavingId, currentWorkspace?.name.orEmpty())
             }
-            workspaceManager.loadWorkspace(space)
-            applyWorkspace(space, splitViewState, windowProjectState, restoreProject = true)
+            if (applyWorkspace(space, splitViewState, windowProjectState, restoreProject = true)) {
+                workspaceManager.loadWorkspace(space)
+                true
+            } else {
+                if (leavingId != null) {
+                    splitViewState.restorePreservedState(leavingId)
+                    splitViewState.discardPreservedState(leavingId)
+                }
+                false
+            }
         }
-    }
 
     /**
      * Drop the remembered bootstrap Spaces of windows that no longer exist. A window is alive
@@ -758,6 +879,10 @@ object WorkspaceMcpToolProvider : McpToolProvider {
             } else {
                 LayoutWorkspace.generateId()
             }
+
+        // The minted ids cannot spell a reserved store file today, but the guard is fail-closed
+        // on every persist route this tool has, not only the caller-chosen one (#926).
+        refusalForReservedStoreFile(id)?.let { return McpToolResult(it, isError = true) }
 
         val wsName =
             name?.takeIf { it.isNotBlank() }
@@ -891,7 +1016,7 @@ object WorkspaceMcpToolProvider : McpToolProvider {
         DashboardStatsManager.recordTerminalSession()
 
         val tabId = mountedTab.id
-        // openTerminalInActivePanelNow mints ids as "terminal-<timestamp>" (the only path this
+        // openTerminalInActivePanelNow mints ids as "terminal-<millis>-<entropy>" (the only path this
         // tool uses in production); the terminal's addressing keys on the part after the prefix.
         val terminalId = tabId.removePrefix("terminal-")
 
@@ -911,7 +1036,7 @@ object WorkspaceMcpToolProvider : McpToolProvider {
         }
     }
 
-    @Suppress("ReturnCount")
+    @Suppress("ReturnCount", "CyclomaticComplexMethod")
     private suspend fun handleCloseWorkspace(args: McpToolArgs): McpToolResult {
         val workspaceId = args.string("workspaceId")
         if (workspaceId.isNullOrBlank()) {
@@ -936,9 +1061,12 @@ object WorkspaceMcpToolProvider : McpToolProvider {
                 }
             } else {
                 // Read-only targeting, the same rule list_workspaces uses: closing a workspace
-                // must never mint a window. With exactly one registered window it is the only
-                // possible target; with none or several there is nothing safe to close in.
-                SplitViewStateRegistry.getAllStates().keys.singleOrNull()
+                // must never mint a window. Exactly one registered window is the only possible
+                // target; with none there is nothing to close in, though the disposable-file
+                // delete below can still run.
+                val openWindowIds = SplitViewStateRegistry.getAllStates().keys
+                ambiguousWindowError(workspaceId, openWindowIds)?.let { return it }
+                openWindowIds.singleOrNull()
             }
 
         // Stop the Space where it is running: clears its tabs and drops any preserved copy,
@@ -955,20 +1083,17 @@ object WorkspaceMcpToolProvider : McpToolProvider {
         // substring): a user's saved Space whose name merely mentions "disposable" is not ours.
         var fileDeleted = false
         if (workspaceId.startsWith(DISPOSABLE_ID_PREFIX)) {
-            val fileName =
-                if (workspaceId.endsWith(".json")) {
-                    workspaceId
-                } else {
-                    WorkspaceFileManagerCommon.fileNameForId(workspaceId)
-                }
-            fileDeleted = getFileManager().deleteWorkspace(fileName)
+            fileDeleted = getFileManager().deleteWorkspace(workspaceFileNameFor(workspaceId))
         }
 
         // Saying "success" when neither happened leaves the agent unable to tell "closed"
-        // from "that id does not exist anywhere".
+        // from "that id does not exist anywhere". Zero registered windows is said plainly so
+        // the agent knows there is no windowId it could pass - "(none)" alone read like a
+        // missing target.
         if (!releasedHere && !fileDeleted) {
+            val where = targetWindowId?.let { "in window '$it'" } ?: "in any window (none are open)"
             return McpToolResult(
-                "Workspace '$workspaceId' is not running in window '${targetWindowId ?: "(none)"}' " +
+                "Workspace '$workspaceId' is not running $where " +
                     "and has no disposable file to delete; nothing was closed.",
                 isError = true,
             )
@@ -987,6 +1112,68 @@ object WorkspaceMcpToolProvider : McpToolProvider {
 
         return McpToolResult(response.toString())
     }
+
+    /**
+     * The actionable refusal for a `close_workspace` call that named no `windowId` while
+     * several windows are open. Ambiguity used to collapse to a null target and surface only
+     * as a generic "nothing was closed", which an agent cannot act on - the error names the
+     * candidates so the caller can retry with one, and nothing has been changed when it fires.
+     * Returns null when zero or one window is open, where targeting is unambiguous.
+     */
+    private fun ambiguousWindowError(
+        workspaceId: String,
+        openWindowIds: Set<String>,
+    ): McpToolResult? {
+        if (openWindowIds.size <= 1) return null
+        return McpToolResult(
+            "Multiple windows are open (${openWindowIds.joinToString(", ")}); " +
+                "pass 'windowId' to choose which window to close '$workspaceId' in.",
+            isError = true,
+        )
+    }
+
+    /**
+     * The user-facing refusal when a workspace id would persist onto one of the workspace
+     * store's reserved record files (see
+     * [WorkspaceFileManagerCommon.reservedRecordFileNames]), or null when the id is safe.
+     *
+     * The workspace MCP tools are the one door where a caller-chosen *id* becomes a file: every
+     * save route here derives the file from the id ([WorkspaceFileManagerCommon.fileNameForId]),
+     * so an id that resolves to `Space_Themes.json`, `Last_Session_Set.json` or one of the
+     * single-Space session record's spellings does not save a Space, it overwrites the host's
+     * own store: every Space's theme assignment goes with the first, the next launch's session
+     * restore with the second, and the crash-recovery record with the third (#926).
+     *
+     * The one gate is [reservedWorkspaceStoreFileName], shared with the import path's
+     * `withImportableId` (#964, #1643): it strips the caller's own `.json` suffix because the
+     * load path treats a suffixed id as that file name, derives the name with the SAME
+     * sanitiser the save uses, and compares case-insensitively because APFS and NTFS fold
+     * case. `WorkspaceManager` skips the document records when it scans the directory and
+     * still loads the real session record; this mirrors the write side of that boundary,
+     * fail-closed and BEFORE anything is created or applied, so nothing is left half-made.
+     * Path-shaped spellings never get this far - [isSafeWorkspaceId] refuses them first.
+     */
+    internal fun refusalForReservedStoreFile(id: String): String? {
+        val reserved = reservedWorkspaceStoreFileName(id) ?: return null
+        return "'$id' cannot be a workspace id: it resolves to the reserved store file " +
+            "'$reserved', which BOSS keeps for its own records (Space themes, the session " +
+            "records). Pass a different workspaceId."
+    }
+
+    /**
+     * The file a caller-supplied workspace id lives in. An id is a name, never a path: the
+     * `.json` suffix an agent may echo back from a listing is accepted, but the name is then
+     * derived through [WorkspaceFileManagerCommon.fileNameForId] exactly as it was when the file
+     * was written, so a separator or `..` in the id cannot select a file outside the workspace
+     * directory.
+     *
+     * Confinement itself no longer rests here: [isSafeWorkspaceId] refuses a path-shaped id at the
+     * top of both handlers, and [WorkspaceFileManagerCommon.isBareFileName] refuses a path-shaped
+     * name at the file manager. This is the layer in between, and what it is for is that the name
+     * read is the name written: the create path strips the same suffix when it mints an id.
+     */
+    internal fun workspaceFileNameFor(workspaceId: String): String =
+        WorkspaceFileManagerCommon.fileNameForId(workspaceId.removeSuffix(".json"))
 
     private fun createDefaultWorkspace(
         id: String,
@@ -1066,11 +1253,16 @@ private data class ProjectPathCheck(
 
 private suspend fun checkProjectPath(rawPath: String): ProjectPathCheck {
     val expandedPath = expandTilde(rawPath)
-    // Same gate the boss://folder deep link runs before opening a project folder: a connected
-    // MCP client is no more trusted than a web page, so both surfaces share one definition of
-    // an acceptable project path, failing closed.
+    // Enforces system path bounds in addition to the boss://folder deep link gate: an MCP
+    // client must not open restricted operating system directories, relative paths (which
+    // would resolve against the BOSS process working directory), or paths rejected by isValidPath,
+    // making the MCP surface strictly stricter.
     val rejection =
         when {
+            CLISecurityValidator.isRestrictedSystemPath(expandedPath) -> {
+                "Refusing to open '$rawPath': target path is a restricted system directory."
+            }
+
             !File(expandedPath).isAbsolute -> {
                 "Path must be absolute (got '$rawPath'): a relative path would resolve against the " +
                     "BOSS process's working directory, not the caller's."
@@ -1090,7 +1282,98 @@ private suspend fun checkProjectPath(rawPath: String): ProjectPathCheck {
         return ProjectPathCheck(null, rejection)
     }
     val canonical = withContext(Dispatchers.IO) { canonicalizeOrNull(expandedPath) }
-    return ProjectPathCheck(canonical, "Path is not an existing directory: $rawPath".takeIf { canonical == null })
+    val isRestrictedCanonical = canonical != null && CLISecurityValidator.isRestrictedSystemPath(canonical)
+    return if (isRestrictedCanonical) {
+        ProjectPathCheck(
+            null,
+            "Refusing to open '$rawPath': canonical path '$canonical' is a restricted system directory.",
+        )
+    } else {
+        ProjectPathCheck(canonical, "Path is not an existing directory: $rawPath".takeIf { canonical == null })
+    }
+}
+
+/**
+ * The outcome of containing a `workspacePath` open_workspace argument to the workspace store:
+ * [canonicalPath] is the path the call may go on to read - the caller's path, canonicalised,
+ * so the file checked is the file read - or [error] is the user-facing refusal. At most one of
+ * the two is set, and every failure mode (a path the filesystem cannot represent, traversal,
+ * an absolute path elsewhere, a symlink out of the store, the store directory itself) is a
+ * refusal: the gate fails closed.
+ */
+internal data class WorkspacePathCheck(
+    val canonicalPath: String?,
+    val error: String?,
+)
+
+/**
+ * Resolves [path] to its real on-disk location, symlinks included. File.canonicalFile resolves
+ * links on Linux and macOS but NOT on Windows, where it only normalises spelling and leaves
+ * reparse points (symlinks, junctions) alone - so a link inside the store pointing out slipped
+ * containment precisely on Windows CI. Path.toRealPath resolves links on every OS (realpath on
+ * Unix, GetFinalPathNameByHandle on Windows) and canonicalises 8.3 short names and separators.
+ * A path that does not exist yet cannot be real-pathed: its containment (a Space file about to
+ * be created via createIfAbsent, a `..` chain over a not-yet-created directory) is decided by
+ * where it would land, so it falls back to lexical canonicalisation. Fails closed: an
+ * unparseable or otherwise unresolvable path returns null and the caller refuses.
+ */
+private fun realPathOrNull(path: String): File? =
+    try {
+        File(path).toPath().toRealPath().toFile()
+    } catch (_: java.nio.file.NoSuchFileException) {
+        try {
+            File(path).canonicalFile
+        } catch (_: java.io.IOException) {
+            null
+        } catch (_: SecurityException) {
+            null
+        }
+    } catch (_: java.io.IOException) {
+        null
+    } catch (_: java.nio.file.InvalidPathException) {
+        null
+    } catch (_: SecurityException) {
+        null
+    }
+
+/**
+ * Containment for the workspacePath mode of open_workspace (#896): the file the mode names is
+ * not merely opened, it is parsed and applied as the window's live Space layout, so the
+ * reachable set is the workspace store [workspaceDirectory] - the same directory the
+ * workspaceId mode loads from and this app itself writes - not any readable file on disk.
+ *
+ * Both sides are resolved to their real on-disk location first, so `..` that stays inside the
+ * store is legal while `..` that escapes is not, and a symlink inside the store pointing out
+ * resolves outside and is refused - [realPathOrNull] follows symlinks on every OS, unlike
+ * File.canonicalFile on Windows. [rawPath] need not exist: containment decides only whether the
+ * call may go on to probe and read it.
+ */
+internal suspend fun checkWorkspacePathContainment(
+    rawPath: String,
+    workspaceDirectory: String,
+): WorkspacePathCheck {
+    val resolved =
+        withContext(Dispatchers.IO) {
+            val storeRoot = realPathOrNull(workspaceDirectory)
+            val requested = realPathOrNull(rawPath)
+            if (storeRoot == null || requested == null) null else Pair(storeRoot, requested)
+        }
+    val (storeRoot, requested) =
+        resolved ?: return WorkspacePathCheck(null, "Invalid workspace path (security check failed)")
+    // Path.startsWith is component-wise: a sibling named to share the store's prefix is not
+    // inside it, and the store directory itself is not a Space file inside the store.
+    val contained = requested != storeRoot && requested.toPath().startsWith(storeRoot.toPath())
+    return if (contained) {
+        WorkspacePathCheck(requested.path, null)
+    } else {
+        WorkspacePathCheck(
+            null,
+            "Refusing to open '$rawPath' as a Space: it resolves to " +
+                "${requested.path}, which is not a file inside the workspaces directory " +
+                "(${storeRoot.path}) - the only directory open_workspace loads and applies " +
+                "Space layouts from. Copy the file there and open it by its path or workspaceId.",
+        )
+    }
 }
 
 /**
@@ -1145,9 +1428,25 @@ internal fun matchExistingSpace(
     projectPath: String,
 ): LayoutWorkspace? =
     remembered?.takeIf { it.id in runningIdsInWindow }
-        ?: savedSpaces.firstOrNull { it.id in runningIdsInWindow && it.projectPath == projectPath }
-        ?: savedSpaces.firstOrNull { it.projectPath == projectPath }
+        ?: savedSpaces.firstOrNull { it.id in runningIdsInWindow && matchesProjectPath(it, projectPath) }
+        ?: savedSpaces.firstOrNull { matchesProjectPath(it, projectPath) }
         ?: remembered
+
+/**
+ * Path identity for the saved-Space lookup, not string identity. The request arrives
+ * canonicalized (see [WorkspaceMcpToolProvider.checkProjectPath]) while a saved Space
+ * stores whatever spelling its save flow used, and the two legitimately differ for the
+ * same directory: on Windows the canonical form is `C:\dir` while a Space saved through
+ * any other surface - or on another OS, in a synced workspace file - commonly spells it
+ * `C:/dir`. Raw equality then missed the Space, silently minting a duplicate and, because
+ * the #920 startup-command refusal rides on this lookup, bypassing that refusal for the
+ * same directory spelled differently. [TabPaths.pathsMatch] is the house's definition of
+ * same-file, already trusted for "is this file already open in a tab?".
+ */
+internal fun matchesProjectPath(
+    space: LayoutWorkspace,
+    projectPath: String,
+): Boolean = space.projectPath?.let { TabPaths.pathsMatch(it, projectPath) } == true
 
 /** IDs are names in the workspace store, never caller-selected filesystem paths. */
 internal fun isSafeWorkspaceId(id: String): Boolean =

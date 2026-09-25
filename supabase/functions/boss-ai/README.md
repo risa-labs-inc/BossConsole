@@ -148,6 +148,17 @@ either diagnostic before continuing to publish the connection. Settlement is att
 both attempts fail, a successful completion is still returned and the full reservation remains
 charged. Each diagnostic event is emitted at most once per request, including across retries.
 
+Each settlement attempt has a two-second deadline, including error and streaming cleanup paths.
+Timeouts retry safely because `boss_ai_settle` is first-writer-wins for a request ID. Two failed
+attempts emit `settlement_failed_reservation_retained`; operators must reconcile the request ledger
+by that ID. There is no automatic refund or background reconciler in this change.
+
+Tool envelopes allow at most 128 tools and 128 replayed calls per message. Per-tool descriptions are
+limited to 4,096 characters; parameter and structured-output schemas to 65,536 serialized
+characters, depth 32 and 8,192 visited values. The overall 4 MiB body cap is the aggregate limit.
+Valid signed-in sessions without AI eligibility receive 403, not a request to sign in again;
+eligibility RPC failures return 503 without minting a token.
+
 Requests are limited to four minutes, below the five-minute concurrency lease. A worker crash leaves
 the charge in place but releases its concurrency slot after the lease. Usage rows should be retained
 for accounting; archival must preserve all rows contributing to any current period. Deleting an

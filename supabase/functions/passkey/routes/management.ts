@@ -2,6 +2,7 @@ import { createRoute, OpenAPIHono } from "@hono/zod-openapi"
 import type { PasskeyContext } from "../types/context.ts"
 import { requireAuthenticatedCaller } from "../utils/authorization.ts"
 import { listUserPasskeys, deleteUserPasskey, updatePasskeyDisplayName } from "../services/management.ts"
+import { clientKey, rateLimit } from "../utils/rate-limit.ts"
 import {
   ManagementListRequestSchema,
   ManagementListResponseSchema,
@@ -13,6 +14,31 @@ import {
 } from "../types/schemas.ts"
 
 const management = new OpenAPIHono<{ Variables: PasskeyContext }>()
+
+// Cost cap for the management routes. They are authenticated, so this is a
+// brake on a script (or a stuck client loop) driving unlimited service-role
+// lookups through one isolate, not a security boundary. Checked before the
+// auth relay so an over-budget caller spends nothing. 240/hour is far above
+// any honest management UI (a few calls per screen) and far below a hammer.
+// Per-isolate; see utils/rate-limit.ts for the honest scope of that.
+const MANAGE_LIMIT = 240
+const MANAGE_WINDOW_SECONDS = 60 * 60
+
+/**
+ * True when this client is over the shared management budget.
+ *
+ * All three routes draw on one per-client bucket: they are one feature
+ * (the passkey management screen) reached through one credential, and a
+ * single bucket is what stops a script from interleaving them.
+ */
+function manageLimitExceeded(ctx: { req: { raw: { headers: Headers } } }): boolean {
+  const limit = rateLimit(
+    `manage:${clientKey(ctx.req.raw.headers)}`,
+    MANAGE_LIMIT,
+    MANAGE_WINDOW_SECONDS,
+  )
+  return !limit.allowed
+}
 
 /**
  * Resolves the account these management routes may act on.
@@ -95,6 +121,14 @@ const listPasskeysRoute = createRoute({
         }
       }
     },
+    429: {
+      description: 'Too many requests - per-client rate limit exceeded',
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
+        }
+      }
+    },
     500: {
       description: 'Internal server error',
       content: {
@@ -107,6 +141,10 @@ const listPasskeysRoute = createRoute({
 })
 
 management.openapi(listPasskeysRoute, async (ctx) => {
+  if (manageLimitExceeded(ctx)) {
+    return ctx.json({ error: 'Too many requests' }, 429)
+  }
+
   try {
     const supabase = ctx.get("supabase")
     const { userId } = ctx.req.valid('json')
@@ -181,6 +219,14 @@ const deletePasskeyRoute = createRoute({
         }
       }
     },
+    429: {
+      description: 'Too many requests - per-client rate limit exceeded',
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
+        }
+      }
+    },
     500: {
       description: 'Internal server error',
       content: {
@@ -193,6 +239,10 @@ const deletePasskeyRoute = createRoute({
 })
 
 management.openapi(deletePasskeyRoute, async (ctx) => {
+  if (manageLimitExceeded(ctx)) {
+    return ctx.json({ error: 'Too many requests' }, 429)
+  }
+
   try {
     const supabase = ctx.get("supabase")
     const { userId, passkeyId } = ctx.req.valid('json')
@@ -267,6 +317,14 @@ const updatePasskeyRoute = createRoute({
         }
       }
     },
+    429: {
+      description: 'Too many requests - per-client rate limit exceeded',
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
+        }
+      }
+    },
     500: {
       description: 'Internal server error',
       content: {
@@ -279,6 +337,10 @@ const updatePasskeyRoute = createRoute({
 })
 
 management.openapi(updatePasskeyRoute, async (ctx) => {
+  if (manageLimitExceeded(ctx)) {
+    return ctx.json({ error: 'Too many requests' }, 429)
+  }
+
   try {
     const supabase = ctx.get("supabase")
     const { userId, passkeyId, displayName } = ctx.req.valid('json')

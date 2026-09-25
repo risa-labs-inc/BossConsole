@@ -436,6 +436,8 @@ private fun windowAppearanceEntries() =
         setting("Expand on Hover", "Tab Bar", "vertical tabs", "rail", "collapse", "drawer")
         setting("Pane Tab Strip", "Tab Bar", "vertical tabs", "split", "favicon", "pane", "tabs")
         setting("Only in Split Windows", "Tab Bar", "vertical tabs", "split", "favicon", "pane", "strip")
+        group("Browser Zoom")
+        setting("Show Browser Zoom Badge", "Browser Zoom", "percentage", "reset", "browser", "top bar")
         group("Bars")
         setting("Show Top Bar", "Bars", "chrome", "window")
         setting("Show Bottom Bar", "Bars", "chrome", "window", "status")
@@ -556,9 +558,16 @@ private fun keymapEntries() =
         )
     }
 
+private fun gettingStartedEntries() =
+    section(SettingsSection.GETTING_STARTED) {
+        group("Getting Started", "onboarding", "setup wizard", "welcome", "plugin wizard")
+        setting("Plugin Setup Wizard", "Getting Started")
+    }
+
 /** Every built-in entry, in the order the sections appear in the nav rail. */
 internal val builtInEntries: List<SettingsSearchEntry> by lazy {
-    browserEntries() +
+    gettingStartedEntries() +
+        browserEntries() +
         browserEngineEntries() +
         defaultAppsEntries() +
         runnerEntries() +

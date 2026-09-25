@@ -184,14 +184,18 @@ internal suspend fun materialiseTemplateForProject(
  * Session). Every built-in applied as-is reaches that, including the seven whenever no project is
  * selected, so it wants one rule in the save path rather than a special case in this function.
  *
- * Three outcomes:
+ * Four outcomes:
  *
  * - **Nothing to substitute** - not a built-in at all, or Browser Only: returned unchanged. Nothing
  *   is written and nothing is said.
  * - **A template, with a project selected**: substituted, saved under
  *   [materialisedTemplateName], and returned for the caller to load and apply. Saved BEFORE it is
  *   applied, so a Space the user can switch back to exists from the moment its tabs do.
- * - **A template, with NO project**: returned unchanged, so this is exactly today's behaviour -
+ * - **A template whose project only places a shell, with NO project** ([projectIsOptional] -
+ *   Terminal + Browser, Dual Terminal): returned unchanged and applied as-is, and nothing is said.
+ *   The shells open in the no-project default directory, which is all the layout needs; telling
+ *   the user to open a project first read as a refusal of a layout that had just opened fine.
+ * - **Any other template, with NO project**: returned unchanged, so this is exactly today's behaviour -
  *   the placeholders resolve to `~/BossProjects` while the layout stays unowned - and a status
  *   message says so. Deliberately not a project picker: choosing a project mid-switch is a second
  *   dialog on top of the one the user just used, and the message it replaces (the home screen's,
@@ -205,6 +209,10 @@ suspend fun spaceToOpen(
     val project = DefaultWorkingDirectory.selectedOrNull(projectPath)
     return when {
         !picked.requiresProject() -> {
+            picked
+        }
+
+        project == null && picked.projectIsOptional() -> {
             picked
         }
 

@@ -272,7 +272,18 @@ internal object WindowsProtocolCleanup {
     /**
      * Strip the Windows account name out of a path before logging it.
      *
-     * Covers `C:\Users\<name>\…` and the legacy `C:\Documents and Settings\<name>\…`.
+     * Covers `C:\Users\<name>\…` and the legacy `C:\Documents and Settings\<name>\…`,
+     * spelled with either separator. Windows accepts `C:/Users/<name>` as readily as
+     * the backslash form, and the values masked here include a `shell\open\command`
+     * read back out of the registry - which BOSS did not necessarily write, and which an
+     * installer-authored registration can spell with forward slashes. Matching only the
+     * backslash form logged the account name verbatim, which is the one thing this is for.
+     *
+     * The separators are `+` for the same reason the class holds both spellings: a value
+     * that arrived with its separators escaped is the same kind of foreign, not written
+     * by BOSS text as one that used forward slashes, and matching a single separator
+     * left the account-name class starting on the second one, failing at once and
+     * abandoning the whole match. Raised by @arjun28115 in review on #1343.
      * AGENTS.md requires sanitizing user data in logs and `LogSanitizer` has no path masker yet —
      * a shared one belongs there (it lives in the plugin-facing plugin-logging module), which is
      * why this is local for now.
@@ -280,7 +291,10 @@ internal object WindowsProtocolCleanup {
     internal fun maskUserPath(path: String?): String {
         if (path == null) return "(none)"
         return path
-            .replace(Regex("""(?i)(\\Users\\)([^\\"]+)"""), "$1***")
-            .replace(Regex("""(?i)(\\Documents and Settings\\)([^\\"]+)"""), "$1***")
+            .replace(Regex("""(?i)([\\/]+Users[\\/]+)([^\\/"]+)"""), "$1***")
+            .replace(
+                Regex("""(?i)([\\/]+Documents and Settings[\\/]+)([^\\/"]+)"""),
+                "$1***",
+            )
     }
 }

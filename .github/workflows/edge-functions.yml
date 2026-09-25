@@ -9,8 +9,11 @@ name: ⚡ Edge Functions
 # job existed, which is the argument for having it.
 
 on:
+  # PRs validate dev/develop integration; main pushes validate the merged tree.
+  # Do not add dev here: dev -> main would enqueue the same macOS work twice.
+  # For a branch without a PR, use workflow_dispatch. See docs/ci-validation.md.
   push:
-    branches: [ main, dev ]
+    branches: [main]
     paths:
       - 'supabase/functions/**'
       # The function's behaviour is coupled to the passkey migrations (columns,
@@ -18,14 +21,33 @@ on:
       - 'supabase/migrations/**'
       - '.github/workflows/edge-functions.yml'
   pull_request:
-    branches: [ main, dev ]
+    branches: [main, dev, develop]
     paths:
       - 'supabase/functions/**'
       - 'supabase/migrations/**'
       - '.github/workflows/edge-functions.yml'
   workflow_dispatch:
 
+# Cancel only obsolete PR validation; never cancel main or manual validation.
+concurrency:
+  group: edge-functions-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  fluck-oauth:
+    name: Fluck OAuth - check and test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: supabase/functions/fluck-oauth
+    steps:
+      - uses: actions/checkout@v7
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: deno task check
+      - run: deno task test
+
   passkey:
     name: 🔐 Passkey function — check & test
     runs-on: ubuntu-latest
@@ -151,4 +173,56 @@ jobs:
         run: deno test --allow-env --config deno.json
 
       - name: 🧹 Lint
+        run: deno lint
+
+  live-sessions:
+    name: 🖥️ Live Sessions function — check & test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: supabase/functions/live-sessions
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: 🦕 Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: 🔎 Type check
+        run: find . -name '*.ts' -print0 | sort -z | xargs -0 -r deno check
+
+      - name: 🧪 Tests
+        # --allow-all: the suite sets SUPABASE_URL / SUPABASE_ANON_KEY env vars.
+        run: deno test --allow-all
+
+      - name: 🧹 Lint
+        run: deno lint
+
+  redirect:
+    name: ↪️ Redirect function — check & test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: supabase/functions/redirect
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: 🦕 Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: 🔎 Type check
+        run: find . -name '*.ts' -print0 | sort -z | xargs -0 -r deno check
+
+      - name: 🧪 Tests
+        run: deno test --allow-all
+
+      - name: 🧹 Lint (advisory)
+        # Pre-existing findings in app.ts and tests/redirect.test.ts (inline jsr: specifier,
+        # legacy comment); not gating until those are cleaned up. live-sessions lint IS gating.
+        continue-on-error: true
         run: deno lint

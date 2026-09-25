@@ -1,5 +1,6 @@
 package ai.rever.boss.utils
 
+import ai.rever.boss.components.workspaces.ShellPathQuoting
 import ai.rever.boss.plugin.browser.FluckEngine
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -129,13 +130,9 @@ object ApplicationRestarter {
 
         // Development fallbacks (previous behavior).
         val javaBin = System.getProperty("java.home") + File.separator + "bin" + File.separator + "java"
-        val currentJar =
-            runCatching {
-                File(
-                    ApplicationRestarter::class.java.protectionDomain.codeSource.location
-                        .toURI(),
-                )
-            }.getOrNull()
+        // File(URI) REJECTS a URI with an authority outright, so on a network-share
+        // install this was null and the restart fell through to the classpath form.
+        val currentJar = CodeSourceLocation.fileFor(ApplicationRestarter::class.java)
         return when {
             currentJar?.name?.endsWith(".jar") == true -> {
                 listOf(javaBin, "-jar", currentJar.path)
@@ -160,7 +157,7 @@ object ApplicationRestarter {
     private fun shellQuote(s: String): String = "'" + s.replace("'", "'\\''") + "'"
 
     /** Single-quote a string for safe embedding in a PowerShell command. */
-    private fun psQuote(s: String): String = "'" + s.replace("'", "''") + "'"
+    private fun psQuote(s: String): String = ShellPathQuoting.powershell(s)
 
     /**
      * Locate the running macOS `.app` bundle, or null in dev mode. Mirrors the proven
@@ -190,11 +187,7 @@ object ApplicationRestarter {
         // c) Walk up from the code source looking for a .app bundle (these are real
         //    ancestors of the running code, so they exist by construction).
         runCatching {
-            var current: File? =
-                File(
-                    ApplicationRestarter::class.java.protectionDomain.codeSource.location
-                        .toURI(),
-                )
+            var current: File? = CodeSourceLocation.fileFor(ApplicationRestarter::class.java)
             repeat(6) {
                 val f = current ?: return@runCatching
                 if (f.name.endsWith(".app")) return f.absolutePath

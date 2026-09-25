@@ -1,11 +1,17 @@
 # Database regression tests
 
-From the repository root, run both commands on a disposable local Supabase database:
+From the repository root, run these commands on a disposable local Supabase database:
 
 ```sh
 python3 scripts/test/prepare-db-access-tests.py
 supabase test db
+python3 scripts/test/test-domain-claim-concurrency.py
 ```
+
+The domain concurrency test uses two independent sessions against that disposable
+Docker database. It holds the fifth claim uncommitted, observes the sixth waiting
+on a lock, then verifies the sixth is refused after the fifth commits. It also
+checks that fixed-snapshot transaction isolation is explicitly refused.
 
 Always regenerate immediately before testing. The rotation and audit suites embed
 current operational SQL because Supabase CLI mounts test files in isolation.

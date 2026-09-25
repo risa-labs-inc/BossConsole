@@ -15,6 +15,8 @@ import ai.rever.boss.focusmode.FocusModeSettingsManager
 import ai.rever.boss.keymap.KeymapSettingsManager
 import ai.rever.boss.keymap.menu.MenuShortcutBridge
 import ai.rever.boss.keymap.model.KeymapActions
+import ai.rever.boss.mcp.McpToolRegistryImpl
+import ai.rever.boss.mcp.McpYoloPrompt
 import ai.rever.boss.plugin.api.PanelRegistry
 import ai.rever.boss.plugin.browser.ActiveBrowserRegistry
 import ai.rever.boss.plugin.browser.FluckEngine
@@ -26,6 +28,7 @@ import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.plugin.ui.BossThemeController
 import ai.rever.boss.plugin.ui.LocalHeavyweightOverlays
 import ai.rever.boss.services.editor.EditorAPIAccess
+import ai.rever.boss.services.importer.BookmarkExport
 import ai.rever.boss.services.terminal.TerminalAPIAccess
 import ai.rever.boss.settings.MicrokernelModePreference
 import ai.rever.boss.settings.microkernelModeMenuLabel
@@ -297,6 +300,7 @@ fun ApplicationScope.BossWindow(
         // State for CLI installation dialog
         var showCLIInstallDialog by remember { mutableStateOf(false) }
         var isCliInstalled by remember { mutableStateOf<Boolean>(CLIInstaller.isInstalled()) }
+        val mcpYolo by McpToolRegistryImpl.yoloMode.collectAsState()
 
         // State for Reset Browser dialog
         var showResetBrowserDialog by remember { mutableStateOf(false) }
@@ -542,6 +546,14 @@ fun ApplicationScope.BossWindow(
                     },
                 )
 
+                Separator()
+
+                Item(
+                    "Print...",
+                    shortcut = shortcutBridge.getKeyShortcut(KeymapActions.BROWSER_PRINT),
+                    enabled = hasBrowser,
+                    onClick = { MenuActionsHandler.triggerPrintBrowser(windowState.id) },
+                )
                 Separator()
 
                 Item(
@@ -901,6 +913,26 @@ fun ApplicationScope.BossWindow(
                         showCLIInstallDialog = true
                     },
                 )
+
+                // YOLO mode's second door, and the one that survives a hidden bottom bar (Focus
+                // mode hides it by default): the checkmark is its indicator, unchecking is its off
+                // switch. Checking only ASKS - the shared confirmation in BossAppDialogs - so the
+                // mark reflects the engine, never the click. Hidden when the deployment refuses
+                // the mode, unless it is somehow on, so it can always be turned off.
+                if (McpToolRegistryImpl.yoloAvailable || mcpYolo) {
+                    Separator()
+                    CheckboxItem(
+                        "MCP YOLO Mode",
+                        checked = mcpYolo,
+                        onCheckedChange = { on ->
+                            if (on) {
+                                McpYoloPrompt.request(windowState.id)
+                            } else {
+                                menuScope.launch { McpToolRegistryImpl.setYoloMode(false) }
+                            }
+                        },
+                    )
+                }
             }
 
             // Window Menu
@@ -1017,6 +1049,13 @@ fun ApplicationScope.BossWindow(
                     "Import Passwords & Bookmarks...",
                     onClick = {
                         showImportDialog = true
+                    },
+                )
+
+                Item(
+                    "Export Bookmarks...",
+                    onClick = {
+                        menuScope.launch { BookmarkExport.runFromMenu() }
                     },
                 )
 

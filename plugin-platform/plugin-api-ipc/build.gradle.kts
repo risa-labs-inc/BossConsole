@@ -42,6 +42,9 @@ kotlin {
                 // IPC protocol and connection management
                 implementation(project(":boss-ipc"))
 
+                // Path rules shared with the host, so locally-answered queries agree with it
+                implementation(projects.pluginPlatform.pluginPathUtils)
+
                 implementation(compose.desktop.currentOs)
             }
         }

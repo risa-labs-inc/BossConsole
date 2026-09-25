@@ -32,6 +32,7 @@ class BossIpcServer(
     // Every production endpoint requires both verified process identity and pinned TLS.
     private val tokenRegistry: ProcessTokenRegistry,
     private val tlsIdentity: IpcTlsIdentity,
+    private val limits: IpcTransportLimits = IpcTransportLimits(),
 ) {
     private val logger = LoggerFactory.getLogger(BossIpcServer::class.java)
     private val services = mutableListOf<BindableService>()
@@ -56,7 +57,7 @@ class BossIpcServer(
     }
 
     private fun buildAndStart() {
-        val builder = IpcAddressResolver.configureServerBuilder(address)
+        val builder = IpcAddressResolver.configureServerBuilder(address, limits)
         builder.sslContext(tlsIdentity.serverContext())
         services.forEach { builder.addService(it) }
         // Consulted only for methods no directly-registered service claims, so build-time registration

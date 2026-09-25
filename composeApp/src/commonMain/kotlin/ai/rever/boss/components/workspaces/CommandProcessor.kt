@@ -36,6 +36,15 @@ expect object CommandProcessor {
      * - Windows PowerShell: single-quote literal (embedded `'` → `''`)
      */
     fun quotePath(path: String): String
+
+    /** Escape a value already inside a template's single- or double-quote region. */
+    fun escapeInsideQuote(
+        value: String,
+        quote: Char,
+    ): String
+
+    /** The current shell's escape character, for parsing template quote regions. */
+    fun quoteEscapeCharacter(): Char
 }
 
 /**
@@ -50,6 +59,56 @@ internal object ShellPathQuoting {
     /** POSIX: close the quote, emit an escaped `'`, reopen — fully literal. */
     fun posix(path: String): String = "'" + path.replace("'", "'\\''") + "'"
 
-    /** PowerShell: single-quoted literal; an embedded `'` is doubled. */
-    fun powershell(path: String): String = "'" + path.replace("'", "''") + "'"
+    /**
+     * PowerShell: single-quoted literal; an embedded quote is doubled.
+     *
+     * "Quote" is not only the ASCII `'`. PowerShell's tokenizer treats the four typographic single
+     * quotes (U+2018, U+2019, U+201A, U+201B) as string delimiters too, and a quote character followed
+     * by another quote character is the escape, whichever pair they are. So each of the five is
+     * doubled here. Doubling only `'` left `x` + U+2019 + `;calc;` + U+2019 + `y` as three statements,
+     * and a git branch or a folder may legally carry those characters.
+     */
+    fun powershell(path: String): String =
+        buildString(path.length + 2) {
+            append('\'')
+            for (c in path) {
+                append(c)
+                if (c in POWERSHELL_SINGLE_QUOTES) append(c)
+            }
+            append('\'')
+        }
+
+    private const val POWERSHELL_SINGLE_QUOTES = "'\u2018\u2019\u201A\u201B"
+
+    fun posixInsideQuote(
+        value: String,
+        quote: Char,
+    ): String =
+        if (quote == '\'') {
+            value.replace("'", "'\\''")
+        } else {
+            value
+                .replace("\\", "\\\\")
+                .replace("$", "\\$")
+                .replace("`", "\\`")
+                .replace("\"", "\\\"")
+        }
+
+    fun powershellInsideQuote(
+        value: String,
+        quote: Char,
+    ): String =
+        if (quote == '\'') {
+            buildString(value.length) {
+                for (character in value) {
+                    append(character)
+                    if (character in POWERSHELL_SINGLE_QUOTES) append(character)
+                }
+            }
+        } else {
+            value
+                .replace("`", "``")
+                .replace("$", "`$")
+                .replace("\"", "`\"")
+        }
 }

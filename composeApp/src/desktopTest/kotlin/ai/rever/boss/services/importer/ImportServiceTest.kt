@@ -229,9 +229,7 @@ class ImportServiceTest {
     @Test
     fun `bookmarks in one batch get distinct ids`() =
         runTest {
-            // Bookmark.generateId() is a bare millisecond timestamp, so a bulk
-            // insert would hand every entry the same id — and removeBookmark
-            // filters by id, so deleting one would delete the lot.
+            // Every imported entry must have its own id, even when inserted in one batch.
             val provider = BulkProvider()
             val input = (1..200).map { ImportedBookmark("Site $it", "https://site$it.test/", "Work") }
 

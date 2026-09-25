@@ -110,3 +110,45 @@ Deno.test("health check", async () => {
   assertEquals(res.status, 200)
   assertStringIncludes(await res.text(), "healthy")
 })
+
+
+// (e) Web arm: a live-sessions redirect_to bounces to GoTrue's verify, unchanged, first-party host only.
+
+Deno.test("live-sessions redirect_to → bounce to the GoTrue verify URL (no scheme rewrite)", async () => {
+  const rt = "https://api.risaboss.com/functions/v1/live-sessions/auth"
+  const conf = "https://api.risaboss.com/auth/v1/verify?token=tok123"
+  const html = await pageFor(`/redirect?url=${encodeURIComponent(conf)}&type=magiclink&redirect_to=${encodeURIComponent(rt)}`)
+  assertStringIncludes(html, "https://api.risaboss.com/auth/v1/verify?token=tok123&amp;type=magiclink&amp;redirect_to=" + encodeURIComponent(rt).replace(/&/g, "&amp;"))
+  assertStringIncludes(html, "<h1>BossTerm Live Sessions</h1>")
+  assert(!html.includes("boss://auth/verify"), "must not deep-link the web flow into the desktop app")
+})
+
+Deno.test("live-sessions arm refuses a non-first-party confirmation host", async () => {
+  const rt = "https://api.risaboss.com/functions/v1/live-sessions/auth"
+  const res = await app.request(`/redirect?url=${encodeURIComponent("https://evil.example/auth/v1/verify?token=t")}&redirect_to=${encodeURIComponent(rt)}`)
+  assertEquals(res.status, 400)
+})
+
+Deno.test("a redirect_to merely CONTAINING the live-sessions prefix elsewhere is not the web arm", async () => {
+  const html = await pageFor("/redirect?token=abc&redirect_to=" + encodeURIComponent("https://evil.example/?x=https://api.risaboss.com/functions/v1/live-sessions/"))
+  assertStringIncludes(html, "boss://auth/verify?token=abc")
+})
+
+Deno.test("live-sessions arm is an exact match: a sub-path under the prefix is NOT the web arm", async () => {
+  const html = await pageFor("/redirect?token=abc&redirect_to=" + encodeURIComponent("https://api.risaboss.com/functions/v1/live-sessions/other"))
+  assertStringIncludes(html, "boss://auth/verify?token=abc")
+})
+
+Deno.test("live-sessions arm preserves a token_hash parameter name instead of renaming it", async () => {
+  const rt = "https://cli.risaboss.com/auth"
+  const conf = "https://api.risaboss.com/auth/v1/verify?token_hash=hh123"
+  const html = await pageFor(`/redirect?url=${encodeURIComponent(conf)}&type=magiclink&redirect_to=${encodeURIComponent(rt)}`)
+  assertStringIncludes(html, "auth/v1/verify?token_hash=hh123&amp;type=magiclink")
+})
+
+Deno.test("live-sessions arm accepts the vanity-host landing", async () => {
+  const rt = "https://cli.risaboss.com/auth"
+  const html = await pageFor(`/redirect?url=${encodeURIComponent("https://api.risaboss.com/auth/v1/verify?token=t1")}&type=magiclink&redirect_to=${encodeURIComponent(rt)}`)
+  assertStringIncludes(html, "redirect_to=" + encodeURIComponent(rt).replace(/&/g, "&amp;"))
+  assertStringIncludes(html, "<h1>BossTerm Live Sessions</h1>")
+})

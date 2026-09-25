@@ -63,6 +63,18 @@ actual class WorkspaceFileManager actual constructor(
             // The ID, not the name: see WorkspaceFileManagerCommon.fileNameForId. A caller that
             // knows the Space came from a legacy path passes it explicitly.
             val actualFileName = fileName ?: WorkspaceFileManagerCommon.fileNameForId(workspace.id)
+
+            // Never write the literal ".json": a blank id resolves to it and an explicit
+            // fileName is not sanitised, so this is the last place the refusal can live. Every
+            // id-less Space would share that one file.
+            if (actualFileName == ".json") {
+                logger.warn(
+                    LogCategory.WORKSPACE,
+                    "Refused to save workspace to a nameless file",
+                    mapOf("workspace" to workspace.name),
+                )
+                return null
+            }
             val filePath = getWorkspaceFilePath(actualFileName)
             val file = File(filePath)
 
@@ -119,6 +131,11 @@ actual class WorkspaceFileManager actual constructor(
 
                 dir
                     .listFiles { file ->
+                        // ".json" has no stem: it is what a blank id wrote on older builds, and
+                        // nothing produces it any more. It is still LISTED - that file is a
+                        // real Space (the last id-less import), and the load scan adopts it:
+                        // mints a stable id, saves under <id>.json, and removes the nameless
+                        // file. Filtering it here would orphan that Space silently.
                         file.isFile && file.name.endsWith(".json")
                     }?.map { file ->
                         WorkspaceFileInfo(
@@ -156,7 +173,15 @@ actual class WorkspaceFileManager actual constructor(
             }
         }
 
-    actual fun getWorkspaceFilePath(fileName: String): String = Paths.get(workspaceDirectory, fileName).toString()
+    actual fun getWorkspaceFilePath(fileName: String): String {
+        // Every read, write and delete above builds its path here, and each of them catches and
+        // logs, so a refused name surfaces as "not found" / "not saved" with a warning rather than
+        // as a file outside the directory.
+        require(WorkspaceFileManagerCommon.isBareFileName(fileName)) {
+            "Workspace file names are bare names inside the workspace directory, got '$fileName'"
+        }
+        return Paths.get(workspaceDirectory, fileName).toString()
+    }
 
     actual fun writeDocumentBlocking(
         fileName: String,

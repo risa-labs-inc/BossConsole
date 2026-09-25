@@ -5,6 +5,8 @@ import ai.rever.boss.components.plugin.DynamicPluginInfo
 import ai.rever.boss.components.plugin.DynamicPluginManager
 import ai.rever.boss.components.plugin.HotReloadPolicy
 import ai.rever.boss.components.plugin.PersistedPluginEntry
+import ai.rever.boss.components.plugin.UpdateJarIdentityVet
+import ai.rever.boss.components.plugin.isContainedPath
 import ai.rever.boss.config.GitHubConfig
 import ai.rever.boss.config.SupabaseClientConfig
 import ai.rever.boss.plugin.api.PluginState
@@ -308,6 +310,15 @@ object PluginStoreSetup {
                     // and PluginUpdateManager needs that distinct from the empty string it
                     // publishes when it resolved and found no api jar.
                     hostApiVersion = { System.getProperty("boss.api.version") },
+                    // Vet the downloaded jar's declared identity before the swap
+                    // force-unloads the running plugin (BossConsole#927): the store
+                    // row's bytes are anchored, the manifest inside them is not, so a
+                    // mismatched jar must not uninstall - or become - the plugin the
+                    // user chose to update. The vet enforces the store installers' two
+                    // conditions (the row's id, and nothing protected) and discards a
+                    // refused jar with its `.sig` sidecar itself, so the gate does not
+                    // lean on this call site's failure path to clean the bytes up.
+                    verifyDownloadedJar = UpdateJarIdentityVet::vet,
                 )
 
             // Create and start realtime service for live updates
@@ -652,7 +663,20 @@ object PluginStoreSetup {
                 val installedVersion =
                     PluginVersionComparator.extractVersionFromJarFileName(existingJar.name, systemPlugin.artifactPrefix)
                         ?: runCatching { readPluginManifest(existingJar)?.version }.getOrNull()
-                val latestVersion = fetchLatestReleaseVersion(systemPlugin.githubRepo)
+                val pinnedRepo =
+                    SystemPluginManifestService.pinnedGithubRepoOrNull(
+                        systemPlugin.pluginId,
+                        systemPlugin.githubRepo,
+                    )
+                if (pinnedRepo == null) {
+                    logger.error(
+                        LogCategory.SYSTEM,
+                        "Refusing system-plugin update check from untrusted GitHub repo",
+                        mapOf("pluginId" to systemPlugin.pluginId, "repo" to systemPlugin.githubRepo),
+                    )
+                    return@launch
+                }
+                val latestVersion = fetchLatestReleaseVersion(pinnedRepo)
                 when {
                     latestVersion == null -> {
                         logger.debug(
@@ -1316,9 +1340,23 @@ object PluginStoreSetup {
      * @return true if download was successful, false otherwise
      */
     private suspend fun downloadSystemPluginFromGitHub(plugin: SystemPluginInfo): Boolean {
+        val pinnedRepo =
+            SystemPluginManifestService.pinnedGithubRepoOrNull(plugin.pluginId, plugin.githubRepo)
+        if (pinnedRepo == null) {
+            logger.error(
+                LogCategory.SYSTEM,
+                "Refusing system-plugin download from untrusted GitHub repo",
+                mapOf(
+                    "pluginId" to plugin.pluginId,
+                    "repo" to plugin.githubRepo,
+                    "reason" to "plugin id and repo do not match a build-owned system-plugin pin",
+                ),
+            )
+            return false
+        }
         return withSystemPluginDownloadLock(plugin) {
             try {
-                val apiUrl = "https://api.github.com/repos/${plugin.githubRepo}/releases/latest"
+                val apiUrl = "https://api.github.com/repos/$pinnedRepo/releases/latest"
                 logger.debug(
                     LogCategory.SYSTEM,
                     "Fetching latest release from GitHub",
@@ -1787,7 +1825,13 @@ object PluginStoreSetup {
         dynamicPluginManager: DynamicPluginManager,
         persistedPlugins: List<PluginPersistence.InstalledPluginEntry>,
         devRoot: File = DevPluginArtifacts.stagingRoot(),
+        pluginsDir: File = _pluginDir,
     ): Map<String, Result<DynamicPluginInfo>> {
+        // A persisted jarPath is untrusted input (installed.json is plain JSON):
+        // loading it verbatim would be an arbitrary-JAR load primitive. Confine it
+        // to the managed locations - the plugins dir and the dev staging root,
+        // which is where resolvePersistedEntryPath's dev-swap answers live.
+        val allowedRoots = listOf(pluginsDir, devRoot)
         val entries =
             persistedPlugins.map { entry ->
                 PersistedPluginEntry(
@@ -1797,7 +1841,7 @@ object PluginStoreSetup {
                 )
             }
 
-        val initialResults = dynamicPluginManager.loadPersistedPlugins(entries)
+        val initialResults = dynamicPluginManager.loadPersistedPlugins(entries, allowedRoots)
         val finalResults = initialResults.toMutableMap()
         val persistedById = persistedPlugins.associateBy { it.pluginId }
 
@@ -1817,9 +1861,9 @@ object PluginStoreSetup {
                 val fallbackResult =
                     attemptStoreFallbackOnDevFailure(
                         dynamicPluginManager = dynamicPluginManager,
-                        pluginId = pluginId,
                         entry = entry,
                         attemptedPath = attemptedPath,
+                        allowedRoots = allowedRoots,
                         devError =
                             result.exceptionOrNull()
                                 ?: IllegalStateException(
@@ -1836,17 +1880,28 @@ object PluginStoreSetup {
 
     private suspend fun attemptStoreFallbackOnDevFailure(
         dynamicPluginManager: DynamicPluginManager,
-        pluginId: String,
         entry: PluginPersistence.InstalledPluginEntry,
         attemptedPath: String?,
+        allowedRoots: List<File>,
         devError: Throwable?,
     ): Result<DynamicPluginInfo>? {
         val isDevBuildSwap =
             attemptedPath != null &&
                 attemptedPath != entry.jarPath &&
                 DevPluginArtifacts.isDevPluginJar(File(attemptedPath))
+        // The fallback loads the raw persisted jarPath - the same untrusted
+        // input the initial load was confined for, so apply the same
+        // containment here or the dev-swap path would re-open the primitive.
+        val storeContained = isContainedPath(entry.jarPath, allowedRoots)
         val storeJar = File(entry.jarPath)
-        if (!isDevBuildSwap || !storeJar.exists()) {
+        if (!isDevBuildSwap || !storeContained || !storeJar.exists()) {
+            if (isDevBuildSwap && !storeContained) {
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Refusing dev-fallback store JAR outside the managed roots",
+                    mapOf("pluginId" to entry.pluginId, "jarPath" to entry.jarPath),
+                )
+            }
             return null
         }
 
@@ -1854,7 +1909,7 @@ object PluginStoreSetup {
             LogCategory.SYSTEM,
             "Dev plugin failed to load at startup; falling back to store build",
             mapOf(
-                "pluginId" to pluginId,
+                "pluginId" to entry.pluginId,
                 "devJarPath" to attemptedPath,
                 "storeJarPath" to entry.jarPath,
                 "error" to (devError?.message ?: "unknown"),
@@ -1866,14 +1921,14 @@ object PluginStoreSetup {
         if (fallbackResult.isSuccess) {
             logger.info(
                 LogCategory.SYSTEM,
-                "Successfully fell back to store build for plugin $pluginId",
-                mapOf("pluginId" to pluginId, "storeJarPath" to entry.jarPath),
+                "Successfully fell back to store build for plugin ${entry.pluginId}",
+                mapOf("pluginId" to entry.pluginId, "storeJarPath" to entry.jarPath),
             )
         } else {
             logger.error(
                 LogCategory.SYSTEM,
-                "Fallback to store build also failed for plugin $pluginId",
-                mapOf("pluginId" to pluginId, "storeJarPath" to entry.jarPath),
+                "Fallback to store build also failed for plugin ${entry.pluginId}",
+                mapOf("pluginId" to entry.pluginId, "storeJarPath" to entry.jarPath),
                 fallbackResult.exceptionOrNull(),
             )
         }

@@ -3,6 +3,7 @@ package ai.rever.boss.components.plugin.providers
 import ai.rever.boss.components.events.FileEventBus
 import ai.rever.boss.components.plugin.panels.left_top.directoryHasChildren
 import ai.rever.boss.components.plugin.panels.left_top.scanDirectory
+import ai.rever.boss.components.plugin.tab_types.fluck.getDefaultDownloadsDirectory
 import ai.rever.boss.plugin.api.FileNodeData
 import ai.rever.boss.plugin.api.FileSystemDataProvider
 import ai.rever.boss.utils.logging.BossLogger
@@ -310,11 +311,11 @@ class FileSystemDataProviderImpl : FileSystemDataProvider {
         }
     }
 
-    override fun getDownloadsDirectory(): String {
-        val homeDir = System.getProperty("user.home")
-        val downloadsDir = java.io.File(homeDir, "Downloads")
-        return if (downloadsDir.exists()) downloadsDir.absolutePath else homeDir
-    }
+    // Shared with the browser's save location and with FileSystemDataProviderProxy, which
+    // answers this locally for out-of-process plugins: a plugin must not be told a different
+    // folder because of the process it happened to be loaded in. This used to hand back the
+    // home folder when ~/Downloads was absent, dropping saved files loose in the home dir.
+    override fun getDownloadsDirectory(): String = getDefaultDownloadsDirectory()
 
     override fun getHomeDirectory(): String = System.getProperty("user.home")
 }

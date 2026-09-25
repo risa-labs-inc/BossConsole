@@ -110,7 +110,6 @@
     <ID>CyclomaticComplexMethod:BrowserFunctions.kt$private fun configureBrowserPopupHandler( browser: Browser, onOpenInNewTab: (String) -&gt; Unit, )</ID>
     <ID>CyclomaticComplexMethod:BrowserHandleImpl.kt$BrowserHandleImpl$@OptIn(ExperimentalComposeUiApi::class) @Composable override fun Content()</ID>
     <ID>CyclomaticComplexMethod:BrowserHandleImpl.kt$BrowserHandleImpl$override fun dispatchCoBrowseInput(inputJson: String)</ID>
-    <ID>CyclomaticComplexMethod:BrowserHandleImpl.kt$BrowserHandleImpl$private fun getFormFieldInfoFromJS(frame: com.teamdev.jxbrowser.frame.Frame): FormFieldInfo?</ID>
     <ID>CyclomaticComplexMethod:BrowserHandleImpl.kt$BrowserHandleImpl$private fun jsKeyToKeyCode( key: String, code: String, ): KeyCode</ID>
     <ID>CyclomaticComplexMethod:BrowserHandleImpl.kt$BrowserHandleImpl$private fun setupEventListeners()</ID>
     <ID>CyclomaticComplexMethod:BrowserHandleImpl.kt$BrowserHandleImpl$private fun setupPopupHandler()</ID>
@@ -266,7 +265,6 @@
     <ID>LongMethod:BrowserFunctions.kt$private fun configureBrowserPopupHandler( browser: Browser, onOpenInNewTab: (String) -&gt; Unit, )</ID>
     <ID>LongMethod:BrowserHandleImpl.kt$BrowserHandleImpl$@OptIn(ExperimentalComposeUiApi::class) @Composable override fun Content()</ID>
     <ID>LongMethod:BrowserHandleImpl.kt$BrowserHandleImpl$override fun dispatchCoBrowseInput(inputJson: String)</ID>
-    <ID>LongMethod:BrowserHandleImpl.kt$BrowserHandleImpl$private fun getFormFieldInfoFromJS(frame: com.teamdev.jxbrowser.frame.Frame): FormFieldInfo?</ID>
     <ID>LongMethod:BrowserHandleImpl.kt$BrowserHandleImpl$private fun setupContextMenuHandler()</ID>
     <ID>LongMethod:BrowserHandleImpl.kt$BrowserHandleImpl$private fun setupEventListeners()</ID>
     <ID>LongMethod:BrowserHandleImpl.kt$BrowserHandleImpl$private fun setupPopupHandler()</ID>
@@ -309,7 +307,7 @@
     <ID>LongMethod:DynamicPluginManager.kt$DynamicPluginManager$private suspend fun uninstallPlugin( pluginId: String, force: Boolean, waitForGC: Boolean, closeTabsAcrossWindows: Boolean, ): Result&lt;Unit&gt;</ID>
     <ID>LongMethod:DynamicPluginManager.kt$DynamicPluginManager$suspend fun installPlugin( jarPath: String, enabled: Boolean = true, ): Result&lt;DynamicPluginInfo&gt;</ID>
     <ID>LongMethod:DynamicPluginManager.kt$DynamicPluginManager$suspend fun loadBundledPlugins(bundledDir: java.io.File): Map&lt;String, Result&lt;DynamicPluginInfo&gt;&gt;</ID>
-    <ID>LongMethod:DynamicPluginManager.kt$DynamicPluginManager$suspend fun loadPersistedPlugins(plugins: List&lt;PersistedPluginEntry&gt;): Map&lt;String, Result&lt;DynamicPluginInfo&gt;&gt;</ID>
+    <ID>LongMethod:DynamicPluginManager.kt$DynamicPluginManager$suspend fun loadPersistedPlugins( plugins: List&lt;PersistedPluginEntry&gt;, allowedRoots: List&lt;java.io.File&gt; = managedPluginJarRoots(), ): Map&lt;String, Result&lt;DynamicPluginInfo&gt;&gt;</ID>
     <ID>LongMethod:DynamicPluginManager.kt$DynamicPluginManager.Companion$private suspend fun hotSwapApiLayerOrchestration(pluginDir: java.io.File): Result&lt;Int&gt;</ID>
     <ID>LongMethod:EditableKeymapSettings.kt$@Composable fun EditableKeymapSettings()</ID>
     <ID>LongMethod:EditableKeymapSettings.kt$@Composable private fun ShortcutItem( binding: KeyBinding, hasConflict: Boolean, conflictingBindings: List&lt;KeyBinding&gt;, onEdit: () -&gt; Unit, )</ID>
@@ -965,7 +963,7 @@
     <ID>NestedBlockDepth:DownloadDataProviderImpl.kt$DownloadDataProviderImpl$override suspend fun removeDownload(id: String): Result&lt;Unit&gt;</ID>
     <ID>NestedBlockDepth:DownloadSettings.kt$private fun getLinuxDownloadsDirectory(userHome: String): String</ID>
     <ID>NestedBlockDepth:DynamicPluginManager.kt$DynamicPluginManager$suspend fun installPlugin( jarPath: String, enabled: Boolean = true, ): Result&lt;DynamicPluginInfo&gt;</ID>
-    <ID>NestedBlockDepth:DynamicPluginManager.kt$DynamicPluginManager$suspend fun loadPersistedPlugins(plugins: List&lt;PersistedPluginEntry&gt;): Map&lt;String, Result&lt;DynamicPluginInfo&gt;&gt;</ID>
+    <ID>NestedBlockDepth:DynamicPluginManager.kt$DynamicPluginManager$suspend fun loadPersistedPlugins( plugins: List&lt;PersistedPluginEntry&gt;, allowedRoots: List&lt;java.io.File&gt; = managedPluginJarRoots(), ): Map&lt;String, Result&lt;DynamicPluginInfo&gt;&gt;</ID>
     <ID>NestedBlockDepth:DynamicPluginManager.kt$DynamicPluginManager.Companion$private suspend fun hotSwapApiLayerOrchestration(pluginDir: java.io.File): Result&lt;Int&gt;</ID>
     <ID>NestedBlockDepth:FluckEngine.kt$FluckEngine$private fun cleanupStaleLockFiles(profileDir: java.nio.file.Path): Boolean</ID>
     <ID>NestedBlockDepth:FluckEngine.kt$FluckEngine$private fun killStaleChromiumProcesses()</ID>
@@ -973,7 +971,7 @@
     <ID>NestedBlockDepth:GitHubUpdateSource.kt$GitHubUpdateSource$override suspend fun listReleases(): List&lt;GitHubRelease&gt;</ID>
     <ID>NestedBlockDepth:GlobalSearchService.kt$GlobalSearchService$private suspend fun searchPluginProviders(query: String): List&lt;SearchResult&gt;</ID>
     <ID>NestedBlockDepth:KeyboardEventBus.kt$KeyboardEventBus$suspend fun emit(event: KeyboardEvent): Boolean</ID>
-    <ID>NestedBlockDepth:KeymapSettingsManager.kt$KeymapSettingsManager$private fun loadSettingsSync()</ID>
+    <ID>NestedBlockDepth:KeymapSettingsManager.kt$KeymapSettingsManager$internal fun loadSettingsSync()</ID>
     <ID>NestedBlockDepth:PasskeyAuthService.kt$PasskeyAuthService$suspend fun authenticateWithPasskey( email: String? = null, credentialId: String? = null, ): Result&lt;Unit&gt;</ID>
     <ID>NestedBlockDepth:PasskeySessionHandler.kt$PasskeySessionHandler$suspend fun completeAuthentication(authData: PasskeyAuthenticationResult): Result&lt;Unit&gt;</ID>
     <ID>NestedBlockDepth:PluginStoreSetup.kt$PluginStoreSetup$private fun copyBundledPluginsToPluginDir(dynamicPluginManager: ai.rever.boss.components.plugin.DynamicPluginManager)</ID>
@@ -1078,7 +1076,7 @@
     <ID>ReturnCount:BrowserFunctions.kt$actual fun isBrowserValid(browser: Any?): Boolean</ID>
     <ID>ReturnCount:BrowserFunctions.kt$actual fun recreateBrowserViewState( browser: Any, window: Any?, ): Any?</ID>
     <ID>ReturnCount:BrowserServiceImpl.kt$BrowserServiceImpl$override fun deleteProfile(profileName: String): Boolean</ID>
-    <ID>ReturnCount:CLICommandHandler.kt$CLICommandHandler$private suspend fun handleLoadWorkspace(configPath: String)</ID>
+    <ID>ReturnCount:CLICommandHandler.kt$CLICommandHandler$private suspend fun handleLoadWorkspace(command: CLICommand.LoadWorkspace)</ID>
     <ID>ReturnCount:CLICommandHandler.kt$CLICommandHandler$private suspend fun handleOpenFile(filePath: String)</ID>
     <ID>ReturnCount:CLICommandHandler.kt$CLICommandHandler$private suspend fun handleOpenFolder(folderPath: String)</ID>
     <ID>ReturnCount:CLIInstaller.kt$CLIInstaller$private fun installHomebrewStyle(): CLIInstallResult</ID>
@@ -1467,7 +1465,7 @@
     <ID>TooManyFunctions:SettingsComponents.kt$ai.rever.boss.components.settings.shared.SettingsComponents.kt</ID>
     <ID>TooManyFunctions:ShortcutLifecycleManager.kt$ShortcutLifecycleManager</ID>
     <ID>TooManyFunctions:SplitView.kt$SplitViewState</ID>
-    <ID>TooManyFunctions:SplitViewOperationsImpl.kt$SplitViewOperationsImpl : SplitViewOperations</ID>
+    <ID>TooManyFunctions:SplitViewOperationsImpl.kt$SplitViewOperationsImpl : SplitViewOperationsDisposableProvider</ID>
     <ID>TooManyFunctions:TabDraggableComponent.kt$TabDraggableComponent</ID>
     <ID>TooManyFunctions:TerminalAPIAccess.kt$TerminalAPIAccess</ID>
     <ID>TooManyFunctions:TrackingPluginContext.kt$PluginRegistrationTracker</ID>

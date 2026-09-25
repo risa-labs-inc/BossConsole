@@ -152,4 +152,17 @@ class ReleaseNotesMarkdownTest {
 
         assertEquals(null, summarizeReleaseNotes(blocks))
     }
+
+    @Test
+    fun `intraword emphasis stays literal`() {
+        val text = "2*3*4 and 2**3**4 and a__b__c and a**b**c plus snake_case_text"
+        assertEquals(text, buildInlineMarkdown(text).text)
+    }
+
+    @Test
+    fun `word-boundary emphasis still applies after flank guards`() {
+        val styled = buildInlineMarkdown("*real* and **bold** and __strong__ end")
+        assertEquals("real and bold and strong end", styled.text)
+        assertTrue(styled.spanStyles.size >= 3)
+    }
 }

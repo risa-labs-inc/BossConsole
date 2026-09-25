@@ -2,14 +2,22 @@ package ai.rever.boss.startup
 
 import ai.rever.boss.app.LastSessionCoordinator
 import ai.rever.boss.cache.HighQualityFaviconService
+import ai.rever.boss.components.plugin.DefaultPlugin
+import ai.rever.boss.components.plugin.panels.left_top.ProjectState
+import ai.rever.boss.dashboard.DashboardStatsManager
+import ai.rever.boss.dashboard.RecentBrowserPagesManager
+import ai.rever.boss.dashboard.RecentFilesManager
+import ai.rever.boss.mcp.McpToolRegistryImpl
 import ai.rever.boss.performance.PerformanceMonitor
 import ai.rever.boss.plugin.PluginStoreSetup
 import ai.rever.boss.plugin.browser.FluckEngine
+import ai.rever.boss.services.auth.UserDataStorage
 import ai.rever.boss.updater.AppUpdateRealtimeService
 import ai.rever.boss.updater.UpdateCoordinator
 import ai.rever.boss.utils.SingleInstanceManager
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.window.AWTKeyboardInterceptor
+import kotlinx.coroutines.runBlocking
 
 /**
  * A named step in the shutdown sequence.
@@ -36,6 +44,36 @@ object ShutdownSequence {
                 // composition, so the window-dispose save never runs: macOS
                 // app-menu Quit / Cmd+Q, ApplicationRestarter's exitProcess paths, SIGTERM.
                 LastSessionCoordinator.instance.saveOnProcessExit()
+            },
+            ShutdownStep("flushing debounced recent-files and user-data saves on exit") {
+                // RecentFilesManager debounces saves by up to 5 seconds; quitting inside
+                // that window dropped the last recorded entry - the gap #795's own body
+                // called out as a separate bug. runBlocking, not a fire-and-forget launch:
+                // this hook thread must not return - and let the process finish exiting -
+                // before both writes are on disk.
+                runBlocking {
+                    RecentFilesManager.flushPendingSaves()
+                    RecentBrowserPagesManager.flushPendingSaves()
+                    UserDataStorage.flushPendingSaves()
+                    ProjectState.flushPendingSaves()
+                    DashboardStatsManager.flushPendingSaves()
+                }
+            },
+            ShutdownStep("flushing MCP operation ledger on exit") {
+                // The ledger persists on a daemon writer thread fed by a bounded queue;
+                // record() returns after the enqueue, so Cmd+Q, SIGTERM and the restart
+                // paths would otherwise exit with audit records still queued. Bounded
+                // wait, and ordered before the logger step so a timeout warning still
+                // has a log to land in.
+                McpToolRegistryImpl.ledger.flush()
+            },
+            ShutdownStep("awaiting window plugin teardown") {
+                // Window close deliberately does not join plugin teardown - joining is the
+                // b07 UI stall. Here, at process exit, is the one place that may wait:
+                // bounded, so a wedged teardown cannot hang quit either.
+                runBlocking {
+                    DefaultPlugin.awaitPendingTeardowns(DefaultPlugin.PLUGIN_DISPOSE_TIMEOUT_MS)
+                }
             },
             ShutdownStep("stopping performance monitor") {
                 PerformanceMonitor.stop()

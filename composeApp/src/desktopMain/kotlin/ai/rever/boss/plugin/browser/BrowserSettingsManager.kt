@@ -1,6 +1,7 @@
 package ai.rever.boss.plugin.browser
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.Dispatchers
@@ -124,7 +125,7 @@ object BrowserSettingsManager {
                     )
 
                 val content = json.encodeToString(settings)
-                settingsFile.writeText(content)
+                settingsFile.atomicWriteText(content)
             } catch (e: Exception) {
                 logger.warn(LogCategory.BROWSER, "Failed to save browser settings", error = e)
             }

@@ -25,7 +25,9 @@ You can install or update the CLI symlinks inside BossConsole via **Toolbox → 
 | `boss terminal` | Opens a new integrated BossTerm pane | `boss terminal` |
 | `boss status` | Checks running BossConsole health and status | `boss status --json` |
 | `boss doctor` | Reports health problems with suggested next steps (exit `2` when degraded) | `boss doctor --json` |
+| `boss project-detect` | Reports project languages, tools, and frameworks from local files | `boss project-detect --path . --json` |
 | `boss mcp <action>` | Discovers and invokes MCP tools | `boss mcp list` |
+| `boss pack <action>` | Plans and applies plugin packs (exit `2` when an apply is partial) | `boss pack plan team.json` |
 | `boss plugin <action>` | Developer CLI: scaffold, validate, and link plugins | `boss plugin init my-tool` |
 | `boss completion <shell>` | Generates shell tab-completion scripts | `boss completion bash > ~/.boss-complete.sh` |
 
@@ -178,7 +180,32 @@ boss mcp invoke workspace_info --json
 
 ---
 
-### 5. `boss completion <bash|zsh|fish>`
+### 5. `boss mcp ledger <verify|tail|search>`
+
+Reads the local, sanitized MCP operation ledger without requiring a running BOSS process.
+
+```bash
+# Verify retained hash-chain integrity; exits non-zero for broken, incomplete, or unverifiable data
+boss mcp ledger verify
+
+# Show the newest 20 records, or filter the durable history
+boss mcp ledger tail -n 20
+boss mcp ledger search --tool run_command --disposition failed --from 2026-09-01 --limit 50
+
+# Machine-readable output or an explicit ledger path
+boss mcp ledger verify --json
+boss mcp ledger tail --file /path/to/mcp-calls.jsonl --json
+```
+
+The chain detects edits, insertions, reordering, and removals from inside retained history. It is
+not a signature: someone able to rewrite the entire chain can recompute it, and removing only the
+newest tail cannot be distinguished from normal retained history without an external checkpoint.
+An all-legacy ledger from before integrity tracking exits non-zero until BOSS writes one new record
+that anchors the hash chain; the report distinguishes that ordinary upgrade state from tampering.
+
+---
+
+### 6. `boss completion <bash|zsh|fish>`
 
 Generates tab-autocompletion scripts for your shell, completing subcommands and MCP actions (`list`, `describe`, `invoke`):
 
@@ -224,6 +251,35 @@ boss plugin link . --json
 
 ---
 
+## Plugin Packs (`boss pack`)
+
+A plugin pack names the plugins a desk needs and the MCP policy rules that make their tools usable. `boss pack` is a thin client over three host MCP tools, `pack_plan`, `pack_apply` and `pack_status`, so an agent can call the same tools directly and is governed the same way.
+
+```json
+{
+  "pack": "team-backend",
+  "plugins": ["ai.rever.boss.plugin.dynamic.terminaltab", "ai.rever.boss.plugin.dynamic.codebase@1.4.2?"],
+  "allow_tools": ["run_tests"],
+  "ask_providers": ["ai.rever.boss.plugin.dynamic.codebase"]
+}
+```
+
+A plugin entry is `<pluginId>`, `<pluginId>@<exact version>`, and a trailing `?` marks it optional. Rule lists are `allow_tools`, `ask_tools`, `deny_tools`, `allow_providers`, `ask_providers` and `deny_providers`.
+
+```bash
+boss pack plan team.json          # what would change; changes nothing
+boss pack apply team.json --wait  # apply, then report each row
+boss pack status [<job>]          # progress and result of an apply
+```
+
+- **Approval.** `pack_apply` is a mutating tool, so under the default policy BOSS holds it for the operator in the MCP approval dialog. The dialog shows the pack itself: every plugin and every rule. A pack too large to be shown in full is refused. `pack_apply` is classified HIGH risk, because one call installs executable code and writes durable policy, so granting it a *persistent* allow takes the host's Review-then-Confirm step rather than a single click.
+- **Consent covers the dependencies.** `pack_plan` resolves each install's full transitive closure and lists the extra plugin ids in `alsoInstalls`, so approving a pack that names one plugin cannot quietly install several. When the walk could not see the whole closure the row says so (`closureComplete: false`, with `unresolved`, `cyclic` or `truncated`). `pack_apply` installs the closure its own fresh plan resolved and reports which dependencies arrived; it never re-walks the store at install time.
+- **Precedence.** A pack only adds a rule where none exists. It never replaces an operator rule, in either direction, and it cannot set a rule for the pack tools themselves. While the policy file is unreadable, nothing is written. A rule whose tool belongs to a DENYed provider is reported as ineffective rather than added, because writing it would not make the tool callable. The plan can say so only for a tool that is already registered; for a tool the pack's own install brings in, the provider is known only once that install has run, so the DENY is caught when the rule is written and reported as `denied_by_provider` in the result.
+- **Resets win.** The reset counter for every rule subject is captured when the pack is planned and checked again when the rule is written. If the operator resets that tool or provider between approving the pack and the job running, the write is refused and reported, rather than reinstating what they just cleared.
+- **Installs.** Plugins come from the plugin store through the installers the host already uses, with their manifest and signature checks. A plugin with no version named installs the store's current release together with its dependencies; a pinned version installs that release alone.
+- **Re-applying** does only what the previous apply left undone.
+- **Exit codes** for `apply --wait`: `0` applied or already satisfied, `2` partial, `1` failed or not run.
+
 ## Process Exit Codes & Stream Guarantees
 
 The CLI adheres to strict UNIX process exit codes and standard stream separation:
@@ -231,7 +287,7 @@ The CLI adheres to strict UNIX process exit codes and standard stream separation
 - **Exit Code `0`**: Operation succeeded. `stdout` contains the tool output or JSON response.
 - **Exit Code `1`**: Tool execution failed (`isError == true`), invalid tool arguments, or desktop app offline. Clikt usage errors also use exit code `1`. The error description is written strictly to `stderr`, leaving `stdout` clean so shell pipelines do not ingest corrupted data.
 - **Output encoding**: Piped or redirected output, including every `--json` response and `boss mcp invoke` tool output, is UTF-8 on every platform; a Windows console keeps its own code page. Windows PowerShell 5.1 decodes a native command's output with `[Console]::OutputEncoding`, so set it to UTF-8 (`[Console]::OutputEncoding = [System.Text.Encoding]::UTF8`) before capturing output that contains non-ASCII text.
-- **Exit Code `2`**: `boss doctor` only. BOSS is running but reported at least one health finding. `stdout` still contains the report, so a script can branch on the code and read the details. `boss status` never uses this code.
+- **Exit Code `2`**: `boss doctor` reports at least one health finding, or `boss pack apply --wait` completes partially. `stdout` still contains the report so a script can read the details. `boss project-detect` uses exit code `1` for an invalid path.
 
 ### Offline Fail-Fast
 If BossConsole is not running, commands fail immediately without hanging:
@@ -252,4 +308,8 @@ $ echo $?
 
 PowerShell: use `--stdin` for JSON on Windows PowerShell 5.1 or legacy native argument passing, which can strip embedded quotes from `--args`. PowerShell 7.3+ uses Standard argument passing in this launcher. Packaged Windows console I/O still requires platform verification.
 
+cmd: `boss.bat` refuses an argument with a double quote inside it, because cmd would run what follows the quote (#1617). Quote whole arguments only. The arguments after `status`, `doctor`, `mcp` and `completion` are passed on untouched, so `boss mcp invoke search_workspace --args {"query":"x"}` works. For a `terminal -c` command that needs a quote, use `boss.ps1`.
+
 Registry access before sign-in follows the existing host policy: tools without required permissions or an admin requirement remain available. For an admin operator, the per-tool disabled switch is the remaining registry access control.
+
+4. **Secret references**: an argument may carry `{{secret:<id>}}` (or `.username` / `.notes`). `boss mcp invoke` takes the same governed path as an attached agent: the running BOSS window prompts, naming the secret and the tool, and the value is substituted host-side after approval. The CLI output is the tool's result with resolved values scrubbed; the reference, never the value, is what the ledger records. See [MCP_SECRET_REFERENCES.md](MCP_SECRET_REFERENCES.md).

@@ -2,6 +2,8 @@ package ai.rever.boss.components.window_panel
 
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -73,4 +75,27 @@ object SplitViewStateRegistry {
      * @return true if the window is registered, false otherwise
      */
     fun isRegistered(windowId: String): Boolean = _states.value.containsKey(windowId)
+}
+
+/**
+ * Registers [splitViewState] for [windowId] for exactly as long as this effect stays in the
+ * composition, and unregisters it in `onDispose` - one effect owns both halves of the
+ * registration's lifetime.
+ *
+ * The unregister used to live inside a distant `DisposableEffect` keyed on seven values. A
+ * change to any of the other six ran that `onDispose` and dropped a still-live window from the
+ * registry, and a throw earlier in the same callback skipped the unregister entirely and kept
+ * a dead window's tabs, browsers and scopes reachable from every `getAllStates` caller
+ * (Top of Mind, the MCP tools). Pairing them here keys removal to the same lifetime as the
+ * add, so neither failure mode can strand or orphan an entry.
+ */
+@Composable
+internal fun RegisterSplitViewState(
+    windowId: String,
+    splitViewState: SplitViewState,
+) {
+    DisposableEffect(windowId, splitViewState) {
+        SplitViewStateRegistry.register(windowId, splitViewState)
+        onDispose { SplitViewStateRegistry.unregister(windowId) }
+    }
 }

@@ -1,6 +1,7 @@
 package ai.rever.boss.updater
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.Dispatchers
@@ -164,7 +165,7 @@ actual object UpdateSettingsManager {
                         )
 
                     val content = json.encodeToString(UpdateSettingsData.serializer(), settings)
-                    settingsFile.writeText(content)
+                    settingsFile.atomicWriteText(content)
 
                     logger.debug(
                         LogCategory.SYSTEM,

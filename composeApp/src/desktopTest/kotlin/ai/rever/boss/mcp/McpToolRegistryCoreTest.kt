@@ -31,6 +31,9 @@ import kotlin.test.assertTrue
  * cannot be read or written (BossConsole#85) — lives in
  * [McpKillSwitchPersistenceTest].
  */
+// Keep permission, alias, and invocation regression cases together so they share
+// the same throwaway registry setup and verify the full dispatch contract.
+@Suppress("LargeClass")
 class McpToolRegistryCoreTest {
     private val tempFiles = mutableListOf<File>()
 
@@ -387,6 +390,7 @@ class McpToolRegistryCoreTest {
             val core = McpToolRegistryCore(disabledFile = null)
             val result = core.invoke("does_not_exist", "{}")
             assertTrue(result.isError)
+            assertTrue(result.text.contains("No such MCP tool"), result.text)
         }
 
     @Test
@@ -398,6 +402,7 @@ class McpToolRegistryCoreTest {
 
             val result = core.invoke("disabled_tool", "{}")
             assertTrue(result.isError)
+            assertTrue(result.text.contains("disabled"), result.text)
         }
 
     @Test
@@ -409,6 +414,51 @@ class McpToolRegistryCoreTest {
 
             val result = core.invoke("gated_tool", "{}")
             assertTrue(result.isError)
+            assertTrue(result.text.contains("not permitted"), result.text)
+        }
+
+    @Test
+    fun `invoke distinguishes unknown, disabled, and unpermitted tools`() =
+        runBlocking {
+            val core = McpToolRegistryCore(disabledFile = null)
+            core.registerProvider(
+                provider(
+                    "p1",
+                    echoTool("close_workspace"),
+                    echoTool("disabled_tool"),
+                    echoTool("gated_tool", requiredPermissions = listOf("secret.read")),
+                ),
+            )
+            core.setToolEnabled("disabled_tool", enabled = false)
+
+            val unknown = core.invoke("close_workspac", "{}")
+            val disabled = core.invoke("disabled_tool", "{}")
+            val unpermitted = core.invoke("gated_tool", "{}")
+
+            // Three distinct messages - and the typo gets a "did you mean" hint.
+            assertTrue(unknown.isError)
+            assertTrue(unknown.text.contains("did you mean 'close_workspace'"), unknown.text)
+            assertTrue(disabled.text.contains("disabled"), disabled.text)
+            assertTrue(unpermitted.text.contains("not permitted"), unpermitted.text)
+            assertEquals(3, setOf(unknown.text, disabled.text, unpermitted.text).size)
+        }
+
+    @Test
+    fun `a suggestion only names tools the caller could see`() =
+        runBlocking {
+            // The gated tool is registered but unpermitted: it must not leak into the hint.
+            val core = McpToolRegistryCore(disabledFile = null)
+            core.registerProvider(
+                provider(
+                    "p1",
+                    echoTool("gated_secret", requiredPermissions = listOf("secret.read")),
+                    echoTool("open_workspace"),
+                ),
+            )
+
+            val result = core.invoke("gated_secre", "{}")
+            assertTrue(result.isError)
+            assertFalse(result.text.contains("gated_secret"), result.text)
         }
 
     @Test
@@ -507,15 +557,73 @@ class McpToolRegistryCoreTest {
         }
 
     @Test
-    fun `invoke with malformed JSON args runs the handler with an empty arg set instead of erroring`() =
+    fun `invoke refuses non-object and unparseable args without running the handler`() =
         runBlocking {
+            var handlerCalls = 0
+            val ledger = McpOperationLedger(ledgerFile = null)
+            val core = McpToolRegistryCore(disabledFile = null, ledger = ledger)
+            core.registerProvider(
+                provider(
+                    "p1",
+                    echoTool(
+                        "bad_args_tool",
+                        handler =
+                            McpToolHandler {
+                                handlerCalls++
+                                McpToolResult("ok")
+                            },
+                    ),
+                ),
+            )
+
+            val arrayResult = core.invoke("bad_args_tool", "[1,2,3]")
+            assertTrue(arrayResult.isError)
+            assertTrue(
+                arrayResult.text.contains("JSON array"),
+                "the refusal must name the received type, got: ${arrayResult.text}",
+            )
+            assertTrue(
+                arrayResult.text.contains("inputSchema"),
+                "the refusal must point at the expected schema, got: ${arrayResult.text}",
+            )
+
+            // The lenient element parser reads "garbage" as a bare-token primitive - still
+            // not a JSON object, still refused, and the handler still must not run.
+            val garbageResult = core.invoke("bad_args_tool", "garbage")
+            assertTrue(garbageResult.isError)
+            assertTrue(
+                garbageResult.text.contains("received"),
+                "the refusal must name what was received, got: ${garbageResult.text}",
+            )
+
+            val unparseableResult = core.invoke("bad_args_tool", "{not valid json")
+            assertTrue(unparseableResult.isError)
+            assertTrue(
+                unparseableResult.text.contains("unparseable"),
+                "the refusal must say the input could not be parsed, got: ${unparseableResult.text}",
+            )
+
+            // The refusal is a ledgered INVALID_ARGUMENTS denial, and the handler never ran
+            // for any of the three calls - a "lying success" on defaults is what b13 removes.
+            assertEquals(0, handlerCalls)
+            assertEquals(
+                List(3) { McpApprovalDisposition.INVALID_ARGUMENTS },
+                ledger.recentOperations.value.map { it.approvalDisposition },
+            )
+        }
+
+    @Test
+    fun `invoke still treats blank argument text as no arguments`() =
+        runBlocking {
+            // Blank means "caller sent nothing", which parseArgs maps to {} - only
+            // non-blank non-object text is refused, so a no-arg call must still run.
             var captured: McpToolArgs? = null
             val core = McpToolRegistryCore(disabledFile = null)
             core.registerProvider(
                 provider(
                     "p1",
                     echoTool(
-                        "bad_args_tool",
+                        "blank_args_tool",
                         handler =
                             McpToolHandler { args ->
                                 captured = args
@@ -525,9 +633,7 @@ class McpToolRegistryCoreTest {
                 ),
             )
 
-            val result = core.invoke("bad_args_tool", "{not valid json")
-
-            assertFalse(result.isError)
+            assertFalse(core.invoke("blank_args_tool", "   ").isError)
             assertFalse(requireNotNull(captured).has("anything"))
         }
 

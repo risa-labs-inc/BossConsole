@@ -1,0 +1,13 @@
+# cli.risaboss.com -> the live-sessions edge function, as a same-host proxy.
+#
+# Supabase allows ONE custom domain per project and api.risaboss.com holds it, so a second
+# hostname has to be a reverse proxy. A Workers Custom Domain creates the DNS record for
+# cli.risaboss.com by itself (the zone is on Cloudflare), so no manual DNS step.
+#
+# Deploy:  cd infra/cloudflare/live-sessions-alias && npx wrangler login && npx wrangler deploy
+name = "live-sessions-alias"
+# The zone risaboss.com lives in the RISA Labs, Inc account.
+account_id = "804b4814a4615997b78ab1d30d12ff77"
+main = "worker.js"
+compatibility_date = "2026-09-01"
+routes = [{ pattern = "cli.risaboss.com", custom_domain = true }]

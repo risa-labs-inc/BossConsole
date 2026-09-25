@@ -10,8 +10,20 @@ import {
 } from "../types/schemas.ts"
 import { listPlugins, searchPlugins, getPlugin, getPopularTags } from "../services/plugins.ts"
 import { getPluginVersions } from "../services/versions.ts"
+import { clientKey, rateLimit } from "../utils/rate-limit.ts"
 
 const browse = new OpenAPIHono<{ Variables: PluginStoreContext }>()
+
+// Per-client limit on the anonymous catalogue routes (/list, /search,
+// /tags/popular): the same in-isolate token bucket the organisation function
+// applies to its handoff, invite and DNS routes (utils/rate-limit.ts is a
+// verbatim copy of organisation/utils/rate-limit.ts). 60/min matches the
+// organisation's admin-write brake - generous for a Toolbox paging through the
+// store, small enough that an anon loop burning search_plugins ILIKE CPU and
+// edge invocations is cut off quickly. Best effort by design: the util's header
+// spells out what this is and is not.
+const CATALOGUE_LIMIT = 60
+const CATALOGUE_WINDOW_SECONDS = 60
 
 // ============================================================================
 // GET /list - List all plugins
@@ -27,6 +39,14 @@ const listRoute = createRoute({
     query: ListPluginsQuerySchema
   },
   responses: {
+    429: {
+      description: 'Too many requests from this client',
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
+        }
+      }
+    },
     200: {
       description: 'Plugin list retrieved successfully',
       content: {
@@ -48,6 +68,18 @@ const listRoute = createRoute({
 
 browse.openapi(listRoute, async (ctx) => {
   try {
+    // The brake before the work: this route is unauthenticated, so the limit
+    // is consumed before a single database call.
+    const limit = rateLimit(
+      `catalogue:${clientKey(ctx.req.raw.headers)}`,
+      CATALOGUE_LIMIT,
+      CATALOGUE_WINDOW_SECONDS,
+    )
+    if (!limit.allowed) {
+      ctx.header("Retry-After", String(limit.retryAfterSeconds))
+      return ctx.json({ error: 'Too many requests; try again later' }, 429)
+    }
+
     const supabase = ctx.get("supabase")
     const { page, pageSize, sortBy } = ctx.req.valid('query')
 
@@ -96,6 +128,14 @@ const searchRoute = createRoute({
     }
   },
   responses: {
+    429: {
+      description: 'Too many requests from this client',
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
+        }
+      }
+    },
     200: {
       description: 'Search results retrieved successfully',
       content: {
@@ -125,6 +165,18 @@ const searchRoute = createRoute({
 
 browse.openapi(searchRoute, async (ctx) => {
   try {
+    // search_plugins is ILIKE-backed, so an unthrottled anon client burns DB
+    // CPU per request; the limit is consumed before the query is parsed.
+    const limit = rateLimit(
+      `catalogue:${clientKey(ctx.req.raw.headers)}`,
+      CATALOGUE_LIMIT,
+      CATALOGUE_WINDOW_SECONDS,
+    )
+    if (!limit.allowed) {
+      ctx.header("Retry-After", String(limit.retryAfterSeconds))
+      return ctx.json({ error: 'Too many requests; try again later' }, 429)
+    }
+
     const supabase = ctx.get("supabase")
     const body = ctx.req.valid('json')
 
@@ -200,14 +252,28 @@ browse.openapi(getPluginRoute, async (ctx) => {
     const supabase = ctx.get("supabase")
     const { pluginId } = ctx.req.valid('param')
 
-    const plugin = await getPlugin(supabase, pluginId)
+    // OPTIONAL auth, the same quiet rule as /list: a missing or unusable
+    // token answers the public catalogue, a valid one additionally unlocks
+    // what user_can_view_plugin_row says this reader may see. Without it the
+    // service-role client computes visibility for NOBODY (auth.uid() is
+    // NULL), and an organisation member got a 404 for their own
+    // organisation's plugin on the very page that lists its versions
+    // (issue #852).
+    const viewer = await optionalViewer(ctx)
+
+    const plugin = await getPlugin(supabase, pluginId, viewer)
     
     if (!plugin) {
       return ctx.json({ error: 'Plugin not found' }, 404)
     }
 
     // Get all versions
-    const versions = await getPluginVersions(supabase, pluginId)
+    const versions = await getPluginVersions(supabase, pluginId, viewer)
+
+    // PRIVATE when the answer depends on who asked - the same reason and the
+    // same header as /list: a shared cache holding one reader's copy would
+    // serve somebody else's organisation plugins to the next caller.
+    ctx.header("Cache-Control", viewer ? "private, no-store" : "public, max-age=60")
 
     return ctx.json({
       id: plugin.id,
@@ -254,6 +320,11 @@ browse.openapi(getPluginRoute, async (ctx) => {
 // GET /tags/popular - Get popular tags
 // ============================================================================
 
+// Same ceiling /search already enforces on pageSize. This route is public and sends the anon
+// key, and the value used to reach `LIMIT p_limit` in get_popular_tags with nothing bounding it
+// on the way - not here, not in getPopularTags, not in the SQL function.
+const POPULAR_TAGS_LIMIT_MAX = 100
+
 const popularTagsRoute = createRoute({
   method: 'get',
   path: '/tags/popular',
@@ -262,15 +333,34 @@ const popularTagsRoute = createRoute({
   description: 'Get the most used tags for filtering',
   request: {
     query: z.object({
-      limit: z.string().optional().default('20').transform(Number)
+      // BossConsole#1253: cap `limit` so an unauthenticated caller cannot
+      // ask the SECURITY DEFINER `get_popular_tags` RPC for the entire
+      // tag cloud in one request.
+      limit: z.coerce.number().int().min(1).max(100).default(20)
     })
   },
   responses: {
+    429: {
+      description: 'Too many requests from this client',
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
+        }
+      }
+    },
     200: {
       description: 'Popular tags retrieved successfully',
       content: {
         'application/json': {
           schema: PopularTagsResponseSchema
+        }
+      }
+    },
+    400: {
+      description: 'Invalid limit',
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
         }
       }
     },
@@ -287,8 +377,33 @@ const popularTagsRoute = createRoute({
 
 browse.openapi(popularTagsRoute, async (ctx) => {
   try {
+    // The rate limit is asked first, so an invalid limit still counts against the caller. Its
+    // result is `gate`, not `limit`: `limit` below is the validated value, and it is the one that
+    // has to reach the database.
+    const gate = rateLimit(
+      `catalogue:${clientKey(ctx.req.raw.headers)}`,
+      CATALOGUE_LIMIT,
+      CATALOGUE_WINDOW_SECONDS,
+    )
+    if (!gate.allowed) {
+      ctx.header("Retry-After", String(gate.retryAfterSeconds))
+      return ctx.json({ error: 'Too many requests; try again later' }, 429)
+    }
+
     const supabase = ctx.get("supabase")
-    const { limit } = ctx.req.valid('query')
+    const { limit: rawLimit } = ctx.req.valid('query')
+
+    // Fail closed before anything touches the database. Two shapes got through before:
+    // an oversized integer, which asked for an arbitrarily large window, and a non-numeric
+    // value, which is worse - Number('abc') is NaN, JSON has no NaN so the RPC payload carries
+    // null, and PostgreSQL treats LIMIT NULL as LIMIT ALL. Number.isInteger rejects NaN,
+    // fractions and Infinity in one test.
+    const limit = Number(rawLimit)
+    if (!Number.isInteger(limit) || limit < 1 || limit > POPULAR_TAGS_LIMIT_MAX) {
+      return ctx.json({
+        error: `limit must be an integer from 1 to ${POPULAR_TAGS_LIMIT_MAX}`
+      }, 400)
+    }
 
     const tags = await getPopularTags(supabase, limit)
 

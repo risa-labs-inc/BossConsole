@@ -198,43 +198,6 @@ object RoleService {
         }
 
     /**
-     * Check if a user has a specific role
-     */
-    suspend fun userHasRole(
-        userId: String,
-        roleName: String,
-    ): Result<Boolean> =
-        try {
-            // Call helper RPC function that checks role by name
-            val postgrestResult =
-                client.postgrest.rpc(
-                    function = "check_user_has_role",
-                    parameters =
-                        buildJsonObject {
-                            put("target_user_id", userId)
-                            put("role_name", roleName)
-                        },
-                )
-
-            val jsonElement = supabaseJson.parseToJsonElement(postgrestResult.data)
-            val hasRole = jsonElement.jsonPrimitive.boolean
-
-            Result.success(hasRole)
-        } catch (e: Exception) {
-            logger.warn(
-                LogCategory.AUTH,
-                "Failed to check user role",
-                error = sanitizeSupabaseFailure("userHasRole", e),
-            )
-            Result.failure(sanitizeSupabaseFailure("userHasRole", e))
-        }
-
-    /**
-     * Check if a user is an admin
-     */
-    suspend fun isUserAdmin(userId: String): Result<Boolean> = userHasRole(userId, "admin")
-
-    /**
      * Assign a role to a user by role name (admin only)
      * Supports dynamic roles created at runtime
      */

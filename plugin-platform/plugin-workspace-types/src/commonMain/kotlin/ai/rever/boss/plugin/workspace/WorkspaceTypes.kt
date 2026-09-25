@@ -3,7 +3,6 @@ package ai.rever.boss.plugin.workspace
 import androidx.compose.runtime.Immutable
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import kotlin.time.Clock
 
 /**
  * Represents a tab configuration within a workspace.
@@ -199,9 +198,9 @@ data class LayoutWorkspace(
 ) {
     companion object {
         /**
-         * Generate a unique workspace ID based on current timestamp.
+         * Generate a workspace ID with entropy so concurrent saves cannot share a filename.
          */
-        fun generateId(): String = "workspace-${Clock.System.now().toEpochMilliseconds()}"
+        fun generateId(): String = uniqueId("workspace")
     }
 }
 

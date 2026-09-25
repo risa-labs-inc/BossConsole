@@ -1,6 +1,7 @@
 package ai.rever.boss.components.sidebar
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.Dispatchers
@@ -47,7 +48,7 @@ actual object SidebarVisibilitySettingsManager {
                         SidebarVisibilitySettings.serializer(),
                         _currentSettings.value,
                     )
-                settingsFile.writeText(content)
+                settingsFile.atomicWriteText(content)
             } catch (e: Exception) {
                 // Log the in-memory state's distinguishing fields so the
                 // user's report of "my preferences didn't stick" is

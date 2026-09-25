@@ -1,5 +1,6 @@
 package ai.rever.boss.search
 
+import ai.rever.boss.plugin.api.BufferSnapshot
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -15,8 +16,11 @@ import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
+import java.io.InputStream
 import java.nio.file.Files
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -292,6 +296,164 @@ class ContentSearchServiceTest {
     }
 
     @Test
+    fun `invalid search regex is reported instead of looking like no results`(
+        @TempDir dir: File,
+    ) = runBlocking {
+        File(dir, "a.txt").writeText("needle\n")
+        val service = ContentSearchService(projectPathProvider = { dir.absolutePath })
+
+        val error =
+            assertFailsWith<IllegalArgumentException> {
+                service.searchInProject(query = "(", isRegex = true)
+            }
+
+        assertTrue(error.message.orEmpty().contains("Invalid regex pattern"))
+    }
+
+    @Test
+    fun `invalid replacement regex is returned as a per-file error`(
+        @TempDir dir: File,
+    ) = runBlocking {
+        File(dir, "a.txt").writeText("needle\n")
+        val summary =
+            ContentSearchService(projectPathProvider = { dir.absolutePath }).replaceInProject(
+                query = "(",
+                replacement = "pin",
+                files = listOf("a.txt"),
+                isRegex = true,
+                dryRun = true,
+            )
+
+        assertEquals(0, summary.totalReplacements)
+        assertTrue(
+            summary.files
+                .single()
+                .error
+                .orEmpty()
+                .contains("Invalid regex pattern"),
+        )
+    }
+
+    @Test
+    fun `a hostile regex reports an incomplete search instead of an empty result`(
+        @TempDir dir: File,
+    ): Unit =
+        runBlocking {
+            File(dir, "long.txt").writeText("a".repeat(40_000) + "b")
+            val service = ContentSearchService(projectPathProvider = { dir.absolutePath })
+
+            assertFailsWith<ProjectSearchIncompleteException> {
+                withTimeout(5_000) {
+                    service.searchInProject(query = "(a+)+$", isRegex = true)
+                }
+            }
+        }
+
+    @Test
+    fun `a hostile replacement regex reports a per-file error`(
+        @TempDir dir: File,
+    ) = runBlocking {
+        File(dir, "long.txt").writeText("a".repeat(40_000) + "b")
+        val summary =
+            withTimeout(5_000) {
+                ContentSearchService(projectPathProvider = { dir.absolutePath }).replaceInProject(
+                    query = "(a+)+$",
+                    replacement = "pin",
+                    files = listOf("long.txt"),
+                    isRegex = true,
+                )
+            }
+
+        assertEquals(0, summary.totalReplacements)
+        assertTrue(
+            summary.files
+                .single()
+                .error
+                .orEmpty()
+                .contains("time budget"),
+        )
+    }
+
+    @Test
+    fun `a file stream that grows beyond the read limit is rejected while reading`() {
+        val result = readUtf8AtMost(GrowingInputStream(initialSize = 1_024, finalSize = 1_025), 1_024)
+
+        assertEquals(BoundedText.TooLarge, result)
+    }
+
+    @Test
+    fun `bounded reader distinguishes valid replacement character from malformed bytes`() {
+        val valid = "\uFFFD needle".toByteArray(Charsets.UTF_8)
+        assertEquals(BoundedText.Text("\uFFFD needle"), readUtf8AtMost(valid.inputStream(), valid.size.toLong()))
+        assertEquals(BoundedText.InvalidEncoding, readUtf8AtMost(byteArrayOf(0xff.toByte()).inputStream(), 1))
+    }
+
+    @Test
+    fun `search excludes undecodable UTF8 instead of matching replacement text`(
+        @TempDir dir: File,
+    ) = runBlocking {
+        File(dir, "invalid.txt").writeBytes(byteArrayOf(0xff.toByte()) + "needle".toByteArray())
+        File(dir, "valid.txt").writeText("needle")
+
+        val paths =
+            ContentSearchService(projectPathProvider = { dir.absolutePath })
+                .searchInProject(query = "needle")
+                .map { it.path }
+        assertEquals(listOf("valid.txt"), paths)
+    }
+
+    @Test
+    fun `search includes valid UTF8 replacement characters`(
+        @TempDir dir: File,
+    ) = runBlocking {
+        File(dir, "valid.txt").writeText("\uFFFD needle")
+
+        val paths =
+            ContentSearchService(projectPathProvider = { dir.absolutePath })
+                .searchInProject(query = "needle")
+                .map { it.path }
+        assertEquals(listOf("valid.txt"), paths)
+    }
+
+    @Test
+    fun `replace preserves valid replacement characters and refuses malformed bytes`(
+        @TempDir dir: File,
+    ) = runBlocking {
+        val valid = File(dir, "valid.txt").apply { writeText("\uFFFD needle") }
+        val invalid =
+            File(dir, "invalid.txt").apply {
+                writeBytes(byteArrayOf(0xff.toByte()) + "needle".toByteArray())
+            }
+
+        val summary =
+            ContentSearchService(projectPathProvider = { dir.absolutePath }).replaceInProject(
+                query = "needle",
+                replacement = "found",
+                files = listOf("valid.txt", "invalid.txt"),
+                dryRun = false,
+            )
+
+        assertEquals("\uFFFD found", valid.readText())
+        assertEquals(1, summary.totalReplacements)
+        assertTrue(summary.files.any { it.error == "not valid UTF-8" })
+        assertEquals(0xff, invalid.readBytes().first().toInt() and 0xff)
+    }
+
+    @Test
+    fun `disk rewrite invalidates a cached match when the mtime is unchanged`(
+        @TempDir dir: File,
+    ) = runBlocking {
+        val file = File(dir, "a.txt").apply { writeText("Aa") }
+        val service = ContentSearchService(projectPathProvider = { dir.absolutePath })
+
+        assertEquals(listOf("a.txt"), service.searchInProject(query = "Aa").map { it.path })
+        val mtime = Files.getLastModifiedTime(file.toPath())
+        file.writeText("BB")
+        Files.setLastModifiedTime(file.toPath(), mtime)
+        assertTrue(service.searchInProject(query = "Aa").isEmpty())
+    }
+
+    @Test
     fun `a per-file replace failure is reported, not swallowed`(
         @TempDir dir: File,
     ) = runBlocking {
@@ -531,7 +693,7 @@ class ContentSearchServiceTest {
                     if (path == open) {
                         ai.rever.boss.plugin.api.BufferSnapshot(
                             path = path,
-                            content = "val unsavedNeedle = 2\n",
+                            content = "\uFFFD val unsavedNeedle = 2\n",
                             version = 1L,
                             isModified = true,
                         )
@@ -562,11 +724,70 @@ class ContentSearchServiceTest {
     }
 
     @Test
+    fun `oversized open buffers are excluded from search and replacement`(
+        @TempDir dir: File,
+    ) = runBlocking {
+        val file = File(dir, "open.kt").apply { writeText("needle") }
+        val bridge =
+            object : EditorBufferBridge {
+                override suspend fun readBuffer(path: String) =
+                    ai.rever.boss.plugin.api
+                        .BufferSnapshot(path, "needle" + "x".repeat(1_048_576), 1L, true)
+
+                override suspend fun applyEdit(
+                    path: String,
+                    startLine: Int,
+                    startCol: Int,
+                    endLine: Int,
+                    endCol: Int,
+                    newText: String,
+                    expectedVersion: Long,
+                ): ai.rever.boss.plugin.api.EditResult? = null
+            }
+        val service = ContentSearchService({ dir.absolutePath }, bridge, { setOf(file.absolutePath) })
+
+        assertTrue(service.searchInProject(query = "needle").isEmpty())
+        assertEquals(
+            "file too large",
+            service
+                .replaceInProject("needle", "pin", listOf("open.kt"))
+                .files
+                .single()
+                .error,
+        )
+    }
+
+    @Test
+    fun `buffer byte limit counts an unpaired surrogate as its UTF8 replacement byte`(
+        @TempDir dir: File,
+    ) = runBlocking {
+        val file = File(dir, "open.kt").apply { writeText("disk") }
+        val content = "x".repeat(1_048_569) + '\uD800' + "needle"
+        val bridge =
+            object : EditorBufferBridge {
+                override suspend fun readBuffer(path: String) = BufferSnapshot(path, content, 1L, true)
+
+                override suspend fun applyEdit(
+                    path: String,
+                    startLine: Int,
+                    startCol: Int,
+                    endLine: Int,
+                    endCol: Int,
+                    newText: String,
+                    expectedVersion: Long,
+                ): ai.rever.boss.plugin.api.EditResult? = null
+            }
+        val service = ContentSearchService({ dir.absolutePath }, bridge, { setOf(file.absolutePath) })
+
+        assertEquals(listOf("open.kt"), service.searchInProject(query = "needle").map { it.path })
+    }
+
+    @Test
     fun `a cancelling caller unwinds a catastrophic-backtracking regex instead of pinning the thread`(
         @TempDir dir: File,
     ) {
         // The security control this class exists for: [InterruptibleText] re-checks
-        // the CALLER'S job on every character read, so `(a+)+$` against a long line
+        // the CALLER'S job during matching, so `(a+)+$` against a long line
         // - catastrophic backtracking in the non-interruptible Java matcher - must
         // unwind on cancel rather than pinning a Dispatchers.IO thread (and with it
         // every git/search behind the shared pools). Pinned the same way the
@@ -586,10 +807,11 @@ class ContentSearchServiceTest {
                         launch(Dispatchers.IO) {
                             service.searchInProject(query = "(a+)+\$", isRegex = true)
                         }
-                    // Let the matcher start spinning before the cancel lands.
-                    kotlinx.coroutines.delay(1_000)
+                    // Cancel while the matcher is still inside the per-file budget.
+                    kotlinx.coroutines.delay(25)
                     job.cancel()
                     job.join()
+                    assertTrue(job.isCancelled, "the caller cancellation was swallowed by the matcher")
                     true
                 }
 
@@ -598,6 +820,32 @@ class ContentSearchServiceTest {
                 "the cancel did not unwind the wedged matcher within 20s - the check inside the " +
                     "character stream has stopped working",
             )
+        }
+    }
+
+    @Test
+    fun `matcher cancellation is observed after matching has entered the character stream`() {
+        runBlocking {
+            val entered = CompletableDeferred<Unit>()
+            val cancelled = AtomicBoolean(false)
+            val matching =
+                async(Dispatchers.Default) {
+                    assertFailsWith<kotlinx.coroutines.CancellationException> {
+                        Regex("(a+)+$")
+                            .toPattern()
+                            .matcher(
+                                InterruptibleText(
+                                    "a".repeat(40_000) + "b",
+                                    { cancelled.get() },
+                                    Long.MAX_VALUE,
+                                    { entered.complete(Unit) },
+                                ),
+                            ).find()
+                    }
+                }
+            withTimeout(5_000) { entered.await() }
+            cancelled.set(true)
+            withTimeout(5_000) { matching.await() }
         }
     }
 
@@ -648,6 +896,21 @@ class ContentSearchServiceTest {
                 file.readText(),
                 "one operation silently reversed the other's completed edit (iteration $it)",
             )
+        }
+    }
+
+    private class GrowingInputStream(
+        private val initialSize: Int,
+        private val finalSize: Int,
+    ) : InputStream() {
+        private var position = 0
+        private var visibleSize = initialSize
+
+        override fun read(): Int {
+            if (position >= visibleSize) return -1
+            position++
+            if (position == initialSize) visibleSize = finalSize
+            return 'a'.code
         }
     }
 

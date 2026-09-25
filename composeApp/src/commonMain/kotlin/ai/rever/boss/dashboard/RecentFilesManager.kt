@@ -9,6 +9,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -53,6 +54,7 @@ data class RecentFilesData(
  * The sibling [RecentBrowserPagesManager] had the same three defects and was fixed first; this
  * class is kept deliberately parallel to it so the two do not drift again.
  */
+@Suppress("TooManyFunctions")
 object RecentFilesManager {
     private const val MAX_FILES = 20
     private const val SAVE_DEBOUNCE_MS = 5000L // Debounce saves to max once per 5 seconds
@@ -79,9 +81,21 @@ object RecentFilesManager {
      * normal case when a project restores several editors at startup - would both read the same
      * list and the second write would silently discard the first file. A `MutableStateFlow.update`
      * CAS loop is not usable here because a mutation has to leave *two* flows consistent and the
-     * CAS lambda can be retried; a lock is the form that keeps [setFiles] the single writer.
+     * CAS lambda can be retried; a lock is the form that keeps the recorded list single-writer.
      */
     private val mutationLock = Mutex()
+
+    /**
+     * Serialises the derive of [_recentFiles] from [_allFiles], and is deliberately *not*
+     * [mutationLock].
+     *
+     * The derive calls `File.exists()` once per entry - up to 20 - and on an unmounted or
+     * disconnected share, the exact case [_allFiles] exists for, each can block for seconds.
+     * Holding [mutationLock] across that queued every `recordFileOpen`, `removeFile` and
+     * `clearAll` behind one slow mount. The recorded list is read inside this lock, so the
+     * derive that finishes last is the one that read the freshest recorded list.
+     */
+    private val visibilityLock = Mutex()
 
     private val saveJobLock = Any()
     private var saveJob: Job? = null
@@ -103,16 +117,20 @@ object RecentFilesManager {
     val recentFiles: StateFlow<List<RecentFile>> = _recentFiles.asStateFlow()
 
     /**
-     * Replace the recorded list and re-derive the displayed one.
+     * Re-derive the displayed list from the recorded one.
      *
-     * Every mutation goes through here so the two can never drift - the defect being avoided is a
-     * caller updating the display and the save then writing the display back. Call only while
-     * holding [mutationLock]: the two flow writes are not one atomic step, so an unsynchronised
-     * caller can leave the displayed list derived from a list that is no longer recorded.
+     * Split out of the recorded write so the `File.exists()` calls happen outside [mutationLock];
+     * see [visibilityLock]. The displayed list therefore lags the recorded one for the length of
+     * the derive. That is not new - nothing re-derives between mutations either, so a file
+     * deleted outside BOSS already stays visible until the next mutation - the window is just
+     * wider. What must not happen is the reverse: the *recorded* list is what gets persisted
+     * (see [_allFiles]), and no caller may write [_recentFiles] into it.
      */
-    private fun setFiles(files: List<RecentFile>) {
-        _allFiles.value = files
-        _recentFiles.value = visibleFiles(files) { fileExists(it) }
+    private suspend fun refreshVisible() {
+        visibilityLock.withLock {
+            val recorded = _allFiles.value
+            _recentFiles.value = visibleFiles(recorded) { fileExists(it) }
+        }
     }
 
     /**
@@ -120,7 +138,7 @@ object RecentFilesManager {
      * list changed.
      *
      * The single entry point for user-driven mutation, so no caller can reintroduce the
-     * read-then-write race by touching [setFiles] directly. The startup merge is the one other
+     * read-then-write race by writing [_allFiles] directly. The startup merge is the one other
      * path that holds [mutationLock]: its no-op baseline is the decoded file rather than the
      * pre-merge list, so it decides its own save (see [loadAsync]).
      */
@@ -132,13 +150,16 @@ object RecentFilesManager {
                 if (after == before) {
                     false
                 } else {
-                    setFiles(after)
+                    _allFiles.value = after
                     true
                 }
             }
         // A transform that changed nothing schedules nothing. RecentFile is a data class, so
         // this is a value comparison.
-        if (changed) scheduleSave()
+        if (!changed) return
+        // Save first: it only arms a timer, while the derive can block on a slow mount.
+        scheduleSave()
+        refreshVisible()
     }
 
     /**
@@ -188,13 +209,16 @@ object RecentFilesManager {
                 // open an empty editor - fileExists existed for exactly this and had no callers)
                 // but stays in the recorded list, so an unmounted volume coming back brings its
                 // entries with it. See _allFiles.
-                persist =
+                val (recordedChanged, saveDue) =
                     mutationLock.withLock {
                         val after = mergeRecorded(loaded = data.files, recorded = _allFiles.value, max = MAX_FILES)
-                        if (after != _allFiles.value) setFiles(after)
-                        after != data.files
+                        val changed = after != _allFiles.value
+                        if (changed) _allFiles.value = after
+                        changed to (after != data.files)
                     }
+                persist = saveDue
                 if (persist) scheduleSave()
+                if (recordedChanged) refreshVisible()
 
                 val present = _recentFiles.value
                 recentFilesLogger.debug(
@@ -210,31 +234,42 @@ object RecentFilesManager {
 
     /**
      * Reset manager state for hermetic unit testing and redirect [settingsFile] to [testFile].
-     * Cancels the init load (it reads [settingsFile] at execution time) and any pending
-     * debounced save, clears both flows, and re-runs the load so the state matches [testFile].
-     * When [recorded] is given it is seeded after the load, so a test can observe the startup
-     * merge against a non-empty "recorded while the load was in flight" state.
-     * Tests must call this again with the real path before finishing, so the singleton is left
-     * where the app and other tests expect it.
+     * Cancels the init load (it reads [settingsFile] at execution time) and any pending debounced
+     * save, then clears both flows. When [reload] is true the load is re-run so the state matches
+     * [testFile], and [recorded] is seeded after it, so a test can observe the startup merge
+     * against a non-empty "recorded while the load was in flight" state.
+     *
+     * Tests must point this back at [BossDirectories] before finishing, so the singleton is left
+     * where later tests expect it, and pass `reload = false` when they do. Test tasks redirect
+     * `user.home` to a fresh build directory, so this is not the developer's real file; avoiding
+     * the reload still prevents teardown from scheduling work that can outlive the test.
      */
     internal suspend fun resetForTesting(
         testFile: File,
         recorded: List<RecentFile>? = null,
+        reload: Boolean = true,
     ) {
-        initialLoadJob?.cancel()
+        initialLoadJob?.cancelAndJoin()
         initialLoadJob = null
+        // Finished before the swap, not merely cancelled, so reset cannot clear the shared list
+        // while an old save is serializing it. The destination itself is captured by scheduleSave.
+        val pendingSave =
+            synchronized(saveJobLock) {
+                saveJob.also { saveJob = null }
+            }
+        pendingSave?.cancelAndJoin()
         mutationLock.withLock {
             settingsFile = testFile
             _allFiles.value = emptyList()
-            _recentFiles.value = emptyList()
         }
-        synchronized(saveJobLock) {
-            saveJob?.cancel()
-            saveJob = null
-        }
+        // Keep refreshVisible as the only writer of the displayed flow. This orders the reset
+        // against a derive already holding visibilityLock without nesting the two locks.
+        refreshVisible()
+        if (!reload) return
         loadAsync()
         if (recorded != null) {
-            mutationLock.withLock { setFiles(recorded) }
+            mutationLock.withLock { _allFiles.value = recorded }
+            refreshVisible()
         }
     }
 
@@ -246,20 +281,25 @@ object RecentFilesManager {
         // Swap the debounce job under a lock: callers arrive from concurrent coroutines (an open
         // and a removal racing), and an unsynchronised cancel-then-assign can overwrite the
         // reference to a job that is still pending, leaving a timer nothing will ever cancel.
+        val target = settingsFile
         synchronized(saveJobLock) {
             saveJob?.cancel()
             saveJob =
                 scope.launch {
                     delay(SAVE_DEBOUNCE_MS)
-                    saveImmediately()
+                    saveImmediately(target)
                 }
         }
     }
 
     /**
      * Immediately save recent files to disk (bypasses debounce).
+     *
+     * @param target resolved by the caller, never read here: a debounced save that picked
+     *   its destination at execution time would follow [settingsFile] if it changed in
+     *   between, and write one test/profile's files into another's file.
      */
-    private suspend fun saveImmediately() =
+    private suspend fun saveImmediately(target: File = settingsFile) =
         withContext(Dispatchers.IO) {
             try {
                 // The recorded list, never the filtered view; see _allFiles.
@@ -269,11 +309,37 @@ object RecentFilesManager {
                 // a second writer arriving mid-write leaves JSON that fails to parse - and the
                 // load path swallows that as "no recent files", losing all twenty entries rather
                 // than one. atomicWriteText writes a unique sibling temp and moves it into place.
-                settingsFile.atomicWriteText(content)
+                target.atomicWriteText(content)
             } catch (e: Exception) {
                 recentFilesLogger.warn(LogCategory.FILE, "Error saving recent files", error = e)
             }
         }
+
+    /**
+     * Flush a debounced save that is still pending, writing the recorded list immediately.
+     *
+     * The exit-path half of the debounce: quitting inside [SAVE_DEBOUNCE_MS] of the last
+     * mutation used to drop it, because the pending job died with the process - the window
+     * #795's own body called out as a separate bug. The timer is cancelled under
+     * [saveJobLock] (the same swap [scheduleSave] uses, so a save landing during the flush
+     * cannot install a job around it) and the write goes through [saveImmediately], which is
+     * fail-closed: a write error is logged, never thrown, so one unwritable file cannot take
+     * the rest of the exit steps down with it.
+     *
+     * A no-op when nothing is pending: a debounce that already fired has persisted the
+     * list, and rewriting recent-files.json regardless would churn the file on every quit
+     * for no reason.
+     */
+    suspend fun flushPendingSaves() {
+        val pending =
+            synchronized(saveJobLock) {
+                val active = saveJob?.isActive == true
+                saveJob?.cancel()
+                saveJob = null
+                active
+            }
+        if (pending) saveImmediately()
+    }
 
     /**
      * Record a file open event.
@@ -334,9 +400,10 @@ object RecentFilesManager {
  *
  * Pure and separate so the hide-versus-prune rule is testable without driving the singleton's file
  * I/O. The other half of that rule - that the **recorded** list is what gets persisted - is
- * structural rather than tested: `saveImmediately` serialises `_allFiles`, and `setFiles` is the
- * only writer of either flow. If a future change makes `saveImmediately` read `_recentFiles`, an
- * absent volume becomes permanent deletion again and nothing here will catch it.
+ * structural rather than tested: `saveImmediately` serialises `_allFiles`, and `refreshVisible`
+ * is the only writer of `_recentFiles`. If a future change makes `saveImmediately` read
+ * `_recentFiles`, an absent volume becomes permanent deletion again and nothing here will catch
+ * it.
  */
 internal fun visibleFiles(
     all: List<RecentFile>,

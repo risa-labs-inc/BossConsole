@@ -44,6 +44,7 @@ import publish from "./routes/publish.ts"
 import admin from "./routes/admin.ts"
 import apiKeys from "./routes/api-keys.ts"
 import type { PluginStoreContext } from "./types/context.ts"
+import { pluginStoreCorsOrigins } from "./utils/cors.ts"
 
 const app = new OpenAPIHono<{ Variables: PluginStoreContext }>().basePath("/plugin-store")
 const supabaseUrl = Deno.env.get("SUPABASE_URL") || ""
@@ -52,9 +53,14 @@ const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || ""
 // Create Supabase client with service role key
 const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
-// CORS configuration - allow BOSS client and localhost for development
+// CORS configuration - allow the BOSS client and the production site everywhere.
+// The localhost origin is whatever machine the caller is on, not an origin BOSS
+// controls, so it is admitted only in local deployments (or by explicit
+// opt-in) - see utils/cors.ts. With credentials: true below, shipping it
+// unconditionally handed any local page credentialed access to the deployed
+// function (issue #852).
 app.use("*", cors({
-  origin: ['boss://plugins', 'http://localhost:3000', 'https://risaboss.com'],
+  origin: pluginStoreCorsOrigins(),
   allowMethods: ['POST', 'GET', 'DELETE', 'OPTIONS'],
   allowHeaders: ['Content-Type', 'Authorization', 'apikey', 'X-API-Key'],
   exposeHeaders: ['Content-Length'],
