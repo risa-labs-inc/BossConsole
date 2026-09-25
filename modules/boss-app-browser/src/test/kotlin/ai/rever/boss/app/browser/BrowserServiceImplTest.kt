@@ -197,10 +197,12 @@ class BrowserServiceImplTest {
         }
     }
 
+    // Userinfo can no longer reach the contract - the authority gate refuses it (#1591) - so the
+    // query and fragment carry the secret here: the parts describeUri drops from the log.
     @Test
-    fun `the response contract is not redacted - userinfo stays in finalUrl and events`() {
+    fun `the response contract is not redacted - query and fragment stay in finalUrl and events`() {
         runBlocking {
-            val url = "https://user:secret@example.com/path?q=1"
+            val url = "https://example.com/path?code=secret#token=abc"
             val service = BrowserServiceImpl()
             val events =
                 recordedEvents(service) {
@@ -209,6 +211,84 @@ class BrowserServiceImplTest {
                     assertEquals(url, response.finalUrl)
                 }
             assertEquals(listOf(url, url), events.map { it.url })
+        }
+    }
+
+    @Test
+    fun `credentials in the authority are refused, and the message never echoes them`() {
+        runBlocking {
+            val service = BrowserServiceImpl()
+            for (url in listOf(
+                "https://apple.com@evil.example/",
+                "https://user:secret@example.com/path",
+                // An engine strips the tab first, so this is apple.com@evil.example as loaded.
+                "https://apple.com\t@evil.example/",
+            )) {
+                val response = service.navigate(navigateRequest(url))
+                assertFalse(response.success, url)
+                assertTrue(response.errorMessage.contains("credentials"), "$url: ${response.errorMessage}")
+                for (part in listOf("secret", "evil", "apple")) {
+                    assertFalse(part in response.errorMessage, "$url leaked '$part': ${response.errorMessage}")
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `malformed authorities are refused like the host deep-link gate does`() {
+        runBlocking {
+            val service = BrowserServiceImpl()
+            for (url in listOf(
+                "https://",
+                "https:///path",
+                "https:example.com",
+                "https://exa mple.com/",
+                "https://a\\b.example/",
+                "https://a\"b.example/",
+                "https://<a>.example/",
+                "https://host\u0000.example/",
+                "https://:8080/",
+                "https://host.example:99999/",
+                "https://host.example:x/",
+                // Fullwidth digits: Char.isDigit would accept them as a port.
+                "https://host.example:\uFF18\uFF10/",
+                "https://[::1/",
+                "https://[::1]x/",
+            )) {
+                assertFalse(service.navigate(navigateRequest(url)).success, url)
+            }
+        }
+    }
+
+    @Test
+    fun `well formed authorities still navigate, including the ones a stricter parser would refuse`() {
+        runBlocking {
+            val service = BrowserServiceImpl()
+            for (url in listOf(
+                "http://localhost:3000/",
+                "https://[::1]:8080/x",
+                "http://my_service:8080/",
+                "https://a.example:/",
+                "https://a.example?x=1",
+                "https://a.example#frag",
+                "HTTPS://A.EXAMPLE/",
+            )) {
+                assertTrue(service.navigate(navigateRequest(url)).success, url)
+            }
+        }
+    }
+
+    @Test
+    fun `a refused authority leaves no event and no page change`() {
+        runBlocking {
+            val service = BrowserServiceImpl()
+            assertTrue(service.navigate(navigateRequest("https://good.example/")).success)
+            val events =
+                recordedEvents(service) {
+                    assertFalse(service.navigate(navigateRequest("https://good.example@evil.example/")).success)
+                }
+            assertEquals(emptyList(), events)
+            assertEquals("https://good.example/", service.getPageInfo(Empty.getDefaultInstance()).url)
         }
     }
 

@@ -1,0 +1,17 @@
+{
+  "note": "Shared FLUCK_STATE_KEY JWT fixture. Both the Deno edge function and the Kotlin plugin must produce and accept exactly this token. Regenerating it means both suites change together.",
+  "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "keyBytesHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "header": "{\"alg\":\"HS256\",\"typ\":\"JWT\"}",
+  "payload": "{\"ws\":\"ws-fixture-0001\",\"uid\":\"11111111-2222-3333-4444-555555555555\",\"cid\":\"google\",\"n\":\"bm9uY2UtZml4dHVyZQ\",\"iat\":1750000000,\"exp\":1750000600}",
+  "claims": {
+    "ws": "ws-fixture-0001",
+    "uid": "11111111-2222-3333-4444-555555555555",
+    "cid": "google",
+    "n": "bm9uY2UtZml4dHVyZQ",
+    "iat": 1750000000,
+    "exp": 1750000600
+  },
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ3cyI6IndzLWZpeHR1cmUtMDAwMSIsInVpZCI6IjExMTExMTExLTIyMjItMzMzMy00NDQ0LTU1NTU1NTU1NTU1NSIsImNpZCI6Imdvb2dsZSIsIm4iOiJibTl1WTJVdFptbDRkSFZ5WlEiLCJpYXQiOjE3NTAwMDAwMDAsImV4cCI6MTc1MDAwMDYwMH0.myPEjhCYaRzjagzFHWulFcMH4MK_DoCWQELp15dOIDg",
+  "tamperedToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ3cyI6IndzLWZpeHR1cmUtMDAwMSIsInVpZCI6IjExMTExMTExLTIyMjItMzMzMy00NDQ0LTU1NTU1NTU1NTU1NSIsImNpZCI6Imdvb2dsZSIsIm4iOiJibTl1WTJVdFptbDRkSFZ5WlEiLCJpYXQiOjE3NTAwMDAwMDAsImV4cCI6MTc1MDAwMDYwMH0.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+}

@@ -284,4 +284,93 @@ class CLISecurityValidatorTest {
             )
         }
     }
+
+    // ------------------------------------------------------------------
+    // normalizePath and isRestrictedSystemPath - defensive bounds for
+    // workspace and terminal tools against sensitive operating system paths.
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `normalizePath resolves redundant slashes dots and traversals`() {
+        assertEquals("/etc/passwd", CLISecurityValidator.normalizePath("/etc/./passwd"))
+        assertEquals("/etc/shadow", CLISecurityValidator.normalizePath("/var/log/../../etc/shadow"))
+        assertEquals("C:/Windows/System32", CLISecurityValidator.normalizePath("c:\\Windows\\System32"))
+        assertEquals("C:/windows/system32", CLISecurityValidator.normalizePath("c:\\windows\\system32"))
+        assertEquals("C:/Windows", CLISecurityValidator.normalizePath("C:/Windows/System32/.."))
+        assertEquals("/", CLISecurityValidator.normalizePath("/"))
+        assertEquals("C:/", CLISecurityValidator.normalizePath("c:\\"))
+        assertEquals("C:/Windows/System32", CLISecurityValidator.normalizePath("\\\\?\\C:\\Windows\\System32"))
+        assertEquals("C:/Windows", CLISecurityValidator.normalizePath("\\\\.\\C:\\Windows"))
+        assertEquals("", CLISecurityValidator.normalizePath("a".repeat(32_769)))
+    }
+
+    @Test
+    fun `isRestrictedSystemPath flags sensitive operating system paths`() {
+        // POSIX roots
+        assertTrue(CLISecurityValidator.isRestrictedSystemPath("/etc"))
+        assertTrue(CLISecurityValidator.isRestrictedSystemPath("/etc/shadow"))
+        assertTrue(CLISecurityValidator.isRestrictedSystemPath("/proc"))
+        assertTrue(CLISecurityValidator.isRestrictedSystemPath("/sys"))
+        assertTrue(CLISecurityValidator.isRestrictedSystemPath("/dev"))
+        assertTrue(CLISecurityValidator.isRestrictedSystemPath("/boot"))
+        assertTrue(CLISecurityValidator.isRestrictedSystemPath("/bin"))
+        assertTrue(CLISecurityValidator.isRestrictedSystemPath("/sbin"))
+        assertTrue(CLISecurityValidator.isRestrictedSystemPath("/usr/bin"))
+        assertTrue(CLISecurityValidator.isRestrictedSystemPath("/usr/sbin"))
+        assertTrue(CLISecurityValidator.isRestrictedSystemPath("/usr/libexec"))
+
+        // macOS roots and canonical forms
+        assertTrue(CLISecurityValidator.isRestrictedSystemPath("/System"))
+        assertTrue(CLISecurityValidator.isRestrictedSystemPath("/system/Library"))
+        assertTrue(CLISecurityValidator.isRestrictedSystemPath("/Library"))
+        assertTrue(CLISecurityValidator.isRestrictedSystemPath("/library/Preferences"))
+        assertTrue(CLISecurityValidator.isRestrictedSystemPath("/private/etc"))
+        assertTrue(CLISecurityValidator.isRestrictedSystemPath("/private/etc/hosts"))
+        assertTrue(CLISecurityValidator.isRestrictedSystemPath("/private/var/db"))
+
+        // Windows roots
+        assertTrue(CLISecurityValidator.isRestrictedSystemPath("C:\\Windows"))
+        assertTrue(CLISecurityValidator.isRestrictedSystemPath("c:/windows/system32"))
+        assertTrue(CLISecurityValidator.isRestrictedSystemPath("C:\\Program Files"))
+        assertTrue(CLISecurityValidator.isRestrictedSystemPath("C:\\Program Files (x86)"))
+        assertTrue(CLISecurityValidator.isRestrictedSystemPath("\\\\?\\C:\\Windows"))
+
+        // Bare roots
+        assertTrue(CLISecurityValidator.isRestrictedSystemPath("/"))
+        assertTrue(CLISecurityValidator.isRestrictedSystemPath("C:\\"))
+        assertTrue(CLISecurityValidator.isRestrictedSystemPath("c:/"))
+
+        // Traversals into restricted roots
+        assertTrue(CLISecurityValidator.isRestrictedSystemPath("/var/log/../../etc/passwd"))
+        assertTrue(CLISecurityValidator.isRestrictedSystemPath("C:\\Users\\..\\Windows\\System32"))
+
+        // Safe user paths (including /root to avoid blocking root user home directory in containers)
+        assertFalse(CLISecurityValidator.isRestrictedSystemPath("/home/user/workspace/repo"))
+        assertFalse(CLISecurityValidator.isRestrictedSystemPath("C:\\Users\\developer\\projects\\boss"))
+        assertFalse(CLISecurityValidator.isRestrictedSystemPath("/root"))
+        assertFalse(CLISecurityValidator.isRestrictedSystemPath("/root/myproject"))
+    }
+
+    // #1651: normalizePath gives "" for input it will not normalize, and "" used to read as "not
+    // restricted" - so padding a restricted path past the length cap walked it through this check.
+    @Test
+    fun `an over-long path is restricted rather than waved through`() {
+        val padded = "/etc/" + "./".repeat(16_500)
+        check(padded.length > 32_768) { "the fixture must exceed the normalize cap" }
+
+        assertTrue(CLISecurityValidator.isRestrictedSystemPath(padded))
+        // Fail closed regardless of where it points: its target cannot be known.
+        assertTrue(CLISecurityValidator.isRestrictedSystemPath("/home/user/" + "a/".repeat(16_500)))
+        assertTrue(CLISecurityValidator.isRestrictedSystemPath("C:\\Windows\\" + ".\\".repeat(16_500)))
+    }
+
+    @Test
+    fun `a path at the cap is still judged on where it points, and a blank path names nothing`() {
+        val atCap = "/home/user/" + "a".repeat(32_768 - "/home/user/".length)
+        check(atCap.length == 32_768)
+
+        assertFalse(CLISecurityValidator.isRestrictedSystemPath(atCap))
+        assertFalse(CLISecurityValidator.isRestrictedSystemPath(""))
+        assertFalse(CLISecurityValidator.isRestrictedSystemPath("   "))
+    }
 }

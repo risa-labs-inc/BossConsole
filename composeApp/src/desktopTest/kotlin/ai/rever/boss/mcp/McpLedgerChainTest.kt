@@ -50,6 +50,8 @@ class McpLedgerChainTest {
             isError = false,
             rawArgs = mapOf("path" to "/project"),
         )
+        // Persistence is asynchronous: drain the writer so the file asserts below see it.
+        assertTrue(ledger.awaitIdle(), "ledger writer never drained")
     }
 
     @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
@@ -61,7 +63,11 @@ class McpLedgerChainTest {
         val entry = storedRecords(file).single()
         val descriptor = McpOperationRecord.serializer().descriptor
         val fields = (0 until descriptor.elementsCount).map { descriptor.getElementName(it) }.toSet()
-        val canonical = Json.parseToJsonElement(entry.canonicalFormForHashing()) as JsonObject
+        // secretRefs is emitted only when present, so a record without references keeps the
+        // pre-feature hash (see `empty secret references preserve the pre-feature canonical
+        // hash`); coverage of the field is asserted on a record that carries one.
+        val withRefs = entry.copy(secretRefs = listOf("id.password"))
+        val canonical = Json.parseToJsonElement(withRefs.canonicalFormForHashing()) as JsonObject
         assertEquals(fields - setOf("hash", "parentHash"), canonical.keys)
     }
 
@@ -120,6 +126,25 @@ class McpLedgerChainTest {
         assertEquals(McpLedgerChain.linkHash(assertNotNull(records[0].hash), records[1]), records[1].hash)
         assertEquals(records[1].hash, records[2].parentHash)
         assertEquals(McpLedgerChain.linkHash(assertNotNull(records[1].hash), records[2]), records[2].hash)
+    }
+
+    @Test
+    fun `empty secret references preserve the pre-feature canonical hash`() {
+        val record =
+            McpOperationRecord(
+                id = "legacy-hashed",
+                timestamp = 1L,
+                toolName = "tool",
+                providerId = "provider",
+                policyApplied = McpPolicyAction.ALLOW,
+                approvalDisposition = McpApprovalDisposition.AUTO_ALLOWED,
+                durationMs = 1L,
+                isError = false,
+                sanitizedArgs = emptyMap(),
+            )
+
+        assertTrue("secretRefs" !in record.canonicalFormForHashing())
+        assertTrue("secretRefs" in record.copy(secretRefs = listOf("id.password")).canonicalFormForHashing())
     }
 
     @Test

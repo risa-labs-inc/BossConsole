@@ -7,9 +7,12 @@ import ai.rever.boss.plugin.sandbox.health.PluginHealthSummary
 import ai.rever.boss.plugin.sandbox.health.PluginWatchdog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.withTimeoutOrNull
 import java.lang.ref.WeakReference
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -222,7 +225,11 @@ class PluginSandboxManagerImpl(
 
     /**
      * Add a listener for plugin lifecycle events.
-     * Uses weak references to prevent memory leaks.
+     *
+     * Held by [WeakReference] only, to prevent memory leaks: the caller must keep its own strong
+     * reference (a field, as `DynamicPluginManager` and `DefaultPlugin` do) for as long as it
+     * wants events. A listener nothing else refers to is collected at the next GC and silently
+     * dropped by [notifyListeners].
      */
     fun addListener(listener: PluginSandboxListener) {
         cleanupDeadListeners()
@@ -640,10 +647,30 @@ class PluginSandboxManagerImpl(
         sandboxes.values.forEach { it.stop() }
         sandboxes.clear()
 
-        // Brief delay to allow pending coroutines to complete before scope cancellation
-        kotlinx.coroutines.delay(100)
+        // The stops above cancelled the watchdog/health/monitor coroutines, but their
+        // cleanup (finally blocks, close calls) still has to run on this scope. Join the
+        // children rather than sleep a fixed delay: nothing pending means no wait at all,
+        // and a straggler that ignores cancellation is bounded rather than pinning teardown.
+        // The caller's own job is excluded - captured before withTimeoutOrNull wraps it, so a
+        // dispose invoked on a managerScope coroutine cannot self-join into the bound.
+        val callerJob = currentCoroutineContext()[Job]
+        try {
+            withTimeoutOrNull(SCOPE_DRAIN_TIMEOUT_MS) {
+                managerScope.coroutineContext[Job]
+                    ?.children
+                    ?.filter { it !== callerJob }
+                    ?.toList()
+                    ?.forEach { it.join() }
+            }
+        } finally {
+            // Cancel manager scope last since watchdogs and monitor depend on it - and even
+            // when the caller's own bound cancels the drain, a leaked scope is worse.
+            managerScope.cancel()
+        }
+    }
 
-        // Cancel manager scope last since watchdogs and monitor depend on it
-        managerScope.cancel()
+    private companion object {
+        /** Bound on waiting for cancelled watchdog/health coroutines to wind down. */
+        const val SCOPE_DRAIN_TIMEOUT_MS = 500L
     }
 }

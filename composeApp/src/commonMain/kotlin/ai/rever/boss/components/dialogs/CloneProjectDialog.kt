@@ -3,6 +3,7 @@ package ai.rever.boss.components.dialogs
 import ai.rever.boss.git.GitOperationResult
 import ai.rever.boss.git.GitService
 import ai.rever.boss.platform.rememberDirectoryPicker
+import ai.rever.boss.plugin.logging.LogSanitizer
 import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.project.ProjectCreationService
@@ -18,6 +19,9 @@ import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.SaveableStateHolder
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -46,7 +50,17 @@ fun CloneProjectDialog(
     onDismiss: () -> Unit,
     onProjectCloned: (String) -> Unit,
 ) {
+    CloneProjectDialog(onDismiss, onProjectCloned, GitService::cloneRepository)
+}
+
+@Composable
+internal fun CloneProjectDialog(
+    onDismiss: () -> Unit,
+    onProjectCloned: (String) -> Unit,
+    cloneRepository: suspend (String, String, (String) -> Unit) -> GitOperationResult,
+) {
     var cloneStep by remember { mutableStateOf<CloneStep>(CloneStep.Configuration) }
+    val configurationState = rememberSaveableStateHolder()
 
     BossDialog(
         onDismissRequest = {
@@ -62,60 +76,70 @@ fun CloneProjectDialog(
                 usePlatformDefaultWidth = false,
             ),
     ) {
-        Surface(
-            modifier =
-                Modifier
-                    .width(600.dp)
-                    .wrapContentHeight(),
-            shape = RoundedCornerShape(8.dp),
-            color = BossTheme.colors.panel,
-            elevation = 8.dp,
-        ) {
-            when (val step = cloneStep) {
-                is CloneStep.Configuration -> {
+        CloneProjectStepContent(cloneStep, configurationState, cloneRepository, onDismiss, onProjectCloned) {
+            cloneStep = it
+        }
+    }
+}
+
+@Composable
+private fun CloneProjectStepContent(
+    step: CloneStep,
+    configurationState: SaveableStateHolder,
+    cloneRepository: suspend (String, String, (String) -> Unit) -> GitOperationResult,
+    onDismiss: () -> Unit,
+    onProjectCloned: (String) -> Unit,
+    onStepChange: (CloneStep) -> Unit,
+) {
+    Surface(
+        modifier = Modifier.width(600.dp).wrapContentHeight(),
+        shape = RoundedCornerShape(8.dp),
+        color = BossTheme.colors.panel,
+        elevation = 8.dp,
+    ) {
+        when (step) {
+            is CloneStep.Configuration -> {
+                configurationState.SaveableStateProvider("configuration") {
                     ConfigurationStep(
                         onDismiss = onDismiss,
                         onClone = { url, directory ->
-                            cloneStep = CloneStep.Cloning(url, directory, "Initializing...")
+                            onStepChange(CloneStep.Cloning(url, directory, "Initializing..."))
                         },
                     )
                 }
+            }
 
-                is CloneStep.Cloning -> {
-                    CloningStep(
-                        repositoryUrl = step.repositoryUrl,
-                        targetDirectory = step.targetDirectory,
-                        progressMessage = step.progressMessage,
-                        onProgress = { progress ->
-                            cloneStep = CloneStep.Cloning(step.repositoryUrl, step.targetDirectory, progress)
-                        },
-                        onSuccess = { projectPath ->
-                            cloneStep = CloneStep.Success(projectPath)
-                        },
-                        onError = { message ->
-                            cloneStep = CloneStep.Error(message)
-                        },
-                    )
-                }
+            is CloneStep.Cloning -> {
+                CloningStep(
+                    cloneRepository = cloneRepository,
+                    repositoryUrl = step.repositoryUrl,
+                    targetDirectory = step.targetDirectory,
+                    progressMessage = step.progressMessage,
+                    onProgress = { progress ->
+                        onStepChange(CloneStep.Cloning(step.repositoryUrl, step.targetDirectory, progress))
+                    },
+                    onSuccess = { projectPath -> onStepChange(CloneStep.Success(projectPath)) },
+                    onError = { message -> onStepChange(CloneStep.Error(message)) },
+                )
+            }
 
-                is CloneStep.Success -> {
-                    SuccessStep(
-                        projectPath = step.projectPath,
-                        onOpenProject = {
-                            onProjectCloned(step.projectPath)
-                            onDismiss()
-                        },
-                        onClose = onDismiss,
-                    )
-                }
+            is CloneStep.Success -> {
+                SuccessStep(
+                    projectPath = step.projectPath,
+                    onOpenProject = {
+                        onProjectCloned(step.projectPath)
+                        onDismiss()
+                    },
+                    onClose = onDismiss,
+                )
+            }
 
-                is CloneStep.Error -> {
-                    ErrorStep(
-                        message = step.message,
-                        onRetry = { cloneStep = CloneStep.Configuration },
-                        onClose = onDismiss,
-                    )
-                }
+            is CloneStep.Error -> {
+                ErrorStep(
+                    message = step.message,
+                    onRetry = { onStepChange(CloneStep.Configuration) },
+                    onClose = onDismiss,
+                )
             }
         }
     }
@@ -129,12 +153,12 @@ private fun ConfigurationStep(
     onDismiss: () -> Unit,
     onClone: (url: String, directory: String) -> Unit,
 ) {
-    var repositoryUrl by remember { mutableStateOf("") }
-    var targetDirectory by remember { mutableStateOf(ProjectCreationService.getDefaultProjectsDirectory()) }
-    var customDirectoryName by remember { mutableStateOf("") }
+    var repositoryUrl by rememberSaveable { mutableStateOf("") }
+    var targetDirectory by rememberSaveable { mutableStateOf(ProjectCreationService.getDefaultProjectsDirectory()) }
+    var customDirectoryName by rememberSaveable { mutableStateOf("") }
     var urlError by remember { mutableStateOf<String?>(null) }
-    var lastAutoFilledName by remember { mutableStateOf("") }
-    var userManuallyEdited by remember { mutableStateOf(false) }
+    var lastAutoFilledName by rememberSaveable { mutableStateOf("") }
+    var userManuallyEdited by rememberSaveable { mutableStateOf(false) }
 
     // Directory picker
     val directoryPicker =
@@ -451,10 +475,29 @@ private fun ConfigurationStep(
 }
 
 /**
+ * The clone URL as the log may carry it: masked with [LogSanitizer.maskUriParams] like the
+ * service layer's own clone log, and stripped of the control characters that could forge a
+ * second record (#1602). The "Starting clone operation" call below logs this BEFORE
+ * [GitService.cloneRepository] runs, so no later seam has seen the value yet, and BossLogger
+ * appends the data map verbatim. Spaces survive, because a local clone path legitimately
+ * contains them; every other whitespace is stripped with the C0 controls and DEL.
+ */
+internal fun cloneUrlForLog(repositoryUrl: String): String =
+    LogSanitizer.maskUriParams(repositoryUrl.filterNot { it.isLogForgingControlChar() })
+
+/**
+ * The characters a pasted URL must not carry into the log: the C0 controls and DEL, plus the
+ * separators a plain `code < 0x20` check misses - NEL (U+0085), U+2028 and U+2029.
+ */
+private fun Char.isLogForgingControlChar(): Boolean =
+    code < 0x20 || this == '\u007F' || this == '\u0085' || this == '\u2028' || this == '\u2029'
+
+/**
  * Step 2: Cloning - Show progress while cloning
  */
 @Composable
 private fun CloningStep(
+    cloneRepository: suspend (String, String, (String) -> Unit) -> GitOperationResult,
     repositoryUrl: String,
     targetDirectory: String,
     progressMessage: String,
@@ -470,15 +513,14 @@ private fun CloningStep(
             logger.info(
                 LogCategory.GENERAL,
                 "Starting clone operation",
-                mapOf("url" to repositoryUrl, "target" to targetDirectory),
+                mapOf(
+                    "url" to cloneUrlForLog(repositoryUrl),
+                    "target" to targetDirectory.filterNot { it.isLogForgingControlChar() },
+                ),
             )
 
             val result =
-                GitService.cloneRepository(
-                    repositoryUrl = repositoryUrl,
-                    targetDirectory = targetDirectory,
-                    onProgress = onProgress,
-                )
+                cloneRepository(repositoryUrl, targetDirectory, onProgress)
 
             when (result) {
                 is GitSuccess -> {

@@ -6,6 +6,7 @@ import ai.rever.boss.components.plugin.tab_types.fluck.DownloadStatus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import java.io.File
+import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -80,7 +81,7 @@ class DownloadDataProviderImplTest {
     }
 
     @Test
-    fun `removing an unfinished download still cleans up when the engine rejects the cancel`() {
+    fun `rejected cancellation keeps the active download and its bytes for retry`() {
         runBlocking {
             val manager = DownloadManager()
             val partialFile = tempPartialFile()
@@ -88,11 +89,11 @@ class DownloadDataProviderImplTest {
             val engine = FakeDownloadEngine(liveIds = emptySet())
             val provider = provider(manager, engine)
 
-            assertTrue(provider.removeDownload("d4").isSuccess)
+            assertTrue(provider.removeDownload("d4").isFailure)
 
             assertEquals(listOf("cancel:d4"), engine.commands)
-            assertNull(manager.getDownload("d4"))
-            assertFalse(partialFile.exists())
+            assertNotNull(manager.getDownload("d4"))
+            assertTrue(partialFile.exists())
         }
     }
 
@@ -207,6 +208,78 @@ class DownloadDataProviderImplTest {
         }
     }
 
+    @Test
+    fun `failed file removal retains tracking and can be retried`() =
+        runBlocking {
+            val manager = DownloadManager()
+            // Nonempty directories reject delete on every platform, including root.
+            val directory = Files.createTempDirectory("boss-download-refused").toFile()
+            val child = File(directory, "keep.txt").apply { writeText("fixture") }
+            try {
+                manager.addDownload(downloadItem("refused", DownloadStatus.COMPLETED, directory.absolutePath))
+                val provider = provider(manager, FakeDownloadEngine(emptySet()))
+
+                assertTrue(provider.removeDownload("refused").isFailure)
+                assertNotNull(manager.getDownload("refused"))
+                assertTrue(child.exists())
+
+                assertTrue(child.delete())
+                assertTrue(provider.removeDownload("refused").isSuccess)
+                assertNull(manager.getDownload("refused"))
+                assertFalse(directory.exists())
+            } finally {
+                directory.deleteRecursively()
+            }
+        }
+
+    @Test
+    fun `already missing completed file can be removed repeatedly`() =
+        runBlocking {
+            val manager = DownloadManager()
+            val file = tempPartialFile().apply { delete() }
+            manager.addDownload(downloadItem("missing-file", DownloadStatus.COMPLETED, file.absolutePath))
+            val provider = provider(manager, FakeDownloadEngine(emptySet()))
+
+            assertTrue(provider.removeDownload("missing-file").isSuccess)
+            assertTrue(provider.removeDownload("missing-file").isSuccess)
+            assertNull(manager.getDownload("missing-file"))
+        }
+
+    @Test
+    fun `completion racing cancellation still retains entry on deletion failure`() =
+        runBlocking {
+            val manager = DownloadManager()
+            val directory = Files.createTempDirectory("boss-download-race").toFile()
+            val child = File(directory, "keep.txt").apply { writeText("fixture") }
+            try {
+                manager.addDownload(downloadItem("race", DownloadStatus.DOWNLOADING, directory.absolutePath))
+                val engine =
+                    FakeDownloadEngine(emptySet(), onCancel = {
+                        runBlocking { manager.updateStatus("race", DownloadStatus.COMPLETED) }
+                    })
+                assertTrue(provider(manager, engine).removeDownload("race").isFailure)
+                assertEquals(DownloadStatus.COMPLETED, manager.getDownload("race")?.status)
+                assertTrue(child.exists())
+            } finally {
+                directory.deleteRecursively()
+            }
+        }
+
+    @Test
+    fun `settled cancellation can remove tracking even after engine releases handle`() =
+        runBlocking {
+            val manager = DownloadManager()
+            val file = tempPartialFile()
+            manager.addDownload(downloadItem("settled", DownloadStatus.DOWNLOADING, file.absolutePath))
+            val engine =
+                FakeDownloadEngine(emptySet(), onCancel = {
+                    runBlocking { manager.updateStatus("settled", DownloadStatus.CANCELLED) }
+                })
+            assertTrue(provider(manager, engine).removeDownload("settled").isSuccess)
+            assertNull(manager.getDownload("settled"))
+            assertFalse(file.exists())
+        }
+
     private fun provider(
         manager: DownloadManager,
         engine: DownloadEngineController,
@@ -254,6 +327,7 @@ private class FakeDownloadEngine(
     private val liveIds: Set<String>,
     private val stillTracked: (String) -> Boolean = { false },
     private val failWith: Exception? = null,
+    private val onCancel: () -> Unit = {},
 ) : DownloadEngineController {
     val commands = mutableListOf<String>()
     var trackedWhenCancelled: Boolean? = null
@@ -264,6 +338,7 @@ private class FakeDownloadEngine(
 
     override fun cancel(id: String): Boolean {
         trackedWhenCancelled = stillTracked(id)
+        onCancel()
         return record("cancel", id)
     }
 

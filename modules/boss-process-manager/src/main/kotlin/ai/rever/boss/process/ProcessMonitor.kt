@@ -32,41 +32,65 @@ class ProcessMonitor(
     private val _failures = MutableSharedFlow<ProcessFailure>(extraBufferCapacity = 64)
     val failures: SharedFlow<ProcessFailure> = _failures.asSharedFlow()
 
+    // One live monitor per process id. The lock makes startMonitoring's check-and-register and
+    // the stop paths atomic against each other; see startMonitoring for what breaks without it.
     private val monitorJobs = ConcurrentHashMap<String, Job>()
+    private val monitorJobsLock = Any()
     private var globalMonitorJob: Job? = null
 
     /**
      * Start monitoring a specific process.
+     *
+     * The check-and-register step is atomic under the monitor-jobs lock: the global monitor
+     * loop's re-attach pass and a spawn's own start call race for the same id at boot, and two
+     * unsynchronized launches would leave one coroutine untracked in the job map - invisible to
+     * [stopMonitoring] and [stopSupervision], uncancellable, and a second reporter of the same
+     * death. Two failure emissions make the kernel respawn twice, which is what evicts a live
+     * child from the registry and orphans it. Invariant: at most one live monitor per process
+     * id, and every live monitor is tracked.
+     *
+     * Each monitor deregisters itself on completion. That deregistration is identity-guarded,
+     * so a finished monitor's cleanup can never remove a successor's registration.
      */
     fun startMonitoring(processId: String) {
-        val existing = monitorJobs[processId]
-        if (existing?.isActive == true) return
+        synchronized(monitorJobsLock) {
+            val existing = monitorJobs[processId]
+            if (existing?.isActive == true) return
 
-        monitorJobs[processId] =
-            scope.launch {
-                monitorProcess(processId)
-            }
+            monitorJobs[processId] =
+                scope.launch {
+                    val self = currentCoroutineContext().job
+                    try {
+                        monitorProcess(processId)
+                    } finally {
+                        // Identity-guarded: only this monitor's own registration is removed.
+                        monitorJobs.remove(processId, self)
+                    }
+                }
+        }
         logger.info("Started monitoring process: {}", processId)
     }
 
     /**
      * Stop monitoring a specific process.
+     *
+     * The remove runs under the same lock as [startMonitoring]'s check-and-register, so a stop
+     * cannot race a start into leaving a second monitor behind for this id.
      */
     fun stopMonitoring(processId: String) {
-        monitorJobs.remove(processId)?.cancel()
+        val job = synchronized(monitorJobsLock) { monitorJobs.remove(processId) }
+        job?.cancel()
         logger.info("Stopped monitoring process: {}", processId)
     }
 
     /**
      * Start the global monitor that watches for new/removed processes.
      *
-     * [ProcessType.PLUGIN] is not health-supervised here. Plugin health is `PluginProcessMonitor`'s
-     * responsibility on the host side - note that it is written but **not yet wired up**, so today
-     * a crashed out-of-process plugin gets no restart and no in-process fallback from anywhere.
-     * Supervising plugins from here is still the wrong answer to that: a plugin the operator
-     * disables exits on purpose, which would read as a crash and come back through the kernel's
-     * respawn path. Plugins are registered regardless, because the registry is what the shutdown
-     * hook reaps.
+     * [ProcessType.PLUGIN] is not health-supervised here. Plugin health is supervised per window
+     * by `PluginProcessMonitor`, which owns the operator-aware restart and fallback lifecycle.
+     * Supervising plugins globally here would race that owner and could restart a plugin that the
+     * operator deliberately disabled. Plugins remain registered because the registry is what the
+     * shutdown hook reaps.
      *
      * Dead plugins are instead *pruned*. Only a deliberate terminate unregisters one, so a plugin
      * that died on its own would otherwise sit in the registry for the rest of the session, with
@@ -87,6 +111,9 @@ class ProcessMonitor(
                             }
                             return@forEach
                         }
+                        // A death already reported stays in the registry until its replacement is
+                        // spawned; re-attaching would only watch the same dead handle (#1612).
+                        if (process.state.value == ProcessState.PROCESS_STATE_CRASHED) return@forEach
                         if (!monitorJobs.containsKey(process.config.processId) ||
                             monitorJobs[process.config.processId]?.isActive != true
                         ) {
@@ -101,14 +128,27 @@ class ProcessMonitor(
     /**
      * Stop all health supervision, leaving [scope] usable.
      *
+     * What is serialized against [startMonitoring] is the snapshot-and-clear of the job map: it
+     * runs under the monitor-jobs lock, so every monitor registered before it is captured and
+     * cancelled. The `cancel()` calls themselves run after the lock is released, and cancellation
+     * is cooperative, so a global-monitor pass already in flight can still register one more
+     * monitor after the clear; that monitor is tracked in the map like any other, and a later
+     * [stopMonitoring] or [stopSupervision] cancels it. (#1612: the previous wording claimed
+     * cancel-all and clear were atomic together, which they are not.)
+     *
      * This is what a caller that *passed in* its own scope wants: [stopAll] cancels that scope,
      * which for `KernelBootstrap` means taking down its IPC event bridge and failure-handler
      * collector as a side effect of stopping monitoring.
      */
     fun stopSupervision() {
         globalMonitorJob?.cancel()
-        monitorJobs.values.forEach { it.cancel() }
-        monitorJobs.clear()
+        val tracked =
+            synchronized(monitorJobsLock) {
+                val jobs = monitorJobs.values.toList()
+                monitorJobs.clear()
+                jobs
+            }
+        tracked.forEach { it.cancel() }
     }
 
     /**
@@ -132,6 +172,10 @@ class ProcessMonitor(
 
             // Check if process is still alive
             if (!process.isAlive) {
+                // One report per death: a monitor that re-attached to an already-reported dead
+                // handle stops here instead of emitting a duplicate the kernel would act on
+                // twice - a second eviction and respawn racing the first one's replacement.
+                if (!process.claimFailureReport()) break
                 val exitCode =
                     try {
                         process.process.exitValue()

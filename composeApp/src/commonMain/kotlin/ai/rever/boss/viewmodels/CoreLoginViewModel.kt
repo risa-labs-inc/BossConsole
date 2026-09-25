@@ -6,6 +6,7 @@ import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -18,9 +19,11 @@ import kotlinx.coroutines.launch
  * Note: Password-based authentication (signIn/signUp) has been removed.
  * This app uses passwordless authentication only (passkeys + magic links).
  */
-class CoreLoginViewModel {
+class CoreLoginViewModel(
+    // Default preserves production behavior; injectable so a test can assert the scope is cancelled.
+    private val viewModelScope: CoroutineScope = CoroutineScope(Dispatchers.Main + SupervisorJob()),
+) {
     private val logger = BossLogger.forComponent("CoreLoginViewModel")
-    private val viewModelScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
@@ -75,5 +78,14 @@ class CoreLoginViewModel {
     fun setMagicLinkVerificationError(errorMessage: String) {
         logger.debug(LogCategory.AUTH, "Setting magic link verification error", mapOf("error" to errorMessage))
         _errorMessage.value = errorMessage
+    }
+
+    /**
+     * Cancel the view-model scope so an in-flight magic-link request cannot run - or fire its
+     * onSuccess/mutate state - after the auth screen has left composition. Call from the owning
+     * composable's onDispose.
+     */
+    fun dispose() {
+        viewModelScope.cancel()
     }
 }

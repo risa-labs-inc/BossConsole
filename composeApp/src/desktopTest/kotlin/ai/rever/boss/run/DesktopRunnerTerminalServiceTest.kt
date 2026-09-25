@@ -12,7 +12,6 @@ import ai.rever.boss.plugin.run.RunnerTerminalStopEvent
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlin.test.AfterTest
@@ -22,6 +21,8 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Clock
+import kotlin.time.Instant
 
 /**
  * BossConsole#486 review, round 3: `rerunRunner`'s `withContext(NonCancellable)` guarantees the
@@ -60,6 +61,18 @@ class DesktopRunnerTerminalServiceTest {
             workingDirectory = "",
         )
     private val originalSettings = RunnerSettingsManager.currentSettings.value
+
+    @Test
+    fun `runner terminal ids remain distinct within one clock millisecond`() {
+        val fixedClock =
+            object : Clock {
+                override fun now(): Instant = Instant.fromEpochMilliseconds(1_700_000_000_000)
+            }
+        val ids = List(10_000) { mintRunnerTerminalId(config.id, fixedClock) }
+
+        assertEquals(ids.size, ids.toSet().size)
+        assertTrue(ids.all { it.matches(Regex("runner-cancel-test-config-1700000000000-[0-9a-f]{16}")) })
+    }
 
     @Test
     fun `closing one window preserves a shared run in the surviving window`() =
@@ -350,21 +363,9 @@ class DesktopRunnerTerminalServiceTest {
             // No ipcBridge needed: this test asserts on service state, not on the emitted events.
 
             val originalId = RunnerTerminalService.openRunnerTerminal(config, windowA) {}
-            // Both IDs are minted from System.currentTimeMillis() for the same config.id, so back
-            // to back mints can collide and produce the identical string - which would make the
-            // "stale" removeTerminal call below legitimately current. On Windows the clock tick
-            // is commonly ~15 ms, so a burst of fast mints can all share one tick; this file
-            // runs on the windows-latest leg (only ARM64 is excluded). Re-mint until they
-            // differ, pausing a beat after each collision so a slow clock can advance; the loop
-            // is bounded, so a truly stalled clock fails loudly. Each mint is a real sidebar
-            // rerun, which preserves originalId's reverse-map entry.
-            var replacementId = ""
-            var mints = 0
-            do {
-                replacementId = RunnerTerminalService.rerunRunner(config, windowA) {}
-                mints++
-                if (replacementId == originalId) delay(20)
-            } while (replacementId == originalId && mints < 100)
+            // The replacement must have its own identity even when both runs start in one
+            // clock millisecond. The original reverse-map entry survives a sidebar rerun.
+            val replacementId = RunnerTerminalService.rerunRunner(config, windowA) {}
             assertNotEquals(
                 originalId,
                 replacementId,

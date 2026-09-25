@@ -75,7 +75,7 @@ class RepairAdviceTest {
         }
 
     @Test
-    fun `caller cancellation is not converted to missing advice`() =
+    fun `caller cancellation is not converted to missing advice`(): Unit =
         runBlocking {
             assertFailsWith<CancellationException> {
                 repairAdviceOrNull("cancelled") { throw CancellationException("cancelled") }

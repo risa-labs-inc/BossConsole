@@ -45,7 +45,7 @@ object PluginRemoval {
             // the unload at all: a `canUnload = false` plugin is refused whatever the answer, so
             // asking would be a dialog with one real outcome. (The menu gates on that too, but
             // this function is reachable from the deep-link handler as well.)
-            val targets = DynamicPluginManager.activeManagers().filter { it.isInstalled(pluginId) }
+            val targets = DynamicPluginManager.activeManagers().filter { it.hasEntry(pluginId) }
             if (targets.isEmpty()) {
                 return@run Result.failure(IllegalStateException("Plugin is not installed: $pluginId"))
             }
@@ -85,7 +85,7 @@ object PluginRemoval {
             // about. With no dependents this is the unchanged non-forced path, so the manifest
             // gate and the unload-aware checks still apply as they always did.
             val unloadFailures = unloadAcrossWindows(pluginId, dependentsByManager)
-            val remaining = DynamicPluginManager.activeManagers().filter { it.isInstalled(pluginId) }
+            val remaining = DynamicPluginManager.activeManagers().filter { it.hasEntry(pluginId) }
             if (remaining.isNotEmpty()) {
                 val reasons = unloadFailures.mapNotNull { it.message }.distinct()
                 val explanation = if (reasons.isEmpty()) "" else " (${reasons.joinToString("; ")})"
@@ -119,7 +119,7 @@ object PluginRemoval {
         val failures = mutableListOf<Throwable>()
         for ((target, dependents) in dependentsByManager) {
             // A window may have unloaded the plugin while the confirmation dialog was open.
-            if (!target.isInstalled(pluginId)) continue
+            if (!target.hasEntry(pluginId)) continue
 
             val result = target.uninstallPlugin(pluginId, force = dependents.isNotEmpty())
             if (result.isFailure) {

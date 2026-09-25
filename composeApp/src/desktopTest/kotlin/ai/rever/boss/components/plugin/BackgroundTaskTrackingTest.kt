@@ -20,6 +20,22 @@ import kotlin.test.assertEquals
  * No sleeps and no timeouts.
  */
 class BackgroundTaskTrackingTest {
+    @Test
+    fun `every launched task remains reachable when many start together`() {
+        val scope = CoroutineScope(Dispatchers.Unconfined + SupervisorJob())
+        val gate = CompletableDeferred<Unit>()
+        try {
+            val provider = DefaultBackgroundTaskProvider(scope)
+            repeat(100) { provider.launchTask("sync") { gate.await() } }
+
+            assertEquals(100, provider.getRunningTasks().size)
+            assertEquals(100, provider.cancelAll())
+        } finally {
+            gate.complete(Unit)
+            scope.cancel()
+        }
+    }
+
     /**
      * The handle was stored after `scope.launch`, and the release was a `finally` inside the
      * coroutine. A task that reaches the end of its body before the launching thread stores the
@@ -77,28 +93,29 @@ class BackgroundTaskTrackingTest {
     /**
      * The completion handler must evict its own handle and no other.
      *
-     * `taskId` is the task name plus `System.currentTimeMillis()`, so two same-named tasks launched
-     * inside one millisecond share a key and the second `put` overwrites the first handle. A
-     * key-only `remove` would then let the first task to finish drop the second, still-running
-     * task's handle, which is worse than the leak this PR fixes: `getRunningTasks` stops reporting
-     * a live task and `cancelAll` stops cancelling it.
+     * When two launches share a key the second `put` overwrites the first handle, and a key-only
+     * `remove` then lets the first task to finish drop the second, still-running task's handle.
+     * That is worse than the leak this PR fixes: `getRunningTasks` stops reporting a live task and
+     * `cancelAll` stops cancelling it.
      *
-     * The collision is forced through `taskIdOverride` rather than waited for. Two earlier versions
-     * of this test tried to produce it from the real clock and both passed against the key-only
-     * `remove` they existed to catch, because the two launches never landed in one millisecond: the
-     * first `launchTask` in a JVM costs about 11ms of class loading, and warming up on a shape that
-     * does not suspend still leaves `CompletableDeferred.await` cold for the first real launch. A
-     * test whose coverage depends on winning that race is a test that reports nothing on the runs
-     * it loses, which is the case here for the one assertion that cannot fail spuriously.
+     * Whether the production id scheme can still produce a shared key is deliberately not this
+     * test's business, which is why the key is forced through `taskIdOverride` rather than waited
+     * for. Two earlier versions tried to produce one from the real clock and both passed against
+     * the key-only `remove` they existed to catch, because the launches never landed in one
+     * millisecond: the first `launchTask` in a JVM costs about 11ms of class loading, and warming
+     * up on a shape that does not suspend leaves `CompletableDeferred.await` cold for the first
+     * real launch. A test whose coverage depends on winning a race reports nothing on the runs it
+     * loses, in the same green as the runs it wins.
      *
-     * The overwrite at `put` time is untouched here and belongs to #1478's unique ids. This asserts
-     * the precondition rather than assuming it, so the shared key cannot quietly stop being shared.
+     * The overwrite at `put` time is untouched here and belongs to #1478's unique ids. The
+     * precondition is asserted rather than assumed, so a shared key cannot quietly stop being one:
+     * a rebase that drops the override while keeping the parameter fails on that line by name.
      */
     @Test
     fun `a completing task does not evict a sibling sharing its id`() {
         val scope = CoroutineScope(Dispatchers.Unconfined + SupervisorJob())
         try {
-            val provider = DefaultBackgroundTaskProvider(scope) { "$it-fixed" }
+            val provider = DefaultBackgroundTaskProvider(scope, taskIdOverride = { "$it-fixed" })
             val first = CompletableDeferred<Unit>()
             val second = CompletableDeferred<Unit>()
 

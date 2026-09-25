@@ -15,10 +15,14 @@ async function fixture(options: {
   lookupMisconfigured?: boolean
   failFetch?: boolean
   hang?: boolean
+  hangSettlement?: boolean
+  hangFirstSettlement?: boolean
   stallStream?: boolean
   removeToolsAfterPreflight?: boolean
   keyName?: string
   apiType?: "openai_chat" | "openai_responses"
+  eligible?: boolean
+  eligibilityError?: boolean
 } = {}) {
   const calls: { name: string; params: Obj }[] = []
   const requests: Request[] = []
@@ -31,10 +35,12 @@ async function fixture(options: {
       audits.push(event)
     },
     upstreamTimeoutMs: 20,
+    settlementTimeoutMs: 5,
     sessionUser: async (t) => t === "boss-session" ? "00000000-0000-0000-0000-000000000001" : null,
     secret: (name) => name === "BOSS_AI_SIGNING_SECRET" ? secret : "upstream-secret",
     async rpc(name, params) {
       calls.push({ name, params })
+      if (name === "boss_ai_settle") settlements++
       if (name === "boss_ai_lookup" && options.lookupDenied) return null
       if (name === "boss_ai_lookup" && options.lookupMisconfigured) {
         return { error: "misconfigured_allowance" }
@@ -42,11 +48,23 @@ async function fixture(options: {
       if (name === "boss_ai_settle" && options.failAllSettlements) {
         throw new Error("database unavailable")
       }
-      if (name === "boss_ai_settle" && options.failFirstSettlement && ++settlements === 1) {
+      // BossConsole#1252: a settlement RPC that never resolves. The fix
+      // bounds the call so the edge function does not hang.
+      if (
+        name === "boss_ai_settle" &&
+        (options.hangSettlement || (options.hangFirstSettlement && settlements === 1))
+      ) {
+        await new Promise<void>(() => {/* never resolves */})
+      }
+      if (name === "boss_ai_settle" && options.failFirstSettlement && settlements === 1) {
         throw new Error("private database detail")
       }
       if (name === "boss_ai_catalog") {
         return [{ id: "boss-test", allowance: { day: { remaining: 1024 } } }]
+      }
+      if (name === "boss_ai_token_eligible") {
+        if (options.eligibilityError) throw new Error("database unavailable")
+        return options.eligible !== false
       }
       if (name === "boss_ai_reserve" || name === "boss_ai_lookup") {
         return options.deny && name === "boss_ai_reserve" ? { error: options.deny } : {
@@ -155,6 +173,22 @@ Deno.test("broker accepts a BOSS session but not an AI token", async () => {
   const response = await f.handler(req("boss-session"))
   assertEquals(response.status, 200)
   assertEquals((await response.json()).refresh_after_seconds, 180)
+})
+
+Deno.test("/auth/token refuses sessions that /auth/exchange would also refuse", async () => {
+  // /auth/exchange already runs the banned / anonymous / ai.use-less predicate
+  // through boss_ai_consume_exchange_ticket. /auth/token previously only checked
+  // the session was valid - so a banned or anonymous session got a 200 + a token,
+  // a distinguishable probe result. The RPC keeps both halves honest.
+  const f = await fixture({ eligible: false })
+  const req = new Request("https://api.example/boss-ai/auth/token", {
+    method: "POST",
+    headers: { Authorization: "Bearer boss-session" },
+  })
+  const response = await f.handler(req)
+  assertEquals(response.status, 403)
+  assertEquals(f.calls.some((c) => c.name === "boss_ai_token_eligible"), true)
+  assertEquals(f.calls.some((c) => c.name === "boss_ai_consume_exchange_ticket"), false)
 })
 
 Deno.test("permission and allowance denials never dispatch upstream", async () => {
@@ -455,4 +489,70 @@ Deno.test("RPC tickets exchange for AI tokens without a BOSS session", async () 
   )
   assertEquals(metadata.status, 200)
   assertEquals((await exchange(ticket)).status, 401)
+})
+
+// BossConsole#1252: settlement must be bounded by a timeout, not a hung DB.
+// Without it, a slow settlement RPC hangs the whole edge function - the
+// upstream response has already been streamed, but the request cannot
+// return until the settle() call resolves.
+
+Deno.test("a hung settlement does not block the response (BossConsole#1252)", async () => {
+  const f = await fixture({ hangSettlement: true })
+  const start = Date.now()
+  const response = await f.handler(f.request(body))
+  const elapsed = Date.now() - start
+  assertEquals(response.status, 200)
+  assertEquals((await response.json()).choices[0].message.content, "hello")
+  // The response must arrive in bounded time even though the settlement
+  // RPC never resolves. Allow a generous bound for CI jitter, but anything
+  // that takes more than a few seconds means the function hung on settle.
+  assert(elapsed < 1_000, `response took ${elapsed}ms; settlement hung the function`)
+  assertEquals(f.calls.filter((call) => call.name === "boss_ai_settle").length, 2)
+  assert(f.audits.includes("settlement_timeout"))
+  assert(f.audits.includes("settlement_failed_reservation_retained"))
+})
+
+Deno.test("a timed-out settlement is safely retried with identical accounting arguments", async () => {
+  const f = await fixture({ hangFirstSettlement: true })
+  assertEquals((await f.handler(f.request(body))).status, 200)
+  const attempts = f.calls.filter((call) => call.name === "boss_ai_settle")
+  assertEquals(attempts.length, 2)
+  assertEquals(attempts[0].params, attempts[1].params)
+  assert(!f.audits.includes("settlement_failed"))
+})
+
+Deno.test("stream cleanup and upstream-failure settlement are both bounded", async () => {
+  for (const failure of [false, true]) {
+    const f = await fixture({
+      hangSettlement: true,
+      failFetch: failure,
+      stream:
+        'data: {"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":5}}\n\ndata: [DONE]\n\n',
+    })
+    const start = Date.now()
+    const response = await f.handler(f.request({ ...body, stream: true }))
+    const output = await response.text()
+    assert(elapsedSince(start) < 1_000)
+    assertEquals(response.status, failure ? 503 : 200)
+    if (!failure) assert(output.includes("[DONE]"))
+    assertEquals(f.calls.filter((call) => call.name === "boss_ai_settle").length, 2)
+    assert(f.audits.includes("settlement_failed_reservation_retained"))
+  }
+})
+
+function elapsedSince(start: number): number {
+  return Date.now() - start
+}
+
+Deno.test("eligibility RPC failures fail closed without minting or dispatching", async () => {
+  const f = await fixture({ eligibilityError: true })
+  const response = await f.handler(
+    new Request("https://api.example/boss-ai/auth/token", {
+      method: "POST",
+      headers: { Authorization: "Bearer boss-session" },
+    }),
+  )
+  assertEquals(response.status, 503)
+  assertEquals((await response.json()).access_token, undefined)
+  assertEquals(f.requests.length, 0)
 })

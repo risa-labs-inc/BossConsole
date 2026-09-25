@@ -535,13 +535,8 @@ object FluckEngine {
     // Track URLs that are being downloaded to prevent popup handler from opening tabs
     private val activeDownloadUrls = Collections.synchronizedSet(mutableSetOf<String>())
 
-    // Tabs the popup handler just opened. Bounds the auto-open rate so a window.open storm
-    // cannot flood the tab strip, and remembers how many a starting download should take
-    // back down - see PopupTabTracker for both rules.
+    // Admission only: timestamps do not identify which tab owns a download.
     private val popupTabTracker = PopupTabTracker()
-
-    // Callback to close recently opened tabs; the argument is how many to close.
-    private var onCloseRecentTabs: ((Int) -> Unit)? = null
 
     // Download manager for tracking all downloads
     val downloadManager = DownloadManager()
@@ -562,36 +557,8 @@ object FluckEngine {
      */
     fun isActiveDownload(url: String): Boolean = activeDownloadUrls.contains(url)
 
-    /**
-     * Notify that a tab is being opened via the popup handler.
-     * This tab might be a download redirect and should be auto-closed if download starts soon.
-     *
-     * Returns false when the auto-open burst cap is already reached, in which case the caller
-     * must NOT open the tab. Recording and refusal share one timestamp list, so a tab a download
-     * is about to take back down stops counting against the cap as soon as it is drained.
-     */
+    /** Refuse popup opens beyond the burst cap. Downloads do not reset this budget. */
     fun notifyTabOpened(): Boolean = popupTabTracker.tryRecordOpened()
-
-    /**
-     * Set callback to close recently opened tabs; the argument is how many to close.
-     * Called by BossApp or tab management system.
-     */
-    fun setCloseRecentTabsCallback(callback: (Int) -> Unit) {
-        onCloseRecentTabs = callback
-    }
-
-    /**
-     * Auto-close tabs opened within the last few seconds when a download starts.
-     *
-     * A count, not a single close: a redirect burst opens several tabs before the first
-     * download lands, and closing only the newest one left the rest standing as a tab flood.
-     */
-    private fun autoCloseDownloadTab() {
-        val closableCount = popupTabTracker.drainRedirectTabs()
-        if (closableCount > 0) {
-            onCloseRecentTabs?.invoke(closableCount)
-        }
-    }
 
     /**
      * Pause an active download.
@@ -3319,8 +3286,9 @@ object FluckEngine {
                 val downloadUrl = target.url()
                 activeDownloadUrls.add(downloadUrl)
 
-                // Auto-close any tabs that were recently opened (likely download redirects)
-                autoCloseDownloadTab()
+                // No recency-based tab closure: popup callbacks carry no tab identity.
+                // Leave redirect shells open rather than closing unrelated work in another
+                // panel/window. Cleanup requires exact ownership, not a global timestamp.
 
                 val suggestedFileName = target.suggestedFileName()
                 val sanitizedFileName = FileNameSanitizer.sanitize(suggestedFileName)

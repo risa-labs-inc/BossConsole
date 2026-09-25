@@ -6,6 +6,7 @@ import { ChallengeType } from "../types/challenge.ts"
 import { withErrorHandler } from "../utils/error-handler.ts"
 import { ALLOWED_ORIGINS, getAllowedOrigins, getAllowedRpIds, getRpId, rpIdMatchesOrigin } from "../utils/config.ts"
 import { encodedValuesMatch, normalizeBase64Url } from "../utils/base64.ts"
+import { maskSessionId, maskUserId } from "../utils/logging.ts"
 import {
   challengeMatches,
   matchRpIdHash,
@@ -52,7 +53,7 @@ export interface RegistrationCredential {
  */
 export const generateRegistrationChallenge = withErrorHandler(
   async (supabase: SupabaseClient, userId: string, sessionId?: string) => {
-    console.log('🔑 Generating registration challenge for user:', userId, 'sessionId:', sessionId)
+    console.log('🔑 Generating registration challenge for user:', maskUserId(userId), 'sessionId:', maskSessionId(sessionId))
 
     // Generate and store challenge
     const challenge = generateChallenge()
@@ -268,7 +269,7 @@ export const completeRegistration = withErrorHandler(
       }
     }
 
-    console.log('✅ Registration successful for user:', enrollingUserId)
+    console.log('✅ Registration successful for user:', maskUserId(enrollingUserId))
 
     return {
       success: true,

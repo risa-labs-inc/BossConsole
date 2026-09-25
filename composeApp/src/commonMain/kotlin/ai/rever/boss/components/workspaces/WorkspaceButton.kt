@@ -1,10 +1,15 @@
 package ai.rever.boss.components.workspaces
 
+import ai.rever.boss.components.bars.horizontal.StatusMessageManager
 import ai.rever.boss.components.buttons.BossActionButton
 import ai.rever.boss.components.icons.SpaceIcon
 import ai.rever.boss.components.overlays.ContextMenuItem
+import ai.rever.boss.components.window_panel.SplitViewStateRegistry
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.plugin.workspace.SplitConfig.SinglePanel
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.window.LocalWindowId
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Circle
@@ -27,6 +32,8 @@ import androidx.compose.runtime.setValue
  * Platform-specific function to open workspace directory
  */
 expect fun openWorkspaceDirectory(path: String)
+
+private val workspaceButtonLogger = BossLogger.forComponent("WorkspaceButton")
 
 /**
  * Workspace button with dropdown menu.
@@ -88,6 +95,8 @@ fun WorkspaceButton(
      */
     unsavedWorkspaceIds: Set<String> = emptySet(),
 ) {
+    val windowId = LocalWindowId.current
+    val saveOwner = windowId?.let(SplitViewStateRegistry::getState)
     val currentWorkspace by workspaceManager.currentWorkspace.collectAsState()
     val workspaces by workspaceManager.workspaces.collectAsState()
 
@@ -107,6 +116,7 @@ fun WorkspaceButton(
     var showSaveDialog by remember { mutableStateOf(false) }
     var showOpenDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    val namedSaveLatch = remember(windowId, saveOwner) { SaveInFlightLatch() }
 
     // Build options submenu items
     val optionsSubMenu =
@@ -320,10 +330,46 @@ fun WorkspaceButton(
         SaveWorkspaceDialog(
             onDismiss = { showSaveDialog = false },
             onSave = { name ->
-                // Get current layout and save it with the provided name
-                getCurrentWorkspace?.invoke()?.let { currentLayout ->
-                    workspaceManager.updateCurrentWorkspace(currentLayout)
-                    workspaceManager.saveCurrentWorkspace(name)
+                // A named save creates a new Space. Ignore an overlapping submission instead
+                // of replaying it, because replaying the same name would create another Space.
+                if (namedSaveLatch.press()) {
+                    getCurrentWorkspace?.invoke()?.let { currentLayout ->
+                        workspaceManager.updateCurrentWorkspace(currentLayout)
+                        namedSaveLatch.begin()
+                        workspaceManager.saveCurrentWorkspace(
+                            name = name,
+                            onSaved = { savedWorkspace ->
+                                try {
+                                    // Both a real window id and its originally registered state are
+                                    // required. In particular, null === null must never authorize a rebind.
+                                    if (
+                                        windowId != null &&
+                                        saveOwner != null &&
+                                        SplitViewStateRegistry.getState(windowId) === saveOwner
+                                    ) {
+                                        saveOwner.rebindCurrentWorkspace(savedWorkspace.id)
+                                    } else {
+                                        workspaceButtonLogger.debug(
+                                            LogCategory.WORKSPACE,
+                                            "Named save finished after its window deregistered;" +
+                                                " the rebind is dropped",
+                                            mapOf("workspaceId" to savedWorkspace.id),
+                                        )
+                                    }
+                                } finally {
+                                    // Do not replay an overlapping named save: it would mint a duplicate.
+                                    namedSaveLatch.settle {}
+                                }
+                            },
+                            onFailed = { failedName ->
+                                try {
+                                    StatusMessageManager.showMessage("Could not save \"$failedName\"")
+                                } finally {
+                                    namedSaveLatch.settle {}
+                                }
+                            },
+                        )
+                    }
                 }
                 showSaveDialog = false
             },
@@ -336,7 +382,9 @@ fun WorkspaceButton(
             onDismiss = { showOpenDialog = false },
             onOpen = { jsonString ->
                 workspaceManager.importWorkspace(jsonString)?.let { workspace ->
-                    workspaceManager.loadWorkspace(workspace)
+                    // Let the apply/switch callback claim the Space only after it proves that
+                    // the imported layout can build at least one declared tab. Claiming it here
+                    // would leave the manager pointing at an unapplied Space on refusal.
                     onOpenWorkspace(workspace)
                 }
                 showOpenDialog = false

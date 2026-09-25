@@ -1,11 +1,7 @@
 package ai.rever.boss
 
 import ai.rever.boss.components.registery.TabInfo
-import ai.rever.boss.components.window_panel.SplitViewState
 import ai.rever.boss.window.Project
-
-// Platform-specific download tab close callback setup
-expect fun setupDownloadTabCloseCallback(splitViewState: SplitViewState)
 
 // Platform-specific function to consume pending initial tab for a window
 // Returns the TabInfo if there's a pending tab for this window, null otherwise

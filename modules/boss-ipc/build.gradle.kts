@@ -34,7 +34,7 @@ tasks.register<JavaExec>("nativeSmokeJvm") {
 }
 
 group = "ai.rever.boss.ipc"
-version = "1.2.0"
+version = "1.4.0"
 
 java {
     toolchain {
@@ -91,6 +91,8 @@ dependencies {
     testImplementation(libs.kotlin.test.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.grpc.services)
+    // Binds SLF4J so KernelLogForgingTest can capture the kernel's own log records.
+    testImplementation(libs.logback)
 }
 
 if (protocAvailable) {

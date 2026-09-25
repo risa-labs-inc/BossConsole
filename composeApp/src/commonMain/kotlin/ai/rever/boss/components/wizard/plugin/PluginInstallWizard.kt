@@ -2,6 +2,7 @@
 
 package ai.rever.boss.components.wizard.plugin
 
+import ai.rever.boss.components.wizard.WizardNote
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.background
@@ -740,6 +741,12 @@ internal fun CompleteStepContent(
                 modifier = Modifier.padding(horizontal = 32.dp),
             )
         }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        WizardNote(
+            text = "💡 You can reopen this guide anytime from Settings → Getting Started",
+        )
     }
 }
 

@@ -1,13 +1,14 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { getUserPasskeys } from "../utils/database.ts"
 import { withErrorHandler } from "../utils/error-handler.ts"
+import { maskPasskeyId, maskUserId } from "../utils/logging.ts"
 
 /**
  * Lists all active passkeys for a user
  */
 export const listUserPasskeys = withErrorHandler(
   async (supabase: SupabaseClient, userId: string) => {
-    console.log('📋 Listing passkeys for user:', userId)
+    console.log('📋 Listing passkeys for user:', maskUserId(userId))
 
     const result = await getUserPasskeys(supabase, userId)
 
@@ -44,7 +45,7 @@ export const listUserPasskeys = withErrorHandler(
  */
 export const deleteUserPasskey = withErrorHandler(
   async (supabase: SupabaseClient, userId: string, passkeyId: string) => {
-    console.log('🗑️ Deleting passkey:', passkeyId, 'for user:', userId)
+    console.log('🗑️ Deleting passkey:', maskPasskeyId(passkeyId), 'for user:', maskUserId(userId))
 
     // First verify the passkey belongs to the user
     const { data: passkey, error: fetchError } = await supabase
@@ -95,7 +96,7 @@ export const updatePasskeyDisplayName = withErrorHandler(
     passkeyId: string,
     displayName: string
   ) => {
-    console.log('✏️ Updating passkey display name:', passkeyId)
+    console.log('✏️ Updating passkey display name:', maskPasskeyId(passkeyId))
 
     // First verify the passkey belongs to the user
     const { data: passkey, error: fetchError } = await supabase

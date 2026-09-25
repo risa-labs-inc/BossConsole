@@ -51,6 +51,7 @@ import ai.rever.boss.plugin.api.PanelInfo
 import ai.rever.boss.plugin.api.TabTypeInfo
 import ai.rever.boss.plugin.tab.terminal.TerminalTabInfo
 import ai.rever.boss.plugin.tab.terminal.TerminalTabType
+import ai.rever.boss.plugin.workspace.uniqueId
 import ai.rever.boss.project.DefaultWorkingDirectory
 import ai.rever.boss.run.RunConfigurationManager
 import ai.rever.boss.run.RunExecutionService
@@ -976,11 +977,15 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
         DashboardEventBus.newTerminalEvents
             .filter { event -> event.sourceWindowId == windowId }
             .onEach {
-                val timestamp = System.currentTimeMillis()
                 val projectPath = windowProjectState.selectedProject.value.path
+                // The id addresses the tab across every workspace this window runs:
+                // entropy first, then the findTabLocation scan as the backstop.
+                val terminalTabId =
+                    generateSequence { uniqueId("terminal") }
+                        .first { splitViewState.findTabLocation(it) == null }
                 val terminalTab =
                     TerminalTabInfo(
-                        id = "terminal-$timestamp",
+                        id = terminalTabId,
                         typeId = TerminalTabType.typeId,
                         title = "Terminal",
                         icon = TerminalTabType.icon,
@@ -1047,14 +1052,31 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                 // than in a copy of the rule here.
                 val opened = spaceToOpen(workspace, windowProjectState.selectedProject.value.path)
 
-                // Preserve, load, apply: the same three steps the top bar's switch takes,
-                // so switching away and back keeps the tabs that were open.
+                // Preserve, apply, load: the same steps the top bar's switch takes, in the
+                // order that leaves nothing destroyed when the apply is refused - the leaving
+                // tree is simply restored out of the snapshot just taken of it.
                 val currentWorkspace = workspaceManager.currentWorkspace.value
-                if (currentWorkspace != null && currentWorkspace.id.isNotEmpty()) {
-                    splitViewState.preserveCurrentState(currentWorkspace.id, currentWorkspace.name)
+                val leavingId = currentWorkspace?.id?.takeIf { it.isNotEmpty() }
+                if (leavingId != null) {
+                    splitViewState.preserveCurrentState(leavingId, currentWorkspace?.name.orEmpty())
                 }
-                workspaceManager.loadWorkspace(opened)
-                applyWorkspace(opened, splitViewState, windowProjectState)
+                if (applyWorkspace(opened, splitViewState, windowProjectState)) {
+                    workspaceManager.loadWorkspace(opened)
+                } else {
+                    if (leavingId != null) {
+                        splitViewState.restorePreservedState(leavingId)
+                        splitViewState.discardPreservedState(leavingId)
+                    }
+                    // `spaceToOpen` enters a materialised template itself, so a refusal can
+                    // leave the manager claiming a Space that was never applied - point it
+                    // back at what is on screen.
+                    if (
+                        currentWorkspace != null &&
+                        workspaceManager.currentWorkspace.value?.id != currentWorkspace.id
+                    ) {
+                        workspaceManager.loadWorkspace(currentWorkspace)
+                    }
+                }
             }.launchIn(this)
 
         // Handle settings window events from the home screen.
@@ -1147,7 +1169,26 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
             .filter { event -> event.sourceWindowId == windowId }
             .onEach { event ->
                 // sourceWindowId is required, so we already filtered to the correct window
-                splitViewState.openUrlInActivePanel(event.url, event.title)
+                if (event.requiresConfirmation) {
+                    // Show the operator the URL and let them decide; the
+                    // prompt in BossAppDialogs opens the tab on confirm.
+                    val request = PendingUrlOpen(event.url, event.title)
+                    if (state.urlOpenApprovals.enqueue(request)) {
+                        logger.info(
+                            LogCategory.BROWSER,
+                            "Holding an externally requested URL for confirmation",
+                            mapOf("windowId" to windowId),
+                        )
+                    } else {
+                        logger.warn(
+                            LogCategory.BROWSER,
+                            "External URL open refused: approval queue full",
+                            mapOf("windowId" to windowId),
+                        )
+                    }
+                } else {
+                    splitViewState.openUrlInActivePanel(event.url, event.title)
+                }
             }.launchIn(this)
 
         // Observe tab count AND processing state (URLs + Terminals + Files + Workspace Restoration) reactively
@@ -1254,9 +1295,11 @@ private suspend fun loadRequestedSpace(
     val commands = workspace.terminalCommands()
     when (spaceLoadDisposition(commands, event.requiresConfirmation)) {
         SpaceLoadDisposition.LOAD -> {
-            // Use the same loading pattern as the UI
-            workspaceManager.loadWorkspace(workspace)
-            applyWorkspace(workspace, state.splitViewState, state.windowProjectState)
+            // Apply first: a refused layout leaves both the live tree and the manager on the
+            // current Space, instead of recording a Space that was never put on screen.
+            if (applyWorkspace(workspace, state.splitViewState, state.windowProjectState)) {
+                workspaceManager.loadWorkspace(workspace)
+            }
         }
 
         SpaceLoadDisposition.CONFIRM -> {

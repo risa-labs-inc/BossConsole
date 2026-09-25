@@ -298,7 +298,7 @@ class PluginUIServiceBridgeTest {
         }
 
     @Test
-    fun `a plugin that dies right after binding leaves no stuck claim behind`() =
+    fun `a plugin that dies right after binding leaves no stuck claim behind`(): Unit =
         runBlocking {
             // The claim happens inside the request pump, so a `finally` guarding only the event collection
             // missed it: an RPC cancelled between `openStream()` returning Bound and the response side
@@ -609,12 +609,23 @@ class PluginUIServiceBridgeTest {
             assertNull(registry.surfaceOf(PANEL))
         }
 
+    /**
+     * The bridge itself has no owner to protect for an unknown surface, so for any authenticated caller
+     * this stays the pre-existing idempotent no-op. A caller with no credential never reaches the bridge:
+     * ProcessIdentityInterceptor authenticates every RPC, so it is refused at the transport like any other.
+     *
+     * This test used to assert the anonymous call succeeded. It returned a value, so JUnit never ran it,
+     * and the transport began refusing that call without anything failing.
+     */
     @Test
-    fun `unregistering an unknown surface is unaffected by having no credential`() =
+    fun `an unknown surface unregisters as a no-op, but only for an authenticated caller`(): Unit =
         runBlocking {
-            // No owner exists to protect, so this stays the pre-existing idempotent no-op regardless of
-            // who (or what) calls it - unlike RegisterUI and StreamUI, which always require identity.
-            anonymousPlugin().unregisterUI(UIUnregistration.newBuilder().setSurfaceId("never-registered").build())
+            val unknown = UIUnregistration.newBuilder().setSurfaceId("never-registered").build()
+
+            pluginAs("plugin-b").unregisterUI(unknown)
+
+            val failure = assertFailsWith<StatusException> { anonymousPlugin().unregisterUI(unknown) }
+            assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
         }
 
     // ---- BossConsole#54: identity gates placement, end to end ----

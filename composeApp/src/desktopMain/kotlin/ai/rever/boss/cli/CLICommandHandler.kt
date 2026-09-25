@@ -176,7 +176,7 @@ class CLICommandHandler private constructor() {
 
             when (command) {
                 is CLICommand.OpenUrl -> {
-                    handleOpenUrl(command.url)
+                    handleOpenUrl(command.url, command.origin)
                 }
 
                 is CLICommand.LoadWorkspace -> {
@@ -230,8 +230,17 @@ class CLICommandHandler private constructor() {
 
     /**
      * Opens URL in Fluck browser tab.
+     *
+     * The tab opens unattended only when [origin] says the operator asked for
+     * it themselves. Any other origin — above all a `boss://url?url=` link,
+     * which the OS will accept from any program that can ask it to open a URL —
+     * is marked for confirmation, and the window shows the operator the exact
+     * URL before a tab is created for it (see [urlOpenDisposition]).
      */
-    private suspend fun handleOpenUrl(url: String) {
+    private suspend fun handleOpenUrl(
+        url: String,
+        origin: DeepLinkOrigin,
+    ) {
         // Normalize and validate URL (adds https:// if missing)
         val normalizedUrl = CLISecurityValidator.normalizeAndValidateUrl(url)
         if (normalizedUrl == null) {
@@ -239,8 +248,24 @@ class CLICommandHandler private constructor() {
             return
         }
 
+        val disposition = urlOpenDisposition(normalizedUrl, origin)
+        if (disposition == UrlOpenDisposition.REJECT) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "URL open rejected before a tab could be requested",
+                mapOf(
+                    "origin" to origin.name,
+                    "length" to normalizedUrl.length,
+                ),
+            )
+            return
+        }
+
         withContext(Dispatchers.Main) {
-            URLHandlerService.handleURL(normalizedUrl)
+            URLHandlerService.handleURL(
+                normalizedUrl,
+                requiresConfirmation = disposition == UrlOpenDisposition.CONFIRM,
+            )
         }
     }
 
@@ -611,11 +636,57 @@ internal val CLICommand.LoadWorkspace.requiresConfirmation: Boolean
     get() = !origin.isOperatorInitiated
 
 /**
+ * Longest URL BOSS will put in front of the operator for confirmation. A URL
+ * it cannot show in full is not one anybody can meaningfully approve, so a
+ * longer one from outside the operator's own invocation is dropped rather than
+ * prompted. URLs the operator passed to `boss` themselves are never shown and
+ * are bounded only by [CLISecurityValidator.normalizeAndValidateUrl].
+ */
+internal const val URL_CONFIRM_MAX_URL_LENGTH = 2048
+
+/** What BOSS does with a `boss://url` request. */
+internal enum class UrlOpenDisposition {
+    /** Open the tab. */
+    OPEN,
+
+    /** Show the operator the URL and open a tab only if they confirm. */
+    CONFIRM,
+
+    /** Do nothing at all. */
+    REJECT,
+}
+
+/**
+ * Decides what happens to a URL open request, from who asked for it.
+ *
+ * A URL opens unattended only when [origin] says the operator ran `boss`
+ * themselves; otherwise it is put in front of them first, and dropped outright
+ * if it is too long to display in full. [url] is the already-normalized form —
+ * the same string the prompt would show.
+ */
+internal fun urlOpenDisposition(
+    url: String,
+    origin: DeepLinkOrigin,
+): UrlOpenDisposition =
+    when {
+        origin.isOperatorInitiated -> UrlOpenDisposition.OPEN
+        url.length > URL_CONFIRM_MAX_URL_LENGTH -> UrlOpenDisposition.REJECT
+        else -> UrlOpenDisposition.CONFIRM
+    }
+
+/**
  * Sealed class representing CLI commands.
  */
 sealed class CLICommand {
+    /**
+     * @property url the URL to open.
+     * @property origin who asked. Defaults to [DeepLinkOrigin.EXTERNAL] so a
+     *   caller that does not say gets the cautious handling; see
+     *   [CLICommandHandler.handleOpenUrl].
+     */
     data class OpenUrl(
         val url: String,
+        val origin: DeepLinkOrigin = DeepLinkOrigin.EXTERNAL,
     ) : CLICommand()
 
     /**

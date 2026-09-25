@@ -64,6 +64,7 @@ import ai.rever.boss.plugin.tab.fluck.FluckTabType
 import ai.rever.boss.plugin.tab.jupyter.JupyterTabInfo
 import ai.rever.boss.plugin.tab.terminal.TerminalTabInfo
 import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.plugin.workspace.uniqueId
 import ai.rever.boss.project.DefaultWorkingDirectory
 import ai.rever.boss.run.RUNNER_TERMINAL_PREFIX
 import ai.rever.boss.run.RunnerTerminalService
@@ -139,7 +140,6 @@ import com.arkivanov.essenty.lifecycle.destroy
 import com.arkivanov.essenty.lifecycle.resume
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlin.time.Clock
 
 private val bossMainWindowPanelLogger = BossLogger.forComponent("BossMainWindowPanel")
 
@@ -945,10 +945,9 @@ fun BossTabsComponent.rememberTabBarState(
                     onCreateTab = { type, path ->
                         when (type) {
                             TabType.URL -> {
-                                val timestamp = Clock.System.now().toEpochMilliseconds()
                                 val fluckTab =
                                     ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo(
-                                        id = "fluck-$timestamp",
+                                        id = mintTabId("fluck", splitViewState),
                                         typeId = FluckTabType.typeId,
                                         _title =
                                             if (FluckTabInfo.isHomeUrl(path)) FluckTabInfo.HOME_TITLE else "Loading...",
@@ -958,12 +957,11 @@ fun BossTabsComponent.rememberTabBarState(
                             }
 
                             TabType.FILE -> {
-                                val timestamp = Clock.System.now().toEpochMilliseconds()
                                 val fileName = path.extractFileName().ifEmpty { "untitled.txt" }
                                 val fileIconInfo = FileIcons.forFile(fileName)
                                 val editorTab =
                                     EditorTabInfo(
-                                        id = "editor-$timestamp",
+                                        id = mintTabId("editor", splitViewState),
                                         title = fileName,
                                         typeId = CodeEditorTabType.typeId,
                                         icon = fileIconInfo.icon,
@@ -976,12 +974,11 @@ fun BossTabsComponent.rememberTabBarState(
                             }
 
                             TabType.TERMINAL -> {
-                                val timestamp = Clock.System.now().toEpochMilliseconds()
                                 // Get current project path for terminal working directory (per-window)
                                 val projectPath = windowProjectState?.selectedProject?.value?.path ?: ""
                                 val terminalTab =
                                     TerminalTabInfo(
-                                        id = "terminal-$timestamp",
+                                        id = mintTabId("terminal", splitViewState),
                                         typeId = ai.rever.boss.plugin.tab.terminal.TerminalTabType.typeId,
                                         title = "Terminal",
                                         icon = ai.rever.boss.plugin.tab.terminal.TerminalTabType.icon,
@@ -1497,10 +1494,9 @@ fun BossTabsComponent.BossMainPanelContent(modifier: Modifier) {
             onCreateTab = { type, path ->
                 when (type) {
                     TabType.URL -> {
-                        val timestamp = Clock.System.now().toEpochMilliseconds()
                         val fluckTab =
                             ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo(
-                                id = "fluck-$timestamp",
+                                id = mintTabId("fluck"),
                                 typeId = FluckTabType.typeId,
                                 _title = if (FluckTabInfo.isHomeUrl(path)) FluckTabInfo.HOME_TITLE else "Loading...",
                                 url = path,
@@ -1512,12 +1508,11 @@ fun BossTabsComponent.BossMainPanelContent(modifier: Modifier) {
                     }
 
                     TabType.FILE -> {
-                        val timestamp = Clock.System.now().toEpochMilliseconds()
                         val fileName = path.extractFileName().ifEmpty { "untitled.txt" }
                         val fileIconInfo = FileIcons.forFile(fileName)
                         val editorTab =
                             EditorTabInfo(
-                                id = "editor-$timestamp",
+                                id = mintTabId("editor"),
                                 title = fileName,
                                 typeId = CodeEditorTabType.typeId,
                                 icon = fileIconInfo.icon,
@@ -1533,12 +1528,11 @@ fun BossTabsComponent.BossMainPanelContent(modifier: Modifier) {
                     }
 
                     TabType.TERMINAL -> {
-                        val timestamp = Clock.System.now().toEpochMilliseconds()
                         // Get current project path for terminal working directory (per-window)
                         val projectPath = selectedProject.path
                         val terminalTab =
                             TerminalTabInfo(
-                                id = "terminal-$timestamp",
+                                id = mintTabId("terminal"),
                                 typeId = ai.rever.boss.plugin.tab.terminal.TerminalTabType.typeId,
                                 title = "Terminal",
                                 icon = ai.rever.boss.plugin.tab.terminal.TerminalTabType.icon,
@@ -1595,6 +1589,24 @@ class BossTabsComponent(
 ) : ComponentContext by componentContext {
     // Unique ID for this component (used for TabUpdateRegistry)
     private val componentId = "${windowId}_${System.identityHashCode(this)}"
+
+    /**
+     * Mint a tab id no live tab already holds. [uniqueId]'s random suffix is what makes a
+     * same-millisecond collision vanishingly rare; the scan is the deterministic backstop,
+     * since a tab id keys this component's maps and every cross-pane move or MCP address.
+     * When [splitViewState] is known it answers for every workspace this window is running;
+     * this panel's own list is checked either way.
+     */
+    internal fun mintTabId(
+        prefix: String,
+        splitViewState: ai.rever.boss.components.window_panel.SplitViewState? = null,
+    ): String {
+        var id = uniqueId(prefix)
+        while (splitViewState?.findTabLocation(id) != null || tabsState.value.tabs.any { it.id == id }) {
+            id = uniqueId(prefix)
+        }
+        return id
+    }
 
     private val tabComponents = mutableStateMapOf<String, TabComponentWithUI>()
 
@@ -1867,7 +1879,7 @@ class BossTabsComponent(
         }
 
         override fun openNewTab(url: String): String? {
-            val newTabId = "browser_${System.currentTimeMillis()}"
+            val newTabId = bossTabsComponent.mintTabId("browser")
             val newTab =
                 FluckTabInfo(
                     id = newTabId,
@@ -2496,23 +2508,6 @@ class BossTabsComponent(
         if (indicesToRemove.isNotEmpty()) {
             bossMainWindowPanelLogger.debug(LogCategory.UI, "Closed tabs", mapOf("count" to indicesToRemove.size))
         }
-    }
-
-    // Close the most recently opened tab (used for auto-closing download redirects).
-    // Returns whether a tab was closed, so a batch close can stop instead of assuming.
-    fun closeMostRecentTab(): Boolean {
-        val tabs = tabsState.value.tabs
-        if (tabs.isNotEmpty()) {
-            val lastIndex = tabs.size - 1
-            bossMainWindowPanelLogger.debug(LogCategory.UI, "Closing most recent tab", mapOf("index" to lastIndex))
-            // Not reopenable: the only caller is the download-redirect cleanup
-            // (setupDownloadTabCloseCallback), the same automatic closure as closeTabByUrl.
-            // The user did not close it, and reopening would re-run the download.
-            removeTab(lastIndex, recordForReopen = false)
-            return true
-        }
-        bossMainWindowPanelLogger.debug(LogCategory.UI, "No tabs to close")
-        return false
     }
 
     /**

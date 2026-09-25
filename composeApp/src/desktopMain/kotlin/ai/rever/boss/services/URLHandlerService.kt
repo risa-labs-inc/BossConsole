@@ -29,12 +29,10 @@ import java.util.concurrent.atomic.AtomicInteger
 actual object URLHandlerService {
     private val logger = BossLogger.forComponent("URLHandlerService")
 
-    // Queue for URLs received before the app is ready
-    private val urlQueue = mutableListOf<String>()
+    private val urlQueue = UrlOpenReadinessQueue()
 
-    // Flag to track if the app is ready to handle URLs
-    @Volatile
-    private var isAppReady = false
+    /** Bound on untrusted `boss://url` approval requests per [UrlOpenRateLimiter.WINDOW_MS]. */
+    private val openRateLimiter = UrlOpenRateLimiter()
 
     // Track active URL processing operations
     // Incremented when a coroutine is launched to process a URL
@@ -48,7 +46,7 @@ actual object URLHandlerService {
      *
      * @return true if URLs are waiting to be processed
      */
-    actual fun hasQueuedURLs(): Boolean = urlQueue.isNotEmpty()
+    actual fun hasQueuedURLs(): Boolean = urlQueue.hasQueuedURLs()
 
     /**
      * Check if URLs are currently being processed
@@ -67,22 +65,10 @@ actual object URLHandlerService {
      * Mark the app as ready to handle URLs and process any queued URLs
      */
     actual fun markAppReady() {
-        isAppReady = true
-        processQueuedURLs()
-    }
-
-    /**
-     * Process all URLs that were queued while app was initializing
-     */
-    private fun processQueuedURLs() {
-        if (urlQueue.isEmpty()) return
-
-        logger.debug(LogCategory.BROWSER, "Processing queued URLs", mapOf("count" to urlQueue.size))
-        val urls = urlQueue.toList()
-        urlQueue.clear()
-
-        urls.forEach { url ->
-            handleURLInternal(url)
+        val queued = urlQueue.markReadyAndClaimQueued()
+        if (queued.isNotEmpty()) {
+            logger.debug(LogCategory.BROWSER, "Processing queued URLs", mapOf("count" to queued.size))
+            queued.forEach { handleURLInternal(it.url, it.requiresConfirmation) }
         }
     }
 
@@ -95,15 +81,34 @@ actual object URLHandlerService {
      * If the app is not ready yet, queues the URL for later processing.
      *
      * @param url The http/https URL to open
+     * @param requiresConfirmation See the expect declaration.
      */
-    actual fun handleURL(url: String) {
-        if (!isAppReady) {
-            logger.debug(LogCategory.BROWSER, "App not ready, queueing URL", mapOf("url" to url))
-            urlQueue.add(url)
+    actual fun handleURL(
+        url: String,
+        requiresConfirmation: Boolean,
+    ) {
+        // Bound requests that need operator approval before they enter the cold-start
+        // queue. Direct browser handoffs and operator CLI opens retain their normal
+        // behavior; the approval queue has its own capacity bound as well.
+        if (requiresConfirmation && !openRateLimiter.tryAcquire()) {
+            logger.warn(
+                LogCategory.BROWSER,
+                "URL open rate-limited",
+                mapOf("url" to LogSanitizer.maskUriParams(url)),
+            )
             return
         }
 
-        handleURLInternal(url)
+        if (!urlQueue.enqueueOrClaimForCaller(url, requiresConfirmation)) {
+            logger.debug(
+                LogCategory.BROWSER,
+                "App not ready, queueing URL",
+                mapOf("url" to LogSanitizer.maskUriParams(url)),
+            )
+            return
+        }
+
+        handleURLInternal(url, requiresConfirmation)
     }
 
     /**
@@ -115,7 +120,10 @@ actual object URLHandlerService {
      * Tracks processing state to prevent race conditions when checking if tabs
      * are being created.
      */
-    private fun handleURLInternal(url: String) {
+    private fun handleURLInternal(
+        url: String,
+        requiresConfirmation: Boolean,
+    ) {
         // Track whether THIS specific invocation incremented the counter
         // Used for thread-safe error handling to avoid decrementing other threads' counts
         var incremented = false
@@ -142,7 +150,11 @@ actual object URLHandlerService {
             // usable window is plainly registered.
             val focusedWindowId = WindowFocusManager.resolveActionableWindowId()
             if (focusedWindowId == null) {
-                logger.warn(LogCategory.BROWSER, "No usable window registered, cannot open URL", mapOf("url" to url))
+                logger.warn(
+                    LogCategory.BROWSER,
+                    "No usable window registered, cannot open URL",
+                    mapOf("url" to LogSanitizer.maskUriParams(url)),
+                )
                 return
             }
 
@@ -162,8 +174,17 @@ actual object URLHandlerService {
             // Emit URL open event - focused window will handle it
             CoroutineScope(Dispatchers.Main).launch {
                 try {
-                    URLEventBus.openURL(url, title, sourceWindowId = focusedWindowId)
-                    logger.debug(LogCategory.BROWSER, "Emitted URL open event", mapOf("url" to url, "windowId" to focusedWindowId))
+                    URLEventBus.openURL(
+                        url,
+                        title,
+                        sourceWindowId = focusedWindowId,
+                        requiresConfirmation = requiresConfirmation,
+                    )
+                    logger.debug(
+                        LogCategory.BROWSER,
+                        "Emitted URL open event",
+                        mapOf("url" to LogSanitizer.maskUriParams(url), "windowId" to focusedWindowId),
+                    )
 
                     // CRITICAL: Wait for tab to actually be created before decrementing
                     // The event emission is instant, but tab creation (splitViewState.openUrlInActivePanel)
@@ -186,16 +207,7 @@ actual object URLHandlerService {
                     delay(500)
                 } finally {
                     // Decrement counter after tab has time to be created
-                    val count = processingCount.decrementAndGet()
-                    _isProcessing.value = (count > 0)
-                    logger.debug(
-                        LogCategory.BROWSER,
-                        "Processing count decremented",
-                        mapOf(
-                            "count" to count,
-                            "isProcessing" to _isProcessing.value,
-                        ),
-                    )
+                    decrementProcessingCount("Processing count decremented")
                 }
             }
         } catch (e: Exception) {
@@ -203,18 +215,22 @@ actual object URLHandlerService {
             // Only decrement if THIS specific invocation actually incremented
             // This prevents decrementing other threads' counts in multi-threaded scenarios
             if (incremented) {
-                val count = processingCount.decrementAndGet()
-                _isProcessing.value = (count > 0)
-                logger.debug(
-                    LogCategory.BROWSER,
-                    "Processing count decremented due to error",
-                    mapOf(
-                        "count" to count,
-                        "isProcessing" to _isProcessing.value,
-                    ),
-                )
+                decrementProcessingCount("Processing count decremented due to error")
             }
         }
+    }
+
+    private fun decrementProcessingCount(logMessage: String) {
+        val count = processingCount.decrementAndGet()
+        _isProcessing.value = (count > 0)
+        logger.debug(
+            LogCategory.BROWSER,
+            logMessage,
+            mapOf(
+                "count" to count,
+                "isProcessing" to _isProcessing.value,
+            ),
+        )
     }
 
     /**
@@ -283,9 +299,48 @@ actual object URLHandlerService {
      *
      * @param urls List of URLs to open
      */
-    actual fun handleURLs(urls: List<String>) {
+    actual fun handleURLs(
+        urls: List<String>,
+        requiresConfirmation: Boolean,
+    ) {
         urls.forEach { url ->
-            handleURL(url)
+            handleURL(url, requiresConfirmation)
         }
     }
+}
+
+/** Holds the confirmation decision with a cold-start URL until the service becomes ready. */
+internal data class QueuedUrlOpen(
+    val url: String,
+    val requiresConfirmation: Boolean,
+)
+
+/** Atomically hands queued URLs to the ready caller without losing concurrent arrivals. */
+internal class UrlOpenReadinessQueue {
+    private val lock = Any()
+    private val deferred = ArrayDeque<QueuedUrlOpen>()
+    private var ready = false
+
+    fun hasQueuedURLs(): Boolean = synchronized(lock) { deferred.isNotEmpty() }
+
+    fun enqueueOrClaimForCaller(
+        url: String,
+        requiresConfirmation: Boolean,
+    ): Boolean =
+        synchronized(lock) {
+            if (ready) {
+                true
+            } else {
+                deferred.addLast(QueuedUrlOpen(url, requiresConfirmation))
+                false
+            }
+        }
+
+    fun markReadyAndClaimQueued(): List<QueuedUrlOpen> =
+        synchronized(lock) {
+            ready = true
+            buildList(deferred.size) {
+                while (deferred.isNotEmpty()) add(deferred.removeFirst())
+            }
+        }
 }

@@ -308,7 +308,13 @@ object UserDataStorage {
         }
 
     /**
-     * Clear stored user data (on logout)
+     * Clear stored user data (on logout).
+     *
+     * Deletes [storageFile] only: the pre-login [pendingWizardCompletedFile] marker is
+     * deliberately left in place. It exists precisely for the "wizard finished before the
+     * next login" state, and the next login's save merges it into the fresh record -
+     * deleting it here would make a pre-login wizard completion vanish on logout and
+     * re-run the wizard (pinned by `UserDataStorageMergeTest`).
      */
     suspend fun clearUserData() {
         withContext(Dispatchers.IO) {

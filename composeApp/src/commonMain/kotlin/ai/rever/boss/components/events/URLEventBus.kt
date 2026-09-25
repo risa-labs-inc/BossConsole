@@ -11,11 +11,17 @@ import kotlinx.coroutines.flow.asSharedFlow
  * @property url The URL to open (http:// or https://)
  * @property title Initial title for the tab (domain name or "Loading...")
  * @property sourceWindowId The window that initiated this event (required for multi-window support)
+ * @property requiresConfirmation True when [url] must be shown to the
+ *   operator and confirmed before a tab is opened for it, because the request
+ *   came from somewhere other than the operator's own invocation of BOSS (see
+ *   `DeepLinkOrigin`). Defaults to false so the in-app callers, which are the
+ *   operator clicking something, stay direct.
  */
 data class URLOpenEvent(
     val url: String,
     val title: String,
     val sourceWindowId: String,
+    val requiresConfirmation: Boolean,
 )
 
 /**
@@ -46,13 +52,15 @@ object URLEventBus {
      * @param url The URL to open
      * @param title Initial tab title (defaults to "Loading...")
      * @param sourceWindowId The window that initiated this event (required for multi-window support)
+     * @param requiresConfirmation See [URLOpenEvent.requiresConfirmation]
      */
     suspend fun openURL(
         url: String,
         title: String = "Loading...",
         sourceWindowId: String,
+        requiresConfirmation: Boolean,
     ) {
-        val event = URLOpenEvent(url, title, sourceWindowId)
+        val event = URLOpenEvent(url, title, sourceWindowId, requiresConfirmation)
         _urlOpenEvents.emit(event)
         ipcBridge?.forward("URLOpenEvent", event, sourceWindowId)
     }

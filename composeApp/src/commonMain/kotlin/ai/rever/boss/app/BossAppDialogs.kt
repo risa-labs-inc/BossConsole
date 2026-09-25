@@ -7,6 +7,7 @@ import ai.rever.boss.components.dialogs.GlobalSearchDialog
 import ai.rever.boss.components.dialogs.HtmlFileOpenDialog
 import ai.rever.boss.components.dialogs.LogoutConfirmationDialog
 import ai.rever.boss.components.dialogs.McpApprovalDialog
+import ai.rever.boss.components.dialogs.McpYoloConfirmation
 import ai.rever.boss.components.dialogs.NewProjectWizardDialog
 import ai.rever.boss.components.dialogs.NewTabDialog
 import ai.rever.boss.components.dialogs.ProjectOpenModeDialog
@@ -43,8 +44,11 @@ import ai.rever.boss.components.windows.SettingsWindow
 import ai.rever.boss.components.wizard.plugin.PluginWizardIntegration
 import ai.rever.boss.components.wizard.plugin.PluginWizardWindow
 import ai.rever.boss.components.wizard.plugin.rememberPluginInstallWizardState
+import ai.rever.boss.components.workspaces.ProjectSelectionWorkspace
 import ai.rever.boss.components.workspaces.SelectWorkspaceDialog
+import ai.rever.boss.components.workspaces.WorkspaceSettingsManager
 import ai.rever.boss.components.workspaces.applyWorkspace
+import ai.rever.boss.components.workspaces.resolveOnProjectSelection
 import ai.rever.boss.components.workspaces.spaceToOpen
 import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.dashboard.DashboardStatsManager
@@ -86,6 +90,7 @@ import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.window.MenuActionsHandler
 import ai.rever.boss.window.Project
 import ai.rever.boss.window.WindowOperations
+import ai.rever.boss.window.WindowProjectState
 import ai.rever.boss.window.selectProjectInWindow
 import androidx.compose.material.Text
 import androidx.compose.material.TextButton
@@ -402,35 +407,58 @@ internal fun BossAppDialogs(state: BossAppState) {
         )
     }
 
-    // "Which workspace do you want?" - raised by the project-selection effect when the
-    // default workspace setting is `ask`, the default on a fresh install.
-    state.pendingWorkspacePrompt?.let { projectName ->
+    // "Which Space?" - raised by "New Space" in the project-open dialog, and by the
+    // project-selection effect when a plugin selects a project and the setting is `ask`.
+    state.pendingWorkspacePrompt?.let { prompt ->
         val workspaces by workspaceManager.workspaces.collectAsState()
         SelectWorkspaceDialog(
-            projectName = projectName,
+            projectName = prompt.project.name,
+            projectIsOpen = !prompt.placeOnPick,
             // The same list the top bar's workspace button and the app menu show, saved
             // workspaces included. Reading PredefinedWorkspaces here instead would offer a
             // different set than the rest of the app does.
-            workspaces = workspaces,
+            //
+            // Only the Spaces this project can open in: applying a saved Space also selects the
+            // project it was saved with, so one of another project's would swap this one out.
+            workspaces = spacesForProject(workspaces, prompt.project.path),
             onDismiss = {
                 state.pendingWorkspacePrompt = null
                 state.focusRequester.requestFocus()
             },
             onSelect = { workspace ->
                 state.pendingWorkspacePrompt = null
+                // New Space places the project only now, so dismissing the list opened nothing.
+                if (prompt.placeOnPick) placeProjectHere(state, windowProjectState, prompt.project)
+                if (prompt.showCodebase) state.draggablePanelComponent.setPanelVisible(left.top, true)
                 coroutineScope.launch {
-                    // Preserve, load, apply: the same three steps the top bar's workspace
-                    // switch takes, so a workspace opened from here can be switched away
-                    // from and back with its tabs intact.
+                    // Preserve, apply, load: the same steps the top bar's workspace switch
+                    // takes, in the order that leaves nothing destroyed when the apply is
+                    // refused - the leaving tree is restored out of the snapshot just taken.
                     val currentWorkspace = workspaceManager.currentWorkspace.value
-                    if (currentWorkspace != null && currentWorkspace.id.isNotEmpty()) {
-                        splitViewState.preserveCurrentState(currentWorkspace.id, currentWorkspace.name)
+                    val leavingId = currentWorkspace?.id?.takeIf { it.isNotEmpty() }
+                    if (leavingId != null) {
+                        splitViewState.preserveCurrentState(leavingId, currentWorkspace?.name.orEmpty())
                     }
                     // A template picked here is materialised into a Space first - see
                     // `spaceToOpen`, which every pick in the app goes through.
-                    val opened = spaceToOpen(workspace, windowProjectState.selectedProject.value.path)
-                    workspaceManager.loadWorkspace(opened)
-                    applyWorkspace(opened, splitViewState, windowProjectState)
+                    val opened = spaceToOpen(workspace, prompt.project.path)
+                    if (applyWorkspace(opened, splitViewState, windowProjectState)) {
+                        workspaceManager.loadWorkspace(opened)
+                    } else {
+                        if (leavingId != null) {
+                            splitViewState.restorePreservedState(leavingId)
+                            splitViewState.discardPreservedState(leavingId)
+                        }
+                        // `spaceToOpen` enters a materialised template itself, so a refusal can
+                        // leave the manager claiming a Space that was never applied - point it
+                        // back at what is on screen.
+                        if (
+                            currentWorkspace != null &&
+                            workspaceManager.currentWorkspace.value?.id != currentWorkspace.id
+                        ) {
+                            workspaceManager.loadWorkspace(currentWorkspace)
+                        }
+                    }
                 }
                 state.focusRequester.requestFocus()
             },
@@ -855,6 +883,29 @@ internal fun BossAppDialogs(state: BossAppState) {
     // The same question for a Space whose terminal tabs carry commands.
     SpaceLoadPrompt(state)
 
+    // A URL that reached BOSS from outside the operator's own `boss`
+    // invocation (`boss://url`, a link forwarded over the single-instance
+    // channel). Same shape as the terminal prompt above: the request carries
+    // no evidence of who made it, so the operator sees the exact URL before a
+    // tab is opened for it.
+    state.urlOpenApprovals.current?.let { pending ->
+        UrlOpenApprovalDialog(
+            request = pending,
+            pendingCount = state.urlOpenApprovals.size,
+            onDismiss = { state.urlOpenApprovals.consume(pending) },
+            onConfirm = confirm@{
+                // Consume before opening; the dialog also calls onDismiss after onConfirm.
+                // A stale callback must never open or dismiss the next request.
+                if (!state.urlOpenApprovals.consume(pending)) return@confirm
+                logger.info(
+                    LogCategory.BROWSER,
+                    "Operator confirmed an externally requested URL",
+                    mapOf("windowId" to windowId),
+                )
+                splitViewState.openUrlInActivePanel(pending.url, pending.title)
+            },
+        )
+    }
     // A plugin action that reached BOSS from outside the operator's own `boss`
     // invocation. Nothing has been dispatched yet: this prompt is the only path
     // from such a link to the plugin's registered handler.
@@ -867,6 +918,9 @@ internal fun BossAppDialogs(state: BossAppState) {
         val handled = DeepLinkActionRegistryImpl.dispatch(pending.handlerId, pending.action, pending.params)
         if (!handled) StatusMessageManager.showMessage("Plugin action was not handled")
     }
+
+    // YOLO mode's confirmation, raised from the bottom bar or the Tools menu (McpYoloPrompt).
+    McpYoloConfirmation(windowId)
 
     // Interactive approval dialog for governed MCP tools invoked by an AI agent
     state.pendingMcpApproval?.let { approvalRequest ->
@@ -1105,18 +1159,10 @@ internal fun BossAppDialogs(state: BossAppState) {
         rememberDirectoryPicker { path ->
             path?.let {
                 val projectName = it.extractFileName().ifEmpty { "Unknown" }
-                selectProjectInWindow(
-                    windowProjectState,
-                    Project(
-                        name = projectName,
-                        path = it,
-                    ),
-                )
-                // Show CodeBase panel when project is selected
-                state.draggablePanelComponent.setPanelVisible(
-                    left.top,
-                    true,
-                )
+                // Asked where it goes, like every other way of opening a project. The CodeBase
+                // panel this picker has always shown opens once the project lands HERE.
+                val picked = Project(name = projectName, path = it)
+                requestProjectOpen(state, windowProjectState, picked, showCodebase = true)
                 // Close the dialog after selection
                 state.showProjectDialog = false
             }
@@ -1142,7 +1188,7 @@ internal fun BossAppDialogs(state: BossAppState) {
                 state.focusRequester.requestFocus()
             },
             onProjectCreated = { project ->
-                selectProjectInWindow(windowProjectState, project)
+                requestProjectOpen(state, windowProjectState, project)
                 state.showNewProjectDialog = false
                 state.focusRequester.requestFocus()
             },
@@ -1164,33 +1210,37 @@ internal fun BossAppDialogs(state: BossAppState) {
                         path = projectPath,
                     )
                 state.showCloneProjectDialog = false
-                // Check if a project is already open
-                if (selectedProject.path.isNotEmpty()) {
-                    // Show dialog to choose between current window or new window
-                    state.projectToOpen = project
-                } else {
-                    // No project open, directly open in current window
-                    selectProjectInWindow(windowProjectState, project)
-                    state.focusRequester.requestFocus()
-                }
+                requestProjectOpen(state, windowProjectState, project)
             },
         )
     }
 
-    // Project open mode dialog (for cloned projects and other project opening flows)
+    // "Where should this project open?" - the ONE place every host way of opening a project asks
+    // it. See ProjectOpenRequests, which carries the requests raised outside this composable.
     state.projectToOpen?.let { project ->
         ProjectOpenModeDialog(
             project = project,
             onDismiss = {
                 state.projectToOpen = null
+                state.projectToOpenShowsCodebase = false
                 state.focusRequester.requestFocus()
             },
-            onOpenInCurrentWindow = { selectedProj ->
-                selectProjectInWindow(windowProjectState, selectedProj)
+            onOpenInThisSpace = { selectedProj ->
+                placeProjectHere(state, windowProjectState, selectedProj)
+                if (state.projectToOpenShowsCodebase) state.draggablePanelComponent.setPanelVisible(left.top, true)
                 state.projectToOpen = null
+                state.projectToOpenShowsCodebase = false
+                state.focusRequester.requestFocus()
+            },
+            onOpenInNewSpace = { selectedProj ->
+                state.pendingWorkspacePrompt =
+                    SpacePrompt(selectedProj, placeOnPick = true, showCodebase = state.projectToOpenShowsCodebase)
+                state.projectToOpen = null
+                state.projectToOpenShowsCodebase = false
                 state.focusRequester.requestFocus()
             },
             onOpenInNewWindow = { selectedProj ->
+                state.projectToOpenShowsCodebase = false
                 // Create new window with the project - each window has independent project state
                 WindowOperations.createNewWindowWithProject(selectedProj)
                 state.projectToOpen = null
@@ -1369,5 +1419,48 @@ private fun HtmlFilePrompt(state: BossAppState) {
                 },
             )
         }
+    }
+}
+
+/**
+ * A person asked to open [project] in this window: ask where, or - when the default-Space setting
+ * says not to ask - place it straight away and let the project-selection effect apply what the
+ * setting names (None keeps the layout, a layout id applies that layout).
+ *
+ * Ask is the default, and it is the three-way dialog. The other two exist so someone who set a
+ * layout keeps the one-step open they configured, rather than being asked and then having to find
+ * that layout again under New Space.
+ */
+internal fun requestProjectOpen(
+    state: BossAppState,
+    windowProjectState: WindowProjectState,
+    project: Project,
+    showCodebase: Boolean = false,
+) {
+    if (WorkspaceSettingsManager.currentSettings.value.resolveOnProjectSelection() is ProjectSelectionWorkspace.Ask) {
+        state.projectToOpen = project
+        state.projectToOpenShowsCodebase = showCodebase
+    } else {
+        selectProjectInWindow(windowProjectState, project)
+        if (showCodebase) state.draggablePanelComponent.setPanelVisible(left.top, true)
+    }
+}
+
+/**
+ * Give this window [project], after a person answered "where" with this window.
+ *
+ * [BossAppState.answeredProjectPath] is set BEFORE the selection so the project-selection effect,
+ * which observes it a frame later, knows the question was already answered. Not set when the
+ * project is already the selected one: the path does not change, the effect never runs, and a
+ * recorded path would then wrongly swallow a later selection of it.
+ */
+private fun placeProjectHere(
+    state: BossAppState,
+    windowProjectState: WindowProjectState,
+    project: Project,
+) {
+    if (windowProjectState.selectedProject.value.path != project.path) {
+        state.answeredProjectPath = project.path
+        selectProjectInWindow(windowProjectState, project)
     }
 }

@@ -1,5 +1,6 @@
 package ai.rever.boss.ipc.services
 
+import ai.rever.boss.ipc.IpcLogText
 import ai.rever.boss.ipc.auth.IpcCall
 import ai.rever.boss.ipc.auth.ProcessAuthority
 import ai.rever.boss.ipc.proto.*
@@ -23,6 +24,7 @@ import java.util.concurrent.atomic.AtomicReference
 /** Signature of the host-wired broker that invokes a registered process's capability. */
 private typealias CapabilityBroker = suspend (InvokeCapabilityRequest) -> InvokeCapabilityResponse
 
+@Suppress("TooManyFunctions") // registration, heartbeat, status, shutdown and mediation share one process table.
 class KernelServiceImpl(
     private val onProcessRegistered: suspend (String, ProcessManifest, String) -> Unit = { _, _, _ -> },
     private val onShutdownRequested: suspend (String, Boolean) -> Boolean = { _, _ -> true },
@@ -49,11 +51,13 @@ class KernelServiceImpl(
         val caller = IpcCall.requireOwnProcess(processId)
         IpcCall.requirePermission(caller.expectedAddress != null && request.ipcAddress == caller.expectedAddress)
 
+        // The display name is free text from the child's own manifest: neutralized so a hostile
+        // name cannot forge kernel log records. The manifest the registry stores is untouched.
         logger.info(
             "Process registering: id={}, type={}, name={}, ipc={}",
             processId,
             manifest.processType,
-            manifest.displayName,
+            IpcLogText.neutralize(manifest.displayName),
             request.ipcAddress,
         )
 
@@ -120,25 +124,91 @@ class KernelServiceImpl(
     override suspend fun requestShutdown(request: ShutdownRequest): ShutdownResponse {
         val processId = request.processId
         IpcCall.requireProcessControl(processId)
-        logger.info("Shutdown requested for process: id={}, force={}", processId, request.force)
+        // A supervisor may name any target, so the id that reaches the log is caller-supplied text.
+        logger.info(
+            "Shutdown requested for process: id={}, force={}",
+            IpcLogText.neutralize(processId),
+            request.force,
+        )
 
         val success =
             try {
                 onShutdownRequested(processId, request.force)
             } catch (e: Exception) {
-                logger.error("Error shutting down process {}", processId, e)
+                logger.error("Error shutting down process {}", IpcLogText.neutralize(processId), e)
                 false
             }
 
         if (success) {
-            registeredProcesses.remove(processId)
-            lastHeartbeats.remove(processId)
+            evictProcess(processId)
         }
 
         return ShutdownResponse
             .newBuilder()
             .setSuccess(success)
             .build()
+    }
+
+    /**
+     * Deregister a process that died without a clean shutdown - the crash path the kernel's
+     * failure handling reports on the host side (KernelBootstrap.handleFailure).
+     *
+     * Registration is otherwise removed only on a successful [requestShutdown], so a crashed
+     * id would stay in the tables for the rest of the session: [getProcessStatus] and
+     * [listProcesses] keep stamping it RUNNING and [registerProcess] keeps handing its stale
+     * [RegisteredProcessInfo.ipcAddress] to every later child. Evicting here keeps
+     * "registered" equivalent to "live" for this table.
+     *
+     * Call before spawning a replacement: a respawn re-registers the same id, and evicting
+     * after that would drop the live child's entries instead of the dead one's.
+     *
+     * [registeredBefore] makes the eviction compare-and-remove (#1612): only an entry registered
+     * before that instant is dropped. The failure path passes the moment the death was observed,
+     * so a replacement that registered after it - for instance while a duplicate report of the
+     * same death was still being handled - keeps its registration. Registration time is the
+     * identity that works here: the ipcAddress is derived from the process type and id alone, so
+     * the dead child and its replacement share it. The heartbeat entry is guarded the same way.
+     *
+     * @return true if the id was registered before [registeredBefore] and its entries were dropped.
+     */
+    fun deregisterProcess(
+        processId: String,
+        registeredBefore: Long = Long.MAX_VALUE,
+    ): Boolean {
+        val evicted = evictProcess(processId, registeredBefore)
+        if (evicted) {
+            logger.info("Deregistered process after failure: id={}", processId)
+        }
+        return evicted
+    }
+
+    /**
+     * Single eviction site for both deregistration paths: the clean [requestShutdown] flow
+     * and the crash path via [deregisterProcess].
+     *
+     * Compare-and-remove on [registeredBefore] (#1612): only a registration older than it is
+     * dropped, and only a heartbeat older than it. The default, [Long.MAX_VALUE], drops both
+     * unconditionally - [requestShutdown]'s behaviour, unchanged. The heartbeat is guarded on its
+     * own rather than only after an eviction because [heartbeat] records a timestamp for any
+     * authenticated process, registered or not, and the shutdown path has always cleared it.
+     *
+     * @return true if a registration was dropped.
+     */
+    private fun evictProcess(
+        processId: String,
+        registeredBefore: Long = Long.MAX_VALUE,
+    ): Boolean {
+        var evicted = false
+        registeredProcesses.computeIfPresent(processId) { _, info ->
+            if (info.registeredAt < registeredBefore) {
+                evicted = true
+                null
+            } else {
+                info
+            }
+        }
+        lastHeartbeats.computeIfPresent(processId) { _, last -> if (last < registeredBefore) null else last }
+        return evicted
     }
 
     override suspend fun getProcessStatus(request: ProcessStatusRequest): ProcessStatusResponse {

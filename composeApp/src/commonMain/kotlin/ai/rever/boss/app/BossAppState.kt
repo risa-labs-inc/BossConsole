@@ -118,6 +118,13 @@ internal class BossAppState(
     var showNewProjectDialog by mutableStateOf(false)
     var showCloneProjectDialog by mutableStateOf(false)
     var projectToOpen by mutableStateOf<Project?>(null)
+
+    /**
+     * Whether answering [projectToOpen] should also show the CodeBase panel: File > Open Project's
+     * folder picker always has. Held until the project lands in THIS window, so choosing New
+     * Window or dismissing leaves no panel open for a project this window never got.
+     */
+    var projectToOpenShowsCodebase by mutableStateOf(false)
     var showShortcutHelpDialog by mutableStateOf(false)
 
     /**
@@ -127,7 +134,7 @@ internal class BossAppState(
      * Null when nothing is pending. Window-scoped, like the project it follows from:
      * project selection is per window, so two windows can be asked independently.
      */
-    var pendingWorkspacePrompt by mutableStateOf<String?>(null)
+    var pendingWorkspacePrompt by mutableStateOf<SpacePrompt?>(null)
 
     /** Settings window visibility, deep-link section and raise-requests. See [SettingsWindowState]. */
     val settingsWindow = SettingsWindowState()
@@ -190,6 +197,7 @@ internal class BossAppState(
 
     // Keep every external request until the operator answers its own prompt.
     val terminalCommandApprovals = TerminalCommandApprovalQueue()
+    val urlOpenApprovals = UrlOpenApprovalQueue()
 
     // A Space an external request asked to load, held until the operator sees the terminal
     // commands it would start. One at a time: a second arrival is refused, not queued.
@@ -235,6 +243,8 @@ internal class BossAppState(
     // Track if workspace restoration has completed (for first window only)
     // New windows don't restore Last Session, so start as complete
     var workspaceRestorationComplete by mutableStateOf(!isFirstWindow)
+    var workspaceRestorationStarted by mutableStateOf(false)
+    var sessionRestoreRefused by mutableStateOf(false)
 
     /**
      * The project path startup restored from Last Session, if any.
@@ -250,6 +260,17 @@ internal class BossAppState(
      * later, deliberate re-selection of the same project is a real choice and is prompted.
      */
     var restoredProjectPath by mutableStateOf<String?>(null)
+
+    /**
+     * The project a person just placed with an explicit answer to "where should this open?" -
+     * This Space, New Space, or a new window arriving with it.
+     *
+     * The project-selection effect skips it once, like [restoredProjectPath], because the answer
+     * already said what happens to the layout: This Space keeps it, New Space raises the Space
+     * list itself, and a new window opens on its own fresh Space. Consulting the default-Space
+     * setting on top would apply a layout or prompt a second time.
+     */
+    var answeredProjectPath by mutableStateOf<String?>(null)
 
     // Track if handlers have been marked ready (prevents race condition between workspace load and timeout)
     // Uses atomic flag to ensure handler marking happens exactly once
@@ -306,6 +327,20 @@ internal class PendingSpaceLoad(
 )
 
 /**
+ * A URL held back for the operator's confirmation.
+ *
+ * BOSS reaches this state when a `boss://url?url=` request arrives over a path
+ * any program can drive, rather than from the operator's own `boss` invocation
+ * (see `DeepLinkOrigin`). The URL is carried verbatim so the prompt shows
+ * exactly what a tab would open. Keep identity equality: two requests for the
+ * same URL must still get separate arming intervals and consume callbacks.
+ */
+internal class PendingUrlOpen(
+    val url: String,
+    val title: String,
+)
+
+/**
  * Builds the window's [BossAppState]: the component graph is remembered against
  * this window's composition, per-window states come from their global registries.
  */
@@ -335,6 +370,13 @@ internal fun ComponentContext.rememberBossAppState(
         remember(splitViewState, windowId) {
             SplitViewOperationsImpl(splitViewState, windowId)
         }
+    // Release its Main-dispatched coroutine scope when this window's composition leaves, so a
+    // closed window does not leak the scope or any in-flight operation.
+    DisposableEffect(splitViewOperations) {
+        onDispose {
+            splitViewOperations.dispose()
+        }
+    }
 
     // Create workspace data provider wrapper for plugins
     val workspaceDataProvider =

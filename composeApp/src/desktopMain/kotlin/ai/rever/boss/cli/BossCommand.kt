@@ -673,6 +673,7 @@ fun createBossCLI(): BossCommand =
             BossPackApplyCommand(),
             BossPackStatusCommand(),
         ),
+        BossProjectDetectCommand(),
         BossCompletionCommand(),
         BossPluginCommand().subcommands(
             BossPluginInitCommand(),

@@ -25,8 +25,8 @@ data class EngineDownloadCandidate(
 )
 
 /**
- * Published engine versions, newest first, plus which catalogs failed to answer —
- * so the UI can say the list may be incomplete instead of silently shrinking.
+ * Installable engine versions, newest first. Every listed version has a catalog
+ * checksum for the current platform's archive.
  */
 data class EngineVersionListing(
     val versions: List<String>,
@@ -115,53 +115,35 @@ class ChromiumReleaseResolver(
                 // two sources); a genuine build difference between the sources
                 // must now fail loudly and fall through to the next candidate,
                 // never install unverified. When the catalog lookup itself
-                // failed there is no hash to verify with and the backup stays
-                // unverified, exactly as before.
+                // failed there is no hash and the backup cannot be installed.
                 sha256 = catalogSha256,
             )
         return candidates
     }
 
     /**
-     * All published engine versions merged across both sources (Supabase only has
-     * rows published after the Supabase path shipped; GitHub has the full history).
-     * Throws only if both sources fail; a single-source failure is reported via
-     * [EngineVersionListing.failedSources].
+     * Only versions with a catalog checksum for [archiveName] are installable.
+     * Older GitHub-only releases remain available at their source, but offering
+     * them here would download a full archive and inevitably refuse to install it.
      */
-    suspend fun availableVersions(): EngineVersionListing {
+    suspend fun availableVersions(archiveName: String): EngineVersionListing {
         val versions = linkedSetOf<String>()
-        val failedSources = mutableListOf<String>()
-        var lastError: Exception? = null
-
         try {
-            supabaseSource.listReleases().forEach { versions += it.tag_name.removePrefix("v") }
+            supabaseSource.listReleases().forEach { release ->
+                if (release.assets.any { it.name == archiveName && !it.sha256.isNullOrBlank() }) {
+                    versions += release.tag_name.removePrefix("v")
+                }
+            }
         } catch (e: Exception) {
-            failedSources += supabaseSource.name
-            lastError = e
             logger.warn(LogCategory.BROWSER, "Failed to list engine versions from Supabase", error = e)
-        }
-
-        try {
-            gitHubSource
-                .listReleases()
-                .filter { it.tag_name.startsWith(GITHUB_TAG_PREFIX) }
-                .forEach { versions += it.tag_name.removePrefix(GITHUB_TAG_PREFIX) }
-        } catch (e: Exception) {
-            failedSources += gitHubSource.name
-            lastError = e
-            logger.warn(LogCategory.BROWSER, "Failed to list engine versions from GitHub", error = e)
-        }
-
-        if (failedSources.size == 2) {
             throw IllegalStateException(
-                "Could not list engine versions from any source: ${lastError?.message}",
-                lastError,
+                "Could not list checksum-verified engine versions: ${e.message}",
+                e,
             )
         }
 
         return EngineVersionListing(
             versions = versions.sortedWith(compareByDescending(versionComparator(), ::versionKey)),
-            failedSources = failedSources,
         )
     }
 
@@ -263,7 +245,8 @@ object ChromiumReleaseSource {
         cachedVersions?.let { (fetchedAt, listing) ->
             if (System.currentTimeMillis() - fetchedAt < VERSIONS_CACHE_TTL_MS) return listing
         }
-        val listing = resolver.availableVersions()
+        val archiveName = "boss-chromium-${ChromiumAutoDownloader.detectPlatform()}.zip"
+        val listing = resolver.availableVersions(archiveName)
         // Don't cache partial results: a retry should get another chance at the failed source.
         if (listing.failedSources.isEmpty()) {
             cachedVersions = System.currentTimeMillis() to listing

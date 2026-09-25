@@ -1,6 +1,5 @@
 package ai.rever.boss.plugin.browser
 
-import ai.rever.boss.cache.FaviconCache
 import ai.rever.boss.components.overlays.OverlayCorner
 import ai.rever.boss.components.overlays.overlayCornerIsHeavyweight
 import ai.rever.boss.components.plugin.TabAudioSource
@@ -37,7 +36,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.layout.boundsInWindow
@@ -1077,12 +1075,34 @@ internal class BrowserHandleImpl(
             )
         }
 
+    // Same hazard the executors above are built around: FaviconChanged lands on the JxBrowser
+    // callback thread, and the old handler did the BGRA→ARGB loop, bitmap conversion and the
+    // FaviconCache PNG encode right there - a rapid icon swap or a several-thousand-pixel icon
+    // stalled every navigation and menu callback behind it. The pipeline owns the cap and the
+    // keep-latest coalescing; this executor just gives that work its own daemon thread.
+    private val faviconExecutor =
+        DrainingBrowserExecutor("boss-favicon-$id")
+
+    private val faviconPipeline =
+        BrowserFaviconPipeline(
+            executor = faviconExecutor,
+            urlProvider = {
+                // The field read, not browser.url(): the cache key wants the committed page, and a
+                // synchronous round trip for it on this worker could still park behind a wedged
+                // renderer. The fallback covers only the window before the first navigation.
+                lastCommittedMainFrameUrl.ifBlank { runCatching { browser.url() }.getOrDefault("") }
+            },
+            notifyListeners = ::notifyFaviconListeners,
+            warn = { message, data -> logger.warn(LogCategory.BROWSER, message, data) },
+        )
+
     private val ownedExecutors =
         listOf(
             handleCall.executor,
             frameProbeExecutor,
             contextMenuExecutor,
             pageInjectExecutor,
+            faviconExecutor,
         )
 
     private val nativeDisposal =
@@ -1589,56 +1609,21 @@ internal class BrowserHandleImpl(
                 }
             }
 
-        // Favicon changed - save to cache and notify listeners with cache key
+        // Favicon changed - hand the icon to the worker pipeline and return. The callback only
+        // reads dimensions and the pixel array; conversion, the cache write and listener fan-out
+        // all run on faviconExecutor (see faviconPipeline for cap and coalescing).
         subscriptions +=
             browser.on(FaviconChanged::class.java) { event ->
                 try {
                     val favicon = event.favicon()
                     if (favicon == null || favicon.size().isEmpty) {
-                        // No favicon, notify with null
-                        faviconListeners.forEach { listener ->
-                            try {
-                                listener(null)
-                            } catch (e: Exception) {
-                                logger.warn(LogCategory.BROWSER, "Favicon listener threw exception", error = e)
-                            }
-                        }
+                        faviconPipeline.submit(0, 0) { null }
                     } else {
-                        // Convert JxBrowser Bitmap to AWT BufferedImage then to Compose ImageBitmap
                         val size = favicon.size()
-                        val width = size.width()
-                        val height = size.height()
-
-                        val bufferedImage = java.awt.image.BufferedImage(width, height, java.awt.image.BufferedImage.TYPE_INT_ARGB)
-                        val pixels = favicon.pixels()
-
-                        // Convert BGRA bytes to ARGB integers and set pixels
-                        var pixelIndex = 0
-                        for (y in 0 until height) {
-                            for (x in 0 until width) {
-                                val b = pixels[pixelIndex++].toInt() and 0xFF
-                                val g = pixels[pixelIndex++].toInt() and 0xFF
-                                val r = pixels[pixelIndex++].toInt() and 0xFF
-                                val a = pixels[pixelIndex++].toInt() and 0xFF
-                                val argb = (a shl 24) or (r shl 16) or (g shl 8) or b
-                                bufferedImage.setRGB(x, y, argb)
-                            }
-                        }
-
-                        val imageBitmap = bufferedImage.toComposeImageBitmap()
-                        val currentUrl = browser.url()
-                        val cacheKey = FaviconCache.saveFavicon(currentUrl, imageBitmap)
-
-                        faviconListeners.forEach { listener ->
-                            try {
-                                listener(cacheKey)
-                            } catch (e: Exception) {
-                                logger.warn(LogCategory.BROWSER, "Favicon listener threw exception", error = e)
-                            }
-                        }
+                        faviconPipeline.submit(size.width(), size.height()) { favicon.pixels() }
                     }
                 } catch (e: Exception) {
-                    logger.warn(LogCategory.BROWSER, "Error processing favicon", error = e)
+                    logger.warn(LogCategory.BROWSER, "Error queueing favicon", error = e)
                 }
             }
 
@@ -2840,6 +2825,18 @@ internal class BrowserHandleImpl(
         faviconListeners.remove(listener)
     }
 
+    // Runs on the favicon worker, not the JxBrowser callback thread - same non-UI dispatch class
+    // the inline version used, so listeners see no thread-contract change.
+    private fun notifyFaviconListeners(cacheKey: String?) {
+        faviconListeners.forEach { listener ->
+            try {
+                listener(cacheKey)
+            } catch (e: Exception) {
+                logger.warn(LogCategory.BROWSER, "Favicon listener threw exception", error = e)
+            }
+        }
+    }
+
     override fun goBack() {
         if (!canGoBack()) return
         syncCall("goBack", Unit) {
@@ -3177,9 +3174,7 @@ internal class BrowserHandleImpl(
                                 )
                                 return@launch
                             }
-                            // Lets FluckEngine close this tab again if a download starts right
-                            // after it opens - a redirect to a file looks like a page until it
-                            // does not. Also the burst cap: a window.open storm would otherwise
+                            // Admission cap: a window.open storm would otherwise
                             // adopt every popup into a real tab, so past the cap the tab is
                             // dropped - the popup browser above is already closed either way.
                             if (!FluckEngine.notifyTabOpened()) {

@@ -18,15 +18,21 @@ import ai.rever.boss.components.sidebar.SidebarVisibilitySettings
 import ai.rever.boss.components.sidebar.SidebarVisibilitySettingsManager
 import ai.rever.boss.components.window_panel.NavigationDirection
 import ai.rever.boss.components.window_panel.SplitOrientation
+import ai.rever.boss.components.window_panel.SplitViewStateRegistry
 import ai.rever.boss.components.wizard.plugin.PluginWizardIntegration
+import ai.rever.boss.components.workspaces.LayoutWorkspace
+import ai.rever.boss.components.workspaces.SaveInFlightLatch
 import ai.rever.boss.components.workspaces.applyWorkspace
 import ai.rever.boss.components.workspaces.extractCurrentWorkspace
+import ai.rever.boss.components.workspaces.spaceSnapshotForSave
 import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.focusmode.FocusModeSettingsManager
 import ai.rever.boss.plugin.browser.ActiveBrowserRegistry
 import ai.rever.boss.plugin.tab.terminal.TerminalTabInfo
 import ai.rever.boss.plugin.tab.terminal.TerminalTabType
 import ai.rever.boss.project.DefaultWorkingDirectory
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.window.MenuActionsHandler
 import ai.rever.boss.window.WindowAppearanceSettings
 import ai.rever.boss.window.WindowAppearanceSettingsManager
@@ -43,7 +49,6 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.random.Random
-import kotlin.time.Clock
 
 /**
  * [settings] with the strip holding the customize button switched back on, [onLeft] saying which.
@@ -68,6 +73,8 @@ internal fun withCustomizeTargetRevealed(
     } else {
         settings.copy(showRightStrip = true)
     }
+
+private val menuActionLogger = BossLogger.forComponent("BossAppMenuActionEffects")
 
 /**
  * Listeners translating [MenuActionsHandler] menu-bar events (File/View/Plugin
@@ -330,11 +337,12 @@ internal fun BossAppMenuActionEffects(
         MenuActionsHandler.applyWorkspaceEvents
             .onEach { (eventWindowId, workspace) ->
                 if (eventWindowId == windowId) {
-                    // Load workspace into manager
-                    workspaceManager.loadWorkspace(workspace)
-
-                    // Apply workspace to UI
-                    applyWorkspace(workspace, splitViewState, windowProjectState)
+                    // Apply first: a refused apply keeps what is on screen, and the manager
+                    // entering a Space that was never applied would leave the two disagreeing
+                    // about what this window shows.
+                    if (applyWorkspace(workspace, splitViewState, windowProjectState)) {
+                        workspaceManager.loadWorkspace(workspace)
+                    }
                 }
             }.launchIn(this)
     }
@@ -544,35 +552,90 @@ internal fun BossAppMenuActionEffects(
 
     // Handle Save Workspace menu events
     LaunchedEffect(windowId) {
+        // A second event while the first save is still writing must not start another one:
+        // until `onSaved` rebinds the window's id, the window has no active Space, so a re-entry
+        // would mint a second Space with the same derived name. The latch lives in the effect,
+        // not the manager, because only the caller knows the event is a duplicate of its own.
+        // `saveCurrentWorkspace` returns before the write settles, so the latch clears from the
+        // callbacks, not after the call - either of them always fires for a finished write.
+        // A press that arrives while one is in flight is not necessarily a duplicate - the
+        // layout may have changed between the presses - so it is not dropped silently: the
+        // latch remembers it and re-runs the save once the in-flight one settles. At most one
+        // such re-run happens per settle, and the re-run reads the LATEST layout, so nothing
+        // typed in between the presses is lost.
+        val saveLatch = SaveInFlightLatch()
+
+        fun reportSaved(savedWorkspace: LayoutWorkspace) {
+            // The write finished long after the window acted; rebind only if this is
+            // still the state the window registered.
+            if (SplitViewStateRegistry.getState(windowId) === splitViewState) {
+                splitViewState.rebindCurrentWorkspace(savedWorkspace.id)
+                StatusMessageManager.showMessage("Space Saved")
+            } else {
+                menuActionLogger.debug(
+                    LogCategory.WORKSPACE,
+                    "Save finished after its window deregistered; the rebind is dropped",
+                    mapOf("workspaceId" to savedWorkspace.id),
+                )
+            }
+        }
+
+        fun runSave() {
+            val liveLayout =
+                extractCurrentWorkspace(
+                    splitViewState,
+                    windowProjectState.selectedProject.value.path,
+                )
+            val snapshot =
+                spaceSnapshotForSave(
+                    activeWorkspaceId = splitViewState.currentWorkspaceId,
+                    liveLayout = liveLayout,
+                    knownSpaces = workspaceManager.workspaces.value,
+                    processGlobalCurrent = workspaceManager.currentWorkspace.value,
+                )
+            workspaceManager.updateCurrentWorkspace(snapshot)
+            saveLatch.begin()
+            workspaceManager.saveCurrentWorkspace(
+                name = null,
+                onSaved = { savedWorkspace ->
+                    try {
+                        reportSaved(savedWorkspace)
+                    } finally {
+                        // Always release the latch; rerun only while this window still owns the state.
+                        saveLatch.settle {
+                            if (SplitViewStateRegistry.getState(windowId) === splitViewState) {
+                                runSave()
+                            } else {
+                                menuActionLogger.debug(
+                                    LogCategory.WORKSPACE,
+                                    "Queued save dropped after its window deregistered",
+                                )
+                            }
+                        }
+                    }
+                },
+                onFailed = { failedName ->
+                    try {
+                        StatusMessageManager.showMessage("Could not save \"$failedName\"")
+                    } finally {
+                        saveLatch.settle {
+                            if (SplitViewStateRegistry.getState(windowId) === splitViewState) {
+                                runSave()
+                            } else {
+                                menuActionLogger.debug(
+                                    LogCategory.WORKSPACE,
+                                    "Queued save dropped after its window deregistered",
+                                )
+                            }
+                        }
+                    }
+                },
+            )
+        }
         MenuActionsHandler.saveWorkspaceEvents
             .onEach { eventWindowId ->
-                if (eventWindowId == windowId) {
-                    val currentConfig = workspaceManager.currentWorkspace.value
-                    if (currentConfig != null) {
-                        val currentLayout = extractCurrentWorkspace(splitViewState, windowProjectState.selectedProject.value.path)
-                        val updatedConfig =
-                            currentConfig.copy(
-                                layout = currentLayout.layout,
-                                timestamp = Clock.System.now().toEpochMilliseconds(),
-                            )
-                        workspaceManager.updateCurrentWorkspace(updatedConfig)
-                        workspaceManager.saveCurrentWorkspace()
-                        // Nothing marks it saved here. The unsaved flag is DERIVED, from the live
-                        // layout against the copy in `workspaceManager.workspaces` - which this
-                        // write replaces - so the affordance turns itself off when the bytes land
-                        // rather than when the button was pressed. See BossAppStartupEffects.
-                        StatusMessageManager.showMessage("Space Saved")
-                    } else {
-                        val currentLayout = extractCurrentWorkspace(splitViewState, windowProjectState.selectedProject.value.path)
-                        val newConfig =
-                            currentLayout.copy(
-                                name = "Workspace ${Clock.System.now().toEpochMilliseconds() / 1000}",
-                                description = "Saved workspace",
-                            )
-                        workspaceManager.updateCurrentWorkspace(newConfig)
-                        workspaceManager.saveCurrentWorkspace()
-                        StatusMessageManager.showMessage("Space Saved")
-                    }
+                if (eventWindowId == windowId && saveLatch.press()) {
+                    runSave()
                 }
             }.launchIn(this)
     }

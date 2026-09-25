@@ -36,6 +36,15 @@ expect object CommandProcessor {
      * - Windows PowerShell: single-quote literal (embedded `'` → `''`)
      */
     fun quotePath(path: String): String
+
+    /** Escape a value already inside a template's single- or double-quote region. */
+    fun escapeInsideQuote(
+        value: String,
+        quote: Char,
+    ): String
+
+    /** The current shell's escape character, for parsing template quote regions. */
+    fun quoteEscapeCharacter(): Char
 }
 
 /**
@@ -70,4 +79,36 @@ internal object ShellPathQuoting {
         }
 
     private const val POWERSHELL_SINGLE_QUOTES = "'\u2018\u2019\u201A\u201B"
+
+    fun posixInsideQuote(
+        value: String,
+        quote: Char,
+    ): String =
+        if (quote == '\'') {
+            value.replace("'", "'\\''")
+        } else {
+            value
+                .replace("\\", "\\\\")
+                .replace("$", "\\$")
+                .replace("`", "\\`")
+                .replace("\"", "\\\"")
+        }
+
+    fun powershellInsideQuote(
+        value: String,
+        quote: Char,
+    ): String =
+        if (quote == '\'') {
+            buildString(value.length) {
+                for (character in value) {
+                    append(character)
+                    if (character in POWERSHELL_SINGLE_QUOTES) append(character)
+                }
+            }
+        } else {
+            value
+                .replace("`", "``")
+                .replace("$", "`$")
+                .replace("\"", "`\"")
+        }
 }

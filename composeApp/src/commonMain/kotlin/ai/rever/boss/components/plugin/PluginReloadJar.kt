@@ -28,7 +28,8 @@ package ai.rever.boss.components.plugin
  * Documented trade-off, not a defect: when both known candidates exist, the persisted
  * `installed.json` record CAN redirect a reload away from the running jar while that jar is still
  * on disk — the record's manifest version being higher wins, same directory, same user, no
- * privilege boundary crossed.
+ * privilege boundary crossed. Callers confine the persisted candidate to the managed plugin
+ * roots first (see [isContainedPath]), so the redirect can only land inside them.
  *
  * Returning null rather than guessing lets the caller keep the plugin running instead of unloading
  * it for a load that cannot work.

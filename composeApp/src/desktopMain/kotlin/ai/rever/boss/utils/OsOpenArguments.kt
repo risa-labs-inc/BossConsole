@@ -49,6 +49,7 @@ internal object OsOpenArguments {
             "pack",
             "completion",
             "plugin",
+            "project-detect",
         )
 
     /** What a path on disk is, for deciding which deep link to build. */

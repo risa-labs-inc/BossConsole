@@ -31,7 +31,8 @@ data class WorkspaceSettings(
 ) {
     companion object {
         /**
-         * Never apply a workspace on its own. The window keeps whatever is open.
+         * Never apply a workspace on its own, and never ask: a project opens in the Space on
+         * screen, which keeps whatever is open.
          *
          * Distinct from [ASK_WORKSPACE_ID], and kept working exactly as it always has:
          * someone who set "None" asked not to be interrupted, and turning that into a
@@ -40,7 +41,8 @@ data class WorkspaceSettings(
         const val NO_WORKSPACE_ID = "none"
 
         /**
-         * Start with no workspace, and ask which one to open when a project is selected.
+         * Ask where each project a person opens goes: this Space, a new Space, or a new window
+         * (`ProjectOpenModeDialog`). For a project a plugin selects, ask which Space to open.
          *
          * The default on every platform. BOSS used to come up on a layout nobody chose -
          * Claude Code everywhere, browser-only on Windows - so a terminal running an agent,

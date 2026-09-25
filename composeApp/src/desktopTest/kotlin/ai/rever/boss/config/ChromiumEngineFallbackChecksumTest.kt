@@ -224,13 +224,16 @@ class ChromiumEngineFallbackChecksumTest {
     }
 
     @Test
-    fun `a backup body stays unverified when the catalog row carries no sha256`() {
-        // Rows published before the hash column — and lookups that fail, pinned
-        // in ChromiumReleaseSourceTest — have no hash to describe the archive
-        // with. Refusing the backup then would leave users unable to install
-        // an engine the catalog cannot vouch for, so the download proceeds
-        // unverified exactly as before; that is the pinned boundary of this
-        // fix, the same call #798 made for hash-less catalog rows.
+    fun `a backup body with no catalog checksum to pin it is refused fail closed`() {
+        // Rows published before the hash column, and lookups that fail (pinned
+        // in ChromiumReleaseSourceTest), have no hash to describe the archive
+        // with. The fallback fix let the backup proceed unverified and pinned
+        // that as its boundary; the engine integrity gate now refuses instead,
+        // mirroring the plugin update jar identity vet. The archive is
+        // extracted into the engine directory and its binaries are later
+        // EXECUTED, so when nothing pins its bytes it must not install: the
+        // attempt fails before network access and can be retried once the
+        // catalog can vouch for the archive again.
         servedBytes = goodBytes
         val catalog =
             FakeCatalogSource(
@@ -242,9 +245,12 @@ class ChromiumEngineFallbackChecksumTest {
 
         val result = installViaBackupChain(catalog)
 
-        assertTrue(result.isSuccess, "a hash-less catalog row must still install via the backup")
-        assertEquals(VERSION, File(engineDir, "version.txt").readText())
-        assertEquals(listOf(BACKUP_PATH), requestedPaths)
+        assertTrue(result.isFailure, "a hash-less catalog row must not install unverified bytes")
+        assertTrue(
+            result.exceptionOrNull()?.message?.contains("no catalog checksum") == true,
+            "the refusal must say nothing pins the archive, got: ${result.exceptionOrNull()?.message}",
+        )
+        assertEquals(emptyList<String>(), requestedPaths, "a hashless backup must not be downloaded")
     }
 
     @Test

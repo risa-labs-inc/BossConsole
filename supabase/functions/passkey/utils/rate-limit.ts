@@ -89,6 +89,11 @@ export function clientKey(headers: Headers): string {
     const value = headers.get(name)?.trim()
     if (value) return value
   }
-  const first = headers.get("x-forwarded-for")?.split(",")[0].trim()
-  return first || "unknown"
+  // Leftmost XFF is the caller's own claim - anyone can write a victim's address there
+  // and spend the victim's budget (a targeted sign-in lockout against /auth/complete).
+  // The rightmost entry is the one the gateway appended for the connection it actually
+  // accepted, the only hop a caller cannot forge.
+  const chain = headers.get("x-forwarded-for")?.split(",")
+  const last = chain?.[chain.length - 1]?.trim()
+  return last || "unknown"
 }

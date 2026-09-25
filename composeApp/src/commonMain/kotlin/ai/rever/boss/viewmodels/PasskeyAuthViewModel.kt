@@ -9,6 +9,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -18,9 +19,11 @@ import kotlinx.coroutines.launch
  * Passkey authentication view model handling WebAuthn flows
  * Responsible for: passkey authentication, registration, cross-device authentication
  */
-class PasskeyAuthViewModel {
+class PasskeyAuthViewModel(
+    // Default preserves production behavior; injectable so a test can assert the scope is cancelled.
+    private val viewModelScope: CoroutineScope = CoroutineScope(Dispatchers.Main + SupervisorJob()),
+) {
     private val logger = BossLogger.forComponent("PasskeyAuthViewModel")
-    private val viewModelScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     // Store authentication job reference for cancellation
     private var authJob: Job? = null
@@ -247,5 +250,13 @@ class PasskeyAuthViewModel {
         _showCrossDeviceQR.value = false
         _crossDeviceQRUrl.value = null
         _crossDeviceChallenge.value = null
+    }
+
+    /**
+     * Cancel the view-model scope so any in-flight passkey/cross-device work cannot outlive the
+     * auth screen. Call from the owning composable's onDispose.
+     */
+    fun dispose() {
+        viewModelScope.cancel()
     }
 }

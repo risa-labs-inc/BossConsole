@@ -207,6 +207,8 @@ fun main(args: Array<String>) {
 
     // -------------------------------------------------------------------------
     // Phase 2: Logging initialization
+    // File logging is opt-in through BOSS_LOG_FILE / boss.log.file; a relative path
+    // resolves against the working directory. Callers remain responsible for redaction.
     // -------------------------------------------------------------------------
     BossLogger.configureFromEnvironment()
     BossLogger.initialize() // Register shutdown hook for log flushing

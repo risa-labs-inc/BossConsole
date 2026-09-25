@@ -205,3 +205,83 @@ Deno.test("POST visibility still refuses a signed-out caller", async () => {
     restore()
   }
 })
+
+// ---------------------------------------------------------------------------
+// The render is rate limited
+// ---------------------------------------------------------------------------
+
+// The widening above makes this the one page in the function an anonymous reader can spend
+// database and GitHub budget on, so it carries the same brake its siblings do: 30 renders a
+// minute per client, and the refusal lands before loadPlugin/fetchReadme ever run.
+
+Deno.test("a catalogue walk is stopped, and the stop happens before the database", async () => {
+  const { stub, restore } = setup()
+  try {
+    // The whole window's budget, spent as 30 legitimate anonymous renders.
+    for (let i = 0; i < 30; i++) {
+      const response = await get(PATH)
+      assertEquals(response.status, 200, `render ${i + 1} is inside the cap`)
+    }
+    // The 31st gets the page's one refusal answer, and never reaches the RPC: the limit sits
+    // before loadPlugin/fetchReadme, which is the whole point of it.
+    const throttled = await get(PATH)
+    assertEquals(throttled.status, 404)
+    assertStringIncludes(await throttled.text(), "Not available")
+    assertEquals(stub.calls.filter((c) => c.fn === "get_plugin_with_stats_for_viewer").length, 30)
+  } finally {
+    restore()
+  }
+})
+
+Deno.test("a rate-limited reader gets the same page an invisible plugin gets", async () => {
+  // Mirrors join's "every unusable invite renders one identical page": the throttle must not be
+  // separable from the page's other refusals, or the answer itself becomes an oracle telling a
+  // script which of its plugin ids are real and being watched.
+  const { stub, restore } = setup()
+  try {
+    stub.responses.set("get_plugin_with_stats_for_viewer", [])
+    const invisible = await get(PATH)
+    for (let i = 0; i < 29; i++) await get(PATH)
+    const throttled = await get(PATH)
+    assertEquals(invisible.status, 404)
+    assertEquals(throttled.status, 404)
+    assertEquals(stripNonce(await invisible.text()), stripNonce(await throttled.text()))
+  } finally {
+    restore()
+  }
+})
+
+Deno.test("a human reader stays well inside the cap, with no session", async () => {
+  // The limiter adds friction to the walk, not an auth wall: a few renders in a row, exactly
+  // what the widening is for, still work without a cookie and still reach the RPC anonymously.
+  const { stub, restore } = setup()
+  try {
+    for (let i = 0; i < 5; i++) {
+      assertEquals((await get(PATH)).status, 200, `render ${i + 1} should render`)
+    }
+    const renders = stub.calls.filter((c) => c.fn === "get_plugin_with_stats_for_viewer")
+    assertEquals(renders.length, 5)
+    for (const call of renders) assertEquals(call.params.p_viewer_id, null)
+  } finally {
+    restore()
+  }
+})
+
+Deno.test("the cap is per client, not a global budget", async () => {
+  // Every other rate-limit test here sends header-less requests, so they all
+  // share the "unknown" bucket: a regression that dropped clientKey from the
+  // bucket key (making the cap global) would pass them all. Exhaust one
+  // identified client's budget, then prove another still renders.
+  const { restore } = setup()
+  try {
+    for (let i = 0; i < 31; i++) await get(PATH, { "x-forwarded-for": "198.51.100.7" })
+    assertEquals((await get(PATH, { "x-forwarded-for": "203.0.113.9" })).status, 200)
+  } finally {
+    restore()
+  }
+})
+
+/** Blank the per-response CSP nonce so two pages can be compared. */
+function stripNonce(html: string): string {
+  return html.replace(/nonce="[A-Za-z0-9_-]+"/g, 'nonce="N"')
+}

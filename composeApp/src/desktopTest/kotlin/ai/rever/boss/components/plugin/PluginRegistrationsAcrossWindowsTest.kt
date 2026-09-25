@@ -31,6 +31,7 @@ import ai.rever.boss.search.SearchRegistryImpl
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
+import kotlinx.coroutines.runBlocking
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -141,8 +142,10 @@ class PluginRegistrationsAcrossWindowsTest {
                 runCatching { kind.unregister(second, idFor(kind)) }
                 runCatching { kind.unregister(first, idFor(kind)) }
             }
-            runCatching { second.dispose() }
-            runCatching { first.dispose() }
+            // dispose() returns a Job now - teardown is off-thread, so join it before the
+            // next test's window can meet registrations this one was still releasing.
+            runCatching { runBlocking { second.dispose().join() } }
+            runCatching { runBlocking { first.dispose().join() } }
         }
     }
 
@@ -240,14 +243,16 @@ class PluginRegistrationsAcrossWindowsTest {
                 kind.register(second, idFor(kind), "second")
             }
 
-            second.dispose()
+            // Joined, not just launched: the release runs on dispose's background scope, and
+            // the "late" registration below is only refused once it has run.
+            runBlocking { second.dispose().join() }
             // A startup registration finishing after disposal cannot resurrect this window.
             for (kind in kinds) kind.register(second, idFor(kind), "late-second")
 
             assertEveryKind(kinds) { kind -> expect("first", kind) }
         } finally {
             for (kind in kinds) runCatching { kind.unregister(first, idFor(kind)) }
-            runCatching { first.dispose() }
+            runCatching { runBlocking { first.dispose().join() } }
         }
     }
 

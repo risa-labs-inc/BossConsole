@@ -64,7 +64,7 @@ class McpApprovalGateTest {
         }
 
     @Test
-    fun `an approval request carries the tool description, policy, and remaining timeout to the dialog`() =
+    fun `an approval request carries the tool description, policy, and remaining timeout to the dialog`(): Unit =
         runBlocking {
             val bus = McpApprovalBus(defaultTimeoutMs = 5_000L)
 
@@ -92,7 +92,7 @@ class McpApprovalGateTest {
         }
 
     @Test
-    fun `requestApproval times out and fails closed if operator does not respond`() =
+    fun `requestApproval times out and fails closed if operator does not respond`(): Unit =
         runBlocking {
             // Fast timeout of 50ms for testing
             val bus = McpApprovalBus(defaultTimeoutMs = 50L)
@@ -134,7 +134,7 @@ class McpApprovalGateTest {
         }
 
     @Test
-    fun `exceeding pending buffer capacity immediately returns Denied buffer full`() =
+    fun `exceeding pending buffer capacity immediately returns Denied buffer full`(): Unit =
         runBlocking {
             val bus = McpApprovalBus(defaultTimeoutMs = 10_000L, maxPendingRequests = 2)
 
@@ -158,7 +158,7 @@ class McpApprovalGateTest {
         }
 
     @Test
-    fun `deny all rejects exactly the visible snapshot without persisting policy`() =
+    fun `deny all rejects exactly the visible snapshot without persisting policy`(): Unit =
         runBlocking {
             val bus = McpApprovalBus(defaultTimeoutMs = 10_000L, maxPendingRequests = 4)
             val first = async { bus.requestApproval("tool_1", "provider-a", emptyMap()) }

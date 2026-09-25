@@ -1,5 +1,6 @@
 package ai.rever.boss.utils
 
+import ai.rever.boss.cli.CLICommand
 import ai.rever.boss.cli.CLISecurityValidator
 import ai.rever.boss.components.bars.horizontal.StatusMessageManager
 import ai.rever.boss.components.events.PanelEventBus
@@ -205,10 +206,12 @@ actual object DeepLinkHandler {
                         mapOf("uri" to LogSanitizer.describeUri(uri)),
                     )
 
-                    // Handle http/https URLs for default browser functionality
+                    // Handle http/https URLs for default browser functionality.
+                    // These stay direct: an OS hand-off of a plain link is the
+                    // default-browser contract, unlike a boss://url deep link.
                     if (uri.startsWith("http://") || uri.startsWith("https://")) {
                         logger.debug(LogCategory.BROWSER, "Handling as HTTP(S) URL")
-                        URLHandlerService.handleURL(uri)
+                        URLHandlerService.handleURL(uri, requiresConfirmation = false)
                     } else {
                         // Handle boss:// deep links for auth. The flow carries
                         // OS-delivered links only, and its collectors re-enter
@@ -251,9 +254,10 @@ actual object DeepLinkHandler {
                         )
 
                         // Handle http/https URLs for default browser functionality
+                        // (direct, like the macOS route above — the default-browser contract)
                         if (uri.startsWith("http://") || uri.startsWith("https://")) {
                             logger.debug(LogCategory.BROWSER, "Handling as HTTP(S) URL")
-                            URLHandlerService.handleURL(uri)
+                            URLHandlerService.handleURL(uri, requiresConfirmation = false)
                         } else {
                             // Handle boss:// deep links for auth
                             _deepLinkFlow.value = uri
@@ -277,9 +281,10 @@ actual object DeepLinkHandler {
                     logger.info(LogCategory.SYSTEM, "Received deep link", mapOf("uri" to LogSanitizer.describeUri(uri)))
 
                     // Handle http/https URLs for default browser functionality
+                    // (direct, like the macOS route — the default-browser contract)
                     if (uri.startsWith("http://") || uri.startsWith("https://")) {
                         logger.debug(LogCategory.BROWSER, "Handling as HTTP(S) URL")
-                        URLHandlerService.handleURL(uri)
+                        URLHandlerService.handleURL(uri, requiresConfirmation = false)
                     } else {
                         // Handle boss:// deep links for auth
                         _deepLinkFlow.value = uri
@@ -429,7 +434,7 @@ actual object DeepLinkHandler {
         origin: DeepLinkOrigin,
     ): Deferred<Boolean>? {
         when (host) {
-            DeepLinkHost.URL -> handleUrlLink(uri)
+            DeepLinkHost.URL -> handleUrlLink(uri, origin)
             DeepLinkHost.WORKSPACE -> handleWorkspaceLink(uri, origin)
             DeepLinkHost.FILE -> handleFileLink(uri)
             DeepLinkHost.TERMINAL -> handleTerminalLink(uri, origin)
@@ -834,27 +839,44 @@ actual object DeepLinkHandler {
      * Handle boss://url deep links
      * Examples:
      *   boss://url?url=https%3A%2F%2Fexample.com
+     *
+     * [origin] travels with the command all the way to
+     * [ai.rever.boss.cli.CLICommandHandler], which opens the tab outright only
+     * for [DeepLinkOrigin.OPERATOR_CLI] and puts the URL in front of the
+     * operator first otherwise: `boss://` is registered system-wide, so any
+     * program — or any web page — can hand BOSS this link, and opening the
+     * target directly would be a drive-by phish in an authenticated tab strip.
      */
-    private fun handleUrlLink(uri: String) {
-        logger.debug(LogCategory.BROWSER, "Handling URL link")
+    private fun handleUrlLink(
+        uri: String,
+        origin: DeepLinkOrigin,
+    ) {
+        logger.debug(LogCategory.BROWSER, "Handling URL link", mapOf("origin" to origin.name))
 
-        val params = parseQueryParams(uri)
-        val url = params["url"]?.urlDecode()
-
-        if (url == null) {
+        val cliCommand = urlOpenCommandFromLink(uri, origin)
+        if (cliCommand == null) {
             logger.warn(LogCategory.BROWSER, "Missing 'url' parameter in URL deep link")
             return
         }
 
         // Queue command via CLI handler
-        val cliCommand =
-            ai.rever.boss.cli.CLICommand
-                .OpenUrl(url)
         ai.rever.boss.cli.CLICommandHandler
             .getInstance()
             .queueCommand(cliCommand)
 
-        logger.info(LogCategory.BROWSER, "URL command queued", mapOf("url" to LogSanitizer.describeUri(url)))
+        logger.info(
+            LogCategory.BROWSER,
+            "URL command queued",
+            mapOf("url" to LogSanitizer.describeUri(cliCommand.url), "origin" to origin.name),
+        )
+    }
+
+    internal fun urlOpenCommandFromLink(
+        uri: String,
+        origin: DeepLinkOrigin,
+    ): CLICommand.OpenUrl? {
+        val url = parseQueryParams(uri)["url"]?.urlDecode() ?: return null
+        return CLICommand.OpenUrl(url, origin)
     }
 
     /**

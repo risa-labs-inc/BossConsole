@@ -42,6 +42,7 @@ import java.text.SimpleDateFormat
 import java.time.Instant
 import java.time.ZoneId
 import java.util.Date
+import java.util.Locale
 
 /**
  * Card displaying a recent project.
@@ -204,7 +205,11 @@ internal fun formatRelativeTime(
             // 26 hours ago crosses midnight in UTC and labels as "Today" / "Yesterday"
             // differently depending on where the test machine sits.
             else -> {
-                SimpleDateFormat("MMM d")
+                // Name the FORMAT-category locale explicitly - the one users set for dates on
+                // macOS/Windows. The bare SimpleDateFormat constructor already resolves to it, so
+                // this is for clarity and consistency with the codebase's other date formatters,
+                // not a behaviour change.
+                SimpleDateFormat("MMM d", Locale.getDefault(Locale.Category.FORMAT))
                     .apply {
                         timeZone = java.util.TimeZone.getTimeZone(zone)
                     }.format(Date(timestamp))

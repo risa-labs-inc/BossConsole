@@ -624,7 +624,13 @@ class TabDraggableComponent {
      * The state is cleared before the result is worked out, so an exception on the way out cannot
      * leave the component believing a drag is still in flight.
      */
-    fun endDrag(): TabDropResult? {
+    fun endDrag(sourceIndex: Int? = null): TabDropResult? {
+        // The source can be reindexed while the gesture survives. Refresh before computing the
+        // insertion adjustment, and resolve the target from the latest registered bounds.
+        if (sourceIndex != null && draggingTab != null) {
+            draggingTab = draggingTab?.copy(sourceIndex = sourceIndex)
+            updateDropTarget()
+        }
         val dragging = draggingTab
         val target = dropTarget
 

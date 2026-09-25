@@ -9,6 +9,7 @@ import ai.rever.boss.utils.DeepLinkOrigin
 import ai.rever.boss.utils.OsOpenArguments
 import ai.rever.boss.utils.SingleInstanceManager
 import ai.rever.boss.utils.WindowsProtocolHandler
+import ai.rever.boss.utils.canFrameOpenUrl
 import ai.rever.boss.utils.forwardDeepLinkWithRetry
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -16,6 +17,7 @@ import com.github.ajalt.clikt.core.ProgramResult
 import com.github.ajalt.clikt.core.main
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import java.nio.charset.StandardCharsets
 
 /**
  * Result of early / headless CLI dispatch before GUI initialization.
@@ -114,17 +116,29 @@ object CliBootstrap {
         )
 
         // Every link is attempted, and success means every one landed.
-        // `fold` rather than `all`, which would short-circuit and silently
-        // drop the rest of a multi-file selection after one failure. Per-link
-        // retries follow forwardDeepLinkWithRetry's policy: action links are
-        // never replayed, other open requests retry like auth callbacks.
+        // Not `all`, which would short-circuit and silently drop the rest of a
+        // multi-file selection after one failure. Per-link retries follow
+        // forwardDeepLinkWithRetry's policy: action links are never replayed,
+        // other open requests retry like auth callbacks.
         // runBlocking is acceptable here: this runs during pre-UI
         // initialization, before the Compose application starts.
-        val success =
-            deepLinks.fold(true) { acc, (link, origin) ->
-                // Forward first, combine after: `acc &&` would short-circuit and
-                // silently drop the rest of a multi-file selection after one failure.
-                forwardDeepLinkWithRetry(
+        var refusedUnframeable = false
+        var sendFailed = false
+        deepLinks.forEach { (link, origin) ->
+            // A URL that cannot occupy one framed line is refused here, once,
+            // before the retry loop: sendToExistingInstance would refuse it on
+            // every attempt, so entering the loop would only spend a second of
+            // dead time and log failures that read as the running instance
+            // being unreachable when it was never contacted.
+            if (!canFrameOpenUrl(link)) {
+                refusedUnframeable = true
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Refusing to forward a URL that cannot be framed safely",
+                    mapOf("urlBytes" to link.toByteArray(StandardCharsets.UTF_8).size),
+                )
+            } else if (
+                !forwardDeepLinkWithRetry(
                     link = link,
                     send = { attempt ->
                         val accepted = send(link, origin)
@@ -142,16 +156,28 @@ object CliBootstrap {
                         accepted
                     },
                     pause = { runBlocking { delay(500) } },
-                ) && acc
+                )
+            ) {
+                sendFailed = true
             }
+        }
 
-        if (!success) {
+        // The two failures say different things: a refusal means the URL never
+        // reached the channel, while exhausted retries mean the running
+        // instance did not accept it.
+        if (refusedUnframeable) {
+            logger.error(
+                LogCategory.SYSTEM,
+                "Refused to forward a URL that cannot be framed safely",
+            )
+        }
+        if (sendFailed) {
             logger.error(
                 LogCategory.SYSTEM,
                 "Could not send URL to existing instance after retries",
             )
         }
-        return success
+        return !refusedUnframeable && !sendFailed
     }
 
     @Suppress("TooGenericExceptionCaught")

@@ -2,10 +2,12 @@ name: 🔨 Build & Test
 
 on:
   # PRs validate dev/develop integration; main pushes validate the merged tree.
-  # Do not add dev here: dev -> main would enqueue the same macOS work twice.
+  # dev pushes run ubuntu only (see build-test's matrix): they seed the shared
+  # Gradle caches that PRs into dev restore from, without enqueueing the macOS
+  # and Windows work a later dev -> main push runs anyway.
   # For a branch without a PR, use workflow_dispatch. See docs/ci-validation.md.
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
     branches: [main, dev, develop]
   workflow_dispatch:
@@ -224,12 +226,24 @@ jobs:
     needs: version-check
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # macOS and Windows run on PRs into main, pushes to main and manual runs.
+        # PRs that don't target main, and dev pushes (cache seeding), skip them:
+        # hosted macOS and Windows runners run few jobs at once.
+        os: ${{ fromJSON(((github.event_name == 'pull_request' && github.base_ref != 'main') || (github.event_name == 'push' && github.ref == 'refs/heads/dev')) && '["ubuntu-latest"]' || '["ubuntu-latest", "macos-latest", "windows-latest"]') }}
     runs-on: ${{ matrix.os }}
 
     steps:
       - name: 📥 Checkout Repository
         uses: actions/checkout@v7
+
+      - name: 🧪 boss.bat live cmd.exe probes (Windows)
+        # The script-tests job runs this script on Ubuntu, where only its
+        # source-shape checks can run. Here the live probes and their mutation
+        # checks run on the real cmd.exe (#1617). A few seconds, and it
+        # runs before JDK and Gradle setup so a failure reports first.
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: ./scripts/test/test-boss-bat-urlencode.ps1
 
       - name: ☕ Setup JDK
         uses: actions/setup-java@v6.0.0
@@ -240,7 +254,12 @@ jobs:
       - name: 🎯 Setup Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
-          cache-read-only: false
+          # Only pushes (main, dev) write the shared caches; PRs and manual runs restore
+          # them but never write. PR and dispatch caches are scoped to their own ref, so
+          # no other run can read them, and at ~1 GB each they pushed the repo past
+          # GitHub's 10 GB cap and evicted the shared dev/main entries (14 of 20 recent
+          # PR runs started from an empty cache).
+          cache-read-only: ${{ github.event_name != 'push' }}
 
       - name: 🧹 Stop Kotlin Daemon (Windows)
         if: matrix.os == 'windows-latest'
@@ -313,7 +332,12 @@ jobs:
       - name: 🎯 Setup Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
-          cache-read-only: false
+          # Only pushes (main, dev) write the shared caches; PRs and manual runs restore
+          # them but never write. PR and dispatch caches are scoped to their own ref, so
+          # no other run can read them, and at ~1 GB each they pushed the repo past
+          # GitHub's 10 GB cap and evicted the shared dev/main entries (14 of 20 recent
+          # PR runs started from an empty cache).
+          cache-read-only: ${{ github.event_name != 'push' }}
 
       - name: 🔍 Static Analysis (detekt + ktlint)
         run: |
@@ -358,6 +382,9 @@ jobs:
 
       - name: 🎯 Setup Gradle
         uses: gradle/actions/setup-gradle@v6
+        with:
+          # Same policy as build-test: pushes write, PRs and manual runs only read.
+          cache-read-only: ${{ github.event_name != 'push' }}
 
       - name: 🧪 Test Version System
         run: |
@@ -456,6 +483,10 @@ jobs:
       - name: Verify BOSS AI admission across PostgreSQL sessions
         timeout-minutes: 2
         run: python3 scripts/test/test-boss-ai-concurrency.py
+
+      - name: Verify domain quota across PostgreSQL sessions
+        timeout-minutes: 2
+        run: python3 scripts/test/test-domain-claim-concurrency.py
       - name: Verify BOSS AI ticket single-spend across PostgreSQL sessions
         timeout-minutes: 2
         run: python3 scripts/test/test-boss-ai-ticket-concurrency.py

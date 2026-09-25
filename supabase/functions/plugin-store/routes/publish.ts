@@ -19,7 +19,7 @@ import {
   authorizeNewPluginPublish,
   preflightPublishAuthz,
 } from "../services/publish-authz.ts"
-import { createVersion, versionExists, finalizeVersion, getVersionById } from "../services/versions.ts"
+import { createVersion, versionExists, finalizeVersion, getVersionById, deleteStalePendingVersion } from "../services/versions.ts"
 import { getSignedUploadUrl, getSignedDownloadUrl, generateJarPath, uploadJar } from "../services/storage.ts"
 import { getAuthenticatedUser, getUserDisplayName, logApiKeyAction } from "../utils/auth.ts"
 import {
@@ -322,9 +322,21 @@ publish.openapi(publishVersionRoute, async (ctx) => {
       return ctx.json({ success: false, error: authz.error }, authz.status)
     }
 
-    // Check if version already exists
+    // Check if version already exists. One legitimate way for that to happen is
+    // a publish that died between createVersion and its finalize (client
+    // crash, dropped upload): that row is unfinalized — never "latest", never
+    // downloadable — but it still squats on the UNIQUE(plugin_id, version)
+    // slot. Reap it if its upload window has lapsed so the retry can proceed;
+    // anything else is a real collision (#912).
     if (await versionExists(supabase, plugin.id, body.version)) {
-      return ctx.json({ success: false, error: 'Version already exists' }, 400)
+      const reaped = await deleteStalePendingVersion(supabase, plugin.id, body.version)
+        .catch((e) => {
+          console.error('Error reaping stale pending version:', e)
+          return false
+        })
+      if (!reaped) {
+        return ctx.json({ success: false, error: 'Version already exists' }, 400)
+      }
     }
 
     // Generate JAR path
@@ -801,12 +813,21 @@ publish.openapi(publishFromGitHubRoute, async (ctx) => {
       await setPluginTags(supabase, pluginUuid, tags)
     }
 
-    // Check if version already exists
+    // Check if version already exists. Same stale-pending reap as the two-step
+    // path above (#912): this route also has a createVersion → finalize
+    // window that a mid-request crash can strand.
     if (await versionExists(supabase, pluginUuid, version)) {
-      return ctx.json({
-        success: false,
-        error: `Version ${version} already exists for ${manifest.pluginId}`
-      }, 400)
+      const reaped = await deleteStalePendingVersion(supabase, pluginUuid, version)
+        .catch((e) => {
+          console.error('Error reaping stale pending version:', e)
+          return false
+        })
+      if (!reaped) {
+        return ctx.json({
+          success: false,
+          error: `Version ${version} already exists for ${manifest.pluginId}`
+        }, 400)
+      }
     }
 
     // Generate JAR path and upload
@@ -1124,12 +1145,21 @@ publish.openapi(publishFromGitHubMetadataRoute, async (ctx) => {
 
     const version = manifest.version
 
-    // Check if version already exists
+    // Check if version already exists. Same stale-pending reap as the two-step
+    // path above (#912): this route also has a createVersion → finalize
+    // window that a mid-request crash can strand.
     if (await versionExists(supabase, pluginUuid, version)) {
-      return ctx.json({
-        success: false,
-        error: `Version ${version} already exists for ${manifest.pluginId}`
-      }, 400)
+      const reaped = await deleteStalePendingVersion(supabase, pluginUuid, version)
+        .catch((e) => {
+          console.error('Error reaping stale pending version:', e)
+          return false
+        })
+      if (!reaped) {
+        return ctx.json({
+          success: false,
+          error: `Version ${version} already exists for ${manifest.pluginId}`
+        }, 400)
+      }
     }
 
     // Store the GitHub download URL directly as jar_path

@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import { withErrorHandler } from "../utils/error-handler.ts"
 import { normalizeBase64Url } from "../utils/base64.ts"
 import { getRpName } from "../utils/config.ts"
+import { maskEmail, maskUserId } from "../utils/logging.ts"
 
 /**
  * Mobile Registration Service
@@ -15,7 +16,7 @@ export const generateMobileRegistrationPage = withErrorHandler(
     sessionId: string,
     rpId: string
   ) => {
-    console.log('📱 Generating mobile registration page for:', email)
+    console.log('📱 Generating mobile registration page for:', maskEmail(email))
 
     // rp.name is rendered by the OS passkey prompt, so it is derived from the
     // (allow-listed) rpId — a request-supplied name would be UI spoofing.
@@ -48,7 +49,7 @@ export const generateMobileRegistrationPage = withErrorHandler(
       }
     }
 
-    console.log('✅ Found userId from challenge:', userId)
+    console.log('✅ Found userId from challenge:', maskUserId(userId))
 
     // Update challenge with session info
     await supabase
@@ -59,7 +60,7 @@ export const generateMobileRegistrationPage = withErrorHandler(
       })
       .eq('challenge', challenge)
 
-    console.log('✅ Mobile registration page ready for user:', userId)
+    console.log('✅ Mobile registration page ready for user:', maskUserId(userId))
 
     return {
       success: true,
@@ -88,7 +89,7 @@ export const generateMobileAuthenticationPage = withErrorHandler(
     credentialId: string,
     rpId: string
   ) => {
-    console.log('📱 Generating mobile authentication page for:', email)
+    console.log('📱 Generating mobile authentication page for:', maskEmail(email))
 
     // Verify challenge is valid
     const { data: challengeData, error: challengeError } = await supabase
@@ -117,7 +118,7 @@ export const generateMobileAuthenticationPage = withErrorHandler(
       }
     }
 
-    console.log('✅ Found userId from challenge:', userId)
+    console.log('✅ Found userId from challenge:', maskUserId(userId))
 
     // Get user's passkey credential
     const { data: passkey, error: passkeyError } = await supabase
@@ -148,7 +149,7 @@ export const generateMobileAuthenticationPage = withErrorHandler(
       })
       .eq('challenge', challenge)
 
-    console.log('✅ Mobile authentication page ready for user:', userId)
+    console.log('✅ Mobile authentication page ready for user:', maskUserId(userId))
 
     return {
       success: true,

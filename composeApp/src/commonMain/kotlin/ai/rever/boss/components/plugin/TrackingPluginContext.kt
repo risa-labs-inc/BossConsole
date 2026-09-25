@@ -434,11 +434,23 @@ class TrackingPluginContext(
     // Diagnostic provider - delegate to underlying context
     override val diagnosticProvider: DiagnosticProvider? get() = delegate.diagnosticProvider
 
-    // MCP tool provider registration - track per plugin so tools are removed
-    // automatically in unregisterAll() when the plugin is disabled/unloaded.
+    // MCP tool provider registration - namespaced with the plugin's own id, and tracked per
+    // plugin so tools are removed automatically in unregisterAll() when the plugin is
+    // disabled/unloaded. The namespace matters because this is the only layer that knows which
+    // plugin is asking, while the provider id is the ONLY key the shared registry has: the host
+    // registers "boss-workspace" straight into it, so a plugin-supplied id passed through raw
+    // lets the plugin re-register (silently replacing) or unregister the host's own workspace
+    // tools - or any other plugin's (#926). Scoped, a plugin can only ever touch providers in
+    // its own namespace: a same-id re-registration replaces only the plugin's own previous
+    // provider, and unregisterMcpToolProvider re-keys the id below, so a plugin unregistering
+    // "boss-workspace" merely no-ops inside its own namespace. A scoped id is also a NEW
+    // provider identity to the policy engine, so a persisted providerRules ALLOW granted to a
+    // raw id cannot auto-apply to tools the plugin registers next. Same pattern as the download
+    // center's per-plugin idPrefix and ScopedPluginStorageFactory: identity is bound once, here.
     override fun registerMcpToolProvider(provider: McpToolProvider) {
-        tracker.recordMcpToolProviderRegistration(pluginId, provider.providerId)
-        delegate.registerMcpToolProvider(provider)
+        val scoped = PluginScopedMcpToolProvider(pluginId, provider)
+        tracker.recordMcpToolProviderRegistration(pluginId, scoped.providerId)
+        delegate.registerMcpToolProvider(scoped)
     }
 
     // Deliberately does NOT remove providerId from the tracker (unlike a plugin
@@ -447,8 +459,10 @@ class TrackingPluginContext(
     // which ids to unregister and clears everything at once at plugin teardown,
     // so a stale tracker entry here just means unregisterAll() calls the
     // (idempotent) registry unregister a second time for that id — harmless.
+    // The id is re-keyed into this plugin's namespace first: an unregister can
+    // only ever reach providers this plugin registered (#926).
     override fun unregisterMcpToolProvider(providerId: String) {
-        delegate.unregisterMcpToolProvider(providerId)
+        delegate.unregisterMcpToolProvider(scopedMcpProviderId(pluginId, providerId))
     }
 
     override val mcpToolRegistry: McpToolRegistry? get() = delegate.mcpToolRegistry
@@ -595,4 +609,32 @@ private class ScopedPluginStorageFactory(
     private val delegate: PluginStorageFactory,
 ) : PluginStorageFactory {
     override fun createStorage(pluginId: String): PluginStorageProvider = delegate.createStorage(ownPluginId)
+}
+
+/**
+ * The provider id a plugin's registration carries in the shared registry: the plugin's own id
+ * as the namespace, then the id the plugin chose. [TrackingPluginContext] is the only layer
+ * that knows both, and the registry keys providers by id alone (#926).
+ */
+private fun scopedMcpProviderId(
+    pluginId: String,
+    providerId: String,
+): String = "$pluginId::$providerId"
+
+/**
+ * [McpToolProvider] view of a plugin-registered provider that carries the plugin-scoped id.
+ * The interface is exactly two members, so delegation is total: the plugin keeps its tool
+ * definitions and their NAMES unchanged (so its `mcp__boss__<tool>` names keep working), while
+ * the id - the only thing a later unregister or a same-id re-registration acts on - is the
+ * scoped one. This is not a security sandbox; it is name scoping, the same guarantee
+ * [ScopedPluginStorageFactory] and the download center's per-plugin idPrefix already give
+ * their ids.
+ */
+private class PluginScopedMcpToolProvider(
+    pluginId: String,
+    private val delegate: McpToolProvider,
+) : McpToolProvider {
+    override val providerId: String = scopedMcpProviderId(pluginId, delegate.providerId)
+
+    override fun tools(): List<ai.rever.boss.plugin.api.McpToolDefinition> = delegate.tools()
 }

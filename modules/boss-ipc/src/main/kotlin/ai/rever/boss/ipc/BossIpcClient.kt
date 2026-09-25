@@ -26,6 +26,7 @@ class BossIpcClient(
     private val address: String,
     private val credentials: IpcClientCredentials,
     private val interceptors: List<ClientInterceptor> = emptyList(),
+    private val limits: IpcTransportLimits = IpcTransportLimits(),
 ) {
     private val logger = LoggerFactory.getLogger(BossIpcClient::class.java)
 
@@ -41,7 +42,7 @@ class BossIpcClient(
             }
 
     private fun buildChannel(): ManagedChannel {
-        val builder = IpcAddressResolver.configureChannelBuilder(address)
+        val builder = IpcAddressResolver.configureChannelBuilder(address, limits)
         builder.sslContext(IpcTlsIdentity.clientContext(credentials.certificateBase64))
         builder.overrideAuthority(IpcTlsIdentity.AUTHORITY)
         builder.intercept(ProcessTokenClientInterceptor(credentials.token))

@@ -14,7 +14,7 @@ import kotlin.test.assertTrue
 /**
  * Tests for the engine release resolver: numeric version ordering, the
  * Supabase-primary/GitHub-backup download candidates (with sha256 threading),
- * and the merge/partial-failure behavior of the version listing.
+ * and the checksum eligibility of the version listing.
  */
 class ChromiumReleaseSourceTest {
     private class FakeSource(
@@ -82,9 +82,19 @@ class ChromiumReleaseSourceTest {
     }
 
     @Test
-    fun `availableVersions returns newest first across sources with dedup`() =
+    fun `availableVersions shows only catalog versions verified for this platform`() =
         runBlocking {
-            val supabase = FakeSource("supabase", listOf(release("v9.1.2"), release("v9.10.0")))
+            val archive = "boss-chromium-macos-arm64.zip"
+            val supabase =
+                FakeSource(
+                    "supabase",
+                    listOf(
+                        release("v9.1.2", asset(archive, "https://cdn/9.1.2", "sha-912")),
+                        release("v9.10.0", asset(archive, "https://cdn/9.10.0", "sha-9100")),
+                        release("v9.11.0", asset(archive, "https://cdn/9.11.0")),
+                        release("v9.12.0", asset("boss-chromium-windows-x64.zip", "https://cdn/9.12.0", "sha-win")),
+                    ),
+                )
             val gitHub =
                 FakeSource(
                     "github",
@@ -94,33 +104,36 @@ class ChromiumReleaseSourceTest {
                         release("v9.2.17"), // app release — must be ignored
                     ),
                 )
-            val listing = ChromiumReleaseResolver(supabase, gitHub).availableVersions()
+            val listing = ChromiumReleaseResolver(supabase, gitHub).availableVersions(archive)
 
-            assertEquals(listOf("9.10.0", "9.9.0", "9.1.2"), listing.versions)
+            assertEquals(listOf("9.10.0", "9.1.2"), listing.versions)
             assertTrue(listing.failedSources.isEmpty())
         }
 
     // ---- partial failure ----
 
     @Test
-    fun `single source failure is reported not thrown`() =
+    fun `GitHub listing failure does not affect checksum-backed versions`() =
         runBlocking {
-            val supabase = FakeSource("supabase", listOf(release("v9.1.2")))
+            val archive = "boss-chromium-macos-arm64.zip"
+            val supabase = FakeSource("supabase", listOf(release("v9.1.2", asset(archive, "https://cdn/9.1.2", "sha"))))
             val gitHub = FakeSource("github", failing = true)
-            val listing = ChromiumReleaseResolver(supabase, gitHub).availableVersions()
+            val listing = ChromiumReleaseResolver(supabase, gitHub).availableVersions(archive)
 
             assertEquals(listOf("9.1.2"), listing.versions)
-            assertEquals(listOf("github"), listing.failedSources)
+            assertTrue(listing.failedSources.isEmpty())
         }
 
     @Test
-    fun `both sources failing throws`() {
+    fun `catalog failure refuses to offer unverified versions`() {
         val resolver =
             ChromiumReleaseResolver(
                 FakeSource("supabase", failing = true),
                 FakeSource("github", failing = true),
             )
-        assertThrows<IllegalStateException> { runBlocking { resolver.availableVersions() } }
+        assertThrows<IllegalStateException> {
+            runBlocking { resolver.availableVersions("boss-chromium-macos-arm64.zip") }
+        }
     }
 
     // ---- download candidates ----
@@ -172,10 +185,9 @@ class ChromiumReleaseSourceTest {
                     listOf(
                         release(
                             "v9.1.2",
-                            // A row published before the hash column has
-                            // nothing to verify either source against, so the
-                            // backup stays unverified — current behavior, pinned
-                            // here.
+                            // A row published before the hash column has no
+                            // integrity anchor. Candidates remain hashless,
+                            // and the installer refuses them before download.
                             asset("boss-chromium-linux-x64.zip", "https://cdn/linux-x64.zip"),
                         ),
                     ),
@@ -205,10 +217,8 @@ class ChromiumReleaseSourceTest {
                 assertEquals(1, candidates.size)
                 assertEquals("github", candidates[0].sourceName)
                 assertEquals(expectUrl, candidates[0].url)
-                // With no catalog row there is no hash to verify the backup
-                // against, so it stays unverified — current behavior, pinned
-                // (refusing would leave no way to install an engine the
-                // catalog cannot describe).
+                // Without a catalog row this candidate has no hash. The
+                // installer refuses it before downloading the archive.
                 assertNull(candidates[0].sha256)
             }
         }

@@ -179,7 +179,11 @@ object WindowsDefaultBrowserHandler {
                 return false
             }
 
-            logger.info(LogCategory.BROWSER, "Registering BOSS as browser candidate", mapOf("path" to appPath))
+            logger.info(
+                LogCategory.BROWSER,
+                "Registering BOSS as browser candidate",
+                mapOf("path" to WindowsProtocolCleanup.maskUserPath(appPath)),
+            )
 
             // Create registry entries
             val commands =
@@ -257,12 +261,19 @@ object WindowsDefaultBrowserHandler {
     private fun getApplicationPath(): String? =
         try {
             // Try to get the path from the running JAR/EXE
-            val jarPath =
-                WindowsDefaultBrowserHandler::class.java.protectionDomain.codeSource.location
-                    .toURI()
-                    .path
+            // Resolved through CodeSourceLocation, not URI.path: on a network-share
+            // install the path component has already lost the server name.
+            val jarPath = CodeSourceLocation.fileFor(WindowsDefaultBrowserHandler::class.java)?.path
 
             when {
+                // Fail closed, as WindowsProtocolHandler does for the same condition.
+                // Guessing from user.dir here would persist a path derived from
+                // wherever BOSS happened to be launched as the browser command.
+                jarPath == null -> {
+                    logger.warn(LogCategory.BROWSER, "Could not resolve the code source location")
+                    null
+                }
+
                 jarPath.endsWith(".jar") -> {
                     // Running from JAR - look for launcher executable
                     val jarFile = File(jarPath)
@@ -283,7 +294,9 @@ object WindowsDefaultBrowserHandler {
                 }
 
                 else -> {
-                    // Development environment - look for packaged executable
+                    // Development environment - look for packaged executable. Only
+                    // for a code source that resolved and is neither a jar nor an
+                    // exe, the classes directory of a dev run.
                     val workingDir = File(System.getProperty("user.dir"))
                     val possiblePaths =
                         listOf(

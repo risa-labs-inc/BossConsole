@@ -5,7 +5,6 @@ import ai.rever.boss.health.HealthFinding
 import ai.rever.boss.health.HealthSeverity
 import ai.rever.boss.health.WorkspaceHealthReport
 import ai.rever.boss.health.toJson
-import ai.rever.boss.performance.BrowserTabInfo
 import ai.rever.boss.performance.CpuMetrics
 import ai.rever.boss.performance.GcMetrics
 import ai.rever.boss.performance.HealthStatus
@@ -35,43 +34,40 @@ class IntrospectionMcpToolProviderTest {
         IntrospectionMcpToolProvider.performanceSupplier = null
     }
 
-    private fun snapshot(
-        browserTabs: List<BrowserTabInfo> = emptyList(),
-        browserTabCount: Int = 0,
-    ) = PerformanceSnapshot(
-        timestamp = 1_700_000_000_000L,
-        memory =
-            MemoryMetrics(
-                heapUsedBytes = 512L * 1024 * 1024,
-                heapMaxBytes = 2048L * 1024 * 1024,
-                heapCommittedBytes = 1024L * 1024 * 1024,
-                nonHeapUsedBytes = 64L * 1024 * 1024,
-                nonHeapCommittedBytes = 96L * 1024 * 1024,
-            ),
-        cpu =
-            CpuMetrics(
-                processLoad = 0.25,
-                systemLoad = 0.5,
-                availableProcessors = 8,
-                activeThreadCount = 42,
-            ),
-        gc =
-            GcMetrics(
-                collectionCount = 7,
-                collectionTimeMs = 120,
-                gcTimeSinceLastSampleMs = 3,
-                gcCollectors = emptyList(),
-            ),
-        resources =
-            ResourceMetrics(
-                browserTabCount = browserTabCount,
-                terminalCount = 2,
-                editorTabCount = 5,
-                panelCount = 3,
-                windowCount = 1,
-                browserTabs = browserTabs,
-            ),
-    )
+    private fun snapshot(browserTabCount: Int = 0) =
+        PerformanceSnapshot(
+            timestamp = 1_700_000_000_000L,
+            memory =
+                MemoryMetrics(
+                    heapUsedBytes = 512L * 1024 * 1024,
+                    heapMaxBytes = 2048L * 1024 * 1024,
+                    heapCommittedBytes = 1024L * 1024 * 1024,
+                    nonHeapUsedBytes = 64L * 1024 * 1024,
+                    nonHeapCommittedBytes = 96L * 1024 * 1024,
+                ),
+            cpu =
+                CpuMetrics(
+                    processLoad = 0.25,
+                    systemLoad = 0.5,
+                    availableProcessors = 8,
+                    activeThreadCount = 42,
+                ),
+            gc =
+                GcMetrics(
+                    collectionCount = 7,
+                    collectionTimeMs = 120,
+                    gcTimeSinceLastSampleMs = 3,
+                    gcCollectors = emptyList(),
+                ),
+            resources =
+                ResourceMetrics(
+                    browserTabCount = browserTabCount,
+                    terminalCount = 2,
+                    editorTabCount = 5,
+                    panelCount = 3,
+                    windowCount = 1,
+                ),
+        )
 
     // region health
 
@@ -218,27 +214,19 @@ class IntrospectionMcpToolProviderTest {
 
     @Test
     fun `per-tab detail never leaves the process`() {
+        // #1524 compacted retained snapshots: ResourceMetrics no longer holds per-tab detail
+        // at all, so there is nothing per-tab to leak. What remains worth pinning is the wire
+        // shape: the count is reported, and no tab collection key ever appears in the output.
         IntrospectionMcpToolProvider.performanceSupplier = {
             PerformanceReading(
-                snapshot =
-                    snapshot(
-                        browserTabs =
-                            listOf(
-                                BrowserTabInfo(
-                                    id = "tab-1",
-                                    title = "Internal wiki",
-                                    url = "https://wiki.internal/secret",
-                                ),
-                            ),
-                        browserTabCount = 1,
-                    ),
+                snapshot = snapshot(browserTabCount = 1),
                 health = null,
             )
         }
 
         val text = IntrospectionMcpToolProvider.performanceJson().toString()
-        assertFalse(text.contains("wiki.internal"), "a tab URL reached the tool output")
-        assertFalse(text.contains("Internal wiki"), "a tab title reached the tool output")
+        assertFalse(text.contains("browserTabs"), "a per-tab collection reached the tool output")
+        assertFalse(text.contains("tabTitle"), "a tab title field reached the tool output")
         assertTrue(text.contains("\"browserTabCount\":1"), "the count should still be reported")
     }
 

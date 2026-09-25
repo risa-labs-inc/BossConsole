@@ -20,6 +20,24 @@ SELECT throws_ok($$UPDATE public.boss_ai_connections SET api_key_secret='BOSS_AI
  WHERE id='pgtap'$$, '23514', NULL, 'signing secret cannot become an upstream key');
 
 SET LOCAL ROLE service_role;
+SELECT ok(public.boss_ai_token_eligible('ba000000-0000-4000-8000-000000000001'),
+ 'eligible users can mint a direct BOSS AI token');
+RESET ROLE;
+UPDATE auth.users SET banned_until=now()+interval '1 hour'
+ WHERE id='ba000000-0000-4000-8000-000000000001';
+SET LOCAL ROLE service_role;
+SELECT is(public.boss_ai_token_eligible('ba000000-0000-4000-8000-000000000001'),false,
+ 'banned users cannot mint a direct BOSS AI token');
+RESET ROLE;
+UPDATE auth.users SET banned_until=NULL, is_anonymous=true
+ WHERE id='ba000000-0000-4000-8000-000000000001';
+SET LOCAL ROLE service_role;
+SELECT is(public.boss_ai_token_eligible('ba000000-0000-4000-8000-000000000001'),false,
+ 'anonymous users cannot mint a direct BOSS AI token');
+RESET ROLE;
+UPDATE auth.users SET is_anonymous=false
+ WHERE id='ba000000-0000-4000-8000-000000000001';
+SET LOCAL ROLE service_role;
 SELECT ok(public.boss_ai_lookup('ba000000-0000-4000-8000-000000000001','pgtap') ? 'model',
  'authorized service-role preflight returns configuration');
 SELECT is((SELECT count(*) FROM public.boss_ai_requests WHERE model_id='pgtap'),0::bigint,

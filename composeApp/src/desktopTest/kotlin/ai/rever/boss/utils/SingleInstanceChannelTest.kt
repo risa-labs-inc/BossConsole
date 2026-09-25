@@ -94,7 +94,7 @@ class SingleInstanceChannelTest {
         val token = "c".repeat(TOKEN_HEX_LENGTH)
         val url = "boss://auth/verify#access_token=abc&type=recovery"
 
-        val open = assertNotNull(parseRequestLine(formatOpenRequest(token, DeepLinkOrigin.EXTERNAL, url)))
+        val open = assertNotNull(parseRequestLine(openRequestLine(token, DeepLinkOrigin.EXTERNAL, url)))
         assertEquals(token, open.token)
         assertEquals(VERB_OPEN, open.verb)
         assertEquals(DeepLinkOrigin.EXTERNAL, open.origin)
@@ -110,7 +110,7 @@ class SingleInstanceChannelTest {
 
         // A URL with a space in it must survive rather than being cut short.
         val spacedUrl = "boss://url?url=a b"
-        val spaced = assertNotNull(parseRequestLine(formatOpenRequest(token, DeepLinkOrigin.OPERATOR_CLI, spacedUrl)))
+        val spaced = assertNotNull(parseRequestLine(openRequestLine(token, DeepLinkOrigin.OPERATOR_CLI, spacedUrl)))
         assertEquals(spacedUrl, spaced.url)
         assertEquals(DeepLinkOrigin.OPERATOR_CLI, spaced.origin)
 
@@ -200,7 +200,7 @@ class SingleInstanceChannelTest {
         assertEquals(RESPONSE_REJECTED, exchange(descriptor, "boss://terminal?command=id"))
         assertEquals(
             RESPONSE_REJECTED,
-            exchange(descriptor, formatOpenRequest(wrongToken, DeepLinkOrigin.OPERATOR_CLI, "boss://split")),
+            exchange(descriptor, openRequestLine(wrongToken, DeepLinkOrigin.OPERATOR_CLI, "boss://split")),
         )
     }
 
@@ -211,9 +211,10 @@ class SingleInstanceChannelTest {
 
         // A request well past the read budget. The read gives up rather than
         // growing, so the request is never acted on — the connection either
-        // comes back refused or is simply dropped.
+        // comes back refused or is simply dropped. Written raw rather than via
+        // formatOpenRequest, which now refuses oversized URLs on the send side.
         val padding = "a".repeat(MAX_REQUEST_BYTES + 4096)
-        val oversized = formatOpenRequest(descriptor.token, DeepLinkOrigin.EXTERNAL, "boss://url?url=$padding")
+        val oversized = "$PROTOCOL_VERSION ${descriptor.token} $VERB_STATUS $padding"
         assertNotEquals(RESPONSE_OK, exchangeTolerantly(descriptor, oversized))
 
         // The channel is still serving afterwards.

@@ -1,5 +1,6 @@
 package ai.rever.boss.filetypes
 
+import ai.rever.boss.utils.CodeSourceLocation
 import ai.rever.boss.utils.DefaultHandlerState
 import ai.rever.boss.utils.WindowsDefaultBrowserHandler
 import ai.rever.boss.utils.logging.BossLogger
@@ -237,13 +238,15 @@ internal object WindowsFileTypeHandler {
      */
     private fun applicationPath(): String? =
         try {
-            val codeSource =
-                WindowsFileTypeHandler::class.java.protectionDomain.codeSource.location
-                    .toURI()
-                    .path
+            // Resolved through CodeSourceLocation rather than URI.path: on a
+            // network-share install the path component has already dropped the
+            // server name, so this wrote a launcher path onto a local drive that
+            // holds no BOSS - the silent mis-registration this file's header warns
+            // about, in the one write that makes a double-clicked file reach BOSS.
+            val codeSource = CodeSourceLocation.fileFor(WindowsFileTypeHandler::class.java)
             when {
-                codeSource.endsWith(".jar") -> {
-                    val launcher = File(codeSource).parentFile?.resolve("BOSS.exe")
+                codeSource?.name?.endsWith(".jar") == true -> {
+                    val launcher = codeSource.parentFile?.resolve("BOSS.exe")
                     launcher?.takeIf { it.exists() }?.absolutePath
                 }
 

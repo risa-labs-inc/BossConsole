@@ -4,6 +4,7 @@ import ai.rever.boss.mcp.McpMutatingToolCatalog
 import ai.rever.boss.plugin.api.McpToolArgs
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -91,6 +92,20 @@ class McpRiskEvaluatorTest {
             "plugins_list",
             "list_tabs",
             "read_scrollback",
+            "list_workspaces",
+            "workspace_list",
+        )
+
+    // The v9.5.21 workspace lifecycle tools: mutating by name, but with no
+    // `command` argument, so a flat HIGH (no shell escalation) is the tier.
+    private val workspaceMutationTools =
+        setOf(
+            "open_workspace",
+            "workspace_open",
+            "create_workspace",
+            "workspace_create",
+            "close_workspace",
+            "workspace_close",
         )
 
     // Every wording the destructive heuristic pins today. Commands deliberately avoid JSON
@@ -107,15 +122,6 @@ class McpRiskEvaluatorTest {
             "chmod -r 777 /srv/app",
         )
     private val benignCommands = listOf("ls -la", "git status", "pwd", "echo hello")
-    private val knownLowRiskMutatingTools =
-        setOf(
-            "open_workspace",
-            "workspace_open",
-            "create_workspace",
-            "workspace_create",
-            "close_workspace",
-            "workspace_close",
-        )
 
     /** Map and raw JSON stay in sync for either representation read by `McpToolArgs.string`. */
     @Suppress("MaxLineLength")
@@ -235,6 +241,62 @@ class McpRiskEvaluatorTest {
         }
     }
 
+    // #1577: CRITICAL is what makes a saved "Always Allow" ask again, so the destructive tier has
+    // to catch the flag shapes a real call takes, not just one spelling of each.
+    @Test
+    fun `destructive commands are caught in any flag order, spacing, path or chain position`() {
+        for (command in listOf(
+            "rm -fr build",
+            "rm -r -f build",
+            "rm  -rf   build",
+            "/bin/rm -R build",
+            "sudo rm --recursive build",
+            "cd /srv && rm -fr cache",
+            "true; rm -r /tmp/x",
+            "echo $(rm -rf ~)",
+            "rd /s /q build",
+            "rmdir /S build",
+            "Remove-Item -Recurse -Force C:\\build",
+            "git push origin main --force",
+            "git push --force-with-lease origin dev",
+            "git push -uf origin dev",
+            "ls\nrm -r /tmp/x",
+            "rm notes.txt\nrm -r build",
+            "rm build -r",
+            "rm -f build -R",
+        )) {
+            val level = evaluator.evaluateRisk("run_command", commandArgs(command)).level
+            assertEquals(McpRiskLevel.CRITICAL, level, command)
+        }
+    }
+
+    // The other side of the same line: routine calls a user "Always Allow"s must stay HIGH, or
+    // escalation would ask for them too and "Always Allow" would mean nothing.
+    @Test
+    fun `routine commands that share words with destructive ones stay HIGH`() {
+        for (command in listOf(
+            "rm notes.txt",
+            "rm -f notes.txt",
+            "grep -r TODO src",
+            "ls -R",
+            "git push origin main",
+            "git push -u origin main",
+            "del notes.txt",
+            "git log --format=%h",
+        )) {
+            val level = evaluator.evaluateRisk("run_command", commandArgs(command)).level
+            assertEquals(McpRiskLevel.HIGH, level, command)
+        }
+    }
+
+    @Test
+    fun `isShellTool reads names with the same prefix normalization as the evaluator`() {
+        assertTrue(DefaultMcpRiskEvaluator.isShellTool("run_command"))
+        assertTrue(DefaultMcpRiskEvaluator.isShellTool("mcp__boss__run_command"))
+        assertFalse(DefaultMcpRiskEvaluator.isShellTool("mcp__other__run_command"))
+        assertFalse(DefaultMcpRiskEvaluator.isShellTool("docker_rm"))
+    }
+
     @Test
     fun `the cmd alias is honored when the command argument is missing`() {
         assertEquals(
@@ -245,15 +307,98 @@ class McpRiskEvaluatorTest {
     }
 
     @Test
-    fun `the command argument wins over the cmd alias`() {
-        // Precedence, not a merge: `command` is read first and the evaluator never falls
-        // through to `cmd` when both are present.
+    fun `a destructive payload under any argument rates CRITICAL, not only under command`() {
+        // A merge, not precedence (#1624): a tool may read `cmd`, or `text`, or anything else, so a
+        // harmless `command` must not hide a destructive value beside it. Rating on the most
+        // dangerous string can only err toward asking.
         val both =
             McpToolArgs(
                 mapOf("command" to "ls -la", "cmd" to "rm -rf /tmp/cache"),
                 "{\"command\":\"ls -la\",\"cmd\":\"rm -rf /tmp/cache\"}",
             )
-        assertEquals(McpRiskLevel.HIGH, evaluator.evaluateRisk("run_command", both).level)
+        assertEquals(McpRiskLevel.CRITICAL, evaluator.evaluateRisk("run_command", both).level)
+    }
+
+    // send_input carries its keystrokes in `text` (TerminalServiceMain's schema), and plugin-defined
+    // shell tools may use any key - before #1624 none of these could ever rate CRITICAL.
+    @Test
+    fun `shell payloads under other keys and inside nested values are read`() {
+        fun args(json: String) = McpToolArgs(emptyMap(), json)
+        for (json in listOf(
+            """{"sessionId":"s1","text":"rm -rf /srv/app"}""",
+            """{"input":"git push origin main --force"}""",
+            """{"steps":["ls","rm -fr build"]}""",
+            """{"script":{"body":"mkfs.ext4 /dev/sdb"}}""",
+        )) {
+            assertEquals(McpRiskLevel.CRITICAL, evaluator.evaluateRisk("send_input", args(json)).level, json)
+        }
+        assertEquals(McpRiskLevel.HIGH, evaluator.evaluateRisk("send_input", args("""{"text":"ls -la"}""")).level)
+        // Unparseable raw arguments fall back to the named keys rather than failing.
+        assertEquals(McpRiskLevel.HIGH, evaluator.evaluateRisk("send_input", args("not json")).level)
+    }
+
+    // Review on #1650: the scan walks agent-controlled JSON, so it must survive a hostile shape -
+    // a StackOverflowError here would escape the registry's invoke before its ledger record.
+    @Test
+    fun `a 50k-deep payload is rated without overflowing the stack`() {
+        val depth = 50_000
+        val deep = "[".repeat(depth) + "\"ls\"" + "]".repeat(depth)
+
+        val assessment = evaluator.evaluateRisk("send_input", McpToolArgs(emptyMap(), deep))
+
+        // Past the node cap the payload cannot be vouched for, so it is asked about.
+        assertEquals(McpRiskLevel.CRITICAL, assessment.level)
+        assertTrue(assessment.reason.contains("nested too deeply to inspect"), assessment.reason)
+    }
+
+    @Test
+    fun `deeply nested objects are rated without overflowing the stack`() {
+        val depth = 50_000
+        val deep = "{\"a\":".repeat(depth) + "\"ls\"" + "}".repeat(depth)
+
+        assertEquals(McpRiskLevel.CRITICAL, evaluator.evaluateRisk("send_input", McpToolArgs(emptyMap(), deep)).level)
+    }
+
+    // The depth check counts structure, not text: brackets inside a string are keystrokes.
+    @Test
+    fun `brackets inside a string are not nesting`() {
+        val typed = "[".repeat(500) + " \\\" ] still text"
+        val args = McpToolArgs(emptyMap(), """{"text":"$typed"}""")
+
+        assertEquals(McpRiskLevel.HIGH, evaluator.evaluateRisk("send_input", args).level)
+    }
+
+    @Test
+    fun `a payload wider than the node cap is asked about, not rated on what was seen`() {
+        val wide = (1..20_000).joinToString(",", prefix = "[", postfix = "]") { "\"ls\"" }
+
+        val assessment = evaluator.evaluateRisk("send_input", McpToolArgs(emptyMap(), wide))
+
+        assertEquals(McpRiskLevel.CRITICAL, assessment.level)
+        assertTrue(assessment.reason.contains("too large to inspect fully"), assessment.reason)
+    }
+
+    // The documented fallback, pinned for real: when the raw text does not parse, the named keys
+    // are still read.
+    @Test
+    fun `unparseable raw arguments still rate the command key`() {
+        val args = McpToolArgs(mapOf("command" to "rm -rf /"), "not json")
+
+        assertEquals(McpRiskLevel.CRITICAL, evaluator.evaluateRisk("run_command", args).level)
+    }
+
+    @Test
+    fun `a line continuation cannot split a destructive command in two`() {
+        for (command in listOf(
+            "rm \\\n-rf /srv",
+            "rm -r \\\r\n-f /srv",
+            "Remove-Item `\n-Recurse C:\\build",
+            "rd ^\n/s build",
+        )) {
+            val level = evaluator.evaluateRisk("run_command", commandArgs(command)).level
+            assertEquals(McpRiskLevel.CRITICAL, level, command)
+        }
+        assertEquals(McpRiskLevel.HIGH, evaluator.evaluateRisk("run_command", commandArgs("echo \\\nhello")).level)
     }
 
     @Test
@@ -265,6 +410,10 @@ class McpRiskEvaluatorTest {
         assertEquals(McpRiskLevel.CRITICAL, evaluator.evaluateRisk("secret_get", destructive).level)
         assertEquals(McpRiskLevel.HIGH, evaluator.evaluateRisk("file_write", destructive).level)
         assertEquals(McpRiskLevel.LOW, evaluator.evaluateRisk("codebase_read", destructive).level)
+        // The workspace lifecycle tier is the argument-insensitivity itself: a
+        // destructive `command` string must not escalate a tool that cannot
+        // execute anything - the reason it is its own set, not SHELL_TOOLS.
+        assertEquals(McpRiskLevel.HIGH, evaluator.evaluateRisk("open_workspace", destructive).level)
     }
 
     // ---------------------------------------------------------------------
@@ -306,13 +455,28 @@ class McpRiskEvaluatorTest {
     }
 
     @Test
-    fun `the mutating catalog and risk evaluator mismatch stays explicit`() {
+    fun `every mutating catalog tool rates at least HIGH in the risk evaluator`() {
         val mismatches =
             McpMutatingToolCatalog.KNOWN_MUTATING_TOOLS.filterTo(mutableSetOf()) { name ->
                 evaluator.evaluateRisk(name, emptyArgs).level < McpRiskLevel.HIGH
             }
 
-        assertEquals(knownLowRiskMutatingTools, mismatches)
+        assertTrue(mismatches.isEmpty(), "mutating catalog tools rated below HIGH: $mismatches")
+    }
+
+    @Test
+    fun `no read-only evaluator tool is classified mutating by the catalog`() {
+        // The reverse of the sync pin above: the catalog's MUTATING_SUFFIXES
+        // grows by name pattern (and a read-only tool can be renamed), so a
+        // future _stop/_delete suffix or rename could make the catalog call a
+        // tool mutating while the evaluator rates it read-only LOW - a silent
+        // contradiction between the two classification points.
+        val contradictions =
+            readOnlyTools.filterTo(mutableSetOf()) { name ->
+                McpMutatingToolCatalog.isMutating(name, declaredReadOnly = true)
+            }
+
+        assertTrue(contradictions.isEmpty(), "catalog/evaluator read-only contradictions: $contradictions")
     }
 
     // ---------------------------------------------------------------------
@@ -374,6 +538,7 @@ class McpRiskEvaluatorTest {
                 "k8s_logs" to "k8s_apply",
                 // k8s_exec is a shell tool: even its no-arg HIGH floor sits above k8s_logs.
                 "k8s_logs" to "k8s_exec",
+                "list_workspaces" to "create_workspace",
             )
         for ((readOnly, mutating) in pairs) {
             val readOnlyLevel = evaluator.evaluateRisk(readOnly, emptyArgs).level
@@ -399,7 +564,7 @@ class McpRiskEvaluatorTest {
         }
 
         val destructiveArgs = commandArgs("rm -rf /tmp/cache")
-        for (name in dockerMutatingTools + k8sMutatingTools + fileWriteTools + readOnlyTools) {
+        for (name in dockerMutatingTools + k8sMutatingTools + fileWriteTools + workspaceMutationTools + readOnlyTools) {
             assertEquals(
                 evaluator.evaluateRisk(name, emptyArgs).level,
                 evaluator.evaluateRisk(name, destructiveArgs).level,
@@ -415,6 +580,7 @@ class McpRiskEvaluatorTest {
         // emission would change which tools stop hitting the approval default.
         val surface =
             shellTools + secretVaultTools + dockerMutatingTools + k8sMutatingTools + fileWriteTools +
+                workspaceMutationTools +
                 readOnlyTools + setOf("secret_get") +
                 shellTools.map { "mcp__boss__$it" } +
                 setOf("custom_unknown_tool", "", "mcp__vault__secret_get", "secret_get_all")

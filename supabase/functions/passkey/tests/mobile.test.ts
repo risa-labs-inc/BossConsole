@@ -7,6 +7,7 @@ import { OpenAPIHono } from "@hono/zod-openapi"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { PasskeyContext } from "../types/context.ts"
 import { generateMobileRegistrationPage, generateMobileAuthenticationPage } from "../services/mobile.ts"
+import { maskUserId } from "../utils/logging.ts"
 import mobile from "../routes/mobile.ts"
 import { createMockSupabaseClient, mockChallenge, mockPasskey } from "./helpers/mocks.ts"
 
@@ -527,4 +528,61 @@ Deno.test("GET /register/mobile - a request-supplied rpName cannot spoof the rel
   // The OS passkey prompt renders rp.name; it must be the server-derived name.
   assertEquals(body.includes("Microsoft Security"), false)
   assertStringIncludes(body, "const rpName = 'BOSS'")
+})
+
+Deno.test("generateMobileRegistrationPage - logs carry no raw email or user id", async () => {
+  const mockClient = createMockSupabaseClient()
+
+  mockClient.mockResponse('passkey_challenges', {
+    data: {
+      ...mockChallenge,
+      type: 'registration',
+      expires_at: new Date(Date.now() + 60000).toISOString()
+    },
+    error: null
+  }, 'select')
+  mockClient.mockResponse('passkey_challenges', {
+    data: [{ id: 'challenge-789' }],
+    error: null
+  }, 'update')
+
+  const logged: string[] = []
+  const originals = {
+    log: console.log,
+    error: console.error,
+    warn: console.warn,
+    info: console.info,
+    debug: console.debug
+  }
+  const capture = (...args: unknown[]) => {
+    logged.push(args.map(arg => arg instanceof Error ? `${arg.message}\n${arg.stack ?? ''}` : Deno.inspect(arg)).join(' '))
+  }
+  console.log = capture
+  console.error = capture
+  console.warn = capture
+  console.info = capture
+  console.debug = capture
+  try {
+    const result = await generateMobileRegistrationPage(
+      mockClient as unknown as SupabaseClient,
+      'mock-challenge-base64',
+      'victim@example.com',
+      'session-123',
+      'api.risaboss.com'
+    )
+    assertEquals(result.success, true)
+  } finally {
+    console.log = originals.log
+    console.error = originals.error
+    console.warn = originals.warn
+    console.info = originals.info
+    console.debug = originals.debug
+  }
+
+  assertExists(logged.find(line => line.includes('v***@example.com')))
+  assertExists(logged.find(line => line.includes(maskUserId('user-456'))))
+  for (const line of logged) {
+    assertEquals(line.includes('victim@example.com'), false, `log leaked raw email: ${line}`)
+    assertEquals(line.includes('user-456'), false, `log leaked raw user id: ${line}`)
+  }
 })

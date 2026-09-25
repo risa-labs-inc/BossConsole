@@ -1,39 +1,8 @@
 package ai.rever.boss
 
-import ai.rever.boss.components.window_panel.SplitViewState
 import ai.rever.boss.plugin.api.TabInfo
-import ai.rever.boss.plugin.browser.FluckEngine
-import ai.rever.boss.utils.logging.BossLogger
-import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.window.Project
 import ai.rever.boss.window.WindowManager
-
-private val bossAppLogger = BossLogger.forComponent("DesktopBossApp")
-
-/**
- * Desktop-specific implementation for setting up download tab close callback.
- * Called when BossApp initializes on desktop platform.
- */
-actual fun setupDownloadTabCloseCallback(splitViewState: SplitViewState) {
-    FluckEngine.setCloseRecentTabsCallback { count ->
-        bossAppLogger.debug(LogCategory.UI, "Received request to close recent tabs", mapOf("count" to count))
-        // Close up to `count` tabs total, most-recent-first. A redirect burst opens several
-        // tabs before the first download lands, so the number to close comes from the engine's
-        // pending count rather than always being one. The burst lands in one panel, so each
-        // panel is exhausted before moving on - a per-panel round robin would guarantee a
-        // collateral close in every panel that received no burst tab.
-        var remaining = count
-        val panels = splitViewState.getAllPanels()
-        var panelIndex = 0
-        while (remaining > 0 && panelIndex < panels.size) {
-            val tabsComp = splitViewState.getPanelTabsComponent(panels[panelIndex].id)
-            while (remaining > 0 && tabsComp?.closeMostRecentTab() == true) {
-                remaining--
-            }
-            panelIndex++
-        }
-    }
-}
 
 /**
  * Desktop-specific implementation for consuming pending initial tab for a window.

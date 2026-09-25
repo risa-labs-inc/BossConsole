@@ -5,6 +5,7 @@ import ai.rever.boss.plugin.git.GitOperationResult
 import ai.rever.boss.window.WindowGitState
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
@@ -107,6 +108,36 @@ class GitProviderWritesToRepoTest {
         provider(dir).unstage("tracked.txt")
 
         assertEquals(" M", statusOf(dir, "tracked.txt"))
+    }
+
+    @Test
+    fun unstageRenameWithArrowInOriginalPath(
+        @TempDir tmp: File,
+    ) = runTest {
+        assumeTrue(
+            !System.getProperty("os.name").lowercase().contains("win"),
+            "The regression path contains '>', which Windows does not allow in filenames.",
+        )
+        val dir = repo(tmp)
+        File(dir, "old -> name.txt").writeText("hello\n")
+        git(dir, "add", ".")
+        git(dir, "commit", "-q", "-m", "add file")
+
+        git(dir, "mv", "old -> name.txt", "new -> dest.txt")
+
+        // Assert it is staged rename
+        val porcelain = git(dir, "status", "--porcelain=v1")
+        assertTrue(
+            porcelain.contains("R  \"old -> name.txt\" -> \"new -> dest.txt\"") ||
+                porcelain.contains("R  old -> name.txt -> new -> dest.txt"),
+        )
+
+        provider(dir).unstage("new -> dest.txt")
+
+        val after = git(dir, "status", "--porcelain=v1")
+        // Unstaging a rename turns it into unstaged deletion of old and untracked new
+        assertTrue(after.contains(" D \"old -> name.txt\"") || after.contains(" D old -> name.txt"))
+        assertTrue(after.contains("?? \"new -> dest.txt\"") || after.contains("?? new -> dest.txt"))
     }
 
     @Test

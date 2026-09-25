@@ -2,6 +2,8 @@ package ai.rever.boss.logging
 
 import java.io.OutputStream
 import java.io.PrintStream
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.system.measureTimeMillis
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -142,6 +144,58 @@ class DesktopLogCaptureTrimTest {
             // cannot all be present.
             assertTrue(seq.size in 9_000..10_000, "unexpected surviving count: ${seq.size}")
             assertFalse(seq.any { it.endsWith("seq 0") }, "the oldest line survived a full buffer")
+        }
+    }
+
+    @Test
+    fun `a newline-less flood is capped and marked truncated`() {
+        withCapture { capture ->
+            // A 10MB write with no newline: the tee used to grow its line buffer to all of it.
+            val out = System.out
+            out.write(ByteArray(10 * 1024 * 1024) { 'x'.code.toByte() })
+            out.write('\n'.code)
+            out.flush()
+
+            val floods = capture.linesTagged("[truncated")
+            assertEquals(1, floods.size, "expected one truncated flood line")
+            val line = floods.single()
+            assertTrue(
+                line.length < 70_000,
+                "a capped line should stay near 64KB, got ${line.length}",
+            )
+            assertTrue(
+                line.contains("[truncated "),
+                "flood line lost its truncation marker: ...${line.takeLast(80)}",
+            )
+        }
+    }
+
+    @Test
+    fun `a normal line is untouched by the per-line cap`() {
+        withCapture { capture ->
+            println("plain line survives")
+            assertEquals(
+                listOf("plain line survives"),
+                capture.linesTagged("plain line survives"),
+            )
+        }
+    }
+
+    @Test
+    fun `a parked listener cannot stall the logging thread`() {
+        withCapture { capture ->
+            val release = CountDownLatch(1)
+            try {
+                // Synchronous delivery would park the println itself for the full 30s await.
+                capture.addListener { release.await(30, TimeUnit.SECONDS) }
+                val elapsed = measureTimeMillis { repeat(200) { println("queued $it") } }
+                assertTrue(
+                    elapsed < 5_000,
+                    "logging thread waited on a parked listener (${elapsed}ms)",
+                )
+            } finally {
+                release.countDown()
+            }
         }
     }
 

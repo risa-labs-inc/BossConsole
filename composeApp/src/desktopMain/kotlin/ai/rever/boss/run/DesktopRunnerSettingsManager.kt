@@ -3,6 +3,7 @@ package ai.rever.boss.run
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.plugin.run.MAX_RERUN_DELAY_MS
 import ai.rever.boss.plugin.run.MIN_RERUN_DELAY_MS
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CoroutineScope
@@ -12,6 +13,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -37,6 +40,11 @@ actual object RunnerSettingsManager {
 
     // Coroutine scope for async operations - uses SupervisorJob so failures don't cancel other operations
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    // Serializes writes so overlapping saves persist in order, freshest last. The mutex alone
+    // only orders them; atomicWriteText (temp file then atomic rename) is what makes each write
+    // crash-safe, so a reader never sees a torn file and a crash mid-write cannot truncate it.
+    private val saveMutex = Mutex()
 
     // Default settings provided immediately, updated async when file is loaded
     private val _currentSettings = MutableStateFlow(RunnerSettings())
@@ -64,9 +72,12 @@ actual object RunnerSettingsManager {
                     _currentSettings.value = settings
                     logger.debug(LogCategory.SYSTEM, "Loaded settings")
                 } else {
-                    // Create default settings file
-                    val content = json.encodeToString(RunnerSettings.serializer(), _currentSettings.value)
-                    settingsFile.writeText(content)
+                    // Create the default settings file under the same lock saveSettings uses, so a
+                    // load-time default write cannot race a concurrent toggle's save and lose it.
+                    saveMutex.withLock {
+                        val content = json.encodeToString(RunnerSettings.serializer(), _currentSettings.value)
+                        settingsFile.atomicWriteText(content)
+                    }
                     logger.debug(LogCategory.SYSTEM, "Created default settings file")
                 }
             } catch (e: Exception) {
@@ -80,12 +91,15 @@ actual object RunnerSettingsManager {
      */
     actual suspend fun saveSettings() =
         withContext(Dispatchers.IO) {
-            try {
-                val content = json.encodeToString(RunnerSettings.serializer(), _currentSettings.value)
-                settingsFile.writeText(content)
-                logger.debug(LogCategory.SYSTEM, "Settings saved")
-            } catch (e: Exception) {
-                logger.warn(LogCategory.SYSTEM, "Error saving settings", error = e)
+            saveMutex.withLock {
+                try {
+                    // Encode inside the lock so the last writer persists the freshest state.
+                    val content = json.encodeToString(RunnerSettings.serializer(), _currentSettings.value)
+                    settingsFile.atomicWriteText(content)
+                    logger.debug(LogCategory.SYSTEM, "Settings saved")
+                } catch (e: Exception) {
+                    logger.warn(LogCategory.SYSTEM, "Error saving settings", error = e)
+                }
             }
         }
 

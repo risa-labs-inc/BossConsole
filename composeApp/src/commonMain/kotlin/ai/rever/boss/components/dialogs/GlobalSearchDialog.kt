@@ -170,6 +170,7 @@ fun GlobalSearchDialog(
     val dialogState = remember(projectPath) { SpotlightDialogState() }
     val indexedFiles by fileIndexer.indexedFiles.collectAsState()
     val isIndexing by fileIndexer.isIndexing.collectAsState()
+    val indexError by fileIndexer.indexError.collectAsState()
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     val searchFieldFocusRequester = remember { FocusRequester() }
@@ -412,6 +413,7 @@ fun GlobalSearchDialog(
                     SearchDialogHeader(
                         fileCount = indexedFiles.size,
                         isIndexing = isIndexing,
+                        indexError = indexError,
                         onClose = onDismiss,
                     )
                 }
@@ -513,6 +515,7 @@ fun GlobalSearchDialog(
 private fun SearchDialogHeader(
     fileCount: Int,
     isIndexing: Boolean,
+    indexError: String?,
     onClose: () -> Unit,
 ) {
     Row(
@@ -524,22 +527,7 @@ private fun SearchDialogHeader(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            // Spotlight-style icon
-            Box(
-                modifier =
-                    Modifier
-                        .size(36.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(SelectionAccent.copy(alpha = 0.15f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.Search,
-                    contentDescription = null,
-                    tint = SelectionAccent,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
+            SearchDialogIcon()
 
             Column {
                 Row(
@@ -568,7 +556,9 @@ private fun SearchDialogHeader(
                     }
                 }
                 Text(
-                    text = if (isIndexing) "Indexing files..." else "$fileCount files indexed",
+                    text =
+                        indexError?.let { "File index unavailable: $it" }
+                            ?: if (isIndexing) "Indexing files..." else "$fileCount files indexed",
                     color = BossTheme.colors.textSecondary,
                     fontSize = 11.sp,
                 )
@@ -587,6 +577,25 @@ private fun SearchDialogHeader(
                 modifier = Modifier.size(20.dp),
             )
         }
+    }
+}
+
+@Composable
+private fun SearchDialogIcon() {
+    Box(
+        modifier =
+            Modifier
+                .size(36.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(SelectionAccent.copy(alpha = 0.15f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = Icons.Outlined.Search,
+            contentDescription = null,
+            tint = SelectionAccent,
+            modifier = Modifier.size(20.dp),
+        )
     }
 }
 

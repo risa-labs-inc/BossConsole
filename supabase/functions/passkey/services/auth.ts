@@ -17,6 +17,7 @@ import { withErrorHandler, withStatusErrorHandler } from "../utils/error-handler
 import { generateSupabaseAccessToken } from "../utils/jwt.ts"
 import { ALLOWED_ORIGINS, getAllowedOrigins, getAllowedRpIds, getRpId, rpIdMatchesOrigin } from "../utils/config.ts"
 import { normalizeBase64Url } from "../utils/base64.ts"
+import { maskEmail, maskPasskeyId, maskSessionId, maskUserId } from "../utils/logging.ts"
 import {
   challengeMatches,
   COSE_ALG_ES256,
@@ -78,7 +79,7 @@ function inertChallenge(sessionId?: string) {
  */
 export const generateAuthChallenge = withErrorHandler(
   async (supabase: SupabaseClient, email: string, sessionId?: string) => {
-    console.log('🔑 Generating authentication challenge for email:', email)
+    console.log('🔑 Generating authentication challenge for email:', maskEmail(email))
 
     // Use utility function for scalable user lookup
     const userResult = await findUserByEmail(supabase, email)
@@ -89,7 +90,7 @@ export const generateAuthChallenge = withErrorHandler(
     }
 
     const userId = userResult.user.id
-    console.log('Resolved email to user ID:', userId)
+    console.log('Resolved email to user ID:', maskUserId(userId))
 
     // Get user's passkeys
     const passkeyResult = await getUserPasskeys(supabase, userId)
@@ -294,7 +295,7 @@ export const completeAuthentication = withErrorHandler(
     // authenticator data is known to be authentic (WebAuthn L2 §7.2 step 21).
     const counter = evaluateSignCounter(passkey.sign_count, authData.signCount)
     if (!counter.ok) {
-      console.error('❌ Signature counter regression for passkey:', passkey.id, counter.reason)
+      console.error('❌ Signature counter regression for passkey:', maskPasskeyId(passkey.id), counter.reason)
       return {
         success: false,
         error: 'Signature counter did not increase - possible cloned authenticator'
@@ -327,14 +328,14 @@ export const completeAuthentication = withErrorHandler(
     // assertion already claimed this counter value.
     const useResult = await recordPasskeyUse(supabase, passkey.id, counter.nextValue)
     if (!useResult.advanced) {
-      console.error('❌ Signature counter was claimed concurrently for passkey:', passkey.id)
+      console.error('❌ Signature counter was claimed concurrently for passkey:', maskPasskeyId(passkey.id))
       return {
         success: false,
         error: 'Signature counter did not increase - possible cloned authenticator'
       }
     }
 
-    console.log('✅ Authentication successful for user:', passkey.user_id)
+    console.log('✅ Authentication successful for user:', maskUserId(passkey.user_id))
 
     // Mint the session *before* writing the completion row, so the row is only
     // ever published complete.
@@ -373,12 +374,12 @@ export const completeAuthentication = withErrorHandler(
     // Store completed authentication if there's a session_id
     console.log('🔍 Challenge data:', {
       has_session_id: !!challengeData.session_id,
-      session_id: challengeData.session_id,
-      user_id: passkey.user_id
+      session_id: maskSessionId(challengeData.session_id),
+      user_id: maskUserId(passkey.user_id)
     })
 
     if (challengeData.session_id) {
-      console.log('💾 Storing completed authentication for session:', challengeData.session_id)
+      console.log('💾 Storing completed authentication for session:', maskSessionId(challengeData.session_id))
       const storeResult = await storeCompletedAuthentication(supabase, {
         challenge: signedChallenge,
         sessionId: challengeData.session_id,
@@ -467,7 +468,7 @@ function parseStoredExpiryMillis(value: unknown): number | null {
  */
 export const checkAuthStatus = withStatusErrorHandler(
   async (supabase: SupabaseClient, sessionId: string) => {
-    console.log('🔍 Checking auth status for session:', sessionId)
+    console.log('🔍 Checking auth status for session:', maskSessionId(sessionId))
 
     // maybeSingle + newest-first: a client-supplied sessionId can legitimately be
     // reused, and .single() on two rows returns PGRST116, which would wedge the
@@ -508,14 +509,14 @@ export const checkAuthStatus = withStatusErrorHandler(
       })
 
       if (completedError || !completedAuth) {
-        console.log('❌ No completed authentication found for session:', sessionId)
+        console.log('❌ No completed authentication found for session:', maskSessionId(sessionId))
         return {
           status: 'expired' as const,
           message: 'Session not found or expired'
         }
       }
 
-      console.log('✅ Found completed authentication:', completedAuth.user_id)
+      console.log('✅ Found completed authentication:', maskUserId(completedAuth.user_id))
 
       // Replay the session recorded when the ceremony completed, once. Minting a
       // new session on every poll churns auth.sessions rows (and invalidates the
@@ -570,7 +571,7 @@ export const checkAuthStatus = withStatusErrorHandler(
       }
 
       // Generate Supabase session for passkey authentication
-      console.log('🎫 Generating Supabase session for passkey auth:', userResult.user.email)
+      console.log('🎫 Generating Supabase session for passkey auth:', maskEmail(userResult.user.email))
 
       const tokens = await generateSupabaseAccessToken(supabase, userResult.user.email)
 
@@ -593,7 +594,7 @@ export const checkAuthStatus = withStatusErrorHandler(
         .eq('id', completedAuth.id)
 
       if (tokenStoreError) {
-        console.error('⚠️ Failed to persist session for session id:', sessionId, tokenStoreError)
+        console.error('⚠️ Failed to persist session for session id:', maskSessionId(sessionId), tokenStoreError)
       }
 
       return {

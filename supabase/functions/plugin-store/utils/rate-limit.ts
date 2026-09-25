@@ -85,18 +85,26 @@ export function resetRateLimits(): void {
 }
 
 /**
- * Best-effort client identity for rate-limit keys.
+ * Best-effort client identity for rate-limit keys, derived the same way as the
+ * passkey limiter (#1335) and crash-report's clientIp (#1628; #975 does the
+ * same for the organisation limiter).
  *
- * X-Forwarded-For is caller-controlled in general, but behind the Supabase
- * gateway the LEFTMOST entry is the one the gateway observed. It is still
- * spoofable by anyone who can reach the origin directly, which is another
- * reason this is a brake and not a control.
+ * The gateway's connecting headers come first. Failing those, the RIGHTMOST
+ * X-Forwarded-For entry: proxies append the address they observed, so the
+ * rightmost is the hop the gateway added for the connection it accepted, and
+ * everything to its left is whatever the caller sent. Keying on the LEFTMOST
+ * entry, as this used to, let a client rotate it on every request - a fresh
+ * bucket each time, so the limiter never tripped, and one map entry per
+ * request until MAX_KEYS forced a clear that forgot everyone else's count too.
+ * It also let a caller write someone else's address there and spend their
+ * budget. This is still a brake, not a control.
  */
 export function clientKey(headers: Headers): string {
-  const forwarded = headers.get("x-forwarded-for")
-  if (forwarded) {
-    const first = forwarded.split(",")[0].trim()
-    if (first) return first
+  for (const name of ["cf-connecting-ip", "x-real-ip"]) {
+    const value = headers.get(name)?.trim()
+    if (value) return value
   }
-  return headers.get("cf-connecting-ip") ?? headers.get("x-real-ip") ?? "unknown"
+  const chain = headers.get("x-forwarded-for")?.split(",")
+  const last = chain?.[chain.length - 1]?.trim()
+  return last || "unknown"
 }

@@ -13,11 +13,50 @@ REM   boss folder <path>                # Opens folder in codebase
 REM   boss terminal                     # Opens terminal
 REM   boss terminal -c <command>        # Opens terminal with command
 
-REM delayed expansion is OFF at the top level: nothing in this script reads
-REM !var!, and EnableDelayedExpansion would let a literal ! in an argument
-REM (e.g. "boss file 'foo!bar.txt'") get eaten by the parser before :urlencode
-REM can hand the value to PowerShell. No function here needs delayed expansion.
+REM delayed expansion is OFF at the top level: EnableDelayedExpansion would let
+REM a literal ! in an argument (e.g. "boss file 'foo!bar.txt'") get eaten by
+REM the parser before :urlencode can hand the value to PowerShell. Only
+REM :check_arg_quotes turns it on, inside its own scope, to read a value that
+REM is already in a variable.
 setlocal DisableDelayedExpansion
+
+REM Refuse a " inside an argument before anything reads one (#1617). Every read
+REM below wraps the argument in quotes - if "%~1"=="" - and cmd substitutes %~1
+REM before it parses the line, so a quote in the value closes that quote early:
+REM x"=="x" calc & rem " turns the first check into if "x"=="x" calc & rem ...
+REM and runs calc. Checking needs the raw text without cmd parsing it, and an
+REM echoed REM line is the one place cmd writes %* out untouched, so capture it
+REM there and read it back through a FOR variable.
+REM The capture goes in a directory this call claims with md, which fails when
+REM the directory exists: %RANDOM% is seeded from the clock, so two boss calls
+REM started together would otherwise share a file name and could each read and
+REM check the other's arguments. If no directory can be claimed, nothing is
+REM captured and :check_arg_quotes refuses the call.
+set "BOSS_RAW_ARGS="
+set "BOSS_ARGS_TRIES=0"
+:claim_args_dir
+set /a "BOSS_ARGS_TRIES+=1"
+set "BOSS_ARGS_DIR=%TEMP%\boss-args-%RANDOM%%RANDOM%%RANDOM%"
+md "%BOSS_ARGS_DIR%" >nul 2>&1 && goto :capture_args
+if %BOSS_ARGS_TRIES% lss 20 goto :claim_args_dir
+goto :check_args
+:capture_args
+setlocal
+for %%a in (1) do (
+    set "prompt=$_"
+    echo on
+    for %%b in (1) do rem * #%*#
+    @echo off
+) > "%BOSS_ARGS_DIR%\args.txt"
+endlocal
+if exist "%BOSS_ARGS_DIR%\args.txt" for /f "usebackq delims=" %%L in ("%BOSS_ARGS_DIR%\args.txt") do set "BOSS_RAW_ARGS=%%L"
+rd /s /q "%BOSS_ARGS_DIR%" >nul 2>&1
+:check_args
+call :check_arg_quotes || exit /b 1
+REM The forwarded commands pass %* on, and the child has no use for these.
+set "BOSS_RAW_ARGS="
+set "BOSS_ARGS_DIR="
+set "BOSS_ARGS_TRIES="
 
 REM Check if no arguments provided
 if "%~1"=="" (
@@ -198,6 +237,76 @@ echo   boss plugin secret-manager
 echo.
 goto :eof
 
+REM Refuse a quote inside an argument (#1617). Reads BOSS_RAW_ARGS, the raw
+REM command line captured at the top.
+REM Usage: call :check_arg_quotes || exit /b 1
+REM An argument may be quoted as a whole and hold no quote inside. That is all a
+REM path or a URL needs, and it leaves no %~N that can carry a quote into the
+REM quoted reads above. So a " may only open at the start or after a space, and
+REM only close at the end or before a space. Delayed expansion is on here only:
+REM the value is already in a variable, and !var! reads are never re-parsed.
+REM The first argument is always checked. status, doctor, mcp and completion
+REM hand the rest to BOSS.exe as a bare %*, which cmd re-reads exactly as the
+REM caller's line was read, and nothing reads it through %~N first - so their
+REM arguments may hold quotes, as `boss mcp invoke tool --args {"q":"x"}` does.
+REM plugin is not one of them: it reads %~2 and %~3 before it forwards.
+:check_arg_quotes
+setlocal EnableDelayedExpansion
+if not defined BOSS_RAW_ARGS (
+    echo Error: could not read the command-line arguments
+    endlocal & exit /b 1
+)
+REM The captured line is `rem * #<arguments>#`; keep what is between the marks.
+REM cmd echoes it with a trailing space after the closing mark, so the spaces
+REM go first; without that the mark stays, and a quoted last argument reads as
+REM "...# with a quote that closes before a # rather than a space.
+set "rest=!BOSS_RAW_ARGS:*#=!"
+:check_arg_quotes_trim
+if defined rest if "!rest:~-1!"==" " set "rest=!rest:~0,-1!" & goto :check_arg_quotes_trim
+if defined rest if "!rest:~-1!"=="#" set "rest=!rest:~0,-1!"
+REM Length first, so the walk below stops at the last character.
+set "s=!rest!#"
+set "len=0"
+for %%P in (4096 2048 1024 512 256 128 64 32 16 8 4 2 1) do if not "!s:~%%P,1!"=="" (
+    set /a "len+=%%P"
+    set "s=!s:~%%P!"
+)
+set /a "last=len-1"
+set q=^"
+set "open="
+set "prev= "
+set "bad="
+set "first="
+set "done="
+for /l %%i in (0,1,!last!) do if not defined bad if not defined done (
+    set "c=!rest:~%%i,1!"
+    if "!c!"=="!q!" (
+        if defined open (
+            set /a "n=%%i+1"
+            for %%n in (!n!) do set "next=!rest:~%%n,1!"
+            if defined next if not "!next!"==" " set "bad=1"
+            set "open="
+        ) else (
+            if not "!prev!"==" " set "bad=1"
+            set "open=1"
+        )
+    )
+    if not defined first if not defined open if "!c!"==" " if not "!prev!"==" " (
+        set "first=!rest:~0,%%i!"
+        if "!first:~0,1!"=="!q!" set "first=!first:~1!"
+        if "!first:~-1!"=="!q!" set "first=!first:~0,-1!"
+        for %%v in (status doctor mcp completion) do if /i "!first!"=="%%v" set "done=1"
+    )
+    set "prev=!c!"
+)
+if defined bad (
+    echo Error: an argument has a double quote inside it.
+    echo Quote a whole argument, e.g. boss file "C:\My Files\a.txt". In a URL, write a quote as %%22.
+    echo For a terminal command that needs a quote, run boss.ps1 instead.
+    endlocal & exit /b 1
+)
+endlocal & exit /b 0
+
 REM URL encode subroutine
 REM Usage: call :urlencode "string to encode" OUTPUT_VAR
 :urlencode
@@ -225,28 +334,31 @@ REM Usage: call :detect_and_route "argument"
 REM Delayed expansion is OFF here too: nothing in this function reads !var!
 REM (the only ! in this script are comments at :17/:18/:143/:208). EnableDelayedExpansion
 REM would re-create the literal-!-eating defect the top-level DisableDelayedExpansion
-REM just fixed, on the auto-detect path and on the %ENCODED% reads at :274/:281.
+REM just fixed, on the auto-detect path and on the %ENCODED% reads in
+REM :detect_url and :detect_domain.
 REM Exit with the matching endlocal at each branch below.
 setlocal DisableDelayedExpansion
 set "arg=%~1"
 
-REM Check if it's a URL (has http:// or https://)
-echo %arg% | findstr /i "^http://" >nul
-if %errorlevel%==0 goto :detect_url
-echo %arg% | findstr /i "^https://" >nul
-if %errorlevel%==0 goto :detect_url
+REM Every read of arg below is inside quotes. cmd substitutes the value into
+REM the line before it parses the line, so an unquoted read lets an ampersand
+REM in the argument, say a file named R and D.txt, end the command and run the rest as
+REM a second one. The checks used to echo arg into findstr, which did exactly
+REM that on every line; they are now plain string tests with no subshell.
+REM (No percent-wrapped arg in these comments: cmd expands it in REM lines.)
 
-REM Check for common TLDs (looks like a domain)
-echo %arg% | findstr /i "\.com" >nul
-if %errorlevel%==0 goto :detect_domain
-echo %arg% | findstr /i "\.org" >nul
-if %errorlevel%==0 goto :detect_domain
-echo %arg% | findstr /i "\.net" >nul
-if %errorlevel%==0 goto :detect_domain
-echo %arg% | findstr /i "\.io" >nul
-if %errorlevel%==0 goto :detect_domain
-echo %arg% | findstr /i "\.dev" >nul
-if %errorlevel%==0 goto :detect_domain
+REM Check if it's a URL (has http:// or https://)
+if /i "%arg:~0,7%"=="http://" goto :detect_url
+if /i "%arg:~0,8%"=="https://" goto :detect_url
+
+REM Check for common TLDs (looks like a domain). Substring replacement is
+REM case-insensitive, so the value only changes when it contains the TLD in
+REM any case - the same answer findstr /i gave.
+if not "%arg:.com=%"=="%arg%" goto :detect_domain
+if not "%arg:.org=%"=="%arg%" goto :detect_domain
+if not "%arg:.net=%"=="%arg%" goto :detect_domain
+if not "%arg:.io=%"=="%arg%" goto :detect_domain
+if not "%arg:.dev=%"=="%arg%" goto :detect_domain
 
 REM Check if it's a file or folder. Variables read inside a parenthesized
 REM block expand at parse time, before any set/call fills them, so the
@@ -257,12 +369,12 @@ REM boss://file?path= with an empty path.
 if exist "%arg%" goto :detect_file_or_folder
 
 REM Could not detect type
-echo Error: Could not determine type for: %arg%
+echo Error: Could not determine type for: "%arg%"
 echo.
 echo Did you mean:
-echo   boss url %arg%      - Open as URL
-echo   boss file %arg%     - Open as file
-echo   boss folder %arg%   - Open as folder
+echo   boss url "%arg%"      - Open as URL
+echo   boss file "%arg%"     - Open as file
+echo   boss folder "%arg%"   - Open as folder
 echo.
 echo Run 'boss --help' for usage information
 endlocal

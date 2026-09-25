@@ -14,8 +14,15 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.InputStream
+import java.nio.ByteBuffer
+import java.nio.charset.CharacterCodingException
+import java.nio.charset.CodingErrorAction
+import java.nio.charset.StandardCharsets
 import java.nio.file.Files
+import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -24,10 +31,10 @@ import java.util.concurrent.atomic.AtomicInteger
  * project-wide content search, and replace scoped to an explicit file list.
  *
  * Design notes:
- * - File walking is the same shape as [FileIndexer] (skip VCS/build/VCS-adjacent
- *   directories), but the scan is on demand: files are read at search time, so a
- *   fresh checkout needs no reindex. An mtime-keyed result cache makes a repeat
- *   search with the same query and options cheap.
+ * - [ProjectFileDiscovery] is shared with [FileIndexer], so names and contents observe
+ *   the same ignore rules, default exclusions, and link confinement. The scan is on demand:
+ *   files are read at search time, so a fresh checkout needs no reindex. A content-keyed
+ *   result cache skips repeat matching for unchanged files.
  * - Files containing a NUL byte (binary) or larger than [MAX_FILE_SIZE] are
  *   skipped, so a search over a repo with binaries stays fast and sane.
  * - `wholeWord` wraps the pattern in `\b...\b`, which for regex queries
@@ -76,6 +83,8 @@ class ContentSearchService(
      * compiler - silently returns fewer results than exist whenever the excluded files
      * are reached first.
      */
+    // Keep one cache/cancellation snapshot around the complete per-file search pipeline.
+    @Suppress("LongMethod", "CyclomaticComplexMethod", "ReturnCount")
     override suspend fun searchInProject(
         query: String,
         pathPattern: String?,
@@ -89,18 +98,19 @@ class ContentSearchService(
         if (query.isEmpty()) return emptyList()
 
         val regex =
-            buildRegex(query, isRegex, caseSensitive, wholeWord)
-                ?: run {
-                    // A pattern the regex compiler rejects is a USER error (a half-typed
-                    // `foo(`), not "no matches" - say so, because the empty list is the
-                    // same shape an honest no-result returns.
-                    logger.warn(
-                        LogCategory.GENERAL,
-                        "search rejected: invalid regex pattern",
-                        mapOf("query" to query.take(120)),
-                    )
-                    return emptyList()
-                }
+            try {
+                buildRegex(query, isRegex, caseSensitive, wholeWord)
+            } catch (e: IllegalArgumentException) {
+                logger.warn(
+                    LogCategory.GENERAL,
+                    "search rejected: invalid regex pattern",
+                    mapOf(
+                        "query" to query.take(120),
+                        "error" to (e.message ?: "invalid regex"),
+                    ),
+                )
+                throw e
+            }
         val rawOpenPaths = snapshotOpenEditorPaths()
         return withContext(Dispatchers.IO) {
             // The cancellation check the scan hands to the matcher: a caller-
@@ -109,11 +119,23 @@ class ContentSearchService(
             val job = coroutineContext[Job]
             val isCancelled = { job != null && !job.isActive }
             val results = mutableListOf<FileMatch>()
+            val includes = pathPattern?.let { compileIncludeGlobs(it) }
+            val excludes = excludePattern?.let { compileIncludeGlobs(it) }
+            val acceptsPath: (String) -> Boolean = { relativePath ->
+                (includes.isNullOrEmpty() || includes.any { it.matches(relativePath) }) &&
+                    excludes?.any { it.matches(relativePath) } != true
+            }
             // Snapshotted once per search, not per file - the whole point.
             val openPaths = openBufferLookupSet(projectPath, rawOpenPaths)
-            for (file in walkProjectFiles(projectPath, pathPattern, excludePattern)) {
+            val discovery = ProjectFileDiscovery.discover(projectPath, acceptsPath)
+            if (discovery.incompleteReason != null) {
+                throw ProjectDiscoveryIncompleteException(discovery.incompleteReason)
+            }
+            for (projectFile in discovery.files) {
                 ensureActive()
                 if (results.size >= maxResults) break
+                val relativePath = projectFile.relativePath.replace('\\', '/')
+                val file = projectFile.file
 
                 // An open file is searched as the user sees it, not as the disk
                 // has it. Otherwise a replace into a live buffer - or any
@@ -128,39 +150,45 @@ class ContentSearchService(
                         null
                     }
                 val cacheKeyArg =
-                    cacheKey(projectPath, query, pathPattern, excludePattern, isRegex, caseSensitive, wholeWord, file.absolutePath)
+                    cacheKey(
+                        projectPath,
+                        query,
+                        pathPattern,
+                        excludePattern,
+                        isRegex,
+                        caseSensitive,
+                        wholeWord,
+                        file.absolutePath,
+                    )
                 val key = cacheKeyArg + if (buffer != null) "|buf" else "|disk"
-                // The freshness stamp combines BOTH signals for an open file, because
-                // each alone has a blind spot:
-                // - mtime alone misses buffer edits (an unsaved edit does not touch it),
-                //   so the pre-edit matches would be served from cache;
-                // - buffer version alone misses a close-reopen. documentVersion is
-                //   per-document and restarts when a document is created, so closing a
-                //   tab, changing the file on disk and reopening it yields the same key
-                //   AND the same version - and the pre-change matches come back.
-                val stamp =
-                    if (buffer != null) buffer.version * STAMP_MIX + file.lastModified() else file.lastModified()
+                if (buffer == null && file.length() > MAX_FILE_SIZE) continue
+                val text = buffer?.content ?: readTextAtMost(file).textOrNull() ?: continue
+                if (!isWithinContentLimit(text)) continue
+                // The content fingerprint covers unsaved buffer edits, close/reopen, and disk
+                // rewrites even where mtimes have coarse resolution. Do not use hashCode here:
+                // its ordinary collisions (for example, "Aa" and "BB") can serve stale hits.
+                val cached = synchronized(cache) { cache[key] }
+                val fingerprint = if (cached != null) contentFingerprint(text) else null
+                val cachedMatches = if (cached != null && cached.fingerprint == fingerprint) cached.matches else null
                 val matches: List<FileMatch> =
-                    synchronized(cache) {
-                        val cached = cache[key]
-                        if (cached != null && cached.stamp == stamp) cached.matches else null
-                    }
-                        ?: scanText(
-                            file = file,
-                            text = buffer?.content ?: readTextOrNull(file) ?: continue,
-                            regex = regex,
-                            projectRoot = File(projectPath),
-                            isCancelled = isCancelled,
-                        )?.also { found ->
-                            // Empty results are not cached: on a large project most files
-                            // match nothing, and caching them all filled the map and tripped
-                            // the wholesale clear below, so a repeat search - the one this
-                            // cache exists for - hit on nothing. Re-scanning a no-match file
-                            // is cheap; evicting a real hit is not.
-                            if (found.isNotEmpty()) {
-                                synchronized(cache) { cache[key] = CacheEntry(stamp, found) }
+                    cachedMatches ?: scanText(
+                        file = file,
+                        text = text,
+                        regex = regex,
+                        relativePath = relativePath,
+                        isCancelled = isCancelled,
+                    )?.also { found ->
+                        // Empty results are not cached: on a large project most files
+                        // match nothing, and caching them all filled the map and tripped
+                        // the wholesale clear below, so a repeat search - the one this
+                        // cache exists for - hit on nothing. Re-scanning a no-match file
+                        // is cheap; evicting a real hit is not.
+                        if (found.isNotEmpty()) {
+                            synchronized(cache) {
+                                cache[key] = CacheEntry(fingerprint ?: contentFingerprint(text), found)
                             }
-                        } ?: continue
+                        }
+                    } ?: continue
 
                 for (match in matches) {
                     results.add(match)
@@ -195,17 +223,24 @@ class ContentSearchService(
         val projectPath = projectPathProvider() ?: return ReplaceSummary(0, 0, emptyList(), dryRun)
         if (query.isEmpty() || files.isEmpty()) return ReplaceSummary(0, 0, emptyList(), dryRun)
         val regex =
-            buildRegex(query, isRegex, caseSensitive, wholeWord)
-                ?: run {
-                    // Same reasoning as searchInProject: a bad pattern is an error the
-                    // caller should see, not a zero-replacement success.
-                    logger.warn(
-                        LogCategory.GENERAL,
-                        "replace rejected: invalid regex pattern",
-                        mapOf("query" to query.take(120)),
-                    )
-                    return ReplaceSummary(0, 0, emptyList(), dryRun)
-                }
+            try {
+                buildRegex(query, isRegex, caseSensitive, wholeWord)
+            } catch (e: IllegalArgumentException) {
+                logger.warn(
+                    LogCategory.GENERAL,
+                    "replace rejected: invalid regex pattern",
+                    mapOf(
+                        "query" to query.take(120),
+                        "error" to (e.message ?: "invalid regex"),
+                    ),
+                )
+                return ReplaceSummary(
+                    0,
+                    0,
+                    files.map { FileReplaceResult(it, 0, e.message ?: "invalid regex pattern") },
+                    dryRun,
+                )
+            }
 
         return withContext(Dispatchers.IO) {
             val job = coroutineContext[Job]
@@ -258,7 +293,7 @@ class ContentSearchService(
         isRegex: Boolean,
         caseSensitive: Boolean,
         wholeWord: Boolean,
-    ): Regex? {
+    ): Regex {
         val pattern =
             if (isRegex) {
                 query
@@ -269,7 +304,7 @@ class ContentSearchService(
         return try {
             if (caseSensitive) Regex(wrapped) else Regex(wrapped, RegexOption.IGNORE_CASE)
         } catch (e: Exception) {
-            null
+            throw IllegalArgumentException("Invalid regex pattern: ${e.message ?: query}", e)
         }
     }
 
@@ -392,55 +427,6 @@ class ContentSearchService(
         // result-click would resolve it against the new root - the wrong file.
     ): String = "$projectRoot|$query|$pathPattern|$excludePattern|$isRegex|$caseSensitive|$wholeWord|$path"
 
-    private fun walkProjectFiles(
-        projectPath: String,
-        pathPattern: String?,
-        excludePattern: String?,
-    ): Sequence<File> {
-        val root = File(projectPath)
-        // The root's canonical path is IN the set from the start, but the root is still
-        // always entered (the isRoot branch below). Without seeding it, a symlink
-        // `proj/link -> proj` had a canonical path that was not yet "seen", so it was
-        // entered, its children registered their canonicals, and the real subtree was
-        // then skipped as already-seen - matches came back as `link/src/...`.
-        val rootCanon = canonicalOrPath(root)
-        val seen = hashSetOf(rootCanon)
-        val globs = pathPattern?.let { compileIncludeGlobs(it) }
-        // Same compiler for both boxes: include and exclude take identical syntax,
-        // so two implementations would be two sets of edge cases to keep in step.
-        val excludes = excludePattern?.let { compileIncludeGlobs(it) }
-        return root
-            .walkTopDown()
-            // onEnter DESCENDS on true. The predicate has to be "not skipped",
-            // and the root has to pass it: the previous form returned true only
-            // for the skip list, so the walk entered node_modules/.git and
-            // nothing else - including refusing to enter the project root, which
-            // made every search return zero results.
-            .onEnter { dir ->
-                // A directory symlink pointing at an ancestor makes walkTopDown recurse
-                // forever, and ensureActive() only helps if something cancels. A directory
-                // is entered once per canonical path; the root always enters (its canonical
-                // is pre-seeded, so a link back to it is what gets refused).
-                val isRoot = dir.absolutePath == root.absolutePath
-                val notSkipped = isRoot || dir.name !in SKIP_DIRECTORIES
-                notSkipped && (isRoot || seen.add(canonicalOrPath(dir)))
-            }.filter { it.isFile }
-            // Skip symlinked files, so the walk and replaceInProject agree: replace
-            // refuses a path resolving outside the project (resolveFile), and a followed
-            // symlink is exactly such a path. Directory-symlink cycles are handled above.
-            .filterNot {
-                runCatching {
-                    java.nio.file.Files
-                        .isSymbolicLink(it.toPath())
-                }.getOrDefault(false)
-            }.filter { it.length() <= MAX_FILE_SIZE }
-            .filter { file ->
-                val rel = file.relativeTo(root).path.replace('\\', '/')
-                val included = globs.isNullOrEmpty() || globs.any { it.matches(rel) }
-                included && excludes?.any { it.matches(rel) } != true
-            }.asSequence()
-    }
-
     /**
      * Compile an include pattern the way VS Code's "files to include" box does:
      * comma-separated alternatives, and a pattern with no path separator
@@ -476,36 +462,78 @@ class ContentSearchService(
         return expanded.map { globToRegex(it) }
     }
 
-    /** File contents, or null when it cannot be read (permissions, races). */
-    private fun readTextOrNull(file: File): String? =
+    /**
+     * Reads at most [MAX_FILE_SIZE] bytes. The stream check, rather than a pre-read length
+     * check, closes the race where a file grows after discovery and before `readText()` starts.
+     */
+    private fun readTextAtMost(file: File): BoundedText =
         try {
-            file.readText()
-        } catch (e: Exception) {
-            null
+            Files.newInputStream(file.toPath()).use { input ->
+                readUtf8AtMost(input, MAX_FILE_SIZE)
+            }
+        } catch (_: Exception) {
+            BoundedText.Unreadable
         }
+
+    /** Applies the same one-megabyte byte budget to unsaved editor content as disk files. */
+    private fun isWithinContentLimit(text: String): Boolean {
+        var bytes = 0L
+        var index = 0
+        while (index < text.length) {
+            val c = text[index]
+            bytes +=
+                when {
+                    c.code <= 0x7f -> {
+                        1
+                    }
+
+                    c.code <= 0x7ff -> {
+                        2
+                    }
+
+                    c.isHighSurrogate() && index + 1 < text.length && text[index + 1].isLowSurrogate() -> {
+                        index++
+                        4
+                    }
+
+                    c.isHighSurrogate() || c.isLowSurrogate() -> {
+                        1
+                    }
+
+                    else -> {
+                        3
+                    }
+                }
+            if (bytes > MAX_FILE_SIZE) return false
+            index++
+        }
+        return true
+    }
 
     private fun scanText(
         file: File,
         text: String,
         regex: Regex,
-        projectRoot: File,
+        relativePath: String,
         isCancelled: () -> Boolean,
     ): List<FileMatch>? {
         return try {
-            val relative = file.relativeTo(projectRoot).path.replace('\\', '/')
             if ('\u0000' in text) return null
             val lineMap = LineMap(text)
             val matches = mutableListOf<FileMatch>()
             // The matcher reads through [InterruptibleText] rather than the raw
             // string, so a cancel lands inside a wedged pattern instead of at the
             // next suspension point.
-            val searchable = InterruptibleText(text, isCancelled)
             var searchFrom = 0
             while (searchFrom <= text.length && matches.size < MAX_MATCHES_PER_FILE) {
+                // Each find gets its own deadline. A benign file with many matches must not
+                // spend the same 250 ms allowance across all of them.
+                val searchable =
+                    InterruptibleText(text, isCancelled, System.nanoTime() + MAX_REGEX_MATCH_NANOS)
                 val m = regex.find(searchable, searchFrom) ?: break
                 matches.add(
                     FileMatch(
-                        path = relative,
+                        path = relativePath,
                         line = lineMap.lineOf(m.range.first),
                         column = lineMap.columnOf(m.range.first),
                         matchLength = m.value.length,
@@ -523,6 +551,18 @@ class ContentSearchService(
             // search, not a scan error: rethrow so the withContext unwinds
             // instead of the loop quietly moving on to the next file.
             throw e
+        } catch (
+            // A partial result must never look complete. The provider API has no incomplete
+            // result type, so deadline expiry fails the request explicitly.
+            @Suppress("SwallowedException")
+            e: RegexMatchTimeoutException,
+        ) {
+            logger.warn(
+                LogCategory.FILE,
+                "Skipping file whose regex match exceeded its time budget",
+                mapOf("path" to file.path, "budgetMs" to MAX_REGEX_MATCH_MILLIS),
+            )
+            throw ProjectSearchIncompleteException("Regex matching exceeded its per-file time budget: ${file.path}")
         } catch (e: Exception) {
             null
         }
@@ -578,7 +618,6 @@ class ContentSearchService(
         isCancelled: () -> Boolean,
     ): FileReplaceResult {
         if (!file.isFile) return FileReplaceResult(file.path, 0, "not a file")
-        if (file.length() > MAX_FILE_SIZE) return FileReplaceResult(file.path, 0, "file too large")
 
         return try {
             // Open buffers go through the editor's undoable path - under every
@@ -586,6 +625,9 @@ class ContentSearchService(
             val buffer =
                 bufferPathSpellings(file, projectRoot).firstNotNullOfOrNull { bufferBridge.readBuffer(it) }
             if (buffer != null) {
+                if (!isWithinContentLimit(buffer.content)) {
+                    return FileReplaceResult(file.path, 0, "file too large")
+                }
                 replaceInBuffer(file, buffer.content, buffer.version, regex, replacement, isRegex, dryRun, isCancelled)
             } else {
                 // The whole read/compute/persist transaction is serialized per file,
@@ -604,14 +646,27 @@ class ContentSearchService(
                 // distinct inodes - this lock cannot make that pre-existing behavior
                 // coherent, only prevent the two callers from racing each other's writes.
                 FileReplaceCoordination.withFileLock(canonicalOrPath(file)) {
-                    // UTF-8 in, UTF-8 out. A file in another single-byte encoding has no NUL
-                    // bytes, so it passes the binary check, and round-tripping it through
-                    // readText/writeText replaces its undecodable bytes with U+FFFD - a
-                    // silent rewrite of bytes the user never asked to touch. Detect that the
-                    // decode was lossy and refuse, rather than corrupting the file.
-                    val text = file.readText()
+                    // UTF-8 in, UTF-8 out. The bounded reader rejects malformed bytes before
+                    // they can be silently rewritten as replacement characters.
+                    val text =
+                        when (val read = readTextAtMost(file)) {
+                            is BoundedText.Text -> {
+                                read.value
+                            }
+
+                            BoundedText.TooLarge -> {
+                                return@withFileLock FileReplaceResult(file.path, 0, "file too large")
+                            }
+
+                            BoundedText.InvalidEncoding -> {
+                                return@withFileLock FileReplaceResult(file.path, 0, "not valid UTF-8")
+                            }
+
+                            BoundedText.Unreadable -> {
+                                return@withFileLock FileReplaceResult(file.path, 0, "could not read file")
+                            }
+                        }
                     if ('\u0000' in text) return@withFileLock FileReplaceResult(file.path, 0, "binary file")
-                    if ('\uFFFD' in text) return@withFileLock FileReplaceResult(file.path, 0, "not valid UTF-8")
                     val outcome = computeReplaced(text, regex, replacement, isRegex, isCancelled)
                     if (!dryRun && outcome.count > 0) writeAtomically(file, outcome.text)
                     FileReplaceResult(file.path, outcome.count, null)
@@ -792,7 +847,12 @@ class ContentSearchService(
         // The matcher reads through [InterruptibleText] too: replace is
         // reachable from a plugin with the same untrusted patterns, and a
         // wedged file here holds no lock but still parks an IO thread.
-        val matcher = regex.toPattern().matcher(InterruptibleText(text, isCancelled))
+        val matcher =
+            regex
+                .toPattern()
+                .matcher(
+                    InterruptibleText(text, isCancelled, System.nanoTime() + MAX_REGEX_MATCH_NANOS),
+                )
         val repl =
             if (isRegex) {
                 replacement
@@ -875,12 +935,9 @@ class ContentSearchService(
         return Regex(sb.toString())
     }
 
-    /**
-     * [stamp] is the file's mtime, mixed with the buffer version when one is open.
-     * See the call site for why neither signal is sufficient alone.
-     */
+    /** [fingerprint] identifies the exact text that produced [matches]. */
     private data class CacheEntry(
-        val stamp: Long,
+        val fingerprint: String,
         val matches: List<FileMatch>,
     )
 
@@ -888,38 +945,91 @@ class ContentSearchService(
         const val MAX_FILE_SIZE: Long = 1_048_576 // 1 MiB
         const val MAX_MATCHES_PER_FILE = 500
         const val MAX_CACHE_ENTRIES = 500
-
-        /** Odd multiplier so a buffer-version bump and an mtime change cannot cancel out. */
-        const val STAMP_MIX = 1_000_003L
+        const val MAX_REGEX_MATCH_MILLIS = 250L
+        const val MAX_REGEX_MATCH_NANOS = MAX_REGEX_MATCH_MILLIS * 1_000_000L
 
         /** Recursive-wildcard glob segment; kept out of literals with a slash. */
         const val ANY_DEPTH_PREFIX = "**"
+    }
+}
 
-        val SKIP_DIRECTORIES =
-            setOf(
-                ".git",
-                ".hg",
-                ".svn",
-                "node_modules",
-                ".build",
-                "build",
-                ".gradle",
-                ".idea",
-                "dist",
-                "out",
-                "target",
-                "__pycache__",
+/** Search cannot represent a known-incomplete result as an ordinary empty result. */
+class ProjectSearchIncompleteException(
+    reason: String,
+) : IllegalStateException(reason)
+
+/** A collision-resistant identity for cache entries without retaining every searched file's text. */
+private fun contentFingerprint(text: String): String =
+    MessageDigest
+        .getInstance("SHA-256")
+        .digest(text.toByteArray(StandardCharsets.UTF_8))
+        .joinToString(separator = "") { byte ->
+            (byte.toInt() and 0xff).toString(16).padStart(2, '0')
+        }
+
+/** The outcome of a byte-bounded UTF-8 read. */
+internal sealed class BoundedText {
+    data class Text(
+        val value: String,
+    ) : BoundedText()
+
+    data object TooLarge : BoundedText()
+
+    data object InvalidEncoding : BoundedText()
+
+    data object Unreadable : BoundedText()
+
+    fun textOrNull(): String? = (this as? Text)?.value
+}
+
+/**
+ * Reads no more than [maxBytes] from [input], checking one extra byte when the limit is exactly
+ * reached. The extra read is what makes a file which grows during this operation fail closed.
+ */
+internal fun readUtf8AtMost(
+    input: InputStream,
+    maxBytes: Long,
+): BoundedText {
+    val bytes = ByteArrayOutputStream()
+
+    fun decoded(): BoundedText =
+        try {
+            BoundedText.Text(
+                StandardCharsets.UTF_8
+                    .newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(bytes.toByteArray()))
+                    .toString(),
             )
+        } catch (_: CharacterCodingException) {
+            BoundedText.InvalidEncoding
+        }
+
+    val buffer = ByteArray(8 * 1024)
+    var total = 0L
+    while (true) {
+        val remaining = maxBytes - total
+        if (remaining == 0L) {
+            return if (input.read() == -1) {
+                decoded()
+            } else {
+                BoundedText.TooLarge
+            }
+        }
+        val read = input.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
+        if (read == -1) return decoded()
+        bytes.write(buffer, 0, read)
+        total += read
     }
 }
 
 /**
  * A file's real path when resolvable, else its canonical path, else its absolute path
- * normalized (never just returned raw) - identity for cycle detection
- * ([ContentSearchService.walkProjectFiles]) and for cross-instance file-lock keys
- * ([FileReplaceCoordination]). File-scoped rather than a member of [ContentSearchService]
- * so [FileReplaceCoordination] - a process-wide singleton that must not be reset per
- * instance - can compute the same identity without needing one.
+ * normalized (never just returned raw) - identity for cross-instance file-lock keys
+ * ([FileReplaceCoordination]). File-scoped rather than a member of [ContentSearchService] so
+ * [FileReplaceCoordination] - a process-wide singleton that must not be reset per instance - can
+ * compute the same identity without needing one.
  *
  * [java.nio.file.Path.toRealPath] rather than [File.getCanonicalPath] as the first choice:
  * `canonicalPath` does not resolve a Windows directory junction to the directory it points
@@ -1050,8 +1160,8 @@ object GlobalEditorBufferBridge : EditorBufferBridge {
 }
 
 /**
- * A [CharSequence] view of [text] for matcher work that stops the moment
- * [isCancelled] goes true.
+ * A [CharSequence] view of [text] for matcher work that stops on caller cancellation or a
+ * monotonic per-file deadline.
  *
  * A caller-supplied pattern is not trusted: `(a+)+$` against a long line is
  * catastrophic backtracking, and the Java matcher is not interruptible, so
@@ -1063,22 +1173,26 @@ object GlobalEditorBufferBridge : EditorBufferBridge {
  * The check reads the CALLER's job, not `Thread.interrupted()`: structured
  * concurrency does not interrupt a thread running a CPU-bound loop, so the
  * flag would stay clear for the whole wedged run. The matcher re-reads
- * characters on every backtrack step, so each read is the check, and a
- * cancel lands mid-pattern rather than at the next suspension point.
+ * characters on every backtrack step, so checking every 1024 accesses
+ * still catches cancellation inside the pattern.
  *
- * A tripped check throws [CancellationException], so the callers rethrow it
- * past their `catch (Exception)` - which would otherwise turn the cancel
- * into a "scan error" and let the loop move on to the next file.
+ * Cancellation throws [CancellationException], which callers rethrow. Deadline expiry throws
+ * [RegexMatchTimeoutException], which callers report as a skipped file or per-file replacement
+ * error rather than misrepresenting it as caller cancellation.
  */
 internal class InterruptibleText(
     private val text: String,
     private val isCancelled: () -> Boolean,
+    private val deadlineNanos: Long = Long.MAX_VALUE,
+    private val onCharacterAccess: (() -> Unit)? = null,
 ) : CharSequence {
+    private var accesses = 0
+
     override val length: Int
         get() = text.length
 
     override fun get(index: Int): Char {
-        if (isCancelled()) throw CancellationException("search cancelled")
+        checkBudget()
         return text[index]
     }
 
@@ -1086,9 +1200,21 @@ internal class InterruptibleText(
         startIndex: Int,
         endIndex: Int,
     ): CharSequence {
-        if (isCancelled()) throw CancellationException("search cancelled")
+        checkBudget()
         return text.subSequence(startIndex, endIndex)
     }
 
     override fun toString(): String = text
+
+    private fun checkBudget() {
+        if (accesses++ and 1023 != 0) return
+        onCharacterAccess?.invoke()
+        if (isCancelled()) throw CancellationException("search cancelled")
+        if (deadlineNanos != Long.MAX_VALUE && System.nanoTime() - deadlineNanos >= 0) {
+            throw RegexMatchTimeoutException()
+        }
+    }
 }
+
+/** A per-file regex budget expiry, deliberately distinct from caller cancellation. */
+internal class RegexMatchTimeoutException : RuntimeException("regex match exceeded the per-file time budget")

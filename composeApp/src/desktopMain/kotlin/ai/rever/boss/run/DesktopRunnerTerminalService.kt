@@ -5,6 +5,7 @@ import ai.rever.boss.plugin.api.SIDEBAR_TERMINAL_ID
 import ai.rever.boss.plugin.run.Language
 import ai.rever.boss.plugin.run.MAX_RERUN_DELAY_MS
 import ai.rever.boss.plugin.run.MIN_RERUN_DELAY_MS
+import ai.rever.boss.plugin.workspace.uniqueId
 import ai.rever.boss.services.terminal.TerminalAPIAccess
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -28,6 +29,12 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
+import kotlin.time.Clock
+
+internal fun mintRunnerTerminalId(
+    configId: String,
+    clock: Clock = Clock.System,
+): String = uniqueId("$RUNNER_TERMINAL_PREFIX$configId", clock)
 
 /**
  * Desktop implementation of RunnerTerminalService.
@@ -196,7 +203,7 @@ actual object RunnerTerminalService {
         val (terminalId, isRerun) =
             stateLock.withLock {
                 val existingTerminalId = _configToTerminal.value[config.id]
-                val newTerminalId = existingTerminalId ?: "$RUNNER_TERMINAL_PREFIX${config.id}-${System.currentTimeMillis()}"
+                val newTerminalId = existingTerminalId ?: mintRunnerTerminalId(config.id)
 
                 // Update all state atomically
                 _configToTerminal.update { it + (config.id to newTerminalId) }
@@ -333,7 +340,7 @@ actual object RunnerTerminalService {
                 }
 
                 // Create new terminal with fresh ID
-                val newTerminalId = "$RUNNER_TERMINAL_PREFIX${config.id}-${System.currentTimeMillis()}"
+                val newTerminalId = mintRunnerTerminalId(config.id)
 
                 // Update all state atomically
                 _configToTerminal.update { it + (config.id to newTerminalId) }

@@ -52,6 +52,7 @@ private const val KEY_VERSION = "version"
 private const val KEY_TRANSPORT = "transport"
 private const val KEY_ENDPOINT = "endpoint"
 private const val KEY_TOKEN = "token"
+internal const val KEY_PID = "pid"
 
 /** Wire protocol marker, first field of every request line. */
 internal const val PROTOCOL_VERSION = "boss-si-1"
@@ -134,6 +135,16 @@ internal const val PLUGIN_DEV_RELOAD_TIMEOUT_MS = 45_000L
  */
 internal const val MAX_REQUEST_BYTES = 1024 * 1024
 
+/**
+ * Longest URL a [VERB_OPEN] request may carry, in UTF-8 bytes.
+ *
+ * Well past a fully percent-encoded maximum-length file path (~100 KB), yet far
+ * under [MAX_REQUEST_BYTES]: the URL is untrusted input from any program that
+ * can ask the OS to open a link, so it gets its own bound rather than the whole
+ * request budget.
+ */
+internal const val MAX_FORWARD_URL_BYTES = 256 * 1024
+
 // Reserve 1368 wire bytes for the protocol, token and up to 256 UTF-8 tool-name characters.
 internal const val MAX_ARGUMENT_BYTES = 768 * 1024 - 1024
 internal const val MAX_TOOL_NAME_LENGTH = 256
@@ -184,6 +195,7 @@ internal data class InstanceDescriptor(
     val transport: SingleInstanceTransport,
     val endpoint: String,
     val token: String,
+    val pid: Long? = null,
 ) {
     fun encode(): String =
         buildString {
@@ -191,9 +203,12 @@ internal data class InstanceDescriptor(
             appendLine("$KEY_TRANSPORT=${transport.name}")
             appendLine("$KEY_ENDPOINT=$endpoint")
             appendLine("$KEY_TOKEN=$token")
+            if (pid != null) {
+                appendLine("$KEY_PID=$pid")
+            }
         }
 
-    override fun toString(): String = "InstanceDescriptor(transport=$transport, endpoint=$endpoint, token=<redacted>)"
+    override fun toString(): String = "InstanceDescriptor($transport, $endpoint, pid=$pid, token=<redacted>)"
 }
 
 /**
@@ -214,13 +229,109 @@ internal fun parseInstanceDescriptor(text: String): InstanceDescriptor? {
     val transport = SingleInstanceTransport.entries.firstOrNull { it.name == fields[KEY_TRANSPORT] }
     val endpoint = fields[KEY_ENDPOINT]?.takeIf { it.isNotBlank() }
     val token = fields[KEY_TOKEN]?.takeIf { it.length >= TOKEN_HEX_LENGTH }
+    // A present-but-unparseable pid means a tampered file, not a legacy one:
+    // the whole descriptor is unusable rather than merely unverifiable.
+    val pidField = fields[KEY_PID]
+    val pid = pidField?.toLongOrNull()
+    val fieldsUsable = transport != null && endpoint != null && token != null
 
-    return if (transport != null && endpoint != null && token != null) {
-        InstanceDescriptor(transport, endpoint, token)
+    return if (fieldsUsable && (pidField == null || pid != null)) {
+        InstanceDescriptor(transport, endpoint, token, pid)
     } else {
         null
     }
 }
+
+/**
+ * How far a descriptor read off disk can be trusted to name the live owner of
+ * the channel it points at.
+ */
+internal enum class DescriptorTrust {
+    /** The recorded pid is alive and, where the OS exposes it, runs this program. */
+    VERIFIED,
+
+    /**
+     * No usable pid binding: a descriptor written before pids were recorded, or
+     * a live pid whose executable the OS will not show us. Not proof of forgery,
+     * so ordinary links may still cross, but a credential-bearing link must not.
+     */
+    UNVERIFIED,
+
+    /**
+     * The recorded pid is dead or provably belongs to a different program, so
+     * whatever answers on the endpoint is not the publisher — a stale file a
+     * squatter is answering on, or one that was planted outright.
+     */
+    FORGED,
+}
+
+/**
+ * Checks whether the OS process with [pid] is currently alive.
+ * Returns false if the process does not exist, has exited, or cannot be queried.
+ */
+internal fun isProcessAlive(pid: Long): Boolean =
+    runCatching {
+        ProcessHandle.of(pid).map { it.isAlive }.orElse(false)
+    }.getOrDefault(false)
+
+/**
+ * Decides how much trust a descriptor's recorded pid buys the endpoint.
+ *
+ * The strongest check, where the platform can name a socket's owner
+ * ([SocketPeerLookup]), is that the recorded pid is the process holding the
+ * endpoint — without it, a planter could simply copy the live BOSS pid into a
+ * descriptor pointing at its own listener. Where the OS cannot say, the
+ * recorded pid must at least be a live process running our executable.
+ *
+ * The residual hole, documented rather than faked: a same-uid attacker who
+ * records a pid *it owns* and runs a process with the same executable path
+ * (any `java` in a dev environment) satisfies every check here. Closing that
+ * needs an OS-level peer credential bound to a signed identity, which the JDK
+ * does not expose on either transport.
+ */
+@Suppress("ReturnCount")
+internal fun descriptorTrust(descriptor: InstanceDescriptor): DescriptorTrust {
+    val pid = descriptor.pid ?: return DescriptorTrust.UNVERIFIED
+    val handle =
+        runCatching { ProcessHandle.of(pid).orElse(null) }.getOrNull()
+            ?: return DescriptorTrust.FORGED
+    if (!handle.isAlive) return DescriptorTrust.FORGED
+
+    // The endpoint-owner check runs before the executable comparison because it
+    // is the stronger one: it answers "does this pid own this socket", which a
+    // pid the attacker does not own but did record cannot satisfy.
+    val owners = SocketPeerLookup.ownerPidsOf(descriptor)
+    if (owners != null && pid !in owners) return DescriptorTrust.FORGED
+    if (owners != null) return DescriptorTrust.VERIFIED
+
+    val ours =
+        runCatching {
+            ProcessHandle
+                .current()
+                .info()
+                .command()
+                .orElse(null)
+        }.getOrNull()
+    val theirs = runCatching { handle.info().command().orElse(null) }.getOrNull()
+    return when {
+        ours != null && theirs != null && ours != theirs -> DescriptorTrust.FORGED
+
+        // When owner lookup cannot answer, matching executables is the fallback.
+        ours != null && theirs != null -> DescriptorTrust.VERIFIED
+
+        // The OS cannot show executables nor the endpoint's owner, so the pid's
+        // liveness is all that is established — better than nothing, not enough
+        // for auth.
+        else -> DescriptorTrust.UNVERIFIED
+    }
+}
+
+/**
+ * `boss://auth/…` callbacks carry live tokens in the fragment, which is what
+ * makes a hijacked channel worth planting — it is the one link a forwarded
+ * request must never hand to an unverified peer.
+ */
+private fun isAuthDeepLink(url: String): Boolean = deepLinkHostOf(url) == "auth"
 
 /**
  * One request read off the channel.
@@ -267,7 +378,11 @@ internal fun parseRequestLine(line: String): SingleInstanceRequest? {
         }
 
         VERB_OPEN -> {
-            if (parts.size == 5) {
+            // The URL is the rest of the line, so it can never itself contain a
+            // line break — but a raw control character can still arrive mid-line
+            // (a hand-rolled sender, a stray CR). A well-formed URL carries none:
+            // anything needing one arrives percent-encoded.
+            if (parts.size == 5 && parts[4].none { it.isISOControl() }) {
                 SingleInstanceRequest(token, VERB_OPEN, DeepLinkOrigin.fromWireLabel(parts[3]), parts[4])
             } else {
                 null
@@ -329,12 +444,38 @@ private fun decodeBase64Args(base64Payload: String): String? {
     }
 }
 
-/** Builds the line [parseRequestLine] reads. Never log the result: it carries the token. */
+/**
+ * Whether [url] can occupy one framed [VERB_OPEN] line.
+ *
+ * The framing is `\n`-delimited, so a URL containing a raw newline or carriage
+ * return would smuggle a second line into the stream. Rejecting is the safe
+ * answer — a legitimate URL is already percent-encoded, so refusing control
+ * characters loses no real link. The byte cap bounds what the framing writes
+ * into a single request.
+ *
+ * The answer does not depend on the channel token, so a caller can check before
+ * it has even read the descriptor — e.g. to keep a refused URL out of a retry
+ * loop it could never pass.
+ */
+internal fun canFrameOpenUrl(url: String): Boolean =
+    url.isNotBlank() &&
+        url.none { it.isISOControl() } &&
+        url.toByteArray(StandardCharsets.UTF_8).size <= MAX_FORWARD_URL_BYTES
+
+/**
+ * Builds the line [parseRequestLine] reads, or null when [canFrameOpenUrl]
+ * refuses [url]. Never log the result: it carries the token.
+ */
 internal fun formatOpenRequest(
     token: String,
     origin: DeepLinkOrigin,
     url: String,
-): String = "$PROTOCOL_VERSION $token $VERB_OPEN ${origin.name} $url"
+): String? {
+    if (!canFrameOpenUrl(url)) {
+        return null
+    }
+    return "$PROTOCOL_VERSION $token $VERB_OPEN ${origin.name} $url"
+}
 
 /** Builds a liveness probe line. Never log the result: it carries the token. */
 internal fun formatPingRequest(token: String): String = "$PROTOCOL_VERSION $token $VERB_PING"
@@ -562,7 +703,13 @@ private object SingleInstanceWire {
             val channel = ServerSocketChannel.open(StandardProtocolFamily.UNIX)
             channel.bind(UnixDomainSocketAddress.of(path))
             SingleInstanceFiles.restrictToOwner(path, ownerOnlyFilePermissions)
-            channel to InstanceDescriptor(SingleInstanceTransport.UNIX, path.toString(), token)
+            channel to
+                InstanceDescriptor(
+                    transport = SingleInstanceTransport.UNIX,
+                    endpoint = path.toString(),
+                    token = token,
+                    pid = ProcessHandle.current().pid(),
+                )
         } catch (e: UnsupportedOperationException) {
             logger.debug(
                 LogCategory.SYSTEM,
@@ -586,7 +733,13 @@ private object SingleInstanceWire {
             try {
                 val channel = ServerSocketChannel.open()
                 channel.bind(InetSocketAddress(InetAddress.getLoopbackAddress(), port), TCP_BACKLOG)
-                return channel to InstanceDescriptor(SingleInstanceTransport.TCP, port.toString(), token)
+                return channel to
+                    InstanceDescriptor(
+                        transport = SingleInstanceTransport.TCP,
+                        endpoint = port.toString(),
+                        token = token,
+                        pid = ProcessHandle.current().pid(),
+                    )
             } catch (e: IOException) {
                 logger.trace(
                     LogCategory.SYSTEM,
@@ -1034,8 +1187,11 @@ private fun pluginActionResponse(verdict: kotlinx.coroutines.Deferred<Boolean>?)
  *
  * Architecture:
  * - The descriptor lives in BOSS's own per-user data root (`~/.boss/run`, created
- *   owner-only) and records the channel endpoint plus a token minted fresh at
- *   startup. It records no pid.
+ *   owner-only) and records the channel endpoint, a token minted fresh at
+ *   startup, and the pid of the process that published it. The pid binds the
+ *   file to a live owner: [descriptorTrust] refuses to forward to a peer whose
+ *   recorded pid is gone or provably another program, and refuses auth links to
+ *   a peer it cannot verify at all.
  * - The channel is a Unix-domain socket inside that directory where the JDK
  *   supports one (macOS, Linux), and a loopback TCP port otherwise (Windows).
  *   Either way the token is what establishes that a caller may be listened to:
@@ -1110,10 +1266,14 @@ object SingleInstanceManager {
      * Check whether another instance of BOSS is already running, by asking it.
      * Does not take ownership - use [acquireLock] for that.
      */
-    fun isAnotherInstanceRunning(): Boolean {
-        val descriptor = SingleInstanceFiles.read() ?: return false
-        return SingleInstanceWire.respondsToPing(descriptor)
-    }
+    fun isAnotherInstanceRunning(): Boolean =
+        SingleInstanceFiles.read()?.let { existing ->
+            // A dead recorded pid proves the descriptor outlived its publisher;
+            // a live pid is not proof of anything (pids are reused), so the
+            // channel ping remains what decides.
+            (existing.pid == null || isProcessAlive(existing.pid)) &&
+                SingleInstanceWire.respondsToPing(existing)
+        } ?: false
 
     /**
      * Try to become the single instance.
@@ -1126,13 +1286,35 @@ object SingleInstanceManager {
         SingleInstanceFiles.prepare()
 
         val existing = SingleInstanceFiles.read()
-        if (existing != null && SingleInstanceWire.respondsToPing(existing)) {
-            logger.info(LogCategory.SYSTEM, "Another instance is answering on the single-instance channel")
-            return false
-        }
         if (existing != null) {
-            // Nothing answers, so this descriptor outlived its process.
-            logger.debug(LogCategory.SYSTEM, "Reclaiming a single-instance descriptor nothing answers on")
+            // A dead recorded pid proves the descriptor is stale, so the ping —
+            // and any squatter answering it — is skipped outright. A live pid
+            // alone proves nothing (pids are reused); the ping still decides.
+            val isDeadPid = existing.pid != null && !isProcessAlive(existing.pid)
+            if (!isDeadPid && SingleInstanceWire.respondsToPing(existing)) {
+                val forged = descriptorTrust(existing) == DescriptorTrust.FORGED
+                if (forged) {
+                    logger.warn(
+                        LogCategory.SYSTEM,
+                        "The single-instance channel answers, but its recorded owner is a different " +
+                            "program - reclaiming a descriptor that may have been planted",
+                        mapOf("endpoint" to existing.endpoint, "pid" to existing.pid),
+                    )
+                } else {
+                    logger.info(LogCategory.SYSTEM, "Another instance is answering on the single-instance channel")
+                }
+                return if (forged) startServer() else false
+            }
+            if (isDeadPid) {
+                logger.debug(
+                    LogCategory.SYSTEM,
+                    "Reclaiming a single-instance descriptor whose recorded process is gone",
+                    mapOf("pid" to existing.pid),
+                )
+            } else {
+                // Nothing answers, so this descriptor outlived its process.
+                logger.debug(LogCategory.SYSTEM, "Reclaiming a single-instance descriptor nothing answers on")
+            }
         }
 
         return startServer()
@@ -1319,11 +1501,39 @@ object SingleInstanceManager {
     }
 
     /**
+     * The descriptor on disk, or null when it is not safe to talk to the
+     * endpoint it advertises. [DescriptorTrust.FORGED] never is; a peer that
+     * cannot be verified at all ([DescriptorTrust.UNVERIFIED]) is tolerated only
+     * for exchanges that carry no credentials in either direction — anything
+     * requesting or sending credential-adjacent data passes
+     * [requireVerified]. Callers that merely need "is a descriptor there" keep
+     * [SingleInstanceFiles.read].
+     */
+    private fun readSafeDescriptor(requireVerified: Boolean = false): InstanceDescriptor? =
+        SingleInstanceFiles.read()?.takeIf { descriptor ->
+            val trust = descriptorTrust(descriptor)
+            val safe = trust != DescriptorTrust.FORGED && (!requireVerified || trust == DescriptorTrust.VERIFIED)
+            if (!safe) {
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Ignoring a single-instance descriptor whose recorded owner is not the live process",
+                    mapOf(
+                        "transport" to descriptor.transport.name,
+                        "endpoint" to descriptor.endpoint,
+                        "pid" to descriptor.pid,
+                        "trust" to trust.name,
+                    ),
+                )
+            }
+            safe
+        }
+
+    /**
      * Requests a credential from the already-running, signed-in BOSS process.
      * The credential is never written to disk or included in a log line.
      */
     fun requestLlmToken(): Result<String> {
-        val target = SingleInstanceFiles.read()
+        val target = readSafeDescriptor(requireVerified = true)
         return if (target == null) {
             Result.failure(
                 IllegalStateException("Open BOSS, sign in with your RISA account, and retry."),
@@ -1363,7 +1573,7 @@ object SingleInstanceManager {
     @Suppress("ReturnCount", "TooGenericExceptionCaught")
     fun queryStatus(): Result<String> {
         val target =
-            SingleInstanceFiles.read()
+            readSafeDescriptor()
                 ?: return Result.failure(IllegalStateException("BOSS is not running. Launch BOSS to view status."))
         val response =
             SingleInstanceWire.exchange(
@@ -1408,7 +1618,7 @@ object SingleInstanceManager {
     @Suppress("ReturnCount", "TooGenericExceptionCaught")
     fun queryMcpList(): Result<String> {
         val target =
-            SingleInstanceFiles.read()
+            readSafeDescriptor()
                 ?: return Result.failure(IllegalStateException("BOSS is not running. Launch BOSS to list MCP tools."))
         val response =
             SingleInstanceWire.exchange(
@@ -1466,7 +1676,7 @@ object SingleInstanceManager {
             return Result.failure(IllegalArgumentException("Timeout must be between 1 and 60 seconds"))
         }
         val target =
-            SingleInstanceFiles.read()
+            readSafeDescriptor(requireVerified = true)
                 ?: return Result.failure(IllegalStateException("BOSS is not running. Launch BOSS to invoke MCP tools."))
         val response =
             SingleInstanceWire.exchange(
@@ -1508,6 +1718,14 @@ object SingleInstanceManager {
     /**
      * Send a URL to the existing instance.
      *
+     * The descriptor file is the only thing standing between any local program
+     * that can write it and the running instance's auth flow: whoever controls
+     * the endpoint it names receives forwarded links, including `boss://auth`
+     * callbacks carrying live tokens. [descriptorTrust] therefore gates the
+     * forward before a connection is ever opened: nothing crosses when the
+     * recorded owner pid is gone or belongs to another program, and an auth
+     * link never crosses to a peer that cannot be verified at all.
+     *
      * @param origin what the caller knows about where [url] came from. Defaults to
      *   [DeepLinkOrigin.EXTERNAL], because a forwarded URL normally reached this
      *   process from the OS.
@@ -1519,7 +1737,14 @@ object SingleInstanceManager {
      *   run. A refused action, an unregistered handler on the operator path, or an
      *   unknown outcome at timeout returns false. This is not a guarantee that
      *   asynchronous work started by a handler has completed.
+     *
+     *   False also covers two cases a caller may want to tell apart: a URL
+     *   [canFrameOpenUrl] refuses is rejected before any connection attempt,
+     *   while any other false means the running instance could not be reached
+     *   or did not accept. A retrying caller can check [canFrameOpenUrl] once,
+     *   up front, to keep a refusal out of a retry loop it could never pass.
      */
+    @Suppress("ReturnCount")
     fun sendToExistingInstance(
         url: String,
         origin: DeepLinkOrigin = DeepLinkOrigin.EXTERNAL,
@@ -1531,12 +1756,26 @@ object SingleInstanceManager {
 
         val response =
             SingleInstanceFiles.read()?.let { target ->
+                // A refused forward never reaches connect(), so a planted endpoint receives no probe.
+                if (!mayForwardTo(target, url)) return false
+                val request = formatOpenRequest(target.token, origin, url)
+                if (request == null) {
+                    // A URL that cannot occupy one line is refused here, before
+                    // the connection opens: sending it would inject a second
+                    // framed line the peer only partially reads.
+                    logger.warn(
+                        LogCategory.SYSTEM,
+                        "Refusing to forward a URL that cannot be framed safely",
+                        mapOf("urlBytes" to url.toByteArray(StandardCharsets.UTF_8).size),
+                    )
+                    return false
+                }
                 logger.debug(
                     LogCategory.SYSTEM,
                     "Attempting to connect to existing instance",
                     mapOf("transport" to target.transport.name, "endpoint" to target.endpoint),
                 )
-                SingleInstanceWire.exchange(target, formatOpenRequest(target.token, origin, url))
+                SingleInstanceWire.exchange(target, request)
             }
 
         if (response == RESPONSE_OK) {
@@ -1550,6 +1789,52 @@ object SingleInstanceManager {
         }
         return response == RESPONSE_OK
     }
+
+    /**
+     * Whether a link may be handed to the peer [descriptor] names.
+     *
+     * A forged descriptor — recorded pid dead, or belonging to a different
+     * program — means whatever answers on the endpoint is not the publisher, so
+     * nothing is forwarded. A descriptor that cannot be verified (written before
+     * pids were recorded, or a pid whose executable the OS will not show) still
+     * carries ordinary links for backward compatibility, but never a `boss://auth`
+     * callback, since that is the link a planted descriptor exists to steal.
+     * Refusals are logged rather than silent.
+     */
+    private fun mayForwardTo(
+        descriptor: InstanceDescriptor,
+        url: String,
+    ): Boolean =
+        when (descriptorTrust(descriptor)) {
+            DescriptorTrust.FORGED -> {
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Refusing to forward a URL: the descriptor's recorded owner is not the live process",
+                    mapOf(
+                        "transport" to descriptor.transport.name,
+                        "endpoint" to descriptor.endpoint,
+                        "pid" to descriptor.pid,
+                    ),
+                )
+                false
+            }
+
+            DescriptorTrust.UNVERIFIED -> {
+                val refused = isAuthDeepLink(url)
+                if (refused) {
+                    logger.warn(
+                        LogCategory.SYSTEM,
+                        "Refusing to forward an auth link to an unverified single-instance peer",
+                        mapOf("transport" to descriptor.transport.name, "endpoint" to descriptor.endpoint),
+                    )
+                }
+                !refused
+            }
+
+            DescriptorTrust.VERIFIED -> {
+                true
+            }
+        }
 
     /**
      * Dispatches dev reload signal for [pluginId] to the running BossConsole instance
@@ -1568,7 +1853,7 @@ object SingleInstanceManager {
             return ReloadResult.Failed("Invalid plugin id for dev reload: '$pluginId'")
         }
         val target =
-            SingleInstanceFiles.read()
+            readSafeDescriptor()
                 ?: return ReloadResult.HostOffline("BossConsole is not running.")
         val message = "$PROTOCOL_VERSION ${target.token} $VERB_PLUGIN_DEV_RELOAD $pluginId"
         return try {

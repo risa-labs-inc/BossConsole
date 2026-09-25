@@ -12,6 +12,7 @@ import ai.rever.boss.ipc.proto.services.WriteFileRequest
 import ai.rever.boss.plugin.api.FileNodeData
 import ai.rever.boss.plugin.api.FileSystemDataProvider
 import ai.rever.boss.plugin.api.NodeLoadingStateData
+import ai.rever.boss.plugin.pathutils.DownloadsDirectory
 import com.google.protobuf.ByteString
 import io.grpc.ManagedChannel
 import kotlinx.coroutines.CancellationException
@@ -330,7 +331,10 @@ class FileSystemDataProviderProxy(
 
     // ---- Pure system queries (answered locally) ----
 
-    override fun getDownloadsDirectory(): String = System.getProperty("user.home") + "/Downloads"
+    // Answered locally, so it has to agree with the host rather than approximate it: the plain
+    // concatenation this replaced named a directory that did not exist whenever ~/Downloads did
+    // not, and on Windows it mixed separators, so it compared unequal to every host-built path.
+    override fun getDownloadsDirectory(): String = DownloadsDirectory.current()
 
     override fun getHomeDirectory(): String = System.getProperty("user.home")
 

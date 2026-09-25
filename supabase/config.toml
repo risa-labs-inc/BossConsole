@@ -426,3 +426,15 @@ entrypoint = "./functions/boss-ai/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/redirect/*.html" ]
+
+[functions.fluck-oauth]
+enabled = true
+# MUST be false: this function is the redirect target of a Google consent screen - a
+# header-less browser GET that carries no Authorization header and no apikey. Its gate is the
+# `state` parameter, which is an HS256 token signed with a key shared only with the BOSS that
+# minted it, single use through `public.fluck_oauth_claim_nonce`, and valid for ten minutes.
+# Everything the function writes (the BOSS user id and the secret key) is read out of that
+# signed token, never off the request.
+verify_jwt = false
+import_map = "./functions/fluck-oauth/deno.json"
+entrypoint = "./functions/fluck-oauth/index.ts"

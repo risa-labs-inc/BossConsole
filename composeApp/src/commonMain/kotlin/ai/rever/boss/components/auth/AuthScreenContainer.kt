@@ -37,6 +37,12 @@ enum class AuthScreen {
 fun AuthScreenContainer(onLoginSuccess: () -> Unit) {
     // Use a stable key to prevent ViewModel recreation during AuthState changes
     val viewModel = remember("login_viewmodel") { LoginViewModel() }
+    // The ViewModel owns coroutine scopes that must not outlive this screen: without this, an
+    // in-flight sign-in could run its onSuccess (navigation) or mutate state after the screen is
+    // gone, and every sign-out/sign-in cycle would leak the scopes.
+    DisposableEffect(viewModel) {
+        onDispose { viewModel.dispose() }
+    }
     var currentScreen by remember { mutableStateOf(AuthScreen.LOGIN) }
     var magicLinkEmail by remember { mutableStateOf("") }
     var passkeyEmail by remember { mutableStateOf("") }

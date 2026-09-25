@@ -7,6 +7,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.yield
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Nested
@@ -22,6 +23,30 @@ import kotlin.test.assertTrue
  */
 class PluginSandboxManagerTest {
     private lateinit var manager: PluginSandboxManagerImpl
+
+    /**
+     * Every listener a test registers, held strongly for the life of the test.
+     *
+     * [PluginSandboxManagerImpl.addListener] keeps only a [java.lang.ref.WeakReference], so a
+     * listener nothing else refers to is garbage the moment it is registered. A test that
+     * builds one inline, registers it and then waits for an event is exactly that: the local
+     * is dead after `addListener`, a coroutine spills only the locals still live across a
+     * suspension into its continuation, and the interpreter's liveness analysis clears dead
+     * slots of a plain frame just the same. Any GC between registration and the event then
+     * collects the listener, `notifyListeners` drops the cleared reference, and the test
+     * either waits out its timeout (the disable notification, ten seconds, on Windows CI
+     * twice in one day) or passes vacuously (`assertFalse(restarted)` on a listener that was
+     * never going to be called).
+     *
+     * Production registrations keep their listener in a field (`DynamicPluginManager`,
+     * `DefaultPlugin`), which is the contract this list gives the tests too.
+     */
+    private val heldListeners = mutableListOf<PluginSandboxListener>()
+
+    private fun PluginSandboxManagerImpl.listen(listener: PluginSandboxListener) {
+        heldListeners += listener
+        addListener(listener)
+    }
 
     @BeforeEach
     fun setUp() {
@@ -39,6 +64,7 @@ class PluginSandboxManagerTest {
     fun tearDown() =
         runTest {
             manager.dispose()
+            heldListeners.clear()
         }
 
     @Nested
@@ -183,7 +209,7 @@ class PluginSandboxManagerTest {
                         },
                     )
                 var restarted = false
-                raceManager.addListener(
+                raceManager.listen(
                     object : PluginSandboxListener {
                         override fun onPluginRestarted(pluginId: String) {
                             restarted = true
@@ -226,7 +252,7 @@ class PluginSandboxManagerTest {
                         },
                     )
                 var restarted = false
-                raceManager.addListener(
+                raceManager.listen(
                     object : PluginSandboxListener {
                         override fun onPluginRestarted(pluginId: String) {
                             restarted = true
@@ -340,7 +366,7 @@ class PluginSandboxManagerTest {
                             receivedPluginId = pluginId
                         }
                     }
-                manager.addListener(listener)
+                manager.listen(listener)
 
                 val sandbox = manager.createSandbox("plugin-1")
                 sandbox.start()
@@ -359,7 +385,7 @@ class PluginSandboxManagerTest {
                             receivedPluginId = pluginId
                         }
                     }
-                manager.addListener(listener)
+                manager.listen(listener)
 
                 val sandbox = manager.createSandbox("plugin-1")
                 sandbox.start()
@@ -378,7 +404,7 @@ class PluginSandboxManagerTest {
                             receivedPluginId = pluginId
                         }
                     }
-                manager.addListener(listener)
+                manager.listen(listener)
 
                 manager.createSandbox("plugin-1")
                 manager.disablePlugin("plugin-1")
@@ -400,8 +426,8 @@ class PluginSandboxManagerTest {
                             secondListenerSaw = pluginId
                         }
                     }
-                manager.addListener(thrower)
-                manager.addListener(survivor)
+                manager.listen(thrower)
+                manager.listen(survivor)
                 val sandbox = manager.createSandbox("plugin-1")
                 sandbox.start()
 
@@ -426,7 +452,7 @@ class PluginSandboxManagerTest {
                             callCount++
                         }
                     }
-                manager.addListener(listener)
+                manager.listen(listener)
                 manager.createSandbox("plugin-1")
                 manager.disablePlugin("plugin-1")
 
@@ -508,12 +534,21 @@ class PluginSandboxManagerTest {
                                 disabledNotification.complete(pluginId)
                             }
                         }
-                    budgetManager.addListener(listener)
+                    budgetManager.listen(listener)
 
                     // Passed explicitly: createSandbox defaults to a stock
                     // SandboxConfig, not the manager's defaultConfig.
                     val sandbox = budgetManager.createSandbox("plugin-1", config) as InProcessPluginSandbox
                     sandbox.start()
+
+                    // The GC that Windows CI supplied by itself. After a real suspension the
+                    // continuation is all that keeps this coroutine's locals alive, and it holds
+                    // only the ones still used below; registered through addListener alone, the
+                    // listener is then weakly reachable and this collects it, the notification
+                    // is dropped, and the await below runs out its ten seconds. See heldListeners.
+                    yield()
+                    System.gc()
+
                     sandbox.recordError(RuntimeException("wedged"))
 
                     val disabled =

@@ -3,6 +3,7 @@ package ai.rever.boss.components.window_panel.components.main_window_panels
 import ai.rever.boss.components.common.rememberFaviconLoader
 import ai.rever.boss.components.model.TabDraggableComponent
 import ai.rever.boss.components.model.TabDropResult
+import ai.rever.boss.components.model.detectTabDragGestures
 import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.components.overlays.HoverTooltipBox
 import ai.rever.boss.components.overlays.TooltipPlacement
@@ -13,7 +14,6 @@ import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
@@ -30,6 +30,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -123,6 +124,16 @@ internal fun TabFaviconChip(
     var windowPosition by remember { mutableStateOf(Offset.Zero) }
     val icon = loaded ?: tab.tabIcon
 
+    // Read by the drag gesture below, which must not restart when any of them changes. They used
+    // to be its `pointerInput` keys, and all three change while a tab is being dragged: a TabInfo
+    // is a data class carrying the title, so a terminal writing a new one hands the list a fresh
+    // instance, and the index moves whenever anything else in the panel opens or closes. A restart
+    // cancels the gesture coroutine WITHOUT calling onDragEnd or onDragCancel, which left the drag
+    // running with nothing behind it - a ghost following the cursor for the rest of the session.
+    val currentTab by rememberUpdatedState(tab)
+    val currentTabIndex by rememberUpdatedState(tabIndex)
+    val currentOnDragEnd by rememberUpdatedState(onDragEnd)
+
     val background =
         when {
             isActive -> colors.signal.copy(alpha = ACTIVE_CHIP_ALPHA)
@@ -175,12 +186,13 @@ internal fun TabFaviconChip(
                                 Modifier
                             } else {
                                 Modifier.tabChipDrag(
-                                    tab = tab,
+                                    tabId = tab.id,
+                                    tab = { currentTab },
                                     panelId = panelId,
-                                    tabIndex = tabIndex,
+                                    tabIndex = { currentTabIndex },
                                     windowPosition = { windowPosition },
                                     tabDragComponent = tabDragComponent,
-                                    onDragEnd = onDragEnd,
+                                    onDragEnd = { currentOnDragEnd(it) },
                                 )
                             },
                         ).clickable(onClick = onClick),
@@ -225,42 +237,44 @@ private fun Modifier.optionalContextMenu(items: List<ContextMenuItem>): Modifier
 /**
  * Picking a tab up from a chip.
  *
- * Its own modifier so [TabFaviconChip] stays a description of what is drawn. [windowPosition] is a
- * lambda because the gesture reads it when the drag STARTS rather than when the modifier is built:
- * the chip is measured after this runs, so a captured value would be the position from the frame
- * before, which is where the ghost would appear.
+ * Its own modifier so [TabFaviconChip] stays a description of what is drawn. [windowPosition],
+ * [tab] and [tabIndex] are lambdas because the gesture reads them when the drag STARTS rather than
+ * when the modifier is built: the chip is measured after this runs, so a captured position would be
+ * the one from the frame before, which is where the ghost would appear - and the tab and its index
+ * both go on changing for as long as the drag lasts.
  *
- * Six parameters plus the receiver, and they are the drag's own identity - which tab, in which
- * panel, at which index, from where. Wrapping them in a holder would move the same six values
- * behind one name without making the call site say less.
+ * Keyed on [tabId] and [panelId] alone, which is the identity that makes this a DIFFERENT drag.
+ * Anything else in the key restarts the gesture mid-drag, and a restart cancels its coroutine
+ * without onDragEnd or onDragCancel ever running - the stuck-ghost bug. The `finally` is the
+ * backstop for the restarts that remain legitimate, plus detach and leaving the composition.
+ *
+ * Seven parameters plus the receiver, and they are the drag's own identity - which tab, in which
+ * panel, at which index, from where. Wrapping them in a holder would move the same values behind
+ * one name without making the call site say less.
  */
 @Suppress("LongParameterList")
 private fun Modifier.tabChipDrag(
-    tab: TabInfo,
+    tabId: String,
+    tab: () -> TabInfo,
     panelId: String,
-    tabIndex: Int,
+    tabIndex: () -> Int,
     windowPosition: () -> Offset,
     tabDragComponent: TabDraggableComponent,
     onDragEnd: (TabDropResult?) -> Unit,
 ): Modifier =
-    pointerInput(tab, panelId, tabIndex) {
-        detectDragGestures(
-            onDragStart = { offset ->
+    pointerInput(tabId, panelId, tabDragComponent) {
+        detectTabDragGestures(
+            component = tabDragComponent,
+            sourceIndex = tabIndex,
+            onStart = { offset ->
                 tabDragComponent.startDragging(
-                    tabInfo = tab,
+                    tabInfo = tab(),
                     panelId = panelId,
-                    index = tabIndex,
+                    index = tabIndex(),
                     startPosition = windowPosition() + offset,
                 )
             },
-            onDrag = { change, dragAmount ->
-                change.consume()
-                tabDragComponent.updateDrag(dragAmount)
-            },
-            // Cleaned up first either way: a result that throws must not leave a ghost stuck to
-            // the pointer.
-            onDragEnd = { onDragEnd(tabDragComponent.endDrag()) },
-            onDragCancel = { tabDragComponent.cancelDrag() },
+            onEnd = onDragEnd,
         )
     }
 

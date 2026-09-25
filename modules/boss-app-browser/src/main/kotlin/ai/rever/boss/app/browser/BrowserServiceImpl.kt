@@ -210,7 +210,7 @@ class BrowserServiceImpl : BrowserServiceGrpcKt.BrowserServiceCoroutineImplBase(
                 // an attacker could otherwise put an arbitrarily long token there.
                 "URL scheme '${scheme.take(SCHEME_LOG_MAX_LEN)}' is not navigable; $SCHEME_RULE"
             } else {
-                null
+                authorityRefusal(engineForm(url), scheme.length + 1)
             }
         }
 
@@ -225,7 +225,7 @@ class BrowserServiceImpl : BrowserServiceGrpcKt.BrowserServiceCoroutineImplBase(
      * than navigating.
      */
     private fun navigableScheme(url: String): String? {
-        val normalized = url.replace("\t", "").replace("\n", "").replace("\r", "")
+        val normalized = engineForm(url)
         val schemeEnd = normalized.indexOf(':')
         if (schemeEnd < 1) return null
         val scheme = normalized.substring(0, schemeEnd)
@@ -254,4 +254,90 @@ class BrowserServiceImpl : BrowserServiceGrpcKt.BrowserServiceCoroutineImplBase(
         /** Refusals log the scheme, not the URL; cap the echoed length regardless. */
         const val SCHEME_LOG_MAX_LEN = 32
     }
+}
+
+/**
+ * [url] as an engine reads it: the WHATWG URL parser strips ASCII tab and newline anywhere in a
+ * URL before doing anything else, so both gates below judge this form, not the raw string.
+ */
+private fun engineForm(url: String): String = url.replace("\t", "").replace("\n", "").replace("\r", "")
+
+/** Printable characters an authority may not hold; control characters are refused separately. */
+private val FORBIDDEN_IN_AUTHORITY = charArrayOf(' ', '\u00A0', '\\', '"', '<', '>')
+
+/** The clause every authority refusal ends with. Like the scheme refusals, it never echoes the URL. */
+private const val AUTHORITY_RULE = "Navigate accepts http(s)://host[:port] with no credentials in the authority"
+
+/**
+ * Why the authority of an http(s) [url] (in [engineForm]) is refused, or null when it is well
+ * formed. [schemeLength] counts the scheme and its colon.
+ *
+ * The same rule composeApp's `UrlOpenValidation` applies to URLs the OS hands BOSS, so a
+ * `Navigate` over IPC can no longer carry an authority the deep-link gate would refuse (#1591):
+ * `//` must follow the scheme; the authority - up to the first `/`, `?` or `#` - must be
+ * non-empty, free of spaces, backslashes, quotes, angle brackets and control characters, and
+ * free of `@`; and it must hold a non-empty host with, optionally, a valid port. `@` is refused
+ * rather than stripped: credentials in the authority are how a link disguises its destination
+ * (`https://apple.com@evil.example`), and nothing Navigate does needs them.
+ *
+ * Read from the string, not `java.net.URI`, for the reason `UrlOpenValidation` gives: `URI`
+ * rejects hosts browsers open fine, such as an underscore in a Docker service name.
+ */
+private fun authorityRefusal(
+    url: String,
+    schemeLength: Int,
+): String? {
+    if (!url.startsWith("//", schemeLength)) return "URL has no authority; $AUTHORITY_RULE"
+    val start = schemeLength + 2
+    val end = url.indexOfAny(charArrayOf('/', '?', '#'), start).let { if (it < 0) url.length else it }
+    val authority = url.substring(start, end)
+    return when {
+        authority.isEmpty() -> {
+            "URL has no authority; $AUTHORITY_RULE"
+        }
+
+        authority.any { it in FORBIDDEN_IN_AUTHORITY || it.isISOControl() } -> {
+            "URL authority contains a character a host cannot; $AUTHORITY_RULE"
+        }
+
+        '@' in authority -> {
+            "URL carries credentials in its authority; $AUTHORITY_RULE"
+        }
+
+        hostOf(authority).isNullOrEmpty() -> {
+            "URL authority has no valid host and port; $AUTHORITY_RULE"
+        }
+
+        else -> {
+            null
+        }
+    }
+}
+
+/** The host of [authority], or null when its host or port is malformed. Bracketed IPv6 aware. */
+private fun hostOf(authority: String): String? {
+    // Split after the closing bracket for an IPv6 literal, else at the first colon: splitting on
+    // the last colon would cut a bare IPv6 literal in half.
+    val hostEnd =
+        if (authority.startsWith('[')) {
+            authority.indexOf(']').let { if (it < 0) -1 else it + 1 }
+        } else {
+            authority.indexOf(':').let { if (it < 0) authority.length else it }
+        }
+    val portSuffix = if (hostEnd < 0) "" else authority.substring(hostEnd)
+    return when {
+        hostEnd < 0 -> null
+        portSuffix.isNotEmpty() && !isValidPortSuffix(portSuffix) -> null
+        else -> authority.substring(0, hostEnd).removeSurrounding("[", "]")
+    }
+}
+
+/**
+ * `:` for the default port, or `:` and a port from 0 through 65535. ASCII digits only:
+ * `Char.isDigit` accepts every Unicode decimal digit, which `UrlOpenValidation` found the hard way.
+ */
+private fun isValidPortSuffix(suffix: String): Boolean {
+    if (!suffix.startsWith(':')) return false
+    val port = suffix.drop(1).trimStart('0')
+    return port.isEmpty() || (port.all { it in '0'..'9' } && port.toIntOrNull()?.let { it <= 65535 } == true)
 }
