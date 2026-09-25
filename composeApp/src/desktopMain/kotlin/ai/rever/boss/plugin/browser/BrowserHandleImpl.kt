@@ -51,6 +51,8 @@ import com.teamdev.jxbrowser.browser.callback.OpenPopupCallback
 import com.teamdev.jxbrowser.browser.callback.ShowContextMenuCallback
 import com.teamdev.jxbrowser.browser.event.BrowserClosed
 import com.teamdev.jxbrowser.browser.event.FaviconChanged
+import com.teamdev.jxbrowser.browser.event.FocusGained
+import com.teamdev.jxbrowser.browser.event.FocusLost
 import com.teamdev.jxbrowser.browser.event.MediaStreamCaptureStarted
 import com.teamdev.jxbrowser.browser.event.MediaStreamCaptureStopped
 import com.teamdev.jxbrowser.browser.event.RenderProcessTerminated
@@ -1595,6 +1597,15 @@ internal class BrowserHandleImpl(
                 )
             }
 
+        // Whether the web page holds the keyboard - the page half of
+        // ActiveBrowserRegistry.keyboardOwnerIn, which decides the AWT keymap's BROWSER context
+        // (BossConsole#1566). Chromium's own events, because under HARDWARE_ACCELERATED the page
+        // is a native view that takes focus without moving Compose focus or reaching AWT.
+        subscriptions +=
+            browser.on(FocusGained::class.java) { ActiveBrowserRegistry.setPageFocused(id, true) }
+        subscriptions +=
+            browser.on(FocusLost::class.java) { ActiveBrowserRegistry.setPageFocused(id, false) }
+
         // Title changed
         subscriptions +=
             browser.on(TitleChanged::class.java) { event ->
@@ -1669,6 +1680,9 @@ internal class BrowserHandleImpl(
                 )
                 pageInjection.onGone()
                 audioSource.update(false)
+                // A dead renderer sends no FocusLost; a stale "page focused" would keep BROWSER
+                // context, and Cmd+L with it, in whatever surface the user moves to next.
+                ActiveBrowserRegistry.setPageFocused(id, false)
             }
 
         // Browser closed

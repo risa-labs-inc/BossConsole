@@ -78,6 +78,7 @@ import ai.rever.boss.utils.revealInFileManagerLabel
 import ai.rever.boss.window.ClosedTabHistory
 import ai.rever.boss.window.LocalWindowId
 import ai.rever.boss.window.LocalWindowProjectState
+import ai.rever.boss.window.MainPanelFocusTracker
 import ai.rever.boss.window.MenuActionsHandler
 import ai.rever.boss.window.Project
 import ai.rever.boss.window.TabBarPosition
@@ -1144,6 +1145,14 @@ fun BossTabsComponent.BossMainPanel(
     // Null outside a managed window, which is the only case that cannot ask for a tab.
     val paneWindowId = LocalWindowId.current
 
+    // This panel's identity in MainPanelFocusTracker. A token rather than currentPanelId, which is
+    // null for an unmanaged panel. A panel leaving composition with focus inside it reports no
+    // focus change, so the dispose clears it.
+    val focusToken = remember { Any() }
+    DisposableEffect(paneWindowId) {
+        onDispose { paneWindowId?.let { MainPanelFocusTracker.update(it, focusToken, false) } }
+    }
+
     // The favicon strip's right-click menu, and the dialogs two of its entries raise. Built
     // whether or not the strip is drawn: it is a remember, and one that appears and disappears as
     // the window is split and unsplit is a slot that moves.
@@ -1180,6 +1189,9 @@ fun BossTabsComponent.BossMainPanel(
                 .focusRequester(focusRequester)
                 .onFocusChanged { focusState ->
                     isFocused.value = focusState.isFocused || focusState.hasFocus
+                    // The Compose half of "does a browser hold the keyboard" - see
+                    // ActiveBrowserRegistry.keyboardOwnerIn. BossConsole#1566.
+                    paneWindowId?.let { MainPanelFocusTracker.update(it, focusToken, isFocused.value) }
                     if ((focusState.isFocused || focusState.hasFocus) && currentPanelId != null) {
                         splitViewState?.setActivePanel(currentPanelId)
                     }

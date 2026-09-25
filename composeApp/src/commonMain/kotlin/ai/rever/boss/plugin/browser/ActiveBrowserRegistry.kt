@@ -1,5 +1,6 @@
 package ai.rever.boss.plugin.browser
 
+import ai.rever.boss.window.MainPanelFocusTracker
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -43,6 +44,15 @@ object ActiveBrowserRegistry {
 
     private val entries = ConcurrentHashMap<String, Entry>()
     private val handles = ConcurrentHashMap<String, BrowserHandle>()
+
+    /**
+     * Handles whose web page holds Chromium's keyboard focus, from JxBrowser's `FocusGained` /
+     * `FocusLost` browser events.
+     *
+     * Separate from [entries] because focus arrives on a JxBrowser thread and on its own schedule:
+     * a page can gain focus before its surface registers, and keeps it across a re-registration.
+     */
+    private val focusedPages = ConcurrentHashMap.newKeySet<String>()
     private val sequencer = AtomicLong(0)
 
     /**
@@ -76,10 +86,12 @@ object ActiveBrowserRegistry {
      *
      * Still WINDOW-scoped, so it answers "the main panel's visible surface is a browser", not
      * "the keyboard focus is in a browser" - with a browser as the active main-panel tab and
-     * focus in a sidebar editor, Cmd+[ / Cmd+] are still taken by the accelerator. Narrowing
-     * further needs a focus signal the menu layer does not have; see the dead
-     * `AWTKeyboardInterceptor.updateWindowContext` for why the keyboard path cannot supply one
-     * either.
+     * focus in a sidebar editor, Cmd+[ / Cmd+] are still taken by the accelerator. The keyboard
+     * question has its own answer, [keyboardOwnerIn], which the AWT keymap uses. The menu does
+     * not use it, deliberately: when the browser does hold the keyboard the AWT keymap claims
+     * the chord before the menu sees it, so the accelerator only acts where that focus signal
+     * said "not the browser", and that is the fallback to keep until the page-focus half of
+     * [keyboardOwnerIn] has been confirmed on every platform and rendering mode.
      *
      * Recomputed on register and unregister, and via [republish] wherever `handle.isValid` can
      * flip without either - `BrowserHandleImpl` latching `connectionDead` on a transport failure
@@ -186,6 +198,7 @@ object ActiveBrowserRegistry {
             entries.remove(handleId)
             handles.remove(handleId)
         }
+        focusedPages.remove(handleId)
         publishWindows()
     }
 
@@ -215,7 +228,114 @@ object ActiveBrowserRegistry {
      * Callers that care about liveness still filter on [BrowserHandle.isValid].
      */
     fun handleById(handleId: String): BrowserHandle? = handles[handleId]
+
+    /**
+     * Record whether [handleId]'s web page holds the keyboard. Called from the handle's
+     * `FocusGained` / `FocusLost` subscriptions, and with false when its renderer dies.
+     */
+    fun setPageFocused(
+        handleId: String,
+        focused: Boolean,
+    ) {
+        if (focused) focusedPages.add(handleId) else focusedPages.remove(handleId)
+    }
+
+    /**
+     * Whether a browser holds the keyboard in [windowId], and through which part of it.
+     *
+     * THE predicate for "is the browser focused" - the AWT keymap's BROWSER context is decided
+     * here and nowhere else. See [resolveBrowserKeyboardOwner] for the rule and
+     * [MainPanelFocusTracker] for the Compose half.
+     *
+     * Not a question the menu's enabled flags ask; see [windowsWithActiveBrowser] for why.
+     *
+     * [inWindowItself] is false when the keyboard is in a window OWNED by [windowId] (a dialog
+     * window, a Swing dialog) rather than in it. Compose treats focus moving to another window as
+     * a temporary loss and reports no focus change, so [MainPanelFocusTracker] still says the main
+     * panel has focus; trusting it there would hand the dialog's Cmd+L, Cmd+R or Cmd+[ to the
+     * browser behind it. The page half is guarded too: a page should lose focus when its window
+     * deactivates, but that is JxBrowser's behaviour to keep, not ours, and with the keyboard in
+     * another window no browser in this one can be what it is typing into.
+     */
+    fun keyboardOwnerIn(
+        windowId: String,
+        inWindowItself: Boolean,
+    ): BrowserKeyboardOwner {
+        if (!inWindowItself) return BrowserKeyboardOwner.NONE
+        // Runs on the EDT for every modifier chord, so the usual case - no page focused anywhere -
+        // allocates nothing. Liveness is isLive, the same test the active handle passes: a handle
+        // whose transport died sends no FocusLost, and must not keep vetoing the window's browser.
+        val focusedHere =
+            if (focusedPages.isEmpty()) {
+                emptyList()
+            } else {
+                entries.values
+                    .filter { it.windowId == windowId && it.handleId in focusedPages && isLive(it.handleId) }
+                    .map { it.handleId }
+            }
+        return resolveBrowserKeyboardOwner(
+            activeHandleId = _activeHandleIdByWindow.value[windowId],
+            focusedPageHandleIds = focusedHere,
+            mainPanelHasComposeFocus = MainPanelFocusTracker.hasFocus(windowId),
+        )
+    }
 }
+
+/**
+ * Where the keyboard is, relative to a window's browser. See [resolveBrowserKeyboardOwner].
+ */
+enum class BrowserKeyboardOwner {
+    /** No browser holds the keyboard in this window. */
+    NONE,
+
+    /** The active browser's web page holds Chromium's keyboard focus. */
+    PAGE,
+
+    /** Compose focus is in the main panel whose visible tab is the active browser (its chrome). */
+    CHROME,
+}
+
+/**
+ * Which part of a window's browser, if any, holds the keyboard.
+ *
+ * Pure, for the same reason as [selectActiveHandleId]. The inputs:
+ *  - [activeHandleId] - the window's active browser under [activeHandleIds]' filter
+ *    (`inMainPanel && panelActive` and live), or null. Both answers other than NONE need it, so
+ *    a BROWSER-context action always has a target, and a sidebar browser or the background half
+ *    of a split never takes the keyboard's shortcuts.
+ *  - [focusedPageHandleIds] - browsers in this window whose page has Chromium focus.
+ *  - [mainPanelHasComposeFocus] - [MainPanelFocusTracker.hasFocus] for this window.
+ *
+ * Why two focus signals, not one. Under HARDWARE_ACCELERATED (the default) the page is a
+ * native Chromium view: clicking it moves no Compose focus and delivers no Compose pointer
+ * event, so Compose focus alone would keep reporting wherever it was before, a sidebar editor
+ * included. Chromium's own focus events are the truth for the page. They say nothing about the
+ * browser's Compose chrome (address bar, find bar), which is what the Compose signal covers.
+ *
+ * A focused page wins over Compose focus, which can be stale for exactly the reason above. A
+ * focused page that is NOT the active browser (a sidebar slot, the other half of a split)
+ * answers NONE: the keys are going to a browser this window's shortcuts would not act on.
+ *
+ * | active browser | a page focused  | Compose focus in main panel | answer |
+ * |----------------|-----------------|-----------------------------|--------|
+ * | none           | any             | any                         | NONE   |
+ * | A              | A               | any                         | PAGE   |
+ * | A              | B only          | any                         | NONE   |
+ * | A              | none            | yes                         | CHROME |
+ * | A              | none            | no (sidebar, dialog, ...)   | NONE   |
+ */
+internal fun resolveBrowserKeyboardOwner(
+    activeHandleId: String?,
+    focusedPageHandleIds: Collection<String>,
+    mainPanelHasComposeFocus: Boolean,
+): BrowserKeyboardOwner =
+    when {
+        activeHandleId == null -> BrowserKeyboardOwner.NONE
+        activeHandleId in focusedPageHandleIds -> BrowserKeyboardOwner.PAGE
+        focusedPageHandleIds.isNotEmpty() -> BrowserKeyboardOwner.NONE
+        mainPanelHasComposeFocus -> BrowserKeyboardOwner.CHROME
+        else -> BrowserKeyboardOwner.NONE
+    }
 
 /**
  * Which windows have a browser as the surface the user is actually in.

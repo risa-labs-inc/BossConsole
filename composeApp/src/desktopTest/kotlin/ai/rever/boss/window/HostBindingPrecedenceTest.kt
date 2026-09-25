@@ -42,9 +42,9 @@ class HostBindingPrecedenceTest {
 
     @Test
     fun `an EDITOR-context binding cannot reach dispatchAction in the first place`() {
-        // detectCurrentContext answers only BROWSER, TERMINAL or GLOBAL - updateWindowContext
-        // has no callers, so the AWT focus walk is the only source and it recognises just those
-        // two component families. isContextEligible therefore drops every EDITOR binding inside
+        // resolveKeyboardContext answers only BROWSER, TERMINAL or GLOBAL - the AWT focus walk
+        // recognises just those two component families and the browser keyboard owner adds only
+        // BROWSER. isContextEligible therefore drops every EDITOR binding inside
         // findMatchingBinding, before dispatch.
         //
         // Worth pinning because it moves where a fix lives: EDITOR_GO_TO_LINE (Cmd+L) is kept

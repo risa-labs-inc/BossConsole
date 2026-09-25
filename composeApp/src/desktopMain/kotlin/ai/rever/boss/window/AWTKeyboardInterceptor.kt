@@ -9,6 +9,8 @@ import ai.rever.boss.keymap.model.ShortcutContext
 import ai.rever.boss.keymap.model.TabSwitchMode
 import ai.rever.boss.keymap.model.canonicalModifiers
 import ai.rever.boss.keymap.model.primaryModifierPressed
+import ai.rever.boss.plugin.browser.ActiveBrowserRegistry
+import ai.rever.boss.plugin.browser.BrowserKeyboardOwner
 import ai.rever.boss.utils.SystemUtils
 import java.awt.KeyEventDispatcher
 import java.awt.KeyboardFocusManager
@@ -36,12 +38,6 @@ object AWTKeyboardInterceptor {
      * Uses ConcurrentHashMap for thread-safety (AWT events come from EDT).
      */
     private val windowIdMap = ConcurrentHashMap<Window, String>()
-
-    /**
-     * Per-window active context tracking.
-     * Updated by Compose layer when the active tab type changes.
-     */
-    private val windowContextMap = ConcurrentHashMap<String, ShortcutContext>()
 
     private val doubleShiftGesture = DoubleShiftGesture()
 
@@ -141,40 +137,7 @@ object AWTKeyboardInterceptor {
                 }
             }
             if (tabCycleWindowId == windowId) finishTabCycle()
-            windowContextMap.remove(windowId)
         }
-    }
-
-    /**
-     * Update the active shortcut context for a window.
-     * Called from the Compose layer when the active tab type changes.
-     *
-     * NOT CALLED TODAY - no production caller sets a window context, so [windowContextMap] is
-     * always empty and [detectCurrentContext] answers purely from the AWT focus walk. That walk
-     * can only see a heavyweight component, i.e. JxBrowser's page surface, so BROWSER-context
-     * bindings resolve while the PAGE has focus and not while focus is in a browser's Compose
-     * chrome (address bar, tab strip, find bar). Wiring this up would fix that class, but it is
-     * window-scoped: with a browser in the main panel and focus in a SIDEBAR editor it would
-     * report BROWSER and hand Cmd+F and Cmd+R to the browser, which is why it stays unwired
-     * here. See the Cmd+L note in `KeymapPresets.standardBrowserBindings`.
-     *
-     * @param windowId The BOSS window ID
-     * @param context The shortcut context of the currently active component
-     */
-    fun updateWindowContext(
-        windowId: String,
-        context: ShortcutContext,
-    ) {
-        windowContextMap[windowId] = context
-    }
-
-    /**
-     * Clear the active context for a window (reverts to GLOBAL).
-     *
-     * @param windowId The BOSS window ID
-     */
-    fun clearWindowContext(windowId: String) {
-        windowContextMap.remove(windowId)
     }
 
     /**
@@ -258,7 +221,6 @@ object AWTKeyboardInterceptor {
         focusListener = null
         isInstalled = false
         windowIdMap.clear()
-        windowContextMap.clear()
         cancelPendingShortcut()
         finishTabCycle()
     }
@@ -307,10 +269,10 @@ object AWTKeyboardInterceptor {
                 // A host binding matched but has no dispatch case here, because the chord is
                 // served further down or by nothing at all. QUICK_SWITCHER_OPEN (Ctrl+Space)
                 // and TEST_EXTERNAL_LINK (Cmd+Shift+G) are the two that reach this today, and
-                // every EDITOR_* binding would join them if updateWindowContext were ever
-                // wired up.
+                // every EDITOR_* binding would join them if resolveKeyboardContext ever
+                // reported EDITOR.
                 //
-                // NOT the EDITOR bindings today: detectCurrentContext can only answer
+                // NOT the EDITOR bindings today: resolveKeyboardContext can only answer
                 // BROWSER, TERMINAL or GLOBAL, so isContextEligible drops an EDITOR-context
                 // binding in findMatchingBinding and it never gets here. EDITOR_GO_TO_LINE
                 // (Cmd+L) is therefore kept safe from a plugin GLOBAL default by the fluck
@@ -518,56 +480,24 @@ object AWTKeyboardInterceptor {
             )
 
     /**
-     * Detect the current shortcut context based on:
-     * 1. Explicit per-window context (set by Compose layer)
-     * 2. AWT focus owner class hierarchy (fallback)
+     * The shortcut context of the key press about to be matched in [windowId].
+     *
+     * BossConsole#1566: a main-window browser tab is a Compose `BrowserView`, which has no AWT
+     * component with "jxbrowser" in its class name, so the AWT focus walk alone never answered
+     * BROWSER there and every BROWSER binding (Cmd+L above all) was dropped. The browser half of
+     * the answer now comes from [ActiveBrowserRegistry.keyboardOwnerIn], the one place that says
+     * whether a browser holds the keyboard; see [resolveKeyboardContext] for how the two combine.
      */
-    private fun detectCurrentContext(windowId: String?): ShortcutContext {
-        // Primary: explicit per-window context from Compose layer
-        if (windowId != null) {
-            windowContextMap[windowId]?.let { return it }
-        }
-
-        // Fallback: detect from AWT focus owner's class hierarchy
+    private fun detectCurrentContext(focusedWindow: Window?): KeyboardContext {
         val focusOwner = KeyboardFocusManager.getCurrentKeyboardFocusManager().focusOwner
-        return detectContextFromAwtComponent(focusOwner)
+        val windowId = findWindowId(focusedWindow)
+        // findWindowId also answers for an owned window (a dialog); see keyboardOwnerIn's
+        // inWindowItself for why that must not count as the main panel's Compose focus.
+        val inWindowItself = windowId != null && focusedWindow != null && windowIdMap[focusedWindow] == windowId
+        val browserOwner =
+            windowId?.let { ActiveBrowserRegistry.keyboardOwnerIn(it, inWindowItself) } ?: BrowserKeyboardOwner.NONE
+        return resolveKeyboardContext(detectContextFromAwtComponent(focusOwner), browserOwner)
     }
-
-    /**
-     * Detect shortcut context by walking up the AWT component hierarchy.
-     * JxBrowser components have "jxbrowser" in their package name.
-     */
-    private fun detectContextFromAwtComponent(component: java.awt.Component?): ShortcutContext {
-        var current: java.awt.Component? = component
-        while (current != null) {
-            val className = current.javaClass.name
-            if (className.contains("jxbrowser", ignoreCase = true)) {
-                return ShortcutContext.BROWSER
-            }
-            if (className.contains("bossterm", ignoreCase = true) ||
-                className.contains("TerminalPanel", ignoreCase = false)
-            ) {
-                return ShortcutContext.TERMINAL
-            }
-            current = current.parent
-        }
-        return ShortcutContext.GLOBAL
-    }
-
-    /**
-     * Check if a binding's context is eligible given the current active context.
-     * GLOBAL and WORKSPACE bindings always match.
-     * Component-specific bindings (BROWSER, TERMINAL, EDITOR) only match their context.
-     */
-    private fun isContextEligible(
-        bindingContext: ShortcutContext,
-        currentContext: ShortcutContext,
-    ): Boolean =
-        when (bindingContext) {
-            ShortcutContext.GLOBAL -> true
-            ShortcutContext.WORKSPACE -> true
-            else -> bindingContext == currentContext
-        }
 
     /** A binding, and WHICH of its keystrokes the event matched. See [cyclingModifierKeyCode]. */
     internal data class BindingMatch(
@@ -585,21 +515,34 @@ object AWTKeyboardInterceptor {
      * matcher is a different path (the Shortcuts tester and getMatchingBindings read it).
      */
     private fun findMatchingBinding(event: KeyEvent): BindingMatch? {
+        val focusedWindow = KeyboardFocusManager.getCurrentKeyboardFocusManager().focusedWindow
+        return matchBinding(
+            event,
+            KeymapSettingsManager.currentSettings.value.shortcuts.values,
+            detectCurrentContext(focusedWindow),
+        )
+    }
+
+    /**
+     * The matching half of [findMatchingBinding], with the keymap and the context passed in, so a
+     * test can hold the real presets against a known context without reading the on-disk keymap
+     * or the live AWT focus.
+     */
+    internal fun matchBinding(
+        event: KeyEvent,
+        bindings: Collection<KeyBinding>,
+        keyboardContext: KeyboardContext,
+    ): BindingMatch? {
         // Canonicalised once: keyNameMatches folds both sides, so doing it per keystroke per
         // binding meant two lowercase() allocations for each of ~47 bindings per keypress.
         val eventKey = canonicalKeyName(getKeyName(event.keyCode))
-        val settings = KeymapSettingsManager.currentSettings.value
-
-        // Detect current context for filtering
-        val focusedWindow = KeyboardFocusManager.getCurrentKeyboardFocusManager().focusedWindow
-        val windowId = findWindowId(focusedWindow)
-        val currentContext = detectCurrentContext(windowId)
+        val currentContext = keyboardContext.context
 
         // Collect all matching bindings with their context priority
         var bestMatch: BindingMatch? = null
         var bestPriority = -1
 
-        for (binding in settings.shortcuts.values) {
+        for (binding in bindings) {
             if (!binding.enabled) continue
 
             // Primary keystroke OR any alternate - allKeystrokes is what makes Cmd+Plus reach
@@ -614,7 +557,7 @@ object AWTKeyboardInterceptor {
 
             if (matched != null) {
                 // Skip bindings whose context doesn't match
-                if (!isContextEligible(binding.context, currentContext)) continue
+                if (!isBindingEligible(binding, keyboardContext)) continue
 
                 // Prioritize: exact context match > GLOBAL > WORKSPACE
                 val priority =
@@ -1024,10 +967,15 @@ object AWTKeyboardInterceptor {
             // These three claim unconditionally while every neighbouring branch carries a gate,
             // and that is deliberate: their bindings are ShortcutContext.BROWSER, so
             // isContextEligible(BROWSER, GLOBAL) is false and findMatchingBinding only reaches
-            // here when the focus walk already reported BROWSER. The gate is upstream and
-            // stronger than a dispatch-time count, not missing. (The MENU items for the same
-            // actions do need `enabled`, because an accelerator fires window-wide whatever the
-            // context - see ActiveBrowserRegistry.windowsWithActiveBrowser.)
+            // here when resolveKeyboardContext reported BROWSER. Outside the Swing fullscreen
+            // window that needs ActiveBrowserRegistry.keyboardOwnerIn to name the window's
+            // active browser, which is the same handle these triggers act on. The gate is
+            // upstream and stronger than a dispatch-time count, not missing. Claiming the press
+            // is also what keeps the matching menu accelerator from firing a second time: a
+            // consumed KEY_PRESSED never reaches the menu bar's key bindings, the same way
+            // Cmd+T and Cmd+W reach only this path. (The MENU items do still need `enabled`,
+            // because an accelerator fires window-wide whatever the context - see
+            // ActiveBrowserRegistry.windowsWithActiveBrowser.)
             KeymapActions.BROWSER_BACK -> {
                 if (perform) MenuActionsHandler.triggerBrowserBack(windowId)
                 true
