@@ -2,6 +2,43 @@
 
 This file provides guidance to coding agents working with this repository.
 
+## Start here: your first BOSS enhancement
+
+For developers and coding agents new to BOSS, use this reading path to find the guidance for
+your change. The detailed sections below explain behavior that must survive an enhancement,
+including lessons from earlier bugs.
+
+1. **Understand the user action.** Describe the current behavior and the intended result in BOSS.
+   When inspecting the app, follow the launch rules in [Workflow Rules](#workflow-rules).
+2. **Orient yourself.** Read [Project Overview](#project-overview),
+   [Architecture](#architecture), and [Workflow Rules](#workflow-rules). Use the
+   [README development section](README.md#development) for setup context and the repository's
+   Gradle wrapper for builds; check versions against the build files in your checkout.
+3. **Find the owner.** Use the map below, then read the relevant subsystem guidance and any
+   applicable instructions in the repository you will edit. A feature visible in Console may
+   be implemented in a separate plugin repository.
+4. **Trace one interaction.** Follow its UI entry point through actions, state changes, and any
+   persistence or plugin calls. Read the nearby tests and the relevant sections of this file
+   before changing that behavior.
+5. **Validate the change.** Run the relevant tests and the repository's ktlint and detekt checks
+   for code changes. Preserve [test home isolation](#composeapp-test-home-isolation). For UI
+   changes, record what was visually verified and what remains untested in the pull request.
+
+### Where to look for your change
+
+| Change | Start with | Read alongside the code |
+|---|---|---|
+| Home, navigation, settings, shared app UI | `composeApp/` | [UI architecture](docs/SUBSYSTEMS.md#ui-architecture), [design system](docs/DESIGN_SYSTEM.md) |
+| Splits, Spaces, saving, or restoring sessions | `composeApp/src/commonMain/kotlin/ai/rever/boss/components/workspaces/` | [Templates](#the-built-in-layouts-are-templates-and-picking-one-materialises-it), [saved identity](#a-saved-space-is-identified-by-its-id-not-its-name), [Last Session](#last-session-is-a-set-of-spaces-not-one-space) |
+| Themes or Space terminology | The owning UI component and theme code | [Space themes](#a-boss-theme-belongs-to-a-space), [product and code naming](#the-product-word-is-space-the-code-word-is-workspace) |
+| A tool's panel, tab UI, or MCP tools | The relevant repository in [boss-plugins](https://github.com/risa-labs-inc/boss-plugins) | Its local instructions and the [plugin authoring guide](https://github.com/risa-labs-inc/boss-plugins/blob/main/docs/creating-a-plugin.md) |
+| Host plugin loading, dependencies, or runtime integration | `plugin-platform/` and relevant `modules/` | [Architecture](#architecture), [dependency handling](#plugin-dependencies-are-resolved-at-install-time), [missing plugins](#a-missing-plugin-no-longer-fails-silently) |
+| Authentication, permissions, or backend behavior | Owning client service and `supabase/` | [Core subsystems](docs/SUBSYSTEMS.md), [RBAC](docs/RBAC_GUIDE.md) |
+
+This is a starting map. Use [Documentation](#documentation) and the remaining section headings
+to find additional guidance for the subsystem you touch. Check documented behavior against the
+source and tests at the revision you are changing, and call out discrepancies in your PR.
+
 ## Project Overview
 
 BOSS (Business Operating System Service) is a desktop application built with Kotlin Multiplatform and Compose Multiplatform. It features WebAuthn/passkey authentication, integrated browser (JxBrowser), terminal integration (BossTerm), customizable keyboard shortcuts, and role-based access control.
