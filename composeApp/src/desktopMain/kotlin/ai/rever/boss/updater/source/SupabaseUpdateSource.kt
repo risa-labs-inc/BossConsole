@@ -3,6 +3,7 @@ package ai.rever.boss.updater.source
 import ai.rever.boss.config.UpdateSourceConfig
 import ai.rever.boss.updater.GitHubAsset
 import ai.rever.boss.updater.GitHubRelease
+import ai.rever.boss.updater.MinimumOsSerializer
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import io.ktor.client.*
@@ -103,6 +104,8 @@ internal data class AppReleaseRow(
     val channel: String = "stable",
     val prerelease: Boolean = false,
     @SerialName("release_notes") val releaseNotes: String = "",
+    @Serializable(with = MinimumOsSerializer::class)
+    @SerialName("min_os") val minimumOs: Map<String, String> = emptyMap(),
     val assets: List<AppReleaseAsset> = emptyList(),
     @SerialName("published_at") val publishedAt: String = "",
 ) {
@@ -114,6 +117,7 @@ internal data class AppReleaseRow(
             draft = false,
             prerelease = prerelease,
             published_at = publishedAt,
+            minimumOs = minimumOs,
             assets =
                 assets.map { asset ->
                     GitHubAsset(

@@ -16,7 +16,7 @@
 # too large.
 #
 # Usage:
-#   publish-supabase-release.sh <app> <version> <channel> <asset_dir> <bucket>
+#   publish-supabase-release.sh <app> <version> <channel> <asset_dir> <bucket> [minimum_os_properties]
 #
 # Example:
 #   publish-supabase-release.sh boss 9.2.17 stable release-assets app-releases
@@ -40,12 +40,16 @@ VERSION="${2:?missing version}"
 CHANNEL="${3:?missing channel}"
 ASSET_DIR="${4:?missing asset_dir}"
 BUCKET="${5:?missing bucket}"
+MINIMUM_OS_FILE="${6:-}"
 
 : "${SUPABASE_URL:?SUPABASE_URL must be set}"
 : "${SUPABASE_SERVICE_ROLE_KEY:?SUPABASE_SERVICE_ROLE_KEY must be set}"
 
 SUPABASE_URL="${SUPABASE_URL%/}"  # strip trailing slash
 command -v jq >/dev/null 2>&1 || { echo "ERROR: jq is required" >&2; exit 1; }
+
+source "$(dirname "${BASH_SOURCE[0]}")/lib/minimum-os.sh"
+MINIMUM_OS_JSON="$(minimum_os_json_from_file "$MINIMUM_OS_FILE")"
 
 # Scratch space for resumable-upload chunks; cleaned up on exit.
 TMP_DIR="$(mktemp -d)"
@@ -274,7 +278,8 @@ fi
 row="$(jq -nc \
   --arg app "$APP" --arg version "$VERSION" --arg channel "$CHANNEL" \
   --argjson prerelease "$PRERELEASE" --arg notes "$notes" --argjson assets "$assets_json" \
-  '{app: $app, version: $version, channel: $channel, prerelease: $prerelease, release_notes: $notes, assets: $assets}')"
+  --argjson min_os "$MINIMUM_OS_JSON" --arg minimum_os_file "$MINIMUM_OS_FILE" \
+  '{app: $app, version: $version, channel: $channel, prerelease: $prerelease, release_notes: $notes, assets: $assets} + (if $minimum_os_file == "" then {} else {min_os: $min_os} end)')"
 
 echo "Upserting app_releases row for $APP $VERSION ($uploaded asset(s))"
 # on_conflict is required: merge-duplicates alone resolves only against the
@@ -300,17 +305,24 @@ fi
 # the release would be invisible to clients with no obvious signal. Fail loud.
 # -G + --data-urlencode so a version with URL-unsafe chars (e.g. a +build.meta
 # semver suffix, where '+' would otherwise decode to space) filters correctly.
+# Legacy callers must also work before the optional metadata column exists.
+VERIFY_SELECT="version"
+if [[ -n "$MINIMUM_OS_FILE" ]]; then
+  VERIFY_SELECT="version,min_os"
+fi
 verify_code="$(curl -sS -G -o "$TMP_DIR/verify.txt" -w '%{http_code}' \
   "$SUPABASE_URL/rest/v1/app_releases" \
   --data-urlencode "app=eq.$APP" \
   --data-urlencode "version=eq.$VERSION" \
-  --data-urlencode "select=version" \
+  --data-urlencode "select=$VERIFY_SELECT" \
   --data-urlencode "limit=1" \
   -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
   -H "apikey: $SUPABASE_SERVICE_ROLE_KEY")"
 # The query already filters by version, so a non-empty array = the row exists.
 # jq (a hard dep) parses it precisely rather than regex-matching the version.
-if [[ "$verify_code" != "200" ]] || ! jq -e 'type == "array" and length > 0' "$TMP_DIR/verify.txt" >/dev/null 2>&1; then
+if [[ "$verify_code" != "200" ]] || ! jq -e --argjson expected "$MINIMUM_OS_JSON" \
+  --arg minimum_os_file "$MINIMUM_OS_FILE" \
+  'type == "array" and length > 0 and ($minimum_os_file == "" or .[0].min_os == $expected)' "$TMP_DIR/verify.txt" >/dev/null 2>&1; then
   echo "ERROR: post-publish check failed — app_releases has no queryable row for $APP $VERSION (HTTP $verify_code): $(cat "$TMP_DIR/verify.txt")" >&2
   exit 1
 fi
