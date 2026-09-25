@@ -1,0 +1,36 @@
+{
+  "name": "boss-research-notebook-mcp",
+  "version": "1.0.0",
+  "description": "MCP server that turns any BOSS agent into a research assistant: capture cited sources, keep linked notes, and export a bibliography or literature-review outline.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "research-notebook-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "node-html-parser": "^7.0.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
