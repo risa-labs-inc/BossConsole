@@ -136,6 +136,47 @@ export async function getPluginForPublish(
 }
 
 /**
+ * Look up a published plugin for the DOWNLOAD paths, without deciding visibility.
+ *
+ * The download routes used getPlugin(), and with no viewer that is get_plugin_with_stats, which
+ * resolves visibility for auth.uid(). This client is service role, so auth.uid() is NULL and
+ * every `org` or `unlisted` plugin came back as no row: the route answered "Plugin not found"
+ * before canInstall() ever saw the caller, and no organisation member could install or update
+ * their own organisation's plugins.
+ *
+ * Passing the viewer to get_plugin_with_stats_for_viewer is not enough on its own. That applies
+ * user_can_view_plugin_row, and viewing is deliberately narrower than installing: an ordinary
+ * member may install an `unlisted` plugin by link but may not see it (20260805000000). So this
+ * lookup applies no visibility at all, and user_can_install_plugin stays the one gate, as the
+ * routes intend. A caller it refuses still gets the same 404 as a plugin that does not exist.
+ *
+ * `published = true` matches what get_plugin_with_stats filtered on, so nothing unpublished
+ * becomes downloadable through this change.
+ */
+export async function getPluginForDownload(
+  supabase: SupabaseClient,
+  pluginId: string
+): Promise<{ id: string; requiredPermissions: string[] } | null> {
+  const { data, error } = await supabase
+    .from('plugins')
+    .select('id, required_permissions')
+    .eq('plugin_id', pluginId)
+    .eq('published', true)
+    .maybeSingle()
+
+  if (error) {
+    console.error('Error getting plugin for download:', error)
+    throw new Error(`Failed to get plugin: ${error.message}`)
+  }
+
+  if (!data) {
+    return null
+  }
+
+  return { id: data.id, requiredPermissions: data.required_permissions || [] }
+}
+
+/**
  * Get plugin details by plugin ID string
  *
  * The storefront detail page MUST pass the viewer. This client is service
