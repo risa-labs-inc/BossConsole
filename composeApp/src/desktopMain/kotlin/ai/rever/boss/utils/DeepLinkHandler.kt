@@ -234,10 +234,10 @@ actual object DeepLinkHandler {
             // Called unconditionally: registerProtocol() is idempotent and inspects the
             // actual shell\open\command value, while isProtocolRegistered() only reports
             // root-key presence. Gating on the latter meant a partial registration (root key
-            // present, command value missing — performRegistration does four independent
-            // `reg add`s and tolerates failures) was reported as "already registered" and
-            // never repaired, leaving boss:// broken for that user on every launch. Costs one
-            // extra `reg query` per Windows start in the already-correct case, bounded at 5s.
+            // present, command value missing — a failed .reg import can leave that shape) was
+            // reported as "already registered" and never repaired, leaving boss:// broken for
+            // that user on every launch. Costs one extra `reg query` per Windows start in the
+            // already-correct case, bounded at 5s.
             WindowsProtocolHandler.registerProtocol()
 
             // On Windows, deep links come through command line args when the app is already running
