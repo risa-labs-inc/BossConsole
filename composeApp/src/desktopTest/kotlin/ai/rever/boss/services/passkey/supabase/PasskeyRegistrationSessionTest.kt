@@ -5,9 +5,15 @@ import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
+/**
+ * Pins serialization of the caller-created browser session into the registration challenge
+ * request. The Deno mobile and route suites pin server-side rejection of unbound or mismatched
+ * sessions; this test does not exercise the desktop browser URL because that path depends on
+ * singleton browser infrastructure.
+ */
 class PasskeyRegistrationSessionTest {
     @Test
-    fun `registration challenge request carries the browser session to the server`() {
+    fun `registration request serializes the caller-created browser session`() {
         val request =
             PasskeyDataMapper.createRegistrationRequest(
                 userId = "user-1",

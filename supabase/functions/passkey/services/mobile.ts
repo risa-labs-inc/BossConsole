@@ -44,6 +44,7 @@ export const generateMobileRegistrationPage = withErrorHandler(
     // In particular, a direct-login challenge has no session and cannot be
     // turned into a cross-device token handoff by opening a crafted page URL.
     if (!challengeData.session_id || challengeData.session_id !== sessionId) {
+      console.error('❌ Registration challenge session binding rejected')
       return { success: false, error: 'Invalid registration session' }
     }
 
@@ -108,6 +109,7 @@ export const generateMobileAuthenticationPage = withErrorHandler(
     }
 
     if (!challengeData.session_id || challengeData.session_id !== sessionId) {
+      console.error('❌ Authentication challenge session binding rejected')
       return { success: false, error: 'Invalid authentication session' }
     }
 

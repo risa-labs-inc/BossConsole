@@ -11,7 +11,7 @@ data class PasskeyRegistrationRequest(
     val displayName: String,
     val challenge: String,
     val authenticatorSelection: AuthenticatorSelectionCriteria? = null,
-    val sessionId: String? = null,
+    val sessionId: String,
 )
 
 @Serializable

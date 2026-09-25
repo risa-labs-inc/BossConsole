@@ -41,7 +41,7 @@ internal object PasskeyDataMapper {
         displayName: String,
         challenge: String,
         authenticatorSelection: AuthenticatorSelectionCriteria?,
-        sessionId: String? = null,
+        sessionId: String,
     ): PasskeyRegistrationRequest =
         PasskeyRegistrationRequest(
             userId = userId,

@@ -24,9 +24,10 @@ object SupabasePasskeyService {
         userId: String,
         displayName: String,
         authenticatorSelection: AuthenticatorSelectionCriteria?,
-        sessionId: String? = null,
+        sessionId: String,
     ): Result<PasskeyChallenge> {
         // Validate input parameters
+        // Combine the validations to stay within Detekt's ReturnCount limit.
         val validation =
             PasskeyRegistrationHandler
                 .validateRegistrationRequest(userId, displayName)

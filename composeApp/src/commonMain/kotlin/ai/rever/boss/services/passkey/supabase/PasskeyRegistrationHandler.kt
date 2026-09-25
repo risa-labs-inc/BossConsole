@@ -20,7 +20,7 @@ internal object PasskeyRegistrationHandler {
         userId: String,
         displayName: String,
         authenticatorSelection: AuthenticatorSelectionCriteria? = null,
-        sessionId: String? = null,
+        sessionId: String,
     ): Result<PasskeyChallenge> =
         try {
             logger.debug(LogCategory.PASSKEY, "Requesting registration challenge", mapOf("userId" to LogSanitizer.maskUserId(userId)))

@@ -152,7 +152,10 @@ class DesktopPasskeyService : PasskeyService {
 
                 // Always use browser WebAuthn for passkey authentication - this is the correct approach
                 // The browser handles the choice between Touch ID, security keys, or cross-device flow
-                val crossDeviceSessionId = sessionId ?: UUID.randomUUID().toString()
+                val crossDeviceSessionId =
+                    requireNotNull(sessionId) {
+                        "Browser passkey authentication requires the session bound at challenge issuance"
+                    }
                 val challengeB64 = Base64.getUrlEncoder().withoutPadding().encodeToString(challenge)
                 val baseUrl = getSupabaseFunctionUrl()
                 val authUrl =
