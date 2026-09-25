@@ -24,20 +24,24 @@ object SupabasePasskeyService {
         userId: String,
         displayName: String,
         authenticatorSelection: AuthenticatorSelectionCriteria?,
+        sessionId: String,
     ): Result<PasskeyChallenge> {
         // Validate input parameters
-        PasskeyRegistrationHandler
-            .validateRegistrationRequest(userId, displayName)
-            .onFailure { return Result.failure(it) }
-
-        PasskeyRegistrationHandler
-            .validateAuthenticatorSelection(authenticatorSelection)
-            .onFailure { return Result.failure(it) }
+        // Combine the validations to stay within Detekt's ReturnCount limit.
+        val validation =
+            PasskeyRegistrationHandler
+                .validateRegistrationRequest(userId, displayName)
+                .fold(
+                    onSuccess = { PasskeyRegistrationHandler.validateAuthenticatorSelection(authenticatorSelection) },
+                    onFailure = { Result.failure(it) },
+                )
+        validation.onFailure { return Result.failure(it) }
 
         return PasskeyRegistrationHandler.requestChallenge(
             userId = userId,
             displayName = displayName,
             authenticatorSelection = authenticatorSelection,
+            sessionId = sessionId,
         )
     }
 

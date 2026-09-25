@@ -4,6 +4,90 @@ import { normalizeBase64Url } from "../utils/base64.ts"
 import { getRpName } from "../utils/config.ts"
 import { maskEmail, maskUserId } from "../utils/logging.ts"
 
+function loadRegistrationChallenge(
+  supabase: SupabaseClient,
+  challenge: string
+) {
+  return supabase
+    .from('passkey_challenges')
+    .select('*')
+    .eq('challenge', challenge)
+    .eq('type', 'registration')
+    .gt('expires_at', new Date().toISOString())
+    .single()
+}
+
+export const generateLegacyMobileRegistrationPage = withErrorHandler(
+  async (
+    supabase: SupabaseClient,
+    challenge: string,
+    email: string,
+    sessionId: string,
+    rpId: string
+  ) => {
+    console.log('📱 Generating legacy mobile registration page for:', maskEmail(email))
+
+    const rpName = getRpName(rpId)
+    const { data: challengeData, error: challengeError } =
+      await loadRegistrationChallenge(supabase, challenge)
+
+    if (challengeError || !challengeData) {
+      return {
+        success: false,
+        error: 'Invalid or expired registration link'
+      }
+    }
+
+    let effectiveChallenge = challengeData
+
+    if (!challengeData.session_id) {
+      const { data: claimedChallenge, error: claimError } = await supabase
+        .from('passkey_challenges')
+        .update({
+          session_id: sessionId,
+          status: 'in_progress'
+        })
+        .eq('challenge', challenge)
+        .eq('type', 'registration')
+        .is('session_id', null)
+        .select('*')
+        .single()
+
+      if (claimError || !claimedChallenge) {
+        console.error('❌ Legacy registration challenge claim rejected')
+        return { success: false, error: 'Invalid registration session' }
+      }
+
+      effectiveChallenge = claimedChallenge
+    }
+
+    if (effectiveChallenge.session_id !== sessionId) {
+      console.error('❌ Legacy registration challenge session binding rejected')
+      return { success: false, error: 'Invalid registration session' }
+    }
+
+    const userId = effectiveChallenge.user_id
+    if (!userId) {
+      return {
+        success: false,
+        error: 'Invalid registration challenge'
+      }
+    }
+
+    return {
+      success: true,
+      userId,
+      email,
+      challenge,
+      sessionId,
+      rpId,
+      rpName
+    }
+  },
+  'Failed to generate legacy mobile registration page',
+  '📱'
+)
+
 /**
  * Mobile Registration Service
  * Handles business logic for mobile registration HTML page generation
@@ -23,13 +107,8 @@ export const generateMobileRegistrationPage = withErrorHandler(
     const rpName = getRpName(rpId)
 
     // Verify challenge exists and is valid
-    const { data: challengeData, error: challengeError } = await supabase
-      .from('passkey_challenges')
-      .select('*')
-      .eq('challenge', challenge)
-      .eq('type', 'registration')
-      .gt('expires_at', new Date().toISOString())
-      .single()
+    const { data: challengeData, error: challengeError } =
+      await loadRegistrationChallenge(supabase, challenge)
 
     if (challengeError || !challengeData) {
       console.error('❌ Invalid or expired challenge:', challengeError)
@@ -37,6 +116,15 @@ export const generateMobileRegistrationPage = withErrorHandler(
         success: false,
         error: 'Invalid or expired registration link'
       }
+    }
+
+    // The page is public. A session supplied in its URL must only confirm the
+    // session bound when the challenge was issued; it must never establish one.
+    // In particular, a direct-login challenge has no session and cannot be
+    // turned into a cross-device token handoff by opening a crafted page URL.
+    if (!challengeData.session_id || challengeData.session_id !== sessionId) {
+      console.error('❌ Registration challenge session binding rejected')
+      return { success: false, error: 'Invalid registration session' }
     }
 
     // Get userId from the challenge data - it was stored when the challenge was created
@@ -50,15 +138,6 @@ export const generateMobileRegistrationPage = withErrorHandler(
     }
 
     console.log('✅ Found userId from challenge:', maskUserId(userId))
-
-    // Update challenge with session info
-    await supabase
-      .from('passkey_challenges')
-      .update({
-        session_id: sessionId,
-        status: 'in_progress'
-      })
-      .eq('challenge', challenge)
 
     console.log('✅ Mobile registration page ready for user:', maskUserId(userId))
 
@@ -108,6 +187,11 @@ export const generateMobileAuthenticationPage = withErrorHandler(
       }
     }
 
+    if (!challengeData.session_id || challengeData.session_id !== sessionId) {
+      console.error('❌ Authentication challenge session binding rejected')
+      return { success: false, error: 'Invalid authentication session' }
+    }
+
     // Get userId from the challenge data - it was stored when the challenge was created
     const userId = challengeData.user_id
     if (!userId) {
@@ -139,15 +223,6 @@ export const generateMobileAuthenticationPage = withErrorHandler(
         error: 'Authentication credential not found'
       }
     }
-
-    // Update challenge with session info
-    await supabase
-      .from('passkey_challenges')
-      .update({
-        session_id: sessionId,
-        status: 'in_progress'
-      })
-      .eq('challenge', challenge)
 
     console.log('✅ Mobile authentication page ready for user:', maskUserId(userId))
 

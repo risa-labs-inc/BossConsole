@@ -22,6 +22,7 @@ Deno.test("generateMobileRegistrationPage - should generate valid registration p
   mockClient.mockResponse('passkey_challenges', {
     data: {
       ...mockChallenge,
+      session_id: 'session-123',
       type: 'registration',
       expires_at: new Date(Date.now() + 60000).toISOString()
     },
@@ -33,12 +34,6 @@ Deno.test("generateMobileRegistrationPage - should generate valid registration p
     data: { id: 'user-456', email: 'test@example.com' },
     error: null
   }, 'select')
-
-  // Mock update challenge with session
-  mockClient.mockResponse('passkey_challenges', {
-    data: [{ id: 'challenge-789' }],
-    error: null
-  }, 'update')
 
   const result = await generateMobileRegistrationPage(
     mockClient as unknown as SupabaseClient,
@@ -114,6 +109,7 @@ Deno.test("generateMobileRegistrationPage - should reject challenge without user
   mockClient.mockResponse('passkey_challenges', {
     data: {
       ...mockChallenge,
+      session_id: 'session-123',
       user_id: null, // Challenge doesn't have user_id
       type: 'registration',
       expires_at: new Date(Date.now() + 60000).toISOString()
@@ -136,13 +132,14 @@ Deno.test("generateMobileRegistrationPage - should reject challenge without user
   }
 })
 
-Deno.test("generateMobileRegistrationPage - should update challenge status to in_progress", async () => {
+Deno.test("generateMobileRegistrationPage - matching session does not write the challenge", async () => {
   const mockClient = createMockSupabaseClient()
 
   // Mock valid challenge
   mockClient.mockResponse('passkey_challenges', {
     data: {
       ...mockChallenge,
+      session_id: 'session-123',
       type: 'registration',
       expires_at: new Date(Date.now() + 60000).toISOString()
     },
@@ -155,12 +152,6 @@ Deno.test("generateMobileRegistrationPage - should update challenge status to in
     error: null
   }, 'select')
 
-  // Mock update with in_progress status
-  mockClient.mockResponse('passkey_challenges', {
-    data: [{ id: 'challenge-789', status: 'in_progress' }],
-    error: null
-  }, 'update')
-
   const result = await generateMobileRegistrationPage(
     mockClient as unknown as SupabaseClient,
     'mock-challenge-base64',
@@ -171,10 +162,10 @@ Deno.test("generateMobileRegistrationPage - should update challenge status to in
 
   assertEquals(result.success, true)
 
-  // Verify update was called
+  // Opening the page must not change the binding or any other challenge field.
   const history = mockClient.getQueryHistory()
   const updateCall = history.find(h => h.operation === 'update')
-  assertExists(updateCall)
+  assertEquals(updateCall, undefined)
 })
 
 // ============================================================================
@@ -188,6 +179,7 @@ Deno.test("generateMobileAuthenticationPage - should generate valid authenticati
   mockClient.mockResponse('passkey_challenges', {
     data: {
       ...mockChallenge,
+      session_id: 'session-123',
       type: 'authentication',
       expires_at: new Date(Date.now() + 60000).toISOString()
     },
@@ -205,12 +197,6 @@ Deno.test("generateMobileAuthenticationPage - should generate valid authenticati
     data: mockPasskey,
     error: null
   }, 'select')
-
-  // Mock challenge update
-  mockClient.mockResponse('passkey_challenges', {
-    data: [{ id: 'challenge-789' }],
-    error: null
-  }, 'update')
 
   const result = await generateMobileAuthenticationPage(
     mockClient as unknown as SupabaseClient,
@@ -290,6 +276,7 @@ Deno.test("generateMobileAuthenticationPage - should reject challenge without us
   mockClient.mockResponse('passkey_challenges', {
     data: {
       ...mockChallenge,
+      session_id: 'session-123',
       user_id: null, // Challenge doesn't have user_id
       type: 'authentication',
       expires_at: new Date(Date.now() + 60000).toISOString()
@@ -320,6 +307,7 @@ Deno.test("generateMobileAuthenticationPage - should reject non-existent credent
   mockClient.mockResponse('passkey_challenges', {
     data: {
       ...mockChallenge,
+      session_id: 'session-123',
       type: 'authentication',
       expires_at: new Date(Date.now() + 60000).toISOString()
     },
@@ -361,6 +349,7 @@ Deno.test("generateMobileAuthenticationPage - should reject inactive credential"
   mockClient.mockResponse('passkey_challenges', {
     data: {
       ...mockChallenge,
+      session_id: 'session-123',
       type: 'authentication',
       expires_at: new Date(Date.now() + 60000).toISOString()
     },
@@ -395,13 +384,14 @@ Deno.test("generateMobileAuthenticationPage - should reject inactive credential"
   }
 })
 
-Deno.test("generateMobileAuthenticationPage - should update challenge status to in_progress", async () => {
+Deno.test("generateMobileAuthenticationPage - matching session does not write the challenge", async () => {
   const mockClient = createMockSupabaseClient()
 
   // Mock valid challenge
   mockClient.mockResponse('passkey_challenges', {
     data: {
       ...mockChallenge,
+      session_id: 'session-123',
       type: 'authentication',
       expires_at: new Date(Date.now() + 60000).toISOString()
     },
@@ -420,12 +410,6 @@ Deno.test("generateMobileAuthenticationPage - should update challenge status to 
     error: null
   }, 'select')
 
-  // Mock challenge update
-  mockClient.mockResponse('passkey_challenges', {
-    data: [{ id: 'challenge-789', status: 'in_progress' }],
-    error: null
-  }, 'update')
-
   const result = await generateMobileAuthenticationPage(
     mockClient as unknown as SupabaseClient,
     'mock-challenge-base64',
@@ -437,10 +421,10 @@ Deno.test("generateMobileAuthenticationPage - should update challenge status to 
 
   assertEquals(result.success, true)
 
-  // Verify update was called
+  // Opening the page must not change the binding or any other challenge field.
   const history = mockClient.getQueryHistory()
   const updateCall = history.find(h => h.operation === 'update')
-  assertExists(updateCall)
+  assertEquals(updateCall, undefined)
 })
 
 Deno.test("generateMobileAuthenticationPage - should return credential metadata", async () => {
@@ -450,6 +434,7 @@ Deno.test("generateMobileAuthenticationPage - should return credential metadata"
   mockClient.mockResponse('passkey_challenges', {
     data: {
       ...mockChallenge,
+      session_id: 'session-123',
       type: 'authentication',
       expires_at: new Date(Date.now() + 60000).toISOString()
     },
@@ -472,12 +457,6 @@ Deno.test("generateMobileAuthenticationPage - should return credential metadata"
     error: null
   }, 'select')
 
-  // Mock challenge update
-  mockClient.mockResponse('passkey_challenges', {
-    data: [{ id: 'challenge-789' }],
-    error: null
-  }, 'update')
-
   const result = await generateMobileAuthenticationPage(
     mockClient as unknown as SupabaseClient,
     'mock-challenge-base64',
@@ -494,12 +473,13 @@ Deno.test("generateMobileAuthenticationPage - should return credential metadata"
   }
 })
 
-Deno.test("GET /register/mobile - a request-supplied rpName cannot spoof the relying party name", async () => {
+Deno.test("GET /register/mobile/v2 - a request-supplied rpName cannot spoof the relying party name", async () => {
   const mockClient = createMockSupabaseClient()
 
   mockClient.mockResponse('passkey_challenges', {
     data: {
       ...mockChallenge,
+      session_id: 'session-123',
       type: 'registration',
       expires_at: new Date(Date.now() + 60000).toISOString()
     },
@@ -519,7 +499,7 @@ Deno.test("GET /register/mobile - a request-supplied rpName cannot spoof the rel
   app.route("/", mobile)
 
   const response = await app.request(
-    "/register/mobile?challenge=mock-challenge-base64&email=test@example.com" +
+    "/register/mobile/v2?challenge=mock-challenge-base64&email=test@example.com" +
     "&sessionId=session-123&rpId=api.risaboss.com&rpName=Microsoft%20Security"
   )
 
@@ -536,15 +516,12 @@ Deno.test("generateMobileRegistrationPage - logs carry no raw email or user id",
   mockClient.mockResponse('passkey_challenges', {
     data: {
       ...mockChallenge,
+      session_id: 'session-123',
       type: 'registration',
       expires_at: new Date(Date.now() + 60000).toISOString()
     },
     error: null
   }, 'select')
-  mockClient.mockResponse('passkey_challenges', {
-    data: [{ id: 'challenge-789' }],
-    error: null
-  }, 'update')
 
   const logged: string[] = []
   const originals = {
@@ -586,3 +563,48 @@ Deno.test("generateMobileRegistrationPage - logs carry no raw email or user id",
     assertEquals(line.includes('user-456'), false, `log leaked raw user id: ${line}`)
   }
 })
+// A direct authentication challenge can be issued without a session. The
+// public page must not convert it into a cross-device handoff by supplying a
+// session in the URL; the same rule protects registration challenges created
+// by clients that have not opted into a cross-device session.
+for (const boundSession of [null, 'session-victim']) {
+  Deno.test(`mobile registration refuses a ${boundSession ?? 'missing'} session binding`, async () => {
+    const client = createMockSupabaseClient()
+    client.mockResponse('passkey_challenges', {
+      data: { ...mockChallenge, type: 'registration', session_id: boundSession },
+      error: null
+    }, 'select')
+
+    const result = await generateMobileRegistrationPage(
+      client as unknown as SupabaseClient,
+      'mock-challenge-base64',
+      'test@example.com',
+      'session-attacker',
+      'api.risaboss.com'
+    )
+
+    assertEquals(result.success, false)
+    assertEquals(client.getQueryHistory().some(query => query.operation === 'update'), false)
+  })
+
+  Deno.test(`mobile authentication refuses a ${boundSession ?? 'missing'} session binding`, async () => {
+    const client = createMockSupabaseClient()
+    client.mockResponse('passkey_challenges', {
+      data: { ...mockChallenge, type: 'authentication', session_id: boundSession },
+      error: null
+    }, 'select')
+
+    const result = await generateMobileAuthenticationPage(
+      client as unknown as SupabaseClient,
+      'mock-challenge-base64',
+      'test@example.com',
+      'session-attacker',
+      'credential-abc',
+      'api.risaboss.com'
+    )
+
+    assertEquals(result.success, false)
+    assertEquals(client.getQueryHistory().some(query => query.operation === 'update'), false)
+    assertEquals(client.getQueryHistory().some(query => query.table === 'user_passkeys'), false)
+  })
+}

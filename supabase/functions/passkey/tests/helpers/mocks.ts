@@ -31,6 +31,7 @@ export interface MockQueryBuilder extends Promise<MockSupabaseResponse> {
   update: (data: unknown) => MockQueryBuilder
   delete: () => MockQueryBuilder
   eq: (column: string, value: unknown) => MockQueryBuilder
+  is: (column: string, value: unknown) => MockQueryBuilder
   gt: (column: string, value: unknown) => MockQueryBuilder
   lt: (column: string, value: unknown) => MockQueryBuilder
   not: (column: string, operator: string, value: unknown) => MockQueryBuilder
@@ -219,7 +220,10 @@ export class MockSupabaseClient {
    * True when every column/value pair in `match` was filtered on by the query.
    */
   private static filtersSatisfy(match: Record<string, unknown>, params: QueryParams): boolean {
-    const filters = (params.eq ?? []) as Array<{ column: string; value: unknown }>
+    const filters = [
+      ...((params.eq ?? []) as Array<{ column: string; value: unknown }>),
+      ...((params.is ?? []) as Array<{ column: string; value: unknown }>)
+    ]
 
     return Object.entries(match).every(([column, value]) =>
       filters.some(filter => filter.column === column && filter.value === value)
@@ -319,6 +323,13 @@ export class MockSupabaseClient {
           currentParams.eq = []
         }
         currentParams.eq.push({ column, value })
+        return builder
+      },
+      is: (column: string, value: unknown) => {
+        if (!currentParams.is) {
+          currentParams.is = []
+        }
+        currentParams.is.push({ column, value })
         return builder
       },
       gt: (column: string, value: unknown) => {

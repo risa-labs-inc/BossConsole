@@ -74,6 +74,23 @@ which accepts base64 and base64url with or without padding. Locking a decoder to
 one alphabet produces failures that depend on the bytes of the individual
 ceremony.
 
+**Mobile-registration version rollout.** New desktop builds use
+`GET /passkey/register/mobile/v2`. This endpoint serves a registration page
+only when the supplied `sessionId` matches the session stored with the
+challenge when that challenge was issued.
+
+`GET /passkey/register/mobile` is temporarily retained for desktop builds
+released before v2. During the compatibility window it can bind an unbound
+registration challenge exactly once. Its conditional update requires
+`session_id IS NULL`, so it cannot replace a session binding established by
+another request.
+
+Let `R` denote the first released desktop version that uses the v2 endpoint.
+The legacy endpoint is supported for `R`, `R+1`, and `R+2`, and must be removed
+before `R+3` is deployed. Once `R` is assigned, this documentation and the
+tracking issue must record the concrete versions before this change leaves
+draft.
+
 **Environment**:
 - `PASSKEY_RP_ID` - **required in hosted deployments.** RP ID for ceremonies. The fallback derives it from `SUPABASE_URL`, which inside the edge runtime is the internal `kong` gateway and maps to `localhost` - not what the browser uses.
 - `PASSKEY_RP_ID_ALIASES` - comma-separated additional RP IDs accepted during verification
