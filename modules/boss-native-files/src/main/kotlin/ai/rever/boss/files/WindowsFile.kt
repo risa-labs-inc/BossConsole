@@ -4,12 +4,15 @@ import com.sun.jna.Memory
 import com.sun.jna.Pointer
 import java.nio.ByteBuffer
 import java.nio.channels.ClosedChannelException
+import java.nio.channels.NonReadableChannelException
 import java.nio.channels.NonWritableChannelException
 import java.nio.channels.SeekableByteChannel
 
 internal class WindowsFile(
     private val pointer: Pointer,
     private val writable: Boolean,
+    verifyPrivate: Boolean = writable,
+    private val readable: Boolean = true,
 ) : SeekableByteChannel {
     private var closed = false
     private var offset = 0L
@@ -19,7 +22,7 @@ internal class WindowsFile(
         try {
             val type = WindowsApi.kernel.getFunction("GetFileType").invokeInt(arrayOf<Any?>(pointer))
             require(type == 1 && WindowsApi.info(pointer).isRegularFile) { "Only regular disk files can be opened" }
-            if (writable) WindowsSecurity.verify(pointer)
+            if (verifyPrivate) WindowsSecurity.verify(pointer)
             valid = true
         } finally {
             if (!valid) close()
@@ -33,6 +36,7 @@ internal class WindowsFile(
 
     @Synchronized
     override fun read(dst: ByteBuffer): Int {
+        if (!readable) throw NonReadableChannelException()
         if (!dst.hasRemaining()) return 0
         val bytes = ByteArray(minOf(dst.remaining(), 65_536))
         val count = transfer("ReadFile", bytes)

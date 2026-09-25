@@ -8,6 +8,7 @@ import java.nio.channels.SeekableByteChannel
 import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 
+@Suppress("TooManyFunctions") // Implements the complete native directory operation contract.
 internal class WindowsDirectory(
     private val pointer: Pointer,
 ) : NativeDirectory {
@@ -24,15 +25,16 @@ internal class WindowsDirectory(
     override fun child(
         name: String,
         create: Boolean,
+        permissions: CreationPermissions,
     ): NativeDirectory {
-        val access = 0x81 // FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES
+        val access = 0xa0 // FILE_TRAVERSE | FILE_READ_ATTRIBUTES; listing is acquired only for enumeration.
         val opened =
-            if (create) {
+            if (create && permissions == CreationPermissions.OWNER_ONLY) {
                 WindowsSecurity.privateDescriptor(handle()) { descriptor ->
                     WindowsOpen(handle(), name, descriptor).use { it.open(access, 3, 1) }
                 }
             } else {
-                WindowsOpen(handle(), name, null).use { it.open(access, 1, 1) }
+                WindowsOpen(handle(), name, null).use { it.open(access, if (create) 3 else 1, 1) }
             }
         return WindowsDirectory(opened)
     }
@@ -41,16 +43,28 @@ internal class WindowsDirectory(
     override fun file(
         name: String,
         create: Boolean,
+        writable: Boolean,
+        readable: Boolean,
+        permissions: CreationPermissions,
     ): SeekableByteChannel {
+        require(readable || writable) { "A file must be opened for reading or writing" }
+        // File-type validation needs FILE_READ_ATTRIBUTES even when file contents are write-only.
+        val access = 0x80 or (if (readable) 0x80000000.toInt() else 0) or (if (writable) 0x40000000 else 0)
+        val disposition = if (create) 2 else 1
         val opened =
-            if (create) {
+            if (create && permissions == CreationPermissions.OWNER_ONLY) {
                 WindowsSecurity.privateDescriptor(handle()) { descriptor ->
-                    WindowsOpen(handle(), name, descriptor).use { it.open(0xc0000000.toInt(), 2, 0x40) }
+                    WindowsOpen(handle(), name, descriptor).use { it.open(access, 2, 0x40) }
                 }
             } else {
-                WindowsOpen(handle(), name, null).use { it.open(0x80000000.toInt(), 1, 0x40) }
+                WindowsOpen(handle(), name, null).use { it.open(access, disposition, 0x40) }
             }
-        return WindowsFile(opened, create)
+        return WindowsFile(
+            opened,
+            writable,
+            verifyPrivate = writable && permissions == CreationPermissions.OWNER_ONLY,
+            readable = readable,
+        )
     }
 
     @Synchronized
@@ -100,20 +114,64 @@ internal class WindowsDirectory(
         WindowsOpen(handle(), source, null).use { request ->
             val entry = request.open(0x10080, 1, 0x200000)
             try {
-                WindowsRename.move(entry, destination.handle(), component(name), overwrite)
+                if (!overwrite || !destination.replaceDirectoryLink(entry, name)) {
+                    WindowsRename.move(entry, destination.handle(), component(name), overwrite)
+                }
             } finally {
                 WindowsApi.close(entry)
             }
         }
     }
 
+    private fun replaceDirectoryLink(
+        source: Pointer,
+        name: String,
+    ): Boolean {
+        val target = info(name)?.takeIf { it.isLink && it.isDirectory }
+        if (target == null || target.identity == WindowsApi.info(source).identity) return false
+        WindowsOpen(handle(), name, null).use { request ->
+            val held = request.open(0x10080, 1, 0x200000)
+            try {
+                val current = WindowsApi.info(held)
+                if (current.identity != target.identity || !current.isLink || !current.isDirectory) {
+                    throw java.io.IOException("Replacement entry changed")
+                }
+                WindowsReplacement.move(source, held, handle(), component(name))
+            } finally {
+                WindowsApi.close(held)
+            }
+        }
+        return true
+    }
+
+    override fun copyEntry(
+        source: String,
+        destination: NativeDirectory,
+        name: String,
+    ) {
+        require(destination is WindowsDirectory) { "Incompatible filesystem provider" }
+        WindowsCopy.copy(handle(), component(source), destination.handle(), component(name))
+    }
+
     @Synchronized
-    override fun entries(visit: (String) -> Boolean) = WindowsEntries.visit(handle(), visit)
+    override fun entries(visit: (String) -> Boolean) {
+        WindowsOpen.reopen(handle()).use { request ->
+            val listable = request.open(0x81, 1, 1)
+            try {
+                WindowsEntries.visit(listable, visit)
+            } finally {
+                WindowsApi.close(listable)
+            }
+        }
+    }
+
+    @Synchronized
+    override fun watch(session: DirectoryWatchSession?): NativeDirectoryWatch = WindowsDirectoryWatch(handle())
 
     @Synchronized
     override fun restrictToOwner() {
         WindowsOpen.reopen(handle()).use { request ->
-            val writable = request.open(0xe0080, 1, 0x200001) // READ_CONTROL | WRITE_DAC | WRITE_OWNER | attributes
+            val writable = request.open(0xe0080, 1, 0x200001)
             try {
                 WindowsSecurity.restrict(writable)
             } finally {
@@ -133,7 +191,7 @@ internal class WindowsDirectory(
     companion object {
         fun openRoot(root: Path): NativeDirectory {
             // Only a drive root or UNC share is opened by name. Descendants always use NtCreateFile relative handles.
-            val arguments = arrayOf<Any?>(WString(root.toString()), 0x100081, 7, null, 3, 0x02200000, null)
+            val arguments = arrayOf<Any?>(WString(root.toString()), 0x1000a0, 7, null, 3, 0x02200000, null)
             val opened = WindowsApi.kernel.getFunction("CreateFileW").invokePointer(arguments)
             if (opened == null || Pointer.nativeValue(opened) == -1L) throw WindowsApi.error("Open filesystem root")
             var valid = false
