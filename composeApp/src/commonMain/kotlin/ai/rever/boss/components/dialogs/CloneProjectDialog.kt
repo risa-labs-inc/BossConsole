@@ -536,45 +536,7 @@ private fun CloningStep(
         }
     }
 
-    Column(
-        modifier =
-            Modifier
-                .padding(16.dp)
-                .heightIn(min = 200.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        CircularProgressIndicator(
-            modifier = Modifier.size(48.dp),
-            color = BossTheme.colors.signal,
-            strokeWidth = 3.dp,
-        )
-
-        Spacer(modifier = Modifier.height(20.dp))
-
-        Text(
-            text = "Cloning Repository",
-            fontSize = 15.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = BossTheme.colors.textPrimary,
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Text(
-            text = progressMessage,
-            fontSize = 13.sp,
-            color = BossTheme.colors.textSecondary,
-        )
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Text(
-            text = "This may take a few moments...",
-            fontSize = 12.sp,
-            color = BossTheme.colors.textSecondary.copy(alpha = 0.6f),
-        )
-    }
+    CloningProgressContent(progressMessage)
 }
 
 /**
