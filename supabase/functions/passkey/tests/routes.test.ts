@@ -197,6 +197,53 @@ Deno.test("POST /register/challenge - rejects an unrecognised token", async () =
   )
 })
 
+Deno.test("POST /register/challenge - the envelope hides a PGRST204 schema diagnostic", async () => {
+  const mockClient = createMockSupabaseClient()
+  mockClient.mockAccessToken(ATTACKER_TOKEN, { id: ATTACKER_ID, email: 'attacker@example.com' })
+
+  // Unlike /auth/challenge (which returns an inert 200 on a store failure,
+  // BossConsole#768), /register/challenge puts the store result's error
+  // straight into a 400 body - this is the route where the PGRST204 text
+  // used to reach a caller (issue #770).
+  const diagnostic = 'column passkey_challenges.session_id does not exist'
+  mockClient.mockResponse('passkey_challenges', {
+    data: null,
+    error: {
+      code: 'PGRST204',
+      message: "Could not find the 'session_id' column of 'passkey_challenges' in the schema cache",
+      details: diagnostic,
+      hint: 'Reload the PostgREST schema cache'
+    }
+  }, 'insert')
+
+  const logged: string[] = []
+  const originalError = console.error
+  console.error = ((...args: unknown[]) => {
+    logged.push(args.map((arg) => Deno.inspect(arg)).join(' '))
+  }) as typeof console.error
+
+  try {
+    const app = buildApp(mockClient)
+    const response = await postJson(app, '/register/challenge', registrationChallengeBody(), ATTACKER_TOKEN)
+
+    assertEquals(response.status, 400)
+    const body = await response.text()
+    assertEquals(JSON.parse(body).error, 'Failed to store challenge')
+    assertEquals(body.includes(diagnostic), false, 'the schema diagnostic must not reach the response body')
+    assertEquals(body.includes('PGRST204'), false)
+    assertEquals(body.includes('passkey_challenges'), false)
+  } finally {
+    console.error = originalError
+  }
+
+  // The driver's text belongs on the server-side log, and must still be there.
+  assertEquals(
+    logged.some((line) => line.includes(diagnostic)),
+    true,
+    'the PGRST204 detail must be logged server-side'
+  )
+})
+
 Deno.test("POST /register/challenge - a token for one user cannot mint a challenge for another", async () => {
   const mockClient = createMockSupabaseClient()
   mockClient.mockAccessToken(ATTACKER_TOKEN, { id: ATTACKER_ID, email: 'attacker@example.com' })
@@ -438,4 +485,84 @@ Deno.test("POST /manage/list - unexpected route exceptions return a generic 500"
   } finally {
     Deno.env.get = originalEnvGet
   }
+})
+
+// ============================================================================
+// Error envelopes: database diagnostics never reach an unauthenticated caller
+//
+// POST /auth/challenge is the passkey entry point and requires no
+// credentials. When the challenge INSERT fails the way schema drift makes it
+// fail — PostgREST answers with a PGRST204 whose detail names the missing
+// column — that text used to travel straight into the response body (issue
+// #770). The route must render the fixed envelope and keep the driver's text
+// on the server-side log.
+// ============================================================================
+
+Deno.test("POST /auth/challenge - the envelope hides a PGRST204 schema diagnostic", async () => {
+  const mockClient = createMockSupabaseClient()
+
+  // The ceremony's reads succeed — the email resolves and the user owns a
+  // passkey — so the only failure below is the challenge INSERT.
+  mockClient.mockResponse('rpc.find_user_by_email', {
+    data: [{ id: 'user-envelope', email: 'caller@example.com' }],
+    error: null
+  }, 'call')
+  mockClient.mockResponse('user_passkeys', {
+    data: [{ id: 'passkey-1', user_id: 'user-envelope', credential_id: 'credential-1', active: true }],
+    error: null
+  }, 'select')
+
+  // The INSERT fails the way a deployment ahead of its migrations does: a
+  // PGRST204-shaped driver error whose message and detail name the column.
+  const diagnostic = 'column passkey_challenges.session_id does not exist'
+  mockClient.mockResponse('passkey_challenges', {
+    data: null,
+    error: {
+      code: 'PGRST204',
+      message: "Could not find the 'session_id' column of 'passkey_challenges' in the schema cache",
+      details: diagnostic,
+      hint: 'Reload the PostgREST schema cache'
+    }
+  }, 'insert')
+
+  const logged: string[] = []
+  const originalError = console.error
+  console.error = ((...args: unknown[]) => {
+    logged.push(args.map((arg) => Deno.inspect(arg)).join(' '))
+  }) as typeof console.error
+
+  try {
+    const app = buildApp(mockClient)
+    const response = await postJson(app, '/auth/challenge', { email: 'caller@example.com' })
+
+    // A store failure returns the same inert 200 shape as the pre-auth
+    // failures (unknown email, no passkeys) by design (BossConsole#768): a
+    // 400 here would let a prober tell an enrolled account apart the moment
+    // the store hiccups. What the unauthenticated caller may see is fixed
+    // text — never the driver's diagnostic.
+    assertEquals(response.status, 200)
+    const body = await response.text()
+    const parsed = JSON.parse(body)
+    assertEquals(parsed.success, true)
+    assertEquals(parsed.allowCredentials, [])
+    assertEquals(body.includes(diagnostic), false, 'the schema diagnostic must not reach the response body')
+    assertEquals(body.includes('PGRST204'), false)
+    assertEquals(body.includes('passkey_challenges'), false)
+    assertEquals(body.includes('Failed to store challenge'), false, 'the fixed envelope is logged, not sent to the client')
+  } finally {
+    console.error = originalError
+  }
+
+  // The driver's text belongs on the server-side log, and must still be there.
+  assertEquals(
+    logged.some((line) => line.includes(diagnostic)),
+    true,
+    'the PGRST204 detail must be logged server-side'
+  )
+  // storeChallenge's fixed envelope must land on the log instead of the wire.
+  assertEquals(
+    logged.some((line) => line.includes('Failed to store challenge')),
+    true,
+    'the fixed envelope is what the store logs, not the raw driver text'
+  )
 })

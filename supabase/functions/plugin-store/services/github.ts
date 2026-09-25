@@ -107,6 +107,19 @@ export const LARGE_JAR_THRESHOLD = 50 * 1024 * 1024 // 50 MB
  * @param downloadUrl URL of the JAR (must be on an allowed host)
  * @returns The hex-encoded SHA-256 and the number of bytes streamed
  */
+/**
+ * An upstream status is a *publisher input* problem (their asset) only when it
+ * is a 4xx other than 429. 404/410 are the "asset missing or renamed" case;
+ * 403/401/406 are a missing/under-scoped GITHUB_TOKEN or SSO, which is also the
+ * publisher's to fix. 429 and every 5xx is GitHub/CDN being down or busy -
+ * that is network text, so those stay plain Errors and keep the fixed 502
+ * envelope instead of being reported to the publisher as their fault.
+ */
+function isPublisherInputStatus(status: number): boolean {
+  return status >= 400 && status < 500 && status !== 429
+}
+
+
 export async function computeRemoteSha256(
   downloadUrl: string
 ): Promise<{ sha256: string; totalBytes: number }> {
@@ -114,12 +127,15 @@ export async function computeRemoteSha256(
     headers: { "User-Agent": "BOSS-Plugin-Store/1.0" },
   })
   if (!response.ok) {
-    throw new Error(
-      `Failed to fetch JAR for hashing: ${response.status} ${response.statusText}`
+    const input = isPublisherInputStatus(response.status)
+    throw new (input ? PublishInputError : Error)(
+      input
+        ? `JAR download URL returned HTTP ${response.status} (asset missing or renamed?)`
+        : `JAR download URL returned HTTP ${response.status}`,
     )
   }
   if (!response.body) {
-    throw new Error("Remote JAR response has no body")
+    throw new PublishInputError("JAR download URL returned no body to hash")
   }
 
   const hash = createHash("sha256")
@@ -134,8 +150,8 @@ export async function computeRemoteSha256(
         if (totalBytes > MAX_HASHABLE_BYTES) {
           // Cancel so the remainder of the response isn't transferred.
           try { await reader.cancel() } catch { /* ignore */ }
-          throw new Error(
-            `Remote JAR exceeds ${MAX_HASHABLE_BYTES}-byte limit at ${totalBytes} bytes; refusing to hash`
+          throw new PublishInputError(
+            `JAR exceeds the ${MAX_HASHABLE_BYTES}-byte hash limit at ${totalBytes} bytes`,
           )
         }
         hash.update(value)
@@ -247,7 +263,8 @@ export async function fetchLatestRelease(
 
   if (!response.ok) {
     if (response.status === 404) {
-      throw new Error(
+      // The publisher's release/tag is absent — curated, actionable text.
+      throw new PublishInputError(
         tag
           ? `Release tag '${tag}' not found for ${owner}/${repo}`
           : `No releases found for ${owner}/${repo}. Make sure the repository has at least one release.`
@@ -265,7 +282,13 @@ export async function fetchLatestRelease(
     // Also log server-side so the failure is visible in edge-function logs, not
     // only in the publisher's HTTP response.
     console.error(`fetchLatestRelease ${owner}/${repo}${tag ? `@${tag}` : ""} failed: ${response.status} ${response.statusText}${detail}`)
-    throw new Error(`GitHub API error: ${response.status} ${response.statusText}${detail}`)
+    // Same publisher-input rule as the ZIP layer: 401/403/406 are the
+    // publisher's to fix (token scope/SSO — the detail above is the hint),
+    // 429/5xx are GitHub being down or busy and keep the fixed envelope.
+    const input = isPublisherInputStatus(response.status)
+    throw new (input ? PublishInputError : Error)(
+      `GitHub API error: ${response.status} ${response.statusText}${detail}`
+    )
   }
 
   return await response.json()
@@ -294,7 +317,10 @@ export async function fetchRepoIsPrivate(owner: string, repo: string): Promise<b
     // inaccessible/private repo with a message that names the likely fix rather
     // than reading as a transient GitHub error.
     if (response.status === 404) {
-      throw new Error(
+      // Marked so the /github/metadata visibility catch keeps this curated
+      // message instead of clobbering it with the fixed envelope; the
+      // non-404 branch below still carries GitHub's own text and stays masked.
+      throw new PublishInputError(
         `${owner}/${repo} was not found via the GitHub API. If it is private, the store's ` +
         `GITHUB_TOKEN secret must be set and granted contents:read on it; otherwise check the URL.`
       )
@@ -338,7 +364,15 @@ export async function downloadJar(downloadUrl: string): Promise<ArrayBuffer> {
   })
 
   if (!response.ok) {
-    throw new Error(`Failed to download JAR: ${response.status} ${response.statusText}`)
+    // Same URL class as computeRemoteSha256 (the public CDN download URL), so
+    // the same rule: 4xx except 429 means the publisher's asset went missing;
+    // 429/5xx is the host and keeps the fixed envelope.
+    const input = isPublisherInputStatus(response.status)
+    throw new (input ? PublishInputError : Error)(
+      input
+        ? `JAR download URL returned HTTP ${response.status} (asset missing or renamed?)`
+        : `JAR download URL returned HTTP ${response.status}`
+    )
   }
 
   return await response.arrayBuffer()
@@ -385,14 +419,24 @@ export async function downloadReleaseAsset(asset: GitHubAsset): Promise<ArrayBuf
       headers: { "User-Agent": "BOSS-Plugin-Store/1.0" },
     })
     if (!cdn.ok) {
-      throw new Error(`Failed to download asset from CDN: ${cdn.status} ${cdn.statusText}`)
+      const input = isPublisherInputStatus(cdn.status)
+      throw new (input ? PublishInputError : Error)(
+        input
+          ? `Release asset CDN download returned HTTP ${cdn.status} (asset missing or renamed?)`
+          : `Release asset CDN download returned HTTP ${cdn.status}`
+      )
     }
     return await readBoundedArrayBuffer(cdn, "Release asset")
   }
 
   // Some deployments serve the bytes directly (200) with no redirect.
   if (!resp.ok) {
-    throw new Error(`Failed to download asset: ${resp.status} ${resp.statusText}`)
+    const input = isPublisherInputStatus(resp.status)
+    throw new (input ? PublishInputError : Error)(
+      input
+        ? `Release asset API download returned HTTP ${resp.status} (asset missing or renamed?)`
+        : `Release asset API download returned HTTP ${resp.status}`
+    )
   }
   return await readBoundedArrayBuffer(resp, "Release asset")
 }
@@ -411,11 +455,13 @@ async function readBoundedArrayBuffer(resp: Response, label: string): Promise<Ar
   // boundary is identical on both the pre-download check and this buffer guard.
   const declared = Number(resp.headers.get("content-length") || "0")
   if (Number.isFinite(declared) && declared >= LARGE_JAR_THRESHOLD) {
-    throw new Error(`${label} declares ${declared} bytes, at/over the ${LARGE_JAR_THRESHOLD}-byte cap`)
+    // The publisher's asset being too big is the same input condition
+    // computeRemoteSha256 marks (and JarTooLargeError reports at the route).
+    throw new PublishInputError(`${label} declares ${declared} bytes, at/over the ${LARGE_JAR_THRESHOLD}-byte cap`)
   }
   const buf = await resp.arrayBuffer()
   if (buf.byteLength >= LARGE_JAR_THRESHOLD) {
-    throw new Error(`${label} is ${buf.byteLength} bytes, at/over the ${LARGE_JAR_THRESHOLD}-byte cap`)
+    throw new PublishInputError(`${label} is ${buf.byteLength} bytes, at/over the ${LARGE_JAR_THRESHOLD}-byte cap`)
   }
   return buf
 }
@@ -506,15 +552,20 @@ export async function extractManifestFromRemoteJar(
     headers: { "User-Agent": "BOSS-Plugin-Store/1.0" },
   })
   if (!headResp.ok) {
-    throw new Error(`HEAD request for JAR size failed: ${headResp.status}`)
+    const input = isPublisherInputStatus(headResp.status)
+    throw new (input ? PublishInputError : Error)(
+      input
+        ? `JAR download URL returned HTTP ${headResp.status} (asset missing or renamed?)`
+        : `JAR download URL returned HTTP ${headResp.status}`,
+    )
   }
   const contentLength = headResp.headers.get("Content-Length")
   if (!contentLength) {
-    throw new Error("Remote JAR response has no Content-Length header")
+    throw new PublishInputError("JAR download URL did not return a Content-Length header")
   }
   const totalSize = parseInt(contentLength, 10)
   if (!Number.isFinite(totalSize) || totalSize <= 0) {
-    throw new Error(`Invalid Content-Length from remote JAR: ${contentLength}`)
+    throw new PublishInputError(`JAR download URL reported an invalid size: ${contentLength}`)
   }
 
   // Step 2: explicit range for the tail.
@@ -528,7 +579,18 @@ export async function extractManifestFromRemoteJar(
   })
 
   if (tailResp.status !== 200 && tailResp.status !== 206) {
-    throw new Error(`Range request for EOCD failed: ${tailResp.status}`)
+    // Only 416/400 are "the server refuses ranges"; 429/5xx are transient
+    // upstream trouble and must keep the fixed 502 envelope, not tell the
+    // publisher their asset lacks range support.
+    const noRange = tailResp.status === 416 || tailResp.status === 400
+    const input = noRange || isPublisherInputStatus(tailResp.status)
+    throw new (input ? PublishInputError : Error)(
+      input
+        ? noRange
+          ? `JAR download URL does not support range requests (HTTP ${tailResp.status})`
+          : `JAR download URL returned HTTP ${tailResp.status} to a range request (asset missing or renamed?)`
+        : `JAR download URL returned HTTP ${tailResp.status} to a range request`,
+    )
   }
 
   const tailData = new Uint8Array(await tailResp.arrayBuffer())
@@ -557,7 +619,7 @@ export async function extractManifestFromRemoteJar(
   }
 
   if (eocdPos === -1) {
-    throw new Error("Cannot find EOCD in JAR (range request)")
+    throw new PublishInputError("Release asset is not a JAR/ZIP archive (end-of-central-directory not found)")
   }
 
   let cdSize: number = tailView.getUint32(eocdPos + 12, true)
@@ -573,8 +635,8 @@ export async function extractManifestFromRemoteJar(
   if (needsZip64) {
     const locatorPos = eocdPos - 20
     if (locatorPos < 0 || tailView.getUint32(locatorPos, true) !== 0x07064b50) {
-      throw new Error(
-        "JAR appears to use ZIP64 but the ZIP64 EOCD locator was not found in the tail"
+      throw new PublishInputError(
+        "JAR appears to use ZIP64 but the ZIP64 EOCD locator was not found in the tail",
       )
     }
     // ZIP64 EOCD locator: relative offset of ZIP64 EOCD record is a uint64 at
@@ -583,7 +645,7 @@ export async function extractManifestFromRemoteJar(
     const zip64EocdLo = tailView.getUint32(locatorPos + 8, true)
     const zip64EocdHi = tailView.getUint32(locatorPos + 12, true)
     if (zip64EocdHi > 0x001fffff) {
-      throw new Error("ZIP64 EOCD offset exceeds JS safe-integer range")
+      throw new PublishInputError("ZIP64 EOCD offset exceeds JS safe-integer range")
     }
     const zip64EocdAbs = zip64EocdHi * 0x1_0000_0000 + zip64EocdLo
 
@@ -600,14 +662,14 @@ export async function extractManifestFromRemoteJar(
     }
     const z64View = new DataView(z64Data.buffer, z64Data.byteOffset, z64Data.byteLength)
     if (z64View.getUint32(z64Base, true) !== 0x06064b50) {
-      throw new Error("ZIP64 EOCD record not found at locator offset")
+      throw new PublishInputError("ZIP64 EOCD record not found at locator offset")
     }
     // Total entries (uint64) at +32, CD size (uint64) at +40, CD offset (uint64) at +48
     const readU64 = (off: number): number => {
       const lo = z64View.getUint32(z64Base + off, true)
       const hi = z64View.getUint32(z64Base + off + 4, true)
       if (hi > 0x001fffff) {
-        throw new Error("ZIP64 field exceeds JS safe-integer range")
+        throw new PublishInputError("ZIP64 field exceeds JS safe-integer range")
       }
       return hi * 0x1_0000_0000 + lo
     }
@@ -678,7 +740,7 @@ export async function extractManifestFromRemoteJar(
             const lo = cdView.getUint32(q, true)
             const hi = cdView.getUint32(q + 4, true)
             if (hi > 0x001fffff) {
-              throw new Error("ZIP64 compressedSize exceeds JS safe-integer range")
+              throw new PublishInputError("ZIP64 compressedSize exceeds JS safe-integer range")
             }
             compressedSize = hi * 0x1_0000_0000 + lo
             q += 8
@@ -687,7 +749,7 @@ export async function extractManifestFromRemoteJar(
             const lo = cdView.getUint32(q, true)
             const hi = cdView.getUint32(q + 4, true)
             if (hi > 0x001fffff) {
-              throw new Error("ZIP64 localHeaderOffset exceeds JS safe-integer range")
+              throw new PublishInputError("ZIP64 localHeaderOffset exceeds JS safe-integer range")
             }
             localHeaderOffset = hi * 0x1_0000_0000 + lo
           }
@@ -697,7 +759,7 @@ export async function extractManifestFromRemoteJar(
         p += 4 + dataSize
       }
       if (!resolved) {
-        throw new Error("plugin.json entry has ZIP64 sentinel without a ZIP64 extra field")
+        throw new PublishInputError("plugin.json entry has ZIP64 sentinel without a ZIP64 extra field")
       }
     }
 
@@ -776,16 +838,24 @@ export async function extractManifestFromRemoteJar(
       for (const c of chunks) { result.set(c, pos); pos += c.length }
       content = new TextDecoder().decode(result)
     } else {
-      throw new Error(`Unsupported compression: ${compressionMethod}`)
+      throw new PublishInputError(`Unsupported compression: ${compressionMethod}`)
     }
 
-    const manifest = JSON.parse(content) as PluginManifest
-    validateManifest(manifest)
+    let manifest: PluginManifest
+    try {
+      manifest = JSON.parse(content) as PluginManifest
+      validateManifest(manifest)
+    } catch (e) {
+      if (e instanceof PublishInputError) throw e
+      throw new PublishInputError(
+        `JAR manifest (plugin.json) is unreadable: ${e instanceof Error ? e.message : String(e)}`,
+      )
+    }
     return { manifest, totalSize }
   }
 
-  throw new Error(
-    `Plugin manifest not found at ${manifestPath}. Make sure your plugin JAR contains a valid plugin.json.`
+  throw new PublishInputError(
+    `Plugin manifest not found at ${manifestPath}. Make sure your plugin JAR contains a valid plugin.json.`,
   )
 }
 
@@ -801,8 +871,8 @@ export async function extractManifestFromJar(jarData: ArrayBuffer): Promise<Plug
   const manifestContent = await extractFileFromZip(uint8Array, manifestPath)
 
   if (!manifestContent) {
-    throw new Error(
-      `Plugin manifest not found at ${manifestPath}. Make sure your plugin JAR contains a valid plugin.json.`
+    throw new PublishInputError(
+      `Plugin manifest not found at ${manifestPath}. Make sure your plugin JAR contains a valid plugin.json.`,
     )
   }
 
@@ -811,10 +881,10 @@ export async function extractManifestFromJar(jarData: ArrayBuffer): Promise<Plug
     validateManifest(manifest)
     return manifest
   } catch (e) {
-    if (e instanceof Error && e.message.startsWith("Invalid plugin manifest")) {
+    if (e instanceof PublishInputError) {
       throw e
     }
-    throw new Error(`Failed to parse plugin.json: ${(e as Error).message}`)
+    throw new PublishInputError(`Failed to parse plugin.json: ${e instanceof Error ? e.message : String(e)}`)
   }
 }
 
@@ -923,10 +993,10 @@ async function extractFileFromZip(
 
         return new TextDecoder().decode(result)
       } catch {
-        throw new Error("Failed to decompress plugin.json from JAR")
+        throw new PublishInputError("Failed to decompress plugin.json from JAR")
       }
     } else {
-      throw new Error(`Unsupported compression method: ${compressionMethod}`)
+      throw new PublishInputError(`Unsupported compression method: ${compressionMethod}`)
     }
   }
 
@@ -986,7 +1056,7 @@ async function extractFileFromZipLinear(
 
           return new TextDecoder().decode(result)
         } catch {
-          throw new Error("Failed to decompress plugin.json from JAR")
+          throw new PublishInputError("Failed to decompress plugin.json from JAR")
         }
       }
     }
@@ -1028,7 +1098,7 @@ function validateManifest(manifest: PluginManifest): void {
   }
 
   if (errors.length > 0) {
-    throw new Error(`Invalid plugin manifest: ${errors.join("; ")}`)
+    throw new PublishInputError(`Invalid plugin manifest: ${errors.join("; ")}`)
   }
 }
 
@@ -1039,6 +1109,21 @@ export async function calculateSha256(data: ArrayBuffer): Promise<string> {
   const hashBuffer = await crypto.subtle.digest("SHA-256", data)
   const hashArray = Array.from(new Uint8Array(hashBuffer))
   return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("")
+}
+
+/**
+ * Marks a message written for a publisher to read — a deliberate, curated
+ * diagnostic (bad asset, malformed manifest, missing header), not driver or
+ * network error text. The publish routes surface `message` for this class
+ * and nothing else: it is the same rule as `JarTooLargeError` at the GitHub
+ * publish handler, generalized so a fixed envelope (issue #770) never
+ * strips the only hint a caller has to fix their input.
+ */
+export class PublishInputError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "PublishInputError"
+  }
 }
 
 /**
@@ -1071,7 +1156,7 @@ export async function fetchPluginFromGitHub(githubUrl: string): Promise<GitHubPl
   // Parse GitHub URL
   const parsed = parseGitHubUrl(githubUrl)
   if (!parsed) {
-    throw new Error(
+    throw new PublishInputError(
       "Invalid GitHub URL. Expected format: https://github.com/owner/repo"
     )
   }
@@ -1082,7 +1167,7 @@ export async function fetchPluginFromGitHub(githubUrl: string): Promise<GitHubPl
   // Find JAR asset
   const jarAsset = findJarAsset(release)
   if (!jarAsset) {
-    throw new Error(
+    throw new PublishInputError(
       `No JAR file found in release ${release.tag_name}. Make sure your release includes a .jar file.`
     )
   }
