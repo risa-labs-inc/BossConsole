@@ -10,6 +10,7 @@ import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.delay
@@ -20,6 +21,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -154,6 +157,8 @@ class InProcessPluginSandbox(
      * anything new.
      */
     private inner class SandboxScope : CoroutineScope {
+        private val retiringJobs = ConcurrentHashMap.newKeySet<Job>()
+
         @Volatile
         private var job: CompletableJob = SupervisorJob()
 
@@ -179,13 +184,28 @@ class InProcessPluginSandbox(
 
         /** Cancel everything in flight and re-arm for new work. */
         fun resetJob() {
-            job.cancel()
+            cancelJob()
             install(SupervisorJob())
         }
 
-        /** Cancel everything in flight, leaving the scope inert until re-armed. */
-        fun cancelJob() {
-            job.cancel()
+        /**
+         * Cancel everything in flight, leaving the scope inert until re-armed.
+         *
+         * Returns all unfinished generations so the caller can wait for them to actually
+         * finish. Cancelling only *asks*; the coroutines are still unwinding
+         * when this returns. See [awaitScopeCancelled].
+         */
+        fun cancelJob(): List<Job> {
+            // Read once. [job] is volatile and replaceable, and returning a
+            // second read could hand back a job this call never cancelled.
+            // Restarts stay non-blocking, but a later stop must also drain
+            // work still unwinding from those older generations.
+            val cancelling = job
+            if (retiringJobs.add(cancelling)) {
+                cancelling.invokeOnCompletion { retiringJobs.remove(cancelling) }
+            }
+            cancelling.cancel()
+            return retiringJobs.toList()
         }
 
         /**
@@ -224,6 +244,32 @@ class InProcessPluginSandbox(
             }
             _sandboxScope.rearmIfCancelled()
         }
+    }
+
+    /**
+     * Give all cancelled sandbox job generations one shared completion budget.
+     * Executor termination misses their work suspended on another dispatcher.
+     * The host may close the classloader after this returns, so timeout is logged.
+     * Independently created plugin scopes are not covered (including #207's
+     * BossTerm terminal-session scope). Timeout is not proof of quiescence either.
+     *
+     * Dispatchers.Default owns the deadline, independent of the caller's Delay.
+     * The caller shields this and executor cleanup from unload cancellation.
+     */
+    private suspend fun awaitScopeCancelled(retiring: List<Job>) {
+        val finished =
+            withContext(Dispatchers.Default) {
+                withTimeoutOrNull(SCOPE_JOIN_TIMEOUT_MS) { retiring.forEach { it.join() } }
+            }
+        if (finished != null) return
+        logger.warn(
+            LogCategory.SYSTEM,
+            "Plugin coroutines still unwinding after cancellation timeout - stopping anyway",
+            mapOf(
+                "pluginId" to pluginId,
+                "timeoutMs" to SCOPE_JOIN_TIMEOUT_MS.toString(),
+            ),
+        )
     }
 
     /**
@@ -342,11 +388,12 @@ class InProcessPluginSandbox(
             // could equally cancel the job restart() had just installed, or
             // retire a pool it no longer owns.
             val retiring: ExecutorService
+            val retiringJob: List<Job>
             synchronized(restartLock) {
                 // Cancel everything the plugin has in flight. The scope object
                 // stays, inert, so a later start() can re-arm it in place rather
                 // than handing the plugin a scope it will never read again.
-                _sandboxScope.cancelJob()
+                retiringJob = _sandboxScope.cancelJob()
                 retiring = executor
                 // shutdown() itself does not block - only awaitTermination
                 // does - so marking the pool dead happens under the lock. Doing
@@ -358,8 +405,22 @@ class InProcessPluginSandbox(
                 retiring.shutdown()
             }
 
-            // Outside the lock, as restart() does: awaiting termination blocks.
-            shutdownExecutor(retiring)
+            // Both waits are outside the lock, as restart() does with its own:
+            // they suspend, and holding restartLock across a suspension would
+            // stall every start(), stop() and restart() behind whatever the
+            // plugin is taking its time over.
+            //
+            // The coroutines first, then the pool. A cancelled coroutine's
+            // `finally` still has to run somewhere, and the pool it belonged to
+            // has already had shutdown() called under the lock - kotlinx's
+            // executor dispatcher answers a rejected dispatch by re-dispatching
+            // to Dispatchers.IO rather than dropping it, so the unwind still
+            // completes and this wait still ends. (The same fallback the
+            // SwappableDispatcher note describes.)
+            withContext(NonCancellable) {
+                awaitScopeCancelled(retiringJob)
+                shutdownExecutor(retiring)
+            }
         }
     }
 
@@ -462,6 +523,16 @@ class InProcessPluginSandbox(
             // Cancel the plugin's in-flight coroutines and re-arm the scope
             // for new work. The scope object itself is deliberately kept -
             // see the note on [sandboxScope].
+            //
+            // Deliberately NOT joined, unlike the cancellation in stop(). A
+            // restart keeps the plugin's classloader open - it swaps the pool
+            // underneath the same loader - so a coroutine that resumes late
+            // still resolves its own classes, which is the whole hazard the
+            // join in stop() exists for. Retain unfinished generations so a
+            // later stop can await them. Waiting during restart would
+            // cost something real: every statement in this function is
+            // non-suspending on purpose, because the sandbox is passing
+            // through RESTARTING and must not be able to stop inside it.
             _sandboxScope.resetJob()
 
             // Put the fresh pool in place before retiring the old one, so
@@ -629,5 +700,17 @@ class InProcessPluginSandbox(
 
     private companion object {
         const val EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS = 2L
+
+        /**
+         * How long [stop] waits for cancelled plugin coroutines to finish
+         * unwinding before it gives up and says so.
+         *
+         * Generous for what it waits on - a cancellation that is honoured
+         * unwinds in microseconds - and matched to the two seconds the pool
+         * teardown beside it and the UI-disposal wait before it already spend,
+         * so a stubborn plugin costs a bounded, familiar amount of time rather
+         * than a new one.
+         */
+        const val SCOPE_JOIN_TIMEOUT_MS = 2_000L
     }
 }
