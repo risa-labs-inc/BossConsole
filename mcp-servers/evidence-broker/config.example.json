@@ -1,0 +1,27 @@
+{
+  "maxResponseBytes": 1048576,
+  "approvalTtlMs": 300000,
+  "credentials": [
+    {
+      "name": "STRIPE_KEY",
+      "allowedHosts": ["api.stripe.com"],
+      "approval": "each-use",
+      "allowedMethods": ["GET"],
+      "injection": { "kind": "header", "header": "Authorization", "prefix": "Bearer " }
+    },
+    {
+      "name": "SEARCH_KEY",
+      "allowedHosts": ["*.search.example"],
+      "approval": "once-per-session",
+      "allowedMethods": ["GET"],
+      "injection": { "kind": "query", "param": "api_key" }
+    },
+    {
+      "name": "LEGACY_PW",
+      "allowedHosts": ["legacy.example.com"],
+      "approval": "each-use",
+      "allowedMethods": ["GET"],
+      "injection": { "kind": "basic", "username": "operator" }
+    }
+  ]
+}
