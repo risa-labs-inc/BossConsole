@@ -80,8 +80,9 @@ export const PluginScreenshotSchema = z.object({
 })
 
 // Intentionally NO `signature` here: listing is not a verification path —
-// the signature travels only on the download response
-// (DownloadInfoResponseSchema), where the host verifies it.
+// the signature travels only on the per-version artifact responses
+// (DownloadInfoResponseSchema and SignatureInfoResponseSchema), where the
+// host verifies it.
 export const PluginVersionSchema = z.object({
   id: z.string().uuid(),
   version: z.string(),
@@ -140,6 +141,38 @@ export const DownloadInfoResponseSchema = z.object({
   versionId: z.string().uuid(),
   minIpcVersion: z.string().default('1.0.0'),
   requiredPermissions: z.array(z.string()).optional().default([])
+})
+
+// ============================================================================
+// Signature Route Schemas
+// ============================================================================
+
+/**
+ * The answer to "what does the store vouch for, for these bytes?" — without
+ * booking a download (BossConsole#108).
+ *
+ * Deliberately has NO downloadUrl: the caller is the host's signature backfill,
+ * which already holds the JAR and only needs the store's verdict so it can
+ * bind a sidecar. Routing that through the download endpoint charged a
+ * plugin_downloads row per attempt — unbounded for answers that stay
+ * retryable, like a row published before store signing — and inflated the
+ * store's default sortBy = "downloads" ranking on hosts that never fetched a
+ * byte. @hono/zod-openapi validates REQUESTS; response schemas are OpenAPI
+ * documentation, so this shape alone would not stop a future edit from adding
+ * downloadUrl to the ctx.json body. The wiring guard is real but lives in the
+ * source scan in tests/signature-route.test.ts, which fails CI if either the
+ * handler or this schema grows a URL field. Keeping the field out of the
+ * schema still matters: it documents the contract, and a URL here is what the
+ * test would be checking for.
+ */
+export const SignatureInfoResponseSchema = z.object({
+  pluginId: z.string(),
+  version: z.string(),
+  sha256: z.string(),
+  // Same field, same semantics as on DownloadInfoResponseSchema: null for
+  // versions published before store signing.
+  signature: z.string().nullable().optional(),
+  versionId: z.string().uuid()
 })
 
 // ============================================================================

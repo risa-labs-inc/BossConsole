@@ -54,6 +54,24 @@ class PluginStoreEndpointTest {
         }
 
     @Test
+    fun `signature lookup encodes both dynamic segments and never books a download`() =
+        runBlocking {
+            // The route the sidecar backfill resolves through (#108): it must be
+            // the signature path, not the download path, or every backfill attempt
+            // books a plugin_downloads row for bytes the host already holds.
+            val id = "a/b?x#y%z+q"
+            val encoded = "a%2Fb%3Fx%23y%25z%2Bq"
+            assertFailsWith<PluginStoreException> {
+                PluginStoreClient.getSignature(id, "1.2.3-rc+build/x")
+            }
+            assertEquals(
+                "GET /prefix/functions/v1/plugin-store/$encoded/signature/1.2.3-rc%2Bbuild%2Fx",
+                requests.poll(),
+            )
+            assertTrue(requests.isEmpty())
+        }
+
+    @Test
     fun `version and authenticated mutation endpoints encode every dynamic segment`() =
         runBlocking {
             val id = "a/b?x#y%z+q"
@@ -84,6 +102,7 @@ class PluginStoreEndpointTest {
             for (input in listOf("", ".", "..")) {
                 assertFailsWith<IllegalArgumentException> { PluginStoreClient.getPlugin(input) }
                 assertFailsWith<IllegalArgumentException> { PluginStoreClient.getDownloadUrl("valid", input) }
+                assertFailsWith<IllegalArgumentException> { PluginStoreClient.getSignature("valid", input) }
             }
             assertTrue(requests.isEmpty())
         }

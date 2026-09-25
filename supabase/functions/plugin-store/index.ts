@@ -9,6 +9,7 @@
  * - GET  /plugin-store/:pluginId       - Get plugin details with all versions
  * - GET  /plugin-store/:pluginId/download        - Download latest JAR
  * - GET  /plugin-store/:pluginId/download/:ver   - Download specific version
+ * - GET  /plugin-store/:pluginId/signature/:ver  - Signature-only lookup, no download booked
  * - POST /plugin-store/:pluginId/rate  - Rate a plugin (auth required)
  * - GET  /plugin-store/:pluginId/rating          - Get user's rating
  * - DELETE /plugin-store/:pluginId/rating        - Delete user's rating
@@ -39,6 +40,7 @@ import { cors } from "hono/cors"
 import { createClient } from "@supabase/supabase-js"
 import browse from "./routes/browse.ts"
 import download from "./routes/download.ts"
+import signature from "./routes/signature.ts"
 import rating from "./routes/rating.ts"
 import publish from "./routes/publish.ts"
 import admin from "./routes/admin.ts"
@@ -90,6 +92,7 @@ app.route("/", apiKeys)        // /api-keys (POST, GET, DELETE)
 app.route("/version", publish) // /version/finalize
 app.route("/", publish)        // /publish, /github, /:pluginId/version
 app.route("/", download)       // /:pluginId/download, /:pluginId/download/:version
+app.route("/", signature)      // /:pluginId/signature/:version — no download booked (BossConsole#108)
 app.route("/", rating)         // /:pluginId/rate, /:pluginId/rating, /:pluginId/ratings
 app.route("/", browse)         // /list, /search, /tags/popular, /:pluginId (wildcard last)
 
@@ -119,6 +122,10 @@ app.doc("/openapi", {
     {
       name: "Download",
       description: "Download plugin JAR files"
+    },
+    {
+      name: "Signature",
+      description: "Store signature verdicts on JAR bytes a caller already holds, without booking a download"
     },
     {
       name: "Rating",

@@ -182,6 +182,41 @@ object PluginStoreClient {
         return json.decodeFromString(response.bodyAsText())
     }
 
+    /**
+     * GET /plugin-store/:pluginId/signature/:version - Store verdict on bytes the caller already holds.
+     *
+     * The signature-only counterpart of [getDownloadUrl]: same gates server-side,
+     * same verdict fields, but no download is booked and no URL is minted. The
+     * caller is the host's sidecar backfill, which holds the JAR already and
+     * must not appear in plugin_downloads (and the store's downloads-sorted
+     * ranking) for every launch it retries.
+     *
+     * Throws [PluginStoreException] on any non-2xx, like [getDownloadUrl];
+     * callers that distinguish settled from retryable answers treat the throw
+     * as retryable (see PluginStoreSetup.fetchStoreSignature). Until the
+     * function deploying this route catches up with the client, a 404 lands
+     * in that same retryable bucket: the JAR stays unsigned, which is the
+     * pre-existing warn-and-allow state, never a wrong sidecar.
+     */
+    suspend fun getSignature(
+        pluginId: String,
+        version: String,
+    ): SignatureInfoResponse {
+        val response =
+            httpClient.get(endpoint(pluginId, "signature", version)) {
+                header("apikey", PluginStoreConfig.anonKey)
+                PluginStoreConfig.accessToken?.let {
+                    header("Authorization", "Bearer $it")
+                }
+            }
+
+        if (!response.status.isSuccess()) {
+            throw PluginStoreException("Failed to get signature: ${response.status}")
+        }
+
+        return json.decodeFromString(response.bodyAsText())
+    }
+
     // ============================================================================
     // Rating Endpoints
     // ============================================================================
@@ -794,6 +829,29 @@ data class DownloadInfoResponse(
     // canonical anchor "pluginId|version|sha256" (lowercase hex digest — see
     // PluginStoreTrust.versionAnchor); null for versions published before
     // store signing.
+    val signature: String? = null,
+)
+
+/**
+ * The store's verdict on bytes the caller already holds, without booking a download.
+ *
+ * Mirrors [DownloadInfoResponse] minus everything download-shaped (URL, size,
+ * IPC floors): the signature backfill binds a sidecar from `sha256` +
+ * `signature` alone, and routing that through the download endpoint charged a
+ * plugin_downloads row per attempt (#108). `sha256` is non-null because the
+ * store column is; a row still carrying the pre-finalize placeholder ('pending')
+ * simply never equals a real local digest, so it can only ever resolve to a
+ * skip, never a fabricated binding — and the host classifies that skip as
+ * retryable `Unavailable`, not a settled mismatch, so a row that finalizes
+ * later is bound on the next launch rather than permanently marked unsignable
+ * (see PluginStoreSetup.signatureOutcome).
+ */
+@Serializable
+data class SignatureInfoResponse(
+    val pluginId: String,
+    val version: String,
+    val sha256: String,
+    val versionId: String,
     val signature: String? = null,
 )
 

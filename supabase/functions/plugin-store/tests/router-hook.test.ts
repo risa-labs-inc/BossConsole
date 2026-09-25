@@ -81,5 +81,5 @@ Deno.test("every router is built by newRouter, so none falls back to the validat
     assert(!source.includes("new OpenAPIHono"), `${entry.name} constructs OpenAPIHono directly; use newRouter()`)
     if (source.includes("newRouter()")) routers.push(entry.name)
   }
-  assertEquals(routers.sort(), ["admin.ts", "api-keys.ts", "browse.ts", "download.ts", "publish.ts", "rating.ts"])
+  assertEquals(routers.sort(), ["admin.ts", "api-keys.ts", "browse.ts", "download.ts", "publish.ts", "rating.ts", "signature.ts"])
 })

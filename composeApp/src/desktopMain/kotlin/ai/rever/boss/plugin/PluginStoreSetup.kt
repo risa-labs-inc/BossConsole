@@ -929,17 +929,26 @@ object PluginStoreSetup {
      * unsigned: [Mismatch] is an answer that will not change until the JAR or the
      * store row does, so it can be remembered, while [Unavailable] is the store
      * failing to answer and must stay retryable. Collapsing both to null is what
-     * made the mismatch case re-cost a `getDownloadUrl` on every launch.
+     * made the mismatch case re-ask the store on every launch — and, before the
+     * signature-only route, each re-ask booked a download row.
      */
     internal sealed interface StoreSignatureOutcome {
         data class Signed(
             val signatureBase64: String,
         ) : StoreSignatureOutcome
 
-        /** The store has this version and vouches for different bytes. */
+        /**
+         * The store has this version and vouches — through a well-formed digest and
+         * a non-blank signature — for different bytes.
+         */
         data object Mismatch : StoreSignatureOutcome
 
-        /** Unreachable, no row, published before signing, or a 403 from the gate. */
+        /**
+         * Unreachable, no row, published before signing, a 403 from the gate — or
+         * an answer that is not yet a real verdict: a placeholder ('pending'
+         * pre-finalize), dropped or blank digest, or a blank signature. All
+         * retryable, and none of them may be written down as final.
+         */
         data object Unavailable : StoreSignatureOutcome
     }
 
@@ -980,7 +989,9 @@ object PluginStoreSetup {
             }
 
             // Settled: remember it, so the next launch does not spend another
-            // getDownloadUrl (and another `plugin_downloads` row) re-learning it.
+            // signature lookup re-learning it. (The marker predates the
+            // signature-only route, when a re-learn also booked a
+            // plugin_downloads row; it still saves the network call.)
             StoreSignatureOutcome.Mismatch -> {
                 // A replacement during the lookup merely leaves an inert old-digest marker.
                 // Unlike a signature, that cannot bind the wrong bytes or fail plugin loading.
@@ -998,6 +1009,12 @@ object PluginStoreSetup {
     /**
      * Ask the store for the signature covering [localSha256]. Never writes; the
      * caller decides what to do with the answer.
+     *
+     * Resolves through the signature-only route, never the download endpoint:
+     * the caller already holds the JAR, and the download route's recordDownload
+     * would book a plugin_downloads row per attempt — unbounded for answers
+     * that stay retryable, like a row published before store signing — feeding
+     * the store's downloads-sorted ranking on hosts that never fetched a byte.
      */
     private suspend fun fetchStoreSignature(
         pluginId: String,
@@ -1005,38 +1022,30 @@ object PluginStoreSetup {
         localSha256: String,
     ): StoreSignatureOutcome =
         try {
-            val info = PluginStoreClient.getDownloadUrl(pluginId, version)
-            val resolved =
-                resolveSidecarSignature(
-                    storeSha256 = info.sha256,
-                    storeSignature = info.signature,
-                    localSha256 = localSha256,
-                )
-            when {
-                resolved != null -> {
-                    StoreSignatureOutcome.Signed(resolved)
-                }
-
-                info.signature != null -> {
-                    logger.warn(
-                        LogCategory.SYSTEM,
-                        "System plugin left unsigned - GitHub asset differs from the store artifact",
-                        mapOf(
-                            "pluginId" to pluginId,
-                            "version" to version,
-                            "storeSha256" to info.sha256,
-                            "localSha256" to localSha256,
-                        ),
-                    )
-                    StoreSignatureOutcome.Mismatch
-                }
-
-                // A row with no signature at all: published before store signing.
-                // Signing it later is a store-side change, so this stays retryable.
-                else -> {
-                    StoreSignatureOutcome.Unavailable
-                }
+            val info = PluginStoreClient.getSignature(pluginId, version)
+            // The row must answer for the identity we asked about. The echo
+            // fields are otherwise unread; one comparison keeps a store bug or
+            // intermediary serving another row's JSON from pairing a signature
+            // with the wrong plugin's anchor — a present-but-invalid sidecar,
+            // the unrecoverable outcome. The throw lands in the retryable
+            // catch below, so a transient mix-up costs one lookup, not a mark.
+            check(info.pluginId == pluginId && info.version == version) {
+                "Signature info answered for a different plugin or version"
             }
+            val outcome = signatureOutcome(info.sha256, info.signature, localSha256)
+            if (outcome == StoreSignatureOutcome.Mismatch) {
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "System plugin left unsigned - GitHub asset differs from the store artifact",
+                    mapOf(
+                        "pluginId" to pluginId,
+                        "version" to version,
+                        "storeSha256" to info.sha256,
+                        "localSha256" to localSha256,
+                    ),
+                )
+            }
+            outcome
         } catch (e: kotlinx.coroutines.CancellationException) {
             // Structured concurrency: a cancelled startup scope must not be
             // reported as "no signature available" and must not fall through into
@@ -1044,7 +1053,8 @@ object PluginStoreSetup {
             throw e
         } catch (e: Exception) {
             // Store unreachable, no row for this version, a version published before
-            // store signing, or a 403 from the install-permission gate. Unsigned is
+            // store signing, a 403 from the install-permission gate, or a 404 while
+            // the deployed store function catches up with this client. Unsigned is
             // the pre-existing state and is still warn-and-allow; a wrong signature
             // would not be. Logged at warn because this is the signal for whether
             // the fleet is ready for the enforcement flip — it must not be invisible
@@ -1058,8 +1068,64 @@ object PluginStoreSetup {
         }
 
     /**
+     * The policy, one rung per possible store answer:
+     * - the store vouches for exactly these bytes: hand back its signature;
+     * - the store vouches, through a well-formed 64-hex digest and a non-blank
+     *   signature, for different bytes: a *settled* mismatch — the answer cannot
+     *   change until the JAR or the store row does, so the caller may remember
+     *   it and stop asking;
+     * - anything else — no row, no signature, a blank one, or a digest that is
+     *   not a well-formed 64-hex digest ('pending' pre-finalize, dropped in
+     *   transport, blank): *unsettled* — the row can still change into one that
+     *   vouches for these bytes, so it must stay retryable, and the caller must
+     *   not write the persistent markUnsignable marker for it.
+     *
+     * Extracted and internal so the rungs are pinned by tests rather than living
+     * inside a network call. A corrupt or placeholder store digest never equals
+     * a real local digest, so it can never fabricate a binding — and classified
+     * retryable rather than settled, a pre-finalize row that finalizes later is
+     * bound on the next launch instead of being permanently marked unsignable.
+     */
+    internal fun signatureOutcome(
+        storeSha256: String?,
+        storeSignature: String?,
+        localSha256: String,
+    ): StoreSignatureOutcome {
+        val bound = resolveSidecarSignature(storeSha256 ?: "", storeSignature, localSha256)
+        if (bound != null) return StoreSignatureOutcome.Signed(bound)
+        // Settled only when the store's answer is a real verdict: a well-formed
+        // digest plus a non-blank signature. A placeholder, dropped or blank
+        // digest is exactly the row that will change when the store finishes
+        // its work, and a blank signature may become a real one — marking
+        // either would pin the JAR unsignable past the row's own correction.
+        return if (isWellFormedSha256(storeSha256) && !storeSignature.isNullOrBlank()) {
+            StoreSignatureOutcome.Mismatch
+        } else {
+            StoreSignatureOutcome.Unavailable
+        }
+    }
+
+    /**
+     * True when [digest] is a complete SHA-256 hex digest: exactly 64 characters,
+     * each one 0-9, a-f or A-F. Deliberately not [Character.isDigit], which
+     * accepts every Unicode decimal digit — the digest arrives over the network,
+     * and a 64-digit placeholder in another script must not classify as
+     * well-formed and settle a mismatch off a digest nobody hashed.
+     */
+    internal fun isWellFormedSha256(digest: String?): Boolean =
+        digest != null &&
+            digest.length == 64 &&
+            digest.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
+
+    /**
      * The policy: a store signature may be bound to a JAR **only** when the store
-     * agrees about those exact bytes.
+     * agrees about those exact bytes — and that agreement must be between two
+     * real digests over a real signature: [storeSha256], [localSha256] and
+     * [storeSignature] must all be non-blank. Blankness is not a technicality:
+     * `"" == ""` is agreement between two absent answers and used to bind a
+     * signature nobody vouched for, and a blank store signature on agreement
+     * used to bind as `Signed("")` — the *present but invalid* sidecar that
+     * hard-fails at load, the one outcome this path exists never to write.
      *
      * Extracted and internal so the rule is pinned by tests rather than living
      * inside a network call. It encodes the non-obvious asymmetry that makes this
@@ -1071,7 +1137,10 @@ object PluginStoreSetup {
         storeSha256: String,
         storeSignature: String?,
         localSha256: String,
-    ): String? = if (storeSha256.equals(localSha256, ignoreCase = true)) storeSignature else null
+    ): String? {
+        if (storeSha256.isBlank() || localSha256.isBlank() || storeSignature.isNullOrBlank()) return null
+        return if (storeSha256.equals(localSha256, ignoreCase = true)) storeSignature else null
+    }
 
     /** True when [jarFile] still hashes to [expectedSha256]; false if it moved or is unreadable. */
     internal fun stillMatchesResolvedBytes(

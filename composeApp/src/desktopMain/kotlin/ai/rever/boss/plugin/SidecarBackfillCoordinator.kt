@@ -11,9 +11,10 @@ import java.util.concurrent.atomic.AtomicLong
 /**
  * Coordinates authenticated signature backfill for installed system-plugin JARs.
  * Authentication avoids the store permission gate; update completion wakes deferred JARs.
- * Each completed attempt is counted even when unsigned: getDownloadUrl records a download,
- * so ordinary failures must not create a retry loop. A signature-only store route would
- * remove that cost (see #108). Cancellation and lost authentication may retry.
+ * Each completed attempt is counted even when unsigned, so ordinary failures must
+ * not create a retry loop; the persistence lambda resolves through the store's
+ * signature-only route (BossConsole#108), so an attempt costs a lookup, not a
+ * booked plugin_downloads row. Cancellation and lost authentication may retry.
  * The supplied scope must dispatch file probes and persistence onto an I/O dispatcher.
  *
  * Split out of [PluginStoreSetup] (BossConsole#447 step 7): already a standalone class
