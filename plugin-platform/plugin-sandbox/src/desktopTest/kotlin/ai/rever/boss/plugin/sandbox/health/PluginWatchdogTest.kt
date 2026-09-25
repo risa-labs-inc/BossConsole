@@ -126,6 +126,12 @@ class PluginWatchdogTest {
         /** Model a plugin that stays silent even after being restarted. */
         var stopBeatingOnRestart = false
 
+        /** Advance part of an interval, so an event can land mid-tick. */
+        fun advance(ms: Long) {
+            scope.testScheduler.advanceTimeBy(ms)
+            scope.runCurrent()
+        }
+
         /** Run one watchdog check interval of virtual time. */
         fun tick(count: Int = 1) {
             repeat(count) {
@@ -278,6 +284,144 @@ class PluginWatchdogTest {
                 assertTrue(
                     h.restartsRequested.isNotEmpty(),
                     "alternating stalls suppressed every check without ever counting as consecutive",
+                )
+
+                h.watchdog.stop()
+            }
+
+        @Test
+        fun `a night of short sleeps does not restart a plugin that keeps beating`() =
+            runTest {
+                val h = harness()
+
+                h.tick()
+                h.beat()
+
+                // The night this test is taken from: a laptop that wakes for a
+                // couple of seconds every quarter of an hour and sleeps again.
+                // Every one of those ticks is stalled, so skippedChecks climbs
+                // to maxSkippedChecks and the checks stop being suppressed -
+                // which is the intended behaviour, and the point. What must not
+                // happen is the check that then runs reading fifteen minutes of
+                // the host's sleep as fifteen minutes of the plugin's silence.
+                repeat(20) {
+                    h.clocks.suspendedMs += 900_000
+                    h.tick()
+                    // The plugin's heartbeat job resumes on the same wake and
+                    // beats, one tick behind the watchdog.
+                    h.beat()
+                    h.tick()
+                }
+
+                assertTrue(
+                    h.restartsRequested.isEmpty(),
+                    "a plugin beating on every wake was restarted for the host's sleep",
+                )
+                assertEquals(0, h.sandbox.markUnhealthyCount)
+
+                h.watchdog.stop()
+            }
+
+        /**
+         * The ordering that matters, and the one the first fix got wrong: the
+         * plugin beats and THEN the lid closes, so the last beat falls inside
+         * the same tick that spans the suspend. Anchoring the credit reset on
+         * the tick's start read that beat as proof of liveness, threw the
+         * credit away and handed checkHealth the raw wall-clock age again.
+         */
+        @Test
+        fun `a beat immediately before each sleep is not mistaken for a beat after it`() =
+            runTest {
+                val h = harness()
+
+                // One tick first, so the watchdog loop has sampled a clock
+                // pair before any sleep is injected - it is always running
+                // when a real lid closes.
+                h.tick()
+
+                repeat(20) {
+                    // Mid-tick, so the beat is strictly newer than the tick's
+                    // opening sample - the position a real 5s heartbeat lands
+                    // in, and the one a start-of-tick anchor misreads.
+                    h.advance(2_000)
+                    h.beat()
+                    h.clocks.suspendedMs += 900_000
+                    h.advance(3_000)
+
+                    h.beat()
+                    h.tick()
+                }
+
+                assertTrue(
+                    h.restartsRequested.isEmpty(),
+                    "the last beat before a sleep must not cancel the credit for that sleep",
+                )
+                assertEquals(0, h.sandbox.markUnhealthyCount)
+
+                h.watchdog.stop()
+            }
+
+        /**
+         * A wall clock stepped forward while awake is indistinguishable from a
+         * suspend by the two-clock test, so it earns credit too. The credit
+         * must not therefore make a genuinely wedged plugin unrestartable: it
+         * is a fixed amount, and real time keeps accruing past it.
+         */
+        @Test
+        fun `a forward clock step does not make a wedged plugin unrestartable`() =
+            runTest {
+                val h = harness()
+
+                h.tick()
+                h.beat()
+
+                // NTP corrects an hour forward. The plugin is already wedged
+                // and never beats again.
+                h.clocks.suspendedMs += 3_600_000
+                h.tick()
+                h.tick(12)
+
+                assertTrue(
+                    h.restartsRequested.isNotEmpty(),
+                    "credit is a fixed amount, so real time accrues past it and the wedge is still caught",
+                )
+
+                h.watchdog.stop()
+            }
+
+        /**
+         * The other direction, and the bound that matters: credit must be
+         * spent by AWAKE time, not held until a beat that is never coming.
+         *
+         * The worst case is a plugin that beats once on the resume and then
+         * dies. That beat is newer than the sleep, so the sleep is counted
+         * twice - once in the heartbeat age and once in the credit - and
+         * without a bound the plugin is forgiven a whole night's worth of
+         * awake time before anyone asks about it again.
+         */
+        @Test
+        fun `a plugin that dies at wake is restarted after a bounded awake time`() =
+            runTest {
+                val h = harness()
+
+                h.tick()
+                h.beat()
+
+                // Mid-tick: the machine sleeps for eight hours, the plugin
+                // beats once on the resume, and is never heard from again.
+                h.advance(2_000)
+                h.clocks.suspendedMs += 8 * 60 * 60 * 1_000L
+                h.beat()
+                h.advance(3_000)
+
+                // Twelve awake ticks - a minute of real, running time, four
+                // times the unhealthy threshold.
+                h.tick(12)
+
+                assertTrue(
+                    h.restartsRequested.isNotEmpty(),
+                    "a dead plugin must be caught within a bounded amount of AWAKE time, " +
+                        "however long the host slept",
                 )
 
                 h.watchdog.stop()

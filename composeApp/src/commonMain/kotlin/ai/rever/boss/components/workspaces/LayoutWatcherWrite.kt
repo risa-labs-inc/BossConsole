@@ -1,5 +1,7 @@
 package ai.rever.boss.components.workspaces
 
+import ai.rever.boss.plugin.workspace.SplitConfig
+
 /**
  * What the layout watcher does when the layout on screen changes.
  *
@@ -37,8 +39,8 @@ package ai.rever.boss.components.workspaces
 internal data class LayoutWatcherWrite(
     /** What the manager should hold as the current Space: the live layout, existing identity. */
     val current: LayoutWorkspace,
-    /** The Last Session record to write. The only file the watcher writes. */
-    val record: LayoutWorkspace,
+    /** The Last Session record to write, or null when there is nothing worth writing. */
+    val record: LayoutWorkspace?,
 )
 
 /**
@@ -68,6 +70,22 @@ internal fun layoutWatcherWrite(
             } else {
                 current.copy(layout = live.layout, timestamp = now)
             },
-        record = record,
+        record = record.takeIf { it.hasAnyTab() },
     )
 }
+
+/**
+ * Whether this layout holds a tab anywhere in its split tree.
+ *
+ * An empty layout is not always the user closing their last tab: unloading a plugin takes its tabs
+ * with it, and the watcher's next write would put that emptiness over a full session. A window the
+ * user really did empty is still recorded at dispose and process exit, via `LastSessionCoordinator`.
+ */
+internal fun LayoutWorkspace.hasAnyTab(): Boolean = layout.hasAnyTab()
+
+private fun SplitConfig.hasAnyTab(): Boolean =
+    when (this) {
+        is SplitConfig.SinglePanel -> panel.tabs.isNotEmpty()
+        is SplitConfig.VerticalSplit -> left.hasAnyTab() || right.hasAnyTab()
+        is SplitConfig.HorizontalSplit -> top.hasAnyTab() || bottom.hasAnyTab()
+    }

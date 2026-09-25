@@ -76,6 +76,27 @@ class PluginWatchdog(
     @Volatile
     private var skippedChecks = 0
 
+    // Wall-clock ms the HOST spent suspended since this plugin was last seen
+    // to beat, subtracted from heartbeat age in [checkHealth]: a suspended
+    // host runs no plugin code, so the time is not evidence against it.
+    //
+    // Needed because suppression is bounded (maxSkippedChecks) and the tick
+    // past that bound compared a RAW wall-clock age against a 15s threshold -
+    // failing every plugin on an age that was almost entirely the host's
+    // sleep. Only suspension is credited, never frozen-while-awake overrun.
+    @Volatile
+    private var suspendedSinceHeartbeatMs = 0L
+
+    // Continuous AWAKE ms since this plugin was last seen to beat, reset by a
+    // beat and by any suspend. Once it passes unhealthyThresholdMs the credit
+    // is spent: the host has been running long enough for a live plugin to
+    // have beaten, so whatever the credit was standing in for no longer
+    // explains the silence. Without it the credit is held until a beat that a
+    // dead plugin never sends - worst case a plugin that beats once on the
+    // resume, which double-counts that sleep and buys it a night of silence.
+    @Volatile
+    private var awakeSinceHeartbeatMs = 0L
+
     private companion object {
         const val NANOS_PER_MILLI = 1_000_000L
 
@@ -126,12 +147,35 @@ class PluginWatchdog(
                     val nowMonotonic = monotonicMillis()
                     val nowWallClock = wallClockMillis()
 
-                    val stalled =
-                        suppressIfHostStalled(
-                            monotonicElapsed = nowMonotonic - beforeMonotonic,
-                            wallClockElapsed = nowWallClock - beforeWallClock,
-                            nowMonotonic = nowMonotonic,
-                        )
+                    val monotonicElapsed = nowMonotonic - beforeMonotonic
+                    val suspendedMs = (nowWallClock - beforeWallClock) - monotonicElapsed
+                    val overrunMs = monotonicElapsed - config.heartbeatIntervalMs
+                    val stalledMs = maxOf(suspendedMs, overrunMs)
+                    val stalledTick = stalledMs > config.stallGraceMs
+                    val hostSuspended = stalledTick && suspendedMs > overrunMs
+
+                    // Only a FULLY AWAKE tick can clear the credit. A tick that
+                    // spanned a suspend cannot: the last beat before a lid
+                    // closes lands inside that same tick, so "the beat is newer
+                    // than the tick start" would discard the credit for the
+                    // very sleep being measured and hand checkHealth the raw
+                    // age again. On an awake tick the whole window is awake, so
+                    // a beat in it is unambiguous proof of liveness and every
+                    // sleep before it is answered for.
+                    if (hostSuspended) {
+                        suspendedSinceHeartbeatMs += suspendedMs
+                        awakeSinceHeartbeatMs = 0
+                    } else if (sandbox.healthMetrics.value.lastHeartbeat >= beforeWallClock) {
+                        suspendedSinceHeartbeatMs = 0
+                        awakeSinceHeartbeatMs = 0
+                    } else {
+                        awakeSinceHeartbeatMs += monotonicElapsed
+                        if (awakeSinceHeartbeatMs > config.unhealthyThresholdMs) {
+                            suspendedSinceHeartbeatMs = 0
+                        }
+                    }
+
+                    val stalled = stalledTick && beginStallSuppression(nowMonotonic, stalledMs, hostSuspended)
                     val suppressed = stalled || nowMonotonic < suppressChecksUntilMonotonic
                     if (suppressed && skippedChecks < config.maxSkippedChecks) {
                         skippedChecks++
@@ -145,43 +189,14 @@ class PluginWatchdog(
     }
 
     /**
-     * Decide whether this tick can say anything about plugin health.
-     *
-     * Two ways the process itself stalls, each with its own signature:
-     *
-     * - **The machine slept** (or the wall clock jumped). A monotonic clock does
-     *   not advance across suspend on macOS or Linux, so wall-clock time runs
-     *   ahead of it. Every plugin's heartbeat looks exactly that much older
-     *   than it is.
-     * - **The process froze while awake** - a long GC pause, a breakpoint, a
-     *   starved dispatcher. Both clocks advance together, and this loop's own
-     *   overrun is what gives it away.
-     *
-     * In both cases the heartbeats did not go stale because the plugins are
-     * wedged; they went stale because nothing in this JVM ran. Restarting on
-     * that evidence takes down every loaded plugin at once, which is exactly
-     * what used to happen after a laptop lid was closed.
-     *
-     * Named for its side effect: a detected stall also suppresses the checks
-     * that follow it, for one unhealthy window.
-     *
-     * @return true when this tick must be discarded.
-     */
-    private fun suppressIfHostStalled(
-        monotonicElapsed: Long,
-        wallClockElapsed: Long,
-        nowMonotonic: Long,
-    ): Boolean {
-        val suspendedMs = wallClockElapsed - monotonicElapsed
-        val overrunMs = monotonicElapsed - config.heartbeatIntervalMs
-        val stalledMs = maxOf(suspendedMs, overrunMs)
-        if (stalledMs <= config.stallGraceMs) return false
-        return beginStallSuppression(nowMonotonic, stalledMs, suspendedMs > overrunMs)
-    }
-
-    /**
      * Arm the recovery window, so the plugins' own heartbeat coroutines -
      * overdue for the same reason - get to run before anything is judged.
+     *
+     * Two stalls reach here. The machine SLEPT: a monotonic clock does not
+     * advance across suspend, so the wall clock runs ahead of it. The process
+     * FROZE while awake (GC pause, breakpoint, starved dispatcher): both
+     * clocks advance together and this loop's own overrun gives it away.
+     * Neither says anything about the plugin.
      *
      * @return true, so the caller discards this tick.
      */
@@ -238,6 +253,8 @@ class PluginWatchdog(
         healthyChecks = 0
         suppressChecksUntilMonotonic = NO_SUPPRESSION
         skippedChecks = 0
+        suspendedSinceHeartbeatMs = 0
+        awakeSinceHeartbeatMs = 0
     }
 
     private suspend fun checkHealth() {
@@ -259,7 +276,11 @@ class PluginWatchdog(
             return
         }
 
-        val timeSinceHeartbeat = wallClockMillis() - metrics.lastHeartbeat
+        // Sleep the host spent since this plugin last beat is not the
+        // plugin's silence; see [suspendedSinceHeartbeatMs].
+        val timeSinceHeartbeat =
+            (wallClockMillis() - metrics.lastHeartbeat - suspendedSinceHeartbeatMs)
+                .coerceAtLeast(0)
 
         // Check for heartbeat timeout (early return prevents duplicate restart triggers)
         if (timeSinceHeartbeat > config.unhealthyThresholdMs) {
@@ -270,6 +291,7 @@ class PluginWatchdog(
                 mapOf(
                     "pluginId" to sandbox.pluginId,
                     "timeSinceHeartbeatMs" to timeSinceHeartbeat,
+                    "hostSuspendedMs" to suspendedSinceHeartbeatMs,
                     "thresholdMs" to config.unhealthyThresholdMs,
                 ),
             )

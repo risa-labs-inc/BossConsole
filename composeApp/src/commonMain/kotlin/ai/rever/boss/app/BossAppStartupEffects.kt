@@ -854,7 +854,9 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                             now = Clock.System.now().toEpochMilliseconds(),
                         )
                     workspaceManager.updateCurrentWorkspace(write.current)
-                    workspaceManager.saveLastSessionRecord(write.record)
+                    // The in-memory copy tracks the live layout unconditionally; the FILE does
+                    // not follow it to empty, so the record can be null. See `layoutWatcherWrite`.
+                    write.record?.let { workspaceManager.saveLastSessionRecord(it) }
                 }
         }.launchIn(this)
 
