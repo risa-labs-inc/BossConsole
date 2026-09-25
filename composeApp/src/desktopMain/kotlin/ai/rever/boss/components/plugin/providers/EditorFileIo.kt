@@ -46,7 +46,7 @@ actual fun writeFileContentSafe(
  * Unlike a render recovery (see isUncontainable and WindowExceptionRoute), returning false
  * does not re-enter the operation that overflowed the stack. OOM remains fatal, matching
  * CrashDisposition.hasFatalCause; the existing read-side OOM catch is not extended here.
- * Failure does not imply atomicity: an I/O failure can leave a partially written file.
+ * The default writer stages content before atomic replacement, preserving the previous file on write failure.
  *
  * This cannot contain failures upstream of this function. The recursive provider dispatch
  * reported in editor-tab issues #18 and #27 was already fixed by host PR #262.
@@ -56,13 +56,10 @@ internal fun guardedWrite(
     filePath: String,
     content: String,
     reportFailure: (String, String, Throwable) -> Unit = ::logWriteFailure,
-    write: (File, String) -> Unit = { file, text -> file.writeText(text) },
+    write: (File, String) -> Unit = { file, text -> EditorFileWriter().write(file.path, text) },
 ): Boolean =
     try {
-        val file = File(filePath)
-        // Create parent directories if they don't exist
-        file.parentFile?.mkdirs()
-        write(file, content)
+        write(File(filePath), content)
         true
     } catch (e: Exception) {
         reportFailure(filePath, content, e)

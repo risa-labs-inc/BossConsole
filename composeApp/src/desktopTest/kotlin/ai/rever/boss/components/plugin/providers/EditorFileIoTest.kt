@@ -1,9 +1,17 @@
 package ai.rever.boss.components.plugin.providers
 
 import ai.rever.boss.plugin.api.FileReadResult
+import com.sun.nio.file.ExtendedOpenOption
+import org.junit.jupiter.api.condition.EnabledOnOs
+import org.junit.jupiter.api.condition.OS
+import org.junit.jupiter.api.io.TempDir
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.StandardOpenOption
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
@@ -57,5 +65,28 @@ class EditorFileIoTest {
         assertIs<FileReadResult.FileTooLarge>(result)
         assertEquals(file.length(), result.sizeBytes)
         assertEquals(1, result.maxSizeBytes)
+    }
+
+    @Test
+    fun `provider refuses a directory without damaging its contents`(
+        @TempDir directory: Path,
+    ) {
+        val child = Files.writeString(directory.resolve("keep.txt"), "keep")
+        assertFalse(provider.writeFileContent(directory.toString(), "replacement"))
+        assertEquals("keep", Files.readString(child))
+    }
+
+    @Test
+    @EnabledOnOs(OS.WINDOWS)
+    fun `a refused replacement reports failure without damaging the file`(
+        @TempDir directory: Path,
+    ) {
+        val target = Files.writeString(directory.resolve("locked.txt"), "keep this content")
+        // The file can be written, but another application prevents its replacement.
+        Files.newByteChannel(target, setOf(StandardOpenOption.READ, ExtendedOpenOption.NOSHARE_DELETE)).use {
+            assertFalse(provider.writeFileContent(target.toString(), "replacement"))
+            assertEquals("keep this content", Files.readString(target))
+            assertEquals(listOf("locked.txt"), directory.toFile().list()!!.toList())
+        }
     }
 }
