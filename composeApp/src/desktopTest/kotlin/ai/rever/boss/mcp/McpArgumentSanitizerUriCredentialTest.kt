@@ -45,6 +45,18 @@ class McpArgumentSanitizerUriCredentialTest {
     }
 
     @Test
+    fun attachedProxyAndContinuedCurlCredentialsAreMaskedWhole() {
+        assertEquals("curl -u[REDACTED] https://x", command("curl -uadmin:hunter2 https://x"))
+        assertEquals("curl -U [REDACTED] https://x", command("curl -U admin:hunter2 https://x"))
+        assertEquals("curl --proxy-user [REDACTED] https://x", command("curl --proxy-user admin:hunter2 https://x"))
+        assertEquals("curl --proxy-user=[REDACTED] https://x", command("curl --proxy-user=admin:hunter2 https://x"))
+        val continuation = "curl -u " + '\\' + '\n' + "  admin:hunter2 https://x"
+        assertEquals("curl -u " + '\\' + '\n' + "  [REDACTED] https://x", command(continuation))
+        assertEquals("curl -u\nadmin:hunter2 https://x", command("curl -u\nadmin:hunter2 https://x"))
+        assertEquals("rsync -u host:/srv/data /tmp", command("rsync -u host:/srv/data /tmp"))
+    }
+
+    @Test
     fun `a dash u that is not basic auth is left alone`() {
         // Ordinary flags an operator needs to read; none carries a user:password value.
         assertEquals("git push -u origin main", command("git push -u origin main"))
@@ -80,6 +92,8 @@ class McpArgumentSanitizerUriCredentialTest {
             "cat '-----BEGIN PUBLIC KEY-----MFkw' > pub",
             command("cat '-----BEGIN PUBLIC KEY-----MFkw' > pub"),
         )
+        val pgp = "-----BEGIN PGP PRIVATE KEY BLOCK-----\nabc123\n-----END PGP PRIVATE KEY BLOCK-----"
+        assertEquals("printf '[REDACTED]' > key.asc", command("printf '$pgp' > key.asc"))
     }
 
     @Test

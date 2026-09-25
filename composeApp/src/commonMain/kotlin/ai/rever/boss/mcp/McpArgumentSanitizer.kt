@@ -193,11 +193,19 @@ object McpArgumentSanitizer {
      * credential is two integers, so the exclusion costs nothing; a numeric password with a
      * non-numeric user (`-u admin:1234`) still redacts, because only both sides being integers
      * makes it a uid pair.
+     *
+     * The short flag also accepts an attached credential; the long user and proxy-user flags
+     * accept a space or equals sign. A backslash plus newline is one separator, while a bare
+     * newline is not. Quoted credentials match whole, including spaces in the password, and a
+     * remote-path value beginning with a slash or backslash after the colon stays readable.
      */
     private val basicAuthFlag =
         Regex(
-            """(?<![A-Za-z0-9_-])(-u|--user)([ \t]+|=)""" +
+            """(?i)(?<![A-Za-z0-9_-])""" +
+                """(-u(?:[ \t]*\\\r?\n[ \t]*|[ \t]+|=|(?=["']?[^ \t\r\n:=/'"\\]+:))|""" +
+                """--(?:proxy-)?user(?:[ \t]*\\\r?\n[ \t]*|[ \t]+|=))""" +
                 """(?!["']?[A-Za-z][A-Za-z0-9+.-]*://)(?!["']?$uidGidValue)""" +
+                """(?!["']?[^ \t\r\n:=/'"\\]+:[/\\])""" +
                 """(?:"[^"]*:[^"]*"|'[^']*:[^']*'|[^\s&,;}"']+:[^\s&,;}"']*)""",
         )
 
@@ -223,11 +231,12 @@ object McpArgumentSanitizer {
      * Shapes the issue measured leaking that the vendor-prefix rule above does not cover: an AWS
      * access key id (`AKIA` or `ASIA` plus 16 upper-case alphanumerics, the documented format) and
      * a PEM private-key block, whose base64 body follows the BEGIN line.
+     * PGP private-key armor adds BLOCK after PRIVATE KEY in both markers.
      */
     private val awsAccessKeyId = Regex("""(?<![A-Z0-9])(?:AKIA|ASIA)[A-Z0-9]{16}(?![A-Z0-9])""")
     private val pemPrivateKey =
         Regex(
-            """-----BEGIN [A-Z ]*PRIVATE KEY-----""" +
+            """-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----""" +
                 // RFC 1421 headers (Proc-Type:, DEK-Info:) sit between the BEGIN line and the
                 // base64 in a traditionally encrypted PEM, and they contain '-' - which the body
                 // class excludes. Without this arm the match stops at the headers and the whole
@@ -237,7 +246,7 @@ object McpArgumentSanitizer {
                 // string: without that the arm starves on the '\' and the encrypted body
                 // survives again (fuzz cell: encrypted pem block / json string value).
                 """(?:(?:\s|\\n)*[A-Za-z-]+:(?:\\(?!n)|[^\n\\])*(?:\n|\\n))*[A-Za-z0-9+/=\s\\]*""" +
-                """(?:-----END [A-Z ]*PRIVATE KEY-----)?""",
+                """(?:-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----)?""",
         )
 
     /**
@@ -252,7 +261,7 @@ object McpArgumentSanitizer {
             .redactUrlUserInfo(text)
             .replace(pemPrivateKey, "[REDACTED]")
             .replace(awsAccessKeyId, "[REDACTED]")
-            .replace(basicAuthFlag, "$1$2[REDACTED]")
+            .replace(basicAuthFlag, "$1[REDACTED]")
             .replace(cookieShortFlag, "$1 [REDACTED]")
             .replace(cookieLongFlag, "$1 [REDACTED]")
             .replace(credentialShapePattern, "[REDACTED]")
