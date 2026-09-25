@@ -27,12 +27,18 @@ import kotlin.test.assertTrue
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class PasskeyAuthViewModelSessionLifecycleTest {
-    private val pendingAttempts = ArrayDeque<CompletableDeferred<Result<Unit>>>()
+    private data class PendingAttempt(
+        val email: String,
+        val credentialId: String?,
+        val gate: CompletableDeferred<Result<Unit>>,
+    )
+
+    private val pendingAttempts = ArrayDeque<PendingAttempt>()
 
     private fun newViewModel() =
-        PasskeyAuthViewModel { _, _ ->
+        PasskeyAuthViewModel { email, credentialId ->
             val gate = CompletableDeferred<Result<Unit>>()
-            pendingAttempts.addLast(gate)
+            pendingAttempts.addLast(PendingAttempt(email, credentialId, gate))
             withContext(NonCancellable) { gate.await() }
         }
 
@@ -54,21 +60,33 @@ class PasskeyAuthViewModelSessionLifecycleTest {
                 viewModel.authenticateWithEmailAndPasskey("user@example.com") { firstSuccess++ }
                 advanceUntilIdle()
                 val superseded = pendingAttempts.removeFirst()
+                assertEquals("user@example.com", superseded.email)
+                assertNull(superseded.credentialId)
                 assertTrue(viewModel.isLoading.value)
 
                 viewModel.authenticateWithSpecificPasskey("user@example.com", "cred-1") { secondSuccess++ }
                 advanceUntilIdle()
-                assertEquals(1, pendingAttempts.size)
+                val currentAttempt = pendingAttempts.removeFirst()
+                assertEquals("user@example.com", currentAttempt.email)
+                assertEquals("cred-1", currentAttempt.credentialId)
 
-                // The abandoned attempt completes after being superseded.
-                superseded.complete(Result.success(Unit))
+                // The current attempt must still be allowed to complete successfully.
+                currentAttempt.gate.complete(Result.success(Unit))
                 advanceUntilIdle()
 
                 assertEquals(0, firstSuccess)
-                assertEquals(0, secondSuccess)
-                assertTrue(viewModel.isLoading.value)
+                assertEquals(1, secondSuccess)
+                assertFalse(viewModel.isLoading.value)
+
+                // The abandoned attempt may complete late, but it must remain inert.
+                superseded.gate.complete(Result.success(Unit))
+                advanceUntilIdle()
+
+                assertEquals(0, firstSuccess)
+                assertEquals(1, secondSuccess)
+                assertFalse(viewModel.isLoading.value)
             } finally {
-                pendingAttempts.forEach { it.complete(Result.failure(Exception("test cleanup"))) }
+                pendingAttempts.forEach { it.gate.complete(Result.failure(Exception("test cleanup"))) }
                 advanceUntilIdle()
                 viewModel.dispose()
                 Dispatchers.resetMain()
@@ -89,7 +107,7 @@ class PasskeyAuthViewModelSessionLifecycleTest {
                 advanceUntilIdle()
 
                 // The abandoned attempt surfaces a cross-device requirement late.
-                superseded.complete(Result.failure(crossDeviceRequirement()))
+                superseded.gate.complete(Result.failure(crossDeviceRequirement()))
                 advanceUntilIdle()
 
                 assertFalse(viewModel.showCrossDeviceQR.value)
@@ -97,7 +115,7 @@ class PasskeyAuthViewModelSessionLifecycleTest {
                 assertNull(viewModel.crossDeviceChallenge.value)
                 assertNull(viewModel.crossDeviceSessionId.value)
             } finally {
-                pendingAttempts.forEach { it.complete(Result.failure(Exception("test cleanup"))) }
+                pendingAttempts.forEach { it.gate.complete(Result.failure(Exception("test cleanup"))) }
                 advanceUntilIdle()
                 viewModel.dispose()
                 Dispatchers.resetMain()
@@ -112,7 +130,7 @@ class PasskeyAuthViewModelSessionLifecycleTest {
             try {
                 viewModel.authenticateWithEmailAndPasskey("user@example.com") {}
                 advanceUntilIdle()
-                pendingAttempts.removeFirst().complete(Result.failure(crossDeviceRequirement()))
+                pendingAttempts.removeFirst().gate.complete(Result.failure(crossDeviceRequirement()))
                 advanceUntilIdle()
                 assertTrue(viewModel.showCrossDeviceQR.value)
                 assertEquals("session-superseded", viewModel.crossDeviceSessionId.value)
@@ -137,7 +155,7 @@ class PasskeyAuthViewModelSessionLifecycleTest {
             try {
                 viewModel.authenticateWithEmailAndPasskey("user@example.com") {}
                 advanceUntilIdle()
-                pendingAttempts.removeFirst().complete(Result.failure(crossDeviceRequirement()))
+                pendingAttempts.removeFirst().gate.complete(Result.failure(crossDeviceRequirement()))
                 advanceUntilIdle()
                 assertTrue(viewModel.showCrossDeviceQR.value)
 
@@ -162,7 +180,7 @@ class PasskeyAuthViewModelSessionLifecycleTest {
                 var success = 0
                 viewModel.authenticateWithEmailAndPasskey("user@example.com") { success++ }
                 advanceUntilIdle()
-                val gate = pendingAttempts.removeFirst()
+                val gate = pendingAttempts.removeFirst().gate
 
                 viewModel.cancelAuthentication()
                 assertFalse(viewModel.isLoading.value)
