@@ -6,7 +6,6 @@ import ai.rever.boss.plugin.api.McpToolHandler
 import ai.rever.boss.plugin.api.McpToolProvider
 import ai.rever.boss.plugin.api.McpToolResult
 import kotlinx.coroutines.async
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
@@ -144,19 +143,25 @@ class McpDestructiveShellAllowTest {
             assertEquals(0, handlerRuns)
         }
 
-    // Non-shell tools rate by name alone, and that rating was already weighed when the rule was
-    // saved, so a saved ALLOW keeps meaning what it did - even for a CRITICAL name.
+    // A CRITICAL name reaches the same gate as a destructive shell command, even though its
+    // risk does not depend on arguments.
     @Test
-    fun `a saved ALLOW on a non-shell tool is unchanged, even for a critical one`() =
+    fun `a saved ALLOW on a critical non-shell tool asks again`() =
         runBlocking {
             val core = core("docker_rm")
             val pending = async { core.invoke("docker_rm", """{"container":"web"}""") }
-            // Give a wrongly raised prompt time to appear before asserting there is none.
-            delay(200)
-
-            assertTrue(approvalBus.pendingList.value.isEmpty())
+            val request = awaitPrompt()
+            assertEquals(McpRiskLevel.CRITICAL, request.riskAssessment?.level)
+            assertTrue(request.escalated)
+            approvalBus.approve(request.id)
             assertFalse(pending.await().isError)
             assertEquals(1, handlerRuns)
+            assertEquals(
+                McpPolicyAction.ASK,
+                ledger.recentOperations.value
+                    .first()
+                    .policyApplied,
+            )
         }
 
     // #1624: the prompt marks itself escalated so the dialog can offer only a one-off answer, and

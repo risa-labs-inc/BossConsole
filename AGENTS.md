@@ -2203,8 +2203,8 @@ grant would hand an unvetted plugin the approval its sibling earned, and trustin
 meant is the fail-closed direction. Revocation stays name-wide as the operator escape hatch:
 revokeSessionTrust(toolName, providerId = null) still clears every provider's trust for that name, and
 over-removing trust fails closed. The approval dialog's “Always, for this tool” scope (Always allow / Always deny) saves
-a tool-wide rule for all agents and arguments across restarts (except that a saved allow does not cover a shell
-call the risk evaluator rates CRITICAL - see the destructive-shell gate under the workspace/terminal tools below). Saved rules can be
+a tool-wide rule for all agents and arguments across restarts (except that a saved allow does not cover an invocation
+the risk evaluator rates CRITICAL - see the re-ask gate under the workspace/terminal tools below). Saved rules can be
 reviewed and reset from “Tool policies” in the bottom bar's MCP access menu; a reset removes
 the rule and clears that tool's session trust, so the tool uses the configured default
 policy (ASK for known mutations in the shipped defaults). Unrelated DENYs remain intact.
@@ -2271,7 +2271,8 @@ the fault flow withholds all tools until recovery. No automatic quarantine UI is
 provided. Ledger redaction is bounded and best effort, not a guarantee for secrets
 under arbitrary keys. Queue overflow and cancellation before/after dispatch have
 distinct ledger dispositions. Risk classification from #336 feeds this same policy and approval path; there is
-no second sandbox prompt. Explicit policies and session trust retain precedence.
+no second sandbox prompt. Explicit DENY and ASK policies retain precedence; standing ALLOWs
+yield to the CRITICAL re-ask gate described below.
 HIGH/CRITICAL risk names use the mutating default alongside catalog-mutating
 and provider-declared mutating names, while everything else remains allowed
 by default. Risk reasons and sanitized arguments appear together in the existing
@@ -2285,8 +2286,9 @@ on `open_terminal` therefore runs later invocations unconfirmed, i.e. as strong 
 unconfirmed external deep link; the command still passes the shape check and the shell
 risk evaluation (HIGH, CRITICAL for destructive patterns) on every call.
 
-A saved ALLOW - "Always, for this tool", a trusted plugin or session trust - does not cover a
-shell call the evaluator rates CRITICAL: that call is asked again every time (#1577), with the
+A standing ALLOW - "Always, for this tool", a trusted plugin, session trust or the read-only
+default - does not cover any invocation the evaluator rates CRITICAL, including tools rated
+CRITICAL by name: that call is asked again every time (#895, #1577), with the
 prompt marked escalated. On an escalated prompt "Always, for this tool" is deny-only ("Always
 deny this tool"): the allow button stays "Allow once" whatever scope is selected, and the registry
 applies any broader approval of an escalated call as once, logging the downgrade. A saved DENY is

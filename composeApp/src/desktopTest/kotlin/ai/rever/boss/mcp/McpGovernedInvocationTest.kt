@@ -301,12 +301,16 @@ class McpGovernedInvocationTest {
                     .approvalDisposition,
             )
 
-            // Second call: the persisted rule means it never suspends for approval again.
-            val second = core.invoke("helm_uninstall", "{}")
-            assertFalse(second.isError)
+            // Second call: the persisted ALLOW rule exists, but helm_uninstall is
+            // CRITICAL by name (#895), so the standing grant re-asks instead of
+            // auto-allowing.
+            val second = async { core.invoke("helm_uninstall", "{}") }
+            val secondReq = approvalBus.pendingList.first { it.isNotEmpty() }.first()
+            approvalBus.approve(secondReq.id)
+            assertFalse(second.await().isError)
             assertEquals(2, callCount)
             assertEquals(
-                McpApprovalDisposition.AUTO_ALLOWED,
+                McpApprovalDisposition.APPROVED_ONCE,
                 ledger.recentOperations.value
                     .first()
                     .approvalDisposition,
@@ -417,15 +421,17 @@ class McpGovernedInvocationTest {
                     .approvalDisposition,
             )
 
-            // Second call, a DIFFERENT tool from the SAME provider: no approval prompt at all -
-            // the provider-wide rule the first call just persisted covers it.
-            val secondResult = core.invoke("k8s_delete", "{}")
-            assertFalse(secondResult.isError)
+            // Second call, a DIFFERENT tool from the SAME provider: the provider-wide
+            // rule covers it, but k8s_delete is CRITICAL by name (#895), so the
+            // standing grant re-asks instead of auto-allowing.
+            val secondResult = async { core.invoke("k8s_delete", "{}") }
+            val secondRequest = approvalBus.pendingList.first { it.isNotEmpty() }.first()
+            approvalBus.approve(secondRequest.id)
+            assertFalse(secondResult.await().isError)
             assertTrue(secondCalled)
-            assertTrue(approvalBus.pendingList.value.isEmpty(), "the second call must never have queued a prompt")
 
-            // And it really did persist, not just live in this run's session trust: a fresh
-            // engine reading the same policy would agree without ever calling trustForSession.
+            // The provider-wide rule persisted — a fresh engine reading the same policy
+            // would agree without ever calling trustForSession.
             assertEquals(McpPolicyAction.ALLOW, policyEngine.policyFor("k8s_delete", "terminal-tab"))
         }
 

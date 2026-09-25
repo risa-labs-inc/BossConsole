@@ -955,7 +955,7 @@ internal class McpToolRegistryCore(
         // its name says (#804), so it gets the mutating default - ASK under the factory
         // config - rather than being auto-allowed for avoiding the catalog's name patterns.
         val savedPolicy = policyEngine.policyFor(canonicalName, tool.providerId, tool.definition.readOnly)
-        val policy = askBeforeDestructiveShell(canonicalName, args, savedPolicy)
+        val policy = askBeforeCritical(canonicalName, args, savedPolicy)
         val startTime = System.nanoTime()
         // The secret pre-pass runs before the audit boundary below on purpose: nothing in it
         // executes the tool, and a cancellation while the vault is being read has nothing to
@@ -1212,29 +1212,23 @@ internal class McpToolRegistryCore(
         }
 
     /**
-     * A saved ALLOW on a shell tool means "don't ask for routine calls", not "run anything" (#1577).
+     * A standing ALLOW cannot pre-approve an invocation rated CRITICAL (#895).
      *
-     * Every shell call already rates HIGH - arbitrary command execution - so HIGH cannot be the
-     * line, or "Always Allow" would ask every time and mean nothing. CRITICAL is: the evaluator
-     * reserves it for destructive command wording (`rm -rf`, `git push --force`, `mkfs`, ...), and
-     * those calls go back to ASK, where the operator sees the same assessment on the prompt.
+     * Every shell call already rates HIGH, so HIGH cannot be the threshold or routine commands
+     * would re-ask too. This gate includes non-shell tools whose names rate CRITICAL.
      *
      * The assessment is of the very [args] this invocation executes - parsed once in [invoke] and
-     * never re-read - so the arguments cannot change between this check and the call. Tool names
-     * are matched through [DefaultMcpRiskEvaluator.isShellTool], the evaluator's own
-     * normalization, so the two cannot disagree about which calls are shell calls. DENY and ASK
-     * pass through untouched, and so does ALLOW for every non-shell tool, whose risk is fixed by
-     * its name and already weighed when the policy was saved. The ALLOW may be a tool rule or a
-     * provider-wide "Trust This Plugin" rule; both are covered.
+     * never re-read - so the arguments cannot change between this check and the call. DENY and
+     * ASK pass through untouched. Tool rules, provider trust, session trust, and read-only
+     * defaults all pass through this same gate when they resolve to ALLOW.
      */
-    private fun askBeforeDestructiveShell(
+    private fun askBeforeCritical(
         toolName: String,
         args: McpToolArgs,
         policy: McpPolicyAction,
     ): McpPolicyAction =
         if (
             policy == McpPolicyAction.ALLOW &&
-            DefaultMcpRiskEvaluator.isShellTool(toolName) &&
             DefaultMcpRiskEvaluator().evaluateRisk(toolName, args).level >= McpRiskLevel.CRITICAL
         ) {
             McpPolicyAction.ASK

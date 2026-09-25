@@ -650,12 +650,14 @@ class SecretReferenceInvariantTest {
     fun `INV3 - session trust for the tool never covers a secret-bearing call`() =
         runBlocking {
             val h = Harness(CountingVault(listOf(record)))
-            h.policyEngine.trustForSession("docker_build", "p1")
-            h.register(tool("docker_build") { McpToolResult("ran") })
-            assertEquals("ran", h.core.invoke("docker_build", """{"a":"plain"}""").text)
+            // A HIGH-risk write keeps the plain-call baseline silent; docker_build is
+            // CRITICAL by name and now requires a prompt even without a reference.
+            h.policyEngine.trustForSession("file_write", "p1")
+            h.register(tool("file_write") { McpToolResult("ran") })
+            assertEquals("ran", h.core.invoke("file_write", """{"a":"plain"}""").text)
             assertTrue(h.seenRequests.isEmpty())
             val op = with(h) { operator() }
-            h.core.invoke("docker_build", """{"a":"{{secret:$id}}"}""")
+            h.core.invoke("file_write", """{"a":"{{secret:$id}}"}""")
             op.cancel()
             assertEquals(1, h.seenRequests.size)
         }

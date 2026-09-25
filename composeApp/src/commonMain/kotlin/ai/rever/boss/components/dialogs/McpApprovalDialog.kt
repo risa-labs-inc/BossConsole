@@ -333,8 +333,8 @@ fun McpApprovalDialog(
                         if (request.escalated) {
                             Text(
                                 text =
-                                    "This call is asked every time, even though this tool is allowed: it looks " +
-                                        "destructive, and no saved rule can approve that in advance - only deny it.",
+                                    "This call is rated CRITICAL, so it asks every time despite a standing " +
+                                        "allow. A saved rule can deny future calls, but cannot pre-approve them.",
                                 fontSize = 11.sp,
                                 color = colors.warn,
                                 modifier = Modifier.padding(top = 6.dp),
