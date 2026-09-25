@@ -4,6 +4,7 @@ import ai.rever.boss.mcp.McpMutatingToolCatalog
 import ai.rever.boss.mcp.McpPolicyAction
 import ai.rever.boss.mcp.McpProactivePolicyOutcome
 import ai.rever.boss.mcp.McpSectionPolicyChange
+import ai.rever.boss.mcp.McpToolRegistryImpl
 import ai.rever.boss.mcp.sandbox.DefaultMcpRiskEvaluator
 import ai.rever.boss.plugin.api.McpToolArgs
 import ai.rever.boss.plugin.ui.BossColorScheme
@@ -92,6 +93,7 @@ fun McpPolicyManagerDialog(
     onDismiss: () -> Unit,
     sectionTools: List<McpToolIdentity>? = null,
     onApplySection: (suspend (List<McpSectionPolicyChange>) -> McpProactivePolicyOutcome)? = null,
+    unresolvedLegacyRules: Map<String, McpPolicyAction> = McpToolRegistryImpl.policyEngine.unresolvedLegacyRules(),
 ) {
     val windowSize = LocalWindowInfo.current.containerSize
     val windowHeight = with(LocalDensity.current) { windowSize.height.toDp() }
@@ -285,6 +287,62 @@ fun McpPolicyManagerDialog(
                             }
                         }
                     }
+                    if (unresolvedLegacyRules.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(20.dp))
+                        Text(
+                            text = "Unresolved legacy rules · ${unresolvedLegacyRules.size}",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = colors.textPrimary,
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text =
+                                "Legacy provider rules awaiting migration. " +
+                                    "Ambiguous ALLOW rules remain inert; legacy DENY rules remain in effect.",
+                            fontSize = 11.sp,
+                            color = colors.textSecondary,
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            unresolvedLegacyRules.toSortedMap().forEach { (rawId, action) ->
+                                Row(
+                                    modifier =
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .background(
+                                                color = colors.textSecondary.copy(alpha = 0.04f),
+                                                shape = RoundedCornerShape(8.dp),
+                                            ).padding(horizontal = 12.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = rawId,
+                                            fontSize = 13.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = colors.textPrimary,
+                                        )
+                                        val statusText =
+                                            if (action == McpPolicyAction.DENY) {
+                                                "DENY (legacy denial in effect)"
+                                            } else {
+                                                "ALLOW (ambiguous, inert)"
+                                            }
+                                        Text(
+                                            text = statusText,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = if (action == McpPolicyAction.DENY) colors.alert else colors.warn,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 Spacer(modifier = Modifier.height(16.dp))
                 Divider(color = colors.textSecondary.copy(alpha = 0.15f))
@@ -381,15 +439,27 @@ private fun ProactivePolicySectionContent(
 
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         availableTools.groupBy { it.providerId }.forEach { (provider, tools) ->
-            Text(
-                text = "$provider · ${tools.size} tools",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = colors.textSecondary,
-                modifier = Modifier.padding(top = 8.dp),
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
+            val isNamespaced = provider.contains("::")
+            val pluginName = if (isNamespaced) provider.substringBefore("::") else null
+            Column(modifier = Modifier.padding(top = 8.dp)) {
+                if (pluginName != null) {
+                    Text(
+                        text = "Plugin: $pluginName",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = colors.textPrimary,
+                    )
+                }
+                Text(
+                    text = "$provider · ${tools.size} tools",
+                    fontSize = 12.sp,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Medium,
+                    color = colors.textSecondary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             tools.forEach { tool ->
                 ProactivePolicyRow(
                     tool = tool,
@@ -427,13 +497,34 @@ private fun ProactivePolicyRow(
         border = BorderStroke(1.dp, colors.textSecondary.copy(alpha = 0.14f)),
     ) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                text = tool.toolName,
-                fontSize = 14.sp,
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.SemiBold,
-                color = colors.textPrimary,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = tool.toolName,
+                    fontSize = 14.sp,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.SemiBold,
+                    color = colors.textPrimary,
+                    modifier = Modifier.weight(1f),
+                )
+                val isNamespaced = tool.providerId.contains("::")
+                val pluginName = if (isNamespaced) tool.providerId.substringBefore("::") else null
+                Column(horizontalAlignment = Alignment.End) {
+                    if (pluginName != null) {
+                        Text(
+                            text = pluginName,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = colors.textSecondary,
+                        )
+                    }
+                    Text(
+                        text = tool.providerId,
+                        fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = colors.textSecondary.copy(alpha = 0.8f),
+                    )
+                }
+            }
             Text(
                 text = tool.description.ifBlank { "No description provided by this tool." },
                 fontSize = 13.sp,

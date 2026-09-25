@@ -152,6 +152,7 @@ data class McpToolPolicyConfig(
      * guarantee holds without it (see `ai.rever.boss.mcp.secrets.McpResultScrubber`).
      */
     val resultScrubbingEnabled: Boolean = true,
+    val providerMapping: Map<String, Set<String>> = emptyMap(),
 )
 
 /**

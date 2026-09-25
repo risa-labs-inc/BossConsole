@@ -2,6 +2,8 @@ package ai.rever.boss.components.dialogs
 
 import ai.rever.boss.mcp.McpApprovalRequest
 import ai.rever.boss.mcp.McpMutatingToolCatalog
+import ai.rever.boss.mcp.McpPolicyAction
+import ai.rever.boss.mcp.McpToolRegistryImpl
 import ai.rever.boss.mcp.secrets.SecretDescriptor
 import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
@@ -200,6 +202,7 @@ fun McpApprovalDialog(
     onApprove: (trustForSession: Boolean, persistPolicy: Boolean, trustProvider: Boolean) -> Unit,
     onDeny: (reason: String, persistPolicy: Boolean) -> Unit,
     onDenyAllPending: () -> Unit = {},
+    unresolvedLegacyRules: Map<String, McpPolicyAction> = McpToolRegistryImpl.policyEngine.unresolvedLegacyRules(),
 ) {
     val colors = BossTheme.colors
     val radii = BossTheme.radius
@@ -273,6 +276,47 @@ fun McpApprovalDialog(
                                 .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 16.dp),
                     ) {
                         ToolDetails(request)
+
+                        val rawId =
+                            if (request.providerId.contains("::")) {
+                                request.providerId.substringAfter("::")
+                            } else {
+                                request.providerId
+                            }
+                        val matchingLegacy = unresolvedLegacyRules[rawId]
+                        if (unresolvedLegacyRules.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Row(
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .background(colors.raised, RoundedCornerShape(radii.card))
+                                        .border(
+                                            1.dp,
+                                            if (matchingLegacy == McpPolicyAction.DENY) colors.alert else colors.line,
+                                            RoundedCornerShape(radii.card),
+                                        ).padding(horizontal = 12.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                val text =
+                                    if (matchingLegacy != null) {
+                                        "Unresolved legacy rule for '$rawId': ${matchingLegacy.name}." +
+                                            if (matchingLegacy == McpPolicyAction.DENY) {
+                                                " Legacy denial remains in effect."
+                                            } else {
+                                                " Ambiguous grant is inert."
+                                            }
+                                    } else {
+                                        "Unresolved legacy provider rules pending review (${unresolvedLegacyRules.size})."
+                                    }
+                                Text(
+                                    text = text,
+                                    fontSize = 11.sp,
+                                    color = if (matchingLegacy == McpPolicyAction.DENY) colors.alert else colors.textSecondary,
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                        }
 
                         // What the tool would be handed from the vault. Metadata only - the request
                         // carries descriptors, never values - and above the risk line because it is

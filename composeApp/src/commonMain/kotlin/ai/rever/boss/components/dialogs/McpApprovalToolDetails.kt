@@ -108,18 +108,33 @@ internal fun ToolDetails(request: McpApprovalRequest) {
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            Text(
-                text = request.providerId,
-                fontSize = 11.sp,
-                color = colors.textSecondary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier =
-                    Modifier
-                        .padding(start = 8.dp)
-                        .border(1.dp, colors.line, RoundedCornerShape(radii.input))
-                        .padding(horizontal = 6.dp, vertical = 1.dp),
-            )
+            val isNamespaced = request.providerId.contains("::")
+            val pluginName = if (isNamespaced) request.providerId.substringBefore("::") else null
+            Column(horizontalAlignment = Alignment.End, modifier = Modifier.padding(start = 8.dp)) {
+                if (pluginName != null) {
+                    Text(
+                        text = "Plugin: $pluginName",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = colors.textPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Text(
+                    text = request.providerId,
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = colors.textSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier =
+                        Modifier
+                            .padding(top = 2.dp)
+                            .border(1.dp, colors.line, RoundedCornerShape(radii.input))
+                            .padding(horizontal = 6.dp, vertical = 1.dp),
+                )
+            }
         }
 
         // The tool's own description is the operator's only sight of what it

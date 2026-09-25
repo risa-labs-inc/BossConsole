@@ -661,6 +661,15 @@ internal class McpToolRegistryCore(
     val tools: StateFlow<List<RegisteredMcpTool>> = _tools.asStateFlow()
 
     fun registerProvider(provider: McpToolProvider) {
+        val rawId =
+            if (provider.providerId.contains("::")) {
+                provider.providerId.substringAfter("::")
+            } else {
+                provider.providerId
+            }
+        val namespacedId = provider.providerId
+        policyEngine.recordProviderRegistration(rawId, namespacedId)
+
         // Query the plugin's tools() OUTSIDE the lock — see mutationLock KDoc.
         // A throwing provider registers with an empty tool set (and a warning)
         // rather than being silently dropped: its id stays tracked so teardown

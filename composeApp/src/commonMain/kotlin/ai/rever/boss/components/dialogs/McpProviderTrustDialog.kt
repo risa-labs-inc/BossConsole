@@ -1,6 +1,7 @@
 package ai.rever.boss.components.dialogs
 
 import ai.rever.boss.mcp.McpPolicyAction
+import ai.rever.boss.mcp.McpToolRegistryImpl
 import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -52,6 +53,7 @@ fun McpProviderTrustDialog(
     providerRules: Map<String, McpPolicyAction>,
     onRevoke: suspend (providerId: String) -> Boolean,
     onDismiss: () -> Unit,
+    unresolvedLegacyRules: Map<String, McpPolicyAction> = McpToolRegistryImpl.policyEngine.unresolvedLegacyRules(),
 ) {
     val colors = BossTheme.colors
     val radii = BossTheme.radius
@@ -104,16 +106,26 @@ fun McpProviderTrustDialog(
                                 .verticalScroll(rememberScrollState()),
                     ) {
                         trusted.keys.sorted().forEach { providerId ->
+                            val isNamespaced = providerId.contains("::")
+                            val pluginName = if (isNamespaced) providerId.substringBefore("::") else null
                             Row(
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
+                                    if (pluginName != null) {
+                                        Text(
+                                            text = "Plugin: $pluginName",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = colors.textPrimary,
+                                        )
+                                    }
                                     Text(
                                         text = providerId,
-                                        fontSize = 13.sp,
+                                        fontSize = 12.sp,
                                         fontFamily = FontFamily.Monospace,
-                                        color = colors.textPrimary,
+                                        color = colors.textSecondary,
                                     )
                                     Text(
                                         text = "All tools trusted",
@@ -138,6 +150,56 @@ fun McpProviderTrustDialog(
                                     },
                                 ) {
                                     Text("Revoke", fontSize = 12.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (unresolvedLegacyRules.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Unresolved legacy rules · ${unresolvedLegacyRules.size}",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = colors.textPrimary,
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text =
+                            "Legacy provider rules awaiting migration. " +
+                                "Ambiguous ALLOW rules remain inert; legacy DENY rules remain in effect.",
+                        fontSize = 11.sp,
+                        color = colors.textSecondary,
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        unresolvedLegacyRules.toSortedMap().forEach { (rawId, action) ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = rawId,
+                                        fontSize = 12.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = colors.textPrimary,
+                                    )
+                                    Text(
+                                        text =
+                                            if (action == McpPolicyAction.DENY) {
+                                                "DENY (legacy denial in effect)"
+                                            } else {
+                                                "ALLOW (ambiguous, inert)"
+                                            },
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = if (action == McpPolicyAction.DENY) colors.alert else colors.warn,
+                                    )
                                 }
                             }
                         }
