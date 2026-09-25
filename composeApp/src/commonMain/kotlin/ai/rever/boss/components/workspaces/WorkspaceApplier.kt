@@ -288,13 +288,17 @@ private suspend fun applyWorkspaceNode(
     splitViewState: SplitViewState,
     currentPanelId: String,
     projectPath: String,
+    consumedConfig: TabConfig? = null,
 ) {
     when (node) {
         is SinglePanel -> {
-            // Add tabs to current panel
+            // Add tabs to current panel, skipping by identity any config already consumed
+            // to seed the panel during splitPanel.
             val tabsComponent = splitViewState.getPanelTabsComponent(currentPanelId)
             node.panel.tabs.forEach { tabConfig ->
-                createTabFromWorkspaceConfig(tabConfig, projectPath, splitViewState)?.let { tabsComponent?.addTab(it) }
+                if (tabConfig !== consumedConfig) {
+                    createTabFromWorkspaceConfig(tabConfig, projectPath, splitViewState)?.let { tabsComponent?.addTab(it) }
+                }
             }
             // One call per panel restores the whole pinning state, and it is clamped inside setPinnedCount:
             // a tab whose type no longer resolves comes back as null above, so fewer tabs can land
@@ -303,117 +307,156 @@ private suspend fun applyWorkspaceNode(
         }
 
         is VerticalSplit -> {
-            // First process left side in current panel
-            when (val leftNode = node.left) {
-                is SinglePanel -> {
-                    // Add tabs to current panel
-                    val tabsComponent = splitViewState.getPanelTabsComponent(currentPanelId)
-                    leftNode.panel.tabs.forEach { tabConfig ->
-                        createTabFromWorkspaceConfig(tabConfig, projectPath, splitViewState)?.let { tabsComponent?.addTab(it) }
-                    }
-                    // One call per panel restores the whole pinning state, and it is clamped inside setPinnedCount:
-                    // a tab whose type no longer resolves comes back as null above, so fewer tabs can land
-                    // than were saved with this count.
-                    tabsComponent?.setPinnedCount(leftNode.panel.pinnedCount)
+            val leftRestorable = firstRestorableTab(node.left, projectPath, splitViewState)
+            val rightRestorable = firstRestorableTab(node.right, projectPath, splitViewState)
+
+            when {
+                leftRestorable != null && rightRestorable != null -> {
+                    // Create parent split before restoring children (#1610).
+                    // Restoring the left child first caused any nested split in the left subtree
+                    // to displace the anchor panel, leading outer splits to replace the wrong leaf
+                    // (restoring ((A, B), C) as ((A, C), B)).
+                    //
+                    // Gate on the first RESTORABLE tab anywhere in the subtree, not on the first
+                    // config resolving: an unrestorable first tab used to silently drop every
+                    // restorable tab behind it (#1211). For a SinglePanel side, splitPanel seeds
+                    // the new panel with the first restorable tab and the SinglePanel restore
+                    // skips it by identity. For a nested split, no tab is pre-created (tabToMove = null)
+                    // so the subtree recursion materializes its tabs without duplication (#1210).
+                    val rightNode = node.right
+                    val consumedRightConfig: TabConfig?
+                    val rightPanelId =
+                        if (rightNode is SinglePanel) {
+                            consumedRightConfig = rightRestorable.first
+                            splitViewState.splitPanel(
+                                panelId = currentPanelId,
+                                orientation = SplitOrientation.VERTICAL,
+                                tabToMove = rightRestorable.second,
+                            )
+                        } else {
+                            consumedRightConfig = null
+                            splitViewState.splitPanel(
+                                panelId = currentPanelId,
+                                orientation = SplitOrientation.VERTICAL,
+                                tabToMove = null,
+                            )
+                        }
+
+                    applyWorkspaceNode(node.left, splitViewState, currentPanelId, projectPath)
+                    applyWorkspaceNode(node.right, splitViewState, rightPanelId, projectPath, consumedRightConfig)
+                }
+
+                leftRestorable != null -> {
+                    // Only left side has restorable tabs: restore into current panel without creating
+                    // an empty sibling ghost panel (#1211, #1610).
+                    applyWorkspaceNode(node.left, splitViewState, currentPanelId, projectPath, consumedConfig)
+                }
+
+                rightRestorable != null -> {
+                    // Only right side has restorable tabs: fold into current panel without creating
+                    // an empty sibling ghost panel (#1211, #1610).
+                    applyWorkspaceNode(node.right, splitViewState, currentPanelId, projectPath, consumedConfig)
                 }
 
                 else -> {
-                    // Recursively apply left workspace config
-                    applyWorkspaceNode(leftNode, splitViewState, currentPanelId, projectPath)
-                }
-            }
-
-            // Then create vertical split for right side
-            // Resolve the first tab up front; if it doesn't map to a supported tab type
-            // (e.g. a legacy panel-host entry in a recovered workspace), skip the split
-            // instead of creating an empty "ghost" panel via splitPanel(tabToMove = null).
-            val firstRightTabInfo = getFirstTab(node.right)?.let { createTabFromWorkspaceConfig(it, projectPath, splitViewState) }
-            if (firstRightTabInfo != null) {
-                val rightPanelId =
-                    splitViewState.splitPanel(
-                        panelId = currentPanelId,
-                        orientation = SplitOrientation.VERTICAL,
-                        tabToMove = firstRightTabInfo,
-                    )
-
-                // Add remaining tabs or process splits for right side
-                when (val rightNode = node.right) {
-                    is SinglePanel -> {
-                        // Add remaining tabs
-                        val tabsComponent = splitViewState.getPanelTabsComponent(rightPanelId)
-                        rightNode.panel.tabs.drop(1).forEach { tabConfig ->
-                            createTabFromWorkspaceConfig(tabConfig, projectPath, splitViewState)?.let { tabsComponent?.addTab(it) }
-                        }
-                        // One call per panel restores the whole pinning state, and it is clamped inside setPinnedCount:
-                        // a tab whose type no longer resolves comes back as null above, so fewer tabs can land
-                        // than were saved with this count.
-                        tabsComponent?.setPinnedCount(rightNode.panel.pinnedCount)
-                    }
-
-                    else -> {
-                        // Recursively apply right workspace config
-                        applyWorkspaceNode(rightNode, splitViewState, rightPanelId, projectPath)
-                    }
+                    // Neither side has restorable tabs: do not create an empty panel or split.
                 }
             }
         }
 
         is HorizontalSplit -> {
-            // First process top side in current panel
-            when (val topNode = node.top) {
-                is SinglePanel -> {
-                    // Add tabs to current panel
-                    val tabsComponent = splitViewState.getPanelTabsComponent(currentPanelId)
-                    topNode.panel.tabs.forEach { tabConfig ->
-                        createTabFromWorkspaceConfig(tabConfig, projectPath, splitViewState)?.let { tabsComponent?.addTab(it) }
-                    }
-                    // One call per panel restores the whole pinning state, and it is clamped inside setPinnedCount:
-                    // a tab whose type no longer resolves comes back as null above, so fewer tabs can land
-                    // than were saved with this count.
-                    tabsComponent?.setPinnedCount(topNode.panel.pinnedCount)
+            val topRestorable = firstRestorableTab(node.top, projectPath, splitViewState)
+            val bottomRestorable = firstRestorableTab(node.bottom, projectPath, splitViewState)
+
+            when {
+                topRestorable != null && bottomRestorable != null -> {
+                    // Create parent split before restoring children (#1610).
+                    val bottomNode = node.bottom
+                    val consumedBottomConfig: TabConfig?
+                    val bottomPanelId =
+                        if (bottomNode is SinglePanel) {
+                            consumedBottomConfig = bottomRestorable.first
+                            splitViewState.splitPanel(
+                                panelId = currentPanelId,
+                                orientation = SplitOrientation.HORIZONTAL,
+                                tabToMove = bottomRestorable.second,
+                            )
+                        } else {
+                            consumedBottomConfig = null
+                            splitViewState.splitPanel(
+                                panelId = currentPanelId,
+                                orientation = SplitOrientation.HORIZONTAL,
+                                tabToMove = null,
+                            )
+                        }
+
+                    applyWorkspaceNode(node.top, splitViewState, currentPanelId, projectPath)
+                    applyWorkspaceNode(node.bottom, splitViewState, bottomPanelId, projectPath, consumedBottomConfig)
+                }
+
+                topRestorable != null -> {
+                    applyWorkspaceNode(node.top, splitViewState, currentPanelId, projectPath, consumedConfig)
+                }
+
+                bottomRestorable != null -> {
+                    applyWorkspaceNode(node.bottom, splitViewState, currentPanelId, projectPath, consumedConfig)
                 }
 
                 else -> {
-                    // Recursively apply top workspace config
-                    applyWorkspaceNode(topNode, splitViewState, currentPanelId, projectPath)
-                }
-            }
-
-            // Then create horizontal split for bottom side
-            // Resolve the first tab up front (see the VerticalSplit note) — never create an
-            // empty split panel for an unsupported first tab.
-            val firstBottomTabInfo = getFirstTab(node.bottom)?.let { createTabFromWorkspaceConfig(it, projectPath, splitViewState) }
-            if (firstBottomTabInfo != null) {
-                val bottomPanelId =
-                    splitViewState.splitPanel(
-                        panelId = currentPanelId,
-                        orientation = SplitOrientation.HORIZONTAL,
-                        tabToMove = firstBottomTabInfo,
-                    )
-
-                // Add remaining tabs or process splits for bottom side
-                when (val bottomNode = node.bottom) {
-                    is SinglePanel -> {
-                        // Add remaining tabs
-                        val tabsComponent = splitViewState.getPanelTabsComponent(bottomPanelId)
-                        bottomNode.panel.tabs.drop(1).forEach { tabConfig ->
-                            createTabFromWorkspaceConfig(tabConfig, projectPath, splitViewState)?.let { tabsComponent?.addTab(it) }
-                        }
-                        // One call per panel restores the whole pinning state, and it is clamped inside setPinnedCount:
-                        // a tab whose type no longer resolves comes back as null above, so fewer tabs can land
-                        // than were saved with this count.
-                        tabsComponent?.setPinnedCount(bottomNode.panel.pinnedCount)
-                    }
-
-                    else -> {
-                        // Recursively apply bottom workspace config
-                        applyWorkspaceNode(bottomNode, splitViewState, bottomPanelId, projectPath)
-                    }
+                    // Neither side has restorable tabs: do not create an empty panel or split.
                 }
             }
         }
     }
 }
+
+/**
+ * The first saved tab in the subtree that still restores to a live tab, in restore order
+ * (left/top before right/bottom, tabs in panel order), paired with the [TabInfo] built for
+ * it. "Restores to a live tab" is judged on the tab that was BUILT, not on
+ * `tabTypeIdFor(config)`: the pre-created instance goes through `addTab`, which drops a
+ * tab whose type has no registered factory, so a built-but-unregistered tab must not
+ * count as restorable either (it would open a panel that then loses its only tab - a
+ * ghost panel), and the jupyter-to-editor fallback is weighed as the editor tab it
+ * produced, not as the jupyter type it was saved as.
+ *
+ * The split pre-creation passes that exact instance to `splitPanel`, so a SinglePanel
+ * side materializes each tab exactly once; a nested subtree only needs the null check,
+ * because the recursion materializes its tabs itself - a pre-created copy there would be
+ * materialized twice (#1210).
+ *
+ * Returns null when nothing in the subtree is restorable, which is the "skip the split
+ * entirely" answer that keeps an all-unrestorable side from leaving a ghost panel behind
+ * - the same trade the old first-tab gate made, now without the collateral tab loss (#1211).
+ */
+private suspend fun firstRestorableTab(
+    node: SplitConfig,
+    resolvedProjectPath: String,
+    splitViewState: SplitViewState,
+): Pair<TabConfig, TabInfo>? =
+    when (node) {
+        is SinglePanel -> {
+            node.panel.tabs
+                .firstNotNullOfOrNull { tabConfig ->
+                    createTabFromWorkspaceConfig(tabConfig, resolvedProjectPath, splitViewState)
+                        // Judge the BUILT tab, not tabTypeIdFor(config): addTab drops a
+                        // tab whose type has no registered factory, and the jupyter
+                        // fallback must count as the editor tab it produced.
+                        ?.takeIf { splitViewState.tabRegistry.isRegistered(it.typeId) }
+                        ?.let { tabConfig to it }
+                }
+        }
+
+        is VerticalSplit -> {
+            val left = firstRestorableTab(node.left, resolvedProjectPath, splitViewState)
+            left ?: firstRestorableTab(node.right, resolvedProjectPath, splitViewState)
+        }
+
+        is HorizontalSplit -> {
+            val top = firstRestorableTab(node.top, resolvedProjectPath, splitViewState)
+            top ?: firstRestorableTab(node.bottom, resolvedProjectPath, splitViewState)
+        }
+    }
 
 /**
  * Whether [layout] declares tabs that cannot all be put on screen - the proof
