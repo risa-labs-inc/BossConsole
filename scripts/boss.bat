@@ -166,6 +166,11 @@ goto :eof
 REM Preserve literal exclamation marks in JSON arguments.
 setlocal DisableDelayedExpansion
 if defined BOSS_EXE if not exist "%BOSS_EXE%" goto :cmd_missing_exe
+REM Tools > Install BOSS CLI replaces the next line with the running app's own BOSS.exe, so an
+REM install in a directory the installer let the user choose is still found.
+REM {{INSTALLED_EXE}}
+REM The MSI installs per user, into %LOCALAPPDATA%\BOSS unless another directory is chosen.
+if not defined BOSS_EXE if exist "%LOCALAPPDATA%\BOSS\BOSS.exe" set "BOSS_EXE=%LOCALAPPDATA%\BOSS\BOSS.exe"
 if not defined BOSS_EXE if exist "%LOCALAPPDATA%\Programs\BOSS\BOSS.exe" set "BOSS_EXE=%LOCALAPPDATA%\Programs\BOSS\BOSS.exe"
 if not defined BOSS_EXE if exist "%ProgramFiles%\BOSS\BOSS.exe" set "BOSS_EXE=%ProgramFiles%\BOSS\BOSS.exe"
 if not defined BOSS_EXE if exist "%~dp0..\composeApp\build\compose\binaries\main\app\BOSS\BOSS.exe" set "BOSS_EXE=%~dp0..\composeApp\build\compose\binaries\main\app\BOSS\BOSS.exe"

@@ -8,6 +8,37 @@ import java.io.File
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermission
 
+/** jpackage sets this on every packaged launch, to the launcher executable itself. */
+private const val JPACKAGE_APP_PATH_PROPERTY = "jpackage.app-path"
+
+/** The line in `boss.bat` that [bossBatForInstall] replaces. */
+private val INSTALLED_EXE_MARKER = Regex("""^REM \{\{INSTALLED_EXE}}(?=[ \t]*\r?$)""", RegexOption.MULTILINE)
+
+/**
+ * [script] - the shipped `boss.bat` - with its `{{INSTALLED_EXE}}` line replaced by a lookup of
+ * [installedExe], the BOSS.exe that is running and installing it.
+ *
+ * `boss.bat` forwards `status`, `doctor`, `mcp` and `plugin` to BOSS.exe and has to find it first.
+ * Its fixed guesses cover the default locations, but the installer lets the user choose any
+ * directory, and the one process that knows where BOSS actually is, is BOSS. The looked-up path goes
+ * after an explicit `BOSS_EXE` and before the guesses, and is itself only used while it exists, so a
+ * moved or uninstalled BOSS falls through to them.
+ *
+ * `%` is doubled because a batch file expands `%` even inside quotes; `"` cannot occur in a Windows
+ * path, and `!` is literal because that block runs with delayed expansion off. Returns [script]
+ * unchanged when [installedExe] is not a Windows launcher path, such as when running from Gradle.
+ */
+internal fun bossBatForInstall(
+    script: String,
+    installedExe: String?,
+): String {
+    val exe = installedExe?.takeIf { it.isNotBlank() && it.endsWith(".exe", ignoreCase = true) } ?: return script
+    val escaped = exe.replace("%", "%%")
+    return INSTALLED_EXE_MARKER.replace(script) {
+        "if not defined BOSS_EXE if exist \"$escaped\" set \"BOSS_EXE=$escaped\""
+    }
+}
+
 actual object CLIInstaller {
     private val logger = BossLogger.forComponent("CLIInstaller")
 
@@ -95,9 +126,11 @@ actual object CLIInstaller {
         val binDir = File("$homeDir\\bin")
         binDir.mkdirs()
 
-        // Read script from resources
+        // Read script from resources, and point it at the BOSS.exe running right now: the installer
+        // lets the user choose the directory, so no fixed list of guesses can find every install.
         val scriptContent =
             readResourceScript("boss.bat")
+                ?.let { bossBatForInstall(it, System.getProperty(JPACKAGE_APP_PATH_PROPERTY)) }
                 ?: return CLIInstallResult(
                     success = false,
                     message = "Failed to read boss.bat from application resources",

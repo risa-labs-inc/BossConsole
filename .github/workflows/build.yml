@@ -60,6 +60,12 @@ jobs:
         # probes need cmd.exe and skip where it is absent.
         run: pwsh -NoProfile -File scripts/test/test-boss-bat-urlencode.ps1
 
+      - name: 🧪 Windows CLI shims find BOSS.exe where the MSI installs it
+        # The MSI installs per user into %LOCALAPPDATA%\BOSS, which neither shim searched, so every
+        # forwarded command (status, doctor, mcp, plugin) failed on a default install. Source-shape
+        # checks run everywhere; the live probes need cmd.exe and skip where it is absent.
+        run: pwsh -NoProfile -File scripts/test/test-boss-cli-exe-discovery.ps1
+
       - name: 🧪 Release publish — TUS slice tests
         # Guards the byte-accurate chunk slicing in the release publish path
         # (regressed twice: #877 misaligned resume, and the SIGPIPE status bug).
