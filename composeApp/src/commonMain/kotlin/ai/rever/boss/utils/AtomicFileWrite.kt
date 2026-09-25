@@ -225,19 +225,19 @@ private fun Path.throwIfNotOwnedByCurrentUser() {
  * `.corrupt-*` files are never pruned. They do not end in `.json`, so no settings scan picks them
  * up, and the file self-heals, so there is at most one per corruption event.
  */
-fun File.renameAsideCorrupt(): Boolean = renameAsideCorrupt(System.currentTimeMillis())
+fun File.renameAsideCorrupt(): Boolean = renameAsideCorruptFile() != null
 
-/** [renameAsideCorrupt] with the stamp supplied, so a test can make the names collide on purpose (#1693). */
-internal fun File.renameAsideCorrupt(stamp: Long): Boolean {
+/** Return the exact saved copy, including a collision suffix; tests can supply a fixed stamp (#1693). */
+internal fun File.renameAsideCorruptFile(stamp: Long = System.currentTimeMillis()): File? {
     var lastFailure: Exception? = null
     var attempt = 0
     while (attempt < MAX_ASIDE_ATTEMPTS) {
         val suffix = if (attempt == 0) "" else "-$attempt"
         try {
-            val aside = resolveSibling("$name.corrupt-$stamp$suffix").toPath()
-            Files.move(toPath(), aside)
-            aside.restrictToOwner()
-            return true
+            val aside = resolveSibling("$name.corrupt-$stamp$suffix")
+            Files.move(toPath(), aside.toPath())
+            aside.toPath().restrictToOwner()
+            return aside
         } catch (e: FileAlreadyExistsException) {
             // Name taken: try the next suffix.
             lastFailure = e
@@ -261,7 +261,7 @@ internal fun File.renameAsideCorrupt(stamp: Long): Boolean {
         mapOf("path" to path),
         error = lastFailure,
     )
-    return false
+    return null
 }
 
 internal const val MAX_ASIDE_ATTEMPTS = 100

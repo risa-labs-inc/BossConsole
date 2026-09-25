@@ -25,6 +25,7 @@ class KeymapSettingsCorruptFileTest {
 
     @BeforeTest
     fun setUp() {
+        KeymapRecoveryNotices.claim()
         tempDir = Files.createTempDirectory("keymap-corrupt-test-").toFile()
         settingsFile = File(tempDir, "keymap-settings.json")
     }
@@ -32,6 +33,7 @@ class KeymapSettingsCorruptFileTest {
     @AfterTest
     fun tearDown() {
         KeymapSettingsManager.resetForTesting()
+        KeymapRecoveryNotices.claim()
         tempDir.deleteRecursively()
     }
 
@@ -65,6 +67,7 @@ class KeymapSettingsCorruptFileTest {
         assertEquals("Mine", loaded.presetName)
         assertEquals(TabSwitchMode.MRU, loaded.tabSwitchMode)
         assertEquals(emptyList(), corruptSiblings(), "a readable file must not be treated as corrupt")
+        assertEquals(null, KeymapRecoveryNotices.claim(), "a readable file must not prompt a recovery notice")
     }
 
     // #1694: coercion keeps the keymap but is not a round trip. The default the older build holds
@@ -94,6 +97,7 @@ class KeymapSettingsCorruptFileTest {
 
         assertTrue(settingsFile.isDirectory, "the original path must be untouched")
         assertEquals(emptyList(), corruptSiblings(), "no aside may be created for a read error")
+        assertEquals(null, KeymapRecoveryNotices.claim(), "a read error must not prompt a reset notice")
     }
 
     private fun corruptSiblings(): List<File> =
@@ -110,5 +114,11 @@ class KeymapSettingsCorruptFileTest {
         val corrupt = tempDir.listFiles { f -> f.name.startsWith("${settingsFile.name}.corrupt-") }.orEmpty()
         assertEquals(1, corrupt.size, "the corrupt bytes must be kept, renamed aside")
         assertEquals(fixture, corrupt.single().readText())
+        assertEquals(
+            corrupt.single().absolutePath,
+            KeymapRecoveryNotices.claim()?.preservedFile,
+            "the first window must receive the exact copy to reveal",
+        )
+        assertEquals(null, KeymapRecoveryNotices.claim(), "a second window must not repeat the notice")
     }
 }
