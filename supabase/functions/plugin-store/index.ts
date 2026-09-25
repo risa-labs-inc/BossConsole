@@ -144,12 +144,14 @@ app.get("/doc", swaggerUI({ url: "/functions/v1/plugin-store/openapi" }))
 
 // 404 handler
 app.notFound((ctx) => {
+  ctx.header("Cache-Control", "private, no-store")
   return ctx.json({ error: "Not Found" }, 404)
 })
 
 // Global error handler
 app.onError((err, ctx) => {
   console.error('Global error:', err)
+  ctx.header("Cache-Control", "private, no-store")
   return ctx.json({ error: 'Internal server error' }, 500)
 })
 

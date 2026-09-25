@@ -8,8 +8,10 @@ import { getPlugin } from "../services/plugins.ts"
 import { ratePlugin, getUserRating, deleteRating, getPluginRatings } from "../services/ratings.ts"
 import { getUserFromToken } from "../utils/auth.ts"
 import { newRouter } from "../utils/router.ts"
+import { ratingCachePolicy } from "../utils/cache.ts"
 
 const rating = newRouter()
+rating.use("*", ratingCachePolicy())
 
 // ============================================================================
 // POST /:pluginId/rate - Rate a plugin

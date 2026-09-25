@@ -12,10 +12,12 @@ import { listPlugins, searchPlugins, getPlugin, getPopularTags } from "../servic
 import { getPluginVersions } from "../services/versions.ts"
 import { clientKey, rateLimit } from "../utils/rate-limit.ts"
 import { newRouter } from "../utils/router.ts"
+import { catalogueCachePolicy } from "../utils/cache.ts"
 
 // A request that fails its route's schema is answered by the router itself, before any handler
 // runs, with the ErrorResponseSchema 400 the routes below declare: see newRouter.
 const browse = newRouter()
+browse.use("*", catalogueCachePolicy())
 
 // Per-client limit on the anonymous catalogue routes (/list, /search,
 // /tags/popular): the same in-isolate token bucket the organisation function

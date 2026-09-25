@@ -11,8 +11,10 @@ import {
   VALID_API_KEY_SCOPES,
 } from "../utils/api-key.ts"
 import { newRouter } from "../utils/router.ts"
+import { privateNoStore } from "../utils/cache.ts"
 
 const apiKeys = newRouter()
+apiKeys.use("*", privateNoStore())
 
 // Rate limit: Maximum API keys per user (configurable via environment variable)
 const MAX_API_KEYS_PER_USER = parseInt(

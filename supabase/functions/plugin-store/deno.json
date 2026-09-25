@@ -1,5 +1,6 @@
 {
   "imports": {
+    "hono": "npm:hono@^4.9.9",
     "hono/cors": "npm:hono@^4.9.9/cors",
     "@hono/zod-openapi": "npm:@hono/zod-openapi@^0.18.4",
     "@hono/swagger-ui": "npm:@hono/swagger-ui@^0.4.1",
@@ -10,5 +11,15 @@
   "compilerOptions": {
     "lib": ["deno.window", "deno.unstable"],
     "strict": true
+  },
+  "lint": {
+    "rules": {
+      "exclude": [
+        "no-import-prefix",
+        "no-unversioned-import",
+        "require-await",
+        "no-unused-vars"
+      ]
+    }
   }
 }

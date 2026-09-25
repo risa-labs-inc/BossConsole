@@ -3,8 +3,10 @@ import { ErrorResponseSchema } from "../types/schemas.ts"
 import { getUserFromToken } from "../utils/auth.ts"
 import { deleteJar } from "../services/storage.ts"
 import { newRouter } from "../utils/router.ts"
+import { privateNoStore } from "../utils/cache.ts"
 
 const admin = newRouter()
+admin.use("*", privateNoStore())
 
 // ============================================================================
 // Schemas

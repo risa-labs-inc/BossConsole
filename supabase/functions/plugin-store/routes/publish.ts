@@ -37,8 +37,10 @@ import {
   validateDeclaredPermissions,
 } from "../utils/permissions.ts"
 import { newRouter } from "../utils/router.ts"
+import { privateNoStore } from "../utils/cache.ts"
 
 const publish = newRouter()
+publish.use("*", privateNoStore())
 
 // ============================================================================
 // POST /publish - Publish a new plugin
