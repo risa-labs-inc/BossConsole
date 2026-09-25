@@ -24,6 +24,20 @@ object ConfigLoader {
      */
     private val embeddedProperties = Properties()
 
+    /** The source values already loaded for this process, before precedence is applied. */
+    data class SourceSnapshot(
+        val envVars: Properties,
+        val local: Properties,
+        val embedded: Properties,
+    )
+
+    fun sourceSnapshot(): SourceSnapshot =
+        SourceSnapshot(
+            envVars = Properties().apply { putAll(envVarsProperties) },
+            local = Properties().apply { putAll(properties) },
+            embedded = Properties().apply { putAll(embeddedProperties) },
+        )
+
     init {
         loadEnvVars()
         loadLocalProperties()

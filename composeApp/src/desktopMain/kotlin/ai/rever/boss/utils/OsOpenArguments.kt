@@ -46,6 +46,7 @@ internal object OsOpenArguments {
             "status",
             "doctor",
             "mcp",
+            "config",
             "pack",
             "completion",
             "plugin",
