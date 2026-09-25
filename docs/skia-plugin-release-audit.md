@@ -60,3 +60,32 @@ does not prove every plugin's method calls are compatible with a future Skia bum
 | `ai.rever.boss.plugin.dynamic.toolevolver` | 0.5.8 | Store, SHA-256 verified | 0 |
 | `ai.rever.boss.plugin.dynamic.topofmind` | 1.2.2 | Store, SHA-256 verified | 0 |
 | `ai.rever.boss.plugin.dynamic.usersecretlist` | 1.2.8 | Store, SHA-256 verified | 0 |
+
+## Direct rendering references on BOSS 9.5.25
+
+A follow-up scan inspected class-file bytes for `org/jetbrains/skia/` and
+`org/jetbrains/skiko/` references, excluding framework implementation classes
+under those packages and `androidx/compose/`. This answers a different question
+from bundling: a plugin need not bundle Skia to depend on host access to it.
+The scan covered 69 available JAR artifacts (installed, downloaded store and
+GitHub release copies, including duplicate versions).
+
+| Dynamic plugin | Version | Direct reference paths |
+| --- | --- | --- |
+| Editor Tab | 1.6.8 | BossEditor MinimapCanvas, MinimapRenderer, FontUtils |
+| Fluck Agent | 1.0.113 | FluckImageLoader image decoding, size validation and conversion to ImageBitmap |
+| Terminal Tab | 2.5.101 | ImageRenderer, MCP show_image conversion, FontUtils, macOS toolbar images and Windows glass integration |
+| Terminal Tab local hotfix | 2.5.102 | Same remaining paths, with the ImageRenderer direct Skia dependency removed |
+
+The Fluck image decoder and editor minimap calls were also confirmed with
+`javap -c` on the downloaded release artifacts. These are potential failures
+under 9.5.25's classloader restriction; no manual UI reproduction was performed.
+Error handling and feature/platform activation determine whether a blocked call
+crashes the plugin, shows an error, or affects only an optional feature.
+
+No other scanned dynamic plugin had direct references under these two package
+prefixes. This bytecode scan does not detect arbitrary reflective name assembly
+or prove all workflows work. The separate Terminal panel delegates through
+TerminalTabPluginAPI and therefore benefits from the terminal-tab fix without
+its own release. The host shared-package fix is still required to cover all
+of the direct rendering paths listed here.
