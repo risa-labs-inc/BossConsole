@@ -51,8 +51,13 @@ class CoordinationToolContractTest {
         boardFile = File(dir, AgentClaimStore.FILE_NAME)
         CoordinationMcpToolProvider.store = AgentClaimStore { boardFile }
         CoordinationMcpToolProvider.clock = { now }
+        // Collect `requests`, the flow a real window collects, and NOT `pendingList`. The two are
+        // not interchangeable: `requests` is backed by a Channel of capacity 4, so an approver
+        // watching only the StateFlow leaves that channel undrained and the FIFTH mutating call
+        // of the whole test fails with "MCP approval queue is full" however promptly it approves.
+        // No test here makes five yet, so this reads as a style choice and is not one.
         approver.launch {
-            approvalBus.pendingList.collect { pending -> pending.forEach { approvalBus.approve(it.id) } }
+            approvalBus.requests.collect { request -> approvalBus.approve(request.id) }
         }
     }
 
@@ -82,6 +87,9 @@ class CoordinationToolContractTest {
     private companion object {
         const val APPROVAL_TIMEOUT_MS = 5_000L
         const val SHORT_TIMEOUT_MS = 300L
+
+        /** Comfortably past the approval channel's capacity of four. */
+        const val BURST_WRITES = 8
     }
 
     // ------------------------------------------------------------- shape
@@ -323,6 +331,17 @@ class CoordinationToolContractTest {
     }
 
     private fun peersCount(raw: String): Int = (json.parseToJsonElement(raw) as JsonObject).int("peer_count")
+
+    @Test
+    fun `a burst of writes past the approval channel capacity all still reach the board`() {
+        // Pins the approver in setUp against the ceiling described there. Every test above makes
+        // at most three mutating calls, so without this the ceiling is invisible until somebody
+        // adds a fourth and meets "MCP approval queue is full" - which names the host's queue and
+        // reads as a governance fault rather than as a fault in the test's own operator stub.
+        repeat(BURST_WRITES) { i -> call("agent_claim", """{"agent_id":"burst-$i","task":"task $i"}""") }
+
+        assertEquals(BURST_WRITES, call("agent_peers", "{}").int("peer_count"))
+    }
 
     @Test
     fun `the host kill switch removes a coordination tool and refuses to invoke it`() {
