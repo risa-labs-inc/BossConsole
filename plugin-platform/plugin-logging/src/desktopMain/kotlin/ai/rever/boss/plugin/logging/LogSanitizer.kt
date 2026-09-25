@@ -2,6 +2,8 @@ package ai.rever.boss.plugin.logging
 
 import org.slf4j.LoggerFactory
 import java.net.URI
+import java.util.Collections
+import java.util.IdentityHashMap
 
 /**
  * Utilities for sanitizing sensitive data before logging.
@@ -773,5 +775,142 @@ object LogSanitizer {
             // so logging from here could recurse. The placeholder marks the failure.
             "[sanitization-error]"
         }
+    }
+
+    /**
+     * Sanitize a stack frame source file name by removing directory paths and sensitive data.
+     *
+     * In standard JVM stack traces, [StackTraceElement.getFileName] is a simple filename like
+     * `BossLogger.kt`. Hand-built or foreign stack frames may embed absolute or relative paths
+     * (e.g. `/Users/ci/keys.pem` or `C:\Users\secret\keys.pem`) or credential shapes.
+     *
+     * @param fileName The stack frame file name to sanitize
+     * @return The sanitized file name, or null if [fileName] was null
+     */
+    fun sanitizeFileName(fileName: String?): String? =
+        when {
+            fileName.isNullOrEmpty() -> {
+                fileName
+            }
+
+            fileName.contains('/') || fileName.contains('\\') -> {
+                "[PATH]"
+            }
+
+            else -> {
+                val sanitized = sanitizeExceptionMessage(fileName)
+                if (sanitized == "[no message]") fileName else sanitized
+            }
+        }
+
+    /**
+     * Sanitize a [StackTraceElement] by removing directory paths and sensitive data from its filename.
+     *
+     * If the frame's filename is null or already clean, returns the original frame.
+     * Otherwise reconstructs a new [StackTraceElement] with the sanitized filename.
+     *
+     * @param frame The stack trace element to sanitize
+     * @return The sanitized stack trace element
+     */
+    fun sanitizeStackTraceElement(frame: StackTraceElement): StackTraceElement {
+        val rawFileName = frame.fileName ?: return frame
+        val sanitizedFileName = sanitizeFileName(rawFileName)
+        return if (sanitizedFileName == rawFileName) {
+            frame
+        } else {
+            createStackTraceElement(frame, sanitizedFileName)
+        }
+    }
+
+    private fun createStackTraceElement(
+        frame: StackTraceElement,
+        sanitizedFileName: String?,
+    ): StackTraceElement =
+        if (frame.classLoaderName != null || frame.moduleName != null) {
+            StackTraceElement(
+                frame.classLoaderName,
+                frame.moduleName,
+                frame.moduleVersion,
+                frame.className,
+                frame.methodName,
+                sanitizedFileName,
+                frame.lineNumber,
+            )
+        } else {
+            StackTraceElement(
+                frame.className,
+                frame.methodName,
+                sanitizedFileName,
+                frame.lineNumber,
+            )
+        }
+
+    /**
+     * Sanitize a [Throwable] by wrapping it in a [SanitizedThrowable] with sanitized message,
+     * cause chain, suppressed exceptions, and stack trace frames.
+     *
+     * Preserves the original exception type name, frame class/method names, and line numbers while
+     * replacing directory paths in frame filenames (such as `/Users/ci/keys.pem`) with `[PATH]`.
+     * Guards against cyclic cause chains via an identity-visited set.
+     *
+     * @param error The throwable to sanitize
+     * @return The sanitized throwable, or null if [error] was null
+     */
+    fun sanitizeThrowable(error: Throwable?): Throwable? =
+        when {
+            error == null -> null
+            error is SanitizedThrowable -> error
+            else -> sanitizeThrowableInternal(error, Collections.newSetFromMap(IdentityHashMap()))
+        }
+
+    private fun sanitizeThrowableInternal(
+        error: Throwable?,
+        visited: MutableSet<Throwable>,
+    ): Throwable? {
+        if (error == null || !visited.add(error)) return null
+
+        val originalClassName = (error as? SanitizedThrowable)?.originalClassName ?: error.javaClass.name
+        val sanitizedMessage = error.message?.let { sanitizeExceptionMessage(it) }
+        val sanitizedCause = error.cause?.let { sanitizeThrowableInternal(it, visited) }
+
+        val sanitized =
+            SanitizedThrowable(
+                originalClassName = originalClassName,
+                sanitizedMessage = sanitizedMessage,
+                cause = sanitizedCause,
+            )
+
+        sanitized.stackTrace = error.stackTrace.map { sanitizeStackTraceElement(it) }.toTypedArray()
+
+        for (suppressed in error.suppressed) {
+            val sanitizedSuppressed = sanitizeThrowableInternal(suppressed, visited)
+            if (sanitizedSuppressed != null) {
+                sanitized.addSuppressed(sanitizedSuppressed)
+            }
+        }
+
+        return sanitized
+    }
+}
+
+/**
+ * A [Throwable] wrapper whose message and stack trace frames have been sanitized.
+ *
+ * Preserves [originalClassName] so that [toString] and [Throwable.printStackTrace]
+ * report the true exception type (e.g. `java.io.FileNotFoundException`) rather than
+ * erasing exception classification across log listeners and crash reporters.
+ *
+ * @param originalClassName The fully qualified class name of the original throwable
+ * @param sanitizedMessage The sanitized exception message, or null if original had none
+ * @param cause The sanitized cause, or null
+ */
+class SanitizedThrowable(
+    val originalClassName: String,
+    sanitizedMessage: String?,
+    cause: Throwable? = null,
+) : Throwable(sanitizedMessage, cause) {
+    override fun toString(): String {
+        val msg = localizedMessage
+        return if (msg != null) "$originalClassName: $msg" else originalClassName
     }
 }

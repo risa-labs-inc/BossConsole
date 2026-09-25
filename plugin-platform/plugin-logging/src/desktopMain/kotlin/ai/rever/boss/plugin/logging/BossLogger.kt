@@ -552,52 +552,22 @@ object BossLogger {
             return
         }
 
+        val sanitizedError = entry.error?.let { LogSanitizer.sanitizeThrowable(it) }
+        val sanitizedEntry = if (sanitizedError === entry.error) entry else entry.copy(error = sanitizedError)
+
         // Store in recent logs
         synchronized(recentLogsLock) {
             if (recentLogs.size >= MAX_LOG_ENTRIES) {
                 recentLogs.removeFirst()
             }
-            recentLogs.addLast(entry)
+            recentLogs.addLast(sanitizedEntry)
         }
 
-        // Format message for SLF4J
-        val formattedMessage =
-            buildString {
-                append("[${entry.category}]")
-                append(" ${entry.component}: ${entry.message}")
-                if (entry.data != null) {
-                    append(" | ${entry.data}")
-                }
-            }
-
-        // Log to SLF4J (which outputs to stdout, captured by GlobalLogCapture)
-        when (entry.level) {
-            LogLevel.TRACE -> {
-                slf4jLogger.trace(formattedMessage, entry.error)
-            }
-
-            LogLevel.DEBUG -> {
-                slf4jLogger.debug(formattedMessage, entry.error)
-            }
-
-            LogLevel.INFO -> {
-                slf4jLogger.info(formattedMessage, entry.error)
-            }
-
-            LogLevel.WARN -> {
-                slf4jLogger.warn(formattedMessage, entry.error)
-            }
-
-            LogLevel.ERROR -> {
-                slf4jLogger.error(formattedMessage, entry.error)
-            }
-
-            LogLevel.OFF -> { /* no-op */ }
-        }
+        logToSlf4j(sanitizedEntry)
 
         // Queue for async file logging
-        if (writesToFile(entry.level)) {
-            val result = fileWriteChannel.trySend(entry)
+        if (writesToFile(sanitizedEntry.level)) {
+            val result = fileWriteChannel.trySend(sanitizedEntry)
             if (result.isFailure) {
                 val count = droppedLogCount.incrementAndGet()
                 val now = System.currentTimeMillis()
@@ -609,7 +579,7 @@ object BossLogger {
         }
 
         // Notify listeners
-        notifyListeners(entry)
+        notifyListeners(sanitizedEntry)
     }
 
     /**
@@ -702,6 +672,41 @@ object BossLogger {
             disableFileLogging()
         } catch (e: Exception) {
             slf4jLogger.warn("Failed to rotate log files: ${e.message}")
+        }
+    }
+
+    private fun logToSlf4j(entry: LogEntry) {
+        val formattedMessage =
+            buildString {
+                append("[${entry.category}]")
+                append(" ${entry.component}: ${entry.message}")
+                if (entry.data != null) {
+                    append(" | ${entry.data}")
+                }
+            }
+
+        when (entry.level) {
+            LogLevel.TRACE -> {
+                slf4jLogger.trace(formattedMessage, entry.error)
+            }
+
+            LogLevel.DEBUG -> {
+                slf4jLogger.debug(formattedMessage, entry.error)
+            }
+
+            LogLevel.INFO -> {
+                slf4jLogger.info(formattedMessage, entry.error)
+            }
+
+            LogLevel.WARN -> {
+                slf4jLogger.warn(formattedMessage, entry.error)
+            }
+
+            LogLevel.ERROR -> {
+                slf4jLogger.error(formattedMessage, entry.error)
+            }
+
+            LogLevel.OFF -> { /* no-op */ }
         }
     }
 
