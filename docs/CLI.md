@@ -333,7 +333,7 @@ $ echo $?
 
 PowerShell: use `--stdin` for JSON on Windows PowerShell 5.1 or legacy native argument passing, which can strip embedded quotes from `--args`. PowerShell 7.3+ uses Standard argument passing in this launcher. Packaged Windows console I/O still requires platform verification.
 
-cmd: `boss.bat` refuses an argument with a double quote inside it, because cmd would run what follows the quote (#1617). Quote whole arguments only. The arguments after `status`, `doctor`, `mcp` and `completion` are passed on untouched, so `boss mcp invoke search_workspace --args {"query":"x"}` works. For a `terminal -c` command that needs a quote, use `boss.ps1`.
+cmd: `boss.bat` refuses an argument with a double quote inside it, because cmd would run what follows the quote (#1617). Quote whole arguments only. The arguments after `status`, `doctor`, `mcp` and `completion` keep whole-argument quotes, so `boss mcp invoke search_workspace --args {"query":"x"}` works. Those commands pass through cmd's `%*` expansion, so an unquoted `&`, `|`, `<`, `>`, or `^` in their forwarded tails is refused; quote the whole argument or use `boss.ps1` when literal shell syntax is required (#1673). Every `plugin` invocation uses the same metacharacter rule because the launcher cannot know whether that command will forward until after validating its arguments. `plugin` also retains the stricter whole-argument quote rule because it may inspect `%~2` and `%~3` before forwarding. For a `terminal -c` command that needs a quote, use `boss.ps1`.
 
 Registry access before sign-in follows the existing host policy: tools without required permissions or an admin requirement remain available. For an admin operator, the per-tool disabled switch is the remaining registry access control.
 
