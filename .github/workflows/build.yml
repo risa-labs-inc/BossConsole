@@ -53,11 +53,9 @@ jobs:
       - name: Headless CLI launcher tests
         run: bash scripts/test/test-headless-cli.sh
 
-      - name: 🧪 boss.bat :urlencode injection regression (#1057)
-        # The shipped Windows CLI shim interpolated the CLI argument into a
-        # single-quoted PowerShell string; one quote in any argument executed
-        # attacker PowerShell. Source-shape checks run everywhere; the live
-        # probes need cmd.exe and skip where it is absent.
+      - name: 🧪 Windows launcher argument handling tests (#1057, #1617)
+        # Source-shape checks and live PowerShell routing checks run everywhere;
+        # the live cmd.exe probes run on Windows in windows-script-tests.
         run: pwsh -NoProfile -File scripts/test/test-boss-bat-urlencode.ps1
 
       - name: 🧪 Release publish — TUS slice tests
@@ -179,6 +177,18 @@ jobs:
         # an optional ARM64 asset that was never built (a live 404), and a
         # pre-release page whose "always latest" links point at an older stable.
         run: bash scripts/test/test-release-download-table.sh
+
+  windows-script-tests:
+    name: 🪟 Windows Launcher Tests
+    runs-on: windows-latest
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: 🧪 Windows boss.bat launcher tests (#1057, #1617)
+        # Runs the end-to-end Windows launcher suite on the real cmd.exe and
+        # pwsh to verify argument parsing, command forwarding, and injection guards.
+        run: pwsh -NoProfile -File scripts/test/test-boss-bat-urlencode.ps1
 
   version-check:
     runs-on: ubuntu-latest
@@ -497,7 +507,7 @@ jobs:
 
   build-summary:
     if: ${{ !cancelled() }}
-    needs: [version-check, script-tests, build-test, code-quality, compatibility-test, database-tests, boss-ai-tests]
+    needs: [version-check, script-tests, windows-script-tests, build-test, code-quality, compatibility-test, database-tests, boss-ai-tests]
     runs-on: ubuntu-latest
 
     steps:
@@ -514,6 +524,7 @@ jobs:
           echo "### 📋 Job Results" >> $GITHUB_STEP_SUMMARY
           echo "- **Version Check**: ${{ needs.version-check.result }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Shell Script Tests**: ${{ needs.script-tests.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Windows Launcher Tests**: ${{ needs.windows-script-tests.result }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Build & Test**: ${{ needs.build-test.result }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Code Quality**: ${{ needs.code-quality.result }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Compatibility Test**: ${{ needs.compatibility-test.result }}" >> $GITHUB_STEP_SUMMARY
@@ -521,7 +532,7 @@ jobs:
           echo "- **BOSS AI contracts**: ${{ needs.boss-ai-tests.result }}" >> $GITHUB_STEP_SUMMARY
 
           # Overall status
-          if [[ "${{ needs.version-check.result }}" == "success" && "${{ needs.script-tests.result }}" == "success" && "${{ needs.build-test.result }}" == "success" && "${{ needs.code-quality.result }}" == "success" && "${{ needs.compatibility-test.result }}" == "success" && "${{ needs.database-tests.result }}" == "success" && "${{ needs.boss-ai-tests.result }}" == "success" ]]; then
+          if [[ "${{ needs.version-check.result }}" == "success" && "${{ needs.script-tests.result }}" == "success" && "${{ needs.windows-script-tests.result }}" == "success" && "${{ needs.build-test.result }}" == "success" && "${{ needs.code-quality.result }}" == "success" && "${{ needs.compatibility-test.result }}" == "success" && "${{ needs.database-tests.result }}" == "success" && "${{ needs.boss-ai-tests.result }}" == "success" ]]; then
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "🎉 **Overall Status**: ✅ SUCCESS" >> $GITHUB_STEP_SUMMARY
           else
