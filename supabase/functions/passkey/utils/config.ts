@@ -240,3 +240,17 @@ export function getAllowedRpIds(): string[] {
 
   return Array.from(allowed)
 }
+
+/**
+ * The legacy registration page may claim an unbound challenge for clients
+ * released before registration sessions were bound at issuance. Deployments
+ * can disable that compatibility path immediately without a code rollout.
+ */
+export function isLegacyMobileRegistrationEnabled(): boolean {
+  const configured = Deno.env
+    .get("PASSKEY_LEGACY_MOBILE_REGISTRATION_ENABLED")
+    ?.trim()
+    .toLowerCase()
+
+  return !configured || !['false', '0', 'no', 'off'].includes(configured)
+}

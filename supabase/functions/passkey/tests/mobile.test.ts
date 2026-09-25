@@ -6,8 +6,12 @@ import { assertEquals, assertExists, assertStringIncludes } from "jsr:@std/asser
 import { OpenAPIHono } from "@hono/zod-openapi"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { PasskeyContext } from "../types/context.ts"
-import { generateMobileRegistrationPage, generateMobileAuthenticationPage } from "../services/mobile.ts"
-import { maskUserId } from "../utils/logging.ts"
+import {
+  generateLegacyMobileRegistrationPage,
+  generateMobileAuthenticationPage,
+  generateMobileRegistrationPage
+} from "../services/mobile.ts"
+import { maskSessionId, maskUserId } from "../utils/logging.ts"
 import mobile from "../routes/mobile.ts"
 import { createMockSupabaseClient, mockChallenge, mockPasskey } from "./helpers/mocks.ts"
 
@@ -473,7 +477,7 @@ Deno.test("generateMobileAuthenticationPage - should return credential metadata"
   }
 })
 
-Deno.test("GET /register/mobile - a request-supplied rpName cannot spoof the relying party name", async () => {
+Deno.test("GET /register/mobile/v2 - a request-supplied rpName cannot spoof the relying party name", async () => {
   const mockClient = createMockSupabaseClient()
 
   mockClient.mockResponse('passkey_challenges', {
@@ -499,7 +503,7 @@ Deno.test("GET /register/mobile - a request-supplied rpName cannot spoof the rel
   app.route("/", mobile)
 
   const response = await app.request(
-    "/register/mobile?challenge=mock-challenge-base64&email=test@example.com" +
+    "/register/mobile/v2?challenge=mock-challenge-base64&email=test@example.com" +
     "&sessionId=session-123&rpId=api.risaboss.com&rpName=Microsoft%20Security"
   )
 
@@ -563,6 +567,58 @@ Deno.test("generateMobileRegistrationPage - logs carry no raw email or user id",
     assertEquals(line.includes('user-456'), false, `log leaked raw user id: ${line}`)
   }
 })
+
+Deno.test("generateLegacyMobileRegistrationPage - logs a masked successful claim", async () => {
+  const client = createMockSupabaseClient()
+  const sessionId = 'legacy-session-secret'
+  client.mockResponse('passkey_challenges', {
+    data: {
+      ...mockChallenge,
+      type: 'registration',
+      session_id: null,
+      expires_at: new Date(Date.now() + 60000).toISOString()
+    },
+    error: null
+  }, 'select')
+  client.mockResponse('passkey_challenges', {
+    data: {
+      ...mockChallenge,
+      type: 'registration',
+      session_id: sessionId,
+      status: 'in_progress'
+    },
+    error: null
+  }, 'update', {
+    match: { session_id: null }
+  })
+
+  const warnings: string[] = []
+  const originalWarn = console.warn
+  console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(' '))
+  try {
+    const result = await generateLegacyMobileRegistrationPage(
+      client as unknown as SupabaseClient,
+      'mock-challenge-base64',
+      'test@example.com',
+      sessionId,
+      'api.risaboss.com'
+    )
+    assertEquals(result.success, true)
+  } finally {
+    console.warn = originalWarn
+  }
+
+  assertExists(
+    warnings.find(line =>
+      line.includes('Legacy registration challenge claimed for session:') &&
+      line.includes(maskSessionId(sessionId))
+    )
+  )
+  for (const line of warnings) {
+    assertEquals(line.includes(sessionId), false, `log leaked raw session id: ${line}`)
+  }
+})
+
 // A direct authentication challenge can be issued without a session. The
 // public page must not convert it into a cross-device handoff by supplying a
 // session in the URL; the same rule protects registration challenges created

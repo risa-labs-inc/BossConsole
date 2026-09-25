@@ -72,7 +72,7 @@ class DesktopPasskeyService : PasskeyService {
                 // Build server WebAuthn registration URL using RESTful endpoint
                 val baseUrl = getSupabaseFunctionUrl()
                 val registrationUrl =
-                    "$baseUrl/passkey/register/mobile?" +
+                    "$baseUrl/passkey/register/mobile/v2?" +
                         "challenge=${URLEncoder.encode(challengeB64, "UTF-8")}&" +
                         "email=${URLEncoder.encode(displayName, "UTF-8")}&" +
                         "sessionId=${URLEncoder.encode(sessionId, "UTF-8")}&" +
