@@ -9,9 +9,18 @@ import kotlin.test.assertTrue
 class IpcVersionTest {
     @Test
     fun `authenticated runtime minimum refuses pre-authentication hosts`() {
-        assertEquals("1.4.0", IpcVersion.CURRENT)
-        assertTrue(IpcVersion.isCompatible("1.4.0", "1.3.0") is IpcVersion.CompatResult.Incompatible)
-        assertEquals(IpcVersion.CompatResult.Compatible, IpcVersion.isCompatible("1.3.0", "1.4.0"))
+        assertEquals("1.5.0", IpcVersion.CURRENT)
+        assertTrue(IpcVersion.isCompatible("1.5.0", "1.4.0") is IpcVersion.CompatResult.Incompatible)
+        assertEquals(IpcVersion.CompatResult.Compatible, IpcVersion.isCompatible("1.4.0", "1.5.0"))
+    }
+
+    @Test
+    fun `mastery pure field is pinned at 1_5_0`() {
+        // MasteryNode.pure (field 11) is part of the wire contract from 1.5.0 on.
+        assertEquals("1.5.0", IpcVersion.CURRENT)
+        assertEquals(IpcVersion.CompatResult.Compatible, IpcVersion.isCompatible("1.5.0"))
+        assertEquals(IpcVersion.CompatResult.Compatible, IpcVersion.isCompatible("1.4.0"))
+        assertTrue(IpcVersion.isCompatible("1.5.0", "1.4.0") is IpcVersion.CompatResult.Incompatible)
     }
 
     @Test

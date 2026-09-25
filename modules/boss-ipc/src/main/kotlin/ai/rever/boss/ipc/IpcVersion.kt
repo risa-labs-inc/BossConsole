@@ -35,6 +35,11 @@ object IpcVersion {
      * Current IPC contract version of this host build.
      *
      * History:
+     * - 1.5.0 - MasteryNode gains additive field 11 `pure`, which exempts a node from
+     *   the blocked-edge veto on fan-in. A peer built before 1.5.0 ignores the unknown
+     *   field and reads `pure = false`, the fail-closed default (the node is vetoed).
+     *   Rebased note: this field originally bumped 1.3.0 to 1.4.0; dev's `CloseInput`
+     *   RPC took 1.4.0 in the meantime, so the fresh minor for field 11 is 1.5.0.
      * - 1.4.0 - additive `TerminalService.CloseInput` RPC delivers stdin EOF to a session
      *   without terminating it, so a caller can let a stdin-consuming one-shot command (sort,
      *   grep, cat with no args, ...) exit on its own. Like 1.0.0 below, this bump is not a
@@ -59,7 +64,7 @@ object IpcVersion {
      *   issue #743 for the rollback rationale (terminal-tab pivoted to
      *   in-process in PR #742).
      */
-    const val CURRENT: String = "1.4.0"
+    const val CURRENT: String = "1.5.0"
 
     /**
      * Parse a semver string into (major, minor, patch). Trailing

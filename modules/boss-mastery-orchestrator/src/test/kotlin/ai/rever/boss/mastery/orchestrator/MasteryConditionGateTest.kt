@@ -6,24 +6,21 @@ import ai.rever.boss.ipc.proto.MasteryNode
 import ai.rever.boss.mastery.CapabilityInfo
 import ai.rever.boss.mastery.CapabilityResolver
 import ai.rever.boss.mastery.MasteryExecutor
-import io.grpc.Status
-import io.grpc.StatusRuntimeException
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 
 /**
  * #1060: MasteryEdge.condition is documented as "must be true for this edge to
- * be followed" but the executor resolves dependencies purely topologically and
- * never evaluates it - a conditioned edge would run its guarded node
- * unconditionally. Until an expression language exists, createMastery refuses
- * definitions carrying a condition instead of silently violating the schema
- * contract.
+ * be followed". The executor evaluates it (fail closed) and createMastery
+ * validates the condition syntax instead of refusing the whole definition -
+ * the blanket refusal was the earlier stopgap while no evaluator existed.
+ * Malformed conditions are still refused loudly at creation time; that gate
+ * is pinned in MasteryServiceConditionTest.
  */
 class MasteryConditionGateTest {
     @Test
-    fun `a definition with a conditioned edge is refused at create time`() =
+    fun `a definition with a conditioned edge passes the create-time condition gate`() =
         runBlocking {
             val guarded =
                 MasteryDefinition
@@ -51,9 +48,8 @@ class MasteryConditionGateTest {
 
             val service = MasteryServiceImpl(MasteryExecutor(RecordingResolver()))
 
-            val ex = assertFailsWith<StatusRuntimeException> { service.createMastery(guarded) }
-            assertEquals(Status.Code.INVALID_ARGUMENT, ex.status.code)
-            assertEquals(true, ex.status.description!!.contains("condition"))
+            val created = service.createMastery(guarded)
+            assertEquals(true, created.id.isNotBlank())
         }
 
     @Test

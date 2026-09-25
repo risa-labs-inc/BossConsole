@@ -18,6 +18,7 @@ import ai.rever.boss.ipc.proto.NodeCompleted
 import ai.rever.boss.ipc.proto.NodeFailed
 import ai.rever.boss.ipc.proto.NodeSkipped
 import ai.rever.boss.ipc.proto.NodeStarted
+import ai.rever.boss.mastery.MasteryEdgeCondition
 import ai.rever.boss.mastery.MasteryExecutor
 import io.grpc.Status
 import kotlinx.coroutines.CancellationException
@@ -243,6 +244,7 @@ private fun PMasteryDef.toKotlin(): KMasteryDef =
                     maxRetries = n.maxRetries,
                     timeoutMs = n.timeoutMs.takeIf { it > 0 } ?: 300_000L,
                     displayName = n.displayName,
+                    pure = n.pure,
                 )
             },
         edges =
@@ -286,6 +288,7 @@ private fun KMasteryDef.toProto(): PMasteryDef {
                 .setMaxRetries(n.maxRetries)
                 .setTimeoutMs(n.timeoutMs)
                 .setDisplayName(n.displayName)
+                .setPure(n.pure)
                 .build(),
         )
     }
@@ -387,14 +390,14 @@ internal fun KProgress.toProto(executionId: String): PProgress {
 }
 
 /**
- * Validates one definition's encoded size, node count, retry count and timeout bounds.
+ * Validates one definition's encoded size, node count, retry count, timeout
+ * bounds and edge-condition syntax.
  *
- * Edge `condition` (and the equally unevaluated `outputKey`/`inputKey` pair) are rejected
- * rather than accepted-and-ignored: the executor resolves dependencies purely
- * topologically and never evaluates edge expressions, so a definition carrying a
- * condition would run its guarded nodes unconditionally (#1060). Refusing the
- * definition keeps the schema's documented contract honest until an expression
- * language actually exists.
+ * Guard syntax is checked here — with [MasteryEdgeCondition]'s own parser —
+ * so a malformed condition fails loudly at creation time instead of turning
+ * into a quiet runtime skip; the executor's fail-closed runtime skip stays
+ * in place as a backstop for definitions that reach execution by other
+ * paths.
  */
 private fun validateDefinition(request: PMasteryDef) {
     validateArgument(request.id.length <= 200 && request.name.length <= 512 && request.author.length <= 512) {
@@ -407,10 +410,11 @@ private fun validateDefinition(request: PMasteryDef) {
     validateArgument(request.nodesList.all { it.maxRetries in 0..5 && it.timeoutMs in 0..300_000 }) {
         "Mastery nodes support at most 5 retries and a 5-minute timeout"
     }
-    validateArgument(request.edgesList.none { it.condition.isNotBlank() }) {
-        "Mastery edge conditions are not supported yet: the executor does not evaluate " +
-            "them, so a conditioned edge would run its target node unconditionally. " +
-            "Remove the condition or split the workflow (#1060)"
+    for (edge in request.edgesList) {
+        val syntaxError = MasteryEdgeCondition.syntaxError(edge.condition)
+        validateArgument(syntaxError == null) {
+            "Edge '${edge.fromNode}' -> '${edge.toNode}' has an invalid condition: $syntaxError"
+        }
     }
 }
 

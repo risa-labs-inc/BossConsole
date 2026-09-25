@@ -58,6 +58,10 @@ message MasteryNode {
   int32 max_retries = 8;
   int64 timeout_ms = 9;       // Per-node timeout (default: 300000 = 5 min)
   string display_name = 10;
+  // Declares the node has no external side effects (mastery-unlock pattern).
+  // Side-effecting nodes are vetoed when any incoming edge is blocked, even
+  // if another edge is followed; pure nodes keep any-admit fan-in.
+  bool pure = 11;
 }
 
 message MasteryEdge {
