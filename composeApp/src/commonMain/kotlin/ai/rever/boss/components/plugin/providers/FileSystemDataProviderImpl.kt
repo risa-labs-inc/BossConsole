@@ -21,6 +21,158 @@ import java.nio.file.Path
 import ai.rever.boss.components.plugin.panels.left_top.scanDirectoryWithDepth as platformScanDirectoryWithDepth
 
 /**
+ * Delete a path below [homeDirectory] without permitting the home root itself or following
+ * directory symlinks encountered during recursion.
+ *
+ * Canonical paths enforce the containment boundary. Deletion deliberately uses the original path
+ * with NIO's default no-follow walk so a nested link is removed as an entry, never traversed into.
+ */
+internal fun deleteUserPath(
+    file: File,
+    homeDirectory: File,
+): Result<Unit> =
+    runCatching {
+        // A symlink at the walk root is deleted as a link, never followed.
+        // `toRealPath()` (used below for the containment check) resolves symlinks,
+        // so without this guard a `delete home/link` call would `Files.walk` the
+        // symlink's TARGET and erase that tree. The user asked to unlink the link,
+        // and that is all the user asked for.
+        val filePath = file.toPath()
+        if (Files.isSymbolicLink(filePath)) {
+            check(homeDirectory.toPath() != filePath) {
+                "Access denied: refusing to delete the user home directory"
+            }
+            // Walk the link's target chain through the cycle-limited resolver. A loop
+            // (e.g. `home/a -> b`, `home/b -> a`) trips `MAX_SYMLINK_HOPS` and throws
+            // `SecurityException`, refusing the call rather than unlinking one side of
+            // the cycle. A chain that resolves to a real (or missing) path returns
+            // cleanly and the unlink proceeds; only a loop is refused.
+            resolveSymlinksFirst(filePath)
+            Files.deleteIfExists(filePath)
+            return@runCatching
+        }
+
+        // The containment check AND the walk must agree byte-for-byte on what path
+        // they are operating on. Both have to resolve symlinks BEFORE lexical `..`
+        // resolution, so a request like `home/link/../<sibling>` (with `link` pointing
+        // outside home) is seen as `<sibling-of-link-target>` and refused, not as
+        // `home/<sibling>` and admitted. `Path.toRealPath()` happens to do this on
+        // POSIX (the OS walks the link before applying `..`), but on Windows the
+        // path parser applies `..` lexically FIRST and only then opens the file -
+        // so a `home/link/../canary` where `link -> outside` would resolve to
+        // `home/canary` (a real file the OS can open), the containment check would
+        // admit it as in-scope, and the walk would erase it. Walk the components
+        // ourselves so the order is right on both platforms, and fall back to
+        // `toRealPath()` if the path doesn't exist (the containment check has
+        // nothing to refuse on a missing file).
+        val canonicalFile =
+            runCatching { resolveSymlinksFirst(filePath) }
+                .getOrElse { runCatching { filePath.toRealPath() }.getOrElse { file.canonicalFile.toPath() } }
+        val canonicalHome = homeDirectory.canonicalFile.toPath()
+        if (canonicalFile == canonicalHome) {
+            throw SecurityException("Access denied: refusing to delete the user home directory")
+        }
+        if (!canonicalFile.startsWith(canonicalHome)) {
+            throw SecurityException("Access denied: file path outside user directory")
+        }
+        // Belt and braces: also require the OS-canonical view (`toRealPath()`, when the path
+        // exists) to be inside home. `resolveSymlinksFirst` walks the components by hand to
+        // match Windows' lexical `..` before link, but `toRealPath()` agrees with the OS for
+        // POSIX and the canonical-file view for Windows; refusing on EITHER catches a
+        // disagreement - e.g. a symlink we missed, or a case the recursive walk handled
+        // differently. Both views must agree the path is inside home.
+        runCatching { filePath.toRealPath() }.getOrNull()?.let { osResolved ->
+            if (osResolved == canonicalHome || !osResolved.startsWith(canonicalHome)) {
+                throw SecurityException("Access denied: file path outside user directory")
+            }
+        }
+
+        val target = canonicalFile
+        val deleted =
+            if (Files.isDirectory(target, LinkOption.NOFOLLOW_LINKS)) {
+                Files.walk(target).use { paths ->
+                    paths.sorted(Comparator.reverseOrder()).forEach { Files.delete(it) }
+                }
+                true
+            } else {
+                Files.deleteIfExists(target)
+            }
+
+        check(deleted) { "Failed to delete (file may not exist or is locked): $file" }
+    }
+
+/**
+ * Maximum number of symlink hops to follow before refusing as a cycle. Matches the `realpath(3)`
+ * default on most systems; long enough for ordinary chained links, short enough to bound a cycle.
+ */
+private const val MAX_SYMLINK_HOPS = 40
+
+/**
+ * Resolve a path by walking each component and following any symlink BEFORE applying `..` or
+ * appending the next component. Mirrors POSIX `realpath(3)` and the behaviour `toRealPath()`
+ * gives on POSIX; on Windows the OS path parser cancels `link/..` lexically first, which is
+ * the wrong order for a containment check, so we do the walk by hand.
+ *
+ * When a component is a symlink, its target is resolved (relative targets against the link's
+ * parent), and the result is then walked the same way - so a relative target like `../outside`
+ * has its `..` applied against the link's parent, NOT left as a literal segment in the
+ * accumulated path. Chained links fall out of the recursion; cycles hit [MAX_SYMLINK_HOPS].
+ *
+ * A missing component stops the walk and leaves the path as-is - the caller (the containment
+ * check) decides whether to admit it.
+ */
+private fun resolveSymlinksFirst(
+    path: Path,
+    hopsRemaining: Int = MAX_SYMLINK_HOPS,
+): Path {
+    if (hopsRemaining <= 0) {
+        throw SecurityException("Symlink chain exceeded $MAX_SYMLINK_HOPS hops (cycle?)")
+    }
+    val absolute = path.toAbsolutePath()
+    val root = absolute.root ?: return absolute
+    var resolved = root
+    for (i in 0 until absolute.nameCount) {
+        resolved = stepSymlinkAware(resolved, absolute.getName(i).toString(), hopsRemaining)
+    }
+    return resolved
+}
+
+private fun stepSymlinkAware(
+    resolved: Path,
+    component: String,
+    hopsRemaining: Int,
+): Path =
+    when {
+        component == "" || component == "." -> {
+            resolved
+        }
+
+        component == ".." -> {
+            resolved.parent ?: resolved
+        }
+
+        Files.isSymbolicLink(resolved.resolve(component)) -> {
+            val link = resolved.resolve(component)
+            val target = Files.readSymbolicLink(link)
+            // Resolve the target's OWN components too: a relative target like `../outside`
+            // is resolved against `link.parent`, then re-walked so its `..` is applied
+            // there. An absolute target is re-walked from the root, which catches any
+            // further symlinks and `..` it carries.
+            val linkTarget =
+                if (target.isAbsolute) {
+                    target.toAbsolutePath().normalize()
+                } else {
+                    link.parent.resolve(target).normalize()
+                }
+            resolveSymlinksFirst(linkTarget, hopsRemaining - 1)
+        }
+
+        else -> {
+            resolved.resolve(component)
+        }
+    }
+
+/**
  * Implementation of FileSystemDataProvider that wraps platform-specific file operations.
  * This allows plugins to access file system without direct platform coupling.
  */
@@ -169,39 +321,13 @@ class FileSystemDataProviderImpl(
         }
     }
 
-    override suspend fun delete(path: String): Result<Unit> {
-        return kotlinx.coroutines.withContext(Dispatchers.IO) {
-            try {
-                val file = java.io.File(path)
-
-                // Security: Validate path is within user's home directory (prevent path traversal)
-                val canonicalFile = file.canonicalFile
-                val homeDir = File(System.getProperty("user.home")).canonicalFile
-                if (!canonicalFile.absolutePath.startsWith(homeDir.absolutePath + File.separator) &&
-                    canonicalFile.absolutePath != homeDir.absolutePath
-                ) {
-                    return@withContext Result.failure(SecurityException("Access denied: file path outside user directory"))
-                }
-
-                // Note: We don't check exists() first to avoid race conditions.
-                // delete() and deleteRecursively() handle non-existent files gracefully.
-                val deleted =
-                    if (file.isDirectory) {
-                        file.deleteRecursively()
-                    } else {
-                        file.delete()
-                    }
-
-                if (deleted) {
-                    Result.success(Unit)
-                } else {
-                    Result.failure(IllegalStateException("Failed to delete (file may not exist or is locked): $path"))
-                }
-            } catch (e: Exception) {
-                Result.failure(e)
-            }
+    override suspend fun delete(path: String): Result<Unit> =
+        kotlinx.coroutines.withContext(Dispatchers.IO) {
+            deleteUserPath(
+                file = File(path),
+                homeDirectory = File(System.getProperty("user.home")),
+            )
         }
-    }
 
     override suspend fun rename(
         path: String,
