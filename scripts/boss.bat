@@ -53,7 +53,8 @@ if exist "%BOSS_ARGS_DIR%\args.txt" for /f "usebackq delims=" %%L in ("%BOSS_ARG
 rd /s /q "%BOSS_ARGS_DIR%" >nul 2>&1
 :check_args
 call :check_arg_quotes || exit /b 1
-REM The forwarded commands pass %* on, and the child has no use for these.
+REM The forwarded commands pass %* on after :check_arg_quotes has also
+REM refused unquoted cmd control characters in their argument tail.
 set "BOSS_RAW_ARGS="
 set "BOSS_ARGS_DIR="
 set "BOSS_ARGS_TRIES="
@@ -245,11 +246,14 @@ REM path or a URL needs, and it leaves no %~N that can carry a quote into the
 REM quoted reads above. So a " may only open at the start or after a space, and
 REM only close at the end or before a space. Delayed expansion is on here only:
 REM the value is already in a variable, and !var! reads are never re-parsed.
-REM The first argument is always checked. status, doctor, mcp and completion
-REM hand the rest to BOSS.exe as a bare %*, which cmd re-reads exactly as the
-REM caller's line was read, and nothing reads it through %~N first - so their
-REM arguments may hold quotes, as `boss mcp invoke tool --args {"q":"x"}` does.
-REM plugin is not one of them: it reads %~2 and %~3 before it forwards.
+REM The first argument is always checked. status, doctor, mcp, completion and
+REM plugin may hand arguments to BOSS.exe as a bare %*, which cmd parses again.
+REM Their argument tails may hold quotes, as
+REM `boss mcp invoke tool --args {"q":"x"}` does, but an unquoted ^&, ^|, ^<, ^>
+REM or caret is refused before the second parse can interpret it (#1673).
+REM plugin keeps the strict quote grammar because it reads %~2 and %~3 before
+REM deciding whether to forward, but its forwarded tail still needs the
+REM metacharacter guard.
 :check_arg_quotes
 setlocal EnableDelayedExpansion
 if not defined BOSS_RAW_ARGS (
@@ -273,29 +277,74 @@ for %%P in (4096 2048 1024 512 256 128 64 32 16 8 4 2 1) do if not "!s:~%%P,1!"=
 )
 set /a "last=len-1"
 set q=^"
+set caret=^^
+set "tab=	"
 set "open="
 set "prev= "
 set "bad="
+set "badMeta="
 set "first="
-set "done="
-for /l %%i in (0,1,!last!) do if not defined bad if not defined done (
+set "token="
+set "tokenStarted="
+set "tokenDone="
+set "forwarded="
+set "loose="
+for /l %%i in (0,1,!last!) do if not defined bad if not defined badMeta (
     set "c=!rest:~%%i,1!"
     if "!c!"=="!q!" (
-        if defined open (
-            set /a "n=%%i+1"
-            for %%n in (!n!) do set "next=!rest:~%%n,1!"
-            if defined next if not "!next!"==" " set "bad=1"
-            set "open="
+        set "looseQuote="
+        if defined loose if defined tokenDone set "looseQuote=1"
+        if defined looseQuote (
+            if defined open (
+                set "open="
+            ) else (
+                set "open=1"
+            )
         ) else (
-            if not "!prev!"==" " set "bad=1"
-            set "open=1"
+            if defined open (
+                set /a "n=%%i+1"
+                for %%n in (!n!) do set "next=!rest:~%%n,1!"
+                if defined next if not "!next!"==" " set "bad=1"
+                set "open="
+            ) else (
+                if not "!prev!"==" " set "bad=1"
+                set "open=1"
+            )
         )
     )
-    if not defined first if not defined open if "!c!"==" " if not "!prev!"==" " (
-        set "first=!rest:~0,%%i!"
-        if "!first:~0,1!"=="!q!" set "first=!first:~1!"
-        if "!first:~-1!"=="!q!" set "first=!first:~0,-1!"
-        for %%v in (status doctor mcp completion) do if /i "!first!"=="%%v" set "done=1"
+    set "isDelim="
+    if not defined open (
+        if "!c!"==" " set "isDelim=1"
+        if "!c!"=="!tab!" set "isDelim=1"
+        if "!c!"=="," set "isDelim=1"
+        if "!c!"==";" set "isDelim=1"
+        if "!c!"=="=" set "isDelim=1"
+    )
+    if not defined tokenDone (
+        if defined tokenStarted (
+            if defined isDelim (
+                set "first=!token!"
+                if "!first:~0,1!"=="!q!" set "first=!first:~1!"
+                if "!first:~-1!"=="!q!" set "first=!first:~0,-1!"
+                set "tokenDone=1"
+                for %%v in (status doctor mcp completion plugin) do if /i "!first!"=="%%v" set "forwarded=1"
+                for %%v in (status doctor mcp completion) do if /i "!first!"=="%%v" set "loose=1"
+            ) else (
+                set "token=!token!!c!"
+            )
+        ) else (
+            if not defined isDelim (
+                set "tokenStarted=1"
+                set "token=!c!"
+            )
+        )
+    )
+    if defined forwarded if defined tokenDone if not defined open (
+        if "!c!"=="&" set "badMeta=1"
+        if "!c!"=="|" set "badMeta=1"
+        if "!c!"=="<" set "badMeta=1"
+        if "!c!"==">" set "badMeta=1"
+        if "!c!"=="!caret!" set "badMeta=1"
     )
     set "prev=!c!"
 )
@@ -303,6 +352,11 @@ if defined bad (
     echo Error: an argument has a double quote inside it.
     echo Quote a whole argument, e.g. boss file "C:\My Files\a.txt". In a URL, write a quote as %%22.
     echo For a terminal command that needs a quote, run boss.ps1 instead.
+    endlocal & exit /b 1
+)
+if defined badMeta (
+    echo Error: command arguments contain an unquoted cmd control character.
+    echo Quote the whole argument, or run boss.ps1 when literal shell syntax is required.
     endlocal & exit /b 1
 )
 endlocal & exit /b 0

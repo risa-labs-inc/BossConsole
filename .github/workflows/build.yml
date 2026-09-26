@@ -53,7 +53,7 @@ jobs:
       - name: Headless CLI launcher tests
         run: bash scripts/test/test-headless-cli.sh
 
-      - name: 🧪 boss.bat :urlencode injection regression (#1057)
+      - name: 🧪 boss.bat argument injection regressions (#1057, #1673)
         # The shipped Windows CLI shim interpolated the CLI argument into a
         # single-quoted PowerShell string; one quote in any argument executed
         # attacker PowerShell. Source-shape checks run everywhere; the live
@@ -239,7 +239,7 @@ jobs:
       - name: 🧪 boss.bat live cmd.exe probes (Windows)
         # The script-tests job runs this script on Ubuntu, where only its
         # source-shape checks can run. Here the live probes and their mutation
-        # checks run on the real cmd.exe (#1617). A few seconds, and it
+        # checks run on the real cmd.exe (#1617, #1673). A few seconds, and it
         # runs before JDK and Gradle setup so a failure reports first.
         if: matrix.os == 'windows-latest'
         shell: pwsh

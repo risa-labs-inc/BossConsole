@@ -1,7 +1,8 @@
 ﻿#!/usr/bin/env pwsh
 <#
 .SYNOPSIS
-Regression tests for the boss.bat :urlencode and :detect_and_route subroutines (#1057, #1059).
+Regression tests for the boss.bat argument boundary, :urlencode and :detect_and_route
+subroutines (#1057, #1059, #1617, #1673).
 
 The :urlencode subroutine used to interpolate the raw CLI argument into a
 single-quoted PowerShell string literal:
@@ -115,6 +116,40 @@ Assert-True ($captureIdx -ge 0) 'the raw arguments are captured on an echoed REM
 Assert-True ($checkIdx -gt $captureIdx) 'call :check_arg_quotes runs after the capture (#1617)'
 Assert-True ($firstReadIdx -gt $checkIdx) `
     "no argument is read before :check_arg_quotes runs (first read: line $($firstReadIdx + 1): $(if ($firstReadIdx -ge 0) { $batLines[$firstReadIdx].Trim() }))"
+
+# Every command that can reach bare %* needs a pre-forwarding cmd-control
+# guard (#1673). Keep this source check on every platform; the Windows probe
+# below proves behavior.
+$checkStart = [array]::IndexOf($batLines, ':check_arg_quotes')
+$checkEnd = [array]::IndexOf($batLines, 'REM URL encode subroutine')
+Assert-True ($checkStart -ge 0 -and $checkEnd -gt $checkStart) `
+    ':check_arg_quotes block found for the forwarded-tail guard check'
+$checkBody = $batLines[$checkStart..($checkEnd - 1)] -join "`n"
+foreach ($operator in @('&', '|', '<', '>')) {
+    $comparison = 'if "!c!"=="' + $operator + '" set "badMeta=1"'
+    Assert-True ($checkBody.Contains($comparison)) `
+        ":check_arg_quotes refuses an unquoted $operator in a forwarded tail"
+}
+Assert-True ($checkBody.Contains('if "!c!"=="!caret!" set "badMeta=1"')) `
+    ':check_arg_quotes refuses an unquoted caret in a forwarded tail'
+foreach ($delimiter in @(' ', "`t", ',', ';', '=')) {
+    $comparison = 'if "!c!"=="' + $(if ($delimiter -eq "`t") { '!tab!' } else { $delimiter }) + '" set "isDelim=1"'
+    Assert-True ($checkBody.Contains($comparison)) `
+        ":check_arg_quotes recognizes cmd first-token delimiter $([int][char]$delimiter)"
+}
+Assert-True ($checkBody -notmatch '\bafterFirst\b') ':check_arg_quotes has no dead afterFirst state'
+Assert-True (
+    $checkBody.Contains(
+        'for %%v in (status doctor mcp completion plugin) do if /i "!first!"=="%%v" set "forwarded=1"'
+    )
+) ':check_arg_quotes protects every command that can forward through bare %*'
+Assert-True (
+    $checkBody.Contains(
+        'for %%v in (status doctor mcp completion) do if /i "!first!"=="%%v" set "loose=1"'
+    )
+) ':check_arg_quotes keeps plugin on the strict quote grammar'
+Assert-True ($checkBody -match 'if defined badMeta \(') `
+    ':check_arg_quotes exits before forwarding when the cmd-control guard fires'
 
 # --- Live behavior checks (need cmd.exe; skipped elsewhere) --------------
 
@@ -501,19 +536,21 @@ try {
     $noArgs = Invoke-BossLine $quoteBat ''
     Assert-True ($noArgs -match 'Error: No command specified') "no arguments still reports a missing command (got: $($noArgs.Trim()))"
 
-    # status, doctor, mcp and completion hand the rest to BOSS.exe as a bare
-    # %*, never through %~N, so a JSON argument keeps its quotes
-    # (docs/CLI.md: boss mcp invoke <tool> --args '{...}'). A stub stands in
-    # for BOSS.exe and prints what it was given.
+    # status, doctor, mcp, completion and plugin may hand arguments to
+    # BOSS.exe as a bare %*. plugin retains stricter quote validation because
+    # it can read %~2/%~3 first; ordinary whole-argument quotes remain valid.
+    # A stub stands in for BOSS.exe and prints what it was given.
     $stubExe = Join-Path $quoteDir 'fake-boss.cmd'
     Set-Content -Path $stubExe -Value "@echo FORWARDED:%*`r`n" -Encoding Ascii -NoNewline
     $env:BOSS_EXE = $stubExe
     try {
         foreach ($line in @(
             'mcp invoke search_workspace --args {"query":"x"}',
+            'mcp invoke search_workspace --args {"query":"^a"}',
             '"mcp" invoke search_workspace --args {"query":"x"}',
             'status --format "json"',
-            'completion "powershell"'
+            'completion "powershell"',
+            'plugin init "C:\My Plugin"'
         )) {
             $forwarded = Invoke-BossLine $quoteBat $line
             Assert-True ($forwarded.Trim() -ceq "FORWARDED:$line") "a forwarded command keeps its quoted arguments: boss $line (got: $($forwarded.Trim()))"
@@ -531,6 +568,46 @@ try {
         $fwdOut = Invoke-BossLine $quoteBat $fwdPayload
         Assert-True (-not (Test-Path $quoteMarker)) "a payload in a forwarded argument is data, not a command: boss $fwdPayload"
         Assert-True ($fwdOut -match 'FORWARDED:') "it reaches the stub rather than being refused (got: $($fwdOut.Trim()))"
+
+        # A caret protects cmd control characters in the caller's parse, but
+        # bare %* causes cmd to parse the expanded line again without that
+        # protection. Refuse the unquoted tail before it reaches the second
+        # parse. Quoted JSON containing the same characters remains covered by
+        # the forwarding cases above.
+        $tabPayload = "mcp`ta^&echo side-effect^>quote-marker.txt"
+        foreach ($line in @(
+            'mcp a^&echo side-effect^>quote-marker.txt',
+            'status a^|echo side-effect^>quote-marker.txt',
+            'doctor a^>quote-marker.txt',
+            'plugin init a^&echo side-effect^>quote-marker.txt',
+            'mcp x^^^"y^&echo side-effect^>quote-marker.txt',
+            $tabPayload,
+            'mcp;a^&echo side-effect^>quote-marker.txt',
+            ',mcp a^&echo side-effect^>quote-marker.txt',
+            'mcp=a^&echo side-effect^>quote-marker.txt'
+        )) {
+            Remove-Item $quoteMarker -ErrorAction SilentlyContinue
+            $caretOut = Invoke-BossLine $quoteBat $line
+            Assert-True (-not (Test-Path $quoteMarker)) "a caret-escaped control character cannot execute on forwarding: boss $line"
+            Assert-True ($caretOut -match 'unquoted cmd control character') `
+                "the unsafe forwarded tail is refused with a reason: boss $line (got: $($caretOut.Trim()))"
+            Assert-True ($caretOut -notmatch 'FORWARDED:') "the refused tail never reaches BOSS.exe: boss $line"
+        }
+
+        # Mutation checks: removing the argument guard recreates #1673 for
+        # ordinary spacing, caret/quote desynchronization, and a real tab
+        # delimiter. These probes cannot pass merely because cmd is inert.
+        foreach ($line in @(
+            'mcp a^&echo side-effect^>quote-marker.txt',
+            'mcp x^^^"y^&echo side-effect^>quote-marker.txt',
+            $tabPayload
+        )) {
+            Remove-Item $quoteMarker -ErrorAction SilentlyContinue
+            Invoke-BossLine $uncheckedBat $line | Out-Null
+            Assert-True (Test-Path $quoteMarker) "mutation check: bare %* executes the payload without the guard: boss $line"
+        }
+        Remove-Item $quoteMarker -ErrorAction SilentlyContinue
+
         # The first argument is read through %~1 whatever the command, and
         # plugin reads %~2 and %~3 before it forwards, so both stay strict.
         foreach ($payload in @(
