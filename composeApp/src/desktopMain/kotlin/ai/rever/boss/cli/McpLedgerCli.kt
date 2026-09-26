@@ -95,6 +95,7 @@ internal val McpApprovalDisposition.reachedHandler: Boolean
             McpApprovalDisposition.DENIED_BY_OPERATOR,
             McpApprovalDisposition.TIMEOUT,
             McpApprovalDisposition.POLICY_DENIED,
+            McpApprovalDisposition.SENTINEL_BLOCKED,
             McpApprovalDisposition.CANCELLED_AWAITING_APPROVAL,
             McpApprovalDisposition.QUEUE_FULL,
             McpApprovalDisposition.INVALID_ARGUMENTS,
