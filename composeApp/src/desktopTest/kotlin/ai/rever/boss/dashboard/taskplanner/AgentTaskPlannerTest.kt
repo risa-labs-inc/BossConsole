@@ -52,13 +52,15 @@ class AgentTaskPlannerTest {
     }
 
     @Test
-    fun `empty task planner displays zero progress`() {
+    fun `empty task planner displays empty state`() {
         rule.setContent {
             AgentTaskPlanner(tasks = emptyList())
         }
 
         rule.onNodeWithText("AI Task Plan").assertIsDisplayed()
-        rule.onNodeWithText("0/0 completed").assertIsDisplayed()
-        rule.onNodeWithText("Progress: 0%").assertIsDisplayed()
+        rule.onNodeWithText("No agent tasks yet.").assertIsDisplayed()
+        rule
+            .onNodeWithText("Start an agent task to see its workflow here.")
+            .assertIsDisplayed()
     }
 }

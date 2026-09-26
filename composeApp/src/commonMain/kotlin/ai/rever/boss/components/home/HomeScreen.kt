@@ -1,5 +1,4 @@
 package ai.rever.boss.components.home
-
 import ai.rever.boss.components.dashboard.cards.BrowserPageCard
 import ai.rever.boss.components.dashboard.cards.FileCard
 import ai.rever.boss.components.dashboard.cards.ProjectCard
@@ -19,10 +18,12 @@ import ai.rever.boss.keymap.KeymapSettingsManager
 import ai.rever.boss.keymap.model.KeyBinding
 import ai.rever.boss.keymap.model.KeymapActions
 import ai.rever.boss.keymap.model.shortcutLabelFor
+import ai.rever.boss.plugin.run.ProcessStatus
 import ai.rever.boss.plugin.scrollbar.verticalScrollWithScrollbar
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.project.ProjectRemovalScope
 import ai.rever.boss.project.removeProjectAndReport
+import ai.rever.boss.run.RunExecutionService
 import ai.rever.boss.window.LocalWindowProjectState
 import ai.rever.boss.window.Project
 import ai.rever.boss.window.selectProjectInWindow
@@ -72,13 +73,17 @@ fun HomeScreen(modifier: Modifier = Modifier) {
     val recentProjects by ProjectState.recentProjects.collectAsState()
     val recentFiles by RecentFilesManager.recentFiles.collectAsState()
     val recentPages by RecentBrowserPagesManager.recentPages.collectAsState()
+
     // Both flows are collected even though only `recentPages` is read directly: getSuggestions
     // reads its two sources non-reactively, so without collecting the dismissed set here,
     // dismissing a suggested site would change nothing on screen until some unrelated
     // recomposition - which is the bug being fixed, not a smaller version of it.
     val dismissed by RecentBrowserPagesManager.dismissedSuggestions.collectAsState()
     val suggestions =
-        remember(recentPages, dismissed) { RecentBrowserPagesManager.getSuggestions(SUGGESTION_LIMIT) }
+        remember(recentPages, dismissed) {
+            RecentBrowserPagesManager.getSuggestions(SUGGESTION_LIMIT)
+        }
+
     // The same WorkspaceManager the top bar's workspace button, the app menu and the
     // default-workspace setting read. The home screen used to list SplitTemplatesManager
     // instead, a second hand-maintained copy of the same layouts (now deleted).
@@ -88,8 +93,14 @@ fun HomeScreen(modifier: Modifier = Modifier) {
     var projectToRemove by remember { mutableStateOf<Project?>(null) }
     val scrollState = rememberScrollState()
     val scope = rememberCoroutineScope()
+    val runningProcesses by RunExecutionService.runningProcesses.collectAsState()
 
-    Box(modifier = modifier.fillMaxSize().background(BossTheme.colors.panel)) {
+    Box(
+        modifier =
+            modifier
+                .fillMaxSize()
+                .background(BossTheme.colors.panel),
+    ) {
         Column(
             modifier =
                 Modifier
@@ -116,37 +127,40 @@ fun HomeScreen(modifier: Modifier = Modifier) {
 
             AgentTaskPlanner(
                 tasks =
-                    listOf(
+                    runningProcesses.map { process ->
                         AgentTask(
-                            title = "Understand requirements",
-                            status = AgentTaskStatus.COMPLETED,
-                        ),
-                        AgentTask(
-                            title = "Create project structure",
-                            status = AgentTaskStatus.COMPLETED,
-                        ),
-                        AgentTask(
-                            title = "Implement feature",
-                            status = AgentTaskStatus.IN_PROGRESS,
-                        ),
-                        AgentTask(
-                            title = "Run tests",
-                            status = AgentTaskStatus.TODO,
-                        ),
-                        AgentTask(
-                            title = "Review results",
-                            status = AgentTaskStatus.TODO,
-                        ),
-                    ),
+                            title = process.configName.ifBlank { process.command },
+                            status =
+                                when (process.status) {
+                                    ProcessStatus.STARTING,
+                                    ProcessStatus.RUNNING,
+                                    ProcessStatus.STOPPING,
+                                    -> AgentTaskStatus.IN_PROGRESS
+
+                                    ProcessStatus.STOPPED -> AgentTaskStatus.COMPLETED
+
+                                    ProcessStatus.FAILED -> AgentTaskStatus.FAILED
+                                },
+                        )
+                    },
             )
 
-            RecentPagesSection(suggestions = suggestions, actions = actions)
+            RecentPagesSection(
+                suggestions = suggestions,
+                actions = actions,
+            )
 
             ToolsSection(actions = actions)
 
-            WorkspaceLayoutsSection(workspaces = workspaces, actions = actions)
+            WorkspaceLayoutsSection(
+                workspaces = workspaces,
+                actions = actions,
+            )
 
-            RecentFilesSection(files = recentFiles, actions = actions)
+            RecentFilesSection(
+                files = recentFiles,
+                actions = actions,
+            )
         }
     }
 
@@ -157,7 +171,11 @@ fun HomeScreen(modifier: Modifier = Modifier) {
         onOpenHere = { selectProjectInWindow(windowProjectState, it) },
         onOpenDone = { projectToOpen = null },
         onRemoveDone = { projectToRemove = null },
-        onRemove = { project, removalScope -> scope.launch { removeProjectAndReport(project, removalScope) } },
+        onRemove = { project, removalScope ->
+            scope.launch {
+                removeProjectAndReport(project, removalScope)
+            }
+        },
     )
 }
 
@@ -179,6 +197,7 @@ private fun JumpBackInSection(
     onAskToRemove: (Project) -> Unit,
 ) {
     if (recentProjects.isEmpty()) return
+
     DashboardSection(
         title = "Jump back in",
         actionText = "Open Project",
@@ -189,7 +208,13 @@ private fun JumpBackInSection(
                 ProjectCard(
                     project = project,
                     // Only ask which window when this one already holds a project.
-                    onClick = { if (windowHoldsProject) onAskWhichWindow(project) else onOpenHere(project) },
+                    onClick = {
+                        if (windowHoldsProject) {
+                            onAskWhichWindow(project)
+                        } else {
+                            onOpenHere(project)
+                        }
+                    },
                     // Asks rather than removing. The cross used to forget the project on
                     // the click, with no undo and no way to get rid of the folder.
                     onRemove = { onAskToRemove(project) },
@@ -207,12 +232,16 @@ private fun ToolsSection(actions: HomeActions) {
     val tools = rememberHomeTools(installedVersionOf = ::installedPluginVersionOf)
     val keymap by KeymapSettingsManager.currentSettings.collectAsState()
     var filter by remember { mutableStateOf(HomeToolFilter.ALL) }
+
     // Ids currently installing, so a tile shows progress rather than looking unresponsive for the
     // length of a download. A snapshot map because installs run concurrently and each tile reads
     // only its own entry.
     val installing = remember { SnapshotStateMap<String, Unit>() }
 
-    DashboardSection(title = "Tools", subtitle = toolsSubtitle(tools)) {
+    DashboardSection(
+        title = "Tools",
+        subtitle = toolsSubtitle(tools),
+    ) {
         HomeToolGrid(
             tools = tools,
             installing = installing.keys,
@@ -230,7 +259,11 @@ private fun WorkspaceLayoutsSection(
     actions: HomeActions,
 ) {
     if (workspaces.isEmpty()) return
-    DashboardSection(title = "Space layouts", subtitle = "Open a whole arrangement at once") {
+
+    DashboardSection(
+        title = "Space layouts",
+        subtitle = "Open a whole arrangement at once",
+    ) {
         CardStrip {
             workspaces.forEach { workspace ->
                 WorkspaceCard(
@@ -251,6 +284,7 @@ private fun RecentFilesSection(
     actions: HomeActions,
 ) {
     if (files.isEmpty()) return
+
     DashboardSection(
         title = "Recent files",
         actionText = "Clear",
@@ -274,6 +308,7 @@ private fun RecentPagesSection(
     actions: HomeActions,
 ) {
     if (suggestions.isEmpty()) return
+
     DashboardSection(
         title = "Recent pages",
         // Unconditional, because the case that needs it most is the one a
@@ -319,7 +354,12 @@ private fun CardStrip(content: @Composable () -> Unit) {
 private fun toolsSubtitle(tools: List<HomeTool>): String {
     val ready = tools.count { it.isReady }
     val discoverable = tools.size - ready
-    return if (discoverable > 0) "$ready ready, $discoverable more available" else "$ready ready"
+
+    return if (discoverable > 0) {
+        "$ready ready, $discoverable more available"
+    } else {
+        "$ready ready"
+    }
 }
 
 /**
@@ -332,6 +372,7 @@ private fun toolsSubtitle(tools: List<HomeTool>): String {
  */
 private fun HomeTool.shortcutLabel(bindings: Map<String, KeyBinding>): String? {
     val action = (launch as? HomeToolLaunch.HostAction)?.action ?: return null
+
     val actionId =
         when (action) {
             HomeHostAction.NEW_TAB -> KeymapActions.TAB_NEW
@@ -349,5 +390,6 @@ private fun HomeTool.shortcutLabel(bindings: Map<String, KeyBinding>): String? {
             HomeHostAction.NEW_PROJECT,
             -> null
         }
+
     return actionId?.let { shortcutLabelFor(it, bindings) }
 }

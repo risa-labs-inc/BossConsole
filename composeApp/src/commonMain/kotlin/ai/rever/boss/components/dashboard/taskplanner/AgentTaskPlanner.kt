@@ -47,57 +47,71 @@ fun AgentTaskPlanner(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        Text(
+            text = "AI Task Plan",
+            color = BossTheme.colors.textPrimary,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+
+        if (tasks.isEmpty()) {
             Text(
-                text = "AI Task Plan",
-                color = BossTheme.colors.textPrimary,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
+                text = "No agent tasks yet.",
+                color = BossTheme.colors.textSecondary,
+                fontSize = 13.sp,
             )
 
             Text(
-                text = "$completed/${tasks.size} completed",
+                text = "Start an agent task to see its workflow here.",
                 color = BossTheme.colors.textSecondary,
                 fontSize = 12.sp,
             )
-        }
-
-        tasks.forEach { task ->
-            val symbol =
-                when (task.status) {
-                    AgentTaskStatus.COMPLETED -> "✓"
-                    AgentTaskStatus.IN_PROGRESS -> "●"
-                    AgentTaskStatus.FAILED -> "!"
-                    AgentTaskStatus.TODO -> "○"
-                }
-
+        } else {
             Row(
                 modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = symbol,
-                    color = BossTheme.colors.data,
-                    fontSize = 14.sp,
-                    modifier = Modifier.padding(end = 8.dp),
+                    text = "$completed/${tasks.size} completed",
+                    color = BossTheme.colors.textSecondary,
+                    fontSize = 12.sp,
                 )
 
                 Text(
-                    text = task.title,
-                    color = BossTheme.colors.textPrimary,
-                    fontSize = 13.sp,
+                    text = "Progress: $progress%",
+                    color = BossTheme.colors.textSecondary,
+                    fontSize = 12.sp,
                 )
             }
-        }
 
-        Text(
-            text = "Progress: $progress%",
-            color = BossTheme.colors.textSecondary,
-            fontSize = 12.sp,
-        )
+            tasks.forEach { task ->
+                val symbol =
+                    when (task.status) {
+                        AgentTaskStatus.COMPLETED -> "✓"
+                        AgentTaskStatus.IN_PROGRESS -> "●"
+                        AgentTaskStatus.FAILED -> "!"
+                        AgentTaskStatus.TODO -> "○"
+                    }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = symbol,
+                        color = BossTheme.colors.data,
+                        fontSize = 14.sp,
+                        modifier = Modifier.padding(end = 8.dp),
+                    )
+
+                    Text(
+                        text = task.title,
+                        color = BossTheme.colors.textPrimary,
+                        fontSize = 13.sp,
+                    )
+                }
+            }
+        }
     }
 }
