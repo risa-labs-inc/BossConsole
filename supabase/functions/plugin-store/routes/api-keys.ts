@@ -1,5 +1,4 @@
-import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
-import type { PluginStoreContext } from "../types/context.ts"
+import { createRoute, z } from "@hono/zod-openapi"
 import { ErrorResponseSchema } from "../types/schemas.ts"
 import { getUserFromToken } from "../utils/auth.ts"
 import { resolvePublishOrg } from "../services/publish-org.ts"
@@ -11,8 +10,9 @@ import {
   areValidScopes,
   VALID_API_KEY_SCOPES,
 } from "../utils/api-key.ts"
+import { newRouter } from "../utils/router.ts"
 
-const apiKeys = new OpenAPIHono<{ Variables: PluginStoreContext }>()
+const apiKeys = newRouter()
 
 // Rate limit: Maximum API keys per user (configurable via environment variable)
 const MAX_API_KEYS_PER_USER = parseInt(

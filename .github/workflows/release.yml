@@ -1572,7 +1572,8 @@ jobs:
           set -euo pipefail
           # Phase 1 of microkernel-runtime extraction. Produces
           # boss-ipc-<ipcVersion>.jar, boss-ui-sdk-<ipcVersion>.jar,
-          # plugin-api-ipc-<ipcVersion>.jar, plugin-api-core-<ipcVersion>.jar
+          # plugin-api-ipc-<ipcVersion>.jar, plugin-api-core-<ipcVersion>.jar,
+          # plugin-path-utils-<ipcVersion>.jar
           # under build/upstream-artifacts/. The standalone runtime repo
           # downloads these at build time.
           ./gradlew assembleUpstreamJars --no-daemon

@@ -108,6 +108,115 @@ class McpProviderPolicyTest {
     }
 
     @Test
+    fun `a legacy provider DENY governs namespaced invocation and policy writes`() {
+        val file = createTempPolicyFile()
+        val engine = McpPolicyEngine(policyFile = file)
+        engine.setProviderPolicy("shared-provider", McpPolicyAction.DENY)
+
+        val reloaded = McpPolicyEngine(policyFile = file)
+
+        assertEquals(
+            McpPolicyAction.DENY,
+            reloaded.policyFor("git_status", "plugin-a::shared-provider"),
+            "a saved raw DENY must not fail open when the live provider gains its plugin namespace",
+        )
+        assertEquals(
+            McpPolicyAction.DENY,
+            reloaded.policyFor("git_status", "plugin-b::shared-provider"),
+            "an ambiguous legacy DENY must conservatively cover every plugin that claims the old id",
+        )
+        assertEquals(
+            McpProactivePolicyOutcome.Denied,
+            reloaded.setProviderPolicyIfAbsent(
+                "plugin-c::shared-provider",
+                McpPolicyAction.ALLOW,
+            ),
+            "a proactive scoped grant must not be staged behind the effective legacy DENY",
+        )
+        val providerId = "plugin-b::shared-provider"
+        assertEquals(
+            McpProactivePolicyOutcome.Denied,
+            reloaded.setSectionPolicies(
+                listOf(
+                    McpSectionPolicyChange(
+                        toolName = "git_status",
+                        providerId = providerId,
+                        expectedRevocation = reloaded.revocationVersion("git_status", providerId),
+                        expectedRule = null,
+                        action = McpPolicyAction.ALLOW,
+                    ),
+                ),
+            ),
+            "a section grant must use the same effective provider DENY as invocation",
+        )
+
+        reloaded.setProviderPolicy("plugin-a::shared-provider", McpPolicyAction.ALLOW)
+        assertEquals(
+            McpPolicyAction.DENY,
+            reloaded.policyFor("git_status", "plugin-a::shared-provider"),
+            "a new scoped ALLOW must not silently override the older durable DENY",
+        )
+    }
+
+    @Test
+    fun `revoking a legacy provider DENY immediately lifts namespaced inheritance without scoped copies`() {
+        val file = createTempPolicyFile()
+        val engine = McpPolicyEngine(policyFile = file)
+        val namespacedId = "plugin-a::shared-provider"
+        val fallbackAction = engine.policyFor("git_status", namespacedId)
+
+        engine.setProviderPolicy("shared-provider", McpPolicyAction.DENY)
+
+        assertEquals(
+            McpPolicyAction.DENY,
+            engine.policyFor("git_status", namespacedId),
+        )
+        assertFalse(
+            engine.config.value.providerRules
+                .containsKey(namespacedId),
+            "runtime compatibility must not persist a derived scoped rule",
+        )
+
+        assertTrue(engine.revokeProviderPolicy("shared-provider"))
+
+        assertEquals(
+            fallbackAction,
+            engine.policyFor("git_status", namespacedId),
+            "revoking the raw rule must immediately lift its inherited effect",
+        )
+        assertFalse(
+            engine.config.value.providerRules
+                .containsKey(namespacedId),
+        )
+
+        val reloaded = McpPolicyEngine(policyFile = file)
+        assertEquals(fallbackAction, reloaded.policyFor("git_status", namespacedId))
+        assertFalse(
+            reloaded.config.value.providerRules
+                .containsKey(namespacedId),
+        )
+    }
+
+    @Test
+    fun `a legacy provider ALLOW is not inherited by a namespaced provider`() {
+        val file = createTempPolicyFile()
+        val engine = McpPolicyEngine(policyFile = file)
+        engine.setProviderPolicy("shared-provider", McpPolicyAction.ALLOW)
+
+        val reloaded = McpPolicyEngine(policyFile = file)
+
+        assertFalse(
+            reloaded.config.value.providerRules
+                .containsKey("plugin-a::shared-provider"),
+        )
+        assertEquals(
+            McpPolicyAction.ASK,
+            reloaded.policyFor("run_command", "plugin-a::shared-provider"),
+            "legacy trust must not cross the plugin namespace introduced to stop provider-id aliasing",
+        )
+    }
+
+    @Test
     fun `revoking a provider rule removes it rather than rewriting it, so the tool falls back to its own rule`() {
         val file = createTempPolicyFile()
         val engine = McpPolicyEngine(policyFile = file)

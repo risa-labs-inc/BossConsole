@@ -122,7 +122,15 @@ class KernelCapabilityRpcTest {
             withTimeout(20_000) {
                 IpcTestServer(KernelServiceImpl()).use { host ->
                     val caller = register(host, "boss-mastery-orchestrator")
-                    register(host, "capability-plugin")
+                    // The plugin must advertise "echo": admission refuses an unadvertised
+                    // action before the broker, and this test pins the unwired-broker
+                    // refusal one step past admission.
+                    register(
+                        host,
+                        "capability-plugin",
+                        ADDRESS,
+                        capability("echo", "Echoes the say input"),
+                    )
 
                     val response =
                         caller.invokeCapability(

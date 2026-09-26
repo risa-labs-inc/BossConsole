@@ -1,5 +1,4 @@
-import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
-import type { PluginStoreContext } from "../types/context.ts"
+import { createRoute, z } from "@hono/zod-openapi"
 import {
   DownloadInfoResponseSchema,
   ErrorResponseSchema
@@ -12,8 +11,9 @@ import { getUserFromToken, validateApiKey } from "../utils/auth.ts"
 import { clientKey, rateLimit } from "../utils/rate-limit.ts"
 import { isAllowedExternalJarUrl } from "../services/github.ts"
 import type { SupabaseClient } from "@supabase/supabase-js"
+import { newRouter } from "../utils/router.ts"
 
-const download = new OpenAPIHono<{ Variables: PluginStoreContext }>()
+const download = newRouter()
 
 // Per-client limit on the public download-info routes, the same in-isolate
 // token bucket as the catalogue routes in browse.ts. A separate key prefix

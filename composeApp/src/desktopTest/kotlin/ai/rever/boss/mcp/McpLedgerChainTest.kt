@@ -40,6 +40,7 @@ class McpLedgerChainTest {
     private fun record(
         ledger: McpOperationLedger,
         toolName: String,
+        escalated: Boolean = false,
     ) {
         ledger.record(
             toolName = toolName,
@@ -49,6 +50,7 @@ class McpLedgerChainTest {
             durationMs = 1L,
             isError = false,
             rawArgs = mapOf("path" to "/project"),
+            escalated = escalated,
         )
         // Persistence is asynchronous: drain the writer so the file asserts below see it.
         assertTrue(ledger.awaitIdle(), "ledger writer never drained")
@@ -63,10 +65,10 @@ class McpLedgerChainTest {
         val entry = storedRecords(file).single()
         val descriptor = McpOperationRecord.serializer().descriptor
         val fields = (0 until descriptor.elementsCount).map { descriptor.getElementName(it) }.toSet()
-        // secretRefs is emitted only when present, so a record without references keeps the
-        // pre-feature hash (see `empty secret references preserve the pre-feature canonical
-        // hash`); coverage of the field is asserted on a record that carries one.
-        val withRefs = entry.copy(secretRefs = listOf("id.password"))
+        // secretRefs and escalated are emitted only when set, so a record without them keeps the
+        // pre-feature hash (see the two `preserve the pre-feature canonical hash` tests); coverage
+        // of those fields is asserted on a record that carries both.
+        val withRefs = entry.copy(secretRefs = listOf("id.password"), escalated = true)
         val canonical = Json.parseToJsonElement(withRefs.canonicalFormForHashing()) as JsonObject
         assertEquals(fields - setOf("hash", "parentHash"), canonical.keys)
     }
@@ -145,6 +147,53 @@ class McpLedgerChainTest {
 
         assertTrue("secretRefs" !in record.canonicalFormForHashing())
         assertTrue("secretRefs" in record.copy(secretRefs = listOf("id.password")).canonicalFormForHashing())
+    }
+
+    @Test
+    fun `an unescalated record preserves the pre-feature canonical hash`() {
+        val record =
+            McpOperationRecord(
+                id = "legacy-hashed",
+                timestamp = 1L,
+                toolName = "tool",
+                providerId = "provider",
+                policyApplied = McpPolicyAction.ALLOW,
+                approvalDisposition = McpApprovalDisposition.AUTO_ALLOWED,
+                durationMs = 1L,
+                isError = false,
+                sanitizedArgs = emptyMap(),
+            )
+
+        // Pinned as text: every record written before the field existed must hash exactly as it did.
+        assertEquals(
+            """{"id":"legacy-hashed","timestamp":1,"toolName":"tool","providerId":"provider",""" +
+                """"policyApplied":"ALLOW","approvalDisposition":"AUTO_ALLOWED","durationMs":1,""" +
+                """"isError":false,"sanitizedArgs":{},"errorSnippet":null}""",
+            record.canonicalFormForHashing(),
+        )
+        assertTrue("\"escalated\":true" in record.copy(escalated = true).canonicalFormForHashing())
+    }
+
+    @Test
+    fun `flipping escalated on a stored record is reported as a break`() {
+        val file = createTempLedgerFile()
+        val ledger = McpOperationLedger(ledgerFile = file)
+        record(ledger, "run_command", escalated = true)
+        record(ledger, "after")
+
+        val lines = file.readLines().toMutableList()
+        val stored = Json.decodeFromString<McpOperationRecord>(lines[0])
+        assertTrue(stored.escalated, "the flag must survive the round trip to disk: ${lines[0]}")
+        assertEquals("intact", verify(file).verdict)
+
+        // Hiding that a destructive call was escalated is exactly the edit an audit must catch.
+        lines[0] = Json.encodeToString(stored.copy(escalated = false))
+        rewrite(file, lines)
+
+        val broken = assertNotNull(verify(file).firstBreak)
+        assertEquals(McpLedgerBreakReason.RECORD_ALTERED, broken.reason)
+        assertEquals(1, broken.lineNumber)
+        assertEquals(stored.id, broken.recordId)
     }
 
     @Test

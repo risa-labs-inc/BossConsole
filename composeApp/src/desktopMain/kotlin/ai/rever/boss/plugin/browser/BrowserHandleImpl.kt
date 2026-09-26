@@ -2782,6 +2782,24 @@ internal class BrowserHandleImpl(
     /** Diagnostic snapshot of every worker native disposal drains; never a disposal fence. */
     override val hasPendingBrowserCall: Boolean get() = ownedExecutors.any { it.pending > 0 }
 
+    /**
+     * See [BrowserHandle.awaitBrowserCallsQuiescent]. Polls the same workers, diagnostic only.
+     *
+     * Two properties of the count this waits on, deferred from #601's review because a single
+     * snapshot could absorb them and a wait cannot. A count pinned above zero makes one read
+     * merely wrong; it makes every teardown that gates on this burn its whole deadline.
+     *
+     * - `shutdownNow()` or a discarding rejection policy would strand admitted work that never
+     *   runs its decrement. Neither is on the shipped path - `BrowserNativeDisposal` calls
+     *   `shutdown()`, `DrainingBrowserExecutor.shutdownNow` compensates for what it discards, and
+     *   a rejected dispatch decrements - so this is a hazard to preserve, not a live bug.
+     * - The count also sees transient coroutine resumptions, so it can read busy for a moment with
+     *   no browser call outstanding. Over-reporting is the safe direction for a teardown gate; it
+     *   is the wrong direction for anything driving a busy indicator.
+     */
+    override suspend fun awaitBrowserCallsQuiescent(timeoutMs: Long): Boolean =
+        awaitQuiescent(timeoutMs, QUIESCENT_POLL_MS) { hasPendingBrowserCall }
+
     override fun getCurrentUrl(): String = syncCall("url", "") { browser.url() }
 
     override fun getTitle(): String = syncCall("title", "") { browser.title() }
@@ -4588,6 +4606,15 @@ internal class BrowserHandleImpl(
         // covers. Starts an interval in the past so the first suppression is always logged.
         private val pinchSuppressedLoggedAt = AtomicLong(System.nanoTime() - PINCH_SUPPRESSED_LOG_INTERVAL_NS)
         private val pinchSuppressedSinceLog = AtomicInteger(0)
+
+        /**
+         * How often [awaitBrowserCallsQuiescent] re-reads the workers.
+         *
+         * Short enough that a teardown deferred on it is not noticeably delayed once the work
+         * finishes, long enough that waiting out a full deadline costs a bounded number of reads
+         * of the owned workers' counters rather than a spin.
+         */
+        private const val QUIESCENT_POLL_MS = 25L
 
         /**
          * Popup browsers we are currently waiting to capture an upload body for.

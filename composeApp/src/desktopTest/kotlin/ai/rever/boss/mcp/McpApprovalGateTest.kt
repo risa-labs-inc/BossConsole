@@ -1,7 +1,6 @@
 package ai.rever.boss.mcp
 
 import kotlinx.coroutines.async
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
@@ -141,9 +140,9 @@ class McpApprovalGateTest {
             val d1 = async { bus.requestApproval("tool_1", "p1", emptyMap()) }
             val d2 = async { bus.requestApproval("tool_2", "p1", emptyMap()) }
 
-            // Wait for both to be pending
-            delay(50)
-            assertEquals(2, bus.pendingList.value.size)
+            // Wait for both to be pending: the same deterministic barrier the deny-all test uses,
+            // rather than a sleep that only holds while the machine is idle.
+            bus.pendingList.first { it.size == 2 }
 
             // Third request exceeds capacity (2)
             val overflowDecision = bus.requestApproval("tool_3", "p1", emptyMap())

@@ -16,6 +16,11 @@
  *   build/upstream-artifacts/boss-ui-sdk-1.0.0.jar
  *   build/upstream-artifacts/plugin-api-ipc-1.0.0.jar
  *   build/upstream-artifacts/plugin-api-core-1.0.0.jar
+ *   build/upstream-artifacts/plugin-path-utils-1.0.0.jar
+ *
+ * plugin-path-utils ships because plugin-api-ipc calls into it at runtime (the Downloads
+ * folder rules its proxy shares with the host); without it the runtime compiles against
+ * plugin-api-ipc and then fails with NoClassDefFoundError on the first such call.
  */
 
 val outputDir = layout.buildDirectory.dir("upstream-artifacts")
@@ -71,6 +76,7 @@ tasks.register<Copy>("assembleUpstreamJars") {
     dependsOn(":boss-ui-sdk:jar")
     dependsOn(":plugin-platform:plugin-api-ipc:desktopJar")
     dependsOn(":plugin-platform:plugin-api-core:desktopJar")
+    dependsOn(":plugin-platform:plugin-path-utils:desktopJar")
 
     val destDir = outputDir
     into(destDir)
@@ -100,15 +106,21 @@ tasks.register<Copy>("assembleUpstreamJars") {
         exclude("*-sources.jar", "*-javadoc.jar")
         rename("""plugin-api-core-desktop-(.+)\.jar""", "plugin-api-core-$1.jar")
     }
+    // plugin-path-utils desktopJar: a runtime dependency of plugin-api-ipc. Same rename trick.
+    from(project(":plugin-platform:plugin-path-utils").layout.buildDirectory.dir("libs")) {
+        include("plugin-path-utils-desktop-*.jar")
+        exclude("*-sources.jar", "*-javadoc.jar")
+        rename("""plugin-path-utils-desktop-(.+)\.jar""", "plugin-path-utils-$1.jar")
+    }
 
     doLast {
         val out = destDir.get().asFile
         val produced = out.listFiles()?.sorted().orEmpty()
         logger.lifecycle("✓ assembleUpstreamJars produced ${produced.size} jar(s):")
         produced.forEach { logger.lifecycle("  - ${it.name} (${it.length() / 1024} KB)") }
-        if (produced.size < 4) {
+        if (produced.size < 5) {
             throw GradleException(
-                "Expected 4 upstream jars in $out but got ${produced.size}: " +
+                "Expected 5 upstream jars in $out but got ${produced.size}: " +
                     produced.joinToString { it.name }
             )
         }

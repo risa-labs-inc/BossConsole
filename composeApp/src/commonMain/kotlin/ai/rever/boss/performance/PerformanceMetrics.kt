@@ -53,9 +53,15 @@ data class PerformanceSettings(
 
     /**
      * Returns a validated copy of settings with values clamped to valid ranges.
+     *
+     * The initial heap is bounded by the CLAMPED max heap, never the stored one. A stored max
+     * below 32 made that range empty and `coerceIn` threw, and the loader's catch then dropped
+     * every setting in the file. A stored max above 8192 let the initial heap end up larger than
+     * the max it is paired with.
      */
-    fun validated(): PerformanceSettings =
-        copy(
+    fun validated(): PerformanceSettings {
+        val heapMb = pluginJvmHeapMb.coerceIn(128, 8192)
+        return copy(
             memoryWarningThresholdPercent = memoryWarningThresholdPercent.coerceIn(1, 100),
             memoryCriticalThresholdPercent = memoryCriticalThresholdPercent.coerceIn(1, 100),
             cpuWarningThresholdPercent = cpuWarningThresholdPercent.coerceIn(1, 100),
@@ -65,9 +71,10 @@ data class PerformanceSettings(
             resourceSampleIntervalMs = resourceSampleIntervalMs.coerceAtLeast(100),
             gcSampleIntervalMs = gcSampleIntervalMs.coerceAtLeast(100),
             historyRetentionMinutes = historyRetentionMinutes.coerceIn(1, MAX_HISTORY_RETENTION_MINUTES),
-            pluginJvmHeapMb = pluginJvmHeapMb.coerceIn(128, 8192),
-            pluginJvmInitialHeapMb = pluginJvmInitialHeapMb.coerceIn(32, pluginJvmHeapMb),
+            pluginJvmHeapMb = heapMb,
+            pluginJvmInitialHeapMb = pluginJvmInitialHeapMb.coerceIn(32, heapMb),
         )
+    }
 }
 
 /**

@@ -416,6 +416,13 @@ verify_jwt = false
 import_map = "./functions/live-sessions/deno.json"
 entrypoint = "./functions/live-sessions/index.ts"
 
+[functions.user-settings]
+# Browser navigations carry a one-use handoff or signed HttpOnly cookie, not a JWT header.
+# The handler authenticates both itself and checks Origin plus CSRF on every write.
+verify_jwt = false
+import_map = "./functions/user-settings/deno.json"
+entrypoint = "./functions/user-settings/index.ts"
+
 [functions.boss-ai]
 enabled = true
 # The handler validates BOSS sessions at /auth/token and its own audience-scoped
@@ -438,3 +445,9 @@ enabled = true
 verify_jwt = false
 import_map = "./functions/fluck-oauth/deno.json"
 entrypoint = "./functions/fluck-oauth/index.ts"
+
+[functions.relay-admission]
+enabled = true
+verify_jwt = false
+import_map = "./functions/relay-admission/deno.json"
+entrypoint = "./functions/relay-admission/index.ts"

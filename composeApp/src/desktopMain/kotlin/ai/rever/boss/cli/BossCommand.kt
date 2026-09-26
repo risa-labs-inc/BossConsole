@@ -204,7 +204,7 @@ class BossStatusCommand : CliktCommand(name = "status") {
  * Usage:
  *   boss mcp list [--json]
  *   boss mcp invoke <tool_name> [-a|--args <json>] [--stdin]
- *   boss mcp ledger <verify|tail|search> [--json]
+ *   boss mcp ledger <verify|tail|search|secrets> [--json]
  */
 @Suppress("TooManyFunctions")
 class BossMcpCommand : CliktCommand(name = "mcp") {
@@ -216,7 +216,7 @@ class BossMcpCommand : CliktCommand(name = "mcp") {
             CompletionCandidates.Fixed("list", "describe", "info", "invoke", "call", "ledger"),
     ).optional()
     val tool by argument(
-        help = "Tool name to describe or invoke, or the ledger action: verify, tail, search",
+        help = "Tool name to describe or invoke, or the ledger action: verify, tail, search, secrets",
     ).optional()
     val args by option("-a", "--args", help = "JSON arguments string for the tool").default("{}")
     val stdin by option("--stdin", help = "Read JSON arguments from standard input").flag(default = false)
@@ -242,6 +242,14 @@ class BossMcpCommand : CliktCommand(name = "mcp") {
     val ledgerDisposition by option(
         "--disposition",
         help = "Only unsuccessful calls in this category: denied, cancelled, withheld, failed",
+    )
+    val ledgerSecret by option(
+        "--secret",
+        help = "Only calls that referenced this secret id, or <id>.<field> for one field",
+    )
+    val ledgerProvider by option(
+        "--provider",
+        help = "Only records from this provider: a host provider id, a plugin id, or <pluginId>::<providerId>",
     )
     val ledgerFrom by option("--from", help = "Only records at or after this time (epoch ms, date, or ISO-8601)")
     val ledgerTo by option("--to", help = "Only records at or before this time (epoch ms, date, or ISO-8601)")
@@ -272,8 +280,8 @@ class BossMcpCommand : CliktCommand(name = "mcp") {
     }
 
     /**
-     * `boss mcp ledger <verify|tail|search>` - reads `~/.boss/mcp-calls.jsonl` and its rotated
-     * backups off disk.
+     * `boss mcp ledger <verify|tail|search|secrets>` - reads `~/.boss/mcp-calls.jsonl` and its
+     * rotated backups off disk.
      *
      * Local rather than IPC on purpose. The running app can only answer from its in-memory ring
      * buffer, which holds the last 100 calls and is not the audit trail; these read the file
@@ -282,7 +290,7 @@ class BossMcpCommand : CliktCommand(name = "mcp") {
     private fun handleLedger() {
         val ledgerAction = tool?.trim()?.lowercase()
         if (ledgerAction.isNullOrEmpty()) {
-            fail("Missing ledger action. Usage: boss mcp ledger <verify|tail|search> [--json]")
+            fail("Missing ledger action. Usage: boss mcp ledger <verify|tail|search|secrets> [--json]")
         }
         val outcome =
             when (ledgerAction) {
@@ -298,9 +306,13 @@ class BossMcpCommand : CliktCommand(name = "mcp") {
                     McpLedgerCli.search(ledgerFile, ledgerLimit, ledgerQuery(), json)
                 }
 
+                "secrets" -> {
+                    McpLedgerSecrets.secrets(ledgerFile, ledgerQuery(), json)
+                }
+
                 else -> {
                     fail(
-                        "Unknown ledger action: '$ledgerAction'. Supported actions: verify, tail, search",
+                        "Unknown ledger action: '$ledgerAction'. Supported actions: verify, tail, search, secrets",
                     )
                 }
             }
@@ -310,7 +322,7 @@ class BossMcpCommand : CliktCommand(name = "mcp") {
         }
     }
 
-    /** The filters `tail` and `search` share, failing on a value that cannot be read. */
+    /** The filters `tail`, `search` and `secrets` share, failing on a value that cannot be read. */
     private fun ledgerQuery(): McpLedgerQuery {
         val category =
             if (ledgerDisposition.isNullOrBlank()) {
@@ -322,9 +334,21 @@ class BossMcpCommand : CliktCommand(name = "mcp") {
                             McpLedgerCli.categoryLabels(),
                     )
             }
+        val secret =
+            if (ledgerSecret.isNullOrBlank()) {
+                null
+            } else {
+                McpLedgerSecrets.parseSelector(ledgerSecret)
+                    ?: fail(
+                        "Cannot read --secret '$ledgerSecret'. Expected a secret id (a UUID), " +
+                            "optionally followed by .password, .username or .notes",
+                    )
+            }
         return McpLedgerQuery(
             tool = ledgerTool?.trim()?.takeIf { it.isNotEmpty() },
             category = category,
+            secret = secret,
+            provider = ledgerProvider?.trim()?.takeIf { it.isNotEmpty() },
             fromMillis = ledgerTime(ledgerFrom, endOfDay = false),
             toMillis = ledgerTime(ledgerTo, endOfDay = true),
         )

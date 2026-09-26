@@ -1,5 +1,4 @@
-import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
-import type { PluginStoreContext } from "../types/context.ts"
+import { createRoute, z } from "@hono/zod-openapi"
 import {
   RatePluginRequestSchema,
   RatePluginResponseSchema,
@@ -8,8 +7,9 @@ import {
 import { getPlugin } from "../services/plugins.ts"
 import { ratePlugin, getUserRating, deleteRating, getPluginRatings } from "../services/ratings.ts"
 import { getUserFromToken } from "../utils/auth.ts"
+import { newRouter } from "../utils/router.ts"
 
-const rating = new OpenAPIHono<{ Variables: PluginStoreContext }>()
+const rating = newRouter()
 
 // ============================================================================
 // POST /:pluginId/rate - Rate a plugin

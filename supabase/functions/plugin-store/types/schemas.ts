@@ -10,9 +10,16 @@ export const PluginTypeSchema = z.enum(['panel', 'tab', 'hybrid', 'mixed', 'serv
 // Browse Route Schemas
 // ============================================================================
 
+// The catalogue's paging bounds, defined once for both routes. The SQL wrappers clamp to the same
+// page size and to a page of 1,000,000 (20260924180000), so no request a route accepts is changed
+// there. CATALOGUE_PAGE_MAX is far below that: 10,000 pages of 100 is a million plugins, and a
+// deeper page is refused here with a 400 rather than silently answered with an empty one.
+export const CATALOGUE_PAGE_MAX = 10_000
+export const CATALOGUE_PAGE_SIZE_MAX = 100
+
 export const ListPluginsQuerySchema = z.object({
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  page: z.coerce.number().int().min(1).max(CATALOGUE_PAGE_MAX).default(1),
+  pageSize: z.coerce.number().int().min(1).max(CATALOGUE_PAGE_SIZE_MAX).default(20),
   sortBy: z.enum(['name', 'downloads', 'rating', 'newest', 'updated']).optional().default('downloads')
 })
 
@@ -25,9 +32,20 @@ export const SearchPluginsRequestSchema = z.object({
   tags: z.array(z.string().max(50)).max(20).optional(),
   minRating: z.number().min(0).max(5).optional().default(0),
   verifiedOnly: z.boolean().optional().default(false),
-  page: z.number().min(1).optional().default(1),
-  pageSize: z.number().min(1).max(100).optional().default(20),
+  page: z.number().int().min(1).max(CATALOGUE_PAGE_MAX).optional().default(1),
+  pageSize: z.number().int().min(1).max(CATALOGUE_PAGE_SIZE_MAX).optional().default(20),
   sortBy: z.enum(['name', 'downloads', 'rating', 'newest', 'updated']).optional().default('downloads')
+})
+
+// GET /tags/popular's query (BossConsole#1253). `z.coerce.number()` alone was not enough: a
+// non-numeric value coerces to NaN, JSON has no NaN so the RPC payload carries null, and
+// PostgreSQL reads LIMIT NULL as LIMIT ALL. `.int()` rejects NaN, fractions and Infinity, and the
+// bounds reject zero, negatives and anything past the cap, all before the handler runs. The SQL
+// function clamps to the same range (20260922160000) for a caller that skips this route.
+export const POPULAR_TAGS_LIMIT_MAX = 100
+
+export const PopularTagsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(POPULAR_TAGS_LIMIT_MAX).default(20)
 })
 
 export const PluginListItemSchema = z.object({

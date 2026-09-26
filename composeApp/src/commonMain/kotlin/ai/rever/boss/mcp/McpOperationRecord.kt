@@ -32,6 +32,24 @@ data class McpOperationRecord(
      */
     val secretRefs: List<String> = emptyList(),
     /**
+     * True when the destructive-shell gate overrode a saved ALLOW: the tool had a saved ALLOW (a
+     * tool rule, a trusted plugin or session trust), the risk evaluator rated this shell call
+     * CRITICAL, and so it was asked about again (#1577). With [policyApplied] and
+     * [approvalDisposition] this tells an overridden call that YOLO mode ran unattended
+     * (`YOLO_ALLOWED`) apart from a routine one under the same ALLOW (#1655).
+     *
+     * It is not "this call was destructive". Under the default ASK policy a destructive call was
+     * never covered by a saved ALLOW, so nothing is overridden and this stays `false`, including
+     * when YOLO mode answers it. A secret-bearing call with a saved ALLOW is asked about too, but by
+     * the secret policy, not this gate, and records `false`; its [secretRefs] say why it asked.
+     * `false` as well for records written before this field existed, which decode with the default.
+     *
+     * Hashed only when `true`. An older build decodes the field away (`ignoreUnknownKeys`), so
+     * `boss mcp ledger verify` on a downgraded install reports those rows as `RECORD_ALTERED`; the
+     * same is already true of rows carrying [secretRefs].
+     */
+    val escalated: Boolean = false,
+    /**
      * SHA-256 over [parentHash] and this record's [canonicalFormForHashing], so a record edited
      * after the fact no longer agrees with the chain that follows it.
      *
@@ -82,5 +100,9 @@ internal fun McpOperationRecord.canonicalFormForHashing(): String =
         put("errorSnippet", errorSnippet)
         if (secretRefs.isNotEmpty()) {
             put("secretRefs", JsonArray(secretRefs.map(::JsonPrimitive)))
+        }
+        // Written only when set, like secretRefs, so every record without it hashes as it did.
+        if (escalated) {
+            put("escalated", true)
         }
     }.toString()

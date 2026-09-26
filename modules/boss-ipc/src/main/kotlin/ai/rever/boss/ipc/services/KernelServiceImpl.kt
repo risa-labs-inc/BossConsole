@@ -257,14 +257,53 @@ class KernelServiceImpl(
 
     override suspend fun invokeCapability(request: InvokeCapabilityRequest): InvokeCapabilityResponse {
         requireCapabilityCaller()
-        if (!registeredProcesses.containsKey(request.pluginId)) {
-            return InvokeCapabilityResponse
-                .newBuilder()
-                .setSuccess(false)
-                .setErrorMessage("Process not found: ${request.pluginId}")
-                .build()
+        // Admission (#1061): the requested action is checked against the registered process's
+        // own manifest before anything dispatches, from the same table [listCapabilities]
+        // advertises, so the set the kernel dispatches can never be wider than the set it
+        // advertises.
+        val refusal = capabilityAdmissionRefusal(request)
+        if (refusal != null) {
+            return refuseCapabilityInvocation(refusal)
         }
         return onCapabilityInvocation(request)
+    }
+
+    /**
+     * The admission verdict for one capability invocation: `null` admits it, anything else
+     * is the fail-closed refusal reason, taken from the process's own registered manifest.
+     * The registry entry is read once, so the presence check and the broker's own lookup
+     * cannot race a deregistration.
+     */
+    private fun capabilityAdmissionRefusal(request: InvokeCapabilityRequest): String? {
+        val info = registeredProcesses[request.pluginId]
+        return when {
+            info == null -> {
+                "Process not found: ${request.pluginId}"
+            }
+
+            info.manifest.capabilitiesList.none { it.action == request.action } -> {
+                "Plugin ${request.pluginId} does not advertise capability: ${request.action}"
+            }
+
+            else -> {
+                null
+            }
+        }
+    }
+
+    /**
+     * Refuse one capability invocation before the broker is consulted: an admission failure
+     * never falls through to dispatch. The reason states the kernel's own fail-closed cause,
+     * and both ids in it are caller-supplied text, so the copy that reaches the kernel log is
+     * neutralized while the response keeps the original for the authenticated caller.
+     */
+    private fun refuseCapabilityInvocation(reason: String): InvokeCapabilityResponse {
+        logger.warn("Capability invocation refused: {}", IpcLogText.neutralize(reason))
+        return InvokeCapabilityResponse
+            .newBuilder()
+            .setSuccess(false)
+            .setErrorMessage(reason)
+            .build()
     }
 
     override suspend fun listCapabilities(request: Empty): ListCapabilitiesResponse {

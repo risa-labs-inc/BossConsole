@@ -12,13 +12,17 @@ import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.ComponentLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
+import ai.rever.boss.utils.renameAsideCorrupt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.io.IOException
 
 /**
  * Desktop implementation of KeymapSettingsManager.
@@ -49,6 +53,20 @@ actual object KeymapSettingsManager {
         Json {
             prettyPrint = true
             ignoreUnknownKeys = true
+            // A newer build may add a ShortcutContext or TabSwitchMode member; an older build
+            // reading that file would otherwise fail the decode and, now that a decode failure
+            // renames the file aside, lose the user's whole keymap. Coercion falls back to the
+            // declared default for an unknown enum value. A field whose *type* changed still
+            // fails to decode and is unrecoverable, so keep edits to these models additive.
+            //
+            // The coercion is not a round trip (#1694). The older build holds the default in
+            // memory, and its next write of this file - the migration write-back in
+            // loadSettingsSync, or any keymap change the user makes - persists the default over
+            // the newer value. Going back to the newer build then reads the default, so a
+            // downgrade still loses that one field; for a ShortcutContext the default is GLOBAL,
+            // which widens a shortcut that was scoped. Losing one field, not the whole keymap,
+            // is the trade this makes.
+            coerceInputValues = true
         }
 
     private val _currentSettings = MutableStateFlow<KeymapSettings>(KeymapPresets.getBOSSDefault())
@@ -104,6 +122,19 @@ actual object KeymapSettingsManager {
                     logger.warn(LogCategory.SYSTEM, "Could not write default keymap settings file", error = e)
                 }
             }
+        } catch (e: SerializationException) {
+            // The file exists but its content is corrupt (a torn write from before #937, or a
+            // hand-edit gone wrong). Left in place, every launch re-reads the same bytes and fails
+            // the same way, and the next save overwrites them with no copy kept. Move it aside so
+            // it can still be inspected, and self-heal with a fresh default. Only a decode failure
+            // lands here: a read error says nothing about whether the bytes are good.
+            logger.error(LogCategory.SYSTEM, "Keymap settings file is corrupt, resetting to defaults", decodeFailure(e))
+            if (!settingsFile.renameAsideCorrupt()) {
+                logger.warn(LogCategory.SYSTEM, "Keymap settings file not moved aside; overwriting it")
+            }
+            val defaultSettings = KeymapPresets.getBOSSDefault()
+            _currentSettings.value = defaultSettings
+            writeDefaultAfterCorruption(settingsFile, json, defaultSettings, logger)
         } catch (e: Exception) {
             logger.error(LogCategory.SYSTEM, "Failed to load keymap settings, using defaults", error = e)
             _currentSettings.value = KeymapPresets.getBOSSDefault()
@@ -262,6 +293,10 @@ actual object KeymapSettingsManager {
             val settings = repairStoredKeyCodes(json.decodeFromString<KeymapSettings>(jsonString), logger)
             updateSettings(settings)
             settings
+        } catch (e: SerializationException) {
+            // The imported document is the user's keymap; log where it failed, not what it said.
+            logger.error(LogCategory.SYSTEM, "Failed to import keymap settings", decodeFailure(e))
+            null
         } catch (e: Exception) {
             logger.error(LogCategory.SYSTEM, "Failed to import keymap settings", error = e)
             null
@@ -431,4 +466,34 @@ private fun repairStoredKeyCodes(
 internal fun KeymapSettingsManager.resetForTesting(testFile: File? = null) {
     settingsFile = testFile ?: defaultSettingsFile
     loadSettingsSync()
+}
+
+/**
+ * Best-effort write of the fresh default after a corrupt keymap file was moved aside. Encodes
+ * inside the guarded block, and catches what [atomicWriteText] throws - an IO fault, a path
+ * `toPath()` rejects, or a POSIX filesystem refusing the owner-only mode - so a failed write
+ * leaves this launch on the in-memory default instead of failing the load. File scope because
+ * [KeymapSettingsManager] is at detekt's `TooManyFunctions` ceiling.
+ */
+private fun writeDefaultAfterCorruption(
+    file: File,
+    json: Json,
+    defaults: KeymapSettings,
+    logger: ComponentLogger,
+) {
+    val warning = "Could not write default keymap settings file"
+    try {
+        file.atomicWriteText(json.encodeToString(KeymapSettings.serializer(), defaults))
+    } catch (e: SerializationException) {
+        logger.warn(LogCategory.SYSTEM, warning, error = e)
+    } catch (e: IOException) {
+        logger.warn(LogCategory.SYSTEM, warning, error = e)
+    } catch (e: IllegalArgumentException) {
+        // InvalidPathException from File.toPath(); it must not escape init.
+        logger.warn(LogCategory.SYSTEM, warning, error = e)
+    } catch (e: UnsupportedOperationException) {
+        logger.warn(LogCategory.SYSTEM, warning, error = e)
+    } catch (e: SecurityException) {
+        logger.warn(LogCategory.SYSTEM, warning, error = e)
+    }
 }

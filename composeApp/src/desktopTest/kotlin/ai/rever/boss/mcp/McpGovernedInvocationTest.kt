@@ -516,6 +516,59 @@ class McpGovernedInvocationTest {
             assertEquals(McpPolicyAction.ASK, policyEngine.policyFor("run_command", "terminal-tab"))
         }
 
+    @Test
+    fun `trustProvider cannot override an inherited legacy DENY added while the dialog is open`() =
+        runBlocking {
+            var called = false
+            val policyEngine = McpPolicyEngine(policyFile = null)
+            val approvalBus = McpApprovalBus(defaultTimeoutMs = 5000L)
+            val ledger = McpOperationLedger(ledgerFile = null)
+            val core =
+                McpToolRegistryCore(
+                    disabledFile = null,
+                    policyEngine = policyEngine,
+                    approvalBus = approvalBus,
+                    ledger = ledger,
+                )
+            val namespacedId = "plugin-a::shared-provider"
+            core.registerProvider(
+                provider(
+                    namespacedId,
+                    echoTool(
+                        "run_command",
+                        handler =
+                            McpToolHandler {
+                                called = true
+                                McpToolResult("ran")
+                            },
+                    ),
+                ),
+            )
+
+            val call = async { core.invoke("run_command", "{}") }
+            val request = approvalBus.pendingList.first { it.isNotEmpty() }.first()
+
+            policyEngine.setProviderPolicy("shared-provider", McpPolicyAction.DENY)
+            approvalBus.approve(request.id, trustProvider = true)
+
+            assertTrue(call.await().isError)
+            assertFalse(called, "a legacy DENY added during approval must prevent execution")
+            assertEquals(
+                McpApprovalDisposition.POLICY_DENIED,
+                ledger.recentOperations.value
+                    .single()
+                    .approvalDisposition,
+            )
+            assertNull(
+                policyEngine.config.value.providerRules[namespacedId],
+                "the production trust path must not persist a scoped ALLOW over the inherited DENY",
+            )
+            assertEquals(
+                McpPolicyAction.DENY,
+                policyEngine.policyFor("run_command", namespacedId),
+            )
+        }
+
     // A registry wired to a policy file whose parent path is a file, so the atomic
     // write's directory creation fails - the same blocked-write setup the per-tool
     // failure case uses in McpPersistentApprovalTest.

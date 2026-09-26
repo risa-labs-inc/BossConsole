@@ -9,6 +9,7 @@ import kotlinx.coroutines.ExecutorCoroutineDispatcher
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -251,4 +252,69 @@ internal class BoundedBrowserCall(
          */
         const val DEFAULT_TIMEOUT_MS = 10_000L
     }
+}
+
+/**
+ * Wait until [hasPending] reports nothing outstanding, or until [timeoutMs] elapses.
+ *
+ * The "await" half of BossConsole#300. A snapshot read answers "is anything in there right now";
+ * a teardown path wants "tell me when there is not", and polling that snapshot in a loop is what
+ * every caller would otherwise write for itself.
+ *
+ * **Polled rather than signalled, deliberately.** `DrainingBrowserExecutor.awaitDrained` is a
+ * termination signal: it completes from `terminated()`, so it answers only after `shutdown()` and
+ * never for a live handle that is merely busy. Building a second, edge-triggered signal for the
+ * live case would also promise more than the underlying count can deliver, since that count is
+ * documented as a snapshot that admission and completion race. A poll makes the weakness visible
+ * instead of hiding it behind a signal that looks authoritative.
+ *
+ * Returns true when it observed nothing outstanding, false when the deadline passed first. False
+ * is not "still running" with any certainty, and true is not a lock: work can be admitted the
+ * instant after either read. It is enough to defer a teardown or to log why one went ahead anyway,
+ * which is what the issue asks for. Nothing here can interrupt a call already inside the native
+ * layer, because that call has no interruption point.
+ *
+ * [pollMs] is how often [hasPending] is re-read. Expiry is [withTimeoutOrNull]'s alone and there
+ * is no deadline arithmetic here: clamping each sleep to the remaining budget was measured to
+ * change nothing, because a sleep cut short at the deadline and one ending at it leave the caller
+ * with the same final read. So a positive [timeoutMs] below one interval answers from the opening
+ * snapshot and one more read, which is the honest bound - ask for a shorter [pollMs] if that is
+ * not enough, rather than expecting a short [timeoutMs] to buy extra polls. A [timeoutMs] of zero
+ * is the opening snapshot alone, since [withTimeoutOrNull] expires before the first re-read.
+ *
+ * **Do not call this from a thread whose work [hasPending] counts.** The wait itself is [delay],
+ * which suspends and releases the thread, so this is not about occupying a worker. It is that on
+ * such a dispatcher every resumption of the poll is dispatched as counted work, and is still
+ * counted at the moment it takes its reading, so [hasPending] includes the poll asking the
+ * question. It can never report zero, and the caller spends the whole of [timeoutMs] to be told
+ * false. A host caller can act on this by polling from a dispatcher the browser workers do not
+ * serve.
+ *
+ * Cancellation propagates: the wait is [delay], and an already-cancelled caller is rejected before
+ * the fast path rather than handed a normal answer.
+ */
+internal suspend fun awaitQuiescent(
+    timeoutMs: Long,
+    pollMs: Long,
+    hasPending: () -> Boolean,
+): Boolean {
+    // Before the fast path, not after: an already-cancelled caller should not receive a normal
+    // `true`. This is what [BoundedBrowserCall.call] does with its own cancellation, for the same
+    // reason - the value being accurate is not the same as the caller still being entitled to it.
+    coroutineContext.ensureActive()
+    // Answer without suspending when there is nothing to wait for, so the common teardown path
+    // neither dispatches nor sleeps a single poll interval.
+    if (!hasPending()) return true
+    val interval = pollMs.coerceAtLeast(1)
+    return withTimeoutOrNull(timeoutMs) {
+        while (hasPending()) {
+            // No deadline arithmetic here on purpose. `withTimeoutOrNull` already owns expiry, and
+            // scaling a timeout to nanos to clamp the last sleep bought nothing measurable (a
+            // sleep cut short at the deadline and one ending at it yield the same final read)
+            // while wrapping negative for the Long.MAX_VALUE kotlinx documents as "no timeout",
+            // which turned the longest wait into a 1ms spin.
+            delay(interval)
+        }
+        true
+    } ?: false
 }

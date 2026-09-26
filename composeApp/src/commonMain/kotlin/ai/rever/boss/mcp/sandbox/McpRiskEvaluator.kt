@@ -197,9 +197,26 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
                         .split(WHITESPACE)
                         .map { token -> token.trim { it in TOKEN_QUOTES } }
                         .filter { it.isNotEmpty() }
-                isRecursiveRm(tokens) || isRecursiveWindowsDelete(tokens) || isForcePush(tokens)
+                isRecursiveRm(tokens) || isRecursiveWindowsDelete(tokens) || isForcePush(tokens) ||
+                    isFormatCommand(tokens)
             }
     }
+
+    /**
+     * `format` as the command itself: the first word of a command, or with a volume anywhere after
+     * it (`cmd /c format d:`, `cmd /c format /q /fs:ntfs e:` - switches may come first). It used to
+     * be matched as the text `format ` anywhere, which rated `docker ps --format json`,
+     * `clang-format -i x.c` and plain English typed into a terminal CRITICAL, so a saved "Always
+     * Allow" asked again for all of them (#1655). None of those carries a drive letter. A sentence
+     * that starts with the word still rates CRITICAL; that errs toward asking.
+     *
+     * [tokens] arrive lowercased ([evaluateShellCommand] lowercases the payload), which is what
+     * lets [VOLUME] and [FORMAT_COMMANDS] be written in lower case only.
+     */
+    private fun isFormatCommand(tokens: List<String>): Boolean =
+        tokens.indices.any { i ->
+            tokens[i] in FORMAT_COMMANDS && (i == 0 || tokens.drop(i + 1).any { it.matches(VOLUME) })
+        }
 
     /**
      * `rm` (by any path, after `sudo` or not) with a recursive flag in any spelling or order.
@@ -238,7 +255,12 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
         fun isShellTool(toolName: String): Boolean = toolName.removePrefix("mcp__boss__") in SHELL_TOOLS
 
         private val DESTRUCTIVE_WORDING =
-            listOf("rm -rf", "del /s", "format ", "mkfs", "git push --force", "git push -f", "dd if=", "chmod -r 777")
+            listOf("rm -rf", "del /s", "mkfs", "git push --force", "git push -f", "dd if=", "chmod -r 777")
+
+        private val FORMAT_COMMANDS = setOf("format", "format.com", "format.exe")
+
+        /** A Windows volume operand: a drive letter and colon, optionally followed by a path. */
+        private val VOLUME = Regex("""[a-z]:.*""")
 
         private val WHITESPACE = Regex("""\s+""")
 

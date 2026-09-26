@@ -15,13 +15,18 @@ import kotlinx.coroutines.launch
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.LinkOption
+import java.nio.file.Path
 import ai.rever.boss.components.plugin.panels.left_top.scanDirectoryWithDepth as platformScanDirectoryWithDepth
 
 /**
  * Implementation of FileSystemDataProvider that wraps platform-specific file operations.
  * This allows plugins to access file system without direct platform coupling.
  */
-class FileSystemDataProviderImpl : FileSystemDataProvider {
+class FileSystemDataProviderImpl(
+    private val downloadsDirectory: () -> String = ::getDefaultDownloadsDirectory,
+) : FileSystemDataProvider {
     private val logger = BossLogger.forComponent("FileSystemDataProvider")
     private val ioScope = CoroutineScope(Dispatchers.IO)
 
@@ -262,12 +267,8 @@ class FileSystemDataProviderImpl : FileSystemDataProvider {
             try {
                 val file = java.io.File(path)
 
-                // Security: Validate path is within user's home directory (prevent path traversal)
-                val canonicalFile = file.canonicalFile
-                val homeDir = File(System.getProperty("user.home")).canonicalFile
-                if (!canonicalFile.absolutePath.startsWith(homeDir.absolutePath + File.separator) &&
-                    canonicalFile.absolutePath != homeDir.absolutePath
-                ) {
+                // Security: Validate path is within the home or Downloads folder (prevent path traversal)
+                if (!isReadableAndWritable(file.canonicalFile)) {
                     return@withContext Result.failure(SecurityException("Access denied: file path outside user directory"))
                 }
 
@@ -291,12 +292,8 @@ class FileSystemDataProviderImpl : FileSystemDataProvider {
             try {
                 val file = java.io.File(path)
 
-                // Security: Validate path is within user's home directory (prevent path traversal)
-                val canonicalFile = file.canonicalFile
-                val homeDir = File(System.getProperty("user.home")).canonicalFile
-                if (!canonicalFile.absolutePath.startsWith(homeDir.absolutePath + File.separator) &&
-                    canonicalFile.absolutePath != homeDir.absolutePath
-                ) {
+                // Security: Validate path is within the home or Downloads folder (prevent path traversal)
+                if (!isReadableAndWritable(file.canonicalFile)) {
                     return@withContext Result.failure(SecurityException("Access denied: file path outside user directory"))
                 }
 
@@ -315,7 +312,55 @@ class FileSystemDataProviderImpl : FileSystemDataProvider {
     // answers this locally for out-of-process plugins: a plugin must not be told a different
     // folder because of the process it happened to be loaded in. This used to hand back the
     // home folder when ~/Downloads was absent, dropping saved files loose in the home dir.
-    override fun getDownloadsDirectory(): String = getDefaultDownloadsDirectory()
+    override fun getDownloadsDirectory(): String = downloadsDirectory()
 
     override fun getHomeDirectory(): String = System.getProperty("user.home")
+
+    /**
+     * Whether plugins may read and write [file], which must be canonical: inside the home
+     * folder, as before, or inside the Downloads folder this provider hands out, which the user
+     * may have moved outside home (another drive on Windows, an absolute XDG dir on Linux).
+     * Nothing else. [delete] stays home-only: it is recursive, so admitting Downloads would let
+     * one call empty it.
+     */
+    private fun isReadableAndWritable(file: File): Boolean {
+        val home = File(System.getProperty("user.home")).canonicalFile
+        // Compares canonicalFile paths, which keep Windows junctions as written, so it is
+        // knowingly weaker than the Downloads branch.
+        val inHome = file.path == home.path || file.path.startsWith(home.path + File.separator)
+
+        return inHome || isInsideDownloads(file)
+    }
+
+    /**
+     * Compared on real paths, so neither `..` nor a symlink or junction inside the folder can
+     * lead into a sibling. A Downloads folder at a filesystem root admits nothing, since that
+     * would admit the whole drive. A path that cannot be resolved, such as a dangling link or a
+     * Downloads share that has gone away, is refused rather than reported as an I/O failure.
+     */
+    private fun isInsideDownloads(file: File): Boolean {
+        val downloads =
+            runCatching { File(downloadsDirectory()).canonicalFile }
+                .getOrNull()
+                ?.let(::realPath)
+                ?.takeIf { it.parent != null }
+
+        return downloads != null && realPath(file)?.startsWith(downloads) == true
+    }
+
+    /**
+     * [file] with every link resolved, including Windows junctions, which `canonicalFile` keeps
+     * as written, or null if that fails. The climb stops at the first part that exists as an
+     * entry, a link included even when its target does not, so a dangling link is resolved
+     * (and fails) rather than appended as a plain name. Parts below it do not exist yet and
+     * cannot be links, so they are appended as they are.
+     */
+    private fun realPath(file: File): Path? =
+        runCatching {
+            val existing =
+                generateSequence(file) { it.parentFile }
+                    .firstOrNull { Files.exists(it.toPath(), LinkOption.NOFOLLOW_LINKS) }
+
+            existing?.toPath()?.toRealPath()?.resolve(existing.toPath().relativize(file.toPath()))
+        }.getOrNull()
 }

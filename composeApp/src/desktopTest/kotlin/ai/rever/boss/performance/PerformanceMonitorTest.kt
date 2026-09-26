@@ -96,6 +96,33 @@ class PerformanceMonitorTest {
     }
 
     @Test
+    fun `a plugin heap below the initial-heap floor is clamped, not thrown, and keeps the rest`() {
+        // The loader catches a throw here and falls back to defaults, which dropped every other
+        // setting in the file along with the one bad value.
+        val settings =
+            PerformanceSettings(
+                memoryWarningThresholdPercent = 60,
+                historyRetentionMinutes = 45,
+                pluginJvmHeapMb = 16,
+                pluginJvmInitialHeapMb = 64,
+            )
+        val validated = settings.validated()
+
+        assertEquals(128, validated.pluginJvmHeapMb)
+        assertEquals(64, validated.pluginJvmInitialHeapMb)
+        assertEquals(60, validated.memoryWarningThresholdPercent, "Other settings must survive")
+        assertEquals(45, validated.historyRetentionMinutes, "Other settings must survive")
+    }
+
+    @Test
+    fun `the initial plugin heap never exceeds the clamped max heap`() {
+        val validated = PerformanceSettings(pluginJvmHeapMb = 16_384, pluginJvmInitialHeapMb = 12_000).validated()
+
+        assertEquals(8192, validated.pluginJvmHeapMb)
+        assertEquals(8192, validated.pluginJvmInitialHeapMb)
+    }
+
+    @Test
     fun `test default settings are valid`() {
         val defaultSettings = PerformanceSettings()
         val validated = defaultSettings.validated()

@@ -1,11 +1,15 @@
 package ai.rever.boss.plugin.browser
 
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogEntry
+import ai.rever.boss.utils.logging.LogListener
 import kotlinx.coroutines.runBlocking
 import java.io.File
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -48,6 +52,30 @@ class UrlHistoryManagerTest {
         UrlHistoryManager.historyFile = originalFile
         UrlHistoryManager.loadHistory()
         NavigationOutcomeTracker.clear()
+    }
+
+    // Review on #1703: this is the file #1629 is about - visited URLs with their query strings -
+    // and its own loader logged the decoder's exception, which quotes the file.
+    @Test
+    fun `a corrupt history file is logged without its URLs`() {
+        val secret = "token=history-${System.nanoTime()}"
+        tempFile.writeText("""[{"url":"https://leak.example/?$secret","title":"t"""")
+        val entries = mutableListOf<LogEntry>()
+        val listener = LogListener { entry -> synchronized(entries) { entries += entry } }
+
+        BossLogger.addListener(listener)
+        try {
+            UrlHistoryManager.loadHistory()
+        } finally {
+            BossLogger.removeListener(listener)
+        }
+
+        val logged = synchronized(entries) { entries.toList() }
+        val failure = logged.single { it.message == "Failed to load browser history" }
+        assertNull(failure.error, "the decoder's exception carries the file, so it must not be attached")
+        for (entry in logged) {
+            assertFalse(secret in "${entry.message} ${entry.data} ${entry.error}", "leaked in: $entry")
+        }
     }
 
     @Test

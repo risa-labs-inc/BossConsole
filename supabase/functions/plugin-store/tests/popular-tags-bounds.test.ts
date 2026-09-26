@@ -1,4 +1,4 @@
-import { assertEquals } from "@std/assert"
+import { assert, assertEquals } from "@std/assert"
 import { OpenAPIHono } from "@hono/zod-openapi"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { PluginStoreContext } from "../types/context.ts"
@@ -39,16 +39,19 @@ function untouchableSupabase(): SupabaseClient {
 }
 
 // Records what the service actually asked the database for, so a test can check the value
-// that reaches p_limit rather than only the status code.
+// that reaches p_limit rather than only the status code - and which function it went to, since
+// a p_limit reaching some other RPC would satisfy the value checks alone.
 function recordingSupabase() {
   const limits: unknown[] = []
+  const functions: string[] = []
   const client = {
-    rpc(_fn: string, args: Record<string, unknown>) {
+    rpc(fn: string, args: Record<string, unknown>) {
+      functions.push(fn)
       limits.push(args.p_limit)
       return Promise.resolve({ data: [], error: null })
     },
   } as unknown as SupabaseClient
-  return { client, limits }
+  return { client, limits, functions }
 }
 
 Deno.test("an oversized limit is refused with the route's own 400, before the database", async () => {
@@ -71,11 +74,22 @@ Deno.test("zero, negative, fractional, empty and beyond-cap limits are all refus
   }
 })
 
-Deno.test("the maximum allowed limit reaches the RPC as that integer", async () => {
-  const { client, limits } = recordingSupabase()
+Deno.test("the maximum allowed limit reaches get_popular_tags as that integer", async () => {
+  const { client, limits, functions } = recordingSupabase()
   const response = await app(client).request("/tags/popular?limit=100")
   assertEquals(response.status, 200)
+  assertEquals(functions, ["get_popular_tags"])
   assertEquals(limits, [100])
+})
+
+Deno.test("a refused limit is answered in the ErrorResponseSchema shape the route declares", async () => {
+  // Without a validation hook the 400 body was the validator's own { success: false, error: <ZodError> }.
+  const response = await app(untouchableSupabase()).request("/tags/popular?limit=abc")
+  assertEquals(response.status, 400)
+  const body = await response.json()
+  assertEquals(Object.keys(body), ["error"])
+  assertEquals(typeof body.error, "string")
+  assert(body.error.includes("limit"), `the error names the field: ${body.error}`)
 })
 
 Deno.test("with no limit the default reaches the RPC, unchanged from before", async () => {

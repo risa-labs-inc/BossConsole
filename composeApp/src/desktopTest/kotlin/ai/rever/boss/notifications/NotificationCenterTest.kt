@@ -1,5 +1,6 @@
 package ai.rever.boss.notifications
 
+import ai.rever.boss.mcp.secrets.captureHostLogs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -13,6 +14,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -133,6 +135,26 @@ class NotificationCenterTest {
         tempFile.writeText("{ not valid")
         NotificationCenter.resetForTesting(tempFile)
         assertTrue(NotificationCenter.notifications.value.isEmpty())
+    }
+
+    @Test
+    fun `a corrupt notification file is logged without its message`() {
+        val secret = "private-notification-body"
+        tempFile.writeText(
+            """{"notifications":[{"id":"n1","title":"Build","message":"$secret"""",
+        )
+
+        val (_, logged) =
+            captureHostLogs {
+                NotificationCenter.resetForTesting(tempFile)
+            }
+
+        val failure = logged.single { it.message == "Failed to load notifications" }
+        assertNull(failure.error, "the decoder exception includes the document and must not be attached")
+        assertEquals("JsonDecodingException", failure.data?.get("decodeFailure"))
+        for (entry in logged) {
+            assertFalse(secret in "${entry.message} ${entry.data} ${entry.error}", "leaked in: $entry")
+        }
     }
 
     @Test

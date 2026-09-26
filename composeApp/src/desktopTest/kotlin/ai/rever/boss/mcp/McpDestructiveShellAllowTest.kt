@@ -54,6 +54,7 @@ class McpDestructiveShellAllowTest {
                 policyEngine = policyEngine,
                 approvalBus = approvalBus,
                 ledger = ledger,
+                yoloAvailable = true,
             )
         core.registerProvider(
             object : McpToolProvider {
@@ -84,12 +85,9 @@ class McpDestructiveShellAllowTest {
             assertFalse(result.isError, result.text)
             assertEquals(1, handlerRuns)
             assertTrue(approvalBus.pendingList.value.isEmpty(), "a routine call must not raise a prompt")
-            assertEquals(
-                McpApprovalDisposition.AUTO_ALLOWED,
-                ledger.recentOperations.value
-                    .first()
-                    .approvalDisposition,
-            )
+            val row = ledger.recentOperations.value.first()
+            assertEquals(McpApprovalDisposition.AUTO_ALLOWED, row.approvalDisposition)
+            assertFalse(row.escalated, "a call the saved ALLOW covered is not an escalation")
         }
 
     @Test
@@ -173,12 +171,9 @@ class McpDestructiveShellAllowTest {
             approvalBus.approve(request.id, trustProvider = true)
 
             assertFalse(pending.await().isError)
-            assertEquals(
-                McpApprovalDisposition.APPROVED_ONCE,
-                ledger.recentOperations.value
-                    .first()
-                    .approvalDisposition,
-            )
+            val row = ledger.recentOperations.value.first()
+            assertEquals(McpApprovalDisposition.APPROVED_ONCE, row.approvalDisposition)
+            assertTrue(row.escalated, "the ledger row must say what the prompt said (#1655)")
             assertTrue(
                 policyEngine.policyFor("some_other_tool", "p1", false) != McpPolicyAction.ALLOW,
                 "an escalated prompt must not be able to trust the whole plugin",
@@ -195,6 +190,47 @@ class McpDestructiveShellAllowTest {
             assertFalse(request.escalated, "only a saved ALLOW that was overridden is an escalation")
             approvalBus.deny(request.id)
             assertTrue(pending.await().isError)
+            assertFalse(
+                ledger.recentOperations.value
+                    .first()
+                    .escalated,
+            )
+        }
+
+    // #1655: YOLO mode answers the escalated prompt too, so without the flag this row read exactly
+    // like a routine YOLO call, and nothing after the fact showed a destructive one ran unattended.
+    @Test
+    fun `a destructive call YOLO mode runs under a saved ALLOW is recorded as escalated`() =
+        runBlocking {
+            val core = core("run_command")
+            core.setYoloMode(true)
+
+            assertFalse(core.invoke("run_command", command("rm -rf /srv/app")).isError)
+            core.invoke("run_command", command("git status"))
+
+            val (routine, destructive) = ledger.recentOperations.value.filter { it.toolName == "run_command" }
+            assertEquals(McpApprovalDisposition.YOLO_ALLOWED, destructive.approvalDisposition)
+            assertTrue(destructive.escalated, "the unattended destructive call must be distinguishable")
+            assertFalse(routine.escalated, "a routine call under the same rule is not")
+            assertEquals(2, handlerRuns)
+        }
+
+    // Review on #1698: the flag means "a saved ALLOW was overridden", not "this call was
+    // destructive". With no saved rule the tool's policy is already ASK, so there is nothing to
+    // override and YOLO answers the destructive call exactly as it answers any other. Pinned so
+    // the limit stays deliberate; recording the assessed risk on every row would be what widens it.
+    @Test
+    fun `a destructive call YOLO mode runs under the default ASK policy is not marked escalated`() =
+        runBlocking {
+            val core = core("run_command", allowEachTool = false)
+            core.setYoloMode(true)
+
+            assertFalse(core.invoke("run_command", command("rm -rf /srv/app")).isError)
+
+            val row = ledger.recentOperations.value.first { it.toolName == "run_command" }
+            assertEquals(McpPolicyAction.ASK, row.policyApplied)
+            assertEquals(McpApprovalDisposition.YOLO_ALLOWED, row.approvalDisposition)
+            assertFalse(row.escalated, "no saved ALLOW was overridden, so this is not an escalation")
         }
 
     // Review on #1650: the deny half of "Always" is the durable answer that does hold on an

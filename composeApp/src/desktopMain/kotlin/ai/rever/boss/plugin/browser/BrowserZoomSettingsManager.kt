@@ -4,9 +4,12 @@ import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
+import ai.rever.boss.utils.renameAsideCorrupt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -58,6 +61,18 @@ object BrowserZoomSettingsManager {
             ignoreUnknownKeys = true
         }
 
+    // Guards every read-modify-write of `settings` and both save entry points. Without it, two
+    // zoom changes on different domains (or a save racing a mutation) can each read the same
+    // starting map, and the second write silently drops the first's change. A plain monitor
+    // rather than a coroutines Mutex because saveSettingsSync() is called from non-suspend code.
+    // The monitor is held across the fsync inside atomicWriteText, so a zoom change can wait behind
+    // another thread's save. That is deliberate: snapshotting under the lock and writing outside it
+    // would let two saves reach the disk out of order and resurrect the older map.
+    private val lock = Any()
+
+    // Volatile so the lock-free readers (getZoomForDomain, getAllDomainSettings) see a locked
+    // writer's update promptly; the reference swap itself is atomic, so a read cannot tear.
+    @Volatile
     private var settings = BrowserZoomSettingsData()
 
     init {
@@ -70,7 +85,8 @@ object BrowserZoomSettingsManager {
      */
     fun getZoomForDomain(domain: String): Double {
         val normalizedDomain = normalizeDomain(domain)
-        return settings.domainSettings[normalizedDomain]?.zoomLevel ?: settings.defaultZoomLevel
+        val snapshot = settings
+        return snapshot.domainSettings[normalizedDomain]?.zoomLevel ?: snapshot.defaultZoomLevel
     }
 
     /**
@@ -83,40 +99,59 @@ object BrowserZoomSettingsManager {
     ) {
         val normalizedDomain = normalizeDomain(domain)
 
-        settings =
-            if (kotlin.math.abs(zoomLevel - 1.0) < 0.001) {
-                // Remove entry if zoom is reset to 100%
-                settings.copy(
-                    domainSettings = settings.domainSettings - normalizedDomain,
-                )
-            } else {
-                // Update or add entry
-                settings.copy(
-                    domainSettings =
-                        settings.domainSettings + (
-                            normalizedDomain to
-                                DomainZoomSettings(
-                                    domain = normalizedDomain,
-                                    zoomLevel = zoomLevel,
-                                    lastUpdated = System.currentTimeMillis(),
-                                )
-                        ),
-                )
-            }
+        synchronized(lock) {
+            settings =
+                if (kotlin.math.abs(zoomLevel - 1.0) < 0.001) {
+                    // Remove entry if zoom is reset to 100%
+                    settings.copy(
+                        domainSettings = settings.domainSettings - normalizedDomain,
+                    )
+                } else {
+                    // Update or add entry
+                    settings.copy(
+                        domainSettings =
+                            settings.domainSettings + (
+                                normalizedDomain to
+                                    DomainZoomSettings(
+                                        domain = normalizedDomain,
+                                        zoomLevel = zoomLevel,
+                                        lastUpdated = System.currentTimeMillis(),
+                                    )
+                            ),
+                    )
+                }
+        }
     }
 
     /**
      * Load settings from disk.
      */
     private fun loadSettings() {
-        try {
-            if (settingsFile.exists()) {
-                val content = settingsFile.readText()
-                settings = json.decodeFromString<BrowserZoomSettingsData>(content)
+        if (!settingsFile.exists()) return
+        // Under [lock] like every other write of `settings`; reentrant, so the corrupt branch's
+        // saveSettingsSync() is safe.
+        synchronized(lock) {
+            try {
+                settings = json.decodeFromString<BrowserZoomSettingsData>(settingsFile.readText())
+            } catch (e: SerializationException) {
+                // Corrupt content, not a read error: move the bad file aside so the stored
+                // per-domain zoom levels are kept for inspection instead of being re-failed on
+                // every launch or overwritten by the next save, and persist a fresh file so this
+                // launch self-heals.
+                logger.error(
+                    LogCategory.BROWSER,
+                    "Zoom settings file is corrupt, resetting to defaults",
+                    decodeFailure(e),
+                )
+                if (!settingsFile.renameAsideCorrupt()) {
+                    logger.warn(LogCategory.BROWSER, "Zoom settings file not moved aside; overwriting it")
+                }
+                settings = BrowserZoomSettingsData()
+                saveSettingsSync()
+            } catch (e: Exception) {
+                logger.warn(LogCategory.BROWSER, "Error loading zoom settings", error = e)
+                settings = BrowserZoomSettingsData()
             }
-        } catch (e: Exception) {
-            logger.warn(LogCategory.BROWSER, "Error loading zoom settings", error = e)
-            settings = BrowserZoomSettingsData()
         }
     }
 
@@ -127,9 +162,11 @@ object BrowserZoomSettingsManager {
      * other tests expect it. Mirrors [ai.rever.boss.run.RunConfigurationManager].
      */
     internal fun resetForTesting(testFile: File? = null) {
-        settingsFile = testFile ?: defaultSettingsFile
-        settings = BrowserZoomSettingsData()
-        loadSettings()
+        synchronized(lock) {
+            settingsFile = testFile ?: defaultSettingsFile
+            settings = BrowserZoomSettingsData()
+            loadSettings()
+        }
     }
 
     /**
@@ -137,24 +174,25 @@ object BrowserZoomSettingsManager {
      */
     suspend fun saveSettings() {
         withContext(Dispatchers.IO) {
+            saveSettingsSync()
+        }
+    }
+
+    /**
+     * Save settings synchronously (for use in non-coroutine contexts).
+     *
+     * Shares [lock] with every mutator, so a save writes a consistent snapshot of `settings`
+     * rather than racing a concurrent change - and with [saveSettings], which delegates here, so
+     * the two entry points are one ordered write path.
+     */
+    fun saveSettingsSync() {
+        synchronized(lock) {
             try {
                 settingsFile.parentFile?.mkdirs()
                 settingsFile.atomicWriteText(json.encodeToString(settings))
             } catch (e: Exception) {
                 logger.warn(LogCategory.BROWSER, "Error saving zoom settings", error = e)
             }
-        }
-    }
-
-    /**
-     * Save settings synchronously (for use in non-coroutine contexts).
-     */
-    fun saveSettingsSync() {
-        try {
-            settingsFile.parentFile?.mkdirs()
-            settingsFile.atomicWriteText(json.encodeToString(settings))
-        } catch (e: Exception) {
-            logger.warn(LogCategory.BROWSER, "Error saving zoom settings (sync)", error = e)
         }
     }
 
@@ -186,17 +224,21 @@ object BrowserZoomSettingsManager {
      */
     fun clearDomainZoom(domain: String) {
         val normalizedDomain = normalizeDomain(domain)
-        settings =
-            settings.copy(
-                domainSettings = settings.domainSettings - normalizedDomain,
-            )
+        synchronized(lock) {
+            settings =
+                settings.copy(
+                    domainSettings = settings.domainSettings - normalizedDomain,
+                )
+        }
     }
 
     /**
      * Clear all domain zoom settings.
      */
     fun clearAllSettings() {
-        settings = BrowserZoomSettingsData()
+        synchronized(lock) {
+            settings = BrowserZoomSettingsData()
+        }
     }
 }
 

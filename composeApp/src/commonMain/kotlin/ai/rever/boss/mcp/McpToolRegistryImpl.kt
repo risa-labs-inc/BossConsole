@@ -955,7 +955,10 @@ internal class McpToolRegistryCore(
         // its name says (#804), so it gets the mutating default - ASK under the factory
         // config - rather than being auto-allowed for avoiding the catalog's name patterns.
         val savedPolicy = policyEngine.policyFor(canonicalName, tool.providerId, tool.definition.readOnly)
-        val policy = askBeforeDestructiveShell(canonicalName, args, savedPolicy)
+        // Stated rather than inferred from a policy change, so the prompt and the ledger row
+        // read the same answer and a second rule that also moves the policy cannot pass as one.
+        val escalated = escalatesToAsk(canonicalName, args, savedPolicy)
+        val policy = if (escalated) McpPolicyAction.ASK else savedPolicy
         val startTime = System.nanoTime()
         // The secret pre-pass runs before the audit boundary below on purpose: nothing in it
         // executes the tool, and a cancellation while the vault is being read has nothing to
@@ -973,7 +976,7 @@ internal class McpToolRegistryCore(
                 if (invalidArguments != null) {
                     McpApprovalDisposition.INVALID_ARGUMENTS to invalidArguments
                 } else {
-                    authorize(tool, args, effectivePolicy, revocation, secrets, escalated = policy != savedPolicy)
+                    authorize(tool, args, effectivePolicy, revocation, secrets, escalated)
                 }
             disposition = authorization.first
             val denial = authorization.second
@@ -1025,6 +1028,7 @@ internal class McpToolRegistryCore(
                             else -> null
                         },
                     secretRefs = secrets.references.map { it.ledgerName },
+                    escalated = escalated,
                 )
             }
         }
@@ -1227,20 +1231,14 @@ internal class McpToolRegistryCore(
      * its name and already weighed when the policy was saved. The ALLOW may be a tool rule or a
      * provider-wide "Trust This Plugin" rule; both are covered.
      */
-    private fun askBeforeDestructiveShell(
+    private fun escalatesToAsk(
         toolName: String,
         args: McpToolArgs,
         policy: McpPolicyAction,
-    ): McpPolicyAction =
-        if (
-            policy == McpPolicyAction.ALLOW &&
+    ): Boolean =
+        policy == McpPolicyAction.ALLOW &&
             DefaultMcpRiskEvaluator.isShellTool(toolName) &&
             DefaultMcpRiskEvaluator().evaluateRisk(toolName, args).level >= McpRiskLevel.CRITICAL
-        ) {
-            McpPolicyAction.ASK
-        } else {
-            policy
-        }
 
     /**
      * The secret pre-pass's refusal is final and never reaches the policy path; anything else
@@ -1290,7 +1288,9 @@ internal class McpToolRegistryCore(
         args: McpToolArgs,
         policy: McpPolicyAction,
         revocation: Long,
-        escalated: Boolean = false,
+        // No default: a caller that forgot it would silently answer "not escalated", which is the
+        // direction that lets a broader approval stick.
+        escalated: Boolean,
         secretRefs: List<SecretDescriptor> = emptyList(),
     ): Pair<McpApprovalDisposition, String?> =
         when (policy) {

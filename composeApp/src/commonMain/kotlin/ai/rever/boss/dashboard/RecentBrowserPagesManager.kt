@@ -9,6 +9,7 @@ import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.utils.logging.LogSanitizer
+import ai.rever.boss.utils.logging.decodeFailure
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -22,6 +23,7 @@ import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import java.io.File
 
@@ -286,6 +288,11 @@ object RecentBrowserPagesManager {
                 // Bootstrap from existing browser history if available
                 bootstrapFromBrowserHistory(ticket, read, historyFile)
             }
+        } catch (e: SerializationException) {
+            // Never error = e here: the decoder's message carries the file, which is visited URLs
+            // with their query strings (#1629).
+            logger.warn(LogCategory.SYSTEM, "Error loading recent pages", decodeFailure(e))
+            bootstrapFromBrowserHistory(ticket, read, historyFile)
         } catch (e: Exception) {
             logger.warn(LogCategory.SYSTEM, "Error loading recent pages", error = e)
             // Try to bootstrap even on error
@@ -340,6 +347,8 @@ object RecentBrowserPagesManager {
                 saveImmediately()
                 logger.debug(LogCategory.SYSTEM, "Bootstrapped pages from browser history", mapOf("count" to recentPages.size))
             }
+        } catch (e: SerializationException) {
+            logger.warn(LogCategory.SYSTEM, "Error bootstrapping from browser history", decodeFailure(e))
         } catch (e: Exception) {
             logger.warn(LogCategory.SYSTEM, "Error bootstrapping from browser history", error = e)
         }

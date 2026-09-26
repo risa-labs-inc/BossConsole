@@ -2,12 +2,14 @@ package ai.rever.boss.cli
 
 import ai.rever.boss.components.dialogs.McpUnsuccessfulCategory
 import ai.rever.boss.components.dialogs.unsuccessfulCategory
+import ai.rever.boss.mcp.McpApprovalDisposition
 import ai.rever.boss.mcp.McpLedgerBreakReason
 import ai.rever.boss.mcp.McpLedgerEntry
 import ai.rever.boss.mcp.McpLedgerReadException
 import ai.rever.boss.mcp.McpLedgerVerification
 import ai.rever.boss.mcp.McpOperationLedger
 import ai.rever.boss.mcp.McpOperationRecord
+import ai.rever.boss.mcp.secrets.SecretField
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -41,13 +43,82 @@ internal sealed interface McpLedgerOutcome {
     ) : McpLedgerOutcome
 }
 
-/** The filters `tail` and `search` share, already parsed and validated by the caller. */
+/**
+ * The filters `tail`, `search` and `secrets` share, already parsed and validated by the caller.
+ *
+ * [secret] is a selector from [McpLedgerSecrets.parseSelector]: a lowercase secret id, which
+ * matches a reference to any of its fields, or `<id>.<field>`, which matches that field only.
+ */
 internal data class McpLedgerQuery(
     val tool: String? = null,
     val category: McpUnsuccessfulCategory? = null,
     val fromMillis: Long? = null,
     val toMillis: Long? = null,
+    val secret: String? = null,
+    val provider: String? = null,
 )
+
+/**
+ * Whether a call with this disposition handed its arguments - and so any resolved secret value -
+ * to the tool's handler.
+ *
+ * Exhaustive rather than a set, for the reason the activity log's `unsuccessfulCategory` is: a
+ * disposition added later is a compile error here instead of silently counted either way, and
+ * for a credential audit both directions are wrong. Every approval disposition means the handler
+ * ran, because an approval withdrawn at the revocation or secret fence is recorded as
+ * [McpApprovalDisposition.POLICY_DENIED] or [McpApprovalDisposition.SECRET_FORBIDDEN] instead;
+ * [McpApprovalDisposition.CANCELLED_IN_FLIGHT] is cancelled after the handler started, so it had the
+ * value too.
+ *
+ * Legacy [McpApprovalDisposition.CANCELLED] is the one that cannot say which side it was on: it
+ * predates the split into awaiting-approval and in-flight (#430, 2026-09-09). No record this report
+ * counts should carry it, since `secretRefs` arrived later (#822, 2026-09-24) and nothing writes
+ * `CANCELLED` any more. Should one appear anyway, it counts as delivered: for a credential audit,
+ * reporting a possible delivery that did not happen is the safe mistake, and the reverse is not.
+ */
+internal val McpApprovalDisposition.reachedHandler: Boolean
+    get() =
+        when (this) {
+            McpApprovalDisposition.AUTO_ALLOWED,
+            McpApprovalDisposition.APPROVED_ONCE,
+            McpApprovalDisposition.SESSION_TRUSTED,
+            McpApprovalDisposition.PERSISTENTLY_ALLOWED,
+            McpApprovalDisposition.PROVIDER_TRUSTED,
+            McpApprovalDisposition.PROVIDER_TRUST_PERSIST_FAILED,
+            McpApprovalDisposition.YOLO_ALLOWED,
+            McpApprovalDisposition.CANCELLED_IN_FLIGHT,
+            McpApprovalDisposition.CANCELLED,
+            -> true
+
+            McpApprovalDisposition.PERSISTENTLY_DENIED,
+            McpApprovalDisposition.POLICY_PERSIST_FAILED,
+            McpApprovalDisposition.DENIED_BY_OPERATOR,
+            McpApprovalDisposition.TIMEOUT,
+            McpApprovalDisposition.POLICY_DENIED,
+            McpApprovalDisposition.CANCELLED_AWAITING_APPROVAL,
+            McpApprovalDisposition.QUEUE_FULL,
+            McpApprovalDisposition.INVALID_ARGUMENTS,
+            McpApprovalDisposition.SECRET_FORBIDDEN,
+            McpApprovalDisposition.SECRET_UNRESOLVED,
+            McpApprovalDisposition.YOLO_ENABLED,
+            McpApprovalDisposition.YOLO_DISABLED,
+            -> false
+        }
+
+/** Every recorded use of one secret, across the records a `secrets` query matched. */
+internal data class McpSecretUse(
+    val id: String,
+    val fields: Set<String>,
+    val calls: Int,
+    val delivered: Int,
+    val tools: Map<String, Int>,
+    val providers: Set<String>,
+    val firstMillis: Long,
+    val lastMillis: Long,
+    val lastDeliveredMillis: Long?,
+) {
+    val withheld: Int get() = calls - delivered
+}
 
 /**
  * The read side of the durable MCP operation ledger, for `boss mcp ledger verify|tail|search`.
@@ -206,9 +277,19 @@ internal object McpLedgerCli {
                 query.category == null ||
                     (record.isError && record.approvalDisposition.unsuccessfulCategory == query.category)
             val toolMatches = query.tool == null || record.toolName == query.tool
+            // A plugin's tools record `<pluginId>::<providerId>`, so the plugin id alone has to match
+            // every provider it registered: an audit that silently finds nothing for a plugin reads as
+            // "this plugin never received it".
+            val providerMatches =
+                query.provider == null ||
+                    record.providerId == query.provider ||
+                    record.providerId.substringBefore("::") == query.provider
+            val secretMatches =
+                query.secret == null ||
+                    record.secretRefs.any { McpLedgerSecrets.matches(it.lowercase(Locale.ROOT), query.secret) }
             val afterFrom = query.fromMillis == null || record.timestamp >= query.fromMillis
             val beforeTo = query.toMillis == null || record.timestamp <= query.toMillis
-            toolMatches && categoryMatches && afterFrom && beforeTo
+            toolMatches && providerMatches && secretMatches && categoryMatches && afterFrom && beforeTo
         }
 
     /**
@@ -216,7 +297,7 @@ internal object McpLedgerCli {
      * operator asking to read an audit trail needs to know there is no audit trail, not to be told
      * there is nothing in it.
      */
-    private fun readEntries(ledgerFile: File): List<McpLedgerEntry> {
+    internal fun readEntries(ledgerFile: File): List<McpLedgerEntry> {
         requireLedger(ledgerFile)
         return McpOperationLedger(ledgerFile = ledgerFile).readEntries()
     }
@@ -229,6 +310,103 @@ internal object McpLedgerCli {
             )
         }
     }
+}
+
+/**
+ * `boss mcp ledger secrets`, and the `--secret` selector `tail` and `search` share: which calls
+ * referenced a secret, which of them handed it to a handler, and when. Its own object so the read
+ * path in [McpLedgerCli] stays the size its other three actions need.
+ */
+internal object McpLedgerSecrets {
+    /**
+     * One summary per secret the matching records referenced, most recently used first: how many
+     * calls named it, how many handed it to a handler and how many were withheld, which tools and
+     * plugins asked, and when. The question an operator rotating a credential after an incident
+     * has to answer, and which `search` could only answer one record at a time.
+     *
+     * Reads only what the ledger records - `secretRefs`, never a value - so it needs no vault
+     * access and works with BOSS closed.
+     */
+    @Suppress("TooGenericExceptionCaught") // Any read failure must be reported, never passed over.
+    fun secrets(
+        fileOverride: String?,
+        query: McpLedgerQuery,
+        json: Boolean,
+    ): McpLedgerOutcome =
+        try {
+            val ledgerFile = McpLedgerCli.resolveLedgerFile(fileOverride)
+            val entries = McpLedgerCli.filterEntries(McpLedgerCli.readEntries(ledgerFile), query)
+            val uses = uses(entries, query.secret)
+            McpLedgerOutcome.Ok(
+                if (json) {
+                    McpLedgerFormat.secretUsesJson(ledgerFile, uses).toString()
+                } else {
+                    McpLedgerFormat.secretUses(ledgerFile, uses)
+                },
+            )
+        } catch (e: McpLedgerReadException) {
+            McpLedgerOutcome.Failed("Error: ${e.message}")
+        } catch (e: Exception) {
+            McpLedgerOutcome.Failed("Error: cannot read the MCP operation ledger: ${e.message}")
+        }
+
+    /**
+     * Folds records into one [McpSecretUse] per secret id. With a field-level [selector], only that
+     * field's references count, so `--secret <id>.username` never reports the password's use.
+     */
+    fun uses(
+        entries: List<McpLedgerEntry>,
+        selector: String?,
+    ): List<McpSecretUse> {
+        val byId = linkedMapOf<String, MutableList<Pair<McpOperationRecord, String>>>()
+        for (entry in entries) {
+            for (ref in entry.record.secretRefs) {
+                val normalized = ref.lowercase(Locale.ROOT)
+                if (selector != null && !matches(normalized, selector)) continue
+                byId.getOrPut(normalized.substringBefore('.')) { mutableListOf() } += entry.record to normalized
+            }
+        }
+        return byId
+            .map { (id, refs) ->
+                // One call referencing two fields of one secret is one call, not two.
+                val calls = refs.map { it.first }.distinctBy { it.id }
+                val delivered = calls.filter { it.approvalDisposition.reachedHandler }
+                McpSecretUse(
+                    id = id,
+                    // `ledgerName` always writes `<id>.<field>`. A reference with no field names the
+                    // password, as `{{secret:<id>}}` does, so that is the field it is reported under.
+                    fields = refs.map { it.second.substringAfter('.', "password") }.toSortedSet(),
+                    calls = calls.size,
+                    delivered = delivered.size,
+                    tools = calls.groupingBy { it.toolName }.eachCount().toSortedMap(),
+                    providers = calls.map { it.providerId }.toSortedSet(),
+                    firstMillis = calls.minOf { it.timestamp },
+                    lastMillis = calls.maxOf { it.timestamp },
+                    lastDeliveredMillis = delivered.maxOfOrNull { it.timestamp },
+                )
+            }.sortedByDescending { it.lastMillis }
+    }
+
+    /**
+     * A `--secret` value: a secret id (a UUID, the only ids the vault issues), optionally with one
+     * of the fields a reference can name, returned lowercase. Null when [raw] is neither, so a
+     * typo is reported rather than silently matching nothing.
+     */
+    fun parseSelector(raw: String?): String? {
+        val text = raw?.trim()?.lowercase(Locale.ROOT).orEmpty()
+        val id = text.substringBefore('.')
+        val field = text.substringAfter('.', "")
+        val fieldOk = !text.contains('.') || field in SecretField.entries.map { it.wireName }
+        return text.takeIf { secretIdPattern.matches(id) && fieldOk }
+    }
+
+    /** A recorded reference `<id>.<field>` against a selector: the id alone matches every field. */
+    fun matches(
+        ref: String,
+        selector: String,
+    ): Boolean = ref == selector || (!selector.contains('.') && ref.substringBefore('.') == selector)
+
+    private val secretIdPattern = Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 }
 
 /** Human and JSON rendering for the `boss mcp ledger` actions. */
@@ -327,6 +505,9 @@ internal object McpLedgerFormat {
                     if (record.secretRefs.isNotEmpty()) {
                         append("\n    secrets: ").append(record.secretRefs.joinToString())
                     }
+                    if (record.escalated) {
+                        append("\n    escalated: rated CRITICAL, so a saved allow did not cover it")
+                    }
                 }
             }
         val footer =
@@ -385,6 +566,63 @@ internal object McpLedgerFormat {
 
     private fun policyOf(record: McpOperationRecord): String = "${record.policyApplied}/${record.approvalDisposition}"
 
+    fun secretUses(
+        ledgerFile: File,
+        uses: List<McpSecretUse>,
+    ): String {
+        // Said on an empty report too: "nothing found" is the answer an operator rotating a
+        // credential acts on, and it only covers what rotation has kept.
+        val scope =
+            "\n\nLedger: ${ledgerFile.absolutePath} and its rotated backups. A use older than the oldest " +
+                "backup is not counted.\nRun `boss mcp ledger verify` to check that this history is intact."
+        if (uses.isEmpty()) return "No matching ledger record references a secret.$scope"
+        val body =
+            uses.joinToString("\n\n") { use ->
+                buildString {
+                    append(use.id)
+                    append("  ")
+                    append("${use.calls} call(s): ${use.delivered} delivered to a handler, ${use.withheld} withheld")
+                    append("\n  fields:    ").append(use.fields.joinToString())
+                    append("\n  tools:     ")
+                    append(use.tools.entries.joinToString { (tool, count) -> "$tool ($count)" })
+                    append("\n  providers: ").append(use.providers.joinToString())
+                    append("\n  first:     ").append(timestamp(use.firstMillis))
+                    append("\n  last:      ").append(timestamp(use.lastMillis))
+                    append("\n  delivered: ").append(use.lastDeliveredMillis?.let(::timestamp) ?: "never")
+                }
+            }
+        return body + "\n\n${uses.size} secret(s). Only references are recorded; no value is read or shown.$scope"
+    }
+
+    fun secretUsesJson(
+        ledgerFile: File,
+        uses: List<McpSecretUse>,
+    ): JsonObject =
+        buildJsonObject {
+            put("path", ledgerFile.absolutePath.replace('\\', '/'))
+            put(
+                "secrets",
+                buildJsonArray {
+                    uses.forEach { use ->
+                        add(
+                            buildJsonObject {
+                                put("id", use.id)
+                                put("fields", buildJsonArray { use.fields.forEach { add(it) } })
+                                put("calls", use.calls)
+                                put("delivered", use.delivered)
+                                put("withheld", use.withheld)
+                                put("tools", buildJsonObject { use.tools.forEach { (tool, n) -> put(tool, n) } })
+                                put("providers", buildJsonArray { use.providers.forEach { add(it) } })
+                                put("firstTimestamp", use.firstMillis)
+                                put("lastTimestamp", use.lastMillis)
+                                put("lastDeliveredTimestamp", use.lastDeliveredMillis)
+                            },
+                        )
+                    }
+                },
+            )
+        }
+
     private fun recordJson(entry: McpLedgerEntry): JsonObject {
         val record = entry.record
         return buildJsonObject {
@@ -405,6 +643,7 @@ internal object McpLedgerFormat {
             )
             put("errorSnippet", record.errorSnippet)
             put("secretRefs", buildJsonArray { record.secretRefs.forEach { add(it) } })
+            put("escalated", record.escalated)
             put("hash", record.hash)
             put("parentHash", record.parentHash)
             put("file", entry.file.name)

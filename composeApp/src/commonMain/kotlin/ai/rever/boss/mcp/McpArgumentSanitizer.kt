@@ -146,10 +146,14 @@ object McpArgumentSanitizer {
     private const val validSecretReference =
         """\{\{secret:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}""" +
             """(?:\.(?:password|username|notes))?\}\}"""
+
+    // `*+`, not `*`: see STACK SAFETY on [sanitizeMessage]. Nothing that may follow the name
+    // (a quote, a backslash, whitespace, `:` or `=`) can be a character the group consumed, so
+    // never backtracking into it changes no match.
     private val sensitiveAssignment =
         Regex(
             """(?i)(?:(?:password|passwd|token|api[_-]?key|credential|cookie)|(?<!\{\{)secret)""" +
-                """(?:[_-][A-Za-z0-9]+)*$KEY_CLOSE\s*[:=]\s*(?!$validSecretReference(?:[\s&,;}]|$))$VALUE""",
+                """(?:[_-][A-Za-z0-9]+)*+$KEY_CLOSE\s*[:=]\s*(?!$validSecretReference(?:[\s&,;}]|$))$VALUE""",
         )
     private val bearer = Regex("""(?i)Bearer\s+[^\s"',;}]+""")
 
@@ -236,7 +240,11 @@ object McpArgumentSanitizer {
                 // or the escaped `\n` they carry when the whole command travels inside a JSON
                 // string: without that the arm starves on the '\' and the encrypted body
                 // survives again (fuzz cell: encrypted pem block / json string value).
-                """(?:(?:\s|\\n)*[A-Za-z-]+:(?:\\(?!n)|[^\n\\])*(?:\n|\\n))*[A-Za-z0-9+/=\s\\]*""" +
+                // All three repeats are possessive (see STACK SAFETY on [sanitizeMessage]). Each
+                // stops where the next part must begin - a header name, the line's end, the body -
+                // and what follows the header lines can match empty, so no match needs one of
+                // them to give anything back.
+                """(?:(?:\s|\\n)*+[A-Za-z-]+:(?:\\(?!n)|[^\n\\])*+(?:\n|\\n))*+[A-Za-z0-9+/=\s\\]*""" +
                 """(?:-----END [A-Z ]*PRIVATE KEY-----)?""",
         )
 
@@ -246,8 +254,29 @@ object McpArgumentSanitizer {
      * terminal command, and it is neither an assignment nor a known shape. #640 added the helper
      * for the logging path; the MCP path is where the same value reaches the approval dialog and
      * the ledger on disk (#886).
+     *
+     * STACK SAFETY. This runs inside invoke's `finally`, after the tool has run, to build the
+     * ledger record - so it must never throw. java.util.regex implements a greedy or lazy repeat
+     * of a GROUP (`(?:a|b)*`) by recursing once per iteration, and the agent chooses the input:
+     * `-----BEGIN PRIVATE KEY-----` followed by 4,000 spaces overflowed a default thread stack in
+     * the PEM rule, so the ledger lost the row of a call that had already executed and `invoke`
+     * threw an Error to its caller. Every repeated group in these rules is possessive (`*+`),
+     * which the engine runs as a loop; a repeat of a single character class is a loop already.
+     * `McpArgumentSanitizerStackSafetyTest` states that as a property over every rule's trigger
+     * and pathological fillers on a small stack. The catch below is the backstop for a rule added
+     * later without that care: a value that cannot be sanitized is withheld, never shown raw.
      */
     fun sanitizeMessage(text: String): String =
+        try {
+            redact(text)
+        } catch (_: StackOverflowError) {
+            SANITIZE_FAILED
+        }
+
+    /** What stands in for a value the rules could not process. */
+    internal const val SANITIZE_FAILED: String = "[OMITTED: could not be sanitized]"
+
+    private fun redact(text: String): String =
         LogSanitizer
             .redactUrlUserInfo(text)
             .replace(pemPrivateKey, "[REDACTED]")

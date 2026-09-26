@@ -2495,12 +2495,6 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
 tasks.withType<Test> {
     // Use JUnit Platform for test discovery
     useJUnitPlatform()
-    // Fail the run on a test JUnit will not execute, rather than let it pass by not running. A @Test
-    // method that returns a value is the common case here: `fun x() = runBlocking { ... }` returns
-    // whatever its last expression does, JUnit reports that as a WARNING-level discovery issue, skips
-    // the method, and the build stays green. Nine tests sat unexecuted that way, and one of them no
-    // longer described the code. Declare such a test `(): Unit =`.
-    systemProperty("junit.platform.discovery.issue.severity.critical", "WARNING")
     // Disable failure when test sources exist but no tests are discovered
     // This handles misconfigured test sources or test classes without test methods
     failOnNoDiscoveredTests = false

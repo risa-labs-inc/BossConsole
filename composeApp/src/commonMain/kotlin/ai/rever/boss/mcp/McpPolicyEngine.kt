@@ -188,7 +188,8 @@ class McpPolicyEngine(
      *
      * Precedence, most authoritative first:
      * 1. A fault that withholds every tool.
-     * 2. An explicit DENY - tool-specific **or** [providerId]'s own - always wins, over
+     * 2. An explicit DENY - tool-specific, [providerId]'s own, or a legacy unscoped provider
+     *    DENY saved before plugin provider ids were namespaced - always wins, over
      *    everything below, including a more specific ALLOW. This is deliberately NOT
      *    "most specific wins": a provider-wide DENY is a broader, and typically later,
      *    decision than whatever per-tool rule it sits next to, and letting a narrower ALLOW
@@ -223,7 +224,7 @@ class McpPolicyEngine(
             return McpPolicyAction.DENY
         }
         val configuredProvider = providerId?.let { _config.value.providerRules[it] }
-        if (configuredProvider == McpPolicyAction.DENY) {
+        if (isProviderDenied(providerId)) {
             return McpPolicyAction.DENY
         }
         if (providerId != null && McpSessionTrust(providerId, toolName) in _sessionTrustedTools.value) {
@@ -238,6 +239,31 @@ class McpPolicyEngine(
             _config.value.defaultReadOnlyAction
         }
     }
+
+    /**
+     * Preserve DENYs written before plugin providers changed from `provider` to
+     * `plugin::provider` (#958). A raw id cannot be assigned to one plugin safely because more
+     * than one plugin may have used it, so every matching scoped provider inherits the DENY.
+     *
+     * This compatibility lookup is intentionally DENY-only. Inheriting a legacy ALLOW would
+     * grant trust to whichever plugin later claimed the raw id and recreate the aliasing problem
+     * namespacing fixed. The rule is resolved at runtime rather than copied so revoking the raw
+     * rule immediately removes its inherited effect.
+     */
+    private fun isProviderDenied(providerId: String?): Boolean {
+        val scopedId = providerId ?: return false
+        val providerRules = _config.value.providerRules
+
+        return providerRules[scopedId] == McpPolicyAction.DENY ||
+            legacyProviderId(scopedId)?.let { legacyId ->
+                providerRules[legacyId] == McpPolicyAction.DENY
+            } == true
+    }
+
+    private fun legacyProviderId(providerId: String): String? =
+        providerId
+            .substringAfter("::", missingDelimiterValue = "")
+            .takeIf(String::isNotEmpty)
 
     /**
      * Trust [toolName], contributed by [providerId], for the duration of this session only.
@@ -448,7 +474,7 @@ class McpPolicyEngine(
             }
             if (changes.any {
                     it.action == McpPolicyAction.ALLOW &&
-                        _config.value.providerRules[it.providerId] == McpPolicyAction.DENY
+                        isProviderDenied(it.providerId)
                 }
             ) {
                 return@synchronized McpProactivePolicyOutcome.Denied
@@ -549,6 +575,9 @@ class McpPolicyEngine(
             if (providerId in _config.value.providerRules) {
                 return@synchronized McpProactivePolicyOutcome.Refused
             }
+            if (action == McpPolicyAction.ALLOW && isProviderDenied(providerId)) {
+                return@synchronized McpProactivePolicyOutcome.Denied
+            }
             writeConfig(
                 key = providerId,
                 logKey = "provider",
@@ -568,7 +597,7 @@ class McpPolicyEngine(
         providerId: String,
         toolName: String?,
     ): Boolean =
-        _config.value.providerRules[providerId] == McpPolicyAction.DENY ||
+        isProviderDenied(providerId) ||
             (toolName != null && policyFor(toolName, providerId) == McpPolicyAction.DENY)
 
     /**
