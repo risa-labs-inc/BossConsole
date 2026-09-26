@@ -11,56 +11,55 @@ class AgentTaskPlannerTest {
     val rule = createComposeRule()
 
     @Test
-    fun `task planner displays title completion count progress and tasks`() {
+    fun `run activity displays completion count progress and runs`() {
         rule.setContent {
             AgentTaskPlanner(
                 tasks =
                     listOf(
                         AgentTask(
-                            title = "Understand requirements",
+                            title = "Build project",
                             status = AgentTaskStatus.COMPLETED,
-                        ),
-                        AgentTask(
-                            title = "Create project structure",
-                            status = AgentTaskStatus.COMPLETED,
-                        ),
-                        AgentTask(
-                            title = "Implement feature",
-                            status = AgentTaskStatus.IN_PROGRESS,
                         ),
                         AgentTask(
                             title = "Run tests",
+                            status = AgentTaskStatus.COMPLETED,
+                        ),
+                        AgentTask(
+                            title = "Start application",
+                            status = AgentTaskStatus.IN_PROGRESS,
+                        ),
+                        AgentTask(
+                            title = "Deploy configuration",
                             status = AgentTaskStatus.TODO,
                         ),
                         AgentTask(
-                            title = "Review results",
+                            title = "Verify result",
                             status = AgentTaskStatus.TODO,
                         ),
                     ),
             )
         }
 
-        rule.onNodeWithText("AI Task Plan").assertIsDisplayed()
+        rule.onNodeWithText("Run Activity").assertIsDisplayed()
         rule.onNodeWithText("2/5 completed").assertIsDisplayed()
         rule.onNodeWithText("Progress: 40%").assertIsDisplayed()
 
-        rule.onNodeWithText("Understand requirements").assertIsDisplayed()
-        rule.onNodeWithText("Create project structure").assertIsDisplayed()
-        rule.onNodeWithText("Implement feature").assertIsDisplayed()
+        rule.onNodeWithText("Build project").assertIsDisplayed()
         rule.onNodeWithText("Run tests").assertIsDisplayed()
-        rule.onNodeWithText("Review results").assertIsDisplayed()
+        rule.onNodeWithText("Start application").assertIsDisplayed()
+        rule.onNodeWithText("Deploy configuration").assertIsDisplayed()
+        rule.onNodeWithText("Verify result").assertIsDisplayed()
     }
 
     @Test
-    fun `empty task planner displays empty state`() {
+    fun `empty run activity displays empty state`() {
         rule.setContent {
             AgentTaskPlanner(tasks = emptyList())
         }
 
-        rule.onNodeWithText("AI Task Plan").assertIsDisplayed()
-        rule.onNodeWithText("No agent tasks yet.").assertIsDisplayed()
-        rule
-            .onNodeWithText("Start an agent task to see its workflow here.")
+        rule.onNodeWithText("Run Activity").assertIsDisplayed()
+        rule.onNodeWithText("No active runs.").assertIsDisplayed()
+        rule.onNodeWithText("Run a configuration to see its activity here.")
             .assertIsDisplayed()
     }
 }

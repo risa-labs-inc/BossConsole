@@ -48,7 +48,7 @@ fun AgentTaskPlanner(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
-            text = "AI Task Plan",
+            text = "Run Activity",
             color = BossTheme.colors.textPrimary,
             fontSize = 16.sp,
             fontWeight = FontWeight.SemiBold,
@@ -56,13 +56,13 @@ fun AgentTaskPlanner(
 
         if (tasks.isEmpty()) {
             Text(
-                text = "No agent tasks yet.",
+                text = "No active runs.",
                 color = BossTheme.colors.textSecondary,
                 fontSize = 13.sp,
             )
 
             Text(
-                text = "Start an agent task to see its workflow here.",
+                text = "Run a configuration to see its activity here.",
                 color = BossTheme.colors.textSecondary,
                 fontSize = 12.sp,
             )
