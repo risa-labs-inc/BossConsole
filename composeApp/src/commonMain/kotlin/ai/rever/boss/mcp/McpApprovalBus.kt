@@ -85,6 +85,13 @@ data class McpApprovalRequest(
      * show them by accident. Empty for every call without references.
      */
     val secretRefs: List<SecretDescriptor> = emptyList(),
+    /**
+     * Shell commands this call would run that [arguments] do not show, because the arguments
+     * only name where they are stored (a saved Space's terminal startup commands; see
+     * [McpStoredCommandSource]). Already sanitized like [arguments]. Non-empty means the prompt
+     * was raised for these whatever the tool's policy says, and approving it approves them.
+     */
+    val storedCommands: List<String> = emptyList(),
     val requestedAt: Long = System.currentTimeMillis(),
     val deferred: CompletableDeferred<McpApprovalDecision> = CompletableDeferred(),
 ) {
@@ -123,9 +130,9 @@ open class McpApprovalBus(
      * or [timeoutMs] elapses (in which case it fails closed).
      */
     // Queue overflow needs its own returns; the request carries the tool's full approval
-    // context, from name and provider to its own read-only declaration and the secrets it
-    // would receive. Folding those into a builder would move the same names one call deeper.
-    @Suppress("ReturnCount", "LongParameterList")
+    // context, from name and provider to its own read-only declaration and the secrets and stored
+    // commands it carries. Folding those into a builder would move the same names one call deeper.
+    @Suppress("ReturnCount", "LongParameterList", "LongMethod")
     suspend fun requestApproval(
         toolName: String,
         providerId: String,
@@ -137,6 +144,7 @@ open class McpApprovalBus(
         policy: McpPolicyAction? = null,
         escalated: Boolean = false,
         secretRefs: List<SecretDescriptor> = emptyList(),
+        storedCommands: List<String> = emptyList(),
     ): McpApprovalDecision {
         val request =
             McpApprovalRequest(
@@ -150,6 +158,10 @@ open class McpApprovalBus(
                 policy = policy,
                 escalated = escalated,
                 secretRefs = secretRefs,
+                // Identity for anything the registry lets through (a command the sanitizer would
+                // change is refused before the prompt, see storedCommandShownInFull); kept so a
+                // request built some other way still never carries an unsanitized command.
+                storedCommands = storedCommands.map { McpArgumentSanitizer.sanitizeMessage(it) },
             )
 
         synchronized(lock) {

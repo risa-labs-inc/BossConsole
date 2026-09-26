@@ -2390,6 +2390,53 @@ later change is most likely to want to undo are recorded here so they are undone
   `aiProviderRefusal`. Neither can be reached through a reference that could not be reached
   through the plugin.
 
+A saved Space's terminal tabs can carry an `initialCommand` each, typed into a shell the moment
+the Space is applied, and `open_workspace(workspaceId = x)` names the file and shows none of
+them. Approving that call is not approving what `x.json` says to run, so the provider used to
+refuse such Spaces outright. It now implements `McpStoredCommandSource` (host-internal, not
+plugin API): before the prompt the registry asks it what the call would run, shows the commands
+in the approval dialog, escalates the risk to the worst of them, and asks even where the tool or
+provider is ALLOW-ed or session-trusted; durable answers to that prompt are taken as one
+approval, since the prompt was raised for the commands and not the tool. After approval the
+registry hands the same list back to the handler under `approvedStartupCommands`, which it
+strips from every incoming call first, so the handler treats the key as the registry's word and
+nobody else's; a Space whose commands changed between the prompt and the open is refused. A
+source that throws refuses the call, and more than `MAX_STORED_COMMANDS_PER_CALL` commands are
+refused before any prompt, as is any command over `MAX_STORED_COMMAND_CHARS`, commands adding up
+to more than `MAX_STORED_COMMANDS_TOTAL_CHARS` (both caps measured on the text as shown, since
+one hidden code point is shown as up to ten characters), or a source that does not answer within
+`STORED_COMMANDS_PREVIEW_TIMEOUT_MS`. So is a command the argument sanitizer would change
+(`storedCommandShownInFull`): `export TOKEN="$(curl ... | sh)"` would be shown as
+`export [REDACTED]` and run in full, and the prompt exists so the operator reads what runs. The
+masker matches inside a variable's name too (`export GITHUB_TOKEN=$GITHUB_TOKEN` shows as
+`export GITHUB_[REDACTED]`), so a Space with such a line is refused as well; the refusal names
+the command by number. A call refused there never reaches the secret pre-pass, so it reads
+nothing from the vault. The prompt is presented as #1624's escalated prompt (no durable allow; a
+durable deny stays available, and its wording names the commands rather than destructiveness),
+and YOLO mode does not answer it. Its ledger row still records `escalated: false`: that field
+keeps #1655's meaning (a destructive shell call raised to ASK), and a stored-command call is
+told apart by `policyApplied = ASK` and the `approvedStartupCommands` key it carries. Each
+command is shown through `displayableStoredCommand`, which walks code points and escapes by
+Unicode category (controls, format characters including the tag block, line and paragraph
+separators, private-use, unassigned) plus the invisible fillers and variation selectors, and
+sits in a bordered entry of its own with the number in a separate column, so a line that
+soft-wraps (a run of spaces pushing `2. $ curl ...` onto the next line) hangs inside its entry
+instead of reading as the next one. Keep it a category test: a range list goes out of date, and
+U+2028 was exactly such a gap, a mandatory line break that drew one command as two numbered
+entries. The box pins its scrollbar whenever the list runs past it, from two answers OR-ed:
+`storedCommandsOverflow`, arithmetic that is a LOWER bound on the height (at least a line per
+entry, at more characters per line than any monospace font fits), so it is right on the first
+frame whenever it says yes and never pins a bar over a list that fits; and the measured
+`ScrollState.maxValue`, with its `Int.MAX_VALUE` before-layout sentinel excluded. That is not
+the scroll-state read the tools-menu section forbids: the sentinel is never read as "scrolls",
+and the arithmetic owns the first frame, so a list only the measurement catches gets its bar one
+frame late. The pinned bar skips the panel's 1.5 s fade, or that frame would be two seconds. The
+commands are shown as the file has them; when they carry `{projectPath}` or another Space
+placeholder, the dialog says those are filled in when the Space opens. **Path mode is out of
+scope here and is not covered by this prompt**: `matchExistingSpace` can re-enter a saved Space
+for a project path, and that route has its own gate (#920), not this one. Shipped templates are
+exempt, as before: their commands are BOSS's own.
+
 ## Process log authority and lifetime
 
 Process logs are host-owned infrastructure, not an OS sandbox. Log setup fails closed

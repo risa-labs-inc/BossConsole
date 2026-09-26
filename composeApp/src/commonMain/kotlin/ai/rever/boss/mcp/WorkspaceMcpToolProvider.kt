@@ -81,8 +81,14 @@ import kotlin.time.Clock
  */
 // One cohesive MCP tool provider; handlers stay beside their tool definitions.
 @Suppress("TooManyFunctions", "LargeClass")
-object WorkspaceMcpToolProvider : McpToolProvider, McpToolAliasProvider {
+object WorkspaceMcpToolProvider :
+    McpToolProvider,
+    McpToolAliasProvider,
+    McpStoredCommandSource {
     private val logger = BossLogger.forComponent("WorkspaceMcpToolProvider")
+
+    /** The one tool whose calls can run stored commands; see [storedCommandsFor]. */
+    private const val OPEN_WORKSPACE_TOOL = "open_workspace"
 
     /** Panel id of the terminal panel the bootstrap Space builds. */
     const val BOOTSTRAP_PANEL_ID = "panel-open-workspace"
@@ -128,6 +134,77 @@ object WorkspaceMcpToolProvider : McpToolProvider, McpToolAliasProvider {
         if (isColdStart) coldStartWindowWaitTimeoutMs else splitViewWaitTimeoutMs
 
     private fun getFileManager(): WorkspaceFileManager = fileManagerProvider?.invoke() ?: WorkspaceFileManager()
+
+    /**
+     * A workspace `open_workspace` would apply for these selectors, and whether it is one of the
+     * shipped templates (whose startup commands are BOSS's own, not a file's). Shared by the
+     * handler and by [storedCommandsFor], so the commands the operator approves are read from the
+     * same place, by the same rule, as the ones that will run.
+     */
+    private class LocatedWorkspace(
+        val workspace: LayoutWorkspace,
+        val shipped: Boolean,
+    )
+
+    @Suppress("ReturnCount") // Ordered lookups: an explicit file, then a shipped template, then the store.
+    private suspend fun locateStoredWorkspace(
+        workspaceId: String?,
+        canonicalWorkspacePath: String?,
+    ): LocatedWorkspace? {
+        if (canonicalWorkspacePath != null) {
+            val file = File(canonicalWorkspacePath)
+            if (file.exists() && file.canRead()) {
+                val content = withContext(Dispatchers.IO) { file.readText() }
+                // withStableId for the same reason the handler does it: agent-authored JSON
+                // commonly carries no id, and a blank one flows into the applier.
+                runCatching { WorkspaceSerializer.deserialize(content) }
+                    .getOrNull()
+                    ?.withStableId()
+                    ?.let { return LocatedWorkspace(it, shipped = false) }
+            }
+        }
+        if (workspaceId.isNullOrBlank()) return null
+        PredefinedWorkspaces.allWorkspaces
+            .firstOrNull { it.id == workspaceId }
+            ?.let { return LocatedWorkspace(it, shipped = true) }
+        return getFileManager()
+            .loadWorkspace(workspaceFileNameFor(workspaceId))
+            ?.withStableId()
+            ?.let { LocatedWorkspace(it, shipped = false) }
+    }
+
+    /**
+     * The terminal startup commands `open_workspace` would type for these arguments, for the
+     * approval dialog. Empty for every call the handler will refuse on its own (a bad id, a
+     * path mode call, a missing file), for a shipped template, and for a Space without commands;
+     * reads only, creates nothing.
+     */
+    @Suppress("ReturnCount") // Each early return is a call the handler refuses on its own, and reads nothing.
+    override suspend fun storedCommandsFor(
+        toolName: String,
+        args: McpToolArgs,
+    ): List<String> {
+        // The registry resolves an alias (workspace_open) to this canonical name before asking.
+        if (toolName != OPEN_WORKSPACE_TOOL) return emptyList()
+        val workspaceId = args.string("workspaceId")
+        val workspacePath = args.string("workspacePath")
+        if (!args.string("path").isNullOrBlank()) return emptyList()
+        if (workspaceId != null && !isSafeWorkspaceId(workspaceId)) return emptyList()
+        // The handler's own containment check (#896), applied here too: the preview must never
+        // read a file the call would be refused for, and the two must agree on which file it is.
+        val canonicalWorkspacePath =
+            if (workspacePath.isNullOrBlank()) {
+                null
+            } else {
+                checkWorkspacePathContainment(
+                    rawPath = workspacePath,
+                    workspaceDirectory = getFileManager().getDefaultWorkspaceDirectory(),
+                ).canonicalPath ?: return emptyList()
+            }
+        val located = locateStoredWorkspace(workspaceId, canonicalWorkspacePath) ?: return emptyList()
+        if (located.shipped) return emptyList()
+        return located.workspace.layout.initialCommands()
+    }
 
     @Suppress("ReturnCount")
     internal suspend fun awaitSplitViewState(
@@ -205,7 +282,7 @@ object WorkspaceMcpToolProvider : McpToolProvider, McpToolAliasProvider {
     override val toolAliases: Map<String, String> =
         mapOf(
             "workspace_list" to "list_workspaces",
-            "workspace_open" to "open_workspace",
+            "workspace_open" to OPEN_WORKSPACE_TOOL,
             "workspace_create" to "create_workspace",
             "terminal_open" to "open_terminal",
             "workspace_close" to "close_workspace",
@@ -214,7 +291,7 @@ object WorkspaceMcpToolProvider : McpToolProvider, McpToolAliasProvider {
     override fun tools(): List<McpToolDefinition> =
         listOf(
             createListWorkspacesTool("list_workspaces"),
-            createOpenWorkspaceTool("open_workspace"),
+            createOpenWorkspaceTool(OPEN_WORKSPACE_TOOL),
             createCreateWorkspaceTool("create_workspace"),
             createOpenTerminalTool("open_terminal"),
             createCloseWorkspaceTool("close_workspace"),
@@ -244,8 +321,8 @@ object WorkspaceMcpToolProvider : McpToolProvider, McpToolAliasProvider {
                     "Space with its first terminal (bootstrap; re-opening a running path re-enters " +
                     "the Space instead of duplicating it), or an existing workspace by " +
                     "'workspaceId' / 'workspacePath', optionally created via 'name' / 'projectPath' " +
-                    "with 'createIfAbsent'. Saved workspaces with terminal startup commands must be opened " +
-                    "through the UI or have those commands submitted explicitly through open_terminal.",
+                    "with 'createIfAbsent'. A saved workspace with terminal startup commands always asks the " +
+                    "operator, who is shown the commands; they run only if that approval is given.",
             inputSchema =
                 """
                 {
@@ -499,34 +576,20 @@ object WorkspaceMcpToolProvider : McpToolProvider, McpToolAliasProvider {
             }
 
         // Locate or create workspace
-        var workspace: LayoutWorkspace? = null
-        var isShippedTemplate = false
         var persisted = false
 
-        if (canonicalWorkspacePath != null) {
+        // A path that passed containment but names nothing readable is "not found", not a
+        // security refusal, and it is decided before the store lookup so a stale path cannot
+        // silently fall through to whatever a workspaceId names.
+        if (canonicalWorkspacePath != null && !createIfAbsent) {
             val file = File(canonicalWorkspacePath)
-            if (file.exists() && file.canRead()) {
-                val content = withContext(Dispatchers.IO) { file.readText() }
-                // Agent-authored JSON commonly carries no id: mint one here too, or the
-                // blank id flows into the applier, which keys the preserved tree under a
-                // throwaway one.
-                workspace = runCatching { WorkspaceSerializer.deserialize(content) }.getOrNull()?.withStableId()
-            } else if (!createIfAbsent) {
+            if (!file.exists() || !file.canRead()) {
                 return McpToolResult("Workspace file not found: $workspacePath", isError = true)
             }
         }
-
-        if (workspace == null && !workspaceId.isNullOrBlank()) {
-            // Check predefined templates
-            workspace = PredefinedWorkspaces.allWorkspaces.firstOrNull { it.id == workspaceId }
-            isShippedTemplate = workspace != null
-
-            // Check saved workspaces
-            if (workspace == null) {
-                val fileManager = getFileManager()
-                workspace = fileManager.loadWorkspace(workspaceFileNameFor(workspaceId))?.withStableId()
-            }
-        }
+        val located = locateStoredWorkspace(workspaceId, canonicalWorkspacePath)
+        var workspace: LayoutWorkspace? = located?.workspace
+        val isShippedTemplate = located?.shipped == true
 
         if (workspace == null) {
             if (createIfAbsent || !name.isNullOrBlank()) {
@@ -568,9 +631,30 @@ object WorkspaceMcpToolProvider : McpToolProvider, McpToolAliasProvider {
             }
         }
 
-        // Persisted commands were not visible in this MCP invocation's approval arguments.
-        // Require a separate open_terminal call so its command receives normal risk review.
-        initialCommandsRefusal(workspace, isShippedTemplate)?.let { return it }
+        // Persisted commands are not in this invocation's arguments, so the only way they run is
+        // if the registry showed them to the operator and handed the approved list back (see
+        // McpStoredCommandSource). The list must match what the file says now, command for
+        // command and in order: a Space edited between the prompt and this point is not the one approved.
+        val stored = if (isShippedTemplate) emptyList() else workspace.layout.initialCommands()
+        if (stored.isNotEmpty()) {
+            val approved = args.approvedStoredCommands()
+            if (approved == null) {
+                return McpToolResult(
+                    "Workspace contains terminal startup commands that were not approved for this call. " +
+                        "Retry so the current commands can be reviewed.",
+                    isError = true,
+                )
+            }
+            // In order: order is semantic for a shell (`... > f` then `cat f`), so a Space whose
+            // commands were only reordered between the prompt and here is not the one approved.
+            if (approved != stored) {
+                return McpToolResult(
+                    "Workspace '${workspace.id}' changed between approval and opening: its startup commands are " +
+                        "no longer the ones the operator approved. Retry so the current commands can be reviewed.",
+                    isError = true,
+                )
+            }
+        }
 
         // Awaited only once there is a workspace to open, so a wrong id is reported at once rather
         // than after the UI-state wait. A window that never registers is an error, as it is in
@@ -655,15 +739,15 @@ object WorkspaceMcpToolProvider : McpToolProvider, McpToolAliasProvider {
     }
 
     /**
-     * The one refusal both open_workspace modes share, so the id mode's gate cannot be walked
-     * around by asking for the path mode instead (#920).
+     * The path mode's refusal of a saved Space that carries startup commands (#920).
      *
      * A saved Space's terminal `initialCommand`s are arbitrary shell lines stored in its
-     * layout, and they were not visible in this invocation's approval arguments - so an MCP
-     * open cannot have approved them, and applying the Space types them into a shell. The id
-     * mode has always refused such a Space; the path mode re-enters the same saved Spaces (see
-     * matchExistingSpace), so it refuses them too. Shipped templates are exempt, exactly as in
-     * the id mode handler: their commands are BOSS's own, not a file's.
+     * layout, and they are not visible in this invocation's approval arguments. The id mode
+     * shows them to the operator through [storedCommandsFor] and runs them only on that
+     * approval; the path mode re-enters the same saved Spaces (see matchExistingSpace) without
+     * that preview, so it keeps refusing them outright rather than typing unseen commands into a
+     * shell. Shipped templates are exempt, exactly as in the id mode handler: their commands are
+     * BOSS's own, not a file's.
      *
      * The operator keeps the doors the message names: the workspace UI loads a command-carrying
      * Space behind its confirmation prompt (see spaceLoadDisposition), and open_terminal types
@@ -673,7 +757,7 @@ object WorkspaceMcpToolProvider : McpToolProvider, McpToolAliasProvider {
         space: LayoutWorkspace,
         isShippedTemplate: Boolean,
     ): McpToolResult? {
-        if (isShippedTemplate || !space.layout.hasInitialCommands()) {
+        if (isShippedTemplate || space.layout.initialCommands().isEmpty()) {
             return null
         }
         return McpToolResult(
@@ -723,12 +807,12 @@ object WorkspaceMcpToolProvider : McpToolProvider, McpToolAliasProvider {
 
         // Path mode re-enters the SAME saved Spaces the id mode resolves above -
         // matchExistingSpace's rule 3 applies any saved Space for this project path exactly as
-        // picking it in the Space switcher would - so the two modes must share one gate: a
-        // Space whose stored terminal commands the id mode refuses must not have them typed
-        // into a shell because the caller reached for a path instead of an id (#920). The gate
-        // sits before the reuse fast path for the same reason the id mode's gate sits before
-        // its already-active return: entering the Space through this tool at all is what is
-        // refused, not only the apply.
+        // picking it in the Space switcher would. The id mode shows that Space's stored terminal
+        // commands in the approval prompt and runs them only on that approval
+        // (McpStoredCommandSource); path mode has no such preview, so it keeps refusing a Space
+        // that carries any, or a caller could have them typed into a shell by reaching for a path
+        // instead of an id (#920). The refusal sits before the reuse fast path because entering
+        // the Space through this mode at all is what is refused, not only the apply.
         initialCommandsRefusal(space, space.id in PredefinedWorkspaces.allIds)?.let { return it }
 
         // Fast path: the window already shows this Space, so the live terminal is left alone.
@@ -1523,9 +1607,10 @@ internal fun matchesProjectPath(
 internal fun isSafeWorkspaceId(id: String): Boolean =
     id.isNotBlank() && id != "." && ".." !in id && id.none { it == '/' || it == '\\' || it == ':' || it.isISOControl() }
 
-internal fun SplitConfig.hasInitialCommands(): Boolean =
+/** Every non-blank terminal `initialCommand` in this layout, in tab order. */
+internal fun SplitConfig.initialCommands(): List<String> =
     when (this) {
-        is SplitConfig.SinglePanel -> panel.tabs.any { !it.initialCommand.isNullOrBlank() }
-        is SplitConfig.VerticalSplit -> left.hasInitialCommands() || right.hasInitialCommands()
-        is SplitConfig.HorizontalSplit -> top.hasInitialCommands() || bottom.hasInitialCommands()
+        is SplitConfig.SinglePanel -> panel.tabs.mapNotNull { it.initialCommand?.takeIf { c -> c.isNotBlank() } }
+        is SplitConfig.VerticalSplit -> left.initialCommands() + right.initialCommands()
+        is SplitConfig.HorizontalSplit -> top.initialCommands() + bottom.initialCommands()
     }

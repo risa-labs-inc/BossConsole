@@ -482,12 +482,11 @@ internal interface McpToolAliasProvider {
 // to whoever adds the ninth.
 //
 // LargeClass for the same reason, and it is the same signal: the class now holds the kill
-// switch, RBAC, the policy path, YOLO mode, the approval fence, the secret pre-pass hand-off,
-// execution and the ledger write. The secret work keeps its own logic in
-// `ai.rever.boss.mcp.secrets` (McpSecretPrePass, the resolver, the substitution and the
-// scrubber) and adds only the hand-off here, so splitting further is a change to the
-// governance path's shape rather than to this feature - and should be done deliberately, not
-// as a side effect of landing one.
+// switch, RBAC, the policy path, YOLO mode, the approval fence, the secret and stored-command
+// pre-pass hand-offs, execution and the ledger write. Both features keep their own logic
+// outside it (`ai.rever.boss.mcp.secrets`, `McpStoredCommandSource`) and add only the hand-off
+// here, so splitting further is a change to the governance path's shape rather than to either
+// feature - and should be done deliberately, not as a side effect of landing one.
 @Suppress("LongParameterList", "LargeClass")
 internal class McpToolRegistryCore(
     private val disabledFile: File?,
@@ -629,6 +628,14 @@ internal class McpToolRegistryCore(
      */
     private val _providerAliases = MutableStateFlow<Map<String, Map<String, String>>>(emptyMap())
 
+    /**
+     * The providers whose tools may run commands their arguments do not show, by provider id
+     * (see [McpStoredCommandSource]). Written under [mutationLock] with [_providers]; read
+     * lock-free on every invocation.
+     */
+    @Volatile
+    private var storedCommandSources: Map<String, McpStoredCommandSource> = emptyMap()
+
     private val _all = MutableStateFlow<List<RegisteredMcpTool>>(emptyList())
     val allTools: StateFlow<List<RegisteredMcpTool>> = _all.asStateFlow()
 
@@ -691,6 +698,12 @@ internal class McpToolRegistryCore(
             }
             _providers.update { it + (provider.providerId to defs) }
             _providerAliases.update { it + (provider.providerId to aliases) }
+            storedCommandSources =
+                if (provider is McpStoredCommandSource) {
+                    storedCommandSources + (provider.providerId to provider)
+                } else {
+                    storedCommandSources - provider.providerId
+                }
             recompute()
         }
         logger.info(
@@ -705,6 +718,7 @@ internal class McpToolRegistryCore(
             if (!_providers.value.containsKey(providerId)) return@synchronized
             _providers.update { it - providerId }
             _providerAliases.update { it - providerId }
+            storedCommandSources = storedCommandSources - providerId
             recompute()
             logger.info(
                 LogCategory.SYSTEM,
@@ -932,7 +946,7 @@ internal class McpToolRegistryCore(
                 }
             }
 
-    // One boundary must cover denial, approval, execution, and the ledger write.
+    // Keep authorization and execution inside the same cancellation audit boundary.
     @Suppress("LongMethod", "CyclomaticComplexMethod")
     suspend fun invoke(
         toolName: String,
@@ -944,7 +958,11 @@ internal class McpToolRegistryCore(
                     unavailableToolMessage(resolveAlias(toolName)?.second ?: toolName),
                     isError = true,
                 )
-        val args = parseMcpToolArgs(arguments, logger)
+        val source = storedCommandSources[tool.providerId]
+        // The approval key is the registry's to set and nobody else's: whatever the agent sent
+        // under it is dropped before the source, the policy, the prompt or the handler see it.
+        val parsed = parseMcpToolArgs(arguments, logger)
+        val args = if (source != null) parsed.withoutApprovedStoredCommands() else parsed
         // Policy is consulted under the canonical name: an alias must inherit the
         // canonical tool's policy, not fall back to whatever default the alias's
         // own name would classify as.
@@ -958,26 +976,50 @@ internal class McpToolRegistryCore(
         // Stated rather than inferred from a policy change, so the prompt and the ledger row
         // read the same answer and a second rule that also moves the policy cannot pass as one.
         val escalated = escalatesToAsk(canonicalName, args, savedPolicy)
-        val policy = if (escalated) McpPolicyAction.ASK else savedPolicy
+        val toolPolicy = if (escalated) McpPolicyAction.ASK else savedPolicy
         val startTime = System.nanoTime()
-        // The secret pre-pass runs before the audit boundary below on purpose: nothing in it
-        // executes the tool, and a cancellation while the vault is being read has nothing to
-        // record - the ledger's job is to say what happened to an authorized-or-refused call,
-        // and this call is neither yet. Everything it decides is carried into that boundary.
+        // Both pre-passes run before the audit boundary: nothing in them executes the tool, and a
+        // source or vault that cannot answer is a refusal recorded like any other. Stored
+        // commands first, so the policy the secret pre-pass sees already carries their forced
+        // ASK; a DENY-ed tool is never asked for either, and neither is a call whose arguments
+        // were already refused. A call the stored-command preview refused reads no vault.
         val invalidArguments = invalidArguments(tool, arguments, args)
-        val secrets = if (invalidArguments == null) secretPrePass.prepare(args, policy) else SecretPreparation.None
+        val stored =
+            if (invalidArguments == null) {
+                previewStoredCommands(source, tool, args, toolPolicy)
+            } else {
+                StoredCommandsPreview.NONE
+            }
+        val policy = stored.effectivePolicy(toolPolicy)
+        val secrets =
+            if (invalidArguments == null && stored.refusal == null) {
+                secretPrePass.prepare(args, policy)
+            } else {
+                SecretPreparation.None
+            }
         val effectivePolicy = secrets.effectivePolicy(policy)
         var disposition = McpApprovalDisposition.AUTO_ALLOWED
         var result: McpToolResult? = null
         var executionStarted = false
         try {
             // Shape and schema refusals precede authorization, approval, and execution.
+            // `escalated` is #1577/#1624's destructive-shell gate; a stored-command prompt is
+            // presented the same way (no durable allow, a durable deny kept), and the secret path
+            // reaches the same downgrade by its own route inside authorize().
             val authorization =
-                if (invalidArguments != null) {
-                    McpApprovalDisposition.INVALID_ARGUMENTS to invalidArguments
-                } else {
-                    authorize(tool, args, effectivePolicy, revocation, secrets, escalated)
-                }
+                invalidArguments?.let { McpApprovalDisposition.INVALID_ARGUMENTS to it }
+                    ?: stored.refusal?.let { McpApprovalDisposition.POLICY_DENIED to it }
+                    ?: authorize(
+                        tool,
+                        args,
+                        effectivePolicy,
+                        revocation,
+                        secrets,
+                        // The ledger's `escalated` stays the destructive-shell gate's alone (#1655);
+                        // a stored-command prompt only borrows its once-only presentation.
+                        escalated = escalated || stored.commands.isNotEmpty(),
+                        storedCommands = stored.commands,
+                    )
             disposition = authorization.first
             val denial = authorization.second
             result =
@@ -993,7 +1035,8 @@ internal class McpToolRegistryCore(
 
                     else -> {
                         executionStarted = true
-                        executeAuthorized(tool, secrets.executionArgs(args), secrets.resultFilter())
+                        val execArgs = secrets.executionArgs(args).withApprovedStoredCommands(stored.commands)
+                        executeAuthorized(tool, execArgs, secrets.resultFilter())
                     }
                 }
             return requireNotNull(result)
@@ -1018,9 +1061,10 @@ internal class McpToolRegistryCore(
                     approvalDisposition = disposition,
                     durationMs = (System.nanoTime() - startTime) / 1_000_000L,
                     isError = result?.isError ?: true,
-                    // The ORIGINAL arguments, references intact: a reference is inert text,
-                    // so this record carries what the agent wrote and never what it received.
-                    rawArgs = McpArgumentSanitizer.parseArguments(args.raw),
+                    // What the agent wrote (references intact, a forged approval key removed), plus
+                    // the stored commands the operator was shown, under the key the handler got
+                    // them by: this record carries what was approved and never a secret value.
+                    rawArgs = McpArgumentSanitizer.parseArguments(args.raw) + stored.ledgerEntry(),
                     errorSnippet =
                         when {
                             result == null -> "Execution cancelled by caller"
@@ -1068,6 +1112,103 @@ internal class McpToolRegistryCore(
         val schemaError =
             if (shapeError == null) validateMcpToolArguments(tool.definition.inputSchema, args.raw) else null
         return shapeError ?: schemaError
+    }
+
+    /** What a [McpStoredCommandSource] says this call would run, or why the call cannot proceed. */
+    private class StoredCommandsPreview(
+        val commands: List<String>,
+        val refusal: String? = null,
+    ) {
+        fun ledgerEntry(): Map<String, Any?> {
+            if (commands.isEmpty()) return emptyMap()
+            return mapOf(APPROVED_STORED_COMMANDS_KEY to commands)
+        }
+
+        /** ASK whatever the tool's rule or trust says, unless the tool is denied outright. */
+        fun effectivePolicy(toolPolicy: McpPolicyAction): McpPolicyAction =
+            if (commands.isNotEmpty() && toolPolicy != McpPolicyAction.DENY) McpPolicyAction.ASK else toolPolicy
+
+        companion object {
+            val NONE = StoredCommandsPreview(emptyList())
+        }
+    }
+
+    /**
+     * Ask the tool's [McpStoredCommandSource], if it has one, what this call would run beyond
+     * its arguments. Off the caller's dispatcher: a source reads operator-saved files. A source
+     * that throws, or names more than [MAX_STORED_COMMANDS_PER_CALL] commands, refuses the call
+     * before any prompt; an operator cannot approve what the host could not enumerate.
+     */
+    // A source that fails for any reason refuses the call; nothing else may run it. A timeout is
+    // reported by its own message rather than rethrown, since the call is refused either way.
+    @Suppress("TooGenericExceptionCaught", "ReturnCount", "SwallowedException")
+    private suspend fun previewStoredCommands(
+        source: McpStoredCommandSource?,
+        tool: RegisteredMcpTool,
+        args: McpToolArgs,
+        toolPolicy: McpPolicyAction,
+    ): StoredCommandsPreview {
+        if (source == null || toolPolicy == McpPolicyAction.DENY) return StoredCommandsPreview.NONE
+        val commands =
+            try {
+                // Bounded: a Space file on a stalled mount must not hang the invocation outside
+                // invokeTimeoutMs; a timeout refuses the call like any other failure.
+                withTimeout(STORED_COMMANDS_PREVIEW_TIMEOUT_MS) {
+                    withContext(Dispatchers.IO) { source.storedCommandsFor(tool.definition.name, args) }
+                }
+            } catch (timeout: TimeoutCancellationException) {
+                logger.warn(LogCategory.SYSTEM, "MCP stored-command source timed out; refusing the call")
+                return StoredCommandsPreview(
+                    emptyList(),
+                    "The host could not read the stored commands this call would run in time; the call was not run",
+                )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (t: Throwable) {
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "MCP stored-command source failed; refusing the call",
+                    mapOf("tool" to tool.definition.name, "error" to (t.message ?: t::class.simpleName)),
+                )
+                return StoredCommandsPreview(
+                    emptyList(),
+                    "The host could not determine which stored commands this call would run; the call was not run",
+                )
+            }
+        if (commands.size > MAX_STORED_COMMANDS_PER_CALL) {
+            return StoredCommandsPreview(
+                emptyList(),
+                "This call would run ${commands.size} stored commands; at most $MAX_STORED_COMMANDS_PER_CALL " +
+                    "can be shown for approval. Open the Space through the workspace UI instead.",
+            )
+        }
+        // Measured as the dialog shows them, not as stored: one hidden code point is shown as up
+        // to ten characters (`\u{E0041}`), and the caps exist to bound what the operator reads.
+        val shownLengths = commands.map { displayableStoredCommand(it).length }
+        val tooLong = shownLengths.indexOfFirst { it > MAX_STORED_COMMAND_CHARS }
+        if (tooLong >= 0) {
+            return StoredCommandsPreview(
+                emptyList(),
+                "Stored command ${tooLong + 1} is longer than $MAX_STORED_COMMAND_CHARS characters as shown and " +
+                    "cannot be shown in full for approval. Open the Space through the workspace UI instead.",
+            )
+        }
+        if (shownLengths.sum() > MAX_STORED_COMMANDS_TOTAL_CHARS) {
+            return StoredCommandsPreview(
+                emptyList(),
+                "This call would run more than $MAX_STORED_COMMANDS_TOTAL_CHARS characters of stored commands as " +
+                    "shown, more than can be shown for approval. Open the Space through the workspace UI instead.",
+            )
+        }
+        val masked = commands.indexOfFirst { !storedCommandShownInFull(it) }
+        if (masked >= 0) {
+            return StoredCommandsPreview(
+                emptyList(),
+                "Stored command ${masked + 1} contains text the host masks as a credential, so it cannot be shown " +
+                    "in full for approval. Open the Space through the workspace UI instead.",
+            )
+        }
+        return StoredCommandsPreview(commands)
     }
 
     private suspend fun confirmApproval(
@@ -1251,6 +1392,7 @@ internal class McpToolRegistryCore(
         revocation: Long,
         secrets: SecretPreparation,
         escalated: Boolean,
+        storedCommands: List<String>,
     ): Pair<McpApprovalDisposition, String?> =
         when (secrets) {
             is SecretPreparation.Refused -> {
@@ -1258,7 +1400,15 @@ internal class McpToolRegistryCore(
             }
 
             else -> {
-                authorizeInvocation(tool, args, policy, revocation, escalated, secrets.descriptors)
+                authorizeInvocation(
+                    tool,
+                    args,
+                    policy,
+                    revocation,
+                    escalated = escalated,
+                    secretRefs = secrets.descriptors,
+                    storedCommands = storedCommands,
+                )
             }
         }
 
@@ -1292,6 +1442,7 @@ internal class McpToolRegistryCore(
         // direction that lets a broader approval stick.
         escalated: Boolean,
         secretRefs: List<SecretDescriptor> = emptyList(),
+        storedCommands: List<String> = emptyList(),
     ): Pair<McpApprovalDisposition, String?> =
         when (policy) {
             McpPolicyAction.DENY -> {
@@ -1303,9 +1454,10 @@ internal class McpToolRegistryCore(
             }
 
             // YOLO answers the prompt, and only the prompt: DENY above, the kill switch and RBAC
-            // are all decided before this branch is reached. A secret-bearing call still asks:
-            // YOLO answers for the tool, never for the vault.
-            McpPolicyAction.ASK if policyEngine.yoloMode.value && secretRefs.isEmpty() -> {
+            // are all decided before this branch is reached. Neither a secret-bearing call nor one
+            // that runs stored commands is answered: YOLO speaks for the tool, never for the vault
+            // or for commands the arguments do not show.
+            McpPolicyAction.ASK if policyEngine.yoloMode.value && secretRefs.isEmpty() && storedCommands.isEmpty() -> {
                 McpApprovalDisposition.YOLO_ALLOWED to null
             }
 
@@ -1318,13 +1470,14 @@ internal class McpToolRegistryCore(
                             McpArgumentSanitizer.parseArguments(args.raw),
                             riskAssessment =
                                 DefaultMcpRiskEvaluator()
-                                    .evaluateRisk(tool.definition.name, args)
+                                    .evaluateRisk(tool.definition.name, args, storedCommands)
                                     .withSecrets(secretRefs),
                             declaredReadOnly = tool.definition.readOnly,
                             toolDescription = tool.definition.description,
                             policy = policy,
                             escalated = escalated,
                             secretRefs = secretRefs,
+                            storedCommands = storedCommands,
                         )
                 ) {
                     is McpApprovalDecision.Approved -> {
