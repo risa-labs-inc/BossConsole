@@ -1,6 +1,8 @@
 package ai.rever.boss.mcp.secrets
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 
 /**
  * The slice of a vault entry the resolver needs. Mapped from the host's own secret model at the
@@ -20,17 +22,19 @@ data class SecretRecord(
 }
 
 /**
- * One page of the signed-in user's own secrets. The only thing the resolver asks of the host.
+ * One secret the signed-in user may see, by id. The only thing the resolver asks of the host.
  *
- * Pages rather than a by-id lookup because that is the RPC the host has (`get_user_secrets`
- * takes a limit and an offset, nothing else). The resolver walks pages until every reference is
- * found or the vault runs out; [SecretReferenceResolver.maxPages] bounds the walk.
+ * By id rather than by page, so resolving a reference decrypts the referenced row and nothing
+ * else (`get_user_secret_by_id`, which mirrors the listing's visibility rule). Earlier the host
+ * had only the paged listing, and one reference walked it page by page, every row decrypted on
+ * the way, and a reference to an id that did not exist walked the whole vault before it was
+ * refused; all of it before any operator prompt, on the agent's say-so.
+ *
+ * `null` is "no visible secret has this id", which is also what another user's id answers; a
+ * failure is "the vault could not be read". The two are refused differently.
  */
 fun interface SecretLookup {
-    suspend fun page(
-        limit: Int,
-        offset: Int,
-    ): Result<List<SecretRecord>>
+    suspend fun byId(id: String): Result<SecretRecord?>
 }
 
 /**
@@ -70,8 +74,6 @@ sealed interface SecretResolution {
  */
 class SecretReferenceResolver(
     private val lookup: SecretLookup,
-    private val pageSize: Int = DEFAULT_PAGE_SIZE,
-    private val maxPages: Int = DEFAULT_MAX_PAGES,
 ) {
     suspend fun resolve(references: Set<SecretReference>): SecretResolution {
         if (references.isEmpty()) return SecretResolution.Resolved(emptyMap(), emptyList())
@@ -84,30 +86,33 @@ class SecretReferenceResolver(
     }
 
     /**
-     * Walk pages until every id in [wanted] is found, the vault runs out, or [maxPages] is hit.
-     * A page that fails to read fails the whole lookup: a partial answer would be a partial call.
+     * One lookup per distinct id, issued together rather than one after another: the reads are
+     * independent, they all happen before the operator is prompted, and a call may carry up to
+     * [ai.rever.boss.mcp.secrets.McpSecretPrePass.MAX_REFERENCES_PER_CALL] of them, so serialising
+     * would put that many round trips in front of the prompt for no gain.
+     *
+     * A lookup that fails fails the whole call: a partial answer would be a partial call. A miss
+     * does not; it is reported by [refusalFor] with every other miss, so the agent learns all of
+     * them at once. The result keeps the reference order, which only the message ordering depends
+     * on, so nothing observable changed with the concurrency.
      */
-    private suspend fun findRecords(wanted: Set<String>): Result<Map<String, SecretRecord>> {
-        val found = HashMap<String, SecretRecord>()
-        var offset = 0
-        var pages = 0
-        while (found.size < wanted.size && pages < maxPages) {
-            val records = readPage(offset).getOrElse { return Result.failure(it) }
-            for (record in records) {
-                val id = record.id.lowercase()
-                if (id in wanted && id !in found) found[id] = record
+    private suspend fun findRecords(wanted: Set<String>): Result<Map<String, SecretRecord>> =
+        coroutineScope {
+            val reads = wanted.map { id -> id to async { lookupById(id) } }
+            val found = LinkedHashMap<String, SecretRecord>()
+            for ((id, read) in reads) {
+                val record = read.await().getOrElse { return@coroutineScope Result.failure(it) } ?: continue
+                // The RPC filters on this id, so a row for any other is a vault fault, and it is
+                // treated as the miss it is rather than delivered under the requested name.
+                if (record.id.equals(id, ignoreCase = true)) found[id] = record
             }
-            pages += 1
-            offset += pageSize
-            if (records.size < pageSize) break
+            Result.success(found)
         }
-        return Result.success(found)
-    }
 
-    /** One page, with a throwing lookup folded into the same failure as a returned one. */
-    private suspend fun readPage(offset: Int): Result<List<SecretRecord>> =
+    /** One lookup, with a throwing vault folded into the same failure as a returned one. */
+    private suspend fun lookupById(id: String): Result<SecretRecord?> =
         try {
-            lookup.page(pageSize, offset)
+            lookup.byId(id)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (
@@ -176,10 +181,5 @@ class SecretReferenceResolver(
          * fail-open cross-repository contract: change both declarations together.
          */
         const val AI_PROVIDER_TAG: String = "ai-provider"
-
-        const val DEFAULT_PAGE_SIZE: Int = 200
-
-        /** 200 x 25 = 5,000 secrets, far past any personal vault; a bound, not a target. */
-        const val DEFAULT_MAX_PAGES: Int = 25
     }
 }

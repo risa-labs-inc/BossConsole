@@ -32,18 +32,39 @@ internal class McpSecretPrePass(
     private val resolver: SecretReferenceResolver?,
     private val secretsPermitted: () -> Boolean,
 ) {
+    companion object {
+        /**
+         * The most references one call may carry, counted after de-duplication (the same
+         * reference written twice is one), and enforced before any vault read.
+         *
+         * Each reference is one vault read and one line in the approval dialog. A `.env` for a
+         * service with a database, a cache, two APIs and a signing key is five; a call that
+         * arrives with dozens is either a mistake or an attempt to have an operator wave through
+         * a dump, and either way the dialog's "This call receives N secrets" line has stopped
+         * meaning anything. Sixteen leaves the real shape room and refuses the other one.
+         */
+        const val MAX_REFERENCES_PER_CALL: Int = 16
+    }
+
     /**
      * The secret pre-pass: what a call's `{{secret:...}}` references mean for it, decided in the
      * order `docs/MCP_SECRET_REFERENCES.md` documents and before any prompt.
      *
-     * 1. No marker or Unicode JSON escape in the raw text: not secret-bearing. Escaped JSON must be
-     *    decoded because a marker can be written as `\u007b\u007bsecret:`.
-     * 2. Malformed reference: refused. A handler must never receive placeholder text.
-     * 3. Feature off, or no `secret.read`: forbidden, before any vault read.
-     * 4. Tool or provider policy DENY: nothing is read; the normal path refuses.
-     * 5. `secretBearingCalls = DENY`: forbidden, before any vault read.
-     * 6. Resolve, all or nothing. The values are held for this call only; the operator sees
-     *    descriptors, and the handler sees values only after approval.
+     * - [1] No marker or Unicode JSON escape in the raw text: not secret-bearing. Escaped JSON must
+     *   be decoded because a marker can be written as `\u007b\u007bsecret:`.
+     * - [2] Malformed reference: refused. A handler must never receive placeholder text.
+     * - [3] Feature off: forbidden, before any vault read.
+     * - [4] No `secret.read`: forbidden, before any vault read.
+     * - [5] Tool or provider policy DENY: nothing is read; the normal path refuses.
+     * - [6] `secretBearingCalls = DENY`: forbidden, before any vault read.
+     * - [7] More than [MAX_REFERENCES_PER_CALL] references: unresolved, before any vault read.
+     * - [8] Resolve, all or nothing, one vault read per reference. The values are held for this
+     *   call only; the operator sees descriptors, and the handler sees values only after approval.
+     *
+     * The numbering here is the one `docs/MCP_SECRET_REFERENCES.md` uses under "What happens to a
+     * call, in order"; the two are meant to be read together, so a step added in one belongs in
+     * the other. Steps after resolution (the approval fences, the substitution re-assessment) are
+     * the registry's and are numbered there.
      */
     @Suppress("ReturnCount", "LongMethod", "CyclomaticComplexMethod")
     suspend fun prepare(
@@ -77,10 +98,10 @@ internal class McpSecretPrePass(
                 }
 
                 is SecretReferenceScan.Malformed -> {
-                    return SecretPreparation.Refused(
-                        McpApprovalDisposition.SECRET_UNRESOLVED,
-                        "Malformed secret reference ${scan.literal}: ${scan.reason}".take(240),
-                    )
+                    // Nothing the agent wrote: this text reaches the agent and the ledger's
+                    // errorSnippet, and the candidate is where a pasted value would sit (see
+                    // SecretReferenceScan.Malformed). The reason alone says what to fix.
+                    return SecretPreparation.Refused(McpApprovalDisposition.SECRET_UNRESOLVED, scan.reason.refusal)
                 }
 
                 is SecretReferenceScan.Found -> {
@@ -110,10 +131,18 @@ internal class McpSecretPrePass(
                 references,
             )
         }
+        if (references.size > MAX_REFERENCES_PER_CALL) {
+            return SecretPreparation.Refused(
+                McpApprovalDisposition.SECRET_UNRESOLVED,
+                "A call may carry at most $MAX_REFERENCES_PER_CALL secret references; this one carries " +
+                    "${references.size}. Split it, or reference fewer secrets.",
+                references,
+            )
+        }
         return resolve(references, arguments, scrub = config.resultScrubbingEnabled)
     }
 
-    /** Step 6 of [prepare]: the vault read, all or nothing, off the caller's dispatcher. */
+    /** Step 8 of [prepare]: the vault read, all or nothing, off the caller's dispatcher. */
     private suspend fun resolve(
         references: Set<SecretReference>,
         arguments: JsonObject,

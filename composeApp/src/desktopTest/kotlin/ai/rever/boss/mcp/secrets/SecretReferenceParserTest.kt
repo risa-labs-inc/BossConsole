@@ -62,8 +62,7 @@ class SecretReferenceParserTest {
     fun `an unknown field is malformed, not ignored`() {
         val result = scan("{{secret:$id.totp}}")
         assertIs<SecretReferenceScan.Malformed>(result)
-        assertEquals("{{secret:$id.totp}}", result.literal)
-        assertTrue(result.reason.contains("unknown field"), result.reason)
+        assertEquals(MalformedSecretReference.UNKNOWN_FIELD, result.reason)
     }
 
     @Test
@@ -77,7 +76,7 @@ class SecretReferenceParserTest {
             .forEach { literal ->
                 val result = scan(literal)
                 assertIs<SecretReferenceScan.Malformed>(result, literal)
-                assertEquals(literal, result.literal)
+                assertEquals(MalformedSecretReference.NOT_AN_ID, result.reason, literal)
             }
     }
 

@@ -38,6 +38,7 @@ secret's use visible at the approval site rather than hidden behind an earlier `
 | Exfiltration by an authorized tool | The tool is trusted with the value by the operator's approval. Plugins run in-process and already hold the whole vault through `PluginContext.secretDataProvider` (`DefaultPlugin.kt`); references add no plugin-side exposure. |
 | Values the tool transforms (hash, base64, ciphertext, case change, double encoding) | The scrubber recognises exact forms only. See the table under "Result scrubbing". |
 | BossTerm's built-in shell tools (`run_command`, `send_input`, `read_scrollback`, ...) and terminal-tab's `run_in_sidebar` / `cli` | They are served by BossTerm's own MCP server and never reach the host registry (BossConsole#495). A reference typed into one of them is never resolved and passes through as literal text. |
+| A resolved value that is itself shell syntax, in a host tool whose argument is a shell command (`open_terminal`, `run_command` through the host registry) | Substitution happens after the operator has read the arguments, so a value containing `;`, `\|` or `$(...)` would change what was approved. The host does not claim the operator saw it: it re-runs the risk evaluator on the substituted arguments and REFUSES the call when the level went up, rather than re-prompting (a re-prompt would have to display the value). A value that leaves the level where it was runs as approved, so this bounds the damage rather than removing the class. An organisation's secret is resolvable by any member, so the value need not have been authored by the approver. |
 | Plugin-internal logging | A handler that logs its own arguments logs the value. The host controls its own log, not a plugin's. |
 | TOTP codes and recovery codes | Not addressable by a reference. A six-digit code cannot be scrubbed, and no BOSS workflow consumes one through a tool today. |
 
@@ -68,20 +69,25 @@ agent --> terminal-tab bridge --> McpToolRegistryCore.invoke(name, argsJson)
   [4] no secret.read (non-admin)                       -> SECRET_FORBIDDEN, refused
   [5] tool or provider policy DENY                     -> POLICY_DENIED, refused, no vault read
   [6] secretBearingCalls = DENY                        -> SECRET_FORBIDDEN, refused, no vault read
-  [7] resolve every reference from the vault           unknown id, empty field, vault failure -> SECRET_UNRESOLVED
+  [7] more than 16 distinct references                 -> SECRET_UNRESOLVED, refused, no vault read
+  [8] resolve every reference, one vault read each     unknown id, empty field, vault failure -> SECRET_UNRESOLVED
                                                         AI-provider key -> SECRET_FORBIDDEN
-  [8] prompt the operator                              ALWAYS, whatever the tool's rule or session trust says;
+  [9] prompt the operator                              ALWAYS, whatever the tool's rule or session trust says;
                                                         the dialog lists website (username) - field per secret,
                                                         and risk is raised to at least HIGH
-  [9] confirm (revocation fence)                       a DENY or reset saved meanwhile refuses the call
- [10] substitute                                       one rewrite of the argument tree; scalar map and raw JSON agree
- [11] execute                                          unchanged timeout and failure handling
- [12] scrub                                            defense in depth; before the cap
- [13] cap                                              unchanged
- [14] ledger                                           the ORIGINAL arguments (references intact) + secretRefs
+ [10] confirm (secret fence, then revocation fence)    secret.read lost, references switched off or
+                                                        secretBearingCalls flipped to DENY meanwhile
+                                                        -> SECRET_FORBIDDEN;
+                                                        a DENY or reset saved meanwhile -> POLICY_DENIED
+ [11] substitute                                       one rewrite of the argument tree; scalar map and raw JSON agree
+ [12] re-assess the SUBSTITUTED arguments              risk went up -> SECRET_FORBIDDEN, refused, never re-prompted
+ [13] execute                                          unchanged timeout and failure handling
+ [14] scrub                                            defense in depth; before the cap
+ [15] cap                                              unchanged
+ [16] ledger                                           the ORIGINAL arguments (references intact) + secretRefs
 ```
 
-Refusals at [2] to [7] happen before any prompt, so the agent gets an immediate, precise error
+Refusals at [2] to [8] happen before any prompt, so the agent gets an immediate, precise error
 and the operator is never asked about a call that could not run.
 
 ### Why the vault is read before the prompt
@@ -91,6 +97,19 @@ comes from the same RPC that returns the value, so one read serves both. The val
 this call only, on the host side, and delivered to the handler only after the operator approves
 and the revocation fence passes. Reading twice (metadata first, value after approval) would be
 theatre: the value has already been in process memory either way.
+
+What that read costs is bounded on both sides. Each reference is one `get_user_secret_by_id`
+RPC, which decrypts the referenced row and no other (its visibility rule is the listing's: the
+user's own secrets and their organisations'), so a reference to an id that does not exist costs
+the vault one lookup and brings nothing else into host memory. And a call may carry at most 16
+distinct references, refused before any read above that, so the number of reads an agent can
+cause with one call, and the number of lines the operator has to read in the dialog, both have a
+ceiling **for one call**. It is not a budget across calls: every refusal path above runs before
+the prompt, so an agent that keeps sending calls full of unknown ids keeps causing one lookup per
+id with no operator involved. That is far smaller than the 25 x 200 walk this replaced, and every
+attempt is in the ledger, but the bound this states is per call and nothing more. Before the by-id RPC existed the resolver walked `get_user_secrets` page by page, every
+row decrypted server-side on the way, and an unknown id walked the whole vault before it was
+refused; that is the shape this replaces.
 
 ## Approval semantics
 
@@ -149,11 +168,28 @@ readable.
 ## What the ledger records
 
 Each record gains `secretRefs`, a list of `<id>.<field>`. The `sanitizedArgs` field is built from
-the arguments the agent wrote, references intact; the substituted arguments never reach the
-ledger. Old records without the field decode with an empty default. Two new dispositions:
+the arguments the agent wrote, references intact; the substituted arguments never reach the ledger.
+In free text a reference usually stays legible there: the argument sanitizer masks every valid
+reference before its redaction rules run and restores it afterwards, and the `KEY=value` rule steps
+around a mask (`TOKEN={{secret:<id>}}`, `--token={{secret:<id>}}`). The other rules do not, so
+wherever a rule recognises a credential by the syntax around it, a reference in the value position
+is redacted along with that value. Some examples, and not a complete list: a value under a key
+whose name marks it sensitive (`password`, `token`, `secret`, `auth`, ...), which the sanitizer
+blanks whole without reading it; a quoted value inside a JSON string
+(`{"token":"{{secret:<id>}}"}`); a credential flag followed by a space (`--token {{secret:<id>}}`);
+`-u deploy:{{secret:<id>}}`; `--cookie {{secret:<id>}}`; an `Authorization:` or `Bearer` value; two
+references written back to back after a sensitive key (`TOKEN={{secret:<a>}}{{secret:<b>}}`); and
+text glued to a reference (`TOKEN={{secret:<id>}}hunter2`), which is redacted together with it.
+Nothing is lost in any of these: `secretRefs` records which secrets the call received independently
+of `sanitizedArgs`. A malformed reference is refused with an error that repeats nothing the agent
+wrote (only which rule failed), so a value pasted where the id belongs cannot reach the error text
+or the ledger's `errorSnippet`. Old records without the field decode with an empty default. Two new
+dispositions:
 
-- `SECRET_FORBIDDEN`: the host would not deliver (permission, policy, feature off, AI-provider key).
-- `SECRET_UNRESOLVED`: the host could not deliver (malformed, unknown id, empty field, vault failure).
+- `SECRET_FORBIDDEN`: the host would not deliver (permission, policy, feature off, AI-provider key,
+  or `secret.read` lost while the prompt was open).
+- `SECRET_UNRESOLVED`: the host could not deliver (malformed, more than 16 references, unknown id,
+  empty field, vault failure).
 
 Both count as "withheld" in the MCP activity log, next to `QUEUE_FULL` and
 `POLICY_PERSIST_FAILED`: the tool never ran and no operator answered.
@@ -166,7 +202,7 @@ Both count as "withheld" in the MCP activity log, next to `QUEUE_FULL` and
 | Path | Cost |
 |---|---|
 | Call without references: the marker scan added to every governed call | 174 ns per call, against the 5.8 µs the existing argument parse already costs (1.5 KB of arguments) |
-| Call with references: one vault read | one `get_user_secrets` page per 200 secrets, walked until the ids are found; network-bound |
+| Call with references | one `get_user_secret_by_id` RPC per distinct id, at most 16; network-bound |
 | Scrubbing a result at the host cap (150,000 characters, 3 values, 4 encodings each) | 0.42 ms per result, linear in the input |
 
 The test asserts loose bounds (an order of magnitude above these) so a slow CI runner does not
@@ -181,6 +217,7 @@ fail; they catch a regression to something quadratic, not a microsecond.
 | Agent / model | untrusted | authors tool names and arguments; reads results | never receives values; sees descriptors and scrubbed results |
 | Plugin handler | partially trusted (already holds the vault) | receives substituted arguments; may log or forward them | unchanged trust; risk shown at approval |
 | External service | untrusted | receives whatever the tool sends | operator's decision; non-goal |
+| Host memory during the prompt | must not outlive the call | a resolved value sits in the `invoke` frame as a `String` while the dialog is open, up to the 45 s timeout | not zeroable on the JVM; the rest of this table says where values GO, this row says where they SIT |
 | Persistent surfaces (ledger, host log, transcripts) | must never hold values | | ledger from pre-substitution arguments; scrubbed failure text; log-capture invariant test |
 | BossTerm built-in tools | outside the boundary | | documented exclusion; references are never resolved there |
 
@@ -235,7 +272,9 @@ plaintext still is not: the boundary, demonstrated rather than described).
 | `Secret references require the secret.read permission` | Non-admin user without `secret.read` | Ask an admin for the role; the same permission gates `secret_get` |
 | `Secret references are disabled on this host` | `secretReferencesEnabled = false` | Operator decision; edit the policy file and restart |
 | `Secret-bearing calls are refused by host policy` | `secretBearingCalls = DENY` | Operator decision |
-| `no secret with id ...` | Unknown or not the signed-in user's own secret | Shared-with-me secrets are not resolvable in v1 |
+| `no secret with id ...` | Unknown, or not visible to the signed-in user (their own and their organisations' secrets are) | Shared-with-me secrets are not resolvable in v1 |
+| `A call may carry at most 16 secret references` | More than 16 distinct references in one call | Split the call, or reference fewer secrets |
+| `Secret access (secret.read) was lost while awaiting approval` | Signed out, or the permission was removed, between the prompt and the approval | Sign in again and retry; the ledger records `SECRET_FORBIDDEN` |
 | `secret ... has no notes` | The field is empty | Use another field or fill it in |
 | `... is an AI provider key ...` | Tagged `ai-provider` | Configure the provider in the host's AI settings; parity with `secret_get` |
 | `the vault could not be read (...)` | Signed out, offline, RPC failure | Sign in; retry |

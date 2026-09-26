@@ -1,6 +1,7 @@
 package ai.rever.boss.mcp.secrets
 
 import kotlinx.coroutines.runBlocking
+import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -32,25 +33,28 @@ class SecretReferenceResolverTest {
         tags = tags,
     )
 
-    /** A vault that pages [records] and counts the pages it served. */
-    private class PagedVault(
+    /**
+     * A vault that answers by id and remembers every id it was asked for.
+     *
+     * The resolver reads concurrently, so the log is a concurrent collection and the assertions
+     * compare it as a multiset: which ids were read and how often, never in what order. The
+     * order is the dispatcher's, not the resolver's promise.
+     */
+    private class Vault(
         private val records: List<SecretRecord>,
     ) : SecretLookup {
-        var pagesServed = 0
+        val asked = ConcurrentLinkedQueue<String>()
 
-        override suspend fun page(
-            limit: Int,
-            offset: Int,
-        ): Result<List<SecretRecord>> {
-            pagesServed += 1
-            return Result.success(records.drop(offset).take(limit))
+        override suspend fun byId(id: String): Result<SecretRecord?> {
+            asked += id
+            return Result.success(records.firstOrNull { it.id.equals(id, ignoreCase = true) })
         }
     }
 
     @Test
     fun `resolves every field of a found secret and describes it without the value`() =
         runBlocking {
-            val vault = PagedVault(listOf(record(a, password = "s3cret!!", notes = "note")))
+            val vault = Vault(listOf(record(a, password = "s3cret!!", notes = "note")))
             val refs = SecretField.entries.map { SecretReference(a, it) }.toSet()
             val resolution = SecretReferenceResolver(vault).resolve(refs)
             assertIs<SecretResolution.Resolved>(resolution)
@@ -69,25 +73,27 @@ class SecretReferenceResolverTest {
         runBlocking {
             val plaintext = "never-print-this"
             val source = record(a, password = plaintext, notes = plaintext)
-            val resolution = SecretReferenceResolver(PagedVault(listOf(source))).resolve(setOf(passwordOf(a)))
+            val resolution = SecretReferenceResolver(Vault(listOf(source))).resolve(setOf(passwordOf(a)))
             assertFalse(source.toString().contains(plaintext), source.toString())
             assertFalse(resolution.toString().contains(plaintext), resolution.toString())
         }
 
     @Test
-    fun `walks pages until every reference is found and no further`() =
+    fun `asks the vault for each referenced id once, whatever else the vault holds`() =
         runBlocking {
             val filler = (1..450).map { record("11111111-1111-4111-8111-%012d".format(it)) }
-            val vault = PagedVault(filler + record(a) + record(b))
-            val resolution = SecretReferenceResolver(vault, pageSize = 200).resolve(setOf(passwordOf(a)))
+            val vault = Vault(filler + record(a, notes = "note") + record(b))
+            val refs = SecretField.entries.map { SecretReference(a, it) }.toSet() + passwordOf(b)
+            val resolution = SecretReferenceResolver(vault).resolve(refs)
             assertIs<SecretResolution.Resolved>(resolution)
-            assertEquals(3, vault.pagesServed)
+            val reads = vault.asked.sorted()
+            assertEquals(listOf(a, b).sorted(), reads, "one read per distinct id, three fields of a share one")
         }
 
     @Test
-    fun `stops at the end of the vault and reports the missing id`() =
+    fun `an unknown id is reported without reading anything else`() =
         runBlocking {
-            val vault = PagedVault(listOf(record(a)))
+            val vault = Vault(listOf(record(a)))
             val resolution =
                 SecretReferenceResolver(vault).resolve(
                     setOf(SecretReference(a, SecretField.PASSWORD), SecretReference(b, SecretField.PASSWORD)),
@@ -95,13 +101,24 @@ class SecretReferenceResolverTest {
             assertIs<SecretResolution.Unresolved>(resolution)
             assertTrue(resolution.reason.contains(b))
             assertFalse(resolution.reason.contains("pw-"))
-            assertEquals(1, vault.pagesServed)
+            assertEquals(listOf(a, b).sorted(), vault.asked.sorted())
+        }
+
+    @Test
+    fun `every missing id is reported at once, not one per attempt`() =
+        runBlocking {
+            val c = "00000000-0000-4000-8000-000000000002"
+            val vault = Vault(listOf(record(a)))
+            val resolution =
+                SecretReferenceResolver(vault).resolve(setOf(passwordOf(a), passwordOf(b), passwordOf(c)))
+            assertIs<SecretResolution.Unresolved>(resolution)
+            assertTrue(resolution.reason.contains(b) && resolution.reason.contains(c), resolution.reason)
         }
 
     @Test
     fun `an ai provider key is forbidden even when everything else resolves`() =
         runBlocking {
-            val vault = PagedVault(listOf(record(a, tags = listOf(SecretReferenceResolver.AI_PROVIDER_TAG)), record(b)))
+            val vault = Vault(listOf(record(a, tags = listOf(SecretReferenceResolver.AI_PROVIDER_TAG)), record(b)))
             val resolution =
                 SecretReferenceResolver(vault).resolve(
                     setOf(SecretReference(a, SecretField.PASSWORD), SecretReference(b, SecretField.PASSWORD)),
@@ -113,7 +130,7 @@ class SecretReferenceResolverTest {
     @Test
     fun `forbidden outranks missing`() =
         runBlocking {
-            val vault = PagedVault(listOf(record(a, tags = listOf("ai-provider"))))
+            val vault = Vault(listOf(record(a, tags = listOf("ai-provider"))))
             val resolution =
                 SecretReferenceResolver(vault).resolve(
                     setOf(SecretReference(a, SecretField.PASSWORD), SecretReference(b, SecretField.PASSWORD)),
@@ -125,7 +142,7 @@ class SecretReferenceResolverTest {
     @Test
     fun `a secret without notes cannot supply its notes`() =
         runBlocking {
-            val vault = PagedVault(listOf(record(a, notes = null)))
+            val vault = Vault(listOf(record(a, notes = null)))
             val resolution = SecretReferenceResolver(vault).resolve(setOf(SecretReference(a, SecretField.NOTES)))
             assertIs<SecretResolution.Unresolved>(resolution)
             assertTrue(resolution.reason.contains("notes"))
@@ -134,7 +151,7 @@ class SecretReferenceResolverTest {
     @Test
     fun `a vault read failure is unresolved and names the failure type only`() =
         runBlocking {
-            val vault = SecretLookup { _, _ -> Result.failure(IllegalStateException("token pw-secret leaked?")) }
+            val vault = SecretLookup { _ -> Result.failure(IllegalStateException("token pw-secret leaked?")) }
             val resolution = SecretReferenceResolver(vault).resolve(setOf(SecretReference(a, SecretField.PASSWORD)))
             assertIs<SecretResolution.Unresolved>(resolution)
             assertTrue(resolution.reason.contains("IllegalStateException"))
@@ -144,39 +161,51 @@ class SecretReferenceResolverTest {
     @Test
     fun `a vault that throws is unresolved, not a crash`() =
         runBlocking {
-            val vault = SecretLookup { _, _ -> error("down") }
+            val vault = SecretLookup { _ -> error("down") }
             val resolution = SecretReferenceResolver(vault).resolve(setOf(SecretReference(a, SecretField.PASSWORD)))
             assertIs<SecretResolution.Unresolved>(resolution)
             Unit
         }
 
     @Test
-    fun `the page walk is bounded`() =
+    fun `a read failure on the second id fails the whole call, even though the first resolved`() =
         runBlocking {
-            val endless =
-                SecretLookup { limit, _ ->
-                    Result.success(List(limit) { record("22222222-2222-4222-8222-%012d".format(it)) })
+            val vault =
+                SecretLookup { id ->
+                    if (id == a) Result.success(record(a)) else Result.failure(IllegalStateException("down"))
                 }
-            val resolution =
-                SecretReferenceResolver(endless, pageSize = 10, maxPages = 3).resolve(setOf(passwordOf(a)))
+            val resolution = SecretReferenceResolver(vault).resolve(setOf(passwordOf(a), passwordOf(b)))
             assertIs<SecretResolution.Unresolved>(resolution)
-            Unit
+            assertTrue(resolution.reason.contains("could not be read"), resolution.reason)
         }
 
     @Test
     fun `ids are matched case-insensitively against the vault`() =
         runBlocking {
-            val vault = PagedVault(listOf(record(a.uppercase(), password = "s3cret!!")))
+            val vault = Vault(listOf(record(a.uppercase(), password = "s3cret!!")))
             val resolution = SecretReferenceResolver(vault).resolve(setOf(SecretReference(a, SecretField.PASSWORD)))
             assertIs<SecretResolution.Resolved>(resolution)
             Unit
         }
 
     @Test
+    fun `a row for a different id than the one asked for is a miss, not a delivery`() =
+        runBlocking {
+            val stray = record(b, password = "not-yours")
+            val vault =
+                object : SecretLookup {
+                    override suspend fun byId(id: String): Result<SecretRecord?> = Result.success(stray)
+                }
+            val resolution = SecretReferenceResolver(vault).resolve(setOf(SecretReference(a, SecretField.PASSWORD)))
+            assertIs<SecretResolution.Unresolved>(resolution)
+            Unit
+        }
+
+    @Test
     fun `no references resolves to nothing without touching the vault`() =
         runBlocking {
-            val vault = PagedVault(emptyList())
+            val vault = Vault(emptyList())
             assertIs<SecretResolution.Resolved>(SecretReferenceResolver(vault).resolve(emptySet()))
-            assertEquals(0, vault.pagesServed)
+            assertTrue(vault.asked.isEmpty())
         }
 }

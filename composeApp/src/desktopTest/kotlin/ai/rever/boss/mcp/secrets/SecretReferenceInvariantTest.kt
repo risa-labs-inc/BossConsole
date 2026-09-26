@@ -3,19 +3,23 @@ package ai.rever.boss.mcp.secrets
 import ai.rever.boss.mcp.McpApprovalBus
 import ai.rever.boss.mcp.McpApprovalDisposition
 import ai.rever.boss.mcp.McpApprovalRequest
+import ai.rever.boss.mcp.McpArgumentSanitizer
 import ai.rever.boss.mcp.McpOperationLedger
 import ai.rever.boss.mcp.McpPolicyAction
 import ai.rever.boss.mcp.McpPolicyEngine
 import ai.rever.boss.mcp.McpSecretPolicyAction
 import ai.rever.boss.mcp.McpToolPolicyConfig
 import ai.rever.boss.mcp.McpToolRegistryCore
+import ai.rever.boss.mcp.SECRET_ACCESS_REVOKED_WHILE_AWAITING_APPROVAL
 import ai.rever.boss.mcp.SECRET_READ_PERMISSION
+import ai.rever.boss.mcp.parseMcpToolArgs
 import ai.rever.boss.mcp.sandbox.McpRiskLevel
 import ai.rever.boss.plugin.api.McpToolArgs
 import ai.rever.boss.plugin.api.McpToolDefinition
 import ai.rever.boss.plugin.api.McpToolHandler
 import ai.rever.boss.plugin.api.McpToolProvider
 import ai.rever.boss.plugin.api.McpToolResult
+import ai.rever.boss.utils.logging.BossLogger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -58,12 +62,9 @@ class SecretReferenceInvariantTest {
     ) : SecretLookup {
         val reads = AtomicInteger()
 
-        override suspend fun page(
-            limit: Int,
-            offset: Int,
-        ): Result<List<SecretRecord>> {
+        override suspend fun byId(id: String): Result<SecretRecord?> {
             reads.incrementAndGet()
-            return Result.success(records.drop(offset).take(limit))
+            return Result.success(records.firstOrNull { it.id == id })
         }
     }
 
@@ -280,7 +281,8 @@ class SecretReferenceInvariantTest {
     fun `INV2 - one unresolvable reference withholds the whole call before any prompt`() =
         runBlocking {
             val other = "00000000-0000-4000-8000-000000000001"
-            val h = Harness(CountingVault(listOf(record)))
+            val vault = CountingVault(listOf(record))
+            val h = Harness(vault)
             var called = false
             h.register(
                 tool("write") {
@@ -293,11 +295,66 @@ class SecretReferenceInvariantTest {
             assertTrue(result.text.contains(other), result.text)
             assertFalse(called)
             assertTrue(h.seenRequests.isEmpty())
+            // One read per referenced id, whether or not it exists: an unknown id costs the
+            // vault one lookup, never a walk of everything else it holds.
+            assertEquals(2, vault.reads.get())
             val rec =
                 h.ledger.recentOperations.value
                     .single()
             assertEquals(McpApprovalDisposition.SECRET_UNRESOLVED, rec.approvalDisposition)
             assertEquals(setOf("$id.password", "$other.password"), rec.secretRefs.toSet())
+        }
+
+    @Test
+    fun `INV2 - more references than the cap are refused before any prompt or vault read`() =
+        runBlocking {
+            val vault = CountingVault(listOf(record))
+            val h = Harness(vault)
+            var called = false
+            h.register(
+                tool("write") {
+                    called = true
+                    McpToolResult("ran")
+                },
+            )
+            val ids = List(McpSecretPrePass.MAX_REFERENCES_PER_CALL + 1) { "00000000-0000-4000-8000-%012d".format(it) }
+            val body = ids.withIndex().joinToString(",") { (i, sid) -> """"k$i":"{{secret:$sid}}"""" }
+            val result = h.core.invoke("write", "{$body}")
+            assertTrue(result.isError)
+            assertTrue(result.text.contains("at most ${McpSecretPrePass.MAX_REFERENCES_PER_CALL}"), result.text)
+            assertFalse(called)
+            assertTrue(h.seenRequests.isEmpty())
+            assertEquals(0, vault.reads.get())
+            val rec =
+                h.ledger.recentOperations.value
+                    .single()
+            assertEquals(McpApprovalDisposition.SECRET_UNRESOLVED, rec.approvalDisposition)
+            assertEquals(ids.size, rec.secretRefs.size)
+        }
+
+    @Test
+    fun `INV2 - the cap counts distinct references, so one secret written many times is one`() =
+        runBlocking {
+            val vault = CountingVault(listOf(record))
+            val h = Harness(vault)
+            var seen: String? = null
+            h.register(
+                tool("write") { args ->
+                    seen = args.raw
+                    McpToolResult("ran")
+                },
+            )
+            val body = (0..McpSecretPrePass.MAX_REFERENCES_PER_CALL).joinToString(",") { """"k$it":"{{secret:$id}}"""" }
+            val op = with(h) { operator() }
+            val result =
+                try {
+                    h.core.invoke("write", "{$body}")
+                } finally {
+                    op.cancel()
+                }
+            assertFalse(result.isError, result.text)
+            assertEquals(1, vault.reads.get())
+            assertFalse(requireNotNull(seen).contains("{{secret:"))
         }
 
     @Test
@@ -322,6 +379,92 @@ class SecretReferenceInvariantTest {
                     .approvalDisposition,
             )
         }
+
+    @Test
+    fun `INV1 - a value pasted where the id belongs reaches neither the result nor the ledger`() =
+        runBlocking {
+            val h = Harness(CountingVault(listOf(record)))
+            h.register(tool("write") { McpToolResult("ran") })
+            val pasted = "hunter2-pasted-value"
+            val result = h.core.invoke("write", """{"a":"{{secret:$pasted}}"}""")
+            assertTrue(result.isError)
+            assertTrue(result.text.startsWith("Malformed secret reference"), result.text)
+            assertFalse(result.text.contains(pasted), result.text)
+            val rec =
+                h.ledger.recentOperations.value
+                    .single()
+            assertFalse(rec.errorSnippet.orEmpty().contains(pasted), rec.errorSnippet)
+        }
+
+    @Test
+    fun `INV1 - no malformed shape echoes what the agent wrote, whatever the sanitizer would miss`() =
+        runBlocking {
+            // Each shape puts pasted words where the sanitizer's VALUE class cannot follow them:
+            // past a space, into the field slot, into an unterminated marker, into a JSON key.
+            val shapes =
+                mapOf(
+                    """{"a":"{{secret:correct horse battery staple}}"}""" to
+                        listOf("correct", "horse", "battery", "staple"),
+                    """{"a":"{{secret:$id.hunter2field}}"}""" to listOf("hunter2field"),
+                    """{"a":"{{secret:tangerine walrus, no closing braces"}""" to
+                        listOf("tangerine", "walrus", "closing"),
+                    """{"{{secret:quokka-in-a-key}}":"x"}""" to listOf("quokka"),
+                )
+            val leaks = mutableListOf<String>()
+            for ((args, words) in shapes) {
+                val h = Harness(CountingVault(listOf(record)))
+                h.register(tool("write") { McpToolResult("ran") })
+                val result = h.core.invoke("write", args)
+                assertTrue(result.isError, args)
+                assertTrue(result.text.startsWith("Malformed secret reference"), result.text)
+                val snippet =
+                    h.ledger.recentOperations.value
+                        .single()
+                        .errorSnippet
+                        .orEmpty()
+                words.filter { result.text.contains(it) }.forEach { leaks += "$args -> result: '$it'" }
+                words.filter { snippet.contains(it) }.forEach { leaks += "$args -> ledger: '$it'" }
+            }
+            assertTrue(leaks.isEmpty(), leaks.joinToString("\n"))
+        }
+
+    @Test
+    fun `INV1 - the ledger records a malformed refusal exactly as the agent read it`() =
+        runBlocking {
+            // The refusal is host-authored, so the ledger's sanitizer has nothing to take out of
+            // it. A `{{secret:...}}` placeholder it did rewrite read `{{[REDACTED]}}` in the ledger,
+            // which tells an auditor a value was there when none was.
+            for (reason in MalformedSecretReference.entries) {
+                assertEquals(reason.refusal, McpArgumentSanitizer.sanitizeMessage(reason.refusal), reason.name)
+            }
+            val shapes =
+                listOf(
+                    """{"a":"{{secret:not-a-uuid}}"}""",
+                    """{"a":"{{secret:$id.totp}}"}""",
+                    """{"a":"{{secret:$id"}""",
+                    """{"{{secret:$id}}":"x"}""",
+                )
+            for (args in shapes) {
+                val h = Harness(CountingVault(listOf(record)))
+                h.register(tool("write") { McpToolResult("ran") })
+                val result = h.core.invoke("write", args)
+                val snippet =
+                    h.ledger.recentOperations.value
+                        .single()
+                        .errorSnippet
+                assertTrue(result.isError, args)
+                assertEquals(result.text, snippet, args)
+            }
+        }
+
+    @Test
+    fun `INV1 - unparseable arguments are not copied into the host log`() {
+        val pasted = "hunter2-pasted-value"
+        val logger = BossLogger.forComponent("SecretReferenceInvariantTest")
+        val (_, logs) = captureHostLogs { parseMcpToolArgs("""{"password":"$pasted" oops""", logger) }
+        assertTrue(logs.isNotEmpty(), "the parse failure is still logged")
+        logs.forEach { assertFalse("$it".contains(pasted), "$it") }
+    }
 
     @Test
     fun `INV2 - a json-escaped reference is resolved rather than passed through`() =
@@ -756,6 +899,116 @@ class SecretReferenceInvariantTest {
             val result = pending.await()
             assertTrue(result.isError)
             assertFalse(called)
+            // Recorded as what it is, not as a tool revoked in the same window.
+            assertEquals(SECRET_ACCESS_REVOKED_WHILE_AWAITING_APPROVAL, result.text)
+            val rec =
+                h.ledger.recentOperations.value
+                    .single()
+            assertEquals(McpApprovalDisposition.SECRET_FORBIDDEN, rec.approvalDisposition)
+            assertEquals(listOf("$id.password"), rec.secretRefs)
+        }
+
+    /**
+     * The value arrives after the operator has seen the arguments and after the risk assessment
+     * that was shown with them. For a shell tool that makes substitution a way to change what was
+     * approved, so the same evaluator runs again on the substituted arguments and the call is
+     * refused - not re-prompted, which would have to display the value - when the level went up.
+     */
+    @Test
+    fun `INV4 - a secret that makes an approved shell call destructive is refused, not run`() =
+        runBlocking {
+            val destructive =
+                SecretRecord(
+                    id = id,
+                    website = "registry.example",
+                    username = "deploy",
+                    password = "tok; rm -rf /srv",
+                    notes = null,
+                )
+            val h = Harness(CountingVault(listOf(destructive)))
+            var ran: String? = null
+            h.register(
+                tool("run_command") { args ->
+                    ran = args.string("command")
+                    McpToolResult("ran")
+                },
+            )
+            val op = with(h) { operator() }
+            val result = h.core.invoke("run_command", """{"command":"deploy --token={{secret:$id}}"}""")
+            op.cancel()
+
+            assertTrue(result.isError, result.text)
+            assertTrue(result.text.contains("more dangerous than the one approved"), result.text)
+            assertNull(ran, "the handler must never receive the escalated command")
+            // The refusal names the levels, never the value.
+            assertFalse(result.text.contains("rm -rf"), result.text)
+            val rec =
+                h.ledger.recentOperations.value
+                    .single()
+            assertEquals(McpApprovalDisposition.SECRET_FORBIDDEN, rec.approvalDisposition)
+            // What the operator was shown carried the reference, not the command that would have run.
+            val shown =
+                h.seenRequests
+                    .single()
+                    .arguments.values
+                    .joinToString { it.toString() }
+            assertTrue(shown.contains("{{secret:"), shown)
+            assertFalse(shown.contains("rm -rf"), shown)
+        }
+
+    @Test
+    fun `INV4 - a secret that leaves the risk where it was still runs`() =
+        runBlocking {
+            val ordinary =
+                SecretRecord(
+                    id = id,
+                    website = "registry.example",
+                    username = "deploy",
+                    password = "t0ken",
+                    notes = null,
+                )
+            val h = Harness(CountingVault(listOf(ordinary)))
+            var ran: String? = null
+            h.register(
+                tool("run_command") { args ->
+                    ran = args.string("command")
+                    McpToolResult("ran")
+                },
+            )
+            val op = with(h) { operator() }
+            val result = h.core.invoke("run_command", """{"command":"deploy --token={{secret:$id}}"}""")
+            op.cancel()
+
+            assertFalse(result.isError, result.text)
+            assertEquals("deploy --token=t0ken", ran)
+        }
+
+    @Test
+    fun `INV4 - a secret-bearing call answered with session trust grants none, even when voided at the fence`() =
+        runBlocking {
+            val h = Harness(CountingVault(listOf(record)), admin = false, permissions = setOf(SECRET_READ_PERMISSION))
+            var calls = 0
+            h.register(
+                tool("write") {
+                    calls += 1
+                    McpToolResult("ran")
+                },
+            )
+            val pending = async { h.core.invoke("write", """{"a":"{{secret:$id}}"}""") }
+            val req =
+                h.approvalBus.pendingList
+                    .first { it.isNotEmpty() }
+                    .first()
+            h.core.updateAccess(isAdmin = false, permissions = emptySet())
+            h.approvalBus.approve(req.id, trustForSession = true)
+            assertTrue(pending.await().isError)
+            assertEquals(0, calls)
+            // Belt and braces, not a pin on the fence order: onceIfEscalated turns every durable
+            // answer to a secret-bearing prompt into a plain approval, so no order of the fences
+            // could grant session trust here. The order is pinned by the SECRET_FORBIDDEN
+            // disposition in `INV4 - losing secret read while the prompt is open withholds the value`.
+            val trusted = h.policyEngine.sessionTrustedTools.value
+            assertTrue(trusted.isEmpty(), "$trusted")
         }
 
     @Test

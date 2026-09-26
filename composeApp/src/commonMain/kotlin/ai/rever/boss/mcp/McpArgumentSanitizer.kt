@@ -1,5 +1,6 @@
 package ai.rever.boss.mcp
 
+import ai.rever.boss.mcp.secrets.SecretField
 import ai.rever.boss.plugin.logging.LogSanitizer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -133,27 +134,42 @@ object McpArgumentSanitizer {
      * `max_tokens=4096` and `--tokenizer=bert` are things an operator reads in this product every
      * day, and `tokens` is not `token`.
      *
-     * Two guards keep a secret REFERENCE (`{{secret:<id>}}`) legible, because it is inert by
-     * construction - it names a vault entry and carries no value - and a ledger showing
-     * `{{[REDACTED]}}` or `TOKEN=[REDACTED]}}` where the agent wrote a reference would hide the
-     * one fact that record exists to show: which secret the call was allowed to receive.
-     * - The lookbehind: `secret:` is itself an assignment prefix, and a reference is exactly that
-     *   shape, so a reference is not treated as a `secret: value` assignment.
-     * - The lookahead: `TOKEN={{secret:<id>}}` is a `token=` assignment whose VALUE is a
-     *   reference; the value is kept. Nothing real starts with `{{secret:`.
-     * See `ai.rever.boss.mcp.secrets`.
+     * A secret REFERENCE (`{{secret:<id>}}`) stays legible, because it is inert by construction -
+     * it names a vault entry and carries no value - and a ledger showing `{{[REDACTED]}}` where the
+     * agent wrote a reference would hide the one fact that record exists to show: which secret the
+     * call was allowed to receive. That is done by [sanitizeMessage] masking every valid reference
+     * before this rule runs and restoring it afterwards, not by an exemption inside this pattern:
+     * an exemption has to guess where the reference ends, and `TOKEN={{secret:<id>}}hunter2` showed
+     * that a guess stopping at `}` lets the plaintext glued after the reference through. Masked, the
+     * whole run `<mask>hunter2` is one VALUE and is redacted; a reference standing alone is not an
+     * assignment of anything and comes back unchanged. See `ai.rever.boss.mcp.secrets`.
      */
-    private const val validSecretReference =
-        """\{\{secret:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}""" +
-            """(?:\.(?:password|username|notes))?\}\}"""
+    private val validSecretReference =
+        Regex(
+            """\{\{secret:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}""" +
+                // From the enum the parser resolves against, not a copy of it: a field added there
+                // and missing here would not be masked, so `TOKEN={{secret:<id>.newfield}}suffix`
+                // would fall back to the pre-mask behaviour for exactly that field.
+                """(?:\.(?:${SecretField.entries.joinToString("|") { Regex.escape(it.wireName) }}))?\}\}""",
+        )
+
+    /**
+     * What a reference is replaced by while the chain runs: private-use delimiters around its index.
+     * Nothing in the chain matches a private-use character, and the delimiters are not delimiters of
+     * VALUE, so a mask glued to other text is redacted together with it.
+     */
+    private const val MASK_OPEN = '\uE000'
+    private const val MASK_CLOSE = '\uE001'
+    private const val REFERENCE_MASK_PATTERN = "\uE000[0-9]+\uE001"
+    private val referenceMask = Regex(REFERENCE_MASK_PATTERN)
 
     // `*+`, not `*`: see STACK SAFETY on [sanitizeMessage]. Nothing that may follow the name
     // (a quote, a backslash, whitespace, `:` or `=`) can be a character the group consumed, so
     // never backtracking into it changes no match.
     private val sensitiveAssignment =
         Regex(
-            """(?i)(?:(?:password|passwd|token|api[_-]?key|credential|cookie)|(?<!\{\{)secret)""" +
-                """(?:[_-][A-Za-z0-9]+)*+$KEY_CLOSE\s*[:=]\s*(?!$validSecretReference(?:[\s&,;}]|$))$VALUE""",
+            """(?i)(?:password|passwd|token|api[_-]?key|credential|cookie|secret)""" +
+                """(?:[_-][A-Za-z0-9]+)*+$KEY_CLOSE\s*[:=]\s*(?!$REFERENCE_MASK_PATTERN(?:[\s&,;}]|$))$VALUE""",
         )
     private val bearer = Regex("""(?i)Bearer\s+[^\s"',;}]+""")
 
@@ -268,13 +284,36 @@ object McpArgumentSanitizer {
      */
     fun sanitizeMessage(text: String): String =
         try {
-            redact(text)
+            maskRedactRestore(text)
         } catch (_: StackOverflowError) {
             SANITIZE_FAILED
         }
 
     /** What stands in for a value the rules could not process. */
     internal const val SANITIZE_FAILED: String = "[OMITTED: could not be sanitized]"
+
+    /** Mask every valid reference, run the redaction chain, restore the references. */
+    private fun maskRedactRestore(text: String): String {
+        // Input that already carries a delimiter cannot be allowed to name a mask, or it could make
+        // a reference appear in the output that the input never held.
+        val clean = text.replace(MASK_OPEN, '\uFFFD').replace(MASK_CLOSE, '\uFFFD')
+        val references = mutableListOf<String>()
+        val masked =
+            clean.replace(validSecretReference) {
+                references += it.value
+                "$MASK_OPEN${references.size - 1}$MASK_CLOSE"
+            }
+        val redacted = redact(masked)
+        if (references.isEmpty()) return redacted
+        // Indices only come from masks written above, so a lookup cannot miss today. This runs on
+        // the ledger write path, which must never throw; a miss would redact, never reveal.
+        return redacted.replace(referenceMask) { match ->
+            match.value
+                .substring(1, match.value.length - 1)
+                .toIntOrNull()
+                ?.let(references::getOrNull) ?: "[REDACTED]"
+        }
+    }
 
     private fun redact(text: String): String =
         LogSanitizer
