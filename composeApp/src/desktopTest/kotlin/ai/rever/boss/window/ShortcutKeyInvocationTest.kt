@@ -1,12 +1,21 @@
 package ai.rever.boss.window
 
+import ai.rever.boss.components.plugin.registries.PluginShortcutRegistryImpl
 import ai.rever.boss.keymap.model.KeyBinding
 import ai.rever.boss.keymap.model.KeyStroke
 import ai.rever.boss.keymap.model.KeymapActions
+import ai.rever.boss.plugin.api.ShortcutActionProvider
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import java.awt.Canvas
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -16,8 +25,8 @@ import kotlin.test.assertTrue
 /**
  * The held-chord bookkeeping behind [AWTKeyboardInterceptor]: a chord runs once on its press
  * (BossConsole#1568), OS auto-repeat presses of the held key must not run it again
- * (BossConsole#490), and the held state is dropped on release, modifier release and
- * cancellation. [ShortcutKeySemanticsTest] drives the same rules end to end.
+ * (BossConsole#490), modifier release preserves physical ownership, and primary release or
+ * cancellation drops it. [ShortcutKeySemanticsTest] drives the same rules end to end.
  *
  * These drive [AWTKeyboardInterceptor.handleKeyPressed] / [AWTKeyboardInterceptor.handleKeyReleased]
  * directly with synthetic AWT events - the same way [HostBindingPrecedenceTest] drives
@@ -25,9 +34,24 @@ import kotlin.test.assertTrue
  * `KeyEventDispatcher` (which needs a registered AWT `Window`) or real chord matching (which
  * reads the on-disk keymap via `KeymapSettingsManager`, and so differs between a dev machine
  * and CI - the same reason [TabStepGateTest] and friends avoid it).
- * [AWTKeyboardInterceptor.pendingShortcuts] is set directly to arm a known chord instead.
+ * [AWTKeyboardInterceptor.heldShortcuts] is seeded directly to own a known chord instead.
  */
 class ShortcutKeyInvocationTest {
+    private lateinit var testScope: CoroutineScope
+    private lateinit var newTabCollector: Job
+    private val newTabEvents = AtomicInteger(0)
+
+    @BeforeTest
+    fun resetPending() {
+        AWTKeyboardInterceptor.cancelPendingShortcut()
+        newTabEvents.set(0)
+        testScope = CoroutineScope(Dispatchers.Unconfined)
+        newTabCollector =
+            testScope.launch {
+                MenuActionsHandler.newTabEvents.collect { newTabEvents.incrementAndGet() }
+            }
+    }
+
     @Test
     fun `native print cancels only its own pending release`() {
         val binding =
@@ -36,27 +60,26 @@ class ShortcutKeyInvocationTest {
                 KeyStroke("P", listOf("Cmd")),
             )
         val pending =
-            AWTKeyboardInterceptor.PendingShortcut(
+            HeldShortcut(
                 keyCode = KeyEvent.VK_P,
                 windowId = "native-print",
                 hostBinding = binding,
             )
-        AWTKeyboardInterceptor.pendingShortcuts[KeyEvent.VK_P] = pending
-        AWTKeyboardInterceptor.claimedKeys.add(KeyEvent.VK_P)
+        AWTKeyboardInterceptor.heldShortcuts.claim(pending)
         AWTKeyboardInterceptor.cancelPendingNativePrint("another-window")
-        assertEquals(pending, AWTKeyboardInterceptor.pendingShortcuts[KeyEvent.VK_P])
+        assertEquals(pending, AWTKeyboardInterceptor.heldShortcuts[KeyEvent.VK_P])
         AWTKeyboardInterceptor.cancelPendingNativePrint("native-print")
-        assertNull(AWTKeyboardInterceptor.pendingShortcuts[KeyEvent.VK_P])
+        assertFalse(AWTKeyboardInterceptor.heldShortcuts[KeyEvent.VK_P]?.releaseActionArmed ?: true)
         assertTrue(AWTKeyboardInterceptor.handleKeyReleased(keyEvent(KeyEvent.KEY_RELEASED, KeyEvent.VK_P)))
-        assertFalse(AWTKeyboardInterceptor.claimedKeys.contains(KeyEvent.VK_P))
+        assertNull(AWTKeyboardInterceptor.heldShortcuts[KeyEvent.VK_P])
     }
 
     @Test
     fun `native print does not cancel another action bound to P`() {
         val pending = pendingFor("native-print", keyCode = KeyEvent.VK_P)
-        AWTKeyboardInterceptor.pendingShortcuts[KeyEvent.VK_P] = pending
+        AWTKeyboardInterceptor.heldShortcuts.claim(pending)
         AWTKeyboardInterceptor.cancelPendingNativePrint("native-print")
-        assertEquals(pending, AWTKeyboardInterceptor.pendingShortcuts[KeyEvent.VK_P])
+        assertEquals(pending, AWTKeyboardInterceptor.heldShortcuts[KeyEvent.VK_P])
     }
 
     private val source = Canvas()
@@ -77,25 +100,28 @@ class ShortcutKeyInvocationTest {
         windowId: String,
         keyCode: Int = KeyEvent.VK_N,
         metaDown: Boolean = true,
-    ) = AWTKeyboardInterceptor.PendingShortcut(
+    ) = HeldShortcut(
         keyCode = keyCode,
         windowId = windowId,
         hostBinding = tabNewBinding(),
-        metaDown = metaDown,
+        modifiers = AwtModifierSnapshot(metaDown = metaDown),
     )
 
     @AfterTest
     fun clearPending() {
         AWTKeyboardInterceptor.cancelPendingShortcut()
+        newTabCollector.cancel()
+        testScope.cancel()
     }
 
     @Test
     fun `a held chord's release is consumed once and clears it`() {
-        AWTKeyboardInterceptor.pendingShortcuts[KeyEvent.VK_N] = pendingFor("keyup-once")
+        AWTKeyboardInterceptor.heldShortcuts.claim(pendingFor("keyup-once"))
 
         val release = keyEvent(KeyEvent.KEY_RELEASED, KeyEvent.VK_N)
         assertTrue(AWTKeyboardInterceptor.handleKeyReleased(release), "the first release belongs to the chord")
-        assertNull(AWTKeyboardInterceptor.pendingShortcuts[KeyEvent.VK_N], "the release must clear the held chord")
+        assertNull(AWTKeyboardInterceptor.heldShortcuts[KeyEvent.VK_N], "the release must clear the held chord")
+        assertEquals(0, newTabEvents.get(), "a normal host action must not be delivered again on release")
         assertFalse(
             AWTKeyboardInterceptor.handleKeyReleased(release),
             "a second release of the same key is not ours",
@@ -103,34 +129,70 @@ class ShortcutKeyInvocationTest {
     }
 
     @Test
+    fun `a held plugin shortcut dispatches nothing on release`() {
+        var calls = 0
+        val provider =
+            object : ShortcutActionProvider {
+                override val providerId = "held-plugin-release"
+
+                override fun shortcuts() = emptyList<ai.rever.boss.plugin.api.PluginShortcutSpec>()
+
+                override fun onAction(
+                    actionId: String,
+                    windowId: String?,
+                ) {
+                    calls++
+                }
+            }
+        PluginShortcutRegistryImpl.register(provider)
+        try {
+            AWTKeyboardInterceptor.heldShortcuts.claim(
+                HeldShortcut(
+                    keyCode = KeyEvent.VK_K,
+                    windowId = "plugin-release",
+                    pluginActionId = "plugin.release.action",
+                ),
+            )
+
+            assertTrue(AWTKeyboardInterceptor.handleKeyReleased(keyEvent(KeyEvent.KEY_RELEASED, KeyEvent.VK_K)))
+            assertEquals(0, calls, "plugin actions run on press only")
+            assertNull(AWTKeyboardInterceptor.heldShortcuts[KeyEvent.VK_K])
+        } finally {
+            PluginShortcutRegistryImpl.unregister(provider.providerId)
+        }
+    }
+
+    @Test
     fun `a release of a different key leaves the held chord alone`() {
         val pending = pendingFor("keyup-mismatch")
-        AWTKeyboardInterceptor.pendingShortcuts[KeyEvent.VK_N] = pending
+        AWTKeyboardInterceptor.heldShortcuts.claim(pending)
 
         assertFalse(AWTKeyboardInterceptor.handleKeyReleased(keyEvent(KeyEvent.KEY_RELEASED, KeyEvent.VK_W)))
         assertEquals(
             pending,
-            AWTKeyboardInterceptor.pendingShortcuts[KeyEvent.VK_N],
+            AWTKeyboardInterceptor.heldShortcuts[KeyEvent.VK_N],
             "an unrelated release must leave the held chord alone",
         )
     }
 
     @Test
-    fun `releasing a modifier drops the held record but is not itself consumed`() {
+    fun `releasing a chord modifier retains its ownership record and is not itself consumed`() {
         // A modifier can never itself be the held keyCode - handleKeyPressed rejects a
-        // modifier-only press (see the test below) - so its release is not consumed. Dropping
-        // the record is what keeps a still-held key's bare repeats swallowed rather than
-        // re-matched (see ShortcutKeySemanticsTest).
+        // modifier-only press (see the test below) - so its release is not consumed. The
+        // record stays to preserve ownership until the primary release.
         val pending = pendingFor("keyup-modifier")
-        AWTKeyboardInterceptor.pendingShortcuts[KeyEvent.VK_N] = pending
+        AWTKeyboardInterceptor.heldShortcuts.claim(pending)
 
-        assertFalse(AWTKeyboardInterceptor.handleKeyReleased(keyEvent(KeyEvent.KEY_RELEASED, KeyEvent.VK_CONTROL)))
-        assertNull(AWTKeyboardInterceptor.pendingShortcuts[KeyEvent.VK_N])
+        assertFalse(AWTKeyboardInterceptor.handleKeyReleased(keyEvent(KeyEvent.KEY_RELEASED, KeyEvent.VK_META)))
+        assertEquals(
+            pending.copy(modifiers = AwtModifierSnapshot()),
+            AWTKeyboardInterceptor.heldShortcuts[KeyEvent.VK_N],
+        )
     }
 
     @Test
     fun `with no chord armed, a key-up does nothing`() {
-        assertTrue(AWTKeyboardInterceptor.pendingShortcuts.isEmpty())
+        assertTrue(AWTKeyboardInterceptor.heldShortcuts.isEmpty())
         assertFalse(AWTKeyboardInterceptor.handleKeyReleased(keyEvent(KeyEvent.KEY_RELEASED, KeyEvent.VK_N)))
     }
 
@@ -138,7 +200,7 @@ class ShortcutKeyInvocationTest {
     fun `a repeat key-down for the held key is claimed without re-matching or firing`() {
         val windowId = "keyup-repeat"
         val pending = pendingFor(windowId)
-        AWTKeyboardInterceptor.pendingShortcuts[KeyEvent.VK_N] = pending
+        AWTKeyboardInterceptor.heldShortcuts.claim(pending)
 
         // OS auto-repeat delivers KEY_PRESSED again and again while a key is held; each one
         // must stay claimed (so it doesn't leak to the focused component) without firing.
@@ -149,26 +211,26 @@ class ShortcutKeyInvocationTest {
         }
         assertEquals(
             pending,
-            AWTKeyboardInterceptor.pendingShortcuts[KeyEvent.VK_N],
+            AWTKeyboardInterceptor.heldShortcuts[KeyEvent.VK_N],
             "repeats must not re-match or replace the held chord",
         )
 
         assertTrue(AWTKeyboardInterceptor.handleKeyReleased(keyEvent(KeyEvent.KEY_RELEASED, KeyEvent.VK_N)))
-        assertNull(AWTKeyboardInterceptor.pendingShortcuts[KeyEvent.VK_N])
+        assertNull(AWTKeyboardInterceptor.heldShortcuts[KeyEvent.VK_N])
     }
 
     @Test
     fun `a key-down with no modifier held is never claimed`() {
         val press = keyEvent(KeyEvent.KEY_PRESSED, KeyEvent.VK_N, 0)
         assertFalse(AWTKeyboardInterceptor.handleKeyPressed(press, "keyup-nomod"))
-        assertNull(AWTKeyboardInterceptor.pendingShortcuts[KeyEvent.VK_N])
+        assertNull(AWTKeyboardInterceptor.heldShortcuts[KeyEvent.VK_N])
     }
 
     @Test
     fun `a bare modifier key-down is never claimed`() {
         val press = keyEvent(KeyEvent.KEY_PRESSED, KeyEvent.VK_CONTROL, InputEvent.CTRL_DOWN_MASK)
         assertFalse(AWTKeyboardInterceptor.handleKeyPressed(press, "keyup-modonly"))
-        assertNull(AWTKeyboardInterceptor.pendingShortcuts[KeyEvent.VK_CONTROL])
+        assertNull(AWTKeyboardInterceptor.heldShortcuts[KeyEvent.VK_CONTROL])
     }
 
     @Test
@@ -183,7 +245,7 @@ class ShortcutKeyInvocationTest {
         // findMatchingBinding, which this suite deliberately avoids depending on (see the class
         // KDoc). A bare, unmodified press has no binding to match regardless of what the keymap
         // says, so handleKeyPressed correctly returns false here either way.
-        AWTKeyboardInterceptor.pendingShortcuts[KeyEvent.VK_N] = pendingFor("keyup-stale", metaDown = true)
+        AWTKeyboardInterceptor.heldShortcuts.claim(pendingFor("keyup-stale", metaDown = true))
 
         val barePress = keyEvent(KeyEvent.KEY_PRESSED, KeyEvent.VK_N, 0)
         assertFalse(
@@ -192,10 +254,10 @@ class ShortcutKeyInvocationTest {
         )
 
         // A stale action must be removed, not merely skipped during the new press.
-        assertNull(AWTKeyboardInterceptor.pendingShortcuts[KeyEvent.VK_N])
+        assertNull(AWTKeyboardInterceptor.heldShortcuts[KeyEvent.VK_N])
         assertFalse(AWTKeyboardInterceptor.handleKeyReleased(keyEvent(KeyEvent.KEY_RELEASED, KeyEvent.VK_N)))
-        AWTKeyboardInterceptor.pendingShortcuts[KeyEvent.VK_N] = pendingFor("keyup-fresh", metaDown = true)
-        assertEquals("keyup-fresh", AWTKeyboardInterceptor.pendingShortcuts[KeyEvent.VK_N]?.windowId)
+        AWTKeyboardInterceptor.heldShortcuts.claim(pendingFor("keyup-fresh", metaDown = true))
+        assertEquals("keyup-fresh", AWTKeyboardInterceptor.heldShortcuts[KeyEvent.VK_N]?.windowId)
     }
 
     @Test
@@ -204,9 +266,9 @@ class ShortcutKeyInvocationTest {
         // without fully releasing N used to overwrite a single slot, so N's release leaked to the
         // focused component with no matching key-down to explain it. Held by hand rather than
         // through handleKeyPressed's real-keymap matching, per this suite's usual pattern.
-        AWTKeyboardInterceptor.pendingShortcuts[KeyEvent.VK_N] = pendingFor("keyup-roll", metaDown = true)
-        AWTKeyboardInterceptor.pendingShortcuts[KeyEvent.VK_T] =
-            AWTKeyboardInterceptor.PendingShortcut(
+        AWTKeyboardInterceptor.heldShortcuts.claim(pendingFor("keyup-roll", metaDown = true))
+        AWTKeyboardInterceptor.heldShortcuts.claim(
+            HeldShortcut(
                 keyCode = KeyEvent.VK_T,
                 windowId = "keyup-roll",
                 hostBinding =
@@ -214,26 +276,28 @@ class ShortcutKeyInvocationTest {
                         KeyBinding(actionId = KeymapActions.TAB_CLOSE, key = "T", modifiers = listOf("Cmd")),
                         KeyStroke("T", listOf("Cmd")),
                     ),
-                metaDown = true,
-            )
+                modifiers = AwtModifierSnapshot(metaDown = true),
+            ),
+        )
 
-        assertEquals(2, AWTKeyboardInterceptor.pendingShortcuts.size, "both chords must stay held")
+        assertEquals("keyup-roll", AWTKeyboardInterceptor.heldShortcuts[KeyEvent.VK_N]?.windowId)
+        assertEquals("keyup-roll", AWTKeyboardInterceptor.heldShortcuts[KeyEvent.VK_T]?.windowId)
 
         assertTrue(AWTKeyboardInterceptor.handleKeyReleased(keyEvent(KeyEvent.KEY_RELEASED, KeyEvent.VK_T)))
         assertTrue(
             AWTKeyboardInterceptor.handleKeyReleased(keyEvent(KeyEvent.KEY_RELEASED, KeyEvent.VK_N)),
             "the first chord must still own its release, not have been silently dropped",
         )
-        assertTrue(AWTKeyboardInterceptor.pendingShortcuts.isEmpty())
+        assertTrue(AWTKeyboardInterceptor.heldShortcuts.isEmpty())
     }
 
     @Test
     fun `cancelling drops a held chord so its eventual release is not claimed`() {
-        AWTKeyboardInterceptor.pendingShortcuts[KeyEvent.VK_N] = pendingFor("keyup-cancel")
+        AWTKeyboardInterceptor.heldShortcuts.claim(pendingFor("keyup-cancel"))
 
         AWTKeyboardInterceptor.cancelPendingShortcut()
 
-        assertTrue(AWTKeyboardInterceptor.pendingShortcuts.isEmpty())
+        assertTrue(AWTKeyboardInterceptor.heldShortcuts.isEmpty())
         assertFalse(AWTKeyboardInterceptor.handleKeyReleased(keyEvent(KeyEvent.KEY_RELEASED, KeyEvent.VK_N)))
     }
 }

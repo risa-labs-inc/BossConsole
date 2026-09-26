@@ -18,14 +18,52 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 
 /**
- * A shortcut chord that ran on KeyDown and whose primary key and modifiers are still held.
- * Kept so a later bare press of the same key can be told from an auto-repeat of the chord.
+ * A shortcut chord that ran on KeyDown and still owns its physical primary key.
+ *
+ * Modifier releases update [modifiers] rather than deleting the record. This keeps repeats of a
+ * still-held key consumed while retaining enough identity to discard a stale claim when a later
+ * press arrives in another context or with another modifier combination.
  */
-data class PendingKeymapShortcut(
+internal data class PendingKeymapShortcut(
     val binding: KeyBinding,
     val primaryKey: Key,
     val context: ShortcutContext,
-)
+    val modifiers: KeymapModifierSnapshot,
+    val consumed: Boolean,
+) {
+    fun matches(
+        event: KeyEvent,
+        candidateContext: ShortcutContext,
+    ): Boolean = context == candidateContext && modifiers == KeymapModifierSnapshot.from(event)
+
+    fun usedModifier(key: Key): Boolean = modifiers.includes(key)
+}
+
+internal data class KeymapModifierSnapshot(
+    val metaDown: Boolean,
+    val controlDown: Boolean,
+    val shiftDown: Boolean,
+    val altDown: Boolean,
+) {
+    fun includes(key: Key): Boolean =
+        when (key) {
+            Key.MetaLeft, Key.MetaRight -> metaDown
+            Key.CtrlLeft, Key.CtrlRight -> controlDown
+            Key.ShiftLeft, Key.ShiftRight -> shiftDown
+            Key.AltLeft, Key.AltRight -> altDown
+            else -> false
+        }
+
+    companion object {
+        fun from(event: KeyEvent): KeymapModifierSnapshot =
+            KeymapModifierSnapshot(
+                metaDown = event.isMetaPressed,
+                controlDown = event.isCtrlPressed,
+                shiftDown = event.isShiftPressed,
+                altDown = event.isAltPressed,
+            )
+    }
+}
 
 /**
  * Context-aware keyboard shortcut handler.
@@ -36,7 +74,10 @@ data class PendingKeymapShortcut(
  *
  * Recognizes shortcut chords and executes the action on KeyDown, once: auto-repeat KeyDowns of
  * the held key and its KeyUp are consumed without executing again. Releasing a modifier first
- * cancels nothing (BossConsole#1568), matching the AWT dispatcher.
+ * cancels nothing (BossConsole#1568). This handler is not wired into the desktop event path yet:
+ * unlike the AWT/JxBrowser integration, every action (including browser print) executes on
+ * KeyDown. A declined action is remembered until KeyUp so auto-repeat does not retry it, but its
+ * press, repeats, and release remain unconsumed.
  *
  * Usage:
  * ```kotlin
@@ -57,10 +98,9 @@ class KeymapHandler(
     private var matcher = KeymapMatcher(settings)
     private var _settings = settings
     private val pendingShortcuts = mutableMapOf<Key, PendingKeymapShortcut>()
-    private val claimedKeys = mutableSetOf<Key>()
 
     /**
-     * Whether a shortcut chord that already ran is still held with its modifiers down.
+     * Whether a shortcut chord that already ran still owns its physical primary key.
      */
     val hasPendingShortcut: Boolean
         get() = pendingShortcuts.isNotEmpty()
@@ -70,7 +110,6 @@ class KeymapHandler(
      */
     fun clearPendingShortcut() {
         pendingShortcuts.clear()
-        claimedKeys.clear()
     }
 
     /**
@@ -104,14 +143,6 @@ class KeymapHandler(
         executor: (actionId: String) -> Boolean,
     ): Boolean {
         pendingShortcuts.entries.removeAll { it.value.context != context }
-        val pending = pendingShortcuts[event.key]
-        val hasModifier =
-            listOf(event.isMetaPressed, event.isCtrlPressed, event.isAltPressed, event.isShiftPressed).any { it }
-        val barePress = event.type == KeyEventType.KeyDown && !hasModifier
-        if (barePress && pending != null && pending.binding.modifiers.isNotEmpty()) {
-            pendingShortcuts.remove(event.key)
-            claimedKeys.remove(event.key)
-        }
         return when (event.type) {
             KeyEventType.KeyDown -> runShortcut(event, context, executor)
             KeyEventType.KeyUp -> releaseShortcut(event)
@@ -129,44 +160,47 @@ class KeymapHandler(
                 false
             }
 
-            event.key in claimedKeys -> {
-                true
-            }
-
             else -> {
+                val held = pendingShortcuts[event.key]
+                if (held != null && held.matches(event, context)) return held.consumed
+                if (held != null) pendingShortcuts.remove(event.key)
                 val binding = matcher.match(event, context)
-                binding != null && runAndHold(binding, event.key, context, executor)
+                binding != null && runAndHold(binding, event, context, executor)
             }
         }
 
     /**
-     * Hold [binding]'s chord and execute it. An action the executor does not handle leaves the
-     * key unclaimed and the event unconsumed, the same as the AWT dispatcher does.
+     * Execute [binding] once and retain its physical chord through KeyUp. Declined chords remain
+     * unconsumed but are still held, preventing OS auto-repeat from invoking the executor again.
      */
     private fun runAndHold(
         binding: KeyBinding,
-        key: Key,
+        event: KeyEvent,
         context: ShortcutContext,
         executor: (String) -> Boolean,
     ): Boolean {
-        pendingShortcuts[key] = PendingKeymapShortcut(binding, key, context)
-        claimedKeys.add(key)
         val handled = executor(binding.actionId)
+        pendingShortcuts[event.key] =
+            PendingKeymapShortcut(
+                binding = binding,
+                primaryKey = event.key,
+                context = context,
+                modifiers = KeymapModifierSnapshot.from(event),
+                consumed = handled,
+            )
         logger.debug(LogCategory.UI, "Ran shortcut", mapOf("actionId" to binding.actionId, "handled" to handled))
-        if (!handled) {
-            pendingShortcuts.remove(key)
-            claimedKeys.remove(key)
-        }
         return handled
     }
 
     private fun releaseShortcut(event: KeyEvent): Boolean {
-        val claimed = claimedKeys.remove(event.key)
-        // A modifier release drops the held records but keeps the keys claimed, so a key still
-        // held after its modifier came up keeps having its repeats swallowed until released.
-        if (event.key in MODIFIER_ONLY_KEYS) pendingShortcuts.clear()
-        pendingShortcuts.remove(event.key)
-        return claimed
+        if (event.key in MODIFIER_ONLY_KEYS) {
+            val modifiers = KeymapModifierSnapshot.from(event)
+            for ((key, held) in pendingShortcuts.toMap()) {
+                if (held.usedModifier(event.key)) pendingShortcuts[key] = held.copy(modifiers = modifiers)
+            }
+            return false
+        }
+        return pendingShortcuts.remove(event.key)?.consumed == true
     }
 
     /**

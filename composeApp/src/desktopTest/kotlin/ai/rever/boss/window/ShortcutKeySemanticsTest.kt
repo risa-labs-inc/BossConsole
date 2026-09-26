@@ -1,7 +1,6 @@
 package ai.rever.boss.window
 
 import ai.rever.boss.components.plugin.registries.PluginShortcutRegistryImpl
-import ai.rever.boss.keymap.KeymapSettingsManager
 import ai.rever.boss.keymap.model.KeyBinding
 import ai.rever.boss.keymap.model.KeyStroke
 import ai.rever.boss.keymap.model.KeymapActions
@@ -15,13 +14,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import java.awt.Canvas
-import java.awt.KeyboardFocusManager
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
-import java.beans.PropertyChangeEvent
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -49,14 +45,14 @@ import kotlin.test.assertTrue
  * | modifier released first   | primary release              | no             | yes      |
  * | primary released first    | modifier release             | no (MRU commit)| no       |
  * | chord held, focus lost    | primary release              | no             | no       |
- * | print armed (see below)   | first primary/modifier release | once         | primary  |
+ * | print armed               | unrelated/own modifier release | no             | no       |
+ * | print armed               | primary release                | once           | yes      |
+ * | print disarmed natively   | primary release                | no             | yes      |
  *
- * Browser print is the one chord that still fires on release; see
- * `AWTKeyboardInterceptor.RELEASE_FIRED_ACTIONS`.
+ * Browser print is the one chord that still fires on release.
  */
 class ShortcutKeySemanticsTest {
-    private lateinit var previousSettings: KeymapSettings
-    private lateinit var settingsState: MutableStateFlow<KeymapSettings>
+    private lateinit var testSettings: KeymapSettings
     private lateinit var canvas: Canvas
     private val windowId = "test-window-key-semantics"
     private lateinit var testScope: CoroutineScope
@@ -91,12 +87,6 @@ class ShortcutKeySemanticsTest {
         AWTKeyboardInterceptor.install()
         canvas = Canvas()
         AWTKeyboardInterceptor.cancelPendingShortcut()
-        val field = KeymapSettingsManager::class.java.getDeclaredField("_currentSettings")
-        field.isAccessible = true
-        @Suppress("UNCHECKED_CAST")
-        val state = field.get(KeymapSettingsManager) as MutableStateFlow<KeymapSettings>
-        settingsState = state
-        previousSettings = state.value
         useBindings(KeyBinding(actionId = KeymapActions.TAB_NEW, key = "T", modifiers = listOf("Cmd")))
     }
 
@@ -104,14 +94,19 @@ class ShortcutKeySemanticsTest {
     fun tearDown() {
         AWTKeyboardInterceptor.cancelPendingShortcut()
         AWTKeyboardInterceptor.uninstall()
-        settingsState.value = previousSettings
+        AWTKeyboardInterceptor.useKeymapSettingsForTest(null)
         collectorJobs.forEach { it.cancel() }
         collectorJobs.clear()
         testScope.cancel()
     }
 
     private fun useBindings(vararg bindings: KeyBinding) {
-        settingsState.value = KeymapSettings.fromBindings(bindings.toList())
+        useSettings(KeymapSettings.fromBindings(bindings.toList()))
+    }
+
+    private fun useSettings(settings: KeymapSettings) {
+        testSettings = settings
+        AWTKeyboardInterceptor.useKeymapSettingsForTest(settings)
     }
 
     private fun dispatchKeyEvent(event: KeyEvent): Boolean = AWTKeyboardInterceptor.processKeyEvent(event, windowId)
@@ -141,8 +136,7 @@ class ShortcutKeySemanticsTest {
         assertTrue(dispatchKeyEvent(release), "the primary release must not leak to the focused component")
         assertTrue(release.isConsumed)
         assertEquals(1, newTabEventCount.get(), "the release must not fire a second time")
-        assertTrue(AWTKeyboardInterceptor.pendingShortcuts.isEmpty())
-        assertTrue(AWTKeyboardInterceptor.claimedKeys.isEmpty())
+        assertTrue(AWTKeyboardInterceptor.heldShortcuts.isEmpty())
     }
 
     @Test
@@ -191,13 +185,8 @@ class ShortcutKeySemanticsTest {
         assertEquals(1, newTabEventCount.get())
 
         // Exercise the listener registered by install without creating or focusing a window.
-        val manager = KeyboardFocusManager.getCurrentKeyboardFocusManager()
-        val listenerField = AWTKeyboardInterceptor::class.java.getDeclaredField("focusListener")
-        listenerField.isAccessible = true
-        val listener = listenerField.get(AWTKeyboardInterceptor) as java.beans.PropertyChangeListener
-        assertTrue(manager.getPropertyChangeListeners("focusedWindow").contains(listener))
-        listener.propertyChange(PropertyChangeEvent(manager, "focusedWindow", null, null))
-        assertTrue(AWTKeyboardInterceptor.pendingShortcuts.isEmpty())
+        AWTKeyboardInterceptor.handleFocusChangeForTest()
+        assertTrue(AWTKeyboardInterceptor.heldShortcuts.isEmpty())
 
         assertFalse(dispatchKeyEvent(key(KeyEvent.KEY_RELEASED)))
         assertEquals(1, newTabEventCount.get())
@@ -206,7 +195,7 @@ class ShortcutKeySemanticsTest {
     @Test
     fun `MRU steps on each Tab press and commits on the modifier release, keeping the last step`() {
         useBindings(KeyBinding(actionId = KeymapActions.TAB_NEXT, key = "Tab", modifiers = listOf("Cmd")))
-        settingsState.value = settingsState.value.copy(tabSwitchMode = TabSwitchMode.MRU)
+        useSettings(testSettings.copy(tabSwitchMode = TabSwitchMode.MRU))
         val events = mutableListOf<MenuActionsHandler.TabSwitchAction>()
         val job = collectTabSwitches(events)
         try {
@@ -268,7 +257,7 @@ class ShortcutKeySemanticsTest {
             for ((round, rebound) in listOf(false, true).withIndex()) {
                 // The rebind uses J, not the default K, so this round can only pass via the keymap.
                 val rebind = KeyBinding(actionId = action, key = "J", modifiers = listOf("Cmd"))
-                settingsState.value = KeymapSettings.fromBindings(listOfNotNull(rebind.takeIf { rebound }))
+                useSettings(KeymapSettings.fromBindings(listOfNotNull(rebind.takeIf { rebound })))
                 val keyCode = if (rebound) KeyEvent.VK_J else KeyEvent.VK_K
                 repeat(3) { assertTrue(dispatchKeyEvent(key(KeyEvent.KEY_PRESSED, keyCode))) }
                 assertEquals(round + 1, calls, "fires on the first press only")
@@ -311,8 +300,7 @@ class ShortcutKeySemanticsTest {
         try {
             useBindings()
             assertTrue(dispatchKeyEvent(key(KeyEvent.KEY_PRESSED, KeyEvent.VK_K)))
-            assertTrue(AWTKeyboardInterceptor.pendingShortcuts.isEmpty())
-            assertTrue(AWTKeyboardInterceptor.claimedKeys.isEmpty())
+            assertTrue(AWTKeyboardInterceptor.heldShortcuts.isEmpty())
             assertFalse(dispatchKeyEvent(key(KeyEvent.KEY_RELEASED, KeyEvent.VK_K)))
         } finally {
             PluginShortcutRegistryImpl.unregister(provider.providerId)
@@ -363,6 +351,21 @@ class ShortcutKeySemanticsTest {
     }
 
     @Test
+    fun `lost primary release after modifier-up cannot block a later different chord`() {
+        useBindings(
+            KeyBinding(actionId = KeymapActions.TAB_NEW, key = "N", modifiers = listOf("Cmd")),
+            KeyBinding(actionId = KeymapActions.BROWSER_PRINT, key = "N", modifiers = listOf("Alt")),
+        )
+        assertTrue(dispatchKeyEvent(key(KeyEvent.KEY_PRESSED, KeyEvent.VK_N)))
+        assertFalse(dispatchKeyEvent(modifierRelease()))
+
+        assertTrue(dispatchKeyEvent(key(KeyEvent.KEY_PRESSED, KeyEvent.VK_N, InputEvent.ALT_DOWN_MASK)))
+        assertEquals(0, printEventCount.get())
+        assertTrue(dispatchKeyEvent(key(KeyEvent.KEY_RELEASED, KeyEvent.VK_N, InputEvent.ALT_DOWN_MASK)))
+        assertEquals(1, printEventCount.get(), "the later chord replaces the stale physical-key owner")
+    }
+
+    @Test
     fun `a gate closing while the chord is held changes nothing - the action already ran`() {
         useBindings(KeyBinding(actionId = KeymapActions.TAB_NEXT_POSITIONAL, key = "T", modifiers = listOf("Cmd")))
         val events = mutableListOf<MenuActionsHandler.TabSwitchAction>()
@@ -382,14 +385,14 @@ class ShortcutKeySemanticsTest {
     }
 
     @Test
-    fun `browser print waits for release and still fires when the modifier comes up first`() {
+    fun `browser print waits for its primary release when the modifier comes up first`() {
         // GLOBAL here only because a headless run has no focused window for detectCurrentContext.
         useBindings(KeyBinding(actionId = KeymapActions.BROWSER_PRINT, key = "P", modifiers = listOf("Cmd")))
         assertTrue(dispatchKeyEvent(key(KeyEvent.KEY_PRESSED, KeyEvent.VK_P)))
         repeat(2) { assertTrue(dispatchKeyEvent(key(KeyEvent.KEY_PRESSED, KeyEvent.VK_P))) }
         assertEquals(0, printEventCount.get(), "print is armed on the press so the native callback can take it")
         assertFalse(dispatchKeyEvent(modifierRelease()))
-        assertEquals(1, printEventCount.get(), "a modifier release fires it rather than dropping it")
+        assertEquals(0, printEventCount.get(), "the modifier release leaves time for the native callback")
         assertTrue(dispatchKeyEvent(key(KeyEvent.KEY_RELEASED, KeyEvent.VK_P, modifiers = 0)))
         assertEquals(1, printEventCount.get())
 
@@ -401,6 +404,36 @@ class ShortcutKeySemanticsTest {
         AWTKeyboardInterceptor.cancelPendingNativePrint(windowId)
         assertTrue(dispatchKeyEvent(key(KeyEvent.KEY_RELEASED, KeyEvent.VK_P)), "the release stays consumed")
         assertEquals(2, printEventCount.get(), "the native print took it, so AWT must not print again")
+    }
+
+    @Test
+    fun `native print can disarm AWT after modifier release but before primary release`() {
+        useBindings(KeyBinding(actionId = KeymapActions.BROWSER_PRINT, key = "P", modifiers = listOf("Cmd")))
+        assertTrue(dispatchKeyEvent(key(KeyEvent.KEY_PRESSED, KeyEvent.VK_P)))
+        assertFalse(dispatchKeyEvent(modifierRelease()))
+        AWTKeyboardInterceptor.cancelPendingNativePrint(windowId)
+        assertTrue(dispatchKeyEvent(key(KeyEvent.KEY_RELEASED, KeyEvent.VK_P, modifiers = 0)))
+        assertEquals(0, printEventCount.get(), "a late native callback still owns the one print")
+        assertTrue(AWTKeyboardInterceptor.heldShortcuts.isEmpty())
+    }
+
+    @Test
+    fun `unrelated modifier release neither fires nor disarms browser print`() {
+        useBindings(KeyBinding(actionId = KeymapActions.BROWSER_PRINT, key = "P", modifiers = listOf("Cmd")))
+        assertTrue(dispatchKeyEvent(key(KeyEvent.KEY_PRESSED, KeyEvent.VK_P)))
+        assertFalse(dispatchKeyEvent(modifierRelease(KeyEvent.VK_SHIFT)))
+        assertEquals(0, printEventCount.get())
+        assertTrue(dispatchKeyEvent(key(KeyEvent.KEY_RELEASED, KeyEvent.VK_P)))
+        assertEquals(1, printEventCount.get())
+    }
+
+    @Test
+    fun `focus loss cancels an armed browser print`() {
+        useBindings(KeyBinding(actionId = KeymapActions.BROWSER_PRINT, key = "P", modifiers = listOf("Cmd")))
+        assertTrue(dispatchKeyEvent(key(KeyEvent.KEY_PRESSED, KeyEvent.VK_P)))
+        AWTKeyboardInterceptor.cancelPendingShortcut()
+        assertFalse(dispatchKeyEvent(key(KeyEvent.KEY_RELEASED, KeyEvent.VK_P)))
+        assertEquals(0, printEventCount.get())
     }
 
     private companion object {
