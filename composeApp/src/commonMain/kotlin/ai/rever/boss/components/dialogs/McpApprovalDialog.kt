@@ -77,7 +77,7 @@ internal enum class McpApprovalScope {
     /** This tool from this provider, until the app quits. Allow only. */
     SESSION,
 
-    /** A persisted, tool-name-wide rule, across restarts. Allow or deny. */
+    /** A persisted rule for this tool from this plugin, across restarts. Allow or deny. */
     ALWAYS_TOOL,
 
     /** A persisted ALLOW for every tool the provider contributes. Allow only. */
@@ -149,12 +149,13 @@ internal object McpPromptChoices {
     fun alwaysToolText(request: McpApprovalRequest): Pair<String, String> =
         if (request.escalated) {
             "Always deny this tool" to
-                "Saves a deny by tool name, across restarts. Allowing still runs just this call: a saved " +
+                "Saves a deny for this tool from this plugin, across restarts. Allowing still runs just this call: " +
+                "a saved " +
                 "allow cannot pre-approve a destructive one."
         } else {
             "Always, for this tool" to
-                "Saved by tool name for all agents and arguments, across restarts - including a replacement " +
-                "plugin that ships a tool with this name."
+                "Saved for this tool from this plugin, for all agents and arguments, across restarts. A plugin " +
+                "that ships a tool with the same name is asked on its own."
         }
 }
 

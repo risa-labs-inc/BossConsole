@@ -1,8 +1,8 @@
 package ai.rever.boss.components.dialogs
 
-import ai.rever.boss.mcp.McpPolicyAction
 import ai.rever.boss.mcp.McpProactivePolicyOutcome
 import ai.rever.boss.mcp.McpSectionPolicyChange
+import ai.rever.boss.mcp.McpToolPolicyConfig
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
@@ -34,12 +34,12 @@ import androidx.compose.ui.unit.sp
 @Composable
 internal fun McpGlobalPolicyControls(
     tools: List<McpToolIdentity>,
-    rules: Map<String, McpPolicyAction>,
+    policy: McpToolPolicyConfig,
     onApply: suspend (List<McpSectionPolicyChange>) -> McpProactivePolicyOutcome,
     onRefresh: () -> Unit,
 ) {
     val colors = BossTheme.colors
-    var selection by remember(tools, rules) { mutableStateOf<McpSectionMode?>(null) }
+    var selection by remember(tools, policy) { mutableStateOf<McpSectionMode?>(null) }
     var saving by remember { mutableStateOf(false) }
     val presets =
         listOf(
@@ -77,7 +77,7 @@ internal fun McpGlobalPolicyControls(
             }
             SectionConfirmation(
                 tools,
-                rules,
+                policy,
                 selection?.let { sectionSelection(tools, it) }.orEmpty(),
                 selection != null,
                 onApply,

@@ -13,6 +13,6 @@ Database regressions are already wired into `.github/workflows/build.yml` throug
 
 ## Separate follow-up scope
 
-- Persisted MCP rules remain intentionally tool-name-wide, unlike provider-scoped session trust. Changing that requires a policy schema and legacy-rule migration, with matching UI semantics.
+- Persisted MCP tool rules are now stored per plugin (`providerToolRules`). Rules written before that stay in the name-only `rules` map and keep answering for every plugin. There is no automatic migration of those rules to a plugin, because nothing records who they were meant for.
 - Shutdown flush currently waits for persistence. A reliable bounded shutdown needs to account for blocking filesystem I/O; a coroutine timeout alone cannot guarantee that a blocked write stops.
 - Snapshot reads reject invalid or escaping process directories. Callers must handle the documented exception.

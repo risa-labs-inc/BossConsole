@@ -10,6 +10,7 @@ import ai.rever.boss.components.dialogs.McpPolicyManagerDialog
 import ai.rever.boss.components.dialogs.McpProviderTrustDialog
 import ai.rever.boss.components.dialogs.McpSessionTrustDialog
 import ai.rever.boss.components.dialogs.McpToolIdentity
+import ai.rever.boss.components.dialogs.savedRules
 import ai.rever.boss.components.events.PanelEventBus
 import ai.rever.boss.components.overlays.ContextMenu
 import ai.rever.boss.components.overlays.HoverTooltipBox
@@ -24,6 +25,7 @@ import ai.rever.boss.mcp.McpPolicyAction
 import ai.rever.boss.mcp.McpToolPolicyConfig
 import ai.rever.boss.mcp.McpToolRegistryImpl
 import ai.rever.boss.mcp.McpYoloPrompt
+import ai.rever.boss.mcp.ruleFor
 import ai.rever.boss.performance.PerformanceState
 import ai.rever.boss.plugin.api.PanelId
 import ai.rever.boss.plugin.api.RegisteredMcpTool
@@ -367,7 +369,7 @@ private fun McpAccessStatusItem(persistedPolicyConfig: McpToolPolicyConfig) {
     val scope = rememberCoroutineScope()
     val summary =
         McpAccessSummary(
-            savedRules = persistedPolicyConfig.rules.size,
+            savedRules = persistedPolicyConfig.savedRules().size,
             trustedPlugins = persistedPolicyConfig.providerRules.count { it.value == McpPolicyAction.ALLOW },
             sessionGrants = sessionTrusted.size,
             yolo = yolo,
@@ -437,24 +439,29 @@ private fun McpAccessStatusItem(persistedPolicyConfig: McpToolPolicyConfig) {
         val disabledToolNames by McpToolRegistryImpl.disabledToolNames.collectAsState()
         var candidateRefresh by remember { mutableStateOf(0) }
         val availableTools =
-            remember(allTools, persistedPolicyConfig.rules, disabledToolNames, candidateRefresh) {
+            remember(
+                allTools,
+                persistedPolicyConfig,
+                disabledToolNames,
+                candidateRefresh,
+            ) {
                 mcpProactivePolicyCandidates(
                     allTools,
-                    persistedPolicyConfig.rules,
+                    persistedPolicyConfig,
                     disabledToolNames,
                     McpToolRegistryImpl.policyEngine::revocationVersion,
                 )
             }
         McpPolicyManagerDialog(
-            rules = persistedPolicyConfig.rules,
+            policy = persistedPolicyConfig,
             availableTools = availableTools,
             // Dispatchers.IO: revokePersistedPolicy and setToolPolicyIfAbsent both do a
             // synchronized atomicWriteText disk write - this call site was the one still running
             // it on the UI thread, where a click could block behind another write holding the
             // same lock from a slow, networked or AV-scanned home directory.
-            onRevoke = { toolName ->
+            onRevoke = { rule ->
                 withContext(Dispatchers.IO) {
-                    McpToolRegistryImpl.policyEngine.revokePersistedPolicy(toolName)
+                    McpToolRegistryImpl.policyEngine.revokePersistedPolicy(rule.toolName, rule.providerId)
                 }
             },
             // setToolPolicyIfAbsent, not setToolPolicy: this path must add a rule only while the
@@ -470,10 +477,10 @@ private fun McpAccessStatusItem(persistedPolicyConfig: McpToolPolicyConfig) {
             onRefreshCandidates = { candidateRefresh++ },
             onDismiss = { showPolicyManager = false },
             sectionTools =
-                remember(allTools, persistedPolicyConfig.rules, disabledToolNames, candidateRefresh) {
+                remember(allTools, persistedPolicyConfig, disabledToolNames, candidateRefresh) {
                     mcpProactivePolicyCandidates(
                         allTools,
-                        emptyMap(),
+                        McpToolPolicyConfig(),
                         disabledToolNames,
                         McpToolRegistryImpl.policyEngine::revocationVersion,
                     )
@@ -488,7 +495,7 @@ private fun McpAccessStatusItem(persistedPolicyConfig: McpToolPolicyConfig) {
 /**
  * Every registered tool [McpPolicyManagerDialog] may write a proactive rule for: not disabled by
  * the kill switch (a proactive rule for a disabled tool would do nothing - [McpToolRegistryImpl]
- * resolves invocation against `tools`, which already excludes it), and not already in [rules]
+ * resolves invocation against `tools`, which already excludes it), and not already in [policy]
  * (that tool has its row in the saved-rules list instead). Sorted here, once, rather than by the
  * composable on every recomposition - the caller already [remember]s the result.
  *
@@ -503,16 +510,21 @@ private fun McpAccessStatusItem(persistedPolicyConfig: McpToolPolicyConfig) {
  * this stays a pure, testable mapping over its arguments; each candidate's own generation is
  * stamped onto it as [McpToolIdentity.expectedRevocation], for [McpPolicyManagerDialog]'s write
  * path to pass back to `setToolPolicyIfAbsent` unchanged.
+ *
+ * The exclusion goes through [ruleFor], not a bare `it.definition.name !in rules`: a name-only
+ * check would hide a tool from this list whenever some other provider's same-named tool holds a
+ * rule, even though this one has none of its own and is exactly the tool this list exists to
+ * offer a rule for.
  */
 internal fun mcpProactivePolicyCandidates(
     allTools: List<RegisteredMcpTool>,
-    rules: Map<String, McpPolicyAction>,
+    policy: McpToolPolicyConfig,
     disabledToolNames: Set<String>,
     revocationVersion: (toolName: String, providerId: String?) -> Long,
 ): List<McpToolIdentity> =
     allTools
         .asSequence()
-        .filter { it.definition.name !in rules }
+        .filter { policy.ruleFor(it.definition.name, it.providerId) == null }
         .filter { it.definition.name !in disabledToolNames }
         .map {
             McpToolIdentity(

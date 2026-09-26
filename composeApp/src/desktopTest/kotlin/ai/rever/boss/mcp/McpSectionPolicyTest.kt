@@ -12,19 +12,19 @@ class McpSectionPolicyTest {
                 it,
                 "plugin",
                 engine.revocationVersion(it, "plugin"),
-                engine.config.value.rules[it],
+                engine.config.value.ruleFor(it, "plugin"),
                 McpPolicyAction.ALLOW,
             )
         }
 
     @Test fun `section saves every rule and invalidates previous queued grants`() {
         val engine = McpPolicyEngine()
-        engine.setToolPolicy("write", McpPolicyAction.DENY)
+        engine.setToolPolicy("write", McpPolicyAction.DENY, providerId = "plugin")
         val snapshot = changes(engine)
         assertIs<McpProactivePolicyOutcome.Saved>(engine.setSectionPolicies(snapshot))
         assertEquals(
-            mapOf("read" to McpPolicyAction.ALLOW, "write" to McpPolicyAction.ALLOW),
-            engine.config.value.rules,
+            mapOf("plugin" to mapOf("read" to McpPolicyAction.ALLOW, "write" to McpPolicyAction.ALLOW)),
+            engine.config.value.providerToolRules,
         )
         assertTrue(engine.revocationVersion("write", "plugin") > snapshot.last().expectedRevocation)
     }
@@ -67,13 +67,16 @@ class McpSectionPolicyTest {
         try {
             val file = java.io.File(dir, "policy.json")
             val engine = McpPolicyEngine(file)
-            engine.setToolPolicy("read", McpPolicyAction.DENY)
+            engine.setToolPolicy("read", McpPolicyAction.DENY, providerId = "plugin")
             val snapshot = changes(engine)
             file.delete()
             file.mkdir()
             java.io.File(file, "blocker").writeText("occupied")
             assertIs<McpProactivePolicyOutcome.Failed>(engine.setSectionPolicies(snapshot))
-            assertEquals(mapOf("read" to McpPolicyAction.DENY), engine.config.value.rules)
+            assertEquals(
+                mapOf("plugin" to mapOf("read" to McpPolicyAction.DENY)),
+                engine.config.value.providerToolRules,
+            )
         } finally {
             dir.deleteRecursively()
         }

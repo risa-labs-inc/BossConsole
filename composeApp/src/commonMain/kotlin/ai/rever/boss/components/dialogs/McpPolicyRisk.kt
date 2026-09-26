@@ -2,6 +2,8 @@ package ai.rever.boss.components.dialogs
 
 import ai.rever.boss.mcp.McpMutatingToolCatalog
 import ai.rever.boss.mcp.McpPolicyAction
+import ai.rever.boss.mcp.McpToolPolicyConfig
+import ai.rever.boss.mcp.ruleFor
 import ai.rever.boss.mcp.sandbox.DefaultMcpRiskEvaluator
 import ai.rever.boss.mcp.sandbox.McpRiskLevel
 import ai.rever.boss.plugin.api.McpToolArgs
@@ -18,14 +20,14 @@ internal fun policyRisk(tool: McpToolIdentity) =
 
 internal fun sensitiveAllows(
     tools: List<McpToolIdentity>,
-    selected: Set<String>,
-    rules: Map<String, McpPolicyAction>,
+    selected: Set<McpToolKey>,
+    policy: McpToolPolicyConfig,
 ) = tools.filter {
-    it.toolName in selected &&
+    it.key in selected &&
         (
             policyRisk(it).level >= McpRiskLevel.HIGH ||
                 McpMutatingToolCatalog.isMutating(it.toolName, it.readOnly) ||
-                rules[it.toolName] == McpPolicyAction.DENY
+                policy.ruleFor(it.toolName, it.providerId) == McpPolicyAction.DENY
         )
 }
 
@@ -40,15 +42,19 @@ internal fun savedPolicyLabel(rule: McpPolicyAction?): String =
 @Composable
 internal fun PolicyChangeSummary(
     tools: List<McpToolIdentity>,
-    rules: Map<String, McpPolicyAction>,
-    selected: Set<String>,
+    policy: McpToolPolicyConfig,
+    selected: Set<McpToolKey>,
 ) {
     val changed =
         tools.filter {
-            rules[it.toolName] != if (it.toolName in selected) McpPolicyAction.ALLOW else McpPolicyAction.DENY
+            val current = policy.ruleFor(it.toolName, it.providerId)
+            current != if (it.key in selected) McpPolicyAction.ALLOW else McpPolicyAction.DENY
         }
-    val replaced = changed.mapNotNull { rules[it.toolName] }
-    val defaultDenials = changed.count { it.toolName !in rules && it.toolName !in selected }
+    val replaced = changed.mapNotNull { policy.ruleFor(it.toolName, it.providerId) }
+    val defaultDenials =
+        changed.count {
+            policy.ruleFor(it.toolName, it.providerId) == null && it.key !in selected
+        }
     Text(
         "Save ${selected.size} Allow and ${tools.size - selected.size} Deny rules. " +
             "Replaces ${replaced.size} saved rules (${replaced.count { it == McpPolicyAction.DENY }} Deny, " +
@@ -63,12 +69,12 @@ internal fun PolicyChangeSummary(
 @Composable
 internal fun PolicyAllowRisks(
     tools: List<McpToolIdentity>,
-    rules: Map<String, McpPolicyAction>,
+    policy: McpToolPolicyConfig,
 ) {
     tools.forEach { tool ->
         val risk = policyRisk(tool)
         Text("${tool.toolName} · ${risk.level}: ${risk.reason}", color = BossTheme.colors.alert, fontSize = 12.sp)
-        if (rules[tool.toolName] == McpPolicyAction.DENY) {
+        if (policy.ruleFor(tool.toolName, tool.providerId) == McpPolicyAction.DENY) {
             Text(
                 "Replaces an existing denial with unattended access.",
                 color = BossTheme.colors.alert,

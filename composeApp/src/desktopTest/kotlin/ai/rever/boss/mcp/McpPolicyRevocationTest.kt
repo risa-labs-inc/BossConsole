@@ -13,6 +13,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class McpPolicyRevocationTest {
@@ -76,17 +77,14 @@ class McpPolicyRevocationTest {
                         trustForSession = scope == "session",
                         persistPolicy = scope == "persistent",
                     )
-                    assertTrue(engine.revokePersistedPolicy("run_command"))
+                    assertTrue(engine.revokePersistedPolicy("run_command", "revocation-test"))
                     assertTrue(second.await().isError, scope)
                     assertEquals(1, executions, scope)
                     assertTrue(engine.sessionTrustedTools.value.isEmpty(), scope)
-                    assertEquals(McpPolicyAction.ASK, engine.policyFor("run_command"), scope)
-                    assertFalse(
-                        engine.config.value.rules
-                            .containsKey("run_command"),
-                        scope,
-                    )
-                    assertEquals(McpPolicyAction.ASK, McpPolicyEngine(file).policyFor("run_command"), scope)
+                    assertEquals(McpPolicyAction.ASK, engine.policyFor("run_command", "revocation-test"), scope)
+                    assertNull(engine.config.value.ruleFor("run_command", "revocation-test"), scope)
+                    val reloaded = McpPolicyEngine(file)
+                    assertEquals(McpPolicyAction.ASK, reloaded.policyFor("run_command", "revocation-test"), scope)
                     assertEquals(McpPolicyAction.DENY, McpPolicyEngine(file).policyFor("docker_rm"), scope)
                     assertEquals(
                         McpApprovalDisposition.POLICY_DENIED,

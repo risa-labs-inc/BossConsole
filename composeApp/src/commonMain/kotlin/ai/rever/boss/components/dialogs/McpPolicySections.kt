@@ -4,6 +4,8 @@ import ai.rever.boss.mcp.McpMutatingToolCatalog
 import ai.rever.boss.mcp.McpPolicyAction
 import ai.rever.boss.mcp.McpProactivePolicyOutcome
 import ai.rever.boss.mcp.McpSectionPolicyChange
+import ai.rever.boss.mcp.McpToolPolicyConfig
+import ai.rever.boss.mcp.ruleFor
 import ai.rever.boss.mcp.sandbox.McpRiskLevel
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.BorderStroke
@@ -55,7 +57,7 @@ internal fun McpToolIdentity.isViewTool(): Boolean =
 internal fun sectionSelection(
     tools: List<McpToolIdentity>,
     mode: McpSectionMode,
-): Set<String> =
+): Set<McpToolKey> =
     tools
         .filter {
             when (mode) {
@@ -64,13 +66,13 @@ internal fun sectionSelection(
                 McpSectionMode.Edit -> !it.isViewTool()
                 McpSectionMode.Custom, McpSectionMode.None -> false
             }
-        }.map { it.toolName }
+        }.map { it.key }
         .toSet()
 
 @Composable
 internal fun McpPolicySections(
     tools: List<McpToolIdentity>,
-    rules: Map<String, McpPolicyAction>,
+    policy: McpToolPolicyConfig,
     query: String,
     onApply: suspend (List<McpSectionPolicyChange>) -> McpProactivePolicyOutcome,
     onRefresh: () -> Unit,
@@ -91,10 +93,16 @@ internal fun McpPolicySections(
             color = BossTheme.colors.textSecondary,
             fontSize = 12.sp,
         )
-        McpGlobalPolicyControls(tools, rules, onApply, onRefresh)
+        McpGlobalPolicyControls(tools, policy, onApply, onRefresh)
         groups.forEach { (provider, members) ->
             key(provider) {
-                McpPolicySection(policySectionName(provider, pluginNames), members, rules, onApply, onRefresh)
+                McpPolicySection(
+                    policySectionName(provider, pluginNames),
+                    members,
+                    policy,
+                    onApply,
+                    onRefresh,
+                )
             }
         }
         if (groups.isEmpty()) Text("No matching sections.", color = BossTheme.colors.textSecondary)
@@ -105,15 +113,19 @@ internal fun McpPolicySections(
 private fun McpPolicySection(
     provider: String,
     tools: List<McpToolIdentity>,
-    rules: Map<String, McpPolicyAction>,
+    policy: McpToolPolicyConfig,
     onApply: suspend (List<McpSectionPolicyChange>) -> McpProactivePolicyOutcome,
     onRefresh: () -> Unit,
 ) {
     val colors = BossTheme.colors
-    val initial = tools.filter { rules[it.toolName] == McpPolicyAction.ALLOW }.map { it.toolName }.toSet()
-    var selected by remember(tools, rules) { mutableStateOf(initial) }
-    var mode by remember(tools, rules) { mutableStateOf(savedSectionMode(tools, rules)) }
-    var dirty by remember(tools, rules) { mutableStateOf(false) }
+    val initial =
+        tools
+            .filter { policy.ruleFor(it.toolName, it.providerId) == McpPolicyAction.ALLOW }
+            .map { it.key }
+            .toSet()
+    var selected by remember(tools, policy) { mutableStateOf(initial) }
+    var mode by remember(tools, policy) { mutableStateOf(savedSectionMode(tools, policy)) }
+    var dirty by remember(tools, policy) { mutableStateOf(false) }
     var expanded by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
     Surface(
@@ -123,7 +135,7 @@ private fun McpPolicySection(
     ) {
         Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             SectionHeader(provider, tools.size, selected.size, !saving) {
-                selected = if (it) tools.map { tool -> tool.toolName }.toSet() else emptySet()
+                selected = if (it) tools.map { tool -> tool.key }.toSet() else emptySet()
                 mode = if (it) McpSectionMode.All else McpSectionMode.None
                 dirty = true
             }
@@ -138,8 +150,9 @@ private fun McpPolicySection(
             }
             if (expanded) {
                 tools.forEach { tool ->
-                    SectionToolRow(tool, rules[tool.toolName], tool.toolName in selected, !saving) { checked ->
-                        selected = if (checked) selected + tool.toolName else selected - tool.toolName
+                    val currentRule = policy.ruleFor(tool.toolName, tool.providerId)
+                    SectionToolRow(tool, currentRule, tool.key in selected, !saving) { checked ->
+                        selected = if (checked) selected + tool.key else selected - tool.key
                         mode = McpSectionMode.Custom
                         dirty = true
                     }
@@ -147,7 +160,7 @@ private fun McpPolicySection(
             }
             SectionConfirmation(
                 tools,
-                rules,
+                policy,
                 selected,
                 dirty,
                 onApply,
@@ -241,7 +254,8 @@ internal fun policyToolsHeading(
 
 internal fun policyToolsDescription(sections: List<McpToolIdentity>?): String =
     if (sections == null) {
-        "Choose Allow or Deny for a tool without a saved rule. Rules follow the tool name."
+        "Choose Allow or Deny for a tool without a saved rule. " +
+            "Each rule is saved for the plugin that provides the tool."
     } else {
         "Enable a section or choose All, View, Edit, or Custom. Changes require confirmation."
     }

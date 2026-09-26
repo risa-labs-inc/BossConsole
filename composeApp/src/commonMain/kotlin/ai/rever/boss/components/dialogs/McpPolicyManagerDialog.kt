@@ -4,6 +4,7 @@ import ai.rever.boss.mcp.McpMutatingToolCatalog
 import ai.rever.boss.mcp.McpPolicyAction
 import ai.rever.boss.mcp.McpProactivePolicyOutcome
 import ai.rever.boss.mcp.McpSectionPolicyChange
+import ai.rever.boss.mcp.McpToolPolicyConfig
 import ai.rever.boss.mcp.sandbox.DefaultMcpRiskEvaluator
 import ai.rever.boss.plugin.api.McpToolArgs
 import ai.rever.boss.plugin.ui.BossColorScheme
@@ -84,9 +85,9 @@ import kotlinx.coroutines.launch
 @Composable
 @Suppress("LongMethod") // Declarative Compose layout.
 fun McpPolicyManagerDialog(
-    rules: Map<String, McpPolicyAction>,
+    policy: McpToolPolicyConfig,
     availableTools: List<McpToolIdentity>,
-    onRevoke: suspend (toolName: String) -> Boolean,
+    onRevoke: suspend (rule: McpSavedRule) -> Boolean,
     onSetPolicy: suspend (tool: McpToolIdentity, action: McpPolicyAction) -> McpProactivePolicyOutcome,
     onRefreshCandidates: () -> Unit,
     onDismiss: () -> Unit,
@@ -105,14 +106,16 @@ fun McpPolicyManagerDialog(
     // SUCCESSFUL revoke of any tool clears it, not only a retry of the same one, so two failures
     // in quick succession show only the most recent - accepted, since this is diagnostic rather
     // than an audit trail (the host log has that).
-    var failedRevoke by remember { mutableStateOf<String?>(null) }
+    var failedRevoke by remember { mutableStateOf<McpSavedRule?>(null) }
     // A DENY row asked to confirm once before it resets: resetting an ALLOW reduces standing
     // privilege, but resetting a DENY raises it, removing the one rule that beats session trust
     // (McpPolicyEngine.policyFor). Tracks at most one row at a time - switching to a different
     // row's button, or dismissing, drops any pending confirmation rather than carrying it silently.
-    var confirmingDeny by remember { mutableStateOf<String?>(null) }
+    var confirmingDeny by remember { mutableStateOf<McpSavedRule?>(null) }
     var query by remember { mutableStateOf("") }
-    val filteredRules = filterSavedPolicies(rules, sectionTools, query, mcpPolicyPluginNames(), availableTools)
+    val pluginNames = mcpPolicyPluginNames()
+    val savedRules = policy.savedRules()
+    val filteredRules = filterSavedPolicies(savedRules, sectionTools, query, pluginNames, availableTools)
     val filteredTools =
         availableTools.filter {
             it.matchesPolicyQuery(query)
@@ -178,7 +181,7 @@ fun McpPolicyManagerDialog(
                     Spacer(modifier = Modifier.height(8.dp))
                     PolicyToolContent(
                         sectionTools,
-                        rules,
+                        policy,
                         query,
                         onApplySection,
                         onRefreshCandidates,
@@ -189,7 +192,7 @@ fun McpPolicyManagerDialog(
                     )
                     Spacer(modifier = Modifier.height(20.dp))
                     Text(
-                        text = "Saved rules · ${rules.size}",
+                        text = "Saved rules · ${savedRules.size}",
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = colors.textPrimary,
@@ -210,12 +213,13 @@ fun McpPolicyManagerDialog(
                     ) {
                         if (filteredRules.isEmpty()) {
                             Text(
-                                text = emptyRulesMessage(rules.isEmpty()),
+                                text = emptyRulesMessage(savedRules.isEmpty()),
                                 fontSize = 13.sp,
                                 color = colors.textSecondary,
                             )
                         } else {
-                            filteredRules.toSortedMap().forEach { (toolName, action) ->
+                            filteredRules.forEach { rule ->
+                                val (toolName, action) = rule.toolName to rule.action
                                 Row(
                                     modifier =
                                         Modifier
@@ -235,6 +239,11 @@ fun McpPolicyManagerDialog(
                                             color = colors.textPrimary,
                                         )
                                         Text(
+                                            text = savedRuleScopeLabel(rule, pluginNames),
+                                            fontSize = 11.sp,
+                                            color = colors.textSecondary,
+                                        )
+                                        Text(
                                             text = action.name,
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.Medium,
@@ -244,7 +253,7 @@ fun McpPolicyManagerDialog(
                                             // than an ordinary success color.
                                             color = if (action == McpPolicyAction.DENY) colors.alert else colors.warn,
                                         )
-                                        if (failedRevoke == toolName) {
+                                        if (failedRevoke == rule) {
                                             Text(
                                                 // Session trust clears even on failure, but a saved ALLOW still
                                                 // permits calls. Do not promise ASK while that durable rule remains.
@@ -261,15 +270,15 @@ fun McpPolicyManagerDialog(
                                     fun revoke() {
                                         confirmingDeny = null
                                         scope.launch {
-                                            failedRevoke = if (onRevoke(toolName)) null else toolName
+                                            failedRevoke = if (onRevoke(rule)) null else rule
                                         }
                                     }
                                     // Removing an ALLOW is a de-escalation and needs no confirmation.
                                     // Removing a DENY is the one control in this dialog that INCREASES
                                     // what the tool is allowed to do, so it gets a second tap instead of
                                     // firing on the first click like every other row's button does.
-                                    if (action == McpPolicyAction.DENY && confirmingDeny != toolName) {
-                                        TextButton(onClick = { confirmingDeny = toolName }) {
+                                    if (action == McpPolicyAction.DENY && confirmingDeny != rule) {
+                                        TextButton(onClick = { confirmingDeny = rule }) {
                                             Text("Remove denial", fontSize = 12.sp, color = colors.alert)
                                         }
                                     } else if (action == McpPolicyAction.DENY) {
@@ -539,7 +548,8 @@ internal fun McpProactivePolicyOutcome.proactivePolicyMessage(): String? =
         }
 
         McpProactivePolicyOutcome.Denied -> {
-            "Current policy already denies this tool. Review the provider policy or defaults before adding a rule."
+            "Current policy already denies this tool. Reset the saved denial or the provider policy first, " +
+                "then try again."
         }
 
         is McpProactivePolicyOutcome.Failed -> {
@@ -550,7 +560,7 @@ internal fun McpProactivePolicyOutcome.proactivePolicyMessage(): String? =
 @Composable
 private fun PolicyToolContent(
     sections: List<McpToolIdentity>?,
-    rules: Map<String, McpPolicyAction>,
+    policy: McpToolPolicyConfig,
     query: String,
     onApply: (suspend (List<McpSectionPolicyChange>) -> McpProactivePolicyOutcome)?,
     onRefresh: () -> Unit,
@@ -560,7 +570,7 @@ private fun PolicyToolContent(
     colors: BossColorScheme,
 ) {
     if (sections != null && onApply != null) {
-        McpPolicySections(sections, rules, query, onApply, onRefresh)
+        McpPolicySections(sections, policy, query, onApply, onRefresh)
     } else {
         FilteredPolicyCandidates(filteredTools, hasTools, onSet, onRefresh, colors)
     }
