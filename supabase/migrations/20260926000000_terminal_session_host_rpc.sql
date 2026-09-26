@@ -2,6 +2,14 @@
 -- SECURITY INVOKER keeps terminal_sessions' existing owner-only RLS authoritative.
 -- The expected identity prevents an in-flight request from writing/reading under a
 -- different account if BossConsole changes session between dispatch and execution.
+-- Contract: each upsert is a complete replacement of the mutable registry fields,
+-- NOT a JSON merge/patch. Every heartbeat must resend its current metadata and links.
+-- Required non-null fields: share_id, device_name, scope, view_url, control_url.
+-- Omitted or JSON-null session_name, e2e_code and app_version clear those fields;
+-- omitted or JSON-null secure writes false. Encrypted publishers must send secure=true
+-- and their e2e_code on EVERY heartbeat. Explicit null is how callers clear optional
+-- metadata. These replacement semantics match the already-deployed RPC and the paired
+-- BossTerm publisher, which serializes a full row. user_id/timestamps are server-owned.
 CREATE OR REPLACE FUNCTION public.upsert_terminal_session(p_expected_user_id uuid, p_session jsonb)
 RETURNS void LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
 BEGIN
@@ -24,7 +32,8 @@ BEGIN
     -- Existing trigger stamps the heartbeat and preserves started_at.
 EXCEPTION WHEN data_exception OR integrity_constraint_violation THEN
     -- PostgreSQL constraint errors include the failing row in DETAIL. These rows
-    -- carry account bearer links and E2E secrets; never return them in an error.
+    -- carry account bearer links and E2E secrets; never return them in client error
+    -- DETAIL. This does not redact database statement logs maintained by operators.
     RAISE EXCEPTION 'Invalid terminal session payload' USING ERRCODE = '22023';
 END;
 $$;
@@ -39,6 +48,15 @@ BEGIN
 END;
 $$;
 
+-- Contract: this RPC is the native owner's control-session directory, not a full
+-- table projection. It returns exactly share_id, device_name, session_name, scope,
+-- control_url, secure, e2e_code, app_version and last_seen_at. view_url and started_at
+-- are intentionally omitted: native callers open control_url; the web directory
+-- still reads the owner-scoped table for read-only links and session age.
+-- p_since is compatibility-only and intentionally ignored in BOTH directions:
+-- callers cannot narrow or widen the fixed server-clock 90-second live window.
+-- Keep this aligned with LIVE_WINDOW_SECONDS in live-sessions/utils/config.ts.
+-- VOLATILE is intentional: the account RPC surface remains POST-only in PostgREST.
 CREATE OR REPLACE FUNCTION public.list_terminal_sessions(p_expected_user_id uuid, p_since timestamptz)
 RETURNS jsonb LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
 BEGIN

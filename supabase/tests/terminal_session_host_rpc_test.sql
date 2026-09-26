@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(28);
+SELECT plan(38);
 INSERT INTO auth.users (id, email) VALUES
  ('aabbccdd-0000-0000-0000-000000000001', 'terminal-rpc-one@example.test'),
  ('aabbccdd-0000-0000-0000-000000000002', 'terminal-rpc-two@example.test');
@@ -17,9 +17,16 @@ SELECT ok(
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', 'aabbccdd-0000-0000-0000-000000000001', true);
 SELECT lives_ok($q$ SELECT public.upsert_terminal_session('aabbccdd-0000-0000-0000-000000000001',
- '{"user_id":"aabbccdd-0000-0000-0000-000000000002","share_id":"0123456789abcdef","device_name":"test","scope":"ALL","view_url":"https://example.test/?t=view","control_url":"https://example.test/?t=account#k=secret"}') $q$, 'publish derives ownership from host session');
+ '{"user_id":"aabbccdd-0000-0000-0000-000000000002","share_id":"0123456789abcdef","device_name":"test","scope":"ALL","view_url":"https://example.test/?t=view","control_url":"https://example.test/?t=account#k=secret","secure":true,"session_name":"work","e2e_code":"1234abcd","app_version":"1.2.test"}') $q$, 'publish derives ownership from host session');
 SELECT is((SELECT user_id::text FROM public.terminal_sessions WHERE share_id='0123456789abcdef'), 'aabbccdd-0000-0000-0000-000000000001', 'payload cannot impersonate another account');
 SELECT is(jsonb_array_length(public.list_terminal_sessions('aabbccdd-0000-0000-0000-000000000001', now()-interval '90 seconds')), 1, 'owner sees their live session');
+SELECT is((SELECT secure FROM public.terminal_sessions WHERE share_id='0123456789abcdef'), true, 'secure=true survives publication');
+SELECT is((public.list_terminal_sessions('aabbccdd-0000-0000-0000-000000000001', now())->0) - 'last_seen_at',
+ '{"share_id":"0123456789abcdef","device_name":"test","session_name":"work","scope":"ALL","control_url":"https://example.test/?t=account#k=secret","secure":true,"e2e_code":"1234abcd","app_version":"1.2.test"}'::jsonb,
+ 'list returns exactly the native directory fields and preserves encrypted control metadata');
+SELECT is((public.list_terminal_sessions('aabbccdd-0000-0000-0000-000000000001', now())->0->>'last_seen_at')::timestamptz,
+ now(), 'list exposes the server heartbeat timestamp');
+
 -- The server stamps heartbeats, so discovery must not trust a device's clock.
 SELECT is(jsonb_array_length(public.list_terminal_sessions('aabbccdd-0000-0000-0000-000000000001', now()+interval '1 day')), 1, 'fast client clock does not hide live sessions');
 SELECT is(jsonb_array_length(public.list_terminal_sessions('aabbccdd-0000-0000-0000-000000000001', NULL)), 1, 'null cutoff uses server freshness');
@@ -37,6 +44,32 @@ SELECT is((SELECT count(*)::integer FROM public.terminal_sessions WHERE share_id
 SELECT is((SELECT started_at FROM public.terminal_sessions WHERE share_id='0123456789abcdef'), now()-interval '1 day', 'heartbeat preserves the original start time');
 SELECT is((SELECT last_seen_at FROM public.terminal_sessions WHERE share_id='0123456789abcdef'), now(), 'heartbeat uses database time, ignoring client timestamps');
 SELECT is((SELECT device_name FROM public.terminal_sessions WHERE share_id='0123456789abcdef'), 'updated', 'heartbeat updates metadata');
+SELECT is((SELECT jsonb_build_object('session_name',session_name,'e2e_code',e2e_code,'app_version',app_version,'secure',secure)
+ FROM public.terminal_sessions WHERE share_id='0123456789abcdef'),
+ '{"session_name":null,"e2e_code":null,"app_version":null,"secure":false}'::jsonb,
+ 'upsert is full replacement: omitted optional fields clear and omitted secure becomes false');
+SELECT lives_ok($q$ SELECT public.upsert_terminal_session('aabbccdd-0000-0000-0000-000000000001',
+ '{"share_id":"0123456789abcdef","device_name":"updated","scope":"ALL","view_url":"https://example.test/?t=view","control_url":"https://example.test/?t=account#k=secret","session_name":null,"e2e_code":null,"app_version":null,"secure":null}') $q$,
+ 'explicit JSON null clears optional metadata with the same replacement semantics');
+SELECT is((SELECT jsonb_build_object('session_name',session_name,'e2e_code',e2e_code,'app_version',app_version,'secure',secure)
+ FROM public.terminal_sessions WHERE share_id='0123456789abcdef'),
+ '{"session_name":null,"e2e_code":null,"app_version":null,"secure":false}'::jsonb, 'JSON null values round-trip as cleared metadata');
+
+-- Backdate only the server heartbeat, then send the exact same mutable payload.
+RESET ROLE;
+ALTER TABLE public.terminal_sessions DISABLE TRIGGER terminal_sessions_touch_on_write;
+UPDATE public.terminal_sessions SET last_seen_at=now()-interval '30 seconds'
+WHERE user_id='aabbccdd-0000-0000-0000-000000000001' AND share_id='0123456789abcdef';
+ALTER TABLE public.terminal_sessions ENABLE TRIGGER terminal_sessions_touch_on_write;
+SET LOCAL ROLE authenticated;
+SELECT is(jsonb_array_length(public.list_terminal_sessions('aabbccdd-0000-0000-0000-000000000001', now()-interval '10 seconds')),
+ 1, 'p_since intentionally cannot narrow the server-clock live window');
+SELECT lives_ok($q$ SELECT public.upsert_terminal_session('aabbccdd-0000-0000-0000-000000000001',
+ '{"share_id":"0123456789abcdef","device_name":"updated","scope":"ALL","view_url":"https://example.test/?t=view","control_url":"https://example.test/?t=account#k=secret","session_name":null,"e2e_code":null,"app_version":null,"secure":null}') $q$,
+ 'identical full replacement is a valid heartbeat');
+SELECT is((SELECT last_seen_at FROM public.terminal_sessions WHERE share_id='0123456789abcdef'), now(), 'unchanged heartbeat still advances the server timestamp');
+SELECT throws_ok($q$ SELECT public.list_terminal_sessions(NULL, now()) $q$, '42501', 'Terminal account changed', 'null expected identity is rejected while authenticated');
+
 
 -- Existing BossTerm direct-table clients interoperate in both directions.
 SELECT lives_ok($q$ INSERT INTO public.terminal_sessions(user_id,share_id,device_name,scope,view_url,control_url)
