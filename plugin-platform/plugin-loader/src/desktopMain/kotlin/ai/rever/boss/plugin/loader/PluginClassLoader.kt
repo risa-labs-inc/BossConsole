@@ -87,6 +87,24 @@ class PluginClassLoader(
             java.util.Collections.newSetFromMap(java.util.WeakHashMap())
 
         /**
+         * Whether a plugin classloader that has left [ClassLoaderState.ACTIVE] defined
+         * [className]. The crash handler asks this about the class a `NoClassDefFoundError` was
+         * thrown in: the JVM caches a failed resolution and, on every later attempt at the same
+         * call site, rebuilds the error's cause by class name through the boot loader, which cannot
+         * see [PluginUnloadRefusal] - so only the first failure carries the typed refusal.
+         *
+         * Keyed by class name, so during an update the old loader answers for a class the new one
+         * defines too. The crash handler's cause-type check is what keeps a live plugin's missing
+         * class out of it, not this lookup. (Naming each loader would pin the instance, but a named
+         * loader prints as `<name>//<class>` in every stack trace, and the log sanitizer masks that
+         * as a path - every plugin frame in every report and log would read `[PATH]`.)
+         */
+        fun isDefinedByRetiredLoader(className: String): Boolean {
+            val snapshot = synchronized(allInstances) { allInstances.toList() }
+            return snapshot.any { it.state != ClassLoaderState.ACTIVE && it.definedClassNamed(className) }
+        }
+
+        /**
          * Find the plugin whose classloader DEFINED [className], if any.
          * Used by the crash handler to attribute an uncaught exception's stack
          * frames to a plugin. Only classes the plugin loader itself defined
@@ -438,13 +456,7 @@ class PluginClassLoader(
             // straggler thread made the late request (a Ktor worker, a
             // coroutine dispatcher, an AWT handler) and can tear that thread
             // down mid-teardown.
-            val refusal =
-                ClassNotFoundException(
-                    "Plugin classloader for '$pluginId' is $stateAtRefusal; refusing to resolve " +
-                        "'$name' against the host classloader. Something still referenced the " +
-                        "plugin after it was unloaded - that reference is the bug.",
-                    notInPluginJar,
-                )
+            val refusal = PluginUnloadRefusal(pluginId, stateAtRefusal, name, notInPluginJar)
             // WARN, not ERROR: refusing is the correct outcome and teardown
             // continues. The throwable is attached so the first entry for a name
             // carries the straggler's stack; repeats drop to DEBUG so a retry
@@ -538,3 +550,32 @@ class PluginClassLoader(
 
     override fun toString(): String = "PluginClassLoader(pluginId=$pluginId, state=$state, urls=${getURLs().size})"
 }
+
+/**
+ * The [ClassNotFoundException] a [PluginClassLoader] answers with when it is asked for a class
+ * after its plugin began unloading, instead of delegating to the host (see the comment in
+ * `PluginClassLoader.loadClassChildFirst` for why delegating would be wrong).
+ *
+ * A type of its own so the host can recognise the refusal without reading its message: the JVM
+ * turns it into a `NoClassDefFoundError` at the resolution site and keeps it as that error's
+ * cause, so a crash handler walking the cause chain finds it by type. That holds for the FIRST
+ * failure at a call site only; later ones carry a rebuilt cause, and
+ * [PluginClassLoader.isDefinedByRetiredLoader] covers them.
+ *
+ * **Do not change the supertype.** It must stay a [ClassNotFoundException]: that is what
+ * `loadClass` declares, and HotSpot turns a loader's exception into a `NoClassDefFoundError` with
+ * that exception as its cause only when it IS a `ClassNotFoundException`. Anything else - a
+ * `LinkageError`, a `RuntimeException` - propagates differently and the crash handler's
+ * carve-out silently stops matching.
+ */
+class PluginUnloadRefusal(
+    val pluginId: String,
+    val loaderState: ClassLoaderState,
+    val className: String,
+    cause: ClassNotFoundException,
+) : ClassNotFoundException(
+        "Plugin classloader for '$pluginId' is $loaderState; refusing to resolve " +
+            "'$className' against the host classloader. Something still referenced the " +
+            "plugin after it was unloaded - that reference is the bug.",
+        cause,
+    )

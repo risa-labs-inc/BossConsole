@@ -7,6 +7,7 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -133,6 +134,11 @@ class PluginClassLoaderUnloadFallbackTest {
             "refusal must name the loader state: ${failure.message}",
         )
         assertNotNull(failure.cause, "the underlying findClass miss is kept as the cause")
+        // Typed, so the host's crash handler recognises it without reading the message (#1368).
+        val refusal = assertIs<PluginUnloadRefusal>(failure)
+        assertEquals(PLUGIN_ID, refusal.pluginId)
+        assertEquals(OwnedByPluginB::class.java.name, refusal.className)
+        assertEquals(ClassLoaderState.UNLOADED, refusal.loaderState)
 
         // Logging of a refusal is deduped per class name; the refusal is not.
         // A retry loop must keep failing, not start succeeding on the 2nd call.

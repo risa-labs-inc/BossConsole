@@ -1,5 +1,7 @@
 package ai.rever.boss.crash
 
+import ai.rever.boss.plugin.loader.ClassLoaderState
+import ai.rever.boss.plugin.loader.PluginUnloadRefusal
 import io.github.jan.supabase.annotations.SupabaseInternal
 import io.github.jan.supabase.auth.exception.TokenExpiredException
 import io.github.jan.supabase.createSupabaseClient
@@ -144,4 +146,64 @@ class CrashHandlerIgnorableTest {
     fun `generic runtime exception is not ignorable`() {
         assertFalse(CrashHandler.isIgnorable(RuntimeException("actual crash")))
     }
+
+    // region a plugin classloader refusing a late request after unload
+
+    /**
+     * The shape all three filed reports arrive in (boss-plugin-terminal-tab#69, #71, #76): the
+     * straggler's `NoClassDefFoundError`, the loader's refusal as its cause, and the plain miss
+     * under that. Built from the loader's real refusal type; `PluginTeardownRefusalIntegrationTest`
+     * gets the same chain out of the JVM instead of building it.
+     */
+    private fun refusal(
+        pluginId: String,
+        className: String,
+    ): PluginUnloadRefusal {
+        val miss = ClassNotFoundException(className)
+        return PluginUnloadRefusal(pluginId, ClassLoaderState.UNLOADED, className, miss)
+    }
+
+    @Test
+    fun `a refusal after unload is ignorable, from any plugin and any straggler`() {
+        // #69 and #76: terminal-tab's own coroutine.
+        val ownStraggler =
+            NoClassDefFoundError("ai/rever/bossterm/compose/tabs/TabController").initCause(
+                refusal(
+                    "ai.rever.boss.plugin.dynamic.terminaltab",
+                    "ai.rever.bossterm.compose.tabs.TabController\$wireCwdTitle\$3\$2\$repository\$1",
+                ),
+            )
+        // #71: a different plugin, and a third-party straggler (ktor's selector).
+        val libraryStraggler =
+            NoClassDefFoundError("io/ktor/network/selector/SelectorManagerSupport").initCause(
+                refusal(
+                    "ai.rever.boss.plugin.dynamic.fluckbrowser",
+                    "io.ktor.network.selector.SelectorManagerSupport\$ClosedSelectorCancellationException",
+                ),
+            )
+
+        assertTrue(CrashHandler.isIgnorable(ownStraggler))
+        assertTrue(CrashHandler.isIgnorable(libraryStraggler))
+    }
+
+    /**
+     * The carve-out is the loader's refusal type, not the error type or the wording: a class
+     * genuinely missing from a live plugin's jar is still a crash worth showing, and so is
+     * anything that merely carries the loader's sentence.
+     */
+    @Test
+    fun `an ordinary missing class is still a crash`() {
+        assertFalse(CrashHandler.isIgnorable(NoClassDefFoundError("com/example/Missing")))
+        assertFalse(
+            CrashHandler.isIgnorable(
+                NoClassDefFoundError("com/example/Missing").initCause(ClassNotFoundException("com.example.Missing")),
+            ),
+        )
+        // The loader's exact sentence on a plain ClassNotFoundException: the text alone decides nothing.
+        val sentence = refusal("ai.rever.boss.plugin.dynamic.terminaltab", "com.example.Missing").message
+        val lookalike = NoClassDefFoundError("com/example/Missing").initCause(ClassNotFoundException(sentence))
+        assertFalse(CrashHandler.isIgnorable(lookalike))
+    }
+
+    // endregion
 }
