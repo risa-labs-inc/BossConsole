@@ -8,7 +8,9 @@ backend prerequisites below.
 One Durable Object owns each publishing app's room. The host submits a pane frame once;
 the object fans out its encrypted bytes to admitted subscribers. A `hello` frame carries a
 single-use host/account ticket, never a query parameter. Guests have no ticket and wait
-for the host's authenticated handshake and approval. Tickets alone never grant output.
+for the host's authenticated handshake and approval. The `account` ticket role is
+restricted to the room owner's own additional devices. A signed-in non-owner uses the
+guest approval flow, just like another link holder. Tickets alone never grant output.
 
 Routing supports live, batched full output, complete screen previews, and hidden panes.
 The relay reports aggregate interests to the host. Batch queues preserve delta order;
@@ -87,6 +89,29 @@ not Internet, GPU rendering, geographic routing or production capacity measureme
 - Worker needs `SUPABASE_SERVICE_ROLE_KEY` as a Wrangler secret. Never commit it or put it
   in browser/native clients. `SUPABASE_URL` points at the same project's REST endpoint.
 - Debug worker configuration exists in `wrangler.toml`; no production route is configured.
+  `workers_dev = true` exposes the debug endpoint publicly. Its service-role binding has
+  broad database privileges despite the Worker's fixed, validated ticket-consumption RPC;
+  use an isolated debug project/key, never the production service key for debug testing.
+  A restricted ticket-consumption credential should replace this before wider rollout.
+- Before production rollout, schedule bounded cleanup of expired rooms, tickets and settings
+  handoffs for abandoned accounts. Request-time cleanup deliberately touches only the caller's
+  rows; expired UUIDs remain owned until cleanup and must never be reclaimed by another user.
+
+### Settings handoff boundary
+
+The app opens a five-minute, single-use bearer handoff in a query parameter. The handler
+strips it with a redirect, uses `Referrer-Policy: no-referrer`, and rejects cross-site Fetch
+Metadata. Query values can still appear in edge/CDN access logs: redact query strings for
+this route. Clients without Fetch Metadata retain compatibility but cannot prevent an
+attacker from persuading a browser to open the attacker's own settings handoff (login CSRF).
+That would select the attacker's preferences session, not grant access to the victim's
+account. Keep this limitation explicit during debug; a nonce-bound or POST handoff is a
+prerequisite for expanding this page to sensitive account settings.
+
+Malformed host protocol messages remain fail-closed: invalid frames may indicate corrupted
+sequence or authorization state, so the relay closes the room rather than silently dropping
+an ordered frame. Compatible additions must use versioned/additive fields and companion
+contract tests. Identical subscriptions are intentional no-ops, not keepalive acknowledgments.
 
 ## Debug client configuration
 

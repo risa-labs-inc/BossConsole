@@ -132,7 +132,7 @@ test("slow viewer is disconnected without interrupting an acknowledging viewer",
     r.subscribe(0, "live");
     r.subscribe(1, "live");
     for (let i = 0; i < 140; i++) {
-      r.output(i, "live", "p", "x".repeat(8192));
+      r.output(i, "live", "p", "x".repeat(32768));
       if (i % 10 === 9) r.send("v1", { op: "ack", through: i + 2 });
     }
     assert.equal(r.viewers[0].closed, 1013);
@@ -382,5 +382,130 @@ test("restored subscriptions retain their batch publication rate after interest 
   router.add({...peer("focused"), admitted: true, panes: ["p"], subscriptions: {p: {mode: "live", fps: 4}}}, new Connection(), true);
   router.remove("focused");
   assert.deepEqual(host.messages.filter(m => m.op === "interests").at(-1).panes.p, {live: true, outputFps: 4, previewFps: 0});
+  router.remove("host");
+});
+
+
+test("pre-admission operations share a small flood budget while normal handshake remains available", () => {
+  for (const op of ["signal", "peerCredit", "ack"]) {
+    let writes = 0;
+    const router = new Router(() => writes++, () => 1000), host = new Connection(), viewer = new Connection();
+    router.add(peer("host", "host"), host); router.add(peer("v"), viewer);
+    for (let i = 0; i < 13; i++) router.receive("v", JSON.stringify({op, payload: "handshake", through: 0}));
+    assert.equal(viewer.closed, 1008, op);
+    assert.equal(host.closed, undefined);
+    assert.ok(host.messages.filter(m => m.op === op).length <= 12);
+    assert.equal(writes, 0, "no-op acknowledgments must not persist attachments");
+    router.remove("host");
+  }
+});
+
+test("pre-admission signal bytes are bounded per message and over the handshake lifetime", () => {
+  let now = 1000;
+  const router = new Router(undefined, () => now), host = new Connection();
+  router.add(peer("host", "host"), host);
+  const oversized = new Connection(); router.add(peer("big"), oversized);
+  router.receive("big", JSON.stringify({op: "signal", payload: "é".repeat(4097)}));
+  assert.equal(oversized.closed, 1008);
+  const repeated = new Connection(); router.add(peer("repeated"), repeated);
+  for (let i = 0; i < 9; i++) {
+    now += 1000;
+    router.receive("repeated", JSON.stringify({op: "signal", payload: "x".repeat(8192)}));
+  }
+  assert.equal(repeated.closed, 1008);
+  assert.equal(host.messages.filter(m => m.op === "signal").length, 8);
+  router.remove("host");
+});
+
+test("duplicate and partial acknowledgments persist only released credit", () => {
+  let writes = 0;
+  const router = new Router(() => writes++), host = new Connection(), viewer = new Connection();
+  router.add(peer("host", "host"), host); router.add(peer("v"), viewer);
+  router.receive("host", JSON.stringify({op: "signal", peer: "v", payload: "first"}));
+  router.receive("host", JSON.stringify({op: "signal", peer: "v", payload: "second"}));
+  const before = writes;
+  router.receive("v", JSON.stringify({op: "ack", through: 0}));
+  router.receive("v", JSON.stringify({op: "ack", through: 1}));
+  assert.equal(writes, before, "partial aggregate credit remains outstanding");
+  router.receive("v", JSON.stringify({op: "ack", through: 2}));
+  assert.equal(writes, before + 1);
+  router.receive("v", JSON.stringify({op: "ack", through: 2}));
+  assert.equal(writes, before + 1);
+  router.remove("host");
+});
+
+test("healthy viewers can have several near-maximum publications in flight", () => {
+  const r = room(1);
+  try {
+    r.subscribe(0, "live");
+    for (let i = 1; i <= 4; i++) r.output(i, "live", "p", "x".repeat(900_000));
+    assert.equal(r.viewers[0].closed, undefined);
+    assert.equal(r.viewers[0].frames().length, 4);
+    const delivery = r.viewers[0].messages.filter(m => m.op === "frames").at(-1).delivery;
+    r.send("v0", {op: "ack", through: delivery});
+    r.output(5, "live", "p", "x".repeat(900_000));
+    assert.equal(r.viewers[0].closed, undefined, "acknowledgment releases running in-flight bytes");
+  } finally { r.dispose(); }
+});
+
+test("queue and room byte totals stay exact across immediate previews and all removal paths", () => {
+  let now = 1000;
+  const router = new Router(undefined, () => now), host = new Connection(), viewer = new Connection();
+  router.add(peer("host", "host"), host); router.add(peer("v"), viewer);
+  const send = (id: string, value: unknown) => router.receive(id, JSON.stringify(value));
+  send("host", {op: "grant", peer: "v", panes: ["p", "q"]});
+  send("v", {op: "subscribe", pane: "p", mode: "preview", fps: 1});
+  send("v", {op: "subscribe", pane: "q", mode: "batch", fps: 1});
+  send("host", {op: "snapshot", peer: "v", pane: "q", epoch: "e", seq: 0, payload: "snapshot"});
+  const output = (seq: number, pane = "p", kind = "preview") => send("host", {op: "output", pane, kind, seq, epoch: "e", payload: "encrypted"});
+  const state = (router as any).peers.get("v");
+  const invariant = () => {
+    const actual = [...state.queued.values()].reduce((sum: number, q: any) => sum + q.messages.reduce((n: number, m: unknown) => n + Buffer.byteLength(JSON.stringify(m)), 0), 0);
+    assert.equal(state.bytes, actual); assert.equal((router as any).queuedBytes, actual);
+  };
+  try {
+    output(1); output(2); output(1, "q", "live"); invariant();
+    now += 1500; // Timer delivery can be delayed while another socket message arrives first.
+    output(3); invariant();
+    assert.equal(state.queued.has("p"), false);
+    assert.equal(state.timers.has("p"), false, "an overdue timer cannot flush the next preview early");
+    send("v", {op: "resync", pane: "q", payload: ""}); invariant();
+    output(4); invariant();
+    send("v", {op: "subscribe", pane: "p", mode: "hidden", fps: 1}); invariant();
+    send("v", {op: "subscribe", pane: "p", mode: "preview", fps: 1}); output(5); output(6); invariant();
+    send("host", {op: "grant", peer: "v", panes: ["p"]}); invariant();
+    output(7); output(8); invariant();
+    router.remove("v");
+    assert.equal((router as any).queuedBytes, 0);
+  } finally { router.remove("host"); }
+});
+
+test("capacity preflight does not mutate peers and removal callback covers cascades", () => {
+  const removed: string[] = [];
+  const router = new Router(undefined, undefined, id => removed.push(id));
+  router.add(peer("host", "host"), new Connection());
+  assert.equal(router.canAdmit("host"), false);
+  assert.equal(router.canAdmit("host", true), true);
+  for (let i = 0; i < 32; i++) router.add(peer("v" + i), new Connection());
+  assert.equal(router.canAdmit("guest"), false);
+  router.close("v0");
+  assert.equal(router.canAdmit("guest"), true);
+  router.remove("host");
+  assert.equal(removed.length, 33);
+  assert.equal(new Set(removed).size, 33);
+});
+
+test("restoring admitted viewers is independent of the pending approval cap", () => {
+  const router = new Router();
+  router.add(peer("host", "host"), new Connection(), true);
+  for (let i = 0; i < 32; i++) router.add(peer("pending" + i), new Connection(), true);
+  assert.equal(router.canAdmit("account"), false);
+  const restored = new Connection();
+  router.add({...peer("restored"), admitted: true}, restored, true);
+  assert.equal(restored.closed, undefined);
+  assert.equal(restored.messages.length, 0);
+  assert.throws(() => router.add(peer("new"), new Connection()), /Room full/);
+  for (let i = 0; i < 95; i++) router.add({...peer("admitted" + i), admitted: true}, new Connection(), true);
+  assert.throws(() => router.add({...peer("overflow"), admitted: true}, new Connection(), true), /Room full/);
   router.remove("host");
 });

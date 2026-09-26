@@ -26,8 +26,10 @@ export class TerminalRoom extends DurableObject<Env> {
   private admitting = new WeakSet<WebSocket>();
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    this.router = new Router((peer) =>
-      this.sockets.get(peer.id)?.serializeAttachment(peer)
+    this.router = new Router(
+      (peer) => this.sockets.get(peer.id)?.serializeAttachment(peer),
+      Date.now,
+      (id) => { this.sockets.delete(id); },
     );
     // Persist only routing and delivery credits, never terminal payloads. Pending
     // batching timers keep the object awake until their queues have been flushed.
@@ -40,6 +42,8 @@ export class TerminalRoom extends DurableObject<Env> {
       Number(a.peer && "role" in a.peer && a.peer.role === "host")
     );
     for (const { ws, peer } of restored) {
+      // Server-initiated closes have no webSocketClose callback and must not resurrect on wake.
+      if (ws.readyState !== WebSocket.OPEN) continue;
       if (peer && "pendingUntil" in peer) {
         if (peer.pendingUntil <= Date.now()) {
           ws.close(1008, "Admission timeout");
@@ -75,7 +79,7 @@ export class TerminalRoom extends DurableObject<Env> {
   }
   async webSocketMessage(ws: WebSocket, data: string | ArrayBuffer) {
     if (typeof data !== "string" || data.length > 1024 * 1024) {
-      ws.close(1009, "Message too large");
+      this.closeSocket(ws, 1009, "Message too large");
       return;
     }
     const peer = ws.deserializeAttachment() as Attachment | null;
@@ -83,16 +87,24 @@ export class TerminalRoom extends DurableObject<Env> {
       this.router.receive(peer.id, data);
       return;
     }
+    // Reject untrusted hello bytes before JSON parsing or contacting the admission service.
+    if (data.length > 4096 || new TextEncoder().encode(data).byteLength > 4096) {
+      this.closeSocket(ws, 1009, "Hello too large");
+      return;
+    }
+    if (!peer || !("pendingUntil" in peer) || peer.pendingUntil <= Date.now()) {
+      this.closeSocket(ws, 1008, "Admission timeout");
+      return;
+    }
     if (this.admitting.has(ws)) {
-      ws.close(1008, "Admission in progress");
+      this.closeSocket(ws, 1008, "Admission in progress");
       return;
     }
     this.admitting.add(ws);
     try {
       const hello = JSON.parse(data);
       if (
-        hello.op !== "hello" || hello.v !== 1 || !UUID.test(hello.room) ||
-        data.length > 4096
+        hello.op !== "hello" || hello.v !== 1 || typeof hello.room !== "string" || !UUID.test(hello.room)
       ) throw new Error("hello");
       if (
         !this.ctx.id.equals(this.env.ROOMS.idFromName(hello.room.toLowerCase()))
@@ -105,6 +117,11 @@ export class TerminalRoom extends DurableObject<Env> {
           typeof hello.ticket !== "string" ||
           !/^[-_A-Za-z0-9]{43}$/.test(hello.ticket)
         ) throw new Error("ticket");
+        // The ticket's role is confidential until redemption. Reject only if neither role
+        // could fit; a fresh owner host ticket may replace its still-connected predecessor.
+        if (!this.router.canAdmit("host", true) && !this.router.canAdmit("account")) {
+          throw new Error("capacity");
+        }
         const r = await fetch(
           `${this.env.SUPABASE_URL}/rest/v1/rpc/consume_terminal_relay_ticket`,
           {
@@ -129,6 +146,16 @@ export class TerminalRoom extends DurableObject<Env> {
         role = result.role;
       }
       if (ws.readyState !== WebSocket.OPEN) throw new Error("closed");
+      if (!this.router.canAdmit(role, role === "host")) throw new Error("capacity");
+      if (role === "host") {
+        // Only a freshly consumed owner-bound host ticket can displace the old connection.
+        // No await between replacement and add: concurrent redemptions serialize here.
+        // Closing the old host also discards all old viewer grants/credits and forces reapproval.
+        for (const [id, socket] of this.sockets) {
+          const old = socket.deserializeAttachment() as Peer;
+          if (old.role === "host") this.router.close(id, 1012, "Host reconnected");
+        }
+      }
       const next: Peer = {
         id: crypto.randomUUID(),
         role,
@@ -137,11 +164,12 @@ export class TerminalRoom extends DurableObject<Env> {
         subscriptions: {},
         expires: Date.now() + (role === "host" ? 12 * 60 * 60 * 1000 : 130_000),
       };
-      this.router.add(next, ws);
       this.sockets.set(next.id, ws);
       ws.serializeAttachment(next);
+      try { this.router.add(next, ws); }
+      catch (error) { this.sockets.delete(next.id); throw error; }
     } catch {
-      ws.close(1008, "Admission refused");
+      this.closeSocket(ws, 1008, "Admission refused");
     } finally {
       this.admitting.delete(ws);
     }
@@ -164,6 +192,11 @@ export class TerminalRoom extends DurableObject<Env> {
       } else next = Math.min(next, expires);
     }
     if (Number.isFinite(next)) await this.ctx.storage.setAlarm(next);
+  }
+  private closeSocket(ws: WebSocket, code: number, reason: string) {
+    const peer = ws.deserializeAttachment() as Attachment | null;
+    if (peer && "id" in peer) this.router.close(peer.id, code, reason);
+    if (ws.readyState === WebSocket.OPEN) ws.close(code, reason);
   }
   webSocketClose(ws: WebSocket) {
     const p = ws.deserializeAttachment() as Attachment | null;

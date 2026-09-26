@@ -365,8 +365,9 @@ export function bearerToken(header: string | undefined | null): string | null {
 
 /**
  * Display-only: the email claim of the caller's JWT. The token is NOT verified
- * here (PostgREST did that for the data), so this is never used for a decision,
- * only for the "signed in as" label after the data call has already succeeded.
+ * here; call only after PostgREST has accepted the same token for the data call.
+ * Email is only a label. The shared decoder also reads `sub` as the browser
+ * preference cache/account-change key; neither claim authorizes server access.
  */
 export function emailFromJwt(token: string): string { return jwtDisplayClaim(token, "email") }
 

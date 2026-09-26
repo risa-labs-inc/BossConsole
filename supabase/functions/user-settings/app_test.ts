@@ -17,11 +17,11 @@ async function cookie() {
 }
 Deno.test("handoff redirects away from bearer token and sets scoped secure cookie", async () => {
   let calls = 0;
-  const app = createApp(config, async (name, args) => {
+  const app = createApp(config, (name, args) => {
     assertEquals(name, "consume_user_settings_handoff");
     assertEquals(args, { p_token: "a".repeat(43) });
     calls++;
-    return { user_id: sub };
+    return Promise.resolve({ user_id: sub });
   });
   const r = await app(new Request(base + "?t=" + "a".repeat(43)));
   assertEquals(r.status, 302);
@@ -48,10 +48,10 @@ Deno.test("unauthenticated and cross-site requests do not invoke privileged RPC"
   );
 });
 Deno.test("GET renders account mode selector", async () => {
-  const app = createApp(config, async (name, args) => {
+  const app = createApp(config, (name, args) => {
     assertEquals(name, "get_user_terminal_preferences");
     assertEquals(args, { p_actor_id: sub });
-    return prefs;
+    return Promise.resolve(prefs);
   });
   const r = await app(
     new Request(base, { headers: { cookie: await cookie() } }),
@@ -61,9 +61,9 @@ Deno.test("GET renders account mode selector", async () => {
 });
 Deno.test("POST verifies origin and CSRF, rejects invalid rate and saves as cookie owner", async () => {
   const calls: unknown[] = [];
-  const rpc: Rpc = async (name, args) => {
+  const rpc: Rpc = (name, args) => {
     calls.push({ name, args });
-    return prefs;
+    return Promise.resolve(prefs);
   };
   const app = createApp(config, rpc);
   const session = await cookie();
@@ -97,10 +97,10 @@ Deno.test("POST verifies origin and CSRF, rejects invalid rate and saves as cook
   }]);
 });
 Deno.test("stale writes return conflict; reset uses server defaults", async () => {
-  const app = createApp(config, async (_name, args) => {
+  const app = createApp(config, (_name, args) => {
     assertEquals(args.p_unfocused_mode, "batch");
     assertEquals(args.p_unfocused_fps, 4);
-    throw new Error("conflict");
+    return Promise.reject(new Error("conflict"));
   });
   const r = await app(
     new Request(base, {

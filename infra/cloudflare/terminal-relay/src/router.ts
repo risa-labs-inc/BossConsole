@@ -28,14 +28,18 @@ export interface Wire {
   through?: number;
 }
 const MAX_BYTES = 1024 * 1024, MAX_PENDING = 512 * 1024;
+const MAX_IN_FLIGHT = 4 * MAX_BYTES, MAX_ROOM_PENDING = 16 * MAX_BYTES;
+const MAX_PRE_ADMISSION_SIGNAL = 8192, MAX_PRE_ADMISSION_BYTES = 65536;
 const bytes = (value: string) => new TextEncoder().encode(value).byteLength;
 const ID = /^[A-Za-z0-9_.:-]{1,128}$/;
 interface State {
   peer: Peer;
   socket: Socket;
-  queued: Wire[];
+  queued: Map<string, { messages: Wire[]; bytes: number }>;
   bytes: number;
   flight: Map<number, number>;
+  flightBytes: number;
+  preAdmissionBytes: number;
   serial: number;
   timers: Map<string, ReturnType<typeof setTimeout>>;
   lastPreview: Map<string, number>;
@@ -46,30 +50,36 @@ interface State {
 }
 export class Router {
   private peers = new Map<string, State>();
+  private queuedBytes = 0;
   constructor(
     private changed: (peer: Peer) => void = () => {},
     private now: () => number = Date.now,
+    private removed: (id: string, peer: Peer) => void = () => {},
   ) {}
+  canAdmit(role: Peer["role"], replacingHost = false): boolean {
+    const hasHost = [...this.peers.values()].some(s => s.peer.role === "host");
+    if (role === "host" && hasHost) return replacingHost;
+    return this.peers.size < 129 && (role === "host" ||
+      [...this.peers.values()].filter(s => !s.peer.admitted).length < 32);
+  }
   add(peer: Peer, socket: Socket, restoring = false) {
-    if (
-      peer.role === "host" &&
-      [...this.peers.values()].some((s) => s.peer.role === "host")
-    ) throw new Error("Host already connected");
-    if (
-      this.peers.size >= 129 ||
-      (!peer.admitted &&
-        [...this.peers.values()].filter((s) => !s.peer.admitted).length >= 32)
-    ) throw new Error("Room full");
+    // Previously admitted viewers do not occupy a pending-approval slot on wake.
+    const eligible = restoring && peer.admitted && peer.role !== "host"
+      ? this.peers.size < 129
+      : this.canAdmit(peer.role);
+    if (this.peers.has(peer.id) || !eligible) throw new Error("Room full or host already connected");
     this.peers.set(peer.id, {
       peer,
       socket,
-      queued: [],
+      queued: new Map(),
       bytes: 0,
       flight: new Map(peer.outstanding ?? []),
+      flightBytes: (peer.outstanding ?? []).reduce((sum, [, size]) => sum + size, 0),
+      preAdmissionBytes: 0,
       serial: peer.delivery ?? 0,
       timers: new Map(),
       lastPreview: new Map(),
-      tokens: peer.role === "host" ? 2000 : 100,
+      tokens: peer.role === "host" ? 2000 : peer.admitted ? 100 : 12,
       tick: this.now(),
       ackTokens: 10000,
       ackTick: this.now(),
@@ -95,7 +105,9 @@ export class Router {
     const s = this.peers.get(id);
     if (!s) return;
     for (const timer of s.timers.values()) clearTimeout(timer);
+    this.clearQueued(s);
     this.peers.delete(id);
+    this.removed(id, s.peer);
     if (s.peer.role === "host") {
       for (const other of [...this.peers.keys()]) {
         this.close(other, 1012, "Host disconnected");
@@ -122,7 +134,12 @@ export class Router {
       const m = JSON.parse(raw) as Wire;
       if (!m || typeof m.op !== "string") throw new Error("message");
       const now = this.now();
-      if (m.op === "ack" || m.op === "peerCredit") {
+      if (!s.peer.admitted && s.peer.role !== "host") {
+        // Approval needs a small key-exchange/hello exchange, not the admitted data budget.
+        s.tokens = Math.min(12, s.tokens + Math.max(0, now - s.tick) * 4 / 1000);
+        s.tick = now;
+        if (--s.tokens < 0) throw new Error("pre-admission rate");
+      } else if (m.op === "ack" || m.op === "peerCredit") {
         s.ackTokens = Math.min(10000, s.ackTokens + (now - s.ackTick) * 5);
         s.ackTick = now;
         if (--s.ackTokens < 0) throw new Error("ack rate");
@@ -141,8 +158,13 @@ export class Router {
         return;
       }
       if (m.op === "signal") {
-        if (typeof m.payload !== "string" || m.payload.length > 65536) {
+        if (typeof m.payload !== "string" || bytes(m.payload) >
+          (s.peer.admitted ? 65536 : MAX_PRE_ADMISSION_SIGNAL)) {
           throw new Error("signal");
+        }
+        if (!s.peer.admitted) {
+          s.preAdmissionBytes += bytes(m.payload);
+          if (s.preAdmissionBytes > MAX_PRE_ADMISSION_BYTES) throw new Error("handshake budget");
         }
         this.host({ op: "signal", peer: id, payload: m.payload });
         return;
@@ -161,10 +183,11 @@ export class Router {
           !Number.isSafeInteger(m.through) || m.through! < 0 ||
           m.through! > s.serial
         ) throw new Error("ack");
-        for (const n of s.flight.keys()) {
-          if (n <= m.through!) s.flight.delete(n);
+        let changed = false;
+        for (const [n, size] of s.flight) {
+          if (n <= m.through!) { s.flight.delete(n); s.flightBytes -= size; changed = true; }
         }
-        this.persist(s);
+        if (changed) this.persist(s);
         return;
       }
       if (!s.peer.admitted) throw new Error("not admitted");
@@ -188,8 +211,7 @@ export class Router {
         if (timer !== undefined) clearTimeout(timer);
         s.timers.delete(m.pane);
         s.lastPreview.delete(m.pane);
-        s.queued = s.queued.filter((q) => q.pane !== m.pane);
-        s.bytes = s.queued.reduce((n, q) => n + bytes(JSON.stringify(q)), 0);
+        this.takeQueued(s, m.pane);
         if (!this.persist(s)) return;
         this.host({ ...m, peer: id });
         this.interests();
@@ -203,8 +225,7 @@ export class Router {
         if (m.op === "resync") {
           const subscription = s.peer.subscriptions[m.pane];
           if (subscription) subscription.waiting = true;
-          s.queued = s.queued.filter((q) => q.pane !== m.pane);
-          s.bytes = s.queued.reduce((n, q) => n + bytes(JSON.stringify(q)), 0);
+          this.takeQueued(s, m.pane);
           if (!this.persist(s)) return;
         }
         // The host verifies the sender, role and sequence inside the encrypted payload.
@@ -240,8 +261,7 @@ export class Router {
       }
       for (const timer of v.timers.values()) clearTimeout(timer);
       v.timers.clear();
-      v.queued = [];
-      v.bytes = 0;
+      this.clearQueued(v);
       if (!this.persist(v)) return;
       this.send(v.peer.id, m);
       this.interests();
@@ -274,8 +294,7 @@ export class Router {
         const timer = v.timers.get(m.pane!);
         if (timer !== undefined) clearTimeout(timer);
         v.timers.delete(m.pane!);
-        v.queued = v.queued.filter((q) => q.pane !== m.pane);
-        v.bytes = v.queued.reduce((n, q) => n + bytes(JSON.stringify(q)), 0);
+        this.takeQueued(v, m.pane!);
         if (!this.persist(v)) return;
       }
       this.deliver(v, [m]);
@@ -287,6 +306,7 @@ export class Router {
       m.seq! < 0 || !m.epoch || !ID.test(m.epoch) ||
       typeof m.payload !== "string"
     ) throw new Error("output");
+    const messageBytes = bytes(JSON.stringify(m));
     for (const v of [...this.peers.values()]) {
       if (this.now() > v.peer.expires) {
         this.close(v.peer.id, 1008, "Session expired");
@@ -312,19 +332,23 @@ export class Router {
           : 1000 / sub.fps;
         if (sub.mode === "preview") {
           // A preview is a complete screen, so only the newest pending one is needed.
-          v.queued = v.queued.filter((q) => q.pane !== m.pane);
+          this.takeQueued(v, m.pane);
           if (delay === 0) {
+            const pendingTimer = v.timers.get(m.pane);
+            if (pendingTimer !== undefined) clearTimeout(pendingTimer);
+            v.timers.delete(m.pane);
             v.lastPreview.set(m.pane, this.now());
             this.deliver(v, [m]);
             continue;
           }
         }
-        v.queued.push(m);
-        v.bytes = v.queued.reduce((n, q) => n + bytes(JSON.stringify(q)), 0);
+        const queue = v.queued.get(m.pane) ?? { messages: [], bytes: 0 };
+        queue.messages.push(m); queue.bytes += messageBytes;
+        v.queued.set(m.pane, queue);
+        v.bytes += messageBytes; this.queuedBytes += messageBytes;
         if (
           v.bytes > MAX_PENDING ||
-          [...this.peers.values()].reduce((n, p) => n + p.bytes, 0) >
-            16 * 1024 * 1024
+          this.queuedBytes > MAX_ROOM_PENDING
         ) {
           this.stalled(v);
           continue;
@@ -335,12 +359,7 @@ export class Router {
             pane,
             setTimeout(() => {
               v.timers.delete(pane);
-              const q = v.queued.filter((q) => q.pane === pane);
-              v.queued = v.queued.filter((q) => q.pane !== pane);
-              v.bytes = v.queued.reduce(
-                (n, q) => n + bytes(JSON.stringify(q)),
-                0,
-              );
+              const q = this.takeQueued(v, pane);
               if (q.length) {
                 if (q[0].kind === "preview") {
                   v.lastPreview.set(pane, this.now());
@@ -353,24 +372,33 @@ export class Router {
       }
     }
   }
+  private takeQueued(s: State, pane: string): Wire[] {
+    const queue = s.queued.get(pane);
+    if (!queue) return [];
+    s.queued.delete(pane);
+    s.bytes -= queue.bytes; this.queuedBytes -= queue.bytes;
+    return queue.messages;
+  }
+  private clearQueued(s: State) {
+    this.queuedBytes -= s.bytes;
+    s.bytes = 0; s.queued.clear();
+  }
   private deliver(s: State, messages: Wire[]) {
     const data = JSON.stringify({
       op: "frames",
       delivery: ++s.serial,
       messages,
     });
-    if (
-      s.flight.size >= 128 ||
-      [...s.flight.values()].reduce((a, b) => a + b, 0) + bytes(data) >
-        MAX_BYTES
-    ) {
+    const dataBytes = bytes(data);
+    if (dataBytes > MAX_BYTES || s.flight.size >= 128 || s.flightBytes + dataBytes > MAX_IN_FLIGHT) {
       this.stalled(s);
       return;
     }
     // Aggregate up to sixteen adjacent deliveries in one credit record. Partial
     // acknowledgments release a bucket only once its final delivery is applied.
     const last = [...s.flight.keys()].at(-1);
-    let credit = bytes(data);
+    let credit = dataBytes;
+    s.flightBytes += dataBytes;
     if (
       last !== undefined &&
       Math.floor((last - 1) / 16) === Math.floor((s.serial - 1) / 16)

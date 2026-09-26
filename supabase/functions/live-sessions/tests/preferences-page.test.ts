@@ -3,16 +3,20 @@ import { livePage } from "../views/page.ts"
 
 /** Execute the shipped page script with a minimal DOM; no browser/network is required. */
 function harness() {
-  const elements = new Map<string, any>()
+  const elements = new Map<string, ReturnType<typeof makeElement>>()
   const posts: unknown[] = []
-  function element(id: string): any {
-    if (!elements.has(id)) elements.set(id, {
+  function makeElement(id: string) {
+    return {
       textContent: id === "cfg" ? JSON.stringify({ basePath: "/live-sessions" }) : "",
       classList: { toggle() {}, add() {}, remove() {}, contains() { return false } },
       style: {}, addEventListener() {}, setAttribute() {},
       contentWindow: { postMessage(value: unknown) { posts.push(value) } },
-    })
-    return elements.get(id)
+    }
+  }
+  function element(id: string): ReturnType<typeof makeElement> {
+    let value = elements.get(id)
+    if (!value) { value = makeElement(id); elements.set(id, value) }
+    return value
   }
   const requests: Array<(response: Response) => void> = []
   const html = livePage({ basePath: "/live-sessions", liveWindowSeconds: 90 }, "test")

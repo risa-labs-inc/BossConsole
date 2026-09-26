@@ -16,6 +16,7 @@ on:
     branches: [main]
     paths:
       - 'supabase/functions/**'
+      - 'infra/cloudflare/terminal-relay/**'
       # The function's behaviour is coupled to the passkey migrations (columns,
       # the session_id index, the RPC grant), so schema edits run these too
       - 'supabase/migrations/**'
@@ -24,6 +25,7 @@ on:
     branches: [main, dev, develop]
     paths:
       - 'supabase/functions/**'
+      - 'infra/cloudflare/terminal-relay/**'
       - 'supabase/migrations/**'
       - '.github/workflows/edge-functions.yml'
   workflow_dispatch:
@@ -199,6 +201,41 @@ jobs:
 
       - name: 🧹 Lint
         run: deno lint
+
+  user-settings:
+    name: User settings — check and test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: supabase/functions/user-settings
+    steps:
+      - uses: actions/checkout@v7
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: deno check app.ts session.ts index.ts app_test.ts
+      - run: deno lint
+      - run: deno test --allow-all
+
+  terminal-relay:
+    name: Terminal relay — check and test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra/cloudflare/terminal-relay
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: infra/cloudflare/terminal-relay/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - run: npm run test:integration
+        env:
+          WRANGLER_SEND_METRICS: 'false'
 
   redirect:
     name: ↪️ Redirect function — check & test
