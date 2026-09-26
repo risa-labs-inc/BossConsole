@@ -1,0 +1,178 @@
+import { DurableObject } from "cloudflare:workers";
+import { type Peer, Router } from "./router";
+interface Env {
+  ROOMS: DurableObjectNamespace<TerminalRoom>;
+  SUPABASE_URL: string;
+  SUPABASE_SERVICE_ROLE_KEY: string;
+}
+type Attachment = Peer | { pendingUntil: number };
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const u = new URL(request.url),
+      id = u.pathname.match(/^\/v1\/rooms\/([^/]+)$/)?.[1];
+    if (!id || !UUID.test(id) || u.search) {
+      return new Response("Not found", { status: 404 });
+    }
+    if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
+      return new Response("WebSocket required", { status: 426 });
+    }
+    return env.ROOMS.get(env.ROOMS.idFromName(id.toLowerCase())).fetch(request);
+  },
+} satisfies ExportedHandler<Env>;
+export class TerminalRoom extends DurableObject<Env> {
+  private router: Router;
+  private sockets = new Map<string, WebSocket>();
+  private admitting = new WeakSet<WebSocket>();
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.router = new Router((peer) =>
+      this.sockets.get(peer.id)?.serializeAttachment(peer)
+    );
+    // Persist only routing and delivery credits, never terminal payloads. Pending
+    // batching timers keep the object awake until their queues have been flushed.
+    const restored = ctx.getWebSockets().map((ws) => ({
+      ws,
+      peer: ws.deserializeAttachment() as Attachment | null,
+    }));
+    restored.sort((a, b) =>
+      Number(b.peer && "role" in b.peer && b.peer.role === "host") -
+      Number(a.peer && "role" in a.peer && a.peer.role === "host")
+    );
+    for (const { ws, peer } of restored) {
+      if (peer && "pendingUntil" in peer) {
+        if (peer.pendingUntil <= Date.now()) {
+          ws.close(1008, "Admission timeout");
+        }
+        continue;
+      }
+      if (!peer || peer.expires <= Date.now()) {
+        ws.close(1008, "Session expired");
+        continue;
+      }
+      this.sockets.set(peer.id, ws);
+      try {
+        this.router.add(peer, ws, true);
+      } catch {
+        this.sockets.delete(peer.id);
+        ws.close(1008, "Invalid session");
+      }
+    }
+  }
+  async fetch(_request: Request): Promise<Response> {
+    if (this.ctx.getWebSockets().length >= 160) {
+      return new Response("Room full", { status: 429 });
+    }
+    const [client, server] = Object.values(new WebSocketPair());
+    this.ctx.acceptWebSocket(server);
+    const pendingUntil = Date.now() + 10000;
+    server.serializeAttachment({ pendingUntil });
+    const alarm = await this.ctx.storage.getAlarm();
+    if (alarm === null || alarm > pendingUntil) {
+      await this.ctx.storage.setAlarm(pendingUntil);
+    }
+    return new Response(null, { status: 101, webSocket: client });
+  }
+  async webSocketMessage(ws: WebSocket, data: string | ArrayBuffer) {
+    if (typeof data !== "string" || data.length > 1024 * 1024) {
+      ws.close(1009, "Message too large");
+      return;
+    }
+    const peer = ws.deserializeAttachment() as Attachment | null;
+    if (peer && "id" in peer) {
+      this.router.receive(peer.id, data);
+      return;
+    }
+    if (this.admitting.has(ws)) {
+      ws.close(1008, "Admission in progress");
+      return;
+    }
+    this.admitting.add(ws);
+    try {
+      const hello = JSON.parse(data);
+      if (
+        hello.op !== "hello" || hello.v !== 1 || !UUID.test(hello.room) ||
+        data.length > 4096
+      ) throw new Error("hello");
+      if (
+        !this.ctx.id.equals(this.env.ROOMS.idFromName(hello.room.toLowerCase()))
+      ) {
+        throw new Error("room");
+      }
+      let role: Peer["role"] = "guest";
+      if (hello.ticket) {
+        if (
+          typeof hello.ticket !== "string" ||
+          !/^[-_A-Za-z0-9]{43}$/.test(hello.ticket)
+        ) throw new Error("ticket");
+        const r = await fetch(
+          `${this.env.SUPABASE_URL}/rest/v1/rpc/consume_terminal_relay_ticket`,
+          {
+            method: "POST",
+            headers: {
+              apikey: this.env.SUPABASE_SERVICE_ROLE_KEY,
+              Authorization: `Bearer ${this.env.SUPABASE_SERVICE_ROLE_KEY}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              p_token: hello.ticket,
+              p_room_id: hello.room,
+            }),
+            signal: AbortSignal.timeout(5000),
+          },
+        );
+        if (!r.ok) throw new Error("admission");
+        const result = await r.json() as { role: string };
+        if (result.role !== "host" && result.role !== "account") {
+          throw new Error("role");
+        }
+        role = result.role;
+      }
+      if (ws.readyState !== WebSocket.OPEN) throw new Error("closed");
+      const next: Peer = {
+        id: crypto.randomUUID(),
+        role,
+        admitted: role === "host",
+        panes: [],
+        subscriptions: {},
+        expires: Date.now() + (role === "host" ? 12 * 60 * 60 * 1000 : 130_000),
+      };
+      this.router.add(next, ws);
+      this.sockets.set(next.id, ws);
+      ws.serializeAttachment(next);
+    } catch {
+      ws.close(1008, "Admission refused");
+    } finally {
+      this.admitting.delete(ws);
+    }
+  }
+  async alarm() {
+    let next = Infinity;
+    for (const ws of this.ctx.getWebSockets()) {
+      const attachment = ws.deserializeAttachment() as Attachment | null;
+      if (!attachment) {
+        ws.close(1008, "Invalid session");
+        continue;
+      }
+      const expires = "id" in attachment
+        ? attachment.expires
+        : attachment.pendingUntil;
+      if (expires <= Date.now()) {
+        if ("id" in attachment) {
+          this.router.close(attachment.id, 1008, "Session expired");
+        } else ws.close(1008, "Admission timeout");
+      } else next = Math.min(next, expires);
+    }
+    if (Number.isFinite(next)) await this.ctx.storage.setAlarm(next);
+  }
+  webSocketClose(ws: WebSocket) {
+    const p = ws.deserializeAttachment() as Attachment | null;
+    if (p && "id" in p) {
+      this.router.remove(p.id);
+      this.sockets.delete(p.id);
+    }
+  }
+  webSocketError(ws: WebSocket) {
+    this.webSocketClose(ws);
+  }
+}

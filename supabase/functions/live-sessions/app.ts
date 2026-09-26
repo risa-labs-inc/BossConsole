@@ -255,7 +255,11 @@ app.get("/api/sessions", async (ctx) => {
     return jsonResponse({ error: "unauthorized" }, 401, viaCookie ? clearCookieHeaders(secure, publicBasePath()) : [])
   }
   if (rows.status !== 200 || !rows.rows) return jsonResponse({ error: "upstream" }, 502)
-  return jsonResponse({ sessions: rows.rows, email: emailFromJwt(token!) }, 200, setCookies)
+  const preferences = ctx.req.query("terminal_preferences") === "1" ? await fetchTerminalPreferences(cfg, token!) : null
+  return jsonResponse({ sessions: rows.rows, email: emailFromJwt(token!),
+    ...(ctx.req.query("terminal_preferences") === "1" ? { terminal_preferences_owner: jwtDisplayClaim(token!, "sub") } : {}),
+    ...(preferences ? { terminal_preferences: preferences } : {}),
+  }, 200, setCookies)
 })
 
 app.notFound(() => jsonResponse({ error: "not_found" }, 404))
@@ -286,6 +290,24 @@ async function fetchRows(cfg: { supabaseUrl: string; anonKey: string }, token: s
     console.error("sessions fetch failed", err)
     return { status: 502, rows: null }
   }
+}
+
+/** Optional additive RPC: an old backend or an outage leaves the viewer's defaults/cache intact. */
+async function fetchTerminalPreferences(cfg: { supabaseUrl: string; anonKey: string }, token: string) {
+  try {
+    const response = await deps.fetch(`${cfg.supabaseUrl}/rest/v1/rpc/get_user_terminal_preferences`, {
+      method: "POST",
+      headers: { apikey: cfg.anonKey, Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: "{}",
+      signal: AbortSignal.timeout(4000),
+    })
+    if (!response.ok) return null
+    const value = await response.json()
+    if (!value || !["batch", "preview"].includes(value.unfocused_mode) ||
+      !Number.isInteger(value.unfocused_fps) || value.unfocused_fps < 1 || value.unfocused_fps > 30 ||
+      !Number.isSafeInteger(value.revision) || value.revision < 0) return null
+    return { unfocused_mode: value.unfocused_mode, unfocused_fps: value.unfocused_fps, revision: value.revision }
+  } catch { return null }
 }
 
 /** GoTrue's view of the token's user, or null when it is not a valid live token. */
@@ -346,12 +368,14 @@ export function bearerToken(header: string | undefined | null): string | null {
  * here (PostgREST did that for the data), so this is never used for a decision,
  * only for the "signed in as" label after the data call has already succeeded.
  */
-export function emailFromJwt(token: string): string {
+export function emailFromJwt(token: string): string { return jwtDisplayClaim(token, "email") }
+
+function jwtDisplayClaim(token: string, claim: string): string {
   try {
     const payload = token.split(".")[1]
     const padded = payload.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - payload.length % 4) % 4)
     const json = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(padded), (c) => c.charCodeAt(0))))
-    return typeof json.email === "string" ? json.email : ""
+    return typeof json[claim] === "string" ? json[claim] : ""
   } catch {
     return ""
   }

@@ -1,0 +1,13 @@
+name = "boss-terminal-relay-debug"
+main = "src/worker.ts"
+compatibility_date = "2026-09-25"
+workers_dev = true
+[vars]
+SUPABASE_URL = "https://api.risaboss.com"
+# Use `wrangler secret put SUPABASE_SERVICE_ROLE_KEY`; never commit credentials.
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "TerminalRoom"
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["TerminalRoom"]

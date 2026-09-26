@@ -1,0 +1,22 @@
+{
+  "name": "boss-terminal-relay",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test:integration": "wrangler deploy --dry-run --outdir .wrangler/test-bundle && node --test --test-timeout=20000 test/worker.integration.mjs",
+    "bench": "tsx test/fanout.bench.ts",
+    "bench:wire": "wrangler deploy --dry-run --outdir .wrangler/test-bundle && node test/wire.bench.mjs"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260925.2",
+    "@electric-sql/pglite": "^0.5.8",
+    "miniflare": "^5.20260925.0-alpha",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "wrangler": "^4.0.0"
+  }
+}
