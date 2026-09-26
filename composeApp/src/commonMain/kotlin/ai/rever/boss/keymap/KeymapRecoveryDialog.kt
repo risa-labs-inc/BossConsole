@@ -48,7 +48,7 @@ private fun KeymapRecoveryDialogContent(
             Text(
                 if (preservedFile != null) {
                     "The keyboard shortcuts file was not valid, so BOSS restored the defaults. " +
-                        "A copy of the invalid file was saved for inspection."
+                        "A copy of the invalid file was saved for inspection at:\n$preservedFile"
                 } else {
                     "The keyboard shortcuts file was not valid, so BOSS restored the defaults. " +
                         "A copy of the invalid file could not be saved."

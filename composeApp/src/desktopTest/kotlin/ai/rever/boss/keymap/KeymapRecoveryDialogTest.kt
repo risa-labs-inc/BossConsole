@@ -13,6 +13,7 @@ import org.junit.After
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
+import java.io.File
 import kotlin.test.assertNotNull
 import kotlin.test.assertNotSame
 import kotlin.test.assertNull
@@ -61,12 +62,14 @@ class KeymapRecoveryDialogTest {
 
     @Test
     fun `a recovery published after composition still appears`() {
+        val preservedFile = File("keymap-settings.json.corrupt-1700000000000-1").absolutePath
         rule.setContent { KeymapRecoveryDialog() }
         rule.onNodeWithText("Keyboard shortcuts reset").assertDoesNotExist()
 
-        rule.runOnIdle { KeymapRecoveryNotices.publish("saved.json") }
+        rule.runOnIdle { KeymapRecoveryNotices.publish(preservedFile) }
 
         rule.onNodeWithText("Keyboard shortcuts reset").assertIsDisplayed()
+        rule.onNodeWithText(preservedFile, substring = true).assertIsDisplayed()
         rule.onNodeWithText(revealInFileManagerLabel()).assertIsDisplayed()
     }
 
