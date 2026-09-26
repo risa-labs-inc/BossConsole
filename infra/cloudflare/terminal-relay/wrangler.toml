@@ -4,10 +4,21 @@ compatibility_date = "2026-09-25"
 workers_dev = true
 [vars]
 SUPABASE_URL = "https://api.risaboss.com"
-# Use `wrangler secret put SUPABASE_SERVICE_ROLE_KEY`; never commit credentials.
+# Use `wrangler secret put RELAY_ADMISSION_KEY`; never commit credentials.
 [[durable_objects.bindings]]
 name = "ROOMS"
 class_name = "TerminalRoom"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["TerminalRoom"]
+
+# Explicit production target; the default command still deploys only debug.
+# Secrets are not inherited: configure RELAY_ADMISSION_KEY with --env production.
+[env.production]
+name = "boss-terminal-relay"
+workers_dev = true
+[env.production.vars]
+SUPABASE_URL = "https://api.risaboss.com"
+[[env.production.durable_objects.bindings]]
+name = "ROOMS"
+class_name = "TerminalRoom"

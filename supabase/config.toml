@@ -445,3 +445,9 @@ enabled = true
 verify_jwt = false
 import_map = "./functions/fluck-oauth/deno.json"
 entrypoint = "./functions/fluck-oauth/index.ts"
+
+[functions.relay-admission]
+enabled = true
+verify_jwt = false
+import_map = "./functions/relay-admission/deno.json"
+entrypoint = "./functions/relay-admission/index.ts"

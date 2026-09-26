@@ -58,7 +58,7 @@ deno test --config deno.json app_test.ts
 ```
 
 The database test creates an isolated PGlite PostgreSQL instance with pgcrypto and applies
-both migrations. It verifies owner isolation, optimistic concurrency, identity guards,
+the three migrations. It verifies owner isolation, optimistic concurrency, identity guards,
 service-only impersonation, one-time handoffs and room tickets. This does not replace the
 full Supabase migration suite. The separate integration test runs the bundled Worker
 in Miniflare and covers socket admission, guest grants, snapshots, fanout, and ticket replay.
@@ -80,23 +80,60 @@ Local p95 delivery including signature verification/decryption was 80.7 ms in th
 case. The driver paces below the actual relay rate limit. These are local load checks,
 not Internet, GPU rendering, geographic routing or production capacity measurements.
 
-## Deployment prerequisites
+## Deployment and production rollout
 
-- Apply `20260927000000_user_terminal_preferences.sql`, then
-  `20260927010000_terminal_relay_tickets.sql`.
-- Edge function `user-settings` requires `USER_SETTINGS_SESSION_SECRET` (at least 32
-  random characters), optional `USER_SETTINGS_SESSION_SECRET_PREV`, and
-  `USER_SETTINGS_PUBLIC_URL` on the custom functions domain.
-- Worker needs `SUPABASE_SERVICE_ROLE_KEY` as a Wrangler secret. Never commit it or put it
-  in browser/native clients. `SUPABASE_URL` points at the same project's REST endpoint.
-- Debug worker configuration exists in `wrangler.toml`; no production route is configured.
-  `workers_dev = true` exposes the debug endpoint publicly. Its service-role binding has
-  broad database privileges despite the Worker's fixed, validated ticket-consumption RPC;
-  use an isolated debug project/key, never the production service key for debug testing.
-  A restricted ticket-consumption credential should replace this before wider rollout.
-- Before production rollout, schedule bounded cleanup of expired rooms, tickets and settings
-  handoffs for abandoned accounts. Request-time cleanup deliberately touches only the caller's
-  rows; expired UUIDs remain owned until cleanup and must never be reclaimed by another user.
+Apply these additive migrations in order:
+
+1. `20260927000000_user_terminal_preferences.sql`
+2. `20260927010000_terminal_relay_tickets.sql`
+3. `20260927020000_terminal_relay_cleanup.sql`
+
+Deploy `user-settings`, `live-sessions` and `relay-admission` explicitly. Settings requires
+`USER_SETTINGS_SESSION_SECRET` (at least 32 random characters), optional
+`USER_SETTINGS_SESSION_SECRET_PREV`, and `USER_SETTINGS_PUBLIC_URL` on the custom functions
+domain. Preserve an existing session secret unless intentionally rotating it.
+
+Set a random `RELAY_ADMISSION_KEY` of at least 32 characters in both the Edge environment and
+the selected Worker. The Worker signs the exact request body with HMAC-SHA256; the Edge
+function validates the signature, bounded body, canonical room/token shape, and invokes only
+`consume_terminal_relay_ticket`. The Worker credential cannot query tables or call arbitrary
+RPCs. The Supabase service-role credential stays inside the Edge function environment.
+Deploy the admission function and configure its key **before** deploying the updated Worker.
+Remove any old `SUPABASE_SERVICE_ROLE_KEY` Worker secret after switching successfully.
+
+The default `wrangler deploy` target is `boss-terminal-relay-debug`. Production is an explicit,
+separate Worker/room namespace:
+
+```bash
+npx wrangler secret put RELAY_ADMISSION_KEY --env production
+npx wrangler deploy --env production
+```
+
+Both use `workers.dev` endpoints and the configured shared Supabase backend; the Worker name
+is not a database isolation boundary. No custom production domain or client default is
+changed. Never embed either admission or database keys in a desktop/browser client.
+
+After the cleanup migration, schedule
+`SELECT public.cleanup_expired_terminal_relay_records(500)` every minute with `pg_cron`
+or an equivalent trusted database scheduler. The explicit, idempotent operator script is
+`operations/schedule-cleanup.sql`; it enables the Supabase-supported `pg_cron` extension
+and creates/updates only the named `terminal-relay-expired-records` job. The service-only function locks and deletes
+bounded batches of expired tickets and handoffs, and at most 100 rooms expired for at least
+five minutes. Active and recently expired rooms are preserved. Room UUIDs are not permanently
+reserved after deletion; hosts generate fresh random UUIDs and the E2E share keys remain the
+trust boundary for old links. Monitor cleanup job failures/backlog and admission failures.
+
+Roll out in this order: backend CI/review and migrations, admission Edge/key, debug Worker
+verification, production Worker, then an opt-in client cohort. Release the BossTerm library
+before publishing a plugin that pins it. Verify the **published Maven artifact**, including
+its rendering/font overrides, without a paired source substitution.
+
+Keep relay disabled by default until deployed native/browser checks cover reconnect,
+revocation, settings synchronization, slow viewers, and direct-mode backward compatibility.
+Rollback a client cohort by removing its explicit relay opt-in and restarting; direct sharing
+remains the default. Keep additive database migrations in place. If reverting a Worker
+version predating the admission gateway, its old credential requirements also return; prefer
+fix-forward or disable the cohort rather than restoring a broad database credential.
 
 ### Settings handoff boundary
 
@@ -169,7 +206,9 @@ is in flight. Text-only previews need no graphics request.
 - Validate screen rendering and real network behavior during debug testing; loopback
   encryption/WebSocket fan-out has passed all nine 10/50/100 pane × 1/3/10 viewer cases.
 - Apply the additive backend changes to debug and install the paired debug plugin only
-  after these checks. Nothing in this worktree has been deployed or installed.
+  after these checks. The first two migrations, settings/live-sessions functions and the original debug Worker
+  were deployed on 2026-09-26; the paired debug plugin was installed. The revised admission
+  gateway and cleanup migration still require deployment. This is not full end-to-end sign-off.
 
 Release the updated BossTerm library before publishing the terminal plugin, then update
 the plugin dependency to that released version. Local paired-source builds do not require
