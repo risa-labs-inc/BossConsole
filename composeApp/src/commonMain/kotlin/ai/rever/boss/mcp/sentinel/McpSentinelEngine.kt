@@ -56,7 +56,6 @@ class McpSentinelEngine(
      */
     fun evaluateAll(tools: List<RegisteredMcpTool>): List<ToolEvaluationResult> {
         val shadowings = ToolShadowingDetector.detectShadowing(tools)
-        val shadowingMap = shadowings.groupBy { "${it.collidingProviderId}/${it.toolName}" }
 
         val results = mutableListOf<ToolEvaluationResult>()
         val evalMap = mutableMapOf<String, ToolEvaluationResult>()
@@ -76,6 +75,19 @@ class McpSentinelEngine(
     }
 
     /**
+     * Evaluate a single tool incrementally without collapsing other evaluations.
+     */
+    fun evaluateSingleToolAndMerge(registered: RegisteredMcpTool): ToolEvaluationResult {
+        synchronized(lock) {
+            val shadowings = _shadowingFindings.value
+            val eval = evaluateSingleTool(registered, shadowings)
+            val key = "${eval.providerId}/${eval.toolName}"
+            _evaluations.update { current -> current + (key to eval) }
+            return eval
+        }
+    }
+
+    /**
      * Check if a specific tool invocation is allowed under current Sentinel state.
      */
     fun checkInvocation(
@@ -86,8 +98,7 @@ class McpSentinelEngine(
         val key = "$providerId/$toolName"
         var eval = _evaluations.value[key]
         if (eval == null && registeredTool != null) {
-            val evaluated = evaluateAll(listOf(registeredTool))
-            eval = evaluated.firstOrNull()
+            eval = evaluateSingleToolAndMerge(registeredTool)
         }
 
         val targetEval = eval ?: return SentinelInvocationCheck(
@@ -134,8 +145,15 @@ class McpSentinelEngine(
     /**
      * Explicitly approve a tool definition change and update its baseline.
      * Transitions state to [SentinelTrustState.TRUSTED].
+     * If [reviewedFingerprint] is provided, verifies that the current tool fingerprint matches
+     * the fingerprint the operator actually reviewed (CAS protection).
      */
-    fun approveAndTrustTool(providerId: String, toolName: String, registeredTool: RegisteredMcpTool? = null): Boolean {
+    fun approveAndTrustTool(
+        providerId: String,
+        toolName: String,
+        reviewedFingerprint: String? = null,
+        registeredTool: RegisteredMcpTool? = null,
+    ): Boolean {
         synchronized(lock) {
             val key = "$providerId/$toolName"
             val eval = _evaluations.value[key]
@@ -143,6 +161,15 @@ class McpSentinelEngine(
             val currentFingerprint = eval?.currentFingerprint
                 ?: registeredTool?.let { ToolDnaFingerprinter.computeFingerprint(it) }
                 ?: return false
+
+            if (reviewedFingerprint != null && currentFingerprint.fingerprint != reviewedFingerprint) {
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "MCP Sentinel: Rejected approval due to fingerprint mismatch",
+                    mapOf("reviewed" to reviewedFingerprint, "current" to currentFingerprint.fingerprint),
+                )
+                return false
+            }
 
             val existingBaseline = baselineStore.getBaseline(providerId, toolName)
             val now = System.currentTimeMillis()
@@ -160,6 +187,8 @@ class McpSentinelEngine(
                 trustState = SentinelTrustState.TRUSTED,
                 lastAcceptedDescription = currentFingerprint.canonicalDescription,
                 lastAcceptedSchemaJson = currentFingerprint.canonicalInputSchemaJson,
+                readOnly = currentFingerprint.readOnly,
+                requiresAdmin = currentFingerprint.requiresAdmin,
                 fingerprintHistory = history,
                 changeHistory = changeHist,
                 reasonForReevaluation = null,
@@ -175,6 +204,8 @@ class McpSentinelEngine(
                     mapOf("provider" to providerId, "tool" to toolName, "fingerprint" to currentFingerprint.fingerprint),
                 )
                 recordAuditEvent("TOOL_REAPPROVED", providerId, toolName, currentFingerprint.fingerprint)
+                // Re-evaluate to update state flow
+                registeredTool?.let { evaluateSingleToolAndMerge(it) }
             }
             return saved
         }
@@ -239,21 +270,42 @@ class McpSentinelEngine(
         val toolName = def.name
 
         val fingerprint = ToolDnaFingerprinter.computeFingerprint(registered)
-        val baseline = baselineStore.getBaseline(providerId, toolName)
 
         val securityFindings = ToolContentScanner.scan(def)
         val toolShadowings = shadowings.filter { it.toolName == toolName }
 
         val now = System.currentTimeMillis()
 
+        if (baselineStore.isCorrupted) {
+            val corruptReason = "ToolDNA baseline store is corrupted on disk; operator review required."
+            return ToolEvaluationResult(
+                providerId = providerId,
+                toolName = toolName,
+                trustState = SentinelTrustState.REVIEW_REQUIRED,
+                currentFingerprint = fingerprint,
+                baselineRecord = null,
+                diffResult = null,
+                securityFindings = securityFindings,
+                shadowingFindings = toolShadowings,
+                reason = corruptReason,
+            )
+        }
+
+        val baseline = baselineStore.getBaseline(providerId, toolName)
+
         if (baseline == null) {
             // New tool never seen before
             val isSuspicious = securityFindings.any { it.severity >= FindingSeverity.HIGH }
-            val state = if (isSuspicious) SentinelTrustState.SUSPICIOUS else SentinelTrustState.NEW
+            val hasShadowing = toolShadowings.isNotEmpty()
+            val state = when {
+                isSuspicious -> SentinelTrustState.SUSPICIOUS
+                hasShadowing -> SentinelTrustState.REVIEW_REQUIRED
+                else -> SentinelTrustState.NEW
+            }
 
             val reason = when {
                 isSuspicious -> "New tool detected with suspicious findings (${securityFindings.size})"
-                toolShadowings.isNotEmpty() -> "New tool detected with cross-provider shadowing collision"
+                hasShadowing -> "New tool detected with cross-provider shadowing collision"
                 else -> "First time observing tool definition"
             }
 
@@ -268,6 +320,8 @@ class McpSentinelEngine(
                 trustState = state,
                 lastAcceptedDescription = fingerprint.canonicalDescription,
                 lastAcceptedSchemaJson = fingerprint.canonicalInputSchemaJson,
+                readOnly = fingerprint.readOnly,
+                requiresAdmin = fingerprint.requiresAdmin,
                 findings = securityFindings,
                 reasonForReevaluation = reason,
             )
@@ -333,8 +387,8 @@ class McpSentinelEngine(
         val diff = ToolDnaDiffEngine.computeDiff(
             oldDescription = baseline.lastAcceptedDescription,
             oldSchemaJson = baseline.lastAcceptedSchemaJson,
-            oldReadOnly = false,
-            oldRequiresAdmin = false,
+            oldReadOnly = baseline.readOnly,
+            oldRequiresAdmin = baseline.requiresAdmin,
             newDefinition = def,
         )
 
@@ -373,3 +427,4 @@ class McpSentinelEngine(
         )
     }
 }
+

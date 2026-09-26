@@ -3,6 +3,7 @@ package ai.rever.boss.mcp.sentinel
 import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -25,6 +26,10 @@ class ToolDnaBaselineStore(
 
     private val baselines = mutableMapOf<String, ToolBaselineRecord>()
 
+    @Volatile
+    var isCorrupted: Boolean = false
+        private set
+
     init {
         loadFromDisk()
     }
@@ -40,12 +45,28 @@ class ToolDnaBaselineStore(
     }
 
     fun saveBaseline(record: ToolBaselineRecord): Boolean = synchronized(lock) {
+        if (isCorrupted) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Refusing to save baseline: ToolDNA baseline store is marked as corrupted",
+                mapOf("path" to (baselineFile?.path ?: "in-memory")),
+            )
+            return false
+        }
         val key = makeKey(record.providerId, record.toolName)
         baselines[key] = record
         persistToDisk()
     }
 
     fun saveAllBaselines(records: List<ToolBaselineRecord>): Boolean = synchronized(lock) {
+        if (isCorrupted) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Refusing to save baselines: ToolDNA baseline store is marked as corrupted",
+                mapOf("path" to (baselineFile?.path ?: "in-memory")),
+            )
+            return false
+        }
         for (record in records) {
             val key = makeKey(record.providerId, record.toolName)
             baselines[key] = record
@@ -62,6 +83,7 @@ class ToolDnaBaselineStore(
 
     fun clear(): Boolean = synchronized(lock) {
         baselines.clear()
+        isCorrupted = false
         persistToDisk()
     }
 
@@ -78,13 +100,22 @@ class ToolDnaBaselineStore(
                     for (rec in records) {
                         baselines[makeKey(rec.providerId, rec.toolName)] = rec
                     }
+                    isCorrupted = false
                     logger.info(
                         LogCategory.SYSTEM,
                         "Loaded ToolDNA baselines from disk",
                         mapOf("count" to records.size, "path" to file.path),
                     )
                 }
+            } catch (e: SerializationException) {
+                isCorrupted = true
+                logger.error(
+                    LogCategory.SYSTEM,
+                    "Corrupted ToolDNA baseline store JSON file on disk",
+                    mapOf("path" to file.path, "error" to (e.message ?: "SerializationException")),
+                )
             } catch (t: Throwable) {
+                isCorrupted = true
                 logger.error(
                     LogCategory.SYSTEM,
                     "Failed to read ToolDNA baseline store from disk",
@@ -100,6 +131,7 @@ class ToolDnaBaselineStore(
             val list = baselines.values.toList()
             val encoded = json.encodeToString(list)
             file.atomicWriteText(encoded)
+            isCorrupted = false
             true
         } catch (t: Throwable) {
             logger.error(
@@ -111,3 +143,4 @@ class ToolDnaBaselineStore(
         }
     }
 }
+

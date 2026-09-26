@@ -108,4 +108,70 @@ class McpSentinelEngineTest {
         val evalUnblocked = engine.evaluateAll(listOf(tool)).single()
         assertTrue(evalUnblocked.trustState != SentinelTrustState.BLOCKED)
     }
+
+    @Test
+    fun `evaluateSingleToolAndMerge preserves existing tool evaluations`(): Unit {
+        val file = tempBaselineFile()
+        val store = ToolDnaBaselineStore(baselineFile = file)
+        val engine = McpSentinelEngine(baselineStore = store)
+
+        val toolA = AttackSimulationFixtures.BENIGN_READ_FILE_TOOL
+        val toolB = RegisteredMcpTool(
+            providerId = "k8s_provider",
+            definition = McpToolDefinition(
+                name = "k8s_list_pods",
+                description = "List Kubernetes pods in cluster",
+                inputSchema = """{"type":"object"}""",
+                readOnly = true,
+            )
+        )
+
+        engine.evaluateAll(listOf(toolA))
+        assertEquals(1, engine.evaluations.value.size)
+
+        // Evaluate tool B individually
+        engine.checkInvocation("k8s_provider", "k8s_list_pods", toolB)
+
+        // Verify tool A evaluation remains intact while tool B was merged
+        assertEquals(2, engine.evaluations.value.size)
+        assertNotNull(engine.evaluations.value["codebase_provider/read_project_file"])
+        assertNotNull(engine.evaluations.value["k8s_provider/k8s_list_pods"])
+    }
+
+    @Test
+    fun `approval with stale reviewedFingerprint is rejected`(): Unit {
+        val file = tempBaselineFile()
+        val store = ToolDnaBaselineStore(baselineFile = file)
+        val engine = McpSentinelEngine(baselineStore = store)
+
+        val toolA = AttackSimulationFixtures.BENIGN_READ_FILE_TOOL
+        engine.evaluateAll(listOf(toolA))
+
+        val reviewedFingerprint = "stale_sha256_digest_that_does_not_match"
+        val approved = engine.approveAndTrustTool(
+            providerId = "codebase_provider",
+            toolName = "read_project_file",
+            reviewedFingerprint = reviewedFingerprint,
+            registeredTool = toolA,
+        )
+
+        assertFalse(approved, "Approval must be rejected when reviewed fingerprint differs from current")
+    }
+
+    @Test
+    fun `corrupted baseline file forces REVIEW_REQUIRED trust state`(): Unit {
+        val file = tempBaselineFile()
+        file.writeText("invalid json content { [ corrupt")
+
+        val store = ToolDnaBaselineStore(baselineFile = file)
+        assertTrue(store.isCorrupted, "Store must mark file as corrupted")
+
+        val engine = McpSentinelEngine(baselineStore = store)
+        val tool = AttackSimulationFixtures.BENIGN_READ_FILE_TOOL
+        val eval = engine.evaluateAll(listOf(tool)).single()
+
+        assertEquals(SentinelTrustState.REVIEW_REQUIRED, eval.trustState)
+        assertTrue(eval.reason.contains("corrupted"))
+    }
 }
+

@@ -996,7 +996,7 @@ internal class McpToolRegistryCore(
                 } else {
                     val sentinelCheck = sentinelEngine.checkInvocation(tool.providerId, canonicalName, tool)
                     if (!sentinelCheck.isAllowed) {
-                        McpApprovalDisposition.POLICY_DENIED to (sentinelCheck.reason ?: "MCP Sentinel: Tool '$canonicalName' is blocked or requires review.")
+                        McpApprovalDisposition.SENTINEL_BLOCKED to (sentinelCheck.reason ?: "MCP Sentinel: Tool '$canonicalName' is blocked or requires review.")
                     } else {
                         authorize(tool, args, effectivePolicy, revocation, secrets, escalated)
                     }

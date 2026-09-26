@@ -1,4 +1,4 @@
-# BOSS MCP Sentinel — ToolDNA Integrity & Poisoning Detection
+# BOSS MCP Sentinel - ToolDNA Integrity & Poisoning Detection
 
 ## 1. Overview
 

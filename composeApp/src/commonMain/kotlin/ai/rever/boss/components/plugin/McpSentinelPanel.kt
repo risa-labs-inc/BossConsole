@@ -110,7 +110,7 @@ fun McpSentinelPanel(
                 Spacer(modifier = Modifier.width(8.dp))
                 Column {
                     Text(
-                        text = "MCP Sentinel — ToolDNA Integrity",
+                        text = "MCP Sentinel - ToolDNA Integrity",
                         style = MaterialTheme.typography.h6.copy(
                             color = Color(0xFFCDD6F4),
                             fontWeight = FontWeight.Bold
@@ -189,7 +189,11 @@ fun McpSentinelPanel(
                     eval = selectedEval,
                     onClose = { selectedToolKey = null },
                     onApprove = {
-                        sentinelEngine.approveAndTrustTool(selectedEval.providerId, selectedEval.toolName)
+                        sentinelEngine.approveAndTrustTool(
+                            providerId = selectedEval.providerId,
+                            toolName = selectedEval.toolName,
+                            reviewedFingerprint = selectedEval.currentFingerprint.fingerprint,
+                        )
                         sentinelEngine.evaluateAll(registeredTools)
                     },
                     onBlock = {

@@ -139,9 +139,12 @@ data class ToolBaselineRecord(
     val trustState: SentinelTrustState,
     val lastAcceptedDescription: String,
     val lastAcceptedSchemaJson: String,
+    val readOnly: Boolean = false,
+    val requiresAdmin: Boolean = false,
     val fingerprintHistory: List<String> = emptyList(),
     val changeHistory: List<String> = emptyList(),
     val reasonForReevaluation: String? = null,
     val findings: List<SecurityFinding> = emptyList(),
     val userDecision: String? = null,
 )
+

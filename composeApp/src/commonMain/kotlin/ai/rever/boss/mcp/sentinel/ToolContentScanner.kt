@@ -2,6 +2,7 @@ package ai.rever.boss.mcp.sentinel
 
 import ai.rever.boss.plugin.api.McpToolDefinition
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -199,17 +200,28 @@ object ToolContentScanner {
                 for ((key, value) in element) {
                     val currentPath = "$path.$key"
                     if (value is JsonPrimitive && value.isString) {
-                        if (key == "description" || key == "title" || key == "default") {
-                            scanText(value.content, currentPath, findings)
-                        }
+                        scanText(value.content, currentPath, findings)
                     } else {
                         scanJsonElement(value, currentPath, findings)
                     }
                 }
             }
-            else -> {
-                // Ignore arrays or primitives directly under schema root
+            is JsonArray -> {
+                element.forEachIndexed { index, item ->
+                    val currentPath = "$path[$index]"
+                    if (item is JsonPrimitive && item.isString) {
+                        scanText(item.content, currentPath, findings)
+                    } else {
+                        scanJsonElement(item, currentPath, findings)
+                    }
+                }
             }
+            is JsonPrimitive -> {
+                if (element.isString) {
+                    scanText(element.content, path, findings)
+                }
+            }
+            else -> {}
         }
     }
 

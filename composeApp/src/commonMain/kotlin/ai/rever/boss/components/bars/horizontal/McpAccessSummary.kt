@@ -67,6 +67,7 @@ internal fun mcpAccessMenuItems(
     onPolicies: () -> Unit,
     onSessionTrust: () -> Unit,
     onTrustedPlugins: () -> Unit,
+    onSentinel: () -> Unit = {},
     onYolo: () -> Unit = {},
 ): List<ContextMenuItem> =
     buildList {
@@ -80,6 +81,12 @@ internal fun mcpAccessMenuItems(
             ContextMenuItem(
                 text = if (summary.savedRules > 0) "Tool policies (${summary.savedRules})..." else "Tool policies...",
                 onClick = onPolicies,
+            ),
+        )
+        add(
+            ContextMenuItem(
+                text = "ToolDNA Sentinel...",
+                onClick = onSentinel,
             ),
         )
         if (summary.sessionGrants > 0) {
