@@ -18,10 +18,35 @@ private val osName: String = System.getProperty("os.name").orEmpty().lowercase()
  * This is the single canonical reveal implementation — `FileSystemUtils.revealInFolder`
  * and `FileSystemDataProviderImpl.revealInFileManager` delegate here so the OS-specific
  * command lives in exactly one place.
+ *
+ * Security: This is a shared host utility. For plugin-originated reveals, use
+ * [revealInFileManager] with [allowedRoots] to enforce scoped security boundaries.
+ * When called without [allowedRoots], this is used for host-initiated reveals and
+ * skips validation (the host is trusted).
  */
-fun revealInFileManager(path: String): Result<Unit> {
+fun revealInFileManager(
+    path: String,
+    allowedRoots: Set<File>? = null,
+): Result<Unit> {
     if (path.isBlank()) return Result.success(Unit)
-    val file = File(path)
+
+    val validatedPath =
+        if (allowedRoots != null) {
+            try {
+                validatePathForReveal(path, allowedRoots)
+            } catch (e: SecurityException) {
+                revealLogger.warn(
+                    LogCategory.FILE,
+                    "Reveal in file manager denied: path outside allowed boundary",
+                    mapOf("path" to path),
+                )
+                return Result.failure(e)
+            }
+        } else {
+            path
+        }
+
+    val file = File(validatedPath)
     return runCatching {
         when {
             osName.contains("mac") -> {
@@ -72,6 +97,28 @@ fun revealInFileManager(path: String): Result<Unit> {
     }.onFailure {
         revealLogger.warn(LogCategory.FILE, "Failed to reveal in file manager", mapOf("path" to path), error = it)
     }
+}
+
+/**
+ * Validates that [path] is within the [allowedRoots] for reveal operations.
+ *
+ * This is a scoped validation function used for plugin-originated reveals.
+ * It does not use global state and must be called with explicit allowed roots.
+ */
+private fun validatePathForReveal(
+    path: String,
+    allowedRoots: Set<File>,
+): String {
+    val file = File(path).canonicalFile
+    for (root in allowedRoots) {
+        val canonicalRoot = root.canonicalFile
+        if (file.absolutePath == canonicalRoot.absolutePath ||
+            file.absolutePath.startsWith(canonicalRoot.absolutePath + File.separator)
+        ) {
+            return file.absolutePath
+        }
+    }
+    throw SecurityException("Access denied: path '$path' is outside allowed roots for reveal operation")
 }
 
 /**

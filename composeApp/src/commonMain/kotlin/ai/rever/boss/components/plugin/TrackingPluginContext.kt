@@ -1,5 +1,6 @@
 package ai.rever.boss.components.plugin
 
+import ai.rever.boss.components.plugin.providers.ScopedFileSystemDataProvider
 import ai.rever.boss.downloads.DownloadCenterProviderImpl
 import ai.rever.boss.plugin.api.ActiveTabsProvider
 import ai.rever.boss.plugin.api.ApplicationEventBus
@@ -61,8 +62,10 @@ import ai.rever.boss.plugin.api.UserManagementProvider
 import ai.rever.boss.plugin.api.WorkspaceDataProvider
 import ai.rever.boss.plugin.api.ZoomSettingsProvider
 import ai.rever.boss.plugin.browser.BrowserService
+import ai.rever.boss.plugin.pathutils.BossDirectories
 import com.arkivanov.decompose.ComponentContext
 import kotlinx.coroutines.CoroutineScope
+import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -334,7 +337,18 @@ class TrackingPluginContext(
     override val splitViewOperations: SplitViewOperations? get() = delegate.splitViewOperations
     override val gitDataProvider: GitDataProvider? get() = delegate.gitDataProvider
     override val projectSearchProvider: ProjectSearchProvider? get() = delegate.projectSearchProvider
-    override val fileSystemDataProvider: FileSystemDataProvider? get() = delegate.fileSystemDataProvider
+
+    // File system data provider - scoped to this plugin's storage directory and current project
+    // to prevent cross-plugin authorization leaks. Similar pattern to downloadCenterProvider and
+    // pluginStorageFactory: identity is bound once at construction, not per-call.
+    override val fileSystemDataProvider: FileSystemDataProvider? by lazy {
+        delegate.fileSystemDataProvider?.let { baseProvider ->
+            val pluginStorageDir = BossDirectories.resolve("plugin-data/$pluginId")
+            val currentProjectDir = delegate.projectPath?.let { File(it) }
+            ScopedFileSystemDataProvider(pluginId, pluginStorageDir, currentProjectDir, baseProvider)
+        }
+    }
+
     override val secretDataProvider: SecretDataProvider? get() = delegate.secretDataProvider
     override val llmProvider: LlmProvider? get() = delegate.llmProvider
     override val brokeredCredentialProvider: BrokeredCredentialProvider?
