@@ -122,3 +122,32 @@ Deno.test("session rejects tampering and expiration", async () => {
   assertEquals(await verifySession(token, secret + "wrong"), null);
   assertEquals(await verifySession(token, secret, Date.now() + 61000), null);
 });
+
+Deno.test("handoff rejects same-site subresources before consuming the token", async () => {
+  let calls = 0;
+  const app = createApp(config, () => {
+    calls++;
+    return Promise.resolve({ user_id: sub });
+  });
+  const url = base + "?t=" + "a".repeat(43);
+  for (const mode of ["no-cors", "cors", "same-origin"]) {
+    assertEquals(
+      (await app(
+        new Request(url, {
+          headers: { "sec-fetch-site": "same-site", "sec-fetch-mode": mode },
+        }),
+      )).status,
+      403,
+    );
+  }
+  assertEquals(calls, 0);
+  assertEquals(
+    (await app(
+      new Request(url, {
+        headers: { "sec-fetch-site": "none", "sec-fetch-mode": "navigate" },
+      }),
+    )).status,
+    302,
+  );
+  assertEquals(calls, 1);
+});

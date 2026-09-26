@@ -131,7 +131,11 @@ export function createApp(config?: Config, rpc: Rpc = defaultRpc()) {
         return response(page("<h2>Not found</h2>"), 404);
       }
       if (req.method === "GET" && url.searchParams.has("t")) {
-        if (req.headers.get("sec-fetch-site") === "cross-site") {
+        if (
+          req.headers.get("sec-fetch-site") === "cross-site" ||
+          (req.headers.has("sec-fetch-mode") &&
+            req.headers.get("sec-fetch-mode") !== "navigate")
+        ) {
           return response(page("<h2>Open this page from BOSS</h2>"), 403);
         }
         const token = url.searchParams.get("t")!;

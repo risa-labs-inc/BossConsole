@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {once} from 'node:events';
 import {performance} from 'node:perf_hooks';
-import {generateKeyPairSync, randomBytes, randomUUID, hkdfSync, createCipheriv, sign} from 'node:crypto';
+import {createHmac, generateKeyPairSync, randomBytes, randomUUID, hkdfSync, createCipheriv, sign} from 'node:crypto';
 import {pathToFileURL} from 'node:url';
 import {resolve} from 'node:path';
 import {Miniflare, convertV4MiniflareOptions} from 'miniflare';
@@ -23,7 +23,8 @@ const until = async (predicate, failure) => {
 };
 const rpc = createServer(async (req, res) => {
   let body = ''; for await (const chunk of req) body += chunk;
-  assert.equal(req.headers.authorization, 'Bearer benchmark-service-key');
+  assert.equal(req.url, '/functions/v1/relay-admission');
+  assert.equal(req.headers['x-relay-signature'], createHmac('sha256', 'benchmark-admission-key-32-characters').update(body).digest('hex'));
   assert.equal(JSON.parse(body).p_token.length, 43);
   res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({role:'host'}));
 });
@@ -34,7 +35,7 @@ try {
   mf = new Miniflare(convertV4MiniflareOptions({workers:[{
     name:'terminal-relay-bench', modules:true, scriptPath:'.wrangler/test-bundle/worker.js',
     compatibilityDate:'2026-09-25', durableObjects:{ROOMS:{className:'TerminalRoom', useSQLite:true}},
-    bindings:{SUPABASE_URL:`http://127.0.0.1:${rpc.address().port}`, SUPABASE_SERVICE_ROLE_KEY:'benchmark-service-key'},
+    bindings:{SUPABASE_URL:`http://127.0.0.1:${rpc.address().port}`, RELAY_ADMISSION_KEY:'benchmark-admission-key-32-characters'},
   }]}));
   const origin = (await mf.ready).origin.replace(/^http/, 'ws');
   for (const panes of [10, 50, 100]) for (const viewers of [1, 3, 10]) {

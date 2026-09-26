@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
+import {createHmac} from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 
@@ -38,7 +39,9 @@ test(
       rpcCalls++;
       let body = "";
       for await (const chunk of req) body += chunk;
-      assert.equal(req.headers.authorization, "Bearer local-test-service-key");
+      assert.equal(req.url, "/functions/v1/relay-admission");
+      assert.equal(req.headers.authorization, undefined);
+      assert.equal(req.headers["x-relay-signature"], createHmac("sha256", "local-test-admission-key-32-characters").update(body).digest("hex"));
       const request = JSON.parse(body);
       if (
         consumed.has(request.p_token) ||
@@ -79,7 +82,7 @@ test(
             },
             bindings: {
               SUPABASE_URL: `http://127.0.0.1:${rpc.address().port}`,
-              SUPABASE_SERVICE_ROLE_KEY: "local-test-service-key",
+              RELAY_ADMISSION_KEY: "local-test-admission-key-32-characters",
             },
           }],
         }),

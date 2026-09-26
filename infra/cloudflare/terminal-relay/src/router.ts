@@ -27,7 +27,7 @@ export interface Wire {
   fps?: number;
   through?: number;
 }
-const MAX_BYTES = 1024 * 1024, MAX_PENDING = 512 * 1024;
+const MAX_BYTES = 1024 * 1024, MAX_PENDING = 4 * MAX_BYTES;
 const MAX_IN_FLIGHT = 4 * MAX_BYTES, MAX_ROOM_PENDING = 16 * MAX_BYTES;
 const MAX_PRE_ADMISSION_SIGNAL = 8192, MAX_PRE_ADMISSION_BYTES = 65536;
 const bytes = (value: string) => new TextEncoder().encode(value).byteLength;
@@ -84,7 +84,20 @@ export class Router {
       ackTokens: 10000,
       ackTick: this.now(),
     });
-    if (restoring) return;
+    if (restoring) {
+      // Timer queues are volatile. Never assume the last persisted boundary covers lost deltas.
+      for (const subscription of Object.values(peer.subscriptions)) {
+        if (subscription.mode === "live" || subscription.mode === "batch") subscription.waiting = true;
+      }
+      const state = this.peers.get(peer.id)!;
+      if (!this.persist(state)) return;
+      for (const [pane, subscription] of Object.entries(peer.subscriptions)) {
+        if (subscription.waiting && (subscription.mode === "live" || subscription.mode === "batch")) {
+          this.host({op: "resync", peer: peer.id, pane, payload: ""});
+        }
+      }
+      return;
+    }
     this.send(peer.id, { op: "welcome", peer: peer.id, v: 1 });
     if (peer.role !== "host") {
       this.host({
@@ -223,7 +236,7 @@ export class Router {
           typeof m.payload !== "string" || m.payload.length > 65536
         ) throw new Error("input");
         if (m.op === "resync") {
-          const subscription = s.peer.subscriptions[m.pane];
+          const subscription = Object.hasOwn(s.peer.subscriptions, m.pane) ? s.peer.subscriptions[m.pane] : undefined;
           if (subscription) subscription.waiting = true;
           this.takeQueued(s, m.pane);
           if (!this.persist(s)) return;
@@ -287,7 +300,7 @@ export class Router {
           !Number.isSafeInteger(m.seq) || m.seq! < 0 || !m.epoch ||
           !ID.test(m.epoch)
         ) throw new Error("snapshot boundary");
-        const subscription = v.peer.subscriptions[m.pane!];
+        const subscription = Object.hasOwn(v.peer.subscriptions, m.pane!) ? v.peer.subscriptions[m.pane!] : undefined;
         if (subscription) subscription.waiting = false;
         // This snapshot already includes every earlier delta. A delayed batch must
         // never replay those bytes after the receiver installs the new boundary.
@@ -384,6 +397,20 @@ export class Router {
     s.bytes = 0; s.queued.clear();
   }
   private deliver(s: State, messages: Wire[]) {
+    let batch: Wire[] = [], batchBytes = 0;
+    for (const message of messages) {
+      const size = bytes(JSON.stringify(message));
+      // Reserve enough for the envelope, delivery integer and commas; each part retains order.
+      if (batch.length && batchBytes + size + 128 > MAX_BYTES) {
+        this.deliverBatch(s, batch);
+        if (!this.peers.has(s.peer.id)) return;
+        batch = []; batchBytes = 0;
+      }
+      batch.push(message); batchBytes += size + 1;
+    }
+    if (batch.length) this.deliverBatch(s, batch);
+  }
+  private deliverBatch(s: State, messages: Wire[]) {
     const data = JSON.stringify({
       op: "frames",
       delivery: ++s.serial,

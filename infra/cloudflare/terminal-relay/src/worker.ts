@@ -3,7 +3,7 @@ import { type Peer, Router } from "./router";
 interface Env {
   ROOMS: DurableObjectNamespace<TerminalRoom>;
   SUPABASE_URL: string;
-  SUPABASE_SERVICE_ROLE_KEY: string;
+  RELAY_ADMISSION_KEY: string;
 }
 type Attachment = Peer | { pendingUntil: number };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -32,7 +32,7 @@ export class TerminalRoom extends DurableObject<Env> {
       (id) => { this.sockets.delete(id); },
     );
     // Persist only routing and delivery credits, never terminal payloads. Pending
-    // batching timers keep the object awake until their queues have been flushed.
+    // batching timers are volatile; restored live/batch subscriptions request a fresh boundary.
     const restored = ctx.getWebSockets().map((ws) => ({
       ws,
       peer: ws.deserializeAttachment() as Attachment | null,
@@ -122,19 +122,21 @@ export class TerminalRoom extends DurableObject<Env> {
         if (!this.router.canAdmit("host", true) && !this.router.canAdmit("account")) {
           throw new Error("capacity");
         }
+        const body = JSON.stringify({p_token: hello.ticket, p_room_id: hello.room});
+        if (!this.env.RELAY_ADMISSION_KEY || this.env.RELAY_ADMISSION_KEY.length < 32) throw new Error("configuration");
+        const encoder = new TextEncoder();
+        const key = await crypto.subtle.importKey("raw", encoder.encode(this.env.RELAY_ADMISSION_KEY),
+          {name: "HMAC", hash: "SHA-256"}, false, ["sign"]);
+        const signature = new Uint8Array(await crypto.subtle.sign("HMAC", key, encoder.encode(body)));
         const r = await fetch(
-          `${this.env.SUPABASE_URL}/rest/v1/rpc/consume_terminal_relay_ticket`,
+          `${this.env.SUPABASE_URL}/functions/v1/relay-admission`,
           {
             method: "POST",
             headers: {
-              apikey: this.env.SUPABASE_SERVICE_ROLE_KEY,
-              Authorization: `Bearer ${this.env.SUPABASE_SERVICE_ROLE_KEY}`,
+              "X-Relay-Signature": Array.from(signature, byte => byte.toString(16).padStart(2, "0")).join(""),
               "Content-Type": "application/json",
             },
-            body: JSON.stringify({
-              p_token: hello.ticket,
-              p_room_id: hello.room,
-            }),
+            body,
             signal: AbortSignal.timeout(5000),
           },
         );
@@ -177,6 +179,7 @@ export class TerminalRoom extends DurableObject<Env> {
   async alarm() {
     let next = Infinity;
     for (const ws of this.ctx.getWebSockets()) {
+      if (ws.readyState !== WebSocket.OPEN) continue;
       const attachment = ws.deserializeAttachment() as Attachment | null;
       if (!attachment) {
         ws.close(1008, "Invalid session");

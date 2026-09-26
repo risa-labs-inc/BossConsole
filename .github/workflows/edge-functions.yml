@@ -213,7 +213,22 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
-      - run: deno check app.ts session.ts index.ts app_test.ts
+      - run: find . -name "*.ts" -print0 | xargs -0 -r deno check
+      - run: deno lint
+      - run: deno test --allow-all
+
+  relay-admission:
+    name: Relay admission — check and test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: supabase/functions/relay-admission
+    steps:
+      - uses: actions/checkout@v7
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: find . -name "*.ts" -print0 | xargs -0 -r deno check
       - run: deno lint
       - run: deno test --allow-all
 

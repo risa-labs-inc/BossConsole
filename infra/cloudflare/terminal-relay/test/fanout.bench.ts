@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { performance } from "node:perf_hooks";
-import { type Peer, Router, type Socket } from "../src/router";
+import { type Peer, Router, type Socket, type Wire } from "../src/router";
 
 // Measures in-process routing only: no network, encryption, rendering, or timer latency.
 const results = [];
@@ -23,10 +23,10 @@ for (const panes of [10, 50, 100]) {
     const last = new Map<string, number>();
     const connection = (id: string): Socket => ({
       send(text) {
-        const m = JSON.parse(text);
+        const m = JSON.parse(text) as {op: string; delivery: number; messages: Wire[]};
         if (m.op === "frames") {
           last.set(id, m.delivery);
-          deliveries += m.messages.filter((m: any) => m.op === "output").length;
+          deliveries += m.messages.filter((m) => m.op === "output").length;
           downstreamBytes += Buffer.byteLength(text);
         }
       },

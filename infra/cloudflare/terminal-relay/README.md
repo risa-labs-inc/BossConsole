@@ -20,8 +20,9 @@ live subscriptions wait for a host snapshot boundary before receiving deltas;
 a stalled viewer closes with 1013 and must reconnect for a fresh snapshot.
 
 Hibernation attachments hold admission, subscriptions, sequence numbers and outstanding
-byte credits only. Pending batch timers flush before hibernation. No terminal payload is
-written to durable storage. Alarms expire unauthenticated connections and room leases.
+byte credits only. Pending timers and their payload queues are volatile and may be lost
+on eviction. Restored live/batch subscriptions wait for a freshly requested host snapshot
+before receiving more deltas. No terminal payload is written to durable storage. Alarms expire unauthenticated connections and room leases.
 This follows Cloudflare's [WebSocket hibernation API](https://developers.cloudflare.com/durable-objects/best-practices/websockets/).
 
 ## Protocol boundary

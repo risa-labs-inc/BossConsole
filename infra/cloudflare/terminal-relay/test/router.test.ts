@@ -1,18 +1,25 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { type Peer, Router, type Socket } from "../src/router";
+import { type Peer, Router, type Socket, type Wire } from "../src/router";
+type Interest = {live: boolean; outputFps: number; previewFps: number};
+type Received = Omit<Wire, "panes"> & {delivery?: number; messages?: Wire[]; panes?: string[] | Record<string, Interest>};
 class Connection implements Socket {
-  messages: any[] = [];
+  messages: Received[] = [];
+  interests(): Record<string, Interest> {
+    const value = this.messages.filter(m => m.op === "interests").at(-1)?.panes;
+    assert(value && !Array.isArray(value));
+    return value;
+  }
   closed: number | undefined;
   send(raw: string) {
-    this.messages.push(JSON.parse(raw));
+    this.messages.push(JSON.parse(raw) as Received);
   }
   close(code: number) {
     this.closed = code;
   }
   frames() {
     return this.messages.filter((m) => m.op === "frames").flatMap((m) =>
-      m.messages
+      m.messages ?? []
     ).filter((m) => m.op === "output");
   }
 }
@@ -54,7 +61,7 @@ function room(count = 3) {
         op: "ack",
         through: viewers[i].messages.filter((m) =>
           m.op === "frames"
-        ).at(-1).delivery,
+        ).at(-1)!.delivery,
       });
     }
   };
@@ -190,9 +197,13 @@ test("hibernation restores delivery numbers and outstanding credit without repea
   restored.add(peer("h", "host"), h, true);
   restored.add(records.get("v")!, v, true);
   restored.receive("h", output);
+  assert.deepEqual(v.messages.filter(m => m.op === "frames").map(m => m.delivery), [1, 2]);
+  assert(h.messages.some(m => m.op === "resync" && m.peer === "v" && m.pane === "p"));
+  restored.receive("h", JSON.stringify({op: "snapshot", peer: "v", pane: "p", epoch: "e", seq: 1, payload: "restored"}));
+  restored.receive("h", output);
   assert.deepEqual(
     v.messages.filter((m) => m.op === "frames").map((m) => m.delivery),
-    [1, 2, 3],
+    [1, 2, 3, 4],
   );
   restored.remove("h");
   r.remove("h");
@@ -206,10 +217,8 @@ test("hidden subscription discards pending batches and stops publication demand"
     r.subscribe(0, "hidden");
     await new Promise((resolve) => setTimeout(resolve, 60));
     assert.equal(r.viewers[0].frames().length, 0);
-    const interests = r.host.messages.filter((m) => m.op === "interests").at(
-      -1,
-    );
-    assert.deepEqual(interests.panes.p, { live: false, outputFps: 0, previewFps: 0 });
+    const interests = r.host.interests();
+    assert.deepEqual(interests.p, { live: false, outputFps: 0, previewFps: 0 });
   } finally {
     r.dispose();
   }
@@ -220,10 +229,8 @@ test("mixed preview rates request one host preview stream at maximum demand", ()
     r.subscribe(0, "preview", "p", 4);
     r.subscribe(1, "preview", "p", 10);
     r.subscribe(2, "batch", "p", 4);
-    const interests = r.host.messages.filter((m) => m.op === "interests").at(
-      -1,
-    );
-    assert.deepEqual(interests.panes.p, { live: true, outputFps: 4, previewFps: 10 });
+    const interests = r.host.interests();
+    assert.deepEqual(interests.p, { live: true, outputFps: 4, previewFps: 10 });
   } finally {
     r.dispose();
   }
@@ -358,7 +365,7 @@ test("private fragment credits stay peer-bound and do not consume input rate all
 
 test("batch-only output uses maximum requested rate; focused demand upgrades and departure restores it", () => {
   const r = room(3);
-  const interest = () => r.host.messages.filter(m => m.op === "interests").at(-1).panes.p;
+  const interest = () => r.host.interests().p;
   try {
     r.subscribe(0, "batch", "p", 4);
     assert.deepEqual(interest(), {live: true, outputFps: 4, previewFps: 0});
@@ -381,7 +388,7 @@ test("restored subscriptions retain their batch publication rate after interest 
   router.add({...peer("batch"), admitted: true, panes: ["p"], subscriptions: {p: {mode: "batch", fps: 4}}}, new Connection(), true);
   router.add({...peer("focused"), admitted: true, panes: ["p"], subscriptions: {p: {mode: "live", fps: 4}}}, new Connection(), true);
   router.remove("focused");
-  assert.deepEqual(host.messages.filter(m => m.op === "interests").at(-1).panes.p, {live: true, outputFps: 4, previewFps: 0});
+  assert.deepEqual(host.interests().p, {live: true, outputFps: 4, previewFps: 0});
   router.remove("host");
 });
 
@@ -441,7 +448,7 @@ test("healthy viewers can have several near-maximum publications in flight", () 
     for (let i = 1; i <= 4; i++) r.output(i, "live", "p", "x".repeat(900_000));
     assert.equal(r.viewers[0].closed, undefined);
     assert.equal(r.viewers[0].frames().length, 4);
-    const delivery = r.viewers[0].messages.filter(m => m.op === "frames").at(-1).delivery;
+    const delivery = r.viewers[0].messages.filter(m => m.op === "frames").at(-1)!.delivery;
     r.send("v0", {op: "ack", through: delivery});
     r.output(5, "live", "p", "x".repeat(900_000));
     assert.equal(r.viewers[0].closed, undefined, "acknowledgment releases running in-flight bytes");
@@ -458,10 +465,12 @@ test("queue and room byte totals stay exact across immediate previews and all re
   send("v", {op: "subscribe", pane: "q", mode: "batch", fps: 1});
   send("host", {op: "snapshot", peer: "v", pane: "q", epoch: "e", seq: 0, payload: "snapshot"});
   const output = (seq: number, pane = "p", kind = "preview") => send("host", {op: "output", pane, kind, seq, epoch: "e", payload: "encrypted"});
-  const state = (router as any).peers.get("v");
+  type QueueState = {bytes: number; queued: Map<string, {messages: Wire[]}>; timers: Map<string, unknown>};
+  const inspected = router as unknown as {peers: Map<string, QueueState>; queuedBytes: number};
+  const state = inspected.peers.get("v")!;
   const invariant = () => {
-    const actual = [...state.queued.values()].reduce((sum: number, q: any) => sum + q.messages.reduce((n: number, m: unknown) => n + Buffer.byteLength(JSON.stringify(m)), 0), 0);
-    assert.equal(state.bytes, actual); assert.equal((router as any).queuedBytes, actual);
+    const actual = [...state.queued.values()].reduce((sum, q) => sum + q.messages.reduce((n: number, m: unknown) => n + Buffer.byteLength(JSON.stringify(m)), 0), 0);
+    assert.equal(state.bytes, actual); assert.equal(inspected.queuedBytes, actual);
   };
   try {
     output(1); output(2); output(1, "q", "live"); invariant();
@@ -476,7 +485,7 @@ test("queue and room byte totals stay exact across immediate previews and all re
     send("host", {op: "grant", peer: "v", panes: ["p"]}); invariant();
     output(7); output(8); invariant();
     router.remove("v");
-    assert.equal((router as any).queuedBytes, 0);
+    assert.equal(inspected.queuedBytes, 0);
   } finally { router.remove("host"); }
 });
 
@@ -508,4 +517,76 @@ test("restoring admitted viewers is independent of the pending approval cap", ()
   for (let i = 0; i < 95; i++) router.add({...peer("admitted" + i), admitted: true}, new Connection(), true);
   assert.throws(() => router.add({...peer("overflow"), admitted: true}, new Connection(), true), /Room full/);
   router.remove("host");
+});
+
+test("large queued batch frames split into bounded delivery envelopes without losing order", async () => {
+  const r = room(1);
+  try {
+    r.subscribe(0, "batch", "p", 30);
+    r.output(1, "live", "p", "a".repeat(900_000));
+    r.output(2, "live", "p", "b".repeat(900_000));
+    assert.equal(r.viewers[0].closed, undefined);
+    await new Promise(resolve => setTimeout(resolve, 60));
+    assert.equal(r.viewers[0].closed, undefined);
+    assert.deepEqual(r.viewers[0].frames().map(m => m.seq), [1, 2]);
+    for (const message of r.viewers[0].messages.filter(m => m.op === "frames")) {
+      assert(Buffer.byteLength(JSON.stringify(message)) <= 1024 * 1024);
+    }
+  } finally { r.dispose(); }
+});
+
+test("a delayed near-limit preview replaces older pending frames without disconnecting", async () => {
+  const r = room(1);
+  try {
+    r.subscribe(0, "preview", "p", 10);
+    r.output(1, "preview");
+    r.output(2, "preview", "p", "a".repeat(900_000));
+    r.output(3, "preview", "p", "b".repeat(900_000));
+    assert.equal(r.viewers[0].closed, undefined);
+    await new Promise(resolve => setTimeout(resolve, 130));
+    assert.deepEqual(r.viewers[0].frames().map(m => m.seq), [1, 3]);
+    assert.equal(r.viewers[0].closed, undefined);
+  } finally { r.dispose(); }
+});
+
+test("restored batch queues request a new snapshot before forwarding further deltas", async () => {
+  const records = new Map<string, Peer>();
+  const old = new Router(p => records.set(p.id, structuredClone(p)));
+  const host = new Connection(), viewer = new Connection();
+  old.add(peer("host", "host"), host); old.add(peer("v"), viewer);
+  const send = (r: Router, id: string, message: unknown) => r.receive(id, JSON.stringify(message));
+  send(old, "host", {op:"grant", peer:"v", panes:["p"]});
+  send(old, "v", {op:"subscribe", pane:"p", mode:"batch", fps:30});
+  send(old, "host", {op:"snapshot", peer:"v", pane:"p", epoch:"e", seq:0, payload:"initial"});
+  send(old, "host", {op:"output", pane:"p", kind:"live", epoch:"e", seq:1, payload:"lost queue"});
+  old.remove("v"); old.remove("host"); // Drop volatile timers, as an eviction would.
+  const restored = new Router();
+  restored.add(peer("host", "host"), host, true);
+  const persisted = records.get("v")!;
+  restored.add(persisted, viewer, true);
+  try {
+    assert.equal(persisted.subscriptions.p.waiting, true);
+    assert(host.messages.some(m => m.op === "resync" && m.peer === "v" && m.pane === "p"));
+    send(restored, "host", {op:"output", pane:"p", kind:"live", epoch:"e", seq:2, payload:"withheld"});
+    await new Promise(resolve => setTimeout(resolve, 60));
+    assert.equal(viewer.frames().length, 0);
+    send(restored, "host", {op:"snapshot", peer:"v", pane:"p", epoch:"e", seq:2, payload:"fresh"});
+    send(restored, "host", {op:"output", pane:"p", kind:"live", epoch:"e", seq:3, payload:"new"});
+    await new Promise(resolve => setTimeout(resolve, 60));
+    assert.deepEqual(viewer.frames().map(m => m.seq), [3]);
+  } finally { restored.remove("host"); }
+});
+
+test("prototype-named granted panes never mutate inherited subscription objects", () => {
+  const r = room(1);
+  try {
+    for (const pane of ["constructor", "toString", "__proto__"]) {
+      r.send("host", {op:"grant", peer:"v0", panes:[pane]});
+      r.send("v0", {op:"resync", pane, payload:""});
+      r.send("host", {op:"snapshot", peer:"v0", pane, epoch:"e", seq:0, payload:"snapshot"});
+    }
+    assert.equal(Object.hasOwn(Object, "waiting"), false);
+    assert.equal(Object.hasOwn(Object.prototype.toString, "waiting"), false);
+    assert.equal(Object.hasOwn(Object.prototype, "waiting"), false);
+  } finally { r.dispose(); }
 });
