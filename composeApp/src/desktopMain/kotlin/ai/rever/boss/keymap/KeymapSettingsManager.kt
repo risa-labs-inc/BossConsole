@@ -13,7 +13,7 @@ import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.ComponentLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.utils.logging.decodeFailure
-import ai.rever.boss.utils.renameAsideCorrupt
+import ai.rever.boss.utils.renameAsideCorruptFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -84,8 +84,9 @@ actual object KeymapSettingsManager {
      * Load settings synchronously on startup.
      * If file doesn't exist, uses default keymap.
      * Applies migration to add any new actions from presets.
+     * Tests can fix [corruptFileStamp] to exhaust all preservation names deterministically.
      */
-    internal fun loadSettingsSync() {
+    internal fun loadSettingsSync(corruptFileStamp: Long = System.currentTimeMillis()) {
         try {
             if (settingsFile.exists()) {
                 val content = settingsFile.readText()
@@ -129,9 +130,12 @@ actual object KeymapSettingsManager {
             // it can still be inspected, and self-heal with a fresh default. Only a decode failure
             // lands here: a read error says nothing about whether the bytes are good.
             logger.error(LogCategory.SYSTEM, "Keymap settings file is corrupt, resetting to defaults", decodeFailure(e))
-            if (!settingsFile.renameAsideCorrupt()) {
+            val preservedFile = settingsFile.renameAsideCorruptFile(stamp = corruptFileStamp)
+            if (preservedFile == null) {
                 logger.warn(LogCategory.SYSTEM, "Keymap settings file not moved aside; overwriting it")
             }
+            // This load can run before any window exists; the first window presents the notice.
+            KeymapRecoveryNotices.publish(preservedFile?.absolutePath)
             val defaultSettings = KeymapPresets.getBOSSDefault()
             _currentSettings.value = defaultSettings
             writeDefaultAfterCorruption(settingsFile, json, defaultSettings, logger)

@@ -325,9 +325,10 @@ class AtomicFileWriteTest {
         val target = File(tempDir, "settings.json").apply { writeText("second corruption") }
         val earlier = File(tempDir, "settings.json.corrupt-1234").apply { writeText("first corruption") }
 
-        assertTrue(target.renameAsideCorrupt(stamp = 1234))
+        val preserved = target.renameAsideCorruptFile(stamp = 1234)
 
         assertEquals("first corruption", earlier.readText(), "the earlier aside must not be replaced")
+        assertEquals(File(tempDir, "settings.json.corrupt-1234-1"), preserved)
         assertEquals("second corruption", File(tempDir, "settings.json.corrupt-1234-1").readText())
         assertFalse(target.exists())
     }
@@ -341,7 +342,7 @@ class AtomicFileWriteTest {
                 File(tempDir, "settings.json.corrupt-1234$suffix").apply { writeText("taken $attempt") }
             }
 
-        assertFalse(target.renameAsideCorrupt(stamp = 1234))
+        assertEquals(null, target.renameAsideCorruptFile(stamp = 1234))
 
         assertEquals("torn", target.readText(), "the file stays where it was")
         taken.forEachIndexed { attempt, file -> assertEquals("taken $attempt", file.readText()) }
