@@ -19,6 +19,7 @@ for (
     "20260927000000_user_terminal_preferences.sql",
     "20260927010000_terminal_relay_tickets.sql",
     "20260927020000_terminal_relay_cleanup.sql",
+    "20260927030000_terminal_preferences_conflict_status.sql",
   ]
 ) await db.exec(await readFile(new URL(file, root), "utf8"));
 const a = "11111111-1111-4111-8111-111111111111",
@@ -49,8 +50,13 @@ assert.equal(
 );
 await assert.rejects(
   db.query("SELECT set_user_terminal_preferences('batch',4,0)"),
-  (e) => hasCode(e, "40001"),
+  (e) => hasCode(e, "PT409"),
 );
+await assert.rejects(
+  db.query("SELECT set_user_terminal_preferences('batch',4,99)"),
+  (e) => hasCode(e, "PT409"),
+);
+assert.equal((await scalar<Preferences>("SELECT get_user_terminal_preferences() value")).revision, 1);
 await assert.rejects(
   db.query("SELECT set_user_terminal_preferences('batch',31,1)"),
   (e) => hasCode(e, "22023"),

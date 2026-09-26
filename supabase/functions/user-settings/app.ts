@@ -102,7 +102,9 @@ function defaultRpc(): Rpc {
     );
     if (!r.ok) {
       const error = await r.json().catch(() => ({}));
-      throw new Error(error?.code === "40001" ? "conflict" : "rpc");
+      throw new Error(
+        ["PT409", "40001"].includes(error?.code) ? "conflict" : "rpc",
+      );
     }
     return await r.json();
   };

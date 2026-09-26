@@ -151,3 +151,63 @@ Deno.test("handoff rejects same-site subresources before consuming the token", a
   );
   assertEquals(calls, 1);
 });
+
+Deno.test("RPC adapter handles explicit HTTP conflicts and legacy serialization codes without leaking errors", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousUrl = Deno.env.get("SUPABASE_URL");
+  const previousKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  Deno.env.set("SUPABASE_URL", "https://database.example");
+  Deno.env.set("SUPABASE_SERVICE_ROLE_KEY", "synthetic-service-key");
+  try {
+    const session = await cookie();
+    for (
+      const [code, upstreamStatus, expectedStatus] of [["PT409", 409, 409], [
+        "40001",
+        500,
+        409,
+      ], ["XX000", 500, 503]] as const
+    ) {
+      let calls = 0;
+      globalThis.fetch = (input, init) => {
+        calls++;
+        assertEquals(
+          String(input),
+          "https://database.example/rest/v1/rpc/set_user_terminal_preferences",
+        );
+        assertEquals(
+          new Headers(init?.headers).get("Authorization"),
+          "Bearer synthetic-service-key",
+        );
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ code, message: "private database detail" }),
+            { status: upstreamStatus },
+          ),
+        );
+      };
+      const response = await createApp(config)(
+        new Request(base, {
+          method: "POST",
+          headers: {
+            cookie: session,
+            origin,
+            "content-type": "application/x-www-form-urlencoded",
+          },
+          body: `csrf=${csrf}&action=save&mode=preview&fps=10&revision=0`,
+        }),
+      );
+      assertEquals(response.status, expectedStatus);
+      assertEquals(
+        (await response.text()).includes("private database detail"),
+        false,
+      );
+      assertEquals(calls, 1);
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousUrl === undefined) Deno.env.delete("SUPABASE_URL");
+    else Deno.env.set("SUPABASE_URL", previousUrl);
+    if (previousKey === undefined) Deno.env.delete("SUPABASE_SERVICE_ROLE_KEY");
+    else Deno.env.set("SUPABASE_SERVICE_ROLE_KEY", previousKey);
+  }
+});

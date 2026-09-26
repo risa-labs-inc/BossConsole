@@ -87,6 +87,7 @@ Apply these additive migrations in order:
 1. `20260927000000_user_terminal_preferences.sql`
 2. `20260927010000_terminal_relay_tickets.sql`
 3. `20260927020000_terminal_relay_cleanup.sql`
+4. `20260927030000_terminal_preferences_conflict_status.sql` (stale saves return HTTP 409)
 
 Deploy `user-settings`, `live-sessions` and `relay-admission` explicitly. Settings requires
 `USER_SETTINGS_SESSION_SECRET` (at least 32 random characters), optional
