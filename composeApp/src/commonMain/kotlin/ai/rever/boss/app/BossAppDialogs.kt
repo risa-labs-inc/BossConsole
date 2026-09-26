@@ -55,7 +55,7 @@ import ai.rever.boss.dashboard.DashboardStatsManager
 import ai.rever.boss.html.HtmlFileOpenMode
 import ai.rever.boss.html.HtmlFileSettingsManager
 import ai.rever.boss.icons.FileIcons
-import ai.rever.boss.keymap.KeymapRecoveryNotices
+import ai.rever.boss.keymap.KeymapRecoveryDialog
 import ai.rever.boss.keymap.KeymapSettingsManager
 import ai.rever.boss.keymap.model.KeymapActions
 import ai.rever.boss.mcp.McpToolRegistryImpl
@@ -88,7 +88,6 @@ import ai.rever.boss.terminal.TerminalLinkSettingsManager
 import ai.rever.boss.utils.WindowFocusManager
 import ai.rever.boss.utils.extractFileName
 import ai.rever.boss.utils.logging.LogCategory
-import ai.rever.boss.utils.revealInFileManager
 import ai.rever.boss.window.MenuActionsHandler
 import ai.rever.boss.window.Project
 import ai.rever.boss.window.WindowOperations
@@ -126,55 +125,9 @@ internal fun BossAppDialogs(state: BossAppState) {
     val selectedProject by windowProjectState.selectedProject.collectAsState()
     val spotlightFileIndexer = rememberSpotlightFileIndexer(state.spotlightFileIndexes, selectedProject.path)
 
-    // Loading settings may also queue a startup recovery notice.
+    // ShortcutHelpDialog uses the current keymap below.
     val keymapSettings by KeymapSettingsManager.currentSettings.collectAsState()
-    val keymapRecovery = remember { KeymapRecoveryNotices.claim() }
-    var showKeymapRecovery by remember { mutableStateOf(keymapRecovery != null) }
-
-    if (showKeymapRecovery && keymapRecovery != null) {
-        val preservedFile = keymapRecovery.preservedFile
-        BossAlertDialog(
-            onDismissRequest = { showKeymapRecovery = false },
-            title = { Text("Keyboard shortcuts reset", color = BossTheme.colors.textPrimary) },
-            text = {
-                Text(
-                    if (preservedFile != null) {
-                        "The keyboard shortcuts file could not be read, so BOSS restored the defaults. " +
-                            "A copy of the unreadable file was saved for inspection."
-                    } else {
-                        "The keyboard shortcuts file could not be read, so BOSS restored the defaults. " +
-                            "A copy of the unreadable file could not be saved."
-                    },
-                    color = BossTheme.colors.textSecondary,
-                )
-            },
-            dismissButton =
-                if (preservedFile != null) {
-                    {
-                        TextButton(
-                            onClick = {
-                                val result = revealInFileManager(preservedFile)
-                                if (result.isFailure) {
-                                    coroutineScope.launch {
-                                        StatusMessageManager.showMessage("Could not reveal the saved shortcuts file")
-                                    }
-                                }
-                                showKeymapRecovery = false
-                            },
-                        ) {
-                            Text("Reveal saved file", color = BossTheme.colors.signalText)
-                        }
-                    }
-                } else {
-                    null
-                },
-            confirmButton = {
-                TextButton(onClick = { showKeymapRecovery = false }) {
-                    Text("Close", color = BossTheme.colors.signalText)
-                }
-            },
-        )
-    }
+    KeymapRecoveryDialog()
 
     // Plugin update confirmation prompt (from "Check for Updates" or the header badge).
     state.pluginUpdatePrompt?.let { prompt ->

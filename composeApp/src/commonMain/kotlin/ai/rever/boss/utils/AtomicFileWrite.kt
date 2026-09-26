@@ -197,6 +197,9 @@ private fun Path.throwIfNotOwnedByCurrentUser() {
     }
 }
 
+/** Boolean compatibility API for settings managers that do not need the preserved path. */
+fun File.renameAsideCorrupt(): Boolean = renameAsideCorruptFile() != null
+
 /**
  * Rename this file aside as `<name>.corrupt-<millis>`, so a settings file that fails to *decode*
  * (as opposed to fresh state simply not existing yet) is preserved for inspection rather than
@@ -219,15 +222,15 @@ private fun Path.throwIfNotOwnedByCurrentUser() {
  * via the return value rather than thrown. The three settings managers call this from recovery
  * paths their object initializers reach, so an escape would fail the whole object rather than leave
  * it on defaults (#1692); the caller's own fallback - fresh defaults, written back with
- * [atomicWriteText] - is what keeps the app usable either way. **When this returns `false` the
+ * [atomicWriteText] - is what keeps the app usable either way. **When this returns `null` the
  * caller's write-back overwrites the corrupt bytes.**
  *
  * `.corrupt-*` files are never pruned. They do not end in `.json`, so no settings scan picks them
  * up, and the file self-heals, so there is at most one per corruption event.
+ *
+ * Returns the exact preserved file, including any collision suffix, or `null` on failure.
+ * Tests can supply a fixed [stamp] to exercise collisions deterministically (#1693).
  */
-fun File.renameAsideCorrupt(): Boolean = renameAsideCorruptFile() != null
-
-/** Return the exact saved copy, including a collision suffix; tests can supply a fixed stamp (#1693). */
 internal fun File.renameAsideCorruptFile(stamp: Long = System.currentTimeMillis()): File? {
     var lastFailure: Exception? = null
     var attempt = 0
@@ -235,8 +238,9 @@ internal fun File.renameAsideCorruptFile(stamp: Long = System.currentTimeMillis(
         val suffix = if (attempt == 0) "" else "-$attempt"
         try {
             val aside = resolveSibling("$name.corrupt-$stamp$suffix")
-            Files.move(toPath(), aside.toPath())
-            aside.toPath().restrictToOwner()
+            val asidePath = aside.toPath()
+            Files.move(toPath(), asidePath)
+            asidePath.restrictToOwner()
             return aside
         } catch (e: FileAlreadyExistsException) {
             // Name taken: try the next suffix.

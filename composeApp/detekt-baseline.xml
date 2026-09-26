@@ -971,7 +971,7 @@
     <ID>NestedBlockDepth:GitHubUpdateSource.kt$GitHubUpdateSource$override suspend fun listReleases(): List&lt;GitHubRelease&gt;</ID>
     <ID>NestedBlockDepth:GlobalSearchService.kt$GlobalSearchService$private suspend fun searchPluginProviders(query: String): List&lt;SearchResult&gt;</ID>
     <ID>NestedBlockDepth:KeyboardEventBus.kt$KeyboardEventBus$suspend fun emit(event: KeyboardEvent): Boolean</ID>
-    <ID>NestedBlockDepth:KeymapSettingsManager.kt$KeymapSettingsManager$internal fun loadSettingsSync()</ID>
+    <ID>NestedBlockDepth:KeymapSettingsManager.kt$KeymapSettingsManager$internal fun loadSettingsSync(corruptFileStamp: Long = System.currentTimeMillis())</ID>
     <ID>NestedBlockDepth:PasskeyAuthService.kt$PasskeyAuthService$suspend fun authenticateWithPasskey( email: String? = null, credentialId: String? = null, ): Result&lt;Unit&gt;</ID>
     <ID>NestedBlockDepth:PasskeySessionHandler.kt$PasskeySessionHandler$suspend fun completeAuthentication(authData: PasskeyAuthenticationResult): Result&lt;Unit&gt;</ID>
     <ID>NestedBlockDepth:PluginStoreSetup.kt$PluginStoreSetup$private fun copyBundledPluginsToPluginDir(dynamicPluginManager: ai.rever.boss.components.plugin.DynamicPluginManager)</ID>

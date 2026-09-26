@@ -84,8 +84,9 @@ actual object KeymapSettingsManager {
      * Load settings synchronously on startup.
      * If file doesn't exist, uses default keymap.
      * Applies migration to add any new actions from presets.
+     * Tests can fix [corruptFileStamp] to exhaust all preservation names deterministically.
      */
-    internal fun loadSettingsSync() {
+    internal fun loadSettingsSync(corruptFileStamp: Long = System.currentTimeMillis()) {
         try {
             if (settingsFile.exists()) {
                 val content = settingsFile.readText()
@@ -129,7 +130,7 @@ actual object KeymapSettingsManager {
             // it can still be inspected, and self-heal with a fresh default. Only a decode failure
             // lands here: a read error says nothing about whether the bytes are good.
             logger.error(LogCategory.SYSTEM, "Keymap settings file is corrupt, resetting to defaults", decodeFailure(e))
-            val preservedFile = settingsFile.renameAsideCorruptFile()
+            val preservedFile = settingsFile.renameAsideCorruptFile(stamp = corruptFileStamp)
             if (preservedFile == null) {
                 logger.warn(LogCategory.SYSTEM, "Keymap settings file not moved aside; overwriting it")
             }
