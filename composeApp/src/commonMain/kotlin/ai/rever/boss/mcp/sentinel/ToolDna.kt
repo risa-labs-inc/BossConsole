@@ -146,5 +146,5 @@ data class ToolBaselineRecord(
     val reasonForReevaluation: String? = null,
     val findings: List<SecurityFinding> = emptyList(),
     val userDecision: String? = null,
+    val hmacSignature: String? = null,
 )
-

@@ -11,7 +11,6 @@ import ai.rever.boss.plugin.api.RegisteredMcpTool
  * 3. Conflicting tool definitions for equivalent identities.
  */
 object ToolShadowingDetector {
-
     /**
      * Analyze a list of registered tools from all providers for collisions.
      */
@@ -25,13 +24,16 @@ object ToolShadowingDetector {
             if (providers.size > 1) {
                 for (tool in toolList) {
                     val colliding = providers.filter { it != tool.providerId }
+                    val collidingStr = colliding.joinToString()
                     findings.add(
                         ShadowingFinding(
                             collidingProviderId = colliding.joinToString(", "),
                             toolName = name,
                             collisionType = "EXACT_NAME_COLLISION",
-                            explanation = "Tool '$name' contributed by '${tool.providerId}' collides with exact same tool name from provider(s): ${colliding.joinToString()}.",
-                        )
+                            explanation =
+                                "Tool '$name' contributed by '${tool.providerId}' " +
+                                    "collides with exact same tool name from provider(s): $collidingStr.",
+                        ),
                     )
                 }
             }
@@ -39,7 +41,7 @@ object ToolShadowingDetector {
 
         // Group tools by normalized tool name
         val normalizedGroups = tools.groupBy { normalizeToolName(it.definition.name) }
-        for ((normName, toolList) in normalizedGroups) {
+        for ((_, toolList) in normalizedGroups) {
             val distinctNames = toolList.map { it.definition.name }.distinct()
             val providers = toolList.map { it.providerId }.distinct()
 
@@ -47,13 +49,16 @@ object ToolShadowingDetector {
                 for (tool in toolList) {
                     val others = toolList.filter { it.providerId != tool.providerId }
                     val collidingNames = others.map { "${it.providerId}/${it.definition.name}" }
+                    val collidingStr = collidingNames.joinToString()
                     findings.add(
                         ShadowingFinding(
                             collidingProviderId = others.map { it.providerId }.distinct().joinToString(", "),
                             toolName = tool.definition.name,
                             collisionType = "NORMALIZED_NAME_COLLISION",
-                            explanation = "Tool '${tool.definition.name}' from '${tool.providerId}' has a normalized name collision with: ${collidingNames.joinToString()}.",
-                        )
+                            explanation =
+                                "Tool '${tool.definition.name}' from '${tool.providerId}' " +
+                                    "has a normalized name collision with: $collidingStr.",
+                        ),
                     )
                 }
             }
@@ -65,11 +70,11 @@ object ToolShadowingDetector {
     /**
      * Normalize tool name by converting to lowercase and stripping delimiters (`_`, `-`, `.`).
      */
-    fun normalizeToolName(name: String): String {
-        return name.lowercase()
+    fun normalizeToolName(name: String): String =
+        name
+            .lowercase()
             .replace("_", "")
             .replace("-", "")
             .replace(".", "")
             .replace(" ", "")
-    }
 }

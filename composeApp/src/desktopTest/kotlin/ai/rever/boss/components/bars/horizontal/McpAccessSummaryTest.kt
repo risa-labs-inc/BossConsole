@@ -12,32 +12,46 @@ import kotlin.test.assertTrue
  */
 class McpAccessSummaryTest {
     private fun labels(summary: McpAccessSummary): List<String> {
-        val items = mcpAccessMenuItems(summary, {}, {}, {})
+        val items = mcpAccessMenuItems(summary, McpAccessMenuActions(onPolicies = {}))
         return items.map { if (it.isDivider) "---" else it.text }
     }
 
     @Test
     fun `every control the bar used to show is reachable from the menu`() {
         assertEquals(
-            listOf("Tool policies (3)...", "Session trust (1)...", "Trusted plugins (2)...", "---", "YOLO mode..."),
+            listOf(
+                "Tool policies (3)...",
+                "Session trust (1)...",
+                "Trusted plugins (2)...",
+                "MCP Sentinel (ToolDNA)...",
+                "---",
+                "YOLO mode...",
+            ),
             labels(McpAccessSummary(savedRules = 3, trustedPlugins = 2, sessionGrants = 1)),
         )
     }
 
     @Test
     fun `entries that would do nothing are left out, but tool policies always stays`() {
-        assertEquals(listOf("Tool policies...", "---", "YOLO mode..."), labels(McpAccessSummary(0, 0, 0)))
+        val expected = listOf("Tool policies...", "MCP Sentinel (ToolDNA)...", "---", "YOLO mode...")
+        assertEquals(expected, labels(McpAccessSummary(0, 0, 0)))
     }
 
     @Test
     fun `each entry runs its own action`() {
         val fired = mutableListOf<String>()
-        mcpAccessMenuItems(
-            McpAccessSummary(1, 1, 1),
-            onPolicies = { fired += "policies" },
-            onSessionTrust = { fired += "session" },
-            onTrustedPlugins = { fired += "plugins" },
-        ).filterNot { it.isDivider || it.text == "YOLO mode..." }.forEach { it.onClick() }
+        val menuItems =
+            mcpAccessMenuItems(
+                McpAccessSummary(1, 1, 1),
+                McpAccessMenuActions(
+                    onPolicies = { fired += "policies" },
+                    onSessionTrust = { fired += "session" },
+                    onTrustedPlugins = { fired += "plugins" },
+                ),
+            )
+        menuItems
+            .filterNot { it.isDivider || it.text == "YOLO mode..." || it.text.startsWith("MCP Sentinel") }
+            .forEach { it.onClick() }
         assertEquals(listOf("policies", "session", "plugins"), fired)
     }
 

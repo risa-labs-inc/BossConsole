@@ -1,6 +1,8 @@
 package ai.rever.boss.mcp.sentinel
 
+import ai.rever.boss.mcp.McpApprovalDisposition
 import ai.rever.boss.mcp.McpOperationLedger
+import ai.rever.boss.mcp.McpPolicyAction
 import ai.rever.boss.plugin.api.RegisteredMcpTool
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -34,6 +36,15 @@ data class SentinelInvocationCheck(
     val evaluationResult: ToolEvaluationResult?,
 )
 
+private data class EvaluationContext(
+    val providerId: String,
+    val toolName: String,
+    val fingerprint: ToolDnaFingerprint,
+    val baseline: ToolBaselineRecord?,
+    val securityFindings: List<SecurityFinding>,
+    val toolShadowings: List<ShadowingFinding>,
+)
+
 /**
  * Engine coordinating MCP Sentinel's trust lifecycle, change detection, security scanning, and governance integration.
  */
@@ -52,11 +63,9 @@ class McpSentinelEngine(
 
     /**
      * Evaluate all currently registered tools.
-     * Computes fingerprints, diffs, static scans, shadowing, and updates evaluation state flow.
      */
     fun evaluateAll(tools: List<RegisteredMcpTool>): List<ToolEvaluationResult> {
         val shadowings = ToolShadowingDetector.detectShadowing(tools)
-
         val results = mutableListOf<ToolEvaluationResult>()
         val evalMap = mutableMapOf<String, ToolEvaluationResult>()
 
@@ -66,7 +75,6 @@ class McpSentinelEngine(
                 results.add(eval)
                 evalMap["${eval.providerId}/${eval.toolName}"] = eval
             }
-
             _shadowingFindings.value = shadowings
             _evaluations.value = evalMap
         }
@@ -101,83 +109,95 @@ class McpSentinelEngine(
             eval = evaluateSingleToolAndMerge(registeredTool)
         }
 
-        val targetEval = eval ?: return SentinelInvocationCheck(
-            isAllowed = true,
-            trustState = SentinelTrustState.UNKNOWN,
-            reason = null,
-            evaluationResult = null,
-        )
-
-        return when (targetEval.trustState) {
-            SentinelTrustState.BLOCKED -> SentinelInvocationCheck(
-                isAllowed = false,
-                trustState = targetEval.trustState,
-                reason = "MCP Sentinel: Tool '$toolName' from provider '$providerId' is BLOCKED by security policy.",
-                evaluationResult = targetEval,
-            )
-            SentinelTrustState.CHANGED -> SentinelInvocationCheck(
-                isAllowed = false,
-                trustState = targetEval.trustState,
-                reason = "MCP Sentinel: Tool '$toolName' definition changed (Rug Pull detected). Re-approval required.",
-                evaluationResult = targetEval,
-            )
-            SentinelTrustState.SUSPICIOUS -> SentinelInvocationCheck(
-                isAllowed = false,
-                trustState = targetEval.trustState,
-                reason = "MCP Sentinel: Tool '$toolName' flagged for suspicious content: ${targetEval.reason}",
-                evaluationResult = targetEval,
-            )
-            SentinelTrustState.REVIEW_REQUIRED -> SentinelInvocationCheck(
-                isAllowed = false,
-                trustState = targetEval.trustState,
-                reason = "MCP Sentinel: Tool '$toolName' definition updated with structural changes. Operator review required.",
-                evaluationResult = targetEval,
-            )
-            SentinelTrustState.NEW, SentinelTrustState.TRUSTED, SentinelTrustState.UNKNOWN -> SentinelInvocationCheck(
+        val targetEval =
+            eval ?: return SentinelInvocationCheck(
                 isAllowed = true,
-                trustState = targetEval.trustState,
+                trustState = SentinelTrustState.UNKNOWN,
                 reason = null,
-                evaluationResult = targetEval,
+                evaluationResult = null,
             )
-        }
+
+        val (isAllowed, reason) =
+            when (targetEval.trustState) {
+                SentinelTrustState.BLOCKED -> {
+                    false to
+                        "MCP Sentinel: Tool '$toolName' from provider '$providerId' is BLOCKED by security policy."
+                }
+
+                SentinelTrustState.CHANGED -> {
+                    false to
+                        "MCP Sentinel: Tool '$toolName' definition changed (Rug Pull detected). Re-approval required."
+                }
+
+                SentinelTrustState.SUSPICIOUS -> {
+                    false to
+                        "MCP Sentinel: Tool '$toolName' flagged for suspicious content: ${targetEval.reason}"
+                }
+
+                SentinelTrustState.REVIEW_REQUIRED -> {
+                    val msg =
+                        "MCP Sentinel: Tool '$toolName' definition updated with structural changes. " +
+                            "Operator review required."
+                    false to msg
+                }
+
+                SentinelTrustState.NEW, SentinelTrustState.TRUSTED, SentinelTrustState.UNKNOWN -> {
+                    true to null
+                }
+            }
+
+        return SentinelInvocationCheck(
+            isAllowed = isAllowed,
+            trustState = targetEval.trustState,
+            reason = reason,
+            evaluationResult = targetEval,
+        )
     }
 
     /**
      * Explicitly approve a tool definition change and update its baseline.
-     * Transitions state to [SentinelTrustState.TRUSTED].
-     * If [reviewedFingerprint] is provided, verifies that the current tool fingerprint matches
-     * the fingerprint the operator actually reviewed (CAS protection).
      */
     fun approveAndTrustTool(
         providerId: String,
         toolName: String,
         reviewedFingerprint: String? = null,
         registeredTool: RegisteredMcpTool? = null,
-    ): Boolean {
+    ): Boolean =
         synchronized(lock) {
             val key = "$providerId/$toolName"
             val eval = _evaluations.value[key]
+            val currentFingerprint =
+                eval?.currentFingerprint
+                    ?: registeredTool?.let { ToolDnaFingerprinter.computeFingerprint(it) }
 
-            val currentFingerprint = eval?.currentFingerprint
-                ?: registeredTool?.let { ToolDnaFingerprinter.computeFingerprint(it) }
-                ?: return false
+            if (currentFingerprint == null) return@synchronized false
 
-            if (reviewedFingerprint != null && currentFingerprint.fingerprint != reviewedFingerprint) {
+            val isMatch = reviewedFingerprint == null || currentFingerprint.fingerprint == reviewedFingerprint
+            if (isMatch) {
+                executeApproval(providerId, toolName, currentFingerprint, registeredTool)
+            } else {
                 logger.warn(
                     LogCategory.SYSTEM,
                     "MCP Sentinel: Rejected approval due to fingerprint mismatch",
-                    mapOf("reviewed" to reviewedFingerprint, "current" to currentFingerprint.fingerprint),
+                    mapOf("reviewed" to (reviewedFingerprint ?: ""), "current" to currentFingerprint.fingerprint),
                 )
-                return false
+                false
             }
+        }
 
-            val existingBaseline = baselineStore.getBaseline(providerId, toolName)
-            val now = System.currentTimeMillis()
+    private fun executeApproval(
+        providerId: String,
+        toolName: String,
+        currentFingerprint: ToolDnaFingerprint,
+        registeredTool: RegisteredMcpTool?,
+    ): Boolean {
+        val existingBaseline = baselineStore.getBaseline(providerId, toolName)
+        val now = System.currentTimeMillis()
+        val history = (existingBaseline?.fingerprintHistory.orEmpty() + currentFingerprint.fingerprint).distinct()
+        val changeHist = (existingBaseline?.changeHistory.orEmpty() + "Approved by user at $now").takeLast(50)
 
-            val history = (existingBaseline?.fingerprintHistory.orEmpty() + currentFingerprint.fingerprint).distinct()
-            val changeHist = (existingBaseline?.changeHistory.orEmpty() + "Approved by user at $now").takeLast(50)
-
-            val newRecord = ToolBaselineRecord(
+        val newRecord =
+            ToolBaselineRecord(
                 providerId = providerId,
                 toolName = toolName,
                 canonicalFingerprint = currentFingerprint.fingerprint,
@@ -191,47 +211,49 @@ class McpSentinelEngine(
                 requiresAdmin = currentFingerprint.requiresAdmin,
                 fingerprintHistory = history,
                 changeHistory = changeHist,
-                reasonForReevaluation = null,
-                findings = emptyList(),
                 userDecision = "APPROVED",
             )
 
-            val saved = baselineStore.saveBaseline(newRecord)
-            if (saved) {
-                logger.info(
-                    LogCategory.SYSTEM,
-                    "MCP Sentinel: Approved and established new baseline",
-                    mapOf("provider" to providerId, "tool" to toolName, "fingerprint" to currentFingerprint.fingerprint),
-                )
-                recordAuditEvent("TOOL_REAPPROVED", providerId, toolName, currentFingerprint.fingerprint)
-                // Re-evaluate to update state flow
-                registeredTool?.let { evaluateSingleToolAndMerge(it) }
-            }
-            return saved
+        val saved = baselineStore.saveBaseline(newRecord)
+        if (saved) {
+            logger.info(
+                LogCategory.SYSTEM,
+                "MCP Sentinel: Approved and established new baseline",
+                mapOf("provider" to providerId, "tool" to toolName, "fingerprint" to currentFingerprint.fingerprint),
+            )
+            recordAuditEvent("TOOL_REAPPROVED", providerId, toolName, currentFingerprint.fingerprint)
+            registeredTool?.let { evaluateSingleToolAndMerge(it) }
         }
+        return saved
     }
 
     /**
      * Explicitly block a tool.
      */
-    fun blockTool(providerId: String, toolName: String): Boolean {
+    fun blockTool(
+        providerId: String,
+        toolName: String,
+    ): Boolean {
         synchronized(lock) {
             val existing = baselineStore.getBaseline(providerId, toolName)
             val now = System.currentTimeMillis()
-            val updated = (existing ?: ToolBaselineRecord(
-                providerId = providerId,
-                toolName = toolName,
-                canonicalFingerprint = "",
-                firstSeenTimestamp = now,
-                lastSeenTimestamp = now,
-                trustState = SentinelTrustState.BLOCKED,
-                lastAcceptedDescription = "",
-                lastAcceptedSchemaJson = "",
-            )).copy(
-                trustState = SentinelTrustState.BLOCKED,
-                userDecision = "BLOCKED",
-                lastSeenTimestamp = now,
-            )
+            val updated =
+                (
+                    existing ?: ToolBaselineRecord(
+                        providerId = providerId,
+                        toolName = toolName,
+                        canonicalFingerprint = "",
+                        firstSeenTimestamp = now,
+                        lastSeenTimestamp = now,
+                        trustState = SentinelTrustState.BLOCKED,
+                        lastAcceptedDescription = "",
+                        lastAcceptedSchemaJson = "",
+                    )
+                ).copy(
+                    trustState = SentinelTrustState.BLOCKED,
+                    userDecision = "BLOCKED",
+                    lastSeenTimestamp = now,
+                )
 
             val saved = baselineStore.saveBaseline(updated)
             if (saved) {
@@ -242,16 +264,20 @@ class McpSentinelEngine(
     }
 
     /**
-     * Unblock a tool and reset its trust state to UNKNOWN / NEW for re-evaluation.
+     * Unblock a tool and reset its trust state to NEW for re-evaluation.
      */
-    fun unblockTool(providerId: String, toolName: String): Boolean {
+    fun unblockTool(
+        providerId: String,
+        toolName: String,
+    ): Boolean {
         synchronized(lock) {
             val existing = baselineStore.getBaseline(providerId, toolName) ?: return false
-            val updated = existing.copy(
-                trustState = SentinelTrustState.NEW,
-                userDecision = "UNBLOCKED",
-                lastSeenTimestamp = System.currentTimeMillis(),
-            )
+            val updated =
+                existing.copy(
+                    trustState = SentinelTrustState.NEW,
+                    userDecision = "UNBLOCKED",
+                    lastSeenTimestamp = System.currentTimeMillis(),
+                )
 
             val saved = baselineStore.saveBaseline(updated)
             if (saved) {
@@ -266,18 +292,13 @@ class McpSentinelEngine(
         shadowings: List<ShadowingFinding>,
     ): ToolEvaluationResult {
         val providerId = registered.providerId
-        val def = registered.definition
-        val toolName = def.name
-
+        val toolName = registered.definition.name
         val fingerprint = ToolDnaFingerprinter.computeFingerprint(registered)
-
-        val securityFindings = ToolContentScanner.scan(def)
+        val securityFindings = ToolContentScanner.scan(registered.definition)
         val toolShadowings = shadowings.filter { it.toolName == toolName }
-
         val now = System.currentTimeMillis()
 
         if (baselineStore.isCorrupted) {
-            val corruptReason = "ToolDNA baseline store is corrupted on disk; operator review required."
             return ToolEvaluationResult(
                 providerId = providerId,
                 toolName = toolName,
@@ -287,144 +308,192 @@ class McpSentinelEngine(
                 diffResult = null,
                 securityFindings = securityFindings,
                 shadowingFindings = toolShadowings,
-                reason = corruptReason,
+                reason = "ToolDNA baseline store is corrupted on disk; operator review required.",
             )
         }
 
         val baseline = baselineStore.getBaseline(providerId, toolName)
+        val ctx = EvaluationContext(providerId, toolName, fingerprint, baseline, securityFindings, toolShadowings)
 
-        if (baseline == null) {
-            // New tool never seen before
-            val isSuspicious = securityFindings.any { it.severity >= FindingSeverity.HIGH }
-            val hasShadowing = toolShadowings.isNotEmpty()
-            val state = when {
-                isSuspicious -> SentinelTrustState.SUSPICIOUS
-                hasShadowing -> SentinelTrustState.REVIEW_REQUIRED
-                else -> SentinelTrustState.NEW
-            }
-
-            val reason = when {
-                isSuspicious -> "New tool detected with suspicious findings (${securityFindings.size})"
-                hasShadowing -> "New tool detected with cross-provider shadowing collision"
-                else -> "First time observing tool definition"
-            }
-
-            // Auto-create initial baseline as NEW
-            val record = ToolBaselineRecord(
-                providerId = providerId,
-                toolName = toolName,
-                canonicalFingerprint = fingerprint.fingerprint,
-                fingerprintVersion = fingerprint.algorithmVersion,
-                firstSeenTimestamp = now,
-                lastSeenTimestamp = now,
-                trustState = state,
-                lastAcceptedDescription = fingerprint.canonicalDescription,
-                lastAcceptedSchemaJson = fingerprint.canonicalInputSchemaJson,
-                readOnly = fingerprint.readOnly,
-                requiresAdmin = fingerprint.requiresAdmin,
-                findings = securityFindings,
-                reasonForReevaluation = reason,
-            )
-            baselineStore.saveBaseline(record)
-            recordAuditEvent("TOOL_FIRST_SEEN", providerId, toolName, fingerprint.fingerprint)
-
-            return ToolEvaluationResult(
-                providerId = providerId,
-                toolName = toolName,
-                trustState = state,
-                currentFingerprint = fingerprint,
-                baselineRecord = record,
-                diffResult = null,
-                securityFindings = securityFindings,
-                shadowingFindings = toolShadowings,
-                reason = reason,
-            )
+        return when {
+            baseline == null -> SentinelEvaluator.evaluateNewTool(baselineStore, ::recordAuditEvent, ctx, now)
+            baseline.trustState == SentinelTrustState.BLOCKED -> SentinelEvaluator.evaluateBlockedTool(ctx)
+            baseline.canonicalFingerprint == fingerprint.fingerprint -> SentinelEvaluator.evaluateUnchangedTool(ctx)
+            else -> SentinelEvaluator.evaluateChangedTool(registered, ::recordAuditEvent, ctx)
         }
-
-        // Check explicit user block
-        if (baseline.trustState == SentinelTrustState.BLOCKED) {
-            return ToolEvaluationResult(
-                providerId = providerId,
-                toolName = toolName,
-                trustState = SentinelTrustState.BLOCKED,
-                currentFingerprint = fingerprint,
-                baselineRecord = baseline,
-                diffResult = null,
-                securityFindings = securityFindings,
-                shadowingFindings = toolShadowings,
-                reason = "Tool is explicitly BLOCKED by operator policy.",
-            )
-        }
-
-        // Compare fingerprints
-        if (baseline.canonicalFingerprint == fingerprint.fingerprint) {
-            // Definition matches baseline!
-            val isSuspicious = securityFindings.any { it.severity >= FindingSeverity.HIGH }
-            val state = when {
-                baseline.trustState == SentinelTrustState.TRUSTED || baseline.userDecision == "APPROVED" -> SentinelTrustState.TRUSTED
-                isSuspicious -> SentinelTrustState.SUSPICIOUS
-                else -> baseline.trustState
-            }
-
-            return ToolEvaluationResult(
-                providerId = providerId,
-                toolName = toolName,
-                trustState = state,
-                currentFingerprint = fingerprint,
-                baselineRecord = baseline,
-                diffResult = null,
-                securityFindings = securityFindings,
-                shadowingFindings = toolShadowings,
-                reason = if (isSuspicious && state != SentinelTrustState.TRUSTED) {
-                    "Matches baseline fingerprint but contains security findings"
-                } else {
-                    "Matches trusted baseline"
-                },
-            )
-        }
-
-        // FINGERPRINT MISMATCH -> RUG PULL / DEFINITION CHANGED!
-        val diff = ToolDnaDiffEngine.computeDiff(
-            oldDescription = baseline.lastAcceptedDescription,
-            oldSchemaJson = baseline.lastAcceptedSchemaJson,
-            oldReadOnly = baseline.readOnly,
-            oldRequiresAdmin = baseline.requiresAdmin,
-            newDefinition = def,
-        )
-
-        val hasHighSeverityFindings = securityFindings.any { it.severity >= FindingSeverity.HIGH }
-        val hasCapabilityExpansion = diff.categories.contains(ChangeCategory.CAPABILITY_EXPANSION) ||
-                diff.categories.contains(ChangeCategory.DESTRUCTIVE_PARAMETER_ADDED)
-
-        val newState = when {
-            hasHighSeverityFindings -> SentinelTrustState.SUSPICIOUS
-            hasCapabilityExpansion -> SentinelTrustState.REVIEW_REQUIRED
-            else -> SentinelTrustState.CHANGED
-        }
-
-        val reason = "Tool definition changed! Previous: ${baseline.canonicalFingerprint.take(8)}, New: ${fingerprint.fingerprint.take(8)}"
-
-        recordAuditEvent("TOOL_DEFINITION_CHANGED", providerId, toolName, fingerprint.fingerprint)
-
-        return ToolEvaluationResult(
-            providerId = providerId,
-            toolName = toolName,
-            trustState = newState,
-            currentFingerprint = fingerprint,
-            baselineRecord = baseline,
-            diffResult = diff,
-            securityFindings = securityFindings,
-            shadowingFindings = toolShadowings,
-            reason = reason,
-        )
     }
 
-    private fun recordAuditEvent(event: String, providerId: String, toolName: String, fingerprint: String) {
+    private fun recordAuditEvent(
+        event: String,
+        providerId: String,
+        toolName: String,
+        fingerprint: String,
+    ) {
         logger.info(
             LogCategory.SYSTEM,
             "MCP Sentinel Event: $event",
             mapOf("providerId" to providerId, "tool" to toolName, "fingerprint" to fingerprint.take(16)),
         )
+        ledger?.record(
+            toolName = toolName,
+            providerId = providerId,
+            policyApplied = McpPolicyAction.DENY,
+            approvalDisposition = McpApprovalDisposition.SENTINEL_BLOCKED,
+            durationMs = 0L,
+            isError = true,
+            rawArgs = mapOf("event" to event, "fingerprint" to fingerprint.take(16)),
+            errorSnippet = "MCP Sentinel Event: $event (fingerprint: ${fingerprint.take(16)})",
+            countsAsCall = false,
+        )
     }
 }
 
+private object SentinelEvaluator {
+    fun evaluateNewTool(
+        baselineStore: ToolDnaBaselineStore,
+        recordAuditEvent: (String, String, String, String) -> Unit,
+        ctx: EvaluationContext,
+        now: Long,
+    ): ToolEvaluationResult {
+        val isSuspicious = ctx.securityFindings.any { it.severity >= FindingSeverity.HIGH }
+        val hasShadowing = ctx.toolShadowings.isNotEmpty()
+        val state =
+            when {
+                isSuspicious -> SentinelTrustState.SUSPICIOUS
+                hasShadowing -> SentinelTrustState.REVIEW_REQUIRED
+                else -> SentinelTrustState.NEW
+            }
+
+        val reason =
+            when {
+                isSuspicious -> "New tool detected with suspicious findings (${ctx.securityFindings.size})"
+                hasShadowing -> "New tool detected with cross-provider shadowing collision"
+                else -> "First time observing tool definition"
+            }
+
+        val record =
+            ToolBaselineRecord(
+                providerId = ctx.providerId,
+                toolName = ctx.toolName,
+                canonicalFingerprint = ctx.fingerprint.fingerprint,
+                fingerprintVersion = ctx.fingerprint.algorithmVersion,
+                firstSeenTimestamp = now,
+                lastSeenTimestamp = now,
+                trustState = state,
+                lastAcceptedDescription = ctx.fingerprint.canonicalDescription,
+                lastAcceptedSchemaJson = ctx.fingerprint.canonicalInputSchemaJson,
+                readOnly = ctx.fingerprint.readOnly,
+                requiresAdmin = ctx.fingerprint.requiresAdmin,
+                findings = ctx.securityFindings,
+                reasonForReevaluation = reason,
+            )
+        baselineStore.saveBaseline(record)
+        recordAuditEvent("TOOL_FIRST_SEEN", ctx.providerId, ctx.toolName, ctx.fingerprint.fingerprint)
+
+        return ToolEvaluationResult(
+            providerId = ctx.providerId,
+            toolName = ctx.toolName,
+            trustState = state,
+            currentFingerprint = ctx.fingerprint,
+            baselineRecord = record,
+            diffResult = null,
+            securityFindings = ctx.securityFindings,
+            shadowingFindings = ctx.toolShadowings,
+            reason = reason,
+        )
+    }
+
+    fun evaluateBlockedTool(ctx: EvaluationContext): ToolEvaluationResult =
+        ToolEvaluationResult(
+            providerId = ctx.providerId,
+            toolName = ctx.toolName,
+            trustState = SentinelTrustState.BLOCKED,
+            currentFingerprint = ctx.fingerprint,
+            baselineRecord = ctx.baseline,
+            diffResult = null,
+            securityFindings = ctx.securityFindings,
+            shadowingFindings = ctx.toolShadowings,
+            reason = "Tool is explicitly BLOCKED by operator policy.",
+        )
+
+    fun evaluateUnchangedTool(ctx: EvaluationContext): ToolEvaluationResult {
+        val baseline = checkNotNull(ctx.baseline)
+        val isSuspicious = ctx.securityFindings.any { it.severity >= FindingSeverity.HIGH }
+        val state =
+            when {
+                baseline.trustState == SentinelTrustState.TRUSTED || baseline.userDecision == "APPROVED" -> {
+                    SentinelTrustState.TRUSTED
+                }
+
+                isSuspicious -> {
+                    SentinelTrustState.SUSPICIOUS
+                }
+
+                else -> {
+                    baseline.trustState
+                }
+            }
+
+        return ToolEvaluationResult(
+            providerId = ctx.providerId,
+            toolName = ctx.toolName,
+            trustState = state,
+            currentFingerprint = ctx.fingerprint,
+            baselineRecord = baseline,
+            diffResult = null,
+            securityFindings = ctx.securityFindings,
+            shadowingFindings = ctx.toolShadowings,
+            reason =
+                if (isSuspicious && state != SentinelTrustState.TRUSTED) {
+                    "Matches baseline fingerprint but contains security findings"
+                } else {
+                    "Matches trusted baseline"
+                },
+        )
+    }
+
+    fun evaluateChangedTool(
+        registered: RegisteredMcpTool,
+        recordAuditEvent: (String, String, String, String) -> Unit,
+        ctx: EvaluationContext,
+    ): ToolEvaluationResult {
+        val baseline = checkNotNull(ctx.baseline)
+        val diff =
+            ToolDnaDiffEngine.computeDiff(
+                oldDescription = baseline.lastAcceptedDescription,
+                oldSchemaJson = baseline.lastAcceptedSchemaJson,
+                oldReadOnly = baseline.readOnly,
+                oldRequiresAdmin = baseline.requiresAdmin,
+                newDefinition = registered.definition,
+            )
+
+        val hasHighSeverity = ctx.securityFindings.any { it.severity >= FindingSeverity.HIGH }
+        val hasExpansion =
+            diff.categories.contains(ChangeCategory.CAPABILITY_EXPANSION) ||
+                diff.categories.contains(ChangeCategory.DESTRUCTIVE_PARAMETER_ADDED)
+
+        val newState =
+            when {
+                hasHighSeverity -> SentinelTrustState.SUSPICIOUS
+                hasExpansion -> SentinelTrustState.REVIEW_REQUIRED
+                else -> SentinelTrustState.CHANGED
+            }
+
+        val prevFp = baseline.canonicalFingerprint.take(8)
+        val newFp = ctx.fingerprint.fingerprint.take(8)
+        val reason = "Tool definition changed! Previous: $prevFp, New: $newFp"
+        recordAuditEvent("TOOL_DEFINITION_CHANGED", ctx.providerId, ctx.toolName, ctx.fingerprint.fingerprint)
+
+        return ToolEvaluationResult(
+            providerId = ctx.providerId,
+            toolName = ctx.toolName,
+            trustState = newState,
+            currentFingerprint = ctx.fingerprint,
+            baselineRecord = baseline,
+            diffResult = diff,
+            securityFindings = ctx.securityFindings,
+            shadowingFindings = ctx.toolShadowings,
+            reason = reason,
+        )
+    }
+}

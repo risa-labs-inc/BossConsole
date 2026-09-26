@@ -520,7 +520,9 @@ internal class McpToolRegistryCore(
     secretLookup: SecretLookup? = null,
     val sentinelEngine: ai.rever.boss.mcp.sentinel.McpSentinelEngine =
         ai.rever.boss.mcp.sentinel.McpSentinelEngine(
-            baselineStore = ai.rever.boss.mcp.sentinel.ToolDnaBaselineStore(null),
+            baselineStore =
+                ai.rever.boss.mcp.sentinel
+                    .ToolDnaBaselineStore(null),
             ledger = ledger,
         ),
 ) {
@@ -996,7 +998,8 @@ internal class McpToolRegistryCore(
                 } else {
                     val sentinelCheck = sentinelEngine.checkInvocation(tool.providerId, canonicalName, tool)
                     if (!sentinelCheck.isAllowed) {
-                        McpApprovalDisposition.SENTINEL_BLOCKED to (sentinelCheck.reason ?: "MCP Sentinel: Tool '$canonicalName' is blocked or requires review.")
+                        val fallbackReason = "MCP Sentinel: Tool '$canonicalName' is blocked or requires review."
+                        McpApprovalDisposition.SENTINEL_BLOCKED to (sentinelCheck.reason ?: fallbackReason)
                     } else {
                         authorize(tool, args, effectivePolicy, revocation, secrets, escalated)
                     }

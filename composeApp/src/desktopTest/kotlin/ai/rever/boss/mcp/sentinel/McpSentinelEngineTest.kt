@@ -1,6 +1,8 @@
 package ai.rever.boss.mcp.sentinel
 
 import ai.rever.boss.plugin.api.McpToolDefinition
+import ai.rever.boss.plugin.api.McpToolHandler
+import ai.rever.boss.plugin.api.McpToolResult
 import ai.rever.boss.plugin.api.RegisteredMcpTool
 import java.io.File
 import kotlin.test.AfterTest
@@ -14,7 +16,10 @@ class McpSentinelEngineTest {
     private val tempFiles = mutableListOf<File>()
 
     private fun tempBaselineFile(): File {
-        val dir = kotlin.io.path.createTempDirectory("mcp-sentinel-test").toFile()
+        val dir =
+            kotlin.io.path
+                .createTempDirectory("mcp-sentinel-test")
+                .toFile()
         return File(dir, "mcp-tooldna-baseline.json").also { tempFiles.add(it) }
     }
 
@@ -41,7 +46,7 @@ class McpSentinelEngineTest {
         assertEquals(SentinelTrustState.TRUSTED, eval2.trustState)
         assertEquals(
             ToolDnaFingerprinter.computeFingerprint(tool).fingerprint,
-            eval2.currentFingerprint.fingerprint
+            eval2.currentFingerprint.fingerprint,
         )
     }
 
@@ -67,7 +72,7 @@ class McpSentinelEngineTest {
         // 4. Verify Rug Pull transition to CHANGED or SUSPICIOUS
         assertTrue(
             evalB.trustState == SentinelTrustState.CHANGED || evalB.trustState == SentinelTrustState.SUSPICIOUS,
-            "Poisoned definition change must be flagged as CHANGED or SUSPICIOUS"
+            "Poisoned definition change must be flagged as CHANGED or SUSPICIOUS",
         )
         assertNotNull(evalB.diffResult)
         assertTrue(evalB.diffResult!!.hasChanges)
@@ -77,7 +82,7 @@ class McpSentinelEngineTest {
         assertFalse(check.isAllowed, "Invocation of changed tool must be refused")
 
         // 6. Explicit Re-approval
-        engine.approveAndTrustTool("codebase_provider", "read_project_file", toolB)
+        engine.approveAndTrustTool("codebase_provider", "read_project_file", registeredTool = toolB)
         val evalAfterReapprove = engine.evaluateAll(listOf(toolB)).single()
         assertEquals(SentinelTrustState.TRUSTED, evalAfterReapprove.trustState)
 
@@ -110,21 +115,24 @@ class McpSentinelEngineTest {
     }
 
     @Test
-    fun `evaluateSingleToolAndMerge preserves existing tool evaluations`(): Unit {
+    fun `evaluateSingleToolAndMerge preserves existing tool evaluations`() {
         val file = tempBaselineFile()
         val store = ToolDnaBaselineStore(baselineFile = file)
         val engine = McpSentinelEngine(baselineStore = store)
 
         val toolA = AttackSimulationFixtures.BENIGN_READ_FILE_TOOL
-        val toolB = RegisteredMcpTool(
-            providerId = "k8s_provider",
-            definition = McpToolDefinition(
-                name = "k8s_list_pods",
-                description = "List Kubernetes pods in cluster",
-                inputSchema = """{"type":"object"}""",
-                readOnly = true,
+        val toolB =
+            RegisteredMcpTool(
+                providerId = "k8s_provider",
+                definition =
+                    McpToolDefinition(
+                        name = "k8s_list_pods",
+                        description = "List Kubernetes pods in cluster",
+                        inputSchema = """{"type":"object"}""",
+                        readOnly = true,
+                        handler = McpToolHandler { McpToolResult("ok") },
+                    ),
             )
-        )
 
         engine.evaluateAll(listOf(toolA))
         assertEquals(1, engine.evaluations.value.size)
@@ -139,7 +147,7 @@ class McpSentinelEngineTest {
     }
 
     @Test
-    fun `approval with stale reviewedFingerprint is rejected`(): Unit {
+    fun `approval with stale reviewedFingerprint is rejected`() {
         val file = tempBaselineFile()
         val store = ToolDnaBaselineStore(baselineFile = file)
         val engine = McpSentinelEngine(baselineStore = store)
@@ -148,18 +156,19 @@ class McpSentinelEngineTest {
         engine.evaluateAll(listOf(toolA))
 
         val reviewedFingerprint = "stale_sha256_digest_that_does_not_match"
-        val approved = engine.approveAndTrustTool(
-            providerId = "codebase_provider",
-            toolName = "read_project_file",
-            reviewedFingerprint = reviewedFingerprint,
-            registeredTool = toolA,
-        )
+        val approved =
+            engine.approveAndTrustTool(
+                providerId = "codebase_provider",
+                toolName = "read_project_file",
+                reviewedFingerprint = reviewedFingerprint,
+                registeredTool = toolA,
+            )
 
         assertFalse(approved, "Approval must be rejected when reviewed fingerprint differs from current")
     }
 
     @Test
-    fun `corrupted baseline file forces REVIEW_REQUIRED trust state`(): Unit {
+    fun `corrupted baseline file forces REVIEW_REQUIRED trust state`() {
         val file = tempBaselineFile()
         file.writeText("invalid json content { [ corrupt")
 
@@ -173,5 +182,57 @@ class McpSentinelEngineTest {
         assertEquals(SentinelTrustState.REVIEW_REQUIRED, eval.trustState)
         assertTrue(eval.reason.contains("corrupted"))
     }
-}
 
+    @Test
+    fun `tampered baseline record with invalid HMAC signature is rejected and marked REVIEW_REQUIRED`() {
+        val file = tempBaselineFile()
+        val store1 = ToolDnaBaselineStore(baselineFile = file)
+        val engine1 = McpSentinelEngine(baselineStore = store1)
+
+        val tool = AttackSimulationFixtures.BENIGN_READ_FILE_TOOL
+        engine1.evaluateAll(listOf(tool))
+        engine1.approveAndTrustTool("codebase_provider", "read_project_file")
+
+        // Tamper with baseline JSON on disk: change trustState to TRUSTED with fake HMAC
+        val content = file.readText()
+        val tamperedContent =
+            content.replace(
+                Regex(""""hmacSignature"\s*:\s*".*?""""),
+                """"hmacSignature": "forged_hmac_1234567890abcdef"""",
+            )
+        file.writeText(tamperedContent)
+
+        val store2 = ToolDnaBaselineStore(baselineFile = file)
+        val rec = store2.getBaseline("codebase_provider", "read_project_file")
+        assertNotNull(rec)
+        val msg1 = "Tampered baseline record must be forced to REVIEW_REQUIRED"
+        assertEquals(SentinelTrustState.REVIEW_REQUIRED, rec.trustState, msg1)
+    }
+
+    @Test
+    fun `unsigned legacy baseline record is marked REVIEW_REQUIRED for operator re-approval`() {
+        val file = tempBaselineFile()
+        val legacyJson =
+            """
+            [
+              {
+                "providerId": "codebase_provider",
+                "toolName": "read_project_file",
+                "canonicalFingerprint": "legacy_fp_123",
+                "firstSeenTimestamp": 1000,
+                "lastSeenTimestamp": 1000,
+                "trustState": "TRUSTED",
+                "lastAcceptedDescription": "desc",
+                "lastAcceptedSchemaJson": "{}"
+              }
+            ]
+            """.trimIndent()
+        file.writeText(legacyJson)
+
+        val store = ToolDnaBaselineStore(baselineFile = file)
+        val rec = store.getBaseline("codebase_provider", "read_project_file")
+        assertNotNull(rec)
+        val msg2 = "Unsigned legacy record must require operator re-approval"
+        assertEquals(SentinelTrustState.REVIEW_REQUIRED, rec.trustState, msg2)
+    }
+}

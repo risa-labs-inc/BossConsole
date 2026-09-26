@@ -392,17 +392,20 @@ private fun McpAccessStatusItem(persistedPolicyConfig: McpToolPolicyConfig) {
                     items =
                         mcpAccessMenuItems(
                             summary = summary,
-                            onPolicies = { showPolicyManager = true },
-                            onSessionTrust = { showSessionTrust = true },
-                            onTrustedPlugins = { showTrustedPlugins = true },
-                            onSentinel = { showSentinelPanel = true },
-                            onYolo = {
-                                if (yolo) {
-                                    scope.launch { McpToolRegistryImpl.setYoloMode(false) }
-                                } else {
-                                    windowId?.let(McpYoloPrompt::request)
-                                }
-                            },
+                            actions =
+                                McpAccessMenuActions(
+                                    onPolicies = { showPolicyManager = true },
+                                    onSessionTrust = { showSessionTrust = true },
+                                    onTrustedPlugins = { showTrustedPlugins = true },
+                                    onSentinel = { showSentinelPanel = true },
+                                    onYolo = {
+                                        if (yolo) {
+                                            scope.launch { McpToolRegistryImpl.setYoloMode(false) }
+                                        } else {
+                                            windowId?.let(McpYoloPrompt::request)
+                                        }
+                                    },
+                                ),
                         ),
                     // Opens upward from the item: the bar sits at the bottom edge of the window.
                     alignment = Alignment.BottomStart,
@@ -415,14 +418,17 @@ private fun McpAccessStatusItem(persistedPolicyConfig: McpToolPolicyConfig) {
     if (showSentinelPanel) {
         ai.rever.boss.plugin.ui.BossDialog(
             onDismissRequest = { showSentinelPanel = false },
-            properties = androidx.compose.ui.window.DialogProperties(),
+            properties =
+                androidx.compose.ui.window
+                    .DialogProperties(),
         ) {
             androidx.compose.material.Surface(
                 modifier = Modifier.fillMaxWidth(0.9f).fillMaxHeight(0.85f),
                 shape = RoundedCornerShape(12.dp),
                 color = Color(0xFF1E1E2E),
             ) {
-                ai.rever.boss.components.plugin.McpSentinelPanel(modifier = Modifier.fillMaxSize())
+                ai.rever.boss.components.plugin
+                    .McpSentinelPanel(modifier = Modifier.fillMaxSize())
             }
         }
     }
@@ -662,3 +668,5 @@ private fun StatusBarTextButton(
         }
     }
 }
+
+internal fun formatMcpDuration(ms: Long): String = "${ms}ms"

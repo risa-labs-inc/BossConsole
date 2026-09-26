@@ -325,11 +325,21 @@ class FileSystemDataProviderImpl(
      */
     private fun isReadableAndWritable(file: File): Boolean {
         val home = File(System.getProperty("user.home")).canonicalFile
-        // Compares canonicalFile paths, which keep Windows junctions as written, so it is
-        // knowingly weaker than the Downloads branch.
         val inHome = file.path == home.path || file.path.startsWith(home.path + File.separator)
+        val validLocation = inHome || isInsideDownloads(file)
 
-        return inHome || isInsideDownloads(file)
+        return validLocation && !isSystemDirectory(file.canonicalFile.path, home)
+    }
+
+    private fun isSystemDirectory(
+        canonicalPath: String,
+        home: File,
+    ): Boolean {
+        val bossDir = File(home, ".boss").canonicalFile.path
+        val bossDebugDir = File(home, ".boss_debug").canonicalFile.path
+        val isBoss = canonicalPath == bossDir || canonicalPath.startsWith(bossDir + File.separator)
+        val isBossDebug = canonicalPath == bossDebugDir || canonicalPath.startsWith(bossDebugDir + File.separator)
+        return isBoss || isBossDebug
     }
 
     /**

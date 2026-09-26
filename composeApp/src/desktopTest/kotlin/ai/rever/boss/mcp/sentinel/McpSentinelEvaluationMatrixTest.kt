@@ -14,7 +14,10 @@ class McpSentinelEvaluationMatrixTest {
     private val tempFiles = mutableListOf<File>()
 
     private fun tempBaselineFile(): File {
-        val dir = kotlin.io.path.createTempDirectory("mcp-sentinel-eval").toFile()
+        val dir =
+            kotlin.io.path
+                .createTempDirectory("mcp-sentinel-eval")
+                .toFile()
         return File(dir, "mcp-eval-baseline.json").also { tempFiles.add(it) }
     }
 
@@ -43,7 +46,7 @@ class McpSentinelEvaluationMatrixTest {
         // 3. Assert Expected Detection & State Transition
         assertTrue(
             evalB.trustState == SentinelTrustState.CHANGED || evalB.trustState == SentinelTrustState.SUSPICIOUS,
-            "State must transition to CHANGED or SUSPICIOUS"
+            "State must transition to CHANGED or SUSPICIOUS",
         )
         assertNotNull(evalB.diffResult)
         assertTrue(evalB.diffResult!!.hasChanges)
@@ -82,10 +85,11 @@ class McpSentinelEvaluationMatrixTest {
     @Test
     fun `EVAL-SHADOW-001 — Cross-server exact tool name collision`() {
         val engine = McpSentinelEngine(ToolDnaBaselineStore(tempBaselineFile()))
-        val tools = listOf(
-            AttackSimulationFixtures.SHADOWING_COLLISION_TOOL_1,
-            AttackSimulationFixtures.SHADOWING_COLLISION_TOOL_2,
-        )
+        val tools =
+            listOf(
+                AttackSimulationFixtures.SHADOWING_COLLISION_TOOL_1,
+                AttackSimulationFixtures.SHADOWING_COLLISION_TOOL_2,
+            )
 
         val evals = engine.evaluateAll(tools)
         val shadowings = engine.shadowingFindings.value
@@ -137,27 +141,38 @@ class McpSentinelEvaluationMatrixTest {
         engine.approveAndTrustTool(providerId, toolName)
 
         // Mutation Version B (benign update)
-        val toolB = RegisteredMcpTool(
-            providerId = providerId,
-            definition = McpToolDefinition(
-                name = toolName,
-                description = "Read a text file from the current workspace project directory with UTF-8 encoding.",
-                inputSchema = """{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}""",
-                readOnly = true,
-                handler = ai.rever.boss.plugin.api.McpToolHandler { ai.rever.boss.plugin.api.McpToolResult("ok") }
+        val toolB =
+            RegisteredMcpTool(
+                providerId = providerId,
+                definition =
+                    McpToolDefinition(
+                        name = toolName,
+                        description =
+                            "Read a text file from the current workspace project directory " +
+                                "with UTF-8 encoding.",
+                        inputSchema =
+                            """{"type":"object","properties":{"path":{"type":"string"}},""" +
+                                """"required":["path"]}""",
+                        readOnly = true,
+                        handler =
+                            ai.rever.boss.plugin.api
+                                .McpToolHandler {
+                                    ai.rever.boss.plugin.api
+                                        .McpToolResult("ok")
+                                },
+                    ),
             )
-        )
         engine.evaluateAll(listOf(toolB))
 
         // Re-approve Version B
-        val success = engine.approveAndTrustTool(providerId, toolName, toolB)
+        val success = engine.approveAndTrustTool(providerId, toolName, registeredTool = toolB)
         assertTrue(success)
 
         val evalAfterReapprove = engine.evaluateAll(listOf(toolB)).single()
         assertEquals(SentinelTrustState.TRUSTED, evalAfterReapprove.trustState)
         assertEquals(
             ToolDnaFingerprinter.computeFingerprint(toolB).fingerprint,
-            evalAfterReapprove.currentFingerprint.fingerprint
+            evalAfterReapprove.currentFingerprint.fingerprint,
         )
     }
 }

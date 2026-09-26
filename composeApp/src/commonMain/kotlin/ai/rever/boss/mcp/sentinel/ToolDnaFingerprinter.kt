@@ -17,7 +17,7 @@ import java.security.MessageDigest
  * 1. Key Order Invariance: Reordered JSON object keys in schemas produce the exact same fingerprint.
  * 2. Format Invariance: Whitespace, formatting, or indentation in input JSON schemas do not alter the fingerprint.
  * 3. Version Scoped: Includes algorithm version to allow future evolution without hash collisions.
- * 4. Content Scoped: Hashes provider identity, tool name, description, schema, readOnly, and permission requirements.
+ * 4. Content Scoped: Hashes provider identity, tool name, description, schema, readOnly, and permission rules.
  */
 object ToolDnaFingerprinter {
     private val json = Json { ignoreUnknownKeys = true }
@@ -28,13 +28,12 @@ object ToolDnaFingerprinter {
     fun computeFingerprint(
         tool: RegisteredMcpTool,
         version: String = ToolDnaFingerprint.CURRENT_ALGORITHM_VERSION,
-    ): ToolDnaFingerprint {
-        return computeFingerprint(
+    ): ToolDnaFingerprint =
+        computeFingerprint(
             providerId = tool.providerId,
             definition = tool.definition,
             version = version,
         )
-    }
 
     /**
      * Compute a canonical [ToolDnaFingerprint] for a [providerId] and [definition].
@@ -51,18 +50,28 @@ object ToolDnaFingerprinter {
 
         val readOnly = definition.readOnly
         val requiresAdmin = definition.requiresAdmin
-        val permissions = definition.requiredPermissions.sorted().joinToString(",")
+        val sortedPerms = definition.requiredPermissions.sorted().map { JsonPrimitive(it) }
+        val permissions = canonicalizeElement(JsonArray(sortedPerms))
 
-        val payload = buildString {
-            append("v=").append(version).append("\n")
-            append("provider=").append(canonicalProvider).append("\n")
-            append("name=").append(canonicalName).append("\n")
-            append("desc=").append(canonicalDesc.length).append(":").append(canonicalDesc).append("\n")
-            append("schema=").append(canonicalSchema.length).append(":").append(canonicalSchema).append("\n")
-            append("readOnly=").append(readOnly).append("\n")
-            append("requiresAdmin=").append(requiresAdmin).append("\n")
-            append("permissions=").append(permissions).append("\n")
-        }
+        val payload =
+            buildString {
+                append("v=").append(version).append("\n")
+                append("provider=").append(canonicalProvider).append("\n")
+                append("name=").append(canonicalName).append("\n")
+                append("desc=")
+                    .append(canonicalDesc.length)
+                    .append(":")
+                    .append(canonicalDesc)
+                    .append("\n")
+                append("schema=")
+                    .append(canonicalSchema.length)
+                    .append(":")
+                    .append(canonicalSchema)
+                    .append("\n")
+                append("readOnly=").append(readOnly).append("\n")
+                append("requiresAdmin=").append(requiresAdmin).append("\n")
+                append("permissions=").append(permissions).append("\n")
+            }
 
         val digest = sha256Hex(payload)
 
@@ -92,32 +101,36 @@ object ToolDnaFingerprinter {
      */
     fun canonicalizeJson(jsonString: String?): String {
         if (jsonString.isNullOrBlank()) return "{}"
-        val parsed = try {
-            json.parseToJsonElement(jsonString)
+        return try {
+            val parsed = json.parseToJsonElement(jsonString)
+            canonicalizeElement(parsed)
         } catch (_: Throwable) {
-            return normalizeText(jsonString)
+            normalizeText(jsonString)
         }
-        return canonicalizeElement(parsed)
     }
 
-    private fun canonicalizeElement(element: JsonElement): String {
-        return when (element) {
+    private fun canonicalizeElement(element: JsonElement): String =
+        when (element) {
             is JsonObject -> {
                 val sortedKeys = element.keys.sorted()
-                val entries = sortedKeys.joinToString(",") { key ->
-                    "\"${escapeJsonString(key)}\":${canonicalizeElement(element.getValue(key))}"
-                }
+                val entries =
+                    sortedKeys.joinToString(",") { key ->
+                        "\"${escapeJsonString(key)}\":${canonicalizeElement(element.getValue(key))}"
+                    }
                 "{$entries}"
             }
+
             is JsonArray -> {
                 val isAllStringPrimitives = element.all { it is JsonPrimitive && (it as JsonPrimitive).isString }
-                val items = if (isAllStringPrimitives) {
-                    element.map { canonicalizeElement(it) }.sorted()
-                } else {
-                    element.map { canonicalizeElement(it) }
-                }
+                val items =
+                    if (isAllStringPrimitives) {
+                        element.map { canonicalizeElement(it) }.sorted()
+                    } else {
+                        element.map { canonicalizeElement(it) }
+                    }
                 "[${items.joinToString(",")}]"
             }
+
             is JsonPrimitive -> {
                 when {
                     element.isString -> "\"${escapeJsonString(element.content)}\""
@@ -125,12 +138,14 @@ object ToolDnaFingerprinter {
                     else -> element.content
                 }
             }
-            is JsonNull -> "null"
-        }
-    }
 
-    private fun escapeJsonString(value: String): String {
-        return value
+            is JsonNull -> {
+                "null"
+            }
+        }
+
+    private fun escapeJsonString(value: String): String =
+        value
             .replace("\\", "\\\\")
             .replace("\"", "\\\"")
             .replace("\b", "\\b")
@@ -138,7 +153,6 @@ object ToolDnaFingerprinter {
             .replace("\n", "\\n")
             .replace("\r", "\\r")
             .replace("\t", "\\t")
-    }
 
     private fun sha256Hex(input: String): String {
         val md = MessageDigest.getInstance("SHA-256")

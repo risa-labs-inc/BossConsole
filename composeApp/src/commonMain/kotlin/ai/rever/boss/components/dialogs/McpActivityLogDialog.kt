@@ -374,6 +374,7 @@ internal val McpApprovalDisposition.unsuccessfulCategory: McpUnsuccessfulCategor
         when (this) {
             McpApprovalDisposition.DENIED_BY_OPERATOR,
             McpApprovalDisposition.POLICY_DENIED,
+            McpApprovalDisposition.SENTINEL_BLOCKED,
             McpApprovalDisposition.PERSISTENTLY_DENIED,
             McpApprovalDisposition.INVALID_ARGUMENTS,
             -> McpUnsuccessfulCategory.DENIED
