@@ -6,6 +6,9 @@ import ai.rever.boss.components.dashboard.cards.FileCard
 import ai.rever.boss.components.dashboard.cards.ProjectCard
 import ai.rever.boss.components.dashboard.cards.WorkspaceCard
 import ai.rever.boss.components.dashboard.sections.DashboardSection
+import ai.rever.boss.components.dashboard.taskplanner.AgentTask
+import ai.rever.boss.components.dashboard.taskplanner.AgentTaskPlanner
+import ai.rever.boss.components.dashboard.taskplanner.AgentTaskStatus
 import ai.rever.boss.components.plugin.panels.left_top.ProjectState
 import ai.rever.boss.components.workspaces.LayoutWorkspace
 import ai.rever.boss.components.workspaces.workspaceManager
@@ -114,6 +117,32 @@ fun HomeScreen(modifier: Modifier = Modifier) {
                 // already open: a Space carries its own project either way.
                 onOpen = openProject,
                 onAskToRemove = { projectToRemove = it },
+            )
+
+            AgentTaskPlanner(
+                tasks =
+                    listOf(
+                        AgentTask(
+                            title = "Understand requirements",
+                            status = AgentTaskStatus.COMPLETED,
+                        ),
+                        AgentTask(
+                            title = "Create project structure",
+                            status = AgentTaskStatus.COMPLETED,
+                        ),
+                        AgentTask(
+                            title = "Implement feature",
+                            status = AgentTaskStatus.IN_PROGRESS,
+                        ),
+                        AgentTask(
+                            title = "Run tests",
+                            status = AgentTaskStatus.TODO,
+                        ),
+                        AgentTask(
+                            title = "Review results",
+                            status = AgentTaskStatus.TODO,
+                        ),
+                    ),
             )
 
             RecentPagesSection(suggestions = suggestions, actions = actions)
