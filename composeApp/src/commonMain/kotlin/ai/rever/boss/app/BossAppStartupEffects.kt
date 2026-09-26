@@ -8,10 +8,12 @@ import ai.rever.boss.components.plugin.tab_types.registerPanelHostTab
 import ai.rever.boss.components.registery.PanelComponentStoreRegistry
 import ai.rever.boss.components.window_panel.RegisterSplitViewState
 import ai.rever.boss.components.window_panel.SplitNode
+import ai.rever.boss.components.window_panel.SplitViewState
 import ai.rever.boss.components.window_panel.SplitViewStateRegistry
 import ai.rever.boss.components.wizard.plugin.PluginWizardIntegration
 import ai.rever.boss.components.workspaces.LAST_SESSION_ID
 import ai.rever.boss.components.workspaces.LAST_SESSION_NAME
+import ai.rever.boss.components.workspaces.LastSessionSet
 import ai.rever.boss.components.workspaces.LayoutWorkspace
 import ai.rever.boss.components.workspaces.ProjectSelectionWorkspace
 import ai.rever.boss.components.workspaces.WorkspaceSettingsManager
@@ -163,16 +165,7 @@ internal fun BossAppStartupEffects(state: BossAppState) {
             // Null for a window running fewer than two, which the single-Space record below
             // already describes on its own; see `sessionSetOf`.
             extractSet = {
-                sessionSetOf(
-                    spaces =
-                        extractRunningWorkspaces(
-                            splitViewState,
-                            windowProjectState.selectedProject.value.path,
-                            defaultWorkingDirectory = defaultWorkingDirectory,
-                            identityFor = { id -> workspaceManager.savedCopyOf(id) },
-                        ),
-                    activeWorkspaceId = splitViewState.currentWorkspaceId,
-                )
+                liveSessionSet(splitViewState, windowProjectState.selectedProject.value.path, defaultWorkingDirectory)
             },
         ) {
             // Invoked at teardown, possibly from the shutdown-hook thread, so read
@@ -854,7 +847,12 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                             now = Clock.System.now().toEpochMilliseconds(),
                         )
                     workspaceManager.updateCurrentWorkspace(write.current)
-                    workspaceManager.saveLastSessionRecord(write.record)
+                    // The recovery files come from the session record's owner only, and as a pair.
+                    writeInSessionRecovery(
+                        windowId = windowId,
+                        record = write.record,
+                        set = { liveSessionSet(splitViewState, selectedProject.path, defaultWorkingDirectory) },
+                    )
                 }
         }.launchIn(this)
 
@@ -887,6 +885,28 @@ internal fun BossAppStartupEffects(state: BossAppState) {
  * Space stays unsaved "across the watcher's interval" has to be able to say which interval.
  */
 private const val LAYOUT_SETTLE_MS = 2000L
+
+/**
+ * Every Space this window is running, and which one is showing - so a restart brings the whole
+ * window back rather than the one Space that happened to be on screen. Null for a window running
+ * fewer than two, which the single-Space record already describes on its own; see `sessionSetOf`.
+ * One expression for the shutdown write and the in-session write, so the two cannot drift.
+ */
+private fun liveSessionSet(
+    splitViewState: SplitViewState,
+    projectPath: String,
+    defaultWorkingDirectory: String,
+): LastSessionSet? =
+    sessionSetOf(
+        spaces =
+            extractRunningWorkspaces(
+                splitViewState,
+                projectPath,
+                defaultWorkingDirectory = defaultWorkingDirectory,
+                identityFor = { id -> workspaceManager.savedCopyOf(id) },
+            ),
+        activeWorkspaceId = splitViewState.currentWorkspaceId,
+    )
 
 /**
  * Ask the app-level [UpdateCoordinator] to start update checks.

@@ -33,7 +33,9 @@ const val LAST_SESSION_SET_FILE = "Last_Session_Set.json"
  * **Still ONE writer, still app-level.** `LastSessionCoordinator` allows exactly one window to
  * produce a session record per session (Issue #19: every window's dispose used to write its own
  * layout into the one record, so closing a secondary window overwrote the primary's). That has not
- * changed - the same claim now covers both files, written together.
+ * changed - the same claim now covers both files, written together. During the session the same
+ * owner window keeps both current, under `LastSessionCoordinator.ownsSessionRecord` rather than
+ * under the claim, and under the lock the shutdown write takes; see `writeInSessionRecovery`.
  */
 @Serializable
 data class LastSessionSet(
