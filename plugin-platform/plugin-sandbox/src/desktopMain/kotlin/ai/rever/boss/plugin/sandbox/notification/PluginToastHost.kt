@@ -9,6 +9,9 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.border
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -33,8 +36,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -94,9 +100,26 @@ fun PluginToastHost(
 ) {
     val toasts by toastState.toasts.collectAsState()
 
+    // Hovering the toast area freezes the auto-dismiss timers, so a toast does not vanish while the
+    // user is reading it or moving the pointer toward its action/dismiss button; leaving resumes them.
+    val interactionSource = remember { MutableInteractionSource() }
+    val hovered by interactionSource.collectIsHoveredAsState()
+    LaunchedEffect(toastState, hovered) {
+        if (hovered) toastState.pauseAutoDismiss() else toastState.resumeAutoDismiss()
+    }
+    // Release the pause when this host leaves composition, even if no pointer-exit event arrives
+    // first: a detaching `hoverable` can emit its Exit as part of the same teardown, too late for the
+    // effect above to observe, which would otherwise strand the controller paused for the rest of the
+    // window's life. Keyed on [toastState] alone (not `hovered`) so this runs only on real teardown,
+    // and `resumeAutoDismiss` is idempotent, so releasing when nothing was paused is a safe no-op.
+    DisposableEffect(toastState) {
+        onDispose { toastState.resumeAutoDismiss() }
+    }
+
     Column(
         modifier =
             modifier
+                .hoverable(interactionSource)
                 .padding(16.dp)
                 .widthIn(max = 400.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
