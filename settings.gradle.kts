@@ -16,6 +16,16 @@ pluginManagement {
     }
 }
 
+plugins {
+    // Every module pins jvmToolchain(17). Without a download repository, a machine
+    // whose only JDK is another version fails at "Cannot find a Java installation
+    // ... matching: {languageVersion=17}" until JDK 17 is installed by hand. With
+    // the resolver, Gradle provisions one under ~/.gradle/jdks on first build and
+    // never touches it again. A no-op wherever a matching JDK is already
+    // installed, which includes CI (setup-java, Temurin 17).
+    id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
+}
+
 dependencyResolutionManagement {
     repositories {
         google {

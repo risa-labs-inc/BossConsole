@@ -1,0 +1,8 @@
+# Shell scripts must be LF. A checkout with core.autocrlf=true (the Git for
+# Windows default) makes them CRLF, which Git Bash tolerates but Linux bash
+# does not: from WSL or a container, scripts/boss fails with
+# "$'\r': command not found" and scripts/test/*.sh with
+# "set: pipefail: invalid option name".
+*.sh text eol=lf
+scripts/boss text eol=lf
+gradlew text eol=lf

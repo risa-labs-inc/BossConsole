@@ -319,8 +319,9 @@ BOSS and BossTerm share one visual language - **"Operator's Console"**: an amber
 This repository contains the source code for BOSS. For building from source and contributing, follow the instructions below.
 
 ### Prerequisites
-- **JDK 17+** (recommended: Azul Zulu or Oracle JDK)
-- **Gradle 8.x** (wrapper included)
+- **A JDK, 17 or newer, to run Gradle.** The build itself compiles with a JDK 17 toolchain; if none is installed, the first build downloads one (Temurin) under `~/.gradle/jdks` and reuses it from then on.
+- **Gradle:** use the wrapper (`./gradlew`, currently 9.7.1). No local installation needed.
+- **Windows:** `.gitattributes` keeps the shell scripts LF whatever `core.autocrlf` is set to, so `gradlew`, `scripts/boss` and `scripts/test/*.sh` also run from WSL or a container against the same checkout.
 
 ### Build Commands
 
