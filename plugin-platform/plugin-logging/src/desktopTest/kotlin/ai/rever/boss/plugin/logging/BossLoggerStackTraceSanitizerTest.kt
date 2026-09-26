@@ -99,12 +99,30 @@ class BossLoggerStackTraceSanitizerTest {
         assertEquals("   ", LogSanitizer.sanitizeFileName("   "))
         assertEquals("BossLogger.kt", LogSanitizer.sanitizeFileName("BossLogger.kt"))
         assertEquals("Main.java", LogSanitizer.sanitizeFileName("Main.java"))
+        assertEquals("build.gradle.kts", LogSanitizer.sanitizeFileName("build.gradle.kts"))
         assertEquals("[PATH]", LogSanitizer.sanitizeFileName("/Users/ci/keys.pem"))
         assertEquals("[PATH]", LogSanitizer.sanitizeFileName("C:\\Users\\ci\\keys.pem"))
         assertEquals("[PATH]", LogSanitizer.sanitizeFileName("dir/Nested.kt"))
         assertEquals("[PATH]", LogSanitizer.sanitizeFileName("dir\\Nested.kt"))
         assertEquals("[EMAIL]", LogSanitizer.sanitizeFileName("user@example.com"))
         assertEquals("ghp...890.kt", LogSanitizer.sanitizeFileName("ghp_12345678901234567890.kt"))
+    }
+
+    @Test
+    fun `sanitizeFileName fast path preserves ordinary source filenames`() {
+        listOf(
+            "BossLogger.kt",
+            "Main.java",
+            "build.gradle.kts",
+            "Settings.gradle.kts",
+            "PluginClassLoaderResourceLifecycleTest.kt",
+        ).forEach { fileName ->
+            assertEquals(
+                fileName,
+                LogSanitizer.sanitizeFileName(fileName),
+                "fast path changed source file name: $fileName",
+            )
+        }
     }
 
     @Test
@@ -134,7 +152,7 @@ class BossLoggerStackTraceSanitizerTest {
         val sanitized = LogSanitizer.sanitizeThrowable(raw)
         assertNotNull(sanitized)
         assertEquals("missing: [PATH]", sanitized.message)
-        assertEquals("java.io.FileNotFoundException", (sanitized as SanitizedThrowable).originalClassName)
+        assertEquals("java.io.FileNotFoundException", sanitized.originalClassName)
         assertEquals("java.io.FileNotFoundException: missing: [PATH]", sanitized.toString())
 
         val trace = sanitized.stackTraceToString()
@@ -183,10 +201,10 @@ class BossLoggerStackTraceSanitizerTest {
         val sanitized = LogSanitizer.sanitizeThrowable(primary)
         assertNotNull(sanitized)
         assertEquals(1, sanitized.suppressed.size)
-        val sanitizedSuppressed = sanitized.suppressed.first()
+        val sanitizedSuppressed = sanitized.suppressed.first() as SanitizedThrowable
         assertEquals("[PATH]", sanitizedSuppressed.message)
         assertEquals("[PATH]", sanitizedSuppressed.stackTrace.first().fileName)
-        assertEquals("java.io.IOException", (sanitizedSuppressed as SanitizedThrowable).originalClassName)
+        assertEquals("java.io.IOException", sanitizedSuppressed.originalClassName)
     }
 
     @Test
@@ -212,5 +230,15 @@ class BossLoggerStackTraceSanitizerTest {
         val sanitized1 = LogSanitizer.sanitizeThrowable(raw)
         val sanitized2 = LogSanitizer.sanitizeThrowable(sanitized1)
         assertSame(sanitized1, sanitized2)
+    }
+
+    @Test
+    fun `SanitizedThrowable exposes originalClassName and avoids native fillInStackTrace overhead`() {
+        val raw = java.io.FileNotFoundException("file not found: /Users/ci/keys.pem")
+        val sanitized = LogSanitizer.sanitizeThrowable(raw)
+        assertNotNull(sanitized)
+        assertEquals("java.io.FileNotFoundException", sanitized.originalClassName)
+        assertEquals("java.io.FileNotFoundException: file not found: [PATH]", sanitized.toString())
+        assertSame(sanitized, sanitized.fillInStackTrace())
     }
 }

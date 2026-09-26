@@ -777,6 +777,9 @@ object LogSanitizer {
         }
     }
 
+    private val plainSourceFilenamePattern =
+        Regex("""^[A-Za-z0-9_$][A-Za-z0-9_$.-]*\.(?:kt|java|kts|groovy|scala)$""")
+
     /**
      * Sanitize a stack frame source file name by removing directory paths and sensitive data.
      *
@@ -784,12 +787,19 @@ object LogSanitizer {
      * `BossLogger.kt`. Hand-built or foreign stack frames may embed absolute or relative paths
      * (e.g. `/Users/ci/keys.pem` or `C:\Users\secret\keys.pem`) or credential shapes.
      *
+     * A precompiled fast-path recognizes ordinary source filenames so clean frames do not run
+     * through the full multi-pass redaction pipeline on the logging hot path.
+     *
      * @param fileName The stack frame file name to sanitize
      * @return The sanitized file name, or null if [fileName] was null
      */
     fun sanitizeFileName(fileName: String?): String? =
         when {
             fileName.isNullOrEmpty() -> {
+                fileName
+            }
+
+            plainSourceFilenamePattern.matches(fileName) && !credentialShapePattern.containsMatchIn(fileName) -> {
                 fileName
             }
 
@@ -856,7 +866,7 @@ object LogSanitizer {
      * @param error The throwable to sanitize
      * @return The sanitized throwable, or null if [error] was null
      */
-    fun sanitizeThrowable(error: Throwable?): Throwable? =
+    fun sanitizeThrowable(error: Throwable?): SanitizedThrowable? =
         when {
             error == null -> null
             error is SanitizedThrowable -> error
@@ -866,7 +876,7 @@ object LogSanitizer {
     private fun sanitizeThrowableInternal(
         error: Throwable?,
         visited: MutableSet<Throwable>,
-    ): Throwable? {
+    ): SanitizedThrowable? {
         if (error == null || !visited.add(error)) return null
 
         val originalClassName = (error as? SanitizedThrowable)?.originalClassName ?: error.javaClass.name
@@ -900,15 +910,25 @@ object LogSanitizer {
  * report the true exception type (e.g. `java.io.FileNotFoundException`) rather than
  * erasing exception classification across log listeners and crash reporters.
  *
+ * The primary constructor is internal to prevent external callers or plugins from bypassing
+ * sanitization by forging a pre-wrapped [SanitizedThrowable]. Use [LogSanitizer.sanitizeThrowable]
+ * to construct instances.
+ *
+ * Note on logging bindings: output type fidelity relies on bindings (such as `slf4j-simple`)
+ * that render exceptions via [toString]. Bindings that inspect `getClass().getName()` directly
+ * (such as logback's `ThrowableProxy`) would render `SanitizedThrowable` as the type.
+ *
  * @param originalClassName The fully qualified class name of the original throwable
  * @param sanitizedMessage The sanitized exception message, or null if original had none
  * @param cause The sanitized cause, or null
  */
-class SanitizedThrowable(
+class SanitizedThrowable internal constructor(
     val originalClassName: String,
     sanitizedMessage: String?,
     cause: Throwable? = null,
 ) : Throwable(sanitizedMessage, cause) {
+    override fun fillInStackTrace(): Throwable = this
+
     override fun toString(): String {
         val msg = localizedMessage
         return if (msg != null) "$originalClassName: $msg" else originalClassName

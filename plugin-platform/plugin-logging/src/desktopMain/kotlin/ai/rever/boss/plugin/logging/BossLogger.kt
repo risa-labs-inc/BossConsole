@@ -51,6 +51,25 @@ enum class LogCategory {
  * Log entry for structured logging.
  *
  * @param timestamp Epoch milliseconds when the log entry was created (cheap to collect)
+ * @param level Severity level of this log entry
+ * @param category Functional category for filtering
+ * @param component Component or class name emitting the log
+ * @param message Log message text (note: NOT automatically sanitized; use [LogSanitizer] before logging)
+ * @param data Optional structured metadata map (note: values are NOT automatically sanitized)
+ * @param error Optional throwable associated with the log entry.
+ *   Before reaching logging sinks ([BossLogger.getRecentLogs], registered [LogListener]s, the SLF4J logger,
+ *   and the async file writer), [BossLogger] sanitizes this throwable via [LogSanitizer.sanitizeThrowable]
+ *   into a [SanitizedThrowable], replacing directory paths (e.g. `/Users/...` or `C:\...`) in stack frame
+ *   filenames with `[PATH]` and sanitizing exception messages, cause chains, and suppressed exceptions.
+ *   Note on runtime type: the resulting throwable has runtime JVM type [SanitizedThrowable], but preserves
+ *   [SanitizedThrowable.originalClassName] in its [SanitizedThrowable.toString] and stack trace headers.
+ *   Consumers should note two design constraints:
+ *   1. Crash reporting paths that inspect `error.javaClass` directly (e.g. to compute a crash signature)
+ *      must consume uncaught exception handles rather than [LogEntry.error], as reading `javaClass` on
+ *      [SanitizedThrowable] would collapse distinct exception types into a single `SanitizedThrowable` signature.
+ *   2. Output type fidelity relies on logging bindings (such as `slf4j-simple`) that render exceptions via
+ *      `toString()`; a binding inspecting `getClass().getName()` directly (such as logback's `ThrowableProxy`)
+ *      would render the wrapper type name.
  */
 data class LogEntry(
     val timestamp: Long,
