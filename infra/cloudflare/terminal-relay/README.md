@@ -208,10 +208,28 @@ is in flight. Text-only previews need no graphics request.
   encryption/WebSocket fan-out has passed all nine 10/50/100 pane × 1/3/10 viewer cases.
 - Apply the additive backend changes to debug and install the paired debug plugin only
   after these checks. The first two migrations, settings/live-sessions functions and the original debug Worker
-  were deployed on 2026-09-26; the paired debug plugin was installed. The revised admission
-  gateway and cleanup migration still require deployment. This is not full end-to-end sign-off.
+  were deployed on 2026-09-26; the paired debug plugin was installed. The admission gateway, conflict-status fix, cleanup RPC and revised debug Worker were
+  subsequently deployed. The debug Worker's old database credential was removed. This is
+  not full native/browser rendering sign-off.
 
 Release the updated BossTerm library before publishing the terminal plugin, then update
 the plugin dependency to that released version. Local paired-source builds do not require
 a BossConsole desktop release; its existing host auth/RPC providers supply the account.
 The new migrations, Edge function and Worker still require their own backend deployment.
+
+## Deployed smoke verification (2026-09-26)
+
+The shared backend and debug Worker passed real authenticated checks using two disposable
+synthetic accounts: preference defaults, owner isolation and stale-write conflicts; one-use
+settings handoffs; the actual settings page cookie, CSRF/origin checks, save and HTTP 409;
+room ownership, one-use ticket rejection, account/guest role classification; denial of an
+unapproved guest; and one publication delivered to three approved viewers. Both accounts
+and their owned rows were deleted afterward. Native host/viewer integration also passes
+against the local Worker using the admission gateway contract.
+
+To repeat the deployed check, provide `SUPABASE_URL`, `SUPABASE_ANON_KEY`,
+`SUPABASE_SERVICE_ROLE_KEY`, `RELAY_WS_URL` and `ALLOW_CREATE_TEST_USERS=true` through a
+protected environment, then run `node test/deployed-smoke.mjs`. Never place credentials in
+command arguments or logs. This harness deliberately creates temporary auth users and
+removes them in `finally`; it is not an automatic CI test. It verifies opaque transport
+routing, not terminal encryption, graphics or real UI behavior.
