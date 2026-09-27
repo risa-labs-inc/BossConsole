@@ -92,9 +92,15 @@ An MCP tool monitored by Sentinel transitions through explicit states:
 ### What Sentinel Detects
 - Modifications to tool descriptions, parameter names, or parameter types post-trust.
 - Prompt injection attempts attempting to hijack LLM context ("ignore previous instructions", "secretly exfiltrate").
-- Hidden formatting controls (BiDi overrides `U+202A..U+202E`, Zero-width spaces `U+200B..U+200D`).
+- Hidden formatting controls (BiDi overrides `U+202A..U+202E`, Zero-width spaces `U+200B..U+200C`).
 - HTML comment hidden instructions (`<!-- system prompt: ... -->`).
 - Ambiguous cross-provider tool shadowing.
+
+### Scanner Finding Severities & Engine Thresholds
+- **CRITICAL** (`INJ-001`): Explicit prompt injection keywords. Triggers `SUSPICIOUS` state and hard-deny invocation block.
+- **HIGH** (`UNI-001`, `ENC-001`): Dangerous BiDi overrides (`U+202A..U+202E`), BiDi isolates (`U+2066..U+2069`), invisible tags (`U+E0000..U+E007F`), or encoded instruction payloads. Triggers `SUSPICIOUS` state and hard-deny invocation block.
+- **MEDIUM** (`HTML-001`, `UNI-002`): HTML comment concealments (`<!-- ... -->`) and suspicious invisible filler characters (`U+200B` ZWSP, `U+200C` ZWNJ, `U+3164`). Under the engine's `severity >= MEDIUM` threshold, HTML-001 contributes directly to a `SUSPICIOUS` trust classification, blocking tool execution until explicit operator review. Operator UI displays an amber warning in `McpSentinelPanel` with the extracted comment snippet.
+- **LOW** (`UNI-003`): Minor formatting characters, variation selectors (`U+FE00..U+FE0F`), emoji joiners (`U+200D` ZWJ), byte order marks (`U+FEFF`), or soft hyphens (`U+00AD`). Recorded for transparency without causing automatic `SUSPICIOUS` classification or invocation denial.
 
 ### Limitations
 - **Server Implementation Risk**: A matching fingerprint proves that the *definition metadata* has not changed, but does not guarantee the server-side backend code is benign.

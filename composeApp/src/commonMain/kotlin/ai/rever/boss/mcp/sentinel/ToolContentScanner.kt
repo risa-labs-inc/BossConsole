@@ -333,17 +333,17 @@ private object ScannerHelpers {
             cp == 0x2060 ||
             cp == 0x180E ||
             cp == 0x200B ||
-            cp == 0x200C ||
-            // U+200D (ZERO WIDTH JOINER) is intentionally excluded: it is required for standard
-            // multi-codepoint emoji composition (e.g. 🧑\u200D💻, family emoji, rainbow flag).
-            // Classifying it MEDIUM would cause every tool mentioning a ZWJ emoji to be
-            // flagged SUSPICIOUS and blocked. Real injection attacks use bidi overrides or
-            // invisible tag characters (U+E0000-U+E007F), which remain HIGH severity.
-            cp == 0xFEFF ||
-            cp == 0x00AD
+            cp == 0x200C
 
     private fun isLowRiskUnicode(cp: Int): Boolean =
         cp == 0x200D ||
+            // U+FEFF (ZERO WIDTH NO-BREAK SPACE / BOM) and U+00AD (SOFT HYPHEN) are classified LOW:
+            // they frequently appear in legitimate UTF-8 files, copy-pasted text, and formatted
+            // documentation. Classifying them MEDIUM would cause tools with soft hyphens or BOMs
+            // to be falsely flagged SUSPICIOUS and hard-denied. Real injection attacks use bidi
+            // overrides or invisible tag characters (U+E0000..U+E007F), which remain HIGH severity.
+            cp == 0xFEFF ||
+            cp == 0x00AD ||
             cp == 0x200E ||
             cp == 0x200F ||
             cp in 0xFE00..0xFE0F ||

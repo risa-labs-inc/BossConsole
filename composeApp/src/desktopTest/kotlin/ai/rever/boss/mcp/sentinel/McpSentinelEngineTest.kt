@@ -4,12 +4,14 @@ import ai.rever.boss.plugin.api.McpToolDefinition
 import ai.rever.boss.plugin.api.McpToolHandler
 import ai.rever.boss.plugin.api.McpToolResult
 import ai.rever.boss.plugin.api.RegisteredMcpTool
+import kotlinx.serialization.encodeToString
 import java.io.File
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class McpSentinelEngineTest {
@@ -368,6 +370,70 @@ class McpSentinelEngineTest {
         assertFalse(check.isAllowed, "BL-A: Invocation on tampered-HMAC baseline must be denied")
     }
 
+    @Test
+    fun `BL-A unsigned baseline record with forged TRUSTED state on disk is mapped to REVIEW_REQUIRED and denied`() {
+        val file = tempBaselineFile()
+        val tool = AttackSimulationFixtures.BENIGN_READ_FILE_TOOL
+        val fp = ToolDnaFingerprinter.computeFingerprint(tool)
+
+        val logger =
+            ai.rever.boss.utils.logging.BossLogger
+                .forComponent("Test")
+        SentinelHmacHelper.initOrLoadHmacKey(file, null, logger)
+
+        // Raw record written to disk with forged TRUSTED state and APPROVED decision, but NO hmacSignature
+        val unsignedForgedRecord =
+            ToolBaselineRecord(
+                providerId = "codebase_provider",
+                toolName = "read_project_file",
+                canonicalFingerprint = fp.fingerprint,
+                fingerprintVersion = fp.algorithmVersion,
+                firstSeenTimestamp = 1000L,
+                lastSeenTimestamp = 1000L,
+                trustState = SentinelTrustState.TRUSTED, // Forged on disk
+                lastAcceptedDescription = fp.canonicalDescription,
+                lastAcceptedSchemaJson = fp.canonicalInputSchemaJson,
+                readOnly = fp.readOnly,
+                requiresAdmin = fp.requiresAdmin,
+                userDecision = "APPROVED", // Forged audit label
+                hmacSignature = null, // Missing signature!
+            )
+
+        // Write raw JSON directly to disk without calling saveBaseline()
+        val jsonStr =
+            kotlinx.serialization.json
+                .Json { prettyPrint = true }
+                .encodeToString(listOf(unsignedForgedRecord))
+        file.writeText(jsonStr)
+
+        val loadedStore = ToolDnaBaselineStore(baselineFile = file)
+        val loadedBaseline = loadedStore.getBaseline("codebase_provider", "read_project_file")
+        assertNotNull(loadedBaseline)
+        assertEquals(
+            SentinelTrustState.REVIEW_REQUIRED,
+            loadedBaseline.trustState,
+            "BL-A: Unsigned record must be mapped to REVIEW_REQUIRED on disk load",
+        )
+        assertNull(
+            loadedBaseline.userDecision,
+            "BL-A: Unsigned record's userDecision must be cleared to null",
+        )
+
+        val loadedEngine = McpSentinelEngine(baselineStore = loadedStore)
+        val eval = loadedEngine.evaluateAll(listOf(tool)).single()
+        assertEquals(
+            SentinelTrustState.REVIEW_REQUIRED,
+            eval.trustState,
+            "BL-A: Evaluation of unsigned record must yield REVIEW_REQUIRED",
+        )
+
+        val check = loadedEngine.checkInvocation("codebase_provider", "read_project_file")
+        assertFalse(
+            check.isAllowed,
+            "BL-A: Invocation of unsigned record with forged TRUSTED state must be denied",
+        )
+    }
+
     // ── BL-B REGRESSION ──────────────────────────────────────────────────────────────────
     // Tools whose descriptions or schema strings contain standard ZWJ emoji sequences
     // (technologist, family, rainbow flag) must NOT be blocked. ZWJ (U+200D) is required
@@ -412,6 +478,78 @@ class McpSentinelEngineTest {
 
         val check = engine.checkInvocation("emoji_provider", "emoji_tool")
         assertTrue(check.isAllowed, "BL-B: TRUSTED ZWJ emoji tool must be invocable")
+    }
+
+    @Test
+    fun `BL-B tool with BOM U+FEFF or Soft Hyphen U+00AD is not flagged SUSPICIOUS and is invocable when approved`() {
+        val file = tempBaselineFile()
+        val store = ToolDnaBaselineStore(baselineFile = file)
+        val engine = McpSentinelEngine(baselineStore = store)
+
+        val bom = "\uFEFF"
+        val softHyphen = "\u00AD"
+        val toolWithBomAndHyphen =
+            RegisteredMcpTool(
+                providerId = "bom_provider",
+                definition =
+                    McpToolDefinition(
+                        name = "formatted_tool",
+                        description = "${bom}Tool description with optional soft${softHyphen}hyphenation.",
+                        inputSchema = """{"type":"object"}""",
+                        handler = McpToolHandler { McpToolResult("ok") },
+                    ),
+            )
+
+        val eval = engine.evaluateAll(listOf(toolWithBomAndHyphen)).single()
+        assertTrue(
+            eval.trustState != SentinelTrustState.SUSPICIOUS,
+            "BL-B: Tool with U+FEFF or U+00AD must not be SUSPICIOUS",
+        )
+
+        engine.approveAndTrustTool("bom_provider", "formatted_tool", registeredTool = toolWithBomAndHyphen)
+        val eval2 = engine.evaluateAll(listOf(toolWithBomAndHyphen)).single()
+        assertEquals(
+            SentinelTrustState.TRUSTED,
+            eval2.trustState,
+            "BL-B: Tool with U+FEFF or U+00AD must be approvable to TRUSTED",
+        )
+
+        val check = engine.checkInvocation("bom_provider", "formatted_tool")
+        assertTrue(check.isAllowed, "BL-B: TRUSTED tool with U+FEFF or U+00AD must be invocable")
+    }
+
+    @Test
+    fun `BL-B tool with bidi override or invisible tags is flagged SUSPICIOUS and blocked`() {
+        val file = tempBaselineFile()
+        val store = ToolDnaBaselineStore(baselineFile = file)
+        val engine = McpSentinelEngine(baselineStore = store)
+
+        val rlo = "\u202E" // Bidi override
+        val tagChar = String(Character.toChars(0xE0001)) // Invisible tag
+        val bidiTool =
+            RegisteredMcpTool(
+                providerId = "bidi_provider",
+                definition =
+                    McpToolDefinition(
+                        name = "bidi_tool",
+                        description = "Exploit ${rlo}hidden payload ${tagChar}tag",
+                        inputSchema = """{"type":"object"}""",
+                        handler = McpToolHandler { McpToolResult("ok") },
+                    ),
+            )
+
+        val eval = engine.evaluateAll(listOf(bidiTool)).single()
+        assertEquals(
+            SentinelTrustState.SUSPICIOUS,
+            eval.trustState,
+            "BL-B: Tool with bidi override or tag char must be SUSPICIOUS",
+        )
+
+        val check = engine.checkInvocation("bidi_provider", "bidi_tool")
+        assertFalse(
+            check.isAllowed,
+            "BL-B: SUSPICIOUS tool with bidi override or tag char must be blocked from invocation",
+        )
     }
 
     // ── BL-C REGRESSION ──────────────────────────────────────────────────────────────────
@@ -477,44 +615,84 @@ class McpSentinelEngineTest {
         assertTrue(baseline.hmacSignature.isNotBlank(), "N5-1: Saved baseline must possess non-blank HMAC signature")
     }
 
-    @Test
-    fun `N5-2 legacy baseline records without payloadVersion verify successfully`() {
-        val file = tempBaselineFile()
-        val store = ToolDnaBaselineStore(baselineFile = file)
-        val tool = AttackSimulationFixtures.BENIGN_READ_FILE_TOOL
-
-        val record =
-            ToolBaselineRecord(
-                providerId = "codebase_provider",
-                toolName = "read_project_file",
-                canonicalFingerprint = "abcd1234efgh5678",
-                fingerprintVersion = "v1",
-                firstSeenTimestamp = 1000L,
-                lastSeenTimestamp = 1000L,
-                trustState = SentinelTrustState.TRUSTED,
-                lastAcceptedDescription = "Reads a file",
-                lastAcceptedSchemaJson = "{}",
-                readOnly = true,
-                requiresAdmin = false,
-                userDecision = "APPROVED",
-            )
-
+    private fun createRawLegacyRecordOnDisk(
+        file: File,
+        tool: RegisteredMcpTool,
+    ): javax.crypto.spec.SecretKeySpec? {
         val logger =
             ai.rever.boss.utils.logging.BossLogger
                 .forComponent("Test")
         val key = SentinelHmacHelper.initOrLoadHmacKey(file, null, logger)
-        val legacySig = SentinelHmacHelper.computeLegacyHmac(key, record)
+        val fp = ToolDnaFingerprinter.computeFingerprint(tool)
 
-        val legacyRecord = record.copy(hmacSignature = legacySig)
-        store.saveBaseline(legacyRecord)
+        val legacyRecord =
+            ToolBaselineRecord(
+                providerId = "codebase_provider",
+                toolName = "read_project_file",
+                canonicalFingerprint = fp.fingerprint,
+                fingerprintVersion = fp.algorithmVersion,
+                firstSeenTimestamp = 1000L,
+                lastSeenTimestamp = 1000L,
+                trustState = SentinelTrustState.TRUSTED,
+                lastAcceptedDescription = fp.canonicalDescription,
+                lastAcceptedSchemaJson = fp.canonicalInputSchemaJson,
+                readOnly = fp.readOnly,
+                requiresAdmin = fp.requiresAdmin,
+                userDecision = "APPROVED",
+            )
 
+        val legacySig = SentinelHmacHelper.computeLegacyHmac(key, legacyRecord)
+        val recordWithLegacySig = legacyRecord.copy(hmacSignature = legacySig)
+        val jsonStr =
+            kotlinx.serialization.json
+                .Json { prettyPrint = true }
+                .encodeToString(listOf(recordWithLegacySig))
+        file.writeText(jsonStr)
+        return key
+    }
+
+    @Test
+    fun `N5-2 legacy baseline records without payloadVersion verify successfully from disk and upgrade on save`() {
+        val file = tempBaselineFile()
+        val tool = AttackSimulationFixtures.BENIGN_READ_FILE_TOOL
+        val key = createRawLegacyRecordOnDisk(file, tool)
+
+        // Instantiate a FRESH store and engine loading the raw file from disk
         val loadedStore = ToolDnaBaselineStore(baselineFile = file)
         val loadedBaseline = loadedStore.getBaseline("codebase_provider", "read_project_file")
-        assertNotNull(loadedBaseline)
+        assertNotNull(loadedBaseline, "N5-2: Baseline record must load successfully from disk")
         assertEquals(
             SentinelTrustState.TRUSTED,
             loadedBaseline.trustState,
             "N5-2: Legacy unversioned HMAC baseline must verify and load as TRUSTED",
+        )
+
+        val loadedEngine = McpSentinelEngine(baselineStore = loadedStore)
+        val eval = loadedEngine.evaluateAll(listOf(tool)).single()
+        assertEquals(
+            SentinelTrustState.TRUSTED,
+            eval.trustState,
+            "N5-2: Tool with legacy HMAC baseline must evaluate as TRUSTED",
+        )
+
+        val check = loadedEngine.checkInvocation("codebase_provider", "read_project_file")
+        assertTrue(check.isAllowed, "N5-2: Tool with legacy HMAC baseline must be allowed to execute")
+
+        // Re-save/update the record to upgrade it to v1 HMAC signature on disk
+        loadedEngine.approveAndTrustTool("codebase_provider", "read_project_file", registeredTool = tool)
+
+        // Verify with a third fresh store that the saved file on disk now uses v1 HMAC
+        val upgradedStore = ToolDnaBaselineStore(baselineFile = file)
+        val upgradedBaseline = upgradedStore.getBaseline("codebase_provider", "read_project_file")
+        assertNotNull(upgradedBaseline)
+        assertEquals(
+            SentinelTrustState.TRUSTED,
+            upgradedBaseline.trustState,
+            "N5-2: Upgraded record must load as TRUSTED",
+        )
+        assertTrue(
+            SentinelHmacHelper.verifyHmac(key, upgradedBaseline),
+            "N5-2: Upgraded baseline must verify via v1 HMAC signature",
         )
     }
 }

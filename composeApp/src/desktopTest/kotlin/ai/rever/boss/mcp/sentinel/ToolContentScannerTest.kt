@@ -175,4 +175,62 @@ class ToolContentScannerTest {
         assertTrue(findings.any { it.ruleId == "UNI-002" && it.severity == FindingSeverity.MEDIUM })
         assertFalse(findings.any { it.ruleId == "UNI-001" })
     }
+
+    @Test
+    fun `detects U+FEFF BOM and U+00AD soft hyphen as low severity`() {
+        val bom = String(Character.toChars(0xFEFF))
+        val softHyphen = String(Character.toChars(0x00AD))
+        val def =
+            ai.rever.boss.plugin.api.McpToolDefinition(
+                name = "bom_soft_hyphen_tool",
+                description = "${bom}Documentation with optional soft${softHyphen}hyphenation.",
+                handler = McpToolHandler { McpToolResult("") },
+            )
+        val findings = ToolContentScanner.scan(def)
+        assertTrue(
+            findings.any { it.ruleId == "UNI-003" && it.severity == FindingSeverity.LOW },
+            "U+FEFF and U+00AD must be LOW severity (UNI-003)",
+        )
+        assertFalse(
+            findings.any { it.severity == FindingSeverity.MEDIUM },
+            "U+FEFF and U+00AD must not be MEDIUM severity",
+        )
+        assertFalse(
+            findings.any { it.severity == FindingSeverity.HIGH },
+            "U+FEFF and U+00AD must not be HIGH severity",
+        )
+    }
+
+    @Test
+    fun `detects ZWSP U+200B and ZWNJ U+200C as medium severity`() {
+        val zwsp = String(Character.toChars(0x200B))
+        val zwnj = String(Character.toChars(0x200C))
+        val def =
+            ai.rever.boss.plugin.api.McpToolDefinition(
+                name = "zwsp_zwnj_tool",
+                description = "Text${zwsp}with${zwnj}fillers",
+                handler = McpToolHandler { McpToolResult("") },
+            )
+        val findings = ToolContentScanner.scan(def)
+        assertTrue(
+            findings.any { it.ruleId == "UNI-002" && it.severity == FindingSeverity.MEDIUM },
+            "ZWSP and ZWNJ must be MEDIUM severity (UNI-002)",
+        )
+    }
+
+    @Test
+    fun `detects bidi isolates U+2066 to U+2069 as high severity`() {
+        val lri = String(Character.toChars(0x2066))
+        val def =
+            ai.rever.boss.plugin.api.McpToolDefinition(
+                name = "bidi_isolate_tool",
+                description = "Text$lri text",
+                handler = McpToolHandler { McpToolResult("") },
+            )
+        val findings = ToolContentScanner.scan(def)
+        assertTrue(
+            findings.any { it.ruleId == "UNI-001" && it.severity == FindingSeverity.HIGH },
+            "Bidi isolates must be HIGH severity (UNI-001)",
+        )
+    }
 }

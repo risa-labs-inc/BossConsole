@@ -16,6 +16,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /** Exercises policy precedence, real approval suspension and audit cancellation at the registry boundary. */
+@Suppress("LargeClass")
 class McpGovernedInvocationTest {
     private fun provider(
         id: String,
@@ -730,6 +731,64 @@ class McpGovernedInvocationTest {
             assertTrue(res.isError, "Invocation must be rejected by Sentinel")
             assertTrue(res.text.contains("MCP Sentinel"), "Error message must indicate Sentinel blockage: ${res.text}")
             assertFalse(handlerCalled, "Tool handler must not be invoked when Sentinel blocks the tool")
+
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `invoke with SentinelEngine blocks invocation before YOLO authorization when tool is blocked`() {
+        runBlocking {
+            var handlerCalled = false
+            val tool =
+                echoTool(
+                    name = "yolo_sentinel_tool",
+                    handler =
+                        McpToolHandler {
+                            handlerCalled = true
+                            McpToolResult("should not run under YOLO")
+                        },
+                )
+
+            val dir = Files.createTempDirectory("mcp-sentinel-yolo-test").toFile()
+            val baselineFile = dir.resolve("tooldna.json")
+            val baselineStore =
+                ai.rever.boss.mcp.sentinel
+                    .ToolDnaBaselineStore(baselineFile = baselineFile)
+            val sentinelEngine =
+                ai.rever.boss.mcp.sentinel
+                    .McpSentinelEngine(baselineStore = baselineStore)
+
+            val policyEngine = McpPolicyEngine(policyFile = null)
+            val ledger = McpOperationLedger(ledgerFile = null)
+
+            // Enable YOLO mode so policy engine would auto-allow execution if Sentinel didn't block first
+            policyEngine.setYoloMode(true)
+
+            val core =
+                McpToolRegistryCore(
+                    disabledFile = null,
+                    policyEngine = policyEngine,
+                    ledger = ledger,
+                    sentinelEngine = sentinelEngine,
+                )
+            core.registerProvider(provider("p1", tool))
+
+            // Block the tool in Sentinel
+            sentinelEngine.blockTool("p1", "yolo_sentinel_tool")
+
+            val res = core.invoke("yolo_sentinel_tool", "{}")
+            assertTrue(res.isError, "Invocation must be rejected by Sentinel even when YOLO mode is enabled")
+            assertTrue(res.text.contains("MCP Sentinel"), "Error message must identify Sentinel blockage: ${res.text}")
+            assertFalse(handlerCalled, "Tool handler must NOT be executed when Sentinel blocks, even under YOLO mode")
+
+            // Verified in ledger disposition
+            val recentOp = ledger.recentOperations.value.first()
+            assertEquals(
+                McpApprovalDisposition.SENTINEL_BLOCKED,
+                recentOp.approvalDisposition,
+                "Ledger disposition must record SENTINEL_BLOCKED, not AUTO_ALLOWED or YOLO_ALLOWED",
+            )
 
             dir.deleteRecursively()
         }

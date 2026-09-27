@@ -321,11 +321,8 @@ internal object SentinelHmacHelper {
         logger: ComponentLogger,
     ): ByteArray {
         val fresh = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
-        if (!targetKeyFile.exists()) {
-            targetKeyFile.createNewFile()
-            restrictKeyFilePermissions(targetKeyFile, logger)
-        }
         targetKeyFile.writeBytes(fresh)
+        restrictKeyFilePermissions(targetKeyFile, logger)
         return fresh
     }
 
