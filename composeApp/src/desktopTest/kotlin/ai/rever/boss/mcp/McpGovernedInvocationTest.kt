@@ -690,4 +690,48 @@ class McpGovernedInvocationTest {
                 fixture.close()
             }
         }
+
+    // ── N1 INTEGRATION ─────────────────────────────────────────────────────────────────
+    // McpToolRegistryCore.invoke enforces McpSentinelEngine check before execution.
+    @Test
+    fun `invoke with SentinelEngine blocks blocked tool invocation at registry boundary`() {
+        runBlocking {
+            var handlerCalled = false
+            val tool =
+                echoTool(
+                    name = "sentinel_blocked_tool",
+                    handler =
+                        McpToolHandler {
+                            handlerCalled = true
+                            McpToolResult("should not run")
+                        },
+                )
+
+            val dir = Files.createTempDirectory("mcp-sentinel-test").toFile()
+            val baselineFile = dir.resolve("tooldna.json")
+            val baselineStore =
+                ai.rever.boss.mcp.sentinel
+                    .ToolDnaBaselineStore(baselineFile = baselineFile)
+            val sentinelEngine =
+                ai.rever.boss.mcp.sentinel
+                    .McpSentinelEngine(baselineStore = baselineStore)
+
+            val core =
+                McpToolRegistryCore(
+                    disabledFile = null,
+                    sentinelEngine = sentinelEngine,
+                )
+            core.registerProvider(provider("p1", tool))
+
+            // Block the tool in Sentinel
+            sentinelEngine.blockTool("p1", "sentinel_blocked_tool")
+
+            val res = core.invoke("sentinel_blocked_tool", "{}")
+            assertTrue(res.isError, "Invocation must be rejected by Sentinel")
+            assertTrue(res.text.contains("MCP Sentinel"), "Error message must indicate Sentinel blockage: ${res.text}")
+            assertFalse(handlerCalled, "Tool handler must not be invoked when Sentinel blocks the tool")
+
+            dir.deleteRecursively()
+        }
+    }
 }

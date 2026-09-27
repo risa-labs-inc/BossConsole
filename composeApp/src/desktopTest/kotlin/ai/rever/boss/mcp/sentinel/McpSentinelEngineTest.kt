@@ -458,4 +458,63 @@ class McpSentinelEngineTest {
         val checkAfter = engine.checkInvocation("codebase_provider", "read_project_file")
         assertTrue(checkAfter.isAllowed, "BL-C: Tool must be invocable after explicit re-approval post-recovery")
     }
+
+    // ── N5 REGRESSION ──────────────────────────────────────────────────────────────────
+    // HMAC payload construction includes payloadVersion=v1 and supports legacy record fallback.
+    @Test
+    fun `N5-1 saved baselines compute HMAC using payloadVersion v1`() {
+        val file = tempBaselineFile()
+        val store = ToolDnaBaselineStore(baselineFile = file)
+        val engine = McpSentinelEngine(baselineStore = store)
+        val tool = AttackSimulationFixtures.BENIGN_READ_FILE_TOOL
+
+        engine.evaluateAll(listOf(tool))
+        engine.approveAndTrustTool("codebase_provider", "read_project_file", registeredTool = tool)
+
+        val baseline = store.getBaseline("codebase_provider", "read_project_file")
+        assertNotNull(baseline)
+        assertNotNull(baseline.hmacSignature)
+        assertTrue(baseline.hmacSignature.isNotBlank(), "N5-1: Saved baseline must possess non-blank HMAC signature")
+    }
+
+    @Test
+    fun `N5-2 legacy baseline records without payloadVersion verify successfully`() {
+        val file = tempBaselineFile()
+        val store = ToolDnaBaselineStore(baselineFile = file)
+        val tool = AttackSimulationFixtures.BENIGN_READ_FILE_TOOL
+
+        val record =
+            ToolBaselineRecord(
+                providerId = "codebase_provider",
+                toolName = "read_project_file",
+                canonicalFingerprint = "abcd1234efgh5678",
+                fingerprintVersion = "v1",
+                firstSeenTimestamp = 1000L,
+                lastSeenTimestamp = 1000L,
+                trustState = SentinelTrustState.TRUSTED,
+                lastAcceptedDescription = "Reads a file",
+                lastAcceptedSchemaJson = "{}",
+                readOnly = true,
+                requiresAdmin = false,
+                userDecision = "APPROVED",
+            )
+
+        val logger =
+            ai.rever.boss.utils.logging.BossLogger
+                .forComponent("Test")
+        val key = SentinelHmacHelper.initOrLoadHmacKey(file, null, logger)
+        val legacySig = SentinelHmacHelper.computeLegacyHmac(key, record)
+
+        val legacyRecord = record.copy(hmacSignature = legacySig)
+        store.saveBaseline(legacyRecord)
+
+        val loadedStore = ToolDnaBaselineStore(baselineFile = file)
+        val loadedBaseline = loadedStore.getBaseline("codebase_provider", "read_project_file")
+        assertNotNull(loadedBaseline)
+        assertEquals(
+            SentinelTrustState.TRUSTED,
+            loadedBaseline.trustState,
+            "N5-2: Legacy unversioned HMAC baseline must verify and load as TRUSTED",
+        )
+    }
 }

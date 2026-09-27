@@ -54,6 +54,15 @@ private data class SentinelAuditEvent(
     val isError: Boolean,
 )
 
+private data class BlockedEvalRequest(
+    val providerId: String,
+    val toolName: String,
+    val updated: ToolBaselineRecord,
+    val currentFp: String,
+    val registeredTool: RegisteredMcpTool?,
+    val currentEval: ToolEvaluationResult?,
+)
+
 internal fun makeSentinelKey(
     providerId: String,
     toolName: String,
@@ -301,6 +310,18 @@ class McpSentinelEngine(
                         isError = true,
                     ),
                 )
+                val key = makeSentinelKey(providerId, toolName)
+                val req =
+                    BlockedEvalRequest(
+                        providerId = providerId,
+                        toolName = toolName,
+                        updated = updated,
+                        currentFp = currentFp,
+                        registeredTool = registeredTool,
+                        currentEval = _evaluations.value[key],
+                    )
+                val blockedEval = SentinelEvaluator.buildBlockedEvaluation(req)
+                _evaluations.update { current -> current + (key to blockedEval) }
             }
             return saved
         }
@@ -530,6 +551,38 @@ private object SentinelEvaluator {
             shadowingFindings = ctx.toolShadowings,
             reason = "Tool is explicitly BLOCKED by operator policy.",
         )
+
+    fun buildBlockedEvaluation(req: BlockedEvalRequest): ToolEvaluationResult {
+        if (req.currentEval != null) {
+            return req.currentEval.copy(
+                trustState = SentinelTrustState.BLOCKED,
+                baselineRecord = req.updated,
+                reason = "Tool is explicitly BLOCKED by operator policy.",
+            )
+        }
+        val fp =
+            req.registeredTool?.let { ToolDnaFingerprinter.computeFingerprint(it) }
+                ?: ToolDnaFingerprint(
+                    providerId = req.providerId,
+                    toolName = req.toolName,
+                    fingerprint = req.currentFp,
+                    canonicalDescription = "",
+                    canonicalInputSchemaJson = "",
+                    readOnly = false,
+                    requiresAdmin = false,
+                )
+        return ToolEvaluationResult(
+            providerId = req.providerId,
+            toolName = req.toolName,
+            trustState = SentinelTrustState.BLOCKED,
+            currentFingerprint = fp,
+            baselineRecord = req.updated,
+            diffResult = null,
+            securityFindings = emptyList(),
+            shadowingFindings = emptyList(),
+            reason = "Tool is explicitly BLOCKED by operator policy.",
+        )
+    }
 
     fun evaluateUnchangedTool(ctx: EvaluationContext): ToolEvaluationResult {
         val baseline = checkNotNull(ctx.baseline)

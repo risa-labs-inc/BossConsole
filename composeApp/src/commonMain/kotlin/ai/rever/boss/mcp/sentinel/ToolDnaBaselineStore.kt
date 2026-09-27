@@ -254,7 +254,7 @@ class ToolDnaBaselineStore(
     }
 }
 
-private object SentinelHmacHelper {
+internal object SentinelHmacHelper {
     fun makeKey(
         providerId: String,
         toolName: String,
@@ -365,7 +365,34 @@ private object SentinelHmacHelper {
         }
     }
 
+    const val HMAC_PAYLOAD_VERSION: String = "v1"
+
     fun computeHmac(
+        key: javax.crypto.spec.SecretKeySpec?,
+        record: ToolBaselineRecord,
+    ): String {
+        if (key == null) return ""
+        val payload =
+            buildString {
+                append("payloadVersion=").append(HMAC_PAYLOAD_VERSION).append("\n")
+                append("provider=").append(record.providerId.trim().lowercase()).append("\n")
+                append("tool=").append(record.toolName).append("\n")
+                append("fingerprint=").append(record.canonicalFingerprint).append("\n")
+                append("version=").append(record.fingerprintVersion).append("\n")
+                append("trustState=").append(record.trustState.name).append("\n")
+                append("readOnly=").append(record.readOnly).append("\n")
+                append("requiresAdmin=").append(record.requiresAdmin).append("\n")
+                append("userDecision=").append(record.userDecision.orEmpty()).append("\n")
+                append("lastAcceptedDescription=").append(record.lastAcceptedDescription).append("\n")
+                append("lastAcceptedSchemaJson=").append(record.lastAcceptedSchemaJson).append("\n")
+            }
+        val mac = javax.crypto.Mac.getInstance("HmacSHA256")
+        mac.init(key)
+        val bytes = mac.doFinal(payload.toByteArray(Charsets.UTF_8))
+        return bytes.joinToString("") { "%02x".format(it) }
+    }
+
+    internal fun computeLegacyHmac(
         key: javax.crypto.spec.SecretKeySpec?,
         record: ToolBaselineRecord,
     ): String {
@@ -395,10 +422,16 @@ private object SentinelHmacHelper {
     ): Boolean {
         val sig = record.hmacSignature
         if (sig.isNullOrBlank() || key == null) return false
-        val expected = computeHmac(key, record)
-        return java.security.MessageDigest.isEqual(
-            expected.toByteArray(Charsets.UTF_8),
-            sig.toByteArray(Charsets.UTF_8),
-        )
+        val sigBytes = sig.toByteArray(Charsets.UTF_8)
+        val matchesV1 =
+            java.security.MessageDigest.isEqual(
+                computeHmac(key, record).toByteArray(Charsets.UTF_8),
+                sigBytes,
+            )
+        return matchesV1 ||
+            java.security.MessageDigest.isEqual(
+                computeLegacyHmac(key, record).toByteArray(Charsets.UTF_8),
+                sigBytes,
+            )
     }
 }
