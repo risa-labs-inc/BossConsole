@@ -12,15 +12,19 @@ import ai.rever.boss.ipc.proto.services.CreateSessionRequest
 import ai.rever.boss.ipc.proto.services.ResizeRequest
 import ai.rever.boss.ipc.proto.services.SendInputRequest
 import ai.rever.boss.ipc.proto.services.StreamOutputRequest
+import ai.rever.boss.ipc.proto.services.TerminalOutputChunk
 import ai.rever.boss.ipc.proto.services.TerminalServiceGrpcKt
 import com.google.protobuf.ByteString
 import io.grpc.Status
 import io.grpc.StatusException
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import java.io.File
@@ -131,6 +135,96 @@ class TerminalOwnershipTest {
                 assertEquals(0, host.listSessions(Empty.getDefaultInstance()).sessionsCount)
             }
         }
+
+    // streamOutput checks ownership once at stream start (#1321). These pin the safety net that rule relies on:
+    // ProcessIdentityInterceptor must still end an admitted stream as soon as its credential is revoked.
+    @Test
+    fun `revoking the owner credential closes an idle terminal output stream`() =
+        runBlocking {
+            withTimeout(15_000) {
+                val owner = caller("idle-owner")
+                val host = caller("host", ProcessAuthority.HOST)
+                val id = owner.createSession(request("echo")).sessionId
+                val received = Channel<TerminalOutputChunk>(Channel.UNLIMITED)
+                val subscription =
+                    async {
+                        refused(Status.Code.UNAUTHENTICATED) {
+                            owner.streamOutput(stream(id)).collect { received.send(it) }
+                        }
+                    }
+                awaitOutput(owner, id, received, "before-revoke")
+                // No further input, so the admitted stream is idle with nothing left to emit when access is revoked.
+                registry.revoke("idle-owner")
+                subscription.await()
+                assertTrue(isAlive(host, id), "The stream must close because of revocation, not process exit")
+                closeAndRemoveHistory(host, id)
+            }
+        }
+
+    @Test
+    fun `replacing the owner credential closes an active terminal output stream while output keeps flowing`() =
+        runBlocking {
+            withTimeout(15_000) {
+                val owner = caller("active-owner")
+                val host = caller("host", ProcessAuthority.HOST)
+                val id = owner.createSession(request("echo")).sessionId
+                val received = Channel<TerminalOutputChunk>(Channel.UNLIMITED)
+                val subscription =
+                    async {
+                        refused(Status.Code.UNAUTHENTICATED) {
+                            owner.streamOutput(stream(id)).collect { received.send(it) }
+                        }
+                    }
+                awaitOutput(owner, id, received, "before-revoke")
+                // Keep the session producing output, so the stream is mid-emission when the credential goes away.
+                val pump =
+                    launch {
+                        while (true) {
+                            host.sendInput(input(id, "still-running\n"))
+                            delay(10)
+                        }
+                    }
+                received.receive()
+                // Re-issuing the same process id revokes the previous credential.
+                caller("active-owner")
+                subscription.await()
+                pump.cancelAndJoin()
+                // The session still produces output for an authorized reader; only the revoked reader was cut off.
+                assertOwnedOutput(host, id)
+                closeAndRemoveHistory(host, id)
+            }
+        }
+
+    private suspend fun awaitOutput(
+        client: TerminalServiceGrpcKt.TerminalServiceCoroutineStub,
+        id: String,
+        received: Channel<TerminalOutputChunk>,
+        marker: String,
+    ) {
+        client.sendInput(input(id, "$marker\n"))
+        // Skip any earlier chunks until the marker has been echoed back through the stream.
+        do {
+            val text = received.receive().data.toStringUtf8()
+        } while (!text.contains(marker))
+    }
+
+    private suspend fun isAlive(
+        host: TerminalServiceGrpcKt.TerminalServiceCoroutineStub,
+        id: String,
+    ) = host
+        .listSessions(Empty.getDefaultInstance())
+        .sessionsList
+        .single { it.sessionId == id }
+        .isAlive
+
+    private fun input(
+        id: String,
+        text: String,
+    ) = SendInputRequest
+        .newBuilder()
+        .setSessionId(id)
+        .setData(ByteString.copyFromUtf8(text))
+        .build()
 
     private suspend fun closeAndRemoveHistory(
         host: TerminalServiceGrpcKt.TerminalServiceCoroutineStub,

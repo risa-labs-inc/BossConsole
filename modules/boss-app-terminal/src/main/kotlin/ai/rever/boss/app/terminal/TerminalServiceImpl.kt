@@ -163,9 +163,14 @@ class TerminalServiceImpl(
                     ).asRuntimeException()
             }
             try {
+                // session() checks ownership once when the stream starts (fail-closed). The caller's
+                // identity and the session owner are both fixed for the life of this call, so only
+                // revocation can change the answer, and ProcessIdentityInterceptor already ends the call
+                // on revocation and re-checks the token before every outbound message. A per-chunk
+                // requireOwner only repeated that and took the registry lock once more per chunk (#1321).
+                // See the IpcCall KDoc and TerminalOwnershipTest.
                 val owned = session(request.sessionId)
                 owned.output.stream().collect { chunk ->
-                    IpcCall.requireOwner(owned.ownerInstance)
                     emit(chunk)
                 }
             } finally {
