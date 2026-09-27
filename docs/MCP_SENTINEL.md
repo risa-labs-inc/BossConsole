@@ -105,6 +105,7 @@ An MCP tool monitored by Sentinel transitions through explicit states:
 ### Limitations
 - **Server Implementation Risk**: A matching fingerprint proves that the *definition metadata* has not changed, but does not guarantee the server-side backend code is benign.
 - **Static Analysis**: Scanner heuristics identify known threat patterns and suspicious payloads, but cannot guarantee 100% detection of novel adversarial phrasing.
+- **Filesystem Permission Support**: Master HMAC key files (`tooldna-master.key`) are created atomically with restrictive POSIX owner-only permissions (`0600` / `OWNER_READ`, `OWNER_WRITE`) on POSIX-compliant filesystems. On filesystems without POSIX permission support (e.g. Windows NTFS without POSIX attribute support), OS-level permission restriction may be unavailable; Sentinel falls back safely to default file creation so key access limitations do not brick or disable the baseline store.
 
 ---
 

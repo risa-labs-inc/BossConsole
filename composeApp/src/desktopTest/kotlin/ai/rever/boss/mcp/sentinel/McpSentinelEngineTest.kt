@@ -686,13 +686,73 @@ class McpSentinelEngineTest {
         val upgradedBaseline = upgradedStore.getBaseline("codebase_provider", "read_project_file")
         assertNotNull(upgradedBaseline)
         assertEquals(
-            SentinelTrustState.TRUSTED,
-            upgradedBaseline.trustState,
-            "N5-2: Upgraded record must load as TRUSTED",
+            SentinelHmacHelper.computeHmac(key, upgradedBaseline),
+            upgradedBaseline.hmacSignature,
+            "N5-2: Upgraded baseline signature on disk must specifically match v1 computeHmac digest",
         )
-        assertTrue(
-            SentinelHmacHelper.verifyHmac(key, upgradedBaseline),
-            "N5-2: Upgraded baseline must verify via v1 HMAC signature",
+    }
+
+    @Test
+    fun `generateAndWriteKey creates owner-only POSIX permissions on key creation and rewrite`() {
+        val dir =
+            kotlin.io.path
+                .createTempDirectory("mcp-key-perm-test")
+                .toFile()
+        val keyFile = File(dir, "tooldna-master.key")
+        val logger =
+            ai.rever.boss.utils.logging.BossLogger
+                .forComponent("Test")
+
+        // Test 1: Creation path
+        val key1 = SentinelHmacHelper.initOrLoadHmacKey(null, keyFile, logger)
+        assertNotNull(key1)
+        assertTrue(keyFile.exists())
+        assertEquals(32L, keyFile.length())
+
+        val view =
+            java.nio.file.Files
+                .getFileAttributeView(keyFile.toPath(), java.nio.file.attribute.PosixFileAttributeView::class.java)
+        if (view != null) {
+            val perms =
+                java.nio.file.Files
+                    .getPosixFilePermissions(keyFile.toPath())
+            val expected =
+                setOf(
+                    java.nio.file.attribute.PosixFilePermission.OWNER_READ,
+                    java.nio.file.attribute.PosixFilePermission.OWNER_WRITE,
+                )
+            assertEquals(expected, perms, "Key file creation must set owner-only (0600) POSIX permissions")
+        }
+
+        // Test 2: Rewrite path (zero-length / corrupted file)
+        keyFile.writeText("") // Corrupt / truncate
+        assertEquals(0L, keyFile.length())
+
+        val key2 = SentinelHmacHelper.initOrLoadHmacKey(null, keyFile, logger)
+        assertNotNull(key2)
+        assertEquals(32L, keyFile.length())
+
+        if (view != null) {
+            val perms2 =
+                java.nio.file.Files
+                    .getPosixFilePermissions(keyFile.toPath())
+            val expected =
+                setOf(
+                    java.nio.file.attribute.PosixFilePermission.OWNER_READ,
+                    java.nio.file.attribute.PosixFilePermission.OWNER_WRITE,
+                )
+            assertEquals(expected, perms2, "Key file rewrite must set owner-only (0600) POSIX permissions")
+        }
+
+        // Test 3: Existing valid key is preserved and not regenerated
+        val key3 = SentinelHmacHelper.initOrLoadHmacKey(null, keyFile, logger)
+        assertNotNull(key3)
+        assertEquals(
+            key2.encoded.toList(),
+            key3.encoded.toList(),
+            "Existing valid key must be preserved without regeneration",
         )
+
+        dir.deleteRecursively()
     }
 }

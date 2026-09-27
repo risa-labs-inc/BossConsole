@@ -321,29 +321,39 @@ internal object SentinelHmacHelper {
         logger: ComponentLogger,
     ): ByteArray {
         val fresh = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
-        targetKeyFile.writeBytes(fresh)
-        restrictKeyFilePermissions(targetKeyFile, logger)
+        writeKeyBytesWithRestrictivePermissions(targetKeyFile, fresh, logger)
         return fresh
     }
 
-    private fun restrictKeyFilePermissions(
+    private fun writeKeyBytesWithRestrictivePermissions(
         targetKeyFile: File,
+        keyBytes: ByteArray,
         logger: ComponentLogger,
     ) {
+        val path = targetKeyFile.toPath()
+        val posixPerms =
+            setOf(
+                java.nio.file.attribute.PosixFilePermission.OWNER_READ,
+                java.nio.file.attribute.PosixFilePermission.OWNER_WRITE,
+            )
         try {
             val view =
                 java.nio.file.Files.getFileAttributeView(
-                    targetKeyFile.toPath(),
+                    path,
                     java.nio.file.attribute.PosixFileAttributeView::class.java,
                 )
             if (view != null) {
-                java.nio.file.Files.setPosixFilePermissions(
-                    targetKeyFile.toPath(),
-                    setOf(
-                        java.nio.file.attribute.PosixFilePermission.OWNER_READ,
-                        java.nio.file.attribute.PosixFilePermission.OWNER_WRITE,
-                    ),
-                )
+                if (!targetKeyFile.exists()) {
+                    val attr =
+                        java.nio.file.attribute.PosixFilePermissions
+                            .asFileAttribute(posixPerms)
+                    java.nio.file.Files
+                        .createFile(path, attr)
+                }
+                targetKeyFile.writeBytes(keyBytes)
+                java.nio.file.Files
+                    .setPosixFilePermissions(path, posixPerms)
+                return
             }
         } catch (e: java.io.IOException) {
             logger.warn(
@@ -352,14 +362,21 @@ internal object SentinelHmacHelper {
                 mapOf("path" to targetKeyFile.path, "error" to (e.message ?: "IOException")),
             )
         } catch (e: java.lang.SecurityException) {
-            // Files.setPosixFilePermissions() can throw SecurityException on JVM when the
-            // security manager disallows the operation; it is a specific JDK platform type.
             logger.warn(
                 LogCategory.SYSTEM,
                 "Could not set owner-only permissions on HMAC key file",
                 mapOf("path" to targetKeyFile.path, "error" to (e.message ?: "SecurityException")),
             )
+        } catch (e: java.lang.UnsupportedOperationException) {
+            // PosixFilePermissions.asFileAttribute is unsupported on Windows / non-POSIX filesystems
+            logger.debug(
+                LogCategory.SYSTEM,
+                "POSIX file permissions unsupported on filesystem; using default file creation",
+                mapOf("path" to targetKeyFile.path, "error" to (e.message ?: "UnsupportedOperationException")),
+            )
         }
+
+        targetKeyFile.writeBytes(keyBytes)
     }
 
     const val HMAC_PAYLOAD_VERSION: String = "v1"
