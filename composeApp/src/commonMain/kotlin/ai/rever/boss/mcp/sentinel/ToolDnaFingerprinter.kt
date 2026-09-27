@@ -109,26 +109,28 @@ object ToolDnaFingerprinter {
         }
     }
 
-    private fun canonicalizeElement(element: JsonElement): String =
+    private val UNORDERED_SET_KEYS = setOf("enum", "type", "required", "requiredPermissions")
+
+    private fun canonicalizeElement(
+        element: JsonElement,
+        parentKey: String? = null,
+    ): String =
         when (element) {
             is JsonObject -> {
                 val sortedKeys = element.keys.sorted()
                 val entries =
                     sortedKeys.joinToString(",") { key ->
-                        "\"${escapeJsonString(key)}\":${canonicalizeElement(element.getValue(key))}"
+                        "\"${escapeJsonString(key)}\":${canonicalizeElement(element.getValue(key), parentKey = key)}"
                     }
                 "{$entries}"
             }
 
             is JsonArray -> {
+                val shouldSort = parentKey != null && UNORDERED_SET_KEYS.contains(parentKey)
                 val isAllStringPrimitives = element.all { it is JsonPrimitive && (it as JsonPrimitive).isString }
-                val items =
-                    if (isAllStringPrimitives) {
-                        element.map { canonicalizeElement(it) }.sorted()
-                    } else {
-                        element.map { canonicalizeElement(it) }
-                    }
-                "[${items.joinToString(",")}]"
+                val items = element.map { canonicalizeElement(it) }
+                val finalItems = if (shouldSort && isAllStringPrimitives) items.sorted() else items
+                "[${finalItems.joinToString(",")}]"
             }
 
             is JsonPrimitive -> {

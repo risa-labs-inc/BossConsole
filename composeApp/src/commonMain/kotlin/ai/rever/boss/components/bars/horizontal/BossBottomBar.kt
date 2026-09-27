@@ -423,9 +423,9 @@ private fun McpAccessStatusItem(persistedPolicyConfig: McpToolPolicyConfig) {
                     .DialogProperties(),
         ) {
             androidx.compose.material.Surface(
-                modifier = Modifier.fillMaxWidth(0.9f).fillMaxHeight(0.85f),
+                modifier = Modifier.width(900.dp).fillMaxHeight(0.85f),
                 shape = RoundedCornerShape(12.dp),
-                color = Color(0xFF1E1E2E),
+                color = BossTheme.colors.panel,
             ) {
                 ai.rever.boss.components.plugin
                     .McpSentinelPanel(modifier = Modifier.fillMaxSize())
@@ -560,6 +560,7 @@ internal fun mcpProactivePolicyCandidates(
 private fun McpActivityStatusItem() {
     val recentOps by McpToolRegistryImpl.ledger.recentOperations.collectAsState()
     var showActivityLog by remember { mutableStateOf(false) }
+    var showSentinelPanel by remember { mutableStateOf(false) }
     val tools by McpToolRegistryImpl.tools.collectAsState()
     if (recentOps.isEmpty() && tools.isEmpty() && !showActivityLog) return
     // The most recent CALL: a YOLO on/off marker is in the ledger for audit but is not a call.
@@ -589,8 +590,26 @@ private fun McpActivityStatusItem() {
             ledgerPath = McpToolRegistryImpl.ledger.persistencePath,
             pendingWriteIds = pendingWriteIds,
             droppedWrites = droppedWrites,
+            onSentinel = { showSentinelPanel = true },
             onDismiss = { showActivityLog = false },
         )
+    }
+    if (showSentinelPanel) {
+        ai.rever.boss.plugin.ui.BossDialog(
+            onDismissRequest = { showSentinelPanel = false },
+            properties =
+                androidx.compose.ui.window
+                    .DialogProperties(),
+        ) {
+            androidx.compose.material.Surface(
+                modifier = Modifier.width(900.dp).fillMaxHeight(0.85f),
+                shape = RoundedCornerShape(12.dp),
+                color = BossTheme.colors.panel,
+            ) {
+                ai.rever.boss.components.plugin
+                    .McpSentinelPanel(modifier = Modifier.fillMaxSize())
+            }
+        }
     }
 }
 
@@ -668,5 +687,3 @@ private fun StatusBarTextButton(
         }
     }
 }
-
-internal fun formatMcpDuration(ms: Long): String = "${ms}ms"

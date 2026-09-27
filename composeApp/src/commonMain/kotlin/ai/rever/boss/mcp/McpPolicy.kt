@@ -34,6 +34,7 @@ enum class McpApprovalDisposition {
     TIMEOUT,
     POLICY_DENIED,
     SENTINEL_BLOCKED,
+    SENTINEL_EVALUATED,
     CANCELLED, // Legacy ledger value.
     CANCELLED_AWAITING_APPROVAL,
     CANCELLED_IN_FLIGHT,

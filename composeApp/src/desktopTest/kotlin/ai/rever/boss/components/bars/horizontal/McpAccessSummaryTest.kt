@@ -78,13 +78,13 @@ class McpAccessSummaryTest {
         val on = McpAccessSummary(0, 0, 0, yolo = true)
         assertEquals("MCP: YOLO", on.label)
         assertTrue(on.isVisible(hasTools = false))
-        assertEquals(listOf("Turn off YOLO mode", "---", "Tool policies..."), labels(on))
+        assertEquals(listOf("Turn off YOLO mode", "---", "Tool policies...", "MCP Sentinel (ToolDNA)..."), labels(on))
         assertEquals("MCP access", McpAccessSummary(0, 0, 0).label)
     }
 
     @Test
     fun `a deployment that refuses yolo does not offer it`() {
-        assertEquals(listOf("Tool policies..."), labels(McpAccessSummary(0, 0, 0, yoloAvailable = false)))
+        assertEquals(listOf("Tool policies...", "MCP Sentinel (ToolDNA)..."), labels(McpAccessSummary(0, 0, 0, yoloAvailable = false)))
     }
 
     @Test

@@ -22,8 +22,8 @@ class ToolContentScannerTest {
         val findings = ToolContentScanner.scan(AttackSimulationFixtures.INVISIBLE_UNICODE_DEF)
 
         assertTrue(findings.isNotEmpty())
-        assertTrue(findings.any { it.ruleId == "UNI-001" })
-        assertEquals(FindingSeverity.HIGH, findings.first { it.ruleId == "UNI-001" }.severity)
+        assertTrue(findings.any { it.ruleId == "UNI-002" })
+        assertEquals(FindingSeverity.MEDIUM, findings.first { it.ruleId == "UNI-002" }.severity)
     }
 
     @Test
@@ -118,5 +118,61 @@ class ToolContentScannerTest {
             findings.any { it.ruleId == "UNI-001" },
             "Scanner must detect supplementary plane invisible tag characters U+E0000-U+E007F",
         )
+    }
+
+    @Test
+    fun `detects emoji variation selectors as low severity`() {
+        val variationSelector = String(Character.toChars(0xFE0F))
+        val def =
+            ai.rever.boss.plugin.api.McpToolDefinition(
+                name = "emoji_tool",
+                description = "Smile 😊$variationSelector",
+                handler = McpToolHandler { McpToolResult("") },
+            )
+        val findings = ToolContentScanner.scan(def)
+        assertTrue(findings.any { it.ruleId == "UNI-003" && it.severity == FindingSeverity.LOW })
+        assertFalse(findings.any { it.ruleId == "UNI-001" })
+    }
+
+    @Test
+    fun `detects LRM and RLM as low severity`() {
+        val lrm = String(Character.toChars(0x200E))
+        val rlm = String(Character.toChars(0x200F))
+        val def =
+            ai.rever.boss.plugin.api.McpToolDefinition(
+                name = "lrm_tool",
+                description = "Text$lrm and$rlm text",
+                handler = McpToolHandler { McpToolResult("") },
+            )
+        val findings = ToolContentScanner.scan(def)
+        assertTrue(findings.any { it.ruleId == "UNI-003" && it.severity == FindingSeverity.LOW })
+        assertFalse(findings.any { it.ruleId == "UNI-001" })
+    }
+
+    @Test
+    fun `detects dangerous bidi controls as high severity`() {
+        val rlo = String(Character.toChars(0x202E))
+        val def =
+            ai.rever.boss.plugin.api.McpToolDefinition(
+                name = "bidi_tool",
+                description = "Text$rlo text",
+                handler = McpToolHandler { McpToolResult("") },
+            )
+        val findings = ToolContentScanner.scan(def)
+        assertTrue(findings.any { it.ruleId == "UNI-001" && it.severity == FindingSeverity.HIGH })
+    }
+
+    @Test
+    fun `detects hangul filler and invisible as medium severity`() {
+        val hangulFiller = String(Character.toChars(0x3164))
+        val def =
+            ai.rever.boss.plugin.api.McpToolDefinition(
+                name = "hangul_tool",
+                description = "Text$hangulFiller text",
+                handler = McpToolHandler { McpToolResult("") },
+            )
+        val findings = ToolContentScanner.scan(def)
+        assertTrue(findings.any { it.ruleId == "UNI-002" && it.severity == FindingSeverity.MEDIUM })
+        assertFalse(findings.any { it.ruleId == "UNI-001" })
     }
 }

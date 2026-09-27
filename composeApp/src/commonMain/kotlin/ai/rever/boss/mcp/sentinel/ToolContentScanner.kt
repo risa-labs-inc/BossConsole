@@ -199,25 +199,58 @@ private object ScannerHelpers {
         location: String,
         findings: MutableList<SecurityFinding>,
     ) {
-        val detectedHex = mutableListOf<String>()
+        val detectedHigh = mutableListOf<String>()
+        val detectedMedium = mutableListOf<String>()
+        val detectedLow = mutableListOf<String>()
         var offset = 0
         while (offset < text.length) {
             val codePoint = text.codePointAt(offset)
-            if (isSuspiciousCodePoint(codePoint)) {
-                detectedHex.add(formatCodePoint(codePoint))
+            val severity = getUnicodeObfuscationSeverity(codePoint)
+            if (severity != null) {
+                val formatted = formatCodePoint(codePoint)
+                when (severity) {
+                    FindingSeverity.HIGH -> detectedHigh.add(formatted)
+                    FindingSeverity.MEDIUM -> detectedMedium.add(formatted)
+                    FindingSeverity.LOW -> detectedLow.add(formatted)
+                    else -> {}
+                }
             }
             offset += Character.charCount(codePoint)
         }
 
-        if (detectedHex.isNotEmpty()) {
-            val unicodeSummary = detectedHex.distinct().take(10).joinToString(", ")
+        if (detectedHigh.isNotEmpty()) {
+            val unicodeSummary = detectedHigh.distinct().take(10).joinToString(", ")
             findings.add(
                 SecurityFinding(
                     ruleId = "UNI-001",
                     severity = FindingSeverity.HIGH,
                     location = location,
                     matchedText = unicodeSummary,
-                    explanation = "Invisible, control, or tag Unicode characters detected: $unicodeSummary.",
+                    explanation = "Dangerous Unicode bidi/tag controls detected: $unicodeSummary.",
+                ),
+            )
+        }
+        if (detectedMedium.isNotEmpty()) {
+            val unicodeSummary = detectedMedium.distinct().take(10).joinToString(", ")
+            findings.add(
+                SecurityFinding(
+                    ruleId = "UNI-002",
+                    severity = FindingSeverity.MEDIUM,
+                    location = location,
+                    matchedText = unicodeSummary,
+                    explanation = "Suspicious invisible or filler characters detected: $unicodeSummary.",
+                ),
+            )
+        }
+        if (detectedLow.isNotEmpty()) {
+            val unicodeSummary = detectedLow.distinct().take(10).joinToString(", ")
+            findings.add(
+                SecurityFinding(
+                    ruleId = "UNI-003",
+                    severity = FindingSeverity.LOW,
+                    location = location,
+                    matchedText = unicodeSummary,
+                    explanation = "Minor formatting or variation characters detected: $unicodeSummary.",
                 ),
             )
         }
@@ -265,11 +298,22 @@ private object ScannerHelpers {
         }
     }
 
-    private fun isSuspiciousCodePoint(cp: Int): Boolean =
-        (cp in 0x200B..0x200D) || cp == 0xFEFF || cp == 0x00AD ||
-            (cp in 0x202A..0x202E) || (cp in 0x2066..0x2069) ||
-            cp == 0x200E || cp == 0x200F || cp == 0x061C ||
-            (cp in 0xE0000..0xE007F) || (cp in 0xFE00..0xFE0F) || (cp in 0xE0100..0xE01EF)
+    private fun getUnicodeObfuscationSeverity(cp: Int): FindingSeverity? =
+        when {
+            // Genuinely dangerous Bidi controls and overrides (e.g. LRE, RLE, LRO, RLO, ALM, LRI, RLI, FSI, PDI)
+            cp in 0x202A..0x202E || cp in 0x2066..0x2069 || cp == 0x061C -> FindingSeverity.HIGH
+
+            // Supplementary plane tag characters (often used for stealth payloads)
+            cp in 0xE0000..0xE007F -> FindingSeverity.HIGH
+
+            // Hangul Fillers / invisible characters (often used for spoofing)
+            cp == 0x115F || cp == 0x1160 || cp == 0x3164 || cp == 0x2060 || cp == 0x180E || cp in 0x200B..0x200D || cp == 0xFEFF || cp == 0x00AD -> FindingSeverity.MEDIUM
+
+            // Legitimate LRM/RLM or Emoji variation selectors
+            cp == 0x200E || cp == 0x200F || cp in 0xFE00..0xFE0F || cp in 0xE0100..0xE01EF -> FindingSeverity.LOW
+
+            else -> null
+        }
 
     private fun formatCodePoint(cp: Int): String = if (cp <= 0xFFFF) "U+%04X".format(cp) else "U+%05X".format(cp)
 

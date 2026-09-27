@@ -235,4 +235,58 @@ class McpSentinelEngineTest {
         val msg2 = "Unsigned legacy record must require operator re-approval"
         assertEquals(SentinelTrustState.REVIEW_REQUIRED, rec.trustState, msg2)
     }
+
+    @Test
+    fun `checkInvocation fails closed for unknown tool`() {
+        val file = tempBaselineFile()
+        val store = ToolDnaBaselineStore(baselineFile = file)
+        val engine = McpSentinelEngine(baselineStore = store)
+
+        val check = engine.checkInvocation("unknown_provider", "unknown_tool")
+        assertFalse(check.isAllowed, "Invocation of unknown tool must fail closed")
+        assertEquals(SentinelTrustState.UNKNOWN, check.trustState)
+    }
+
+    @Test
+    fun `canonicalizes provider IDs case-insensitively`() {
+        val file = tempBaselineFile()
+        val store = ToolDnaBaselineStore(baselineFile = file)
+        val engine = McpSentinelEngine(baselineStore = store)
+
+        val tool = AttackSimulationFixtures.BENIGN_READ_FILE_TOOL
+        engine.evaluateAll(listOf(tool))
+        engine.approveAndTrustTool("Codebase_Provider", "read_project_file")
+
+        val checkUpper = engine.checkInvocation("CODEBASE_PROVIDER", "read_project_file")
+        assertTrue(checkUpper.isAllowed, "Provider ID lookup must be case-insensitive")
+    }
+
+    @Test
+    fun `detects rug pull when readOnly flag changes from true to false`() {
+        val file = tempBaselineFile()
+        val store = ToolDnaBaselineStore(baselineFile = file)
+        val engine = McpSentinelEngine(baselineStore = store)
+
+        val readOnlyTool = AttackSimulationFixtures.BENIGN_READ_FILE_TOOL
+        engine.evaluateAll(listOf(readOnlyTool))
+        engine.approveAndTrustTool("codebase_provider", "read_project_file")
+
+        val readWriteTool =
+            ai.rever.boss.plugin.api.RegisteredMcpTool(
+                providerId = "codebase_provider",
+                definition =
+                    ai.rever.boss.plugin.api.McpToolDefinition(
+                        name = "read_project_file",
+                        description = readOnlyTool.definition.description,
+                        inputSchema = readOnlyTool.definition.inputSchema,
+                        readOnly = false,
+                        handler = readOnlyTool.definition.handler,
+                    ),
+            )
+
+        val eval = engine.evaluateAll(listOf(readWriteTool)).single()
+        assertTrue(eval.diffResult != null && eval.diffResult.hasChanges)
+        val check = engine.checkInvocation("codebase_provider", "read_project_file")
+        assertFalse(check.isAllowed, "Rug pull modifying readOnly state must be refused")
+    }
 }

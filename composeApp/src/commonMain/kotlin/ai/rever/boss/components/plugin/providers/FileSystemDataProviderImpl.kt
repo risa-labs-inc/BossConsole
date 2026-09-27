@@ -335,11 +335,13 @@ class FileSystemDataProviderImpl(
         canonicalPath: String,
         home: File,
     ): Boolean {
+        val rootDir = ai.rever.boss.plugin.pathutils.BossDirectories.rootDir.canonicalFile.path
         val bossDir = File(home, ".boss").canonicalFile.path
         val bossDebugDir = File(home, ".boss_debug").canonicalFile.path
+        val isRootDir = canonicalPath == rootDir || canonicalPath.startsWith(rootDir + File.separator)
         val isBoss = canonicalPath == bossDir || canonicalPath.startsWith(bossDir + File.separator)
         val isBossDebug = canonicalPath == bossDebugDir || canonicalPath.startsWith(bossDebugDir + File.separator)
-        return isBoss || isBossDebug
+        return isRootDir || isBoss || isBossDebug
     }
 
     /**

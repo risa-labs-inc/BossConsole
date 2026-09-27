@@ -16,7 +16,7 @@ import java.io.File
  * Persisted as JSON array via `BossDirectories.resolve("mcp-tooldna-baseline.json")` (under `~/.boss/`).
  */
 class ToolDnaBaselineStore(
-    private val baselineFile: File? = null,
+    private val baselineFile: File,
     private val hmacKeyFile: File? = null,
 ) {
     private val logger = BossLogger.forComponent("ToolDnaBaselineStore")
@@ -54,20 +54,23 @@ class ToolDnaBaselineStore(
             baselines.values.toList()
         }
 
-    fun saveBaseline(record: ToolBaselineRecord): Boolean =
+    fun saveBaseline(
+        record: ToolBaselineRecord,
+        persist: Boolean = true,
+    ): Boolean =
         synchronized(lock) {
             if (isCorrupted) {
                 logger.warn(
                     LogCategory.SYSTEM,
                     "Refusing to save baseline: ToolDNA baseline store is marked as corrupted",
-                    mapOf("path" to (baselineFile?.path ?: "in-memory")),
+                    mapOf("path" to baselineFile.path),
                 )
                 return false
             }
             val signed = record.copy(hmacSignature = SentinelHmacHelper.computeHmac(secretKeySpec, record))
             val key = SentinelHmacHelper.makeKey(signed.providerId, signed.toolName)
             baselines[key] = signed
-            persistToDisk()
+            if (persist) persistToDisk() else true
         }
 
     fun saveAllBaselines(records: List<ToolBaselineRecord>): Boolean =
@@ -101,11 +104,25 @@ class ToolDnaBaselineStore(
             }
         }
 
-    fun clear(): Boolean =
+    fun backupAndClear(): Boolean =
         synchronized(lock) {
+            val file = baselineFile
+            if (file != null && file.exists() && isCorrupted) {
+                val backupFile = File(file.parentFile, file.name + ".corrupt")
+                try {
+                    file.copyTo(backupFile, overwrite = true)
+                } catch (e: Exception) {
+                    logger.error(
+                        LogCategory.SYSTEM,
+                        "Failed to create .corrupt backup for ToolDNA baseline",
+                        mapOf("path" to file.path, "error" to (e.message ?: "Exception")),
+                    )
+                    return false
+                }
+            }
             baselines.clear()
             isCorrupted = false
-            persistToDisk()
+            return persistToDisk()
         }
 
     private fun loadFromDisk() {
@@ -226,7 +243,7 @@ private object SentinelHmacHelper {
     fun makeKey(
         providerId: String,
         toolName: String,
-    ): String = "$providerId/$toolName"
+    ): String = "${providerId.trim().lowercase()}/$toolName"
 
     fun initOrLoadHmacKey(
         baselineFile: File?,
@@ -265,6 +282,26 @@ private object SentinelHmacHelper {
                     targetKeyFile.readBytes()
                 } else {
                     val fresh = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
+                    if (!targetKeyFile.exists()) {
+                        targetKeyFile.createNewFile()
+                        try {
+                            if (java.nio.file.Files.getFileAttributeView(targetKeyFile.toPath(), java.nio.file.attribute.PosixFileAttributeView::class.java) != null) {
+                                java.nio.file.Files.setPosixFilePermissions(
+                                    targetKeyFile.toPath(),
+                                    setOf(
+                                        java.nio.file.attribute.PosixFilePermission.OWNER_READ,
+                                        java.nio.file.attribute.PosixFilePermission.OWNER_WRITE,
+                                    ),
+                                )
+                            }
+                        } catch (e: Exception) {
+                            logger.warn(
+                                LogCategory.SYSTEM,
+                                "Could not set owner-only permissions on HMAC key file",
+                                mapOf("path" to targetKeyFile.path, "error" to (e.message ?: e.toString())),
+                            )
+                        }
+                    }
                     targetKeyFile.writeBytes(fresh)
                     fresh
                 }
@@ -292,7 +329,7 @@ private object SentinelHmacHelper {
         if (key == null) return ""
         val payload =
             buildString {
-                append("provider=").append(record.providerId).append("\n")
+                append("provider=").append(record.providerId.trim().lowercase()).append("\n")
                 append("tool=").append(record.toolName).append("\n")
                 append("fingerprint=").append(record.canonicalFingerprint).append("\n")
                 append("version=").append(record.fingerprintVersion).append("\n")
@@ -300,6 +337,8 @@ private object SentinelHmacHelper {
                 append("readOnly=").append(record.readOnly).append("\n")
                 append("requiresAdmin=").append(record.requiresAdmin).append("\n")
                 append("userDecision=").append(record.userDecision.orEmpty()).append("\n")
+                append("lastAcceptedDescription=").append(record.lastAcceptedDescription).append("\n")
+                append("lastAcceptedSchemaJson=").append(record.lastAcceptedSchemaJson).append("\n")
             }
         val mac = javax.crypto.Mac.getInstance("HmacSHA256")
         mac.init(key)

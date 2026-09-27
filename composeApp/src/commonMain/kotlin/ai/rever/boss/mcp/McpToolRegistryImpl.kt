@@ -146,12 +146,12 @@ object McpToolRegistryImpl : McpToolRegistry {
             ledgerFile = BossDirectories.resolve("mcp-calls.jsonl"),
         )
 
-    val sentinelStore =
+    internal val sentinelStore =
         ai.rever.boss.mcp.sentinel.ToolDnaBaselineStore(
             baselineFile = BossDirectories.resolve("mcp-tooldna-baseline.json"),
         )
 
-    val sentinelEngine =
+    internal val sentinelEngine =
         ai.rever.boss.mcp.sentinel.McpSentinelEngine(
             baselineStore = sentinelStore,
             ledger = ledger,
@@ -518,13 +518,7 @@ internal class McpToolRegistryCore(
      * literal `{{secret:...}}` text it might mistake for a value.
      */
     secretLookup: SecretLookup? = null,
-    val sentinelEngine: ai.rever.boss.mcp.sentinel.McpSentinelEngine =
-        ai.rever.boss.mcp.sentinel.McpSentinelEngine(
-            baselineStore =
-                ai.rever.boss.mcp.sentinel
-                    .ToolDnaBaselineStore(null),
-            ledger = ledger,
-        ),
+    val sentinelEngine: ai.rever.boss.mcp.sentinel.McpSentinelEngine? = null,
 ) {
     private val logger = BossLogger.forComponent("McpToolRegistry")
 
@@ -886,7 +880,7 @@ internal class McpToolRegistryCore(
             }
         }
         _all.value = flat
-        sentinelEngine.evaluateAll(flat)
+        sentinelEngine?.evaluateAll(flat)
         applyExposed()
     }
 
@@ -996,8 +990,8 @@ internal class McpToolRegistryCore(
                 if (invalidArguments != null) {
                     McpApprovalDisposition.INVALID_ARGUMENTS to invalidArguments
                 } else {
-                    val sentinelCheck = sentinelEngine.checkInvocation(tool.providerId, canonicalName, tool)
-                    if (!sentinelCheck.isAllowed) {
+                    val sentinelCheck = sentinelEngine?.checkInvocation(tool.providerId, canonicalName, tool)
+                    if (sentinelCheck != null && !sentinelCheck.isAllowed) {
                         val fallbackReason = "MCP Sentinel: Tool '$canonicalName' is blocked or requires review."
                         McpApprovalDisposition.SENTINEL_BLOCKED to (sentinelCheck.reason ?: fallbackReason)
                     } else {

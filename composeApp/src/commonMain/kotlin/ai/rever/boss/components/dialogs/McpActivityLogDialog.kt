@@ -64,6 +64,7 @@ fun McpActivityLogDialog(
     ledgerPath: String? = null,
     pendingWriteIds: Set<String> = emptySet(),
     droppedWrites: Long = 0,
+    onSentinel: (() -> Unit)? = null,
     onDismiss: () -> Unit,
 ) {
     val windowSize = LocalWindowInfo.current.containerSize
@@ -85,12 +86,30 @@ fun McpActivityLogDialog(
         ) {
             Column(modifier = Modifier.padding(24.dp)) {
                 Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
-                    Text(
-                        text = "MCP Activity Log",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = colors.textPrimary,
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "MCP Activity Log",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = colors.textPrimary,
+                        )
+                        if (onSentinel != null) {
+                            Button(
+                                onClick = onSentinel,
+                                colors = ButtonDefaults.buttonColors(backgroundColor = colors.raised),
+                            ) {
+                                Text(
+                                    text = "MCP Sentinel...",
+                                    fontSize = 12.sp,
+                                    color = colors.signalText,
+                                )
+                            }
+                        }
+                    }
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text =
@@ -403,6 +422,7 @@ internal val McpApprovalDisposition.unsuccessfulCategory: McpUnsuccessfulCategor
             McpApprovalDisposition.YOLO_ALLOWED,
             McpApprovalDisposition.YOLO_ENABLED,
             McpApprovalDisposition.YOLO_DISABLED,
+            McpApprovalDisposition.SENTINEL_EVALUATED,
             -> McpUnsuccessfulCategory.FAILED
         }
 
