@@ -111,11 +111,20 @@ class ToolDnaBaselineStore(
                 val backupFile = File(file.parentFile, file.name + ".corrupt")
                 try {
                     file.copyTo(backupFile, overwrite = true)
-                } catch (e: Exception) {
+                } catch (e: java.io.IOException) {
                     logger.error(
                         LogCategory.SYSTEM,
                         "Failed to create .corrupt backup for ToolDNA baseline",
-                        mapOf("path" to file.path, "error" to (e.message ?: "Exception")),
+                        mapOf("path" to file.path, "error" to (e.message ?: "IOException")),
+                    )
+                    return false
+                } catch (e: java.lang.SecurityException) {
+                    // File.copyTo() can throw SecurityException for access-denied conditions;
+                    // it is a specific JDK platform type, not a logical catch-all.
+                    logger.error(
+                        LogCategory.SYSTEM,
+                        "Failed to create .corrupt backup for ToolDNA baseline",
+                        mapOf("path" to file.path, "error" to (e.message ?: "SecurityException")),
                     )
                     return false
                 }
@@ -188,6 +197,9 @@ class ToolDnaBaselineStore(
                         trustState = SentinelTrustState.REVIEW_REQUIRED,
                         reasonForReevaluation = "Unsigned baseline record: operator re-approval required.",
                         hmacSignature = null,
+                        // Clear userDecision: an unsigned record's audit label must not influence
+                        // authorization (defense-in-depth against any future trust-path regression).
+                        userDecision = null,
                     )
             } else if (!SentinelHmacHelper.verifyHmac(secretKeySpec, rec)) {
                 logger.error(
@@ -203,6 +215,9 @@ class ToolDnaBaselineStore(
                         trustState = SentinelTrustState.REVIEW_REQUIRED,
                         reasonForReevaluation = tamperMsg,
                         hmacSignature = null,
+                        // Clear userDecision: a tampered record's audit label must not influence
+                        // authorization (defense-in-depth against any future trust-path regression).
+                        userDecision = null,
                     )
             } else {
                 baselines[key] = rec
@@ -281,29 +296,7 @@ private object SentinelHmacHelper {
                 if (targetKeyFile.isFile && targetKeyFile.length() == 32L) {
                     targetKeyFile.readBytes()
                 } else {
-                    val fresh = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
-                    if (!targetKeyFile.exists()) {
-                        targetKeyFile.createNewFile()
-                        try {
-                            if (java.nio.file.Files.getFileAttributeView(targetKeyFile.toPath(), java.nio.file.attribute.PosixFileAttributeView::class.java) != null) {
-                                java.nio.file.Files.setPosixFilePermissions(
-                                    targetKeyFile.toPath(),
-                                    setOf(
-                                        java.nio.file.attribute.PosixFilePermission.OWNER_READ,
-                                        java.nio.file.attribute.PosixFilePermission.OWNER_WRITE,
-                                    ),
-                                )
-                            }
-                        } catch (e: Exception) {
-                            logger.warn(
-                                LogCategory.SYSTEM,
-                                "Could not set owner-only permissions on HMAC key file",
-                                mapOf("path" to targetKeyFile.path, "error" to (e.message ?: e.toString())),
-                            )
-                        }
-                    }
-                    targetKeyFile.writeBytes(fresh)
-                    fresh
+                    generateAndWriteKey(targetKeyFile, logger)
                 }
             javax.crypto.spec.SecretKeySpec(bytes, "HmacSHA256")
         } catch (e: java.io.IOException) {
@@ -321,6 +314,56 @@ private object SentinelHmacHelper {
             )
             null
         }
+
+    /** Generate a fresh 32-byte key, write it to [targetKeyFile], and restrict its permissions. */
+    private fun generateAndWriteKey(
+        targetKeyFile: File,
+        logger: ComponentLogger,
+    ): ByteArray {
+        val fresh = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
+        if (!targetKeyFile.exists()) {
+            targetKeyFile.createNewFile()
+            restrictKeyFilePermissions(targetKeyFile, logger)
+        }
+        targetKeyFile.writeBytes(fresh)
+        return fresh
+    }
+
+    private fun restrictKeyFilePermissions(
+        targetKeyFile: File,
+        logger: ComponentLogger,
+    ) {
+        try {
+            val view =
+                java.nio.file.Files.getFileAttributeView(
+                    targetKeyFile.toPath(),
+                    java.nio.file.attribute.PosixFileAttributeView::class.java,
+                )
+            if (view != null) {
+                java.nio.file.Files.setPosixFilePermissions(
+                    targetKeyFile.toPath(),
+                    setOf(
+                        java.nio.file.attribute.PosixFilePermission.OWNER_READ,
+                        java.nio.file.attribute.PosixFilePermission.OWNER_WRITE,
+                    ),
+                )
+            }
+        } catch (e: java.io.IOException) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Could not set owner-only permissions on HMAC key file",
+                mapOf("path" to targetKeyFile.path, "error" to (e.message ?: "IOException")),
+            )
+        } catch (e: java.lang.SecurityException) {
+            // Files.setPosixFilePermissions() can throw SecurityException on JVM when the
+            // security manager disallows the operation; it is a specific JDK platform type.
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Could not set owner-only permissions on HMAC key file",
+                mapOf("path" to targetKeyFile.path, "error" to (e.message ?: "SecurityException")),
+            )
+        }
+    }
 
     fun computeHmac(
         key: javax.crypto.spec.SecretKeySpec?,

@@ -88,10 +88,20 @@ internal fun mcpAccessMenuItems(
             ),
         )
         if (summary.sessionGrants > 0) {
-            add(ContextMenuItem(text = "Session trust (${summary.sessionGrants})...", onClick = actions.onSessionTrust))
+            add(
+                ContextMenuItem(
+                    text = "Session trust (${summary.sessionGrants})...",
+                    onClick = actions.onSessionTrust,
+                ),
+            )
         }
         if (summary.trustedPlugins > 0) {
-            add(ContextMenuItem(text = "Trusted plugins (${summary.trustedPlugins})...", onClick = actions.onTrustedPlugins))
+            add(
+                ContextMenuItem(
+                    text = "Trusted plugins (${summary.trustedPlugins})...",
+                    onClick = actions.onTrustedPlugins,
+                ),
+            )
         }
         add(ContextMenuItem(text = "MCP Sentinel (ToolDNA)...", onClick = actions.onSentinel))
         if (!summary.yolo && summary.yoloAvailable) {

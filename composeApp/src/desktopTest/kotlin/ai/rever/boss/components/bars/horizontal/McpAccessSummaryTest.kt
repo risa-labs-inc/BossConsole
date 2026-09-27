@@ -84,7 +84,10 @@ class McpAccessSummaryTest {
 
     @Test
     fun `a deployment that refuses yolo does not offer it`() {
-        assertEquals(listOf("Tool policies...", "MCP Sentinel (ToolDNA)..."), labels(McpAccessSummary(0, 0, 0, yoloAvailable = false)))
+        assertEquals(
+            listOf("Tool policies...", "MCP Sentinel (ToolDNA)..."),
+            labels(McpAccessSummary(0, 0, 0, yoloAvailable = false)),
+        )
     }
 
     @Test

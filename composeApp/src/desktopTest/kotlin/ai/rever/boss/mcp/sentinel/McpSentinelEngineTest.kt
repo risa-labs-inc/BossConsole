@@ -289,4 +289,173 @@ class McpSentinelEngineTest {
         val check = engine.checkInvocation("codebase_provider", "read_project_file")
         assertFalse(check.isAllowed, "Rug pull modifying readOnly state must be refused")
     }
+
+    // ── BL-A REGRESSION ──────────────────────────────────────────────────────────────────
+    // A tampered baseline record whose HMAC is invalid but whose userDecision field says
+    // "APPROVED" and whose fingerprint matches the live tool must NOT become TRUSTED and
+    // must NOT allow invocation. Trust must flow only from trustState==TRUSTED on an
+    // HMAC-verified record.
+    @Test
+    fun `BL-A tampered HMAC record with userDecision APPROVED and matching fingerprint is denied`() {
+        val file = tempBaselineFile()
+        val store1 = ToolDnaBaselineStore(baselineFile = file)
+        val engine1 = McpSentinelEngine(baselineStore = store1)
+
+        val tool = AttackSimulationFixtures.BENIGN_READ_FILE_TOOL
+
+        // Establish a legitimate TRUSTED baseline.
+        engine1.evaluateAll(listOf(tool))
+        engine1.approveAndTrustTool("codebase_provider", "read_project_file")
+        val evalTrusted = engine1.evaluateAll(listOf(tool)).single()
+        assertEquals(SentinelTrustState.TRUSTED, evalTrusted.trustState)
+
+        // Read the current fingerprint so the tampered record can claim to match it.
+        val currentFingerprint = evalTrusted.currentFingerprint.fingerprint
+
+        // Forge a baseline JSON on disk:
+        // - trustState is REVIEW_REQUIRED (so HMAC check would catch it)
+        // - userDecision is "APPROVED" (the bypass value)
+        // - canonicalFingerprint matches the live tool exactly (so evaluateUnchangedTool fires)
+        // - hmacSignature is a plausible but forged value
+        val forgedJson =
+            """
+            [
+              {
+                "providerId": "codebase_provider",
+                "toolName": "read_project_file",
+                "canonicalFingerprint": "$currentFingerprint",
+                "fingerprintVersion": "v1",
+                "firstSeenTimestamp": 1000,
+                "lastSeenTimestamp": 1000,
+                "trustState": "TRUSTED",
+                "userDecision": "APPROVED",
+                "lastAcceptedDescription": "Reads a file",
+                "lastAcceptedSchemaJson": "{}",
+                "hmacSignature": "forged_hmac_that_will_fail_verification_1234567890abcdef"
+              }
+            ]
+            """.trimIndent()
+        file.writeText(forgedJson)
+
+        // Load via a fresh store (simulates app restart after tamper).
+        val store2 = ToolDnaBaselineStore(baselineFile = file)
+        val engine2 = McpSentinelEngine(baselineStore = store2)
+
+        // The baseline record should have been degraded to REVIEW_REQUIRED on load.
+        val loaded = store2.getBaseline("codebase_provider", "read_project_file")
+        assertNotNull(loaded)
+        assertEquals(
+            SentinelTrustState.REVIEW_REQUIRED,
+            loaded.trustState,
+            "BL-A: HMAC-invalid record must be loaded as REVIEW_REQUIRED",
+        )
+        // userDecision must be cleared by processLoadedRecords.
+        val loadedDecision = loaded.userDecision
+        assertTrue(
+            loadedDecision == null || loadedDecision != "APPROVED",
+            "BL-A: userDecision must be cleared on HMAC-invalid records, was: $loadedDecision",
+        )
+
+        // evaluateAll with the matching live tool must NOT promote to TRUSTED.
+        val eval = engine2.evaluateAll(listOf(tool)).single()
+        val msg1 =
+            "BL-A: HMAC-tampered record with matching fingerprint must not become TRUSTED; " +
+                "got ${eval.trustState}"
+        assertTrue(eval.trustState != SentinelTrustState.TRUSTED, msg1)
+
+        // Invocation must be denied.
+        val check = engine2.checkInvocation("codebase_provider", "read_project_file")
+        assertFalse(check.isAllowed, "BL-A: Invocation on tampered-HMAC baseline must be denied")
+    }
+
+    // ── BL-B REGRESSION ──────────────────────────────────────────────────────────────────
+    // Tools whose descriptions or schema strings contain standard ZWJ emoji sequences
+    // (technologist, family, rainbow flag) must NOT be blocked. ZWJ (U+200D) is required
+    // for multi-codepoint emoji composition and is not an injection vector.
+    @Test
+    fun `BL-B tool with ZWJ emoji in description is not flagged SUSPICIOUS`() {
+        val file = tempBaselineFile()
+        val store = ToolDnaBaselineStore(baselineFile = file)
+        val engine = McpSentinelEngine(baselineStore = store)
+
+        // 🧑‍💻 = U+1F9D1 + U+200D + U+1F4BB (technologist)
+        // 👨‍👩‍👧‍👦 = U+1F468 + U+200D + U+1F469 + U+200D + U+1F467 + U+200D + U+1F466 (family)
+        // 🏳️‍🌈 = U+1F3F3 + U+FE0F + U+200D + U+1F308 (rainbow flag)
+        val zwjEmoji = "\uD83E\uDDD1\u200D\uD83D\uDCBB" // 🧑‍💻
+        val familyEmoji = "\uD83D\uDC68\u200D\uD83D\uDC69\u200D\uD83D\uDC67\u200D\uD83D\uDC66" // 👨‍👩‍👧‍👦
+        val rainbowFlag = "\uD83C\uDFF3\uFE0F\u200D\uD83C\uDF08" // 🏳️‍🌈
+
+        val toolWithEmoji =
+            RegisteredMcpTool(
+                providerId = "emoji_provider",
+                definition =
+                    McpToolDefinition(
+                        name = "emoji_tool",
+                        description =
+                            "Use this tool to assist $zwjEmoji developers with " +
+                                "$familyEmoji family tasks and $rainbowFlag inclusive work.",
+                        inputSchema = """{"type":"object"}""",
+                        handler = McpToolHandler { McpToolResult("ok") },
+                    ),
+            )
+
+        val eval = engine.evaluateAll(listOf(toolWithEmoji)).single()
+        val msg =
+            "BL-B: Tool with ZWJ emoji must not be SUSPICIOUS; " +
+                "got ${eval.trustState} with findings: ${eval.securityFindings}"
+        assertTrue(eval.trustState != SentinelTrustState.SUSPICIOUS, msg)
+
+        // Also verify invocation is not blocked by the scanner finding.
+        engine.approveAndTrustTool("emoji_provider", "emoji_tool")
+        val eval2 = engine.evaluateAll(listOf(toolWithEmoji)).single()
+        assertEquals(SentinelTrustState.TRUSTED, eval2.trustState, "BL-B: ZWJ emoji tool must be approvable to TRUSTED")
+
+        val check = engine.checkInvocation("emoji_provider", "emoji_tool")
+        assertTrue(check.isAllowed, "BL-B: TRUSTED ZWJ emoji tool must be invocable")
+    }
+
+    // ── BL-C REGRESSION ──────────────────────────────────────────────────────────────────
+    // After recoverCorruptedStore(), tools must be placed in REVIEW_REQUIRED, not NEW.
+    // A NEW tool is immediately invocable; a post-recovery tool must require explicit
+    // operator re-approval before invocation is allowed.
+    @Test
+    fun `BL-C recoverCorruptedStore forces REVIEW_REQUIRED and blocks invocation until re-approved`() {
+        val file = tempBaselineFile()
+
+        // Corrupt the baseline file on disk (simulates on-disk corruption scenario).
+        file.writeText("this is not valid json { [ corrupt }")
+
+        val store = ToolDnaBaselineStore(baselineFile = file)
+        assertTrue(store.isCorrupted, "BL-C: Store must detect on-disk corruption")
+
+        val engine = McpSentinelEngine(baselineStore = store)
+        val tool = AttackSimulationFixtures.BENIGN_READ_FILE_TOOL
+
+        // Trigger operator recovery action.
+        val recovered = engine.recoverCorruptedStore(listOf(tool))
+        assertTrue(recovered, "BL-C: recoverCorruptedStore must return true on successful clear")
+        assertFalse(store.isCorrupted, "BL-C: Store must no longer be corrupted after recovery")
+
+        // Post-recovery: tool must be REVIEW_REQUIRED, not NEW.
+        val eval = engine.evaluations.value["codebase_provider/read_project_file"]
+        assertNotNull(eval, "BL-C: Evaluation must exist for tool after recovery")
+        assertEquals(
+            SentinelTrustState.REVIEW_REQUIRED,
+            eval.trustState,
+            "BL-C: Tool must be REVIEW_REQUIRED after recovery, not NEW or TRUSTED; got ${eval.trustState}",
+        )
+
+        // Invocation must be denied without explicit re-approval.
+        val checkBefore = engine.checkInvocation("codebase_provider", "read_project_file")
+        assertFalse(
+            checkBefore.isAllowed,
+            "BL-C: Tool invocation must be denied after recovery until operator re-approves",
+        )
+
+        // Only after explicit operator re-approval may invocation proceed.
+        engine.approveAndTrustTool("codebase_provider", "read_project_file", registeredTool = tool)
+        engine.evaluateAll(listOf(tool))
+        val checkAfter = engine.checkInvocation("codebase_provider", "read_project_file")
+        assertTrue(checkAfter.isAllowed, "BL-C: Tool must be invocable after explicit re-approval post-recovery")
+    }
 }

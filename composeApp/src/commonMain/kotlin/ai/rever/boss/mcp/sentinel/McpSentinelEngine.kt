@@ -45,6 +45,20 @@ private data class EvaluationContext(
     val toolShadowings: List<ShadowingFinding>,
 )
 
+private data class SentinelAuditEvent(
+    val event: String,
+    val providerId: String,
+    val toolName: String,
+    val fingerprint: String,
+    val disposition: McpApprovalDisposition,
+    val isError: Boolean,
+)
+
+internal fun makeSentinelKey(
+    providerId: String,
+    toolName: String,
+): String = "${providerId.trim().lowercase()}/$toolName"
+
 /**
  * Engine coordinating MCP Sentinel's trust lifecycle, change detection, security scanning, and governance integration.
  */
@@ -61,8 +75,6 @@ class McpSentinelEngine(
     private val _shadowingFindings = MutableStateFlow<List<ShadowingFinding>>(emptyList())
     val shadowingFindings: StateFlow<List<ShadowingFinding>> = _shadowingFindings.asStateFlow()
 
-    private fun makeKey(providerId: String, toolName: String): String = "${providerId.trim().lowercase()}/$toolName"
-
     /**
      * Evaluate all currently registered tools.
      */
@@ -75,7 +87,7 @@ class McpSentinelEngine(
             for (registered in tools) {
                 val eval = evaluateSingleTool(registered, shadowings)
                 results.add(eval)
-                evalMap[makeKey(eval.providerId, eval.toolName)] = eval
+                evalMap[makeSentinelKey(eval.providerId, eval.toolName)] = eval
             }
             _shadowingFindings.value = shadowings
             _evaluations.value = evalMap
@@ -91,7 +103,7 @@ class McpSentinelEngine(
         synchronized(lock) {
             val shadowings = _shadowingFindings.value
             val eval = evaluateSingleTool(registered, shadowings)
-            val key = makeKey(eval.providerId, eval.toolName)
+            val key = makeSentinelKey(eval.providerId, eval.toolName)
             _evaluations.update { current -> current + (key to eval) }
             return eval
         }
@@ -105,7 +117,7 @@ class McpSentinelEngine(
         toolName: String,
         registeredTool: RegisteredMcpTool? = null,
     ): SentinelInvocationCheck {
-        val key = makeKey(providerId, toolName)
+        val key = makeSentinelKey(providerId, toolName)
         var eval = _evaluations.value[key]
         if (eval == null && registeredTool != null) {
             eval = evaluateSingleToolAndMerge(registeredTool)
@@ -170,7 +182,7 @@ class McpSentinelEngine(
         registeredTool: RegisteredMcpTool? = null,
     ): Boolean =
         synchronized(lock) {
-            val key = makeKey(providerId, toolName)
+            val key = makeSentinelKey(providerId, toolName)
             val eval = _evaluations.value[key]
             val currentFingerprint =
                 eval?.currentFingerprint
@@ -228,12 +240,14 @@ class McpSentinelEngine(
                 mapOf("provider" to providerId, "tool" to toolName, "fingerprint" to currentFingerprint.fingerprint),
             )
             recordAuditEvent(
-                event = "TOOL_REAPPROVED",
-                providerId = providerId,
-                toolName = toolName,
-                fingerprint = currentFingerprint.fingerprint,
-                disposition = McpApprovalDisposition.SENTINEL_EVALUATED,
-                isError = false,
+                SentinelAuditEvent(
+                    event = "TOOL_REAPPROVED",
+                    providerId = providerId,
+                    toolName = toolName,
+                    fingerprint = currentFingerprint.fingerprint,
+                    disposition = McpApprovalDisposition.SENTINEL_EVALUATED,
+                    isError = false,
+                ),
             )
             registeredTool?.let { evaluateSingleToolAndMerge(it) }
         }
@@ -250,7 +264,7 @@ class McpSentinelEngine(
     ): Boolean {
         synchronized(lock) {
             val existing = baselineStore.getBaseline(providerId, toolName)
-            val eval = _evaluations.value[makeKey(providerId, toolName)]
+            val eval = _evaluations.value[makeSentinelKey(providerId, toolName)]
             val currentFp =
                 existing?.canonicalFingerprint?.takeIf { it.isNotBlank() }
                     ?: eval?.currentFingerprint?.fingerprint
@@ -278,12 +292,14 @@ class McpSentinelEngine(
             val saved = baselineStore.saveBaseline(updated)
             if (saved) {
                 recordAuditEvent(
-                    event = "TOOL_BLOCKED",
-                    providerId = providerId,
-                    toolName = toolName,
-                    fingerprint = updated.canonicalFingerprint,
-                    disposition = McpApprovalDisposition.SENTINEL_BLOCKED,
-                    isError = true,
+                    SentinelAuditEvent(
+                        event = "TOOL_BLOCKED",
+                        providerId = providerId,
+                        toolName = toolName,
+                        fingerprint = updated.canonicalFingerprint,
+                        disposition = McpApprovalDisposition.SENTINEL_BLOCKED,
+                        isError = true,
+                    ),
                 )
             }
             return saved
@@ -313,12 +329,14 @@ class McpSentinelEngine(
                 }
             if (saved) {
                 recordAuditEvent(
-                    event = "TOOL_UNBLOCKED",
-                    providerId = providerId,
-                    toolName = toolName,
-                    fingerprint = existing.canonicalFingerprint,
-                    disposition = McpApprovalDisposition.SENTINEL_EVALUATED,
-                    isError = false,
+                    SentinelAuditEvent(
+                        event = "TOOL_UNBLOCKED",
+                        providerId = providerId,
+                        toolName = toolName,
+                        fingerprint = existing.canonicalFingerprint,
+                        disposition = McpApprovalDisposition.SENTINEL_EVALUATED,
+                        isError = false,
+                    ),
                 )
             }
             return saved
@@ -326,7 +344,11 @@ class McpSentinelEngine(
     }
 
     /**
-     * Recover a corrupted baseline store by moving it aside and re-evaluating all tools to establish a fresh baseline.
+     * Recover a corrupted baseline store by moving it aside and placing all tools in REVIEW_REQUIRED.
+     *
+     * Recovery does NOT automatically restore trust. Every tool must be explicitly re-approved by
+     * an operator before invocations are allowed. Calling [evaluateAll] here would assign NEW state
+     * and allow invocations without oversight, which defeats the purpose of detecting corruption.
      */
     fun recoverCorruptedStore(tools: List<RegisteredMcpTool>): Boolean =
         synchronized(lock) {
@@ -334,7 +356,7 @@ class McpSentinelEngine(
             val cleared = baselineStore.backupAndClear()
             if (cleared) {
                 logger.info(LogCategory.SYSTEM, "MCP Sentinel: Corrupted baseline store cleared and backed up")
-                evaluateAll(tools)
+                _evaluations.value = SentinelEvaluator.buildPostRecoveryEvals(baselineStore, ::makeSentinelKey, tools)
             } else {
                 logger.error(LogCategory.SYSTEM, "MCP Sentinel: Failed to recover corrupted baseline store")
             }
@@ -377,37 +399,59 @@ class McpSentinelEngine(
         }
     }
 
-    private fun recordAuditEvent(
-        event: String,
-        providerId: String,
-        toolName: String,
-        fingerprint: String,
-        disposition: McpApprovalDisposition,
-        isError: Boolean,
-    ) {
+    private fun recordAuditEvent(auditEvent: SentinelAuditEvent) {
         val policyAction =
-            when (event) {
-                "TOOL_BLOCKED" -> McpPolicyAction.DENY
-                "TOOL_DEFINITION_CHANGED" -> McpPolicyAction.DENY
-                "TOOL_REAPPROVED" -> McpPolicyAction.ALLOW
-                "TOOL_UNBLOCKED" -> McpPolicyAction.ASK
-                "TOOL_FIRST_SEEN" -> if (isError) McpPolicyAction.DENY else McpPolicyAction.ALLOW
-                else -> if (isError) McpPolicyAction.DENY else McpPolicyAction.ASK
+            when (auditEvent.event) {
+                "TOOL_BLOCKED", "TOOL_DEFINITION_CHANGED" -> {
+                    McpPolicyAction.DENY
+                }
+
+                "TOOL_REAPPROVED" -> {
+                    McpPolicyAction.ALLOW
+                }
+
+                "TOOL_UNBLOCKED" -> {
+                    McpPolicyAction.ASK
+                }
+
+                "TOOL_FIRST_SEEN" -> {
+                    if (auditEvent.isError) McpPolicyAction.DENY else McpPolicyAction.ALLOW
+                }
+
+                else -> {
+                    if (auditEvent.isError) McpPolicyAction.DENY else McpPolicyAction.ASK
+                }
             }
+
         logger.info(
             LogCategory.SYSTEM,
-            "MCP Sentinel Event: $event",
-            mapOf("providerId" to providerId, "tool" to toolName, "fingerprint" to fingerprint.take(16)),
+            "MCP Sentinel Event: ${auditEvent.event}",
+            mapOf(
+                "providerId" to auditEvent.providerId,
+                "tool" to auditEvent.toolName,
+                "fingerprint" to auditEvent.fingerprint.take(16),
+            ),
         )
+
         ledger?.record(
-            toolName = toolName,
-            providerId = providerId,
+            toolName = auditEvent.toolName,
+            providerId = auditEvent.providerId,
             policyApplied = policyAction,
-            approvalDisposition = disposition,
+            approvalDisposition = auditEvent.disposition,
             durationMs = 0L,
-            isError = isError,
-            rawArgs = mapOf("event" to event, "fingerprint" to fingerprint.take(16)),
-            errorSnippet = if (isError) "MCP Sentinel Event: $event (fingerprint: ${fingerprint.take(16)})" else "",
+            isError = auditEvent.isError,
+            rawArgs =
+                mapOf(
+                    "event" to auditEvent.event,
+                    "fingerprint" to auditEvent.fingerprint.take(16),
+                ),
+            errorSnippet =
+                if (auditEvent.isError) {
+                    "MCP Sentinel Event: ${auditEvent.event} " +
+                        "(fingerprint: ${auditEvent.fingerprint.take(16)})"
+                } else {
+                    ""
+                },
             countsAsCall = false,
         )
     }
@@ -416,7 +460,7 @@ class McpSentinelEngine(
 private object SentinelEvaluator {
     fun evaluateNewTool(
         baselineStore: ToolDnaBaselineStore,
-        recordAuditEvent: (String, String, String, String, McpApprovalDisposition, Boolean) -> Unit,
+        recordAuditEvent: (SentinelAuditEvent) -> Unit,
         ctx: EvaluationContext,
         now: Long,
     ): ToolEvaluationResult {
@@ -451,12 +495,14 @@ private object SentinelEvaluator {
             )
         baselineStore.saveBaseline(record)
         recordAuditEvent(
-            "TOOL_FIRST_SEEN",
-            ctx.providerId,
-            ctx.toolName,
-            ctx.fingerprint.fingerprint,
-            McpApprovalDisposition.SENTINEL_EVALUATED,
-            isSuspicious,
+            SentinelAuditEvent(
+                event = "TOOL_FIRST_SEEN",
+                providerId = ctx.providerId,
+                toolName = ctx.toolName,
+                fingerprint = ctx.fingerprint.fingerprint,
+                disposition = McpApprovalDisposition.SENTINEL_EVALUATED,
+                isError = isSuspicious,
+            ),
         )
 
         return ToolEvaluationResult(
@@ -490,7 +536,12 @@ private object SentinelEvaluator {
         val isSuspicious = ctx.securityFindings.any { it.severity >= FindingSeverity.MEDIUM }
         val state =
             when {
-                baseline.trustState == SentinelTrustState.TRUSTED || baseline.userDecision == "APPROVED" -> {
+                // Trust is derived exclusively from trustState==TRUSTED on an HMAC-verified record.
+                // The userDecision field is an audit label only and must never be used as an
+                // authorization gate: a tampered record on disk can set userDecision="APPROVED"
+                // while failing HMAC verification, which processLoadedRecords maps to
+                // REVIEW_REQUIRED. Checking userDecision here would bypass that protection.
+                baseline.trustState == SentinelTrustState.TRUSTED -> {
                     SentinelTrustState.TRUSTED
                 }
 
@@ -523,7 +574,7 @@ private object SentinelEvaluator {
 
     fun evaluateChangedTool(
         registered: RegisteredMcpTool,
-        recordAuditEvent: (String, String, String, String, McpApprovalDisposition, Boolean) -> Unit,
+        recordAuditEvent: (SentinelAuditEvent) -> Unit,
         ctx: EvaluationContext,
     ): ToolEvaluationResult {
         val baseline = checkNotNull(ctx.baseline)
@@ -552,12 +603,14 @@ private object SentinelEvaluator {
         val newFp = ctx.fingerprint.fingerprint.take(8)
         val reason = "Tool definition changed! Previous: $prevFp, New: $newFp"
         recordAuditEvent(
-            "TOOL_DEFINITION_CHANGED",
-            ctx.providerId,
-            ctx.toolName,
-            ctx.fingerprint.fingerprint,
-            McpApprovalDisposition.SENTINEL_EVALUATED,
-            newState != SentinelTrustState.TRUSTED,
+            SentinelAuditEvent(
+                event = "TOOL_DEFINITION_CHANGED",
+                providerId = ctx.providerId,
+                toolName = ctx.toolName,
+                fingerprint = ctx.fingerprint.fingerprint,
+                disposition = McpApprovalDisposition.SENTINEL_EVALUATED,
+                isError = newState != SentinelTrustState.TRUSTED,
+            ),
         )
 
         return ToolEvaluationResult(
@@ -571,5 +624,58 @@ private object SentinelEvaluator {
             shadowingFindings = ctx.toolShadowings,
             reason = reason,
         )
+    }
+
+    /**
+     * Build the post-recovery evaluation map: every tool is placed in [SentinelTrustState.REVIEW_REQUIRED]
+     * and a corresponding baseline record is persisted. Called by [McpSentinelEngine.forceReviewRequired]
+     * to keep [McpSentinelEngine] under the function-count threshold.
+     */
+    fun buildPostRecoveryEvals(
+        baselineStore: ToolDnaBaselineStore,
+        makeKey: (String, String) -> String,
+        tools: List<RegisteredMcpTool>,
+    ): Map<String, ToolEvaluationResult> {
+        val now = System.currentTimeMillis()
+        val evalMap = mutableMapOf<String, ToolEvaluationResult>()
+        for (registered in tools) {
+            val providerId = registered.providerId
+            val toolName = registered.definition.name
+            val fingerprint = ToolDnaFingerprinter.computeFingerprint(registered)
+            val securityFindings = ToolContentScanner.scan(registered.definition)
+            val reason = "Baseline store was corrupted and cleared; operator re-approval required."
+            val record =
+                ToolBaselineRecord(
+                    providerId = providerId,
+                    toolName = toolName,
+                    canonicalFingerprint = fingerprint.fingerprint,
+                    fingerprintVersion = fingerprint.algorithmVersion,
+                    firstSeenTimestamp = now,
+                    lastSeenTimestamp = now,
+                    trustState = SentinelTrustState.REVIEW_REQUIRED,
+                    lastAcceptedDescription = fingerprint.canonicalDescription,
+                    lastAcceptedSchemaJson = fingerprint.canonicalInputSchemaJson,
+                    readOnly = fingerprint.readOnly,
+                    requiresAdmin = fingerprint.requiresAdmin,
+                    findings = securityFindings,
+                    reasonForReevaluation =
+                        "Baseline store was corrupted and cleared; " +
+                            "operator re-approval required before invocation.",
+                )
+            baselineStore.saveBaseline(record)
+            evalMap[makeKey(providerId, toolName)] =
+                ToolEvaluationResult(
+                    providerId = providerId,
+                    toolName = toolName,
+                    trustState = SentinelTrustState.REVIEW_REQUIRED,
+                    currentFingerprint = fingerprint,
+                    baselineRecord = record,
+                    diffResult = null,
+                    securityFindings = securityFindings,
+                    shadowingFindings = emptyList(),
+                    reason = reason,
+                )
+        }
+        return evalMap
     }
 }

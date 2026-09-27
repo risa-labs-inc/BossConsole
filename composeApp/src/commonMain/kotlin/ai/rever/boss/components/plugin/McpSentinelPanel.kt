@@ -1,9 +1,13 @@
+@file:Suppress("TooManyFunctions")
+
 package ai.rever.boss.components.plugin
 
+import ai.rever.boss.components.bars.horizontal.StatusMessageManager
 import ai.rever.boss.mcp.McpToolRegistryImpl
 import ai.rever.boss.mcp.sentinel.FindingSeverity
 import ai.rever.boss.mcp.sentinel.SentinelTrustState
 import ai.rever.boss.mcp.sentinel.ToolEvaluationResult
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -36,8 +40,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Warning
-import ai.rever.boss.components.bars.horizontal.StatusMessageManager
-import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -55,16 +57,94 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
+private data class McpSentinelPanelState(
+    val isCorrupted: Boolean,
+    val evalList: List<ToolEvaluationResult>,
+    val filteredList: List<ToolEvaluationResult>,
+    val searchQuery: String,
+    val onSearchQueryChange: (String) -> Unit,
+    val selectedFilterState: SentinelTrustState?,
+    val onSelectFilterState: (SentinelTrustState?) -> Unit,
+    val selectedToolKey: String?,
+    val onSelectTool: (String) -> Unit,
+    val selectedEval: ToolEvaluationResult?,
+    val onRefresh: () -> Unit,
+    val onRecover: () -> Unit,
+    val onApprove: (ToolEvaluationResult) -> Unit,
+    val onBlock: (ToolEvaluationResult) -> Unit,
+    val onUnblock: (ToolEvaluationResult) -> Unit,
+)
+
 /**
  * Compose Multiplatform panel for MCP Sentinel (ToolDNA Integrity & Poisoning Protection).
  */
 @Composable
 fun McpSentinelPanel(modifier: Modifier = Modifier) {
+    val state = rememberMcpSentinelPanelState()
+    McpSentinelPanelContent(modifier = modifier, state = state)
+}
+
+private data class SentinelHandlers(
+    val onApprove: (ToolEvaluationResult) -> Unit,
+    val onBlock: (ToolEvaluationResult) -> Unit,
+    val onUnblock: (ToolEvaluationResult) -> Unit,
+    val onRefresh: () -> Unit,
+    val onRecover: () -> Unit,
+)
+
+@Composable
+private fun rememberSentinelHandlers(
+    sentinelEngine: ai.rever.boss.mcp.sentinel.McpSentinelEngine,
+    registeredTools: List<ai.rever.boss.plugin.api.RegisteredMcpTool>,
+): SentinelHandlers {
+    val scope = rememberCoroutineScope()
+    val approve: (ToolEvaluationResult) -> Unit = { eval ->
+        scope.launch(Dispatchers.IO) {
+            val ok =
+                sentinelEngine.approveAndTrustTool(
+                    providerId = eval.providerId,
+                    toolName = eval.toolName,
+                    reviewedFingerprint = eval.currentFingerprint.fingerprint,
+                )
+            if (!ok) StatusMessageManager.showMessage("Failed to approve tool (baseline corrupted?)", 5000)
+            sentinelEngine.evaluateAll(registeredTools)
+        }
+    }
+    val block: (ToolEvaluationResult) -> Unit = { eval ->
+        scope.launch(Dispatchers.IO) {
+            val ok = sentinelEngine.blockTool(eval.providerId, eval.toolName)
+            if (!ok) StatusMessageManager.showMessage("Failed to block tool (baseline corrupted?)", 5000)
+            sentinelEngine.evaluateAll(registeredTools)
+        }
+    }
+    val unblock: (ToolEvaluationResult) -> Unit = { eval ->
+        scope.launch(Dispatchers.IO) {
+            val ok = sentinelEngine.unblockTool(eval.providerId, eval.toolName)
+            if (!ok) StatusMessageManager.showMessage("Failed to unblock tool (baseline corrupted?)", 5000)
+            sentinelEngine.evaluateAll(registeredTools)
+        }
+    }
+    val refresh: () -> Unit = { scope.launch(Dispatchers.IO) { sentinelEngine.evaluateAll(registeredTools) } }
+    val recover: () -> Unit = {
+        scope.launch(Dispatchers.IO) {
+            val ok = sentinelEngine.recoverCorruptedStore(registeredTools)
+            if (!ok) StatusMessageManager.showMessage("Failed to recover baseline store", 5000)
+        }
+    }
+    return SentinelHandlers(
+        onApprove = approve,
+        onBlock = block,
+        onUnblock = unblock,
+        onRefresh = refresh,
+        onRecover = recover,
+    )
+}
+
+@Composable
+private fun rememberMcpSentinelPanelState(): McpSentinelPanelState {
     val sentinelEngine = McpToolRegistryImpl.sentinelEngine
     val registeredTools by McpToolRegistryImpl.allTools.collectAsState()
     val evaluations by sentinelEngine.evaluations.collectAsState()
-    val scope = rememberCoroutineScope()
-    val colors = BossTheme.colors
 
     var searchQuery by remember { mutableStateOf("") }
     var selectedFilterState by remember { mutableStateOf<SentinelTrustState?>(null) }
@@ -84,69 +164,60 @@ fun McpSentinelPanel(modifier: Modifier = Modifier) {
             }
         }
     val selectedEval = selectedToolKey?.let { key -> evaluations[key] }
+    val handlers = rememberSentinelHandlers(sentinelEngine, registeredTools)
 
+    return McpSentinelPanelState(
+        isCorrupted = isCorrupted,
+        evalList = evalList,
+        filteredList = filteredList,
+        searchQuery = searchQuery,
+        onSearchQueryChange = { searchQuery = it },
+        selectedFilterState = selectedFilterState,
+        onSelectFilterState = { selectedFilterState = it },
+        selectedToolKey = selectedToolKey,
+        onSelectTool = { selectedToolKey = it },
+        selectedEval = selectedEval,
+        onRefresh = handlers.onRefresh,
+        onRecover = handlers.onRecover,
+        onApprove = handlers.onApprove,
+        onBlock = handlers.onBlock,
+        onUnblock = handlers.onUnblock,
+    )
+}
+
+@Composable
+private fun McpSentinelPanelContent(
+    modifier: Modifier,
+    state: McpSentinelPanelState,
+) {
+    val colors = BossTheme.colors
     Column(
         modifier = modifier.fillMaxSize().background(colors.panel).padding(16.dp),
     ) {
-        SentinelPanelHeader(
-            onRefresh = {
-                scope.launch(Dispatchers.IO) {
-                    sentinelEngine.evaluateAll(registeredTools)
-                }
-            },
-        )
+        SentinelPanelHeader(onRefresh = state.onRefresh)
         Spacer(modifier = Modifier.height(16.dp))
 
-        if (isCorrupted) {
-            CorruptedBaselineBanner(
-                onRecover = {
-                    scope.launch(Dispatchers.IO) {
-                        val success = sentinelEngine.recoverCorruptedStore(registeredTools)
-                        if (!success) StatusMessageManager.showMessage("Failed to recover baseline store", 5000)
-                    }
-                },
-            )
+        if (state.isCorrupted) {
+            CorruptedBaselineBanner(onRecover = state.onRecover)
             Spacer(modifier = Modifier.height(16.dp))
         }
 
-        OverviewMetricsRow(evalList = evalList)
+        OverviewMetricsRow(evalList = state.evalList)
         Spacer(modifier = Modifier.height(16.dp))
 
         SentinelPanelBody(
-            searchQuery = searchQuery,
-            onSearchQueryChange = { searchQuery = it },
-            selectedFilterState = selectedFilterState,
-            onSelectFilterState = { selectedFilterState = it },
-            evalList = evalList,
-            filteredList = filteredList,
-            selectedToolKey = selectedToolKey,
-            onSelectTool = { selectedToolKey = it },
-            selectedEval = selectedEval,
-            onApprove = { eval ->
-                scope.launch(Dispatchers.IO) {
-                    val success = sentinelEngine.approveAndTrustTool(
-                        providerId = eval.providerId,
-                        toolName = eval.toolName,
-                        reviewedFingerprint = eval.currentFingerprint.fingerprint,
-                    )
-                    if (!success) StatusMessageManager.showMessage("Failed to approve tool (baseline corrupted?)", 5000)
-                    sentinelEngine.evaluateAll(registeredTools)
-                }
-            },
-            onBlock = { eval ->
-                scope.launch(Dispatchers.IO) {
-                    val success = sentinelEngine.blockTool(eval.providerId, eval.toolName)
-                    if (!success) StatusMessageManager.showMessage("Failed to block tool (baseline corrupted?)", 5000)
-                    sentinelEngine.evaluateAll(registeredTools)
-                }
-            },
-            onUnblock = { eval ->
-                scope.launch(Dispatchers.IO) {
-                    val success = sentinelEngine.unblockTool(eval.providerId, eval.toolName)
-                    if (!success) StatusMessageManager.showMessage("Failed to unblock tool (baseline corrupted?)", 5000)
-                    sentinelEngine.evaluateAll(registeredTools)
-                }
-            },
+            searchQuery = state.searchQuery,
+            onSearchQueryChange = state.onSearchQueryChange,
+            selectedFilterState = state.selectedFilterState,
+            onSelectFilterState = state.onSelectFilterState,
+            evalList = state.evalList,
+            filteredList = state.filteredList,
+            selectedToolKey = state.selectedToolKey,
+            onSelectTool = state.onSelectTool,
+            selectedEval = state.selectedEval,
+            onApprove = state.onApprove,
+            onBlock = state.onBlock,
+            onUnblock = state.onUnblock,
         )
     }
 }
@@ -195,11 +266,12 @@ private fun SentinelPanelHeader(onRefresh: () -> Unit) {
 @Composable
 private fun CorruptedBaselineBanner(onRecover: () -> Unit) {
     Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color(0x33F38BA8), RoundedCornerShape(8.dp))
-            .border(1.dp, Color(0xFFF38BA8), RoundedCornerShape(8.dp))
-            .padding(16.dp)
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .background(Color(0x33F38BA8), RoundedCornerShape(8.dp))
+                .border(1.dp, Color(0xFFF38BA8), RoundedCornerShape(8.dp))
+                .padding(16.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Default.Warning, contentDescription = "Warning", tint = Color(0xFFF38BA8))
@@ -207,20 +279,30 @@ private fun CorruptedBaselineBanner(onRecover: () -> Unit) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = "ToolDNA Baseline Store Corrupted",
-                    style = MaterialTheme.typography.subtitle1.copy(color = Color(0xFFF38BA8), fontWeight = FontWeight.Bold)
+                    style =
+                        MaterialTheme.typography.subtitle1.copy(
+                            color = Color(0xFFF38BA8),
+                            fontWeight = FontWeight.Bold,
+                        ),
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "The integrity baseline file is damaged or its HMAC key is unavailable. All changes are currently blocked.",
-                    style = MaterialTheme.typography.caption.copy(color = Color(0xFFCDD6F4))
+                    text =
+                        "The integrity baseline file is damaged or its HMAC key is unavailable. " +
+                            "All changes are currently blocked.",
+                    style = MaterialTheme.typography.caption.copy(color = Color(0xFFCDD6F4)),
                 )
             }
             Spacer(modifier = Modifier.width(16.dp))
             Button(
                 onClick = onRecover,
-                colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFFF38BA8))
+                colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFFF38BA8)),
             ) {
-                Text("Recover & Reset", color = Color(0xFF11111B), fontWeight = FontWeight.Bold)
+                Text(
+                    text = "Recover & Reset",
+                    color = Color(0xFF11111B),
+                    fontWeight = FontWeight.Bold,
+                )
             }
         }
     }
