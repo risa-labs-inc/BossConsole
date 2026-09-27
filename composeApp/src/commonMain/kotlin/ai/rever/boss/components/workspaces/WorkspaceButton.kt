@@ -4,6 +4,7 @@ import ai.rever.boss.components.bars.horizontal.StatusMessageManager
 import ai.rever.boss.components.buttons.BossActionButton
 import ai.rever.boss.components.icons.SpaceIcon
 import ai.rever.boss.components.overlays.ContextMenuItem
+import ai.rever.boss.components.window_panel.SplitViewState
 import ai.rever.boss.components.window_panel.SplitViewStateRegistry
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.plugin.workspace.SplitConfig.SinglePanel
@@ -34,6 +35,42 @@ import androidx.compose.runtime.setValue
 expect fun openWorkspaceDirectory(path: String)
 
 private val workspaceButtonLogger = BossLogger.forComponent("WorkspaceButton")
+
+internal enum class NamedSaveRebindOutcome {
+    REBOUND,
+    NEVER_REGISTERED,
+    DEREGISTERED,
+}
+
+/** The window owner captured when a named save is pressed, not when its button is composed. */
+internal class NamedSaveOwner private constructor(
+    private val windowId: String?,
+    private val state: SplitViewState?,
+) {
+    fun rebind(workspaceId: String): NamedSaveRebindOutcome =
+        when {
+            windowId == null || state == null -> {
+                NamedSaveRebindOutcome.NEVER_REGISTERED
+            }
+
+            SplitViewStateRegistry.getState(windowId) !== state -> {
+                NamedSaveRebindOutcome.DEREGISTERED
+            }
+
+            else -> {
+                state.rebindCurrentWorkspace(workspaceId)
+                NamedSaveRebindOutcome.REBOUND
+            }
+        }
+
+    companion object {
+        fun capture(windowId: String?): NamedSaveOwner =
+            NamedSaveOwner(
+                windowId = windowId,
+                state = windowId?.let(SplitViewStateRegistry::getState),
+            )
+    }
+}
 
 /**
  * Workspace button with dropdown menu.
@@ -96,7 +133,6 @@ fun WorkspaceButton(
     unsavedWorkspaceIds: Set<String> = emptySet(),
 ) {
     val windowId = LocalWindowId.current
-    val saveOwner = windowId?.let(SplitViewStateRegistry::getState)
     val currentWorkspace by workspaceManager.currentWorkspace.collectAsState()
     val workspaces by workspaceManager.workspaces.collectAsState()
 
@@ -116,7 +152,7 @@ fun WorkspaceButton(
     var showSaveDialog by remember { mutableStateOf(false) }
     var showOpenDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
-    val namedSaveLatch = remember(windowId, saveOwner) { SaveInFlightLatch() }
+    val namedSaveLatch = remember(windowId) { SaveInFlightLatch() }
 
     // Build options submenu items
     val optionsSubMenu =
@@ -333,6 +369,9 @@ fun WorkspaceButton(
                 // A named save creates a new Space. Ignore an overlapping submission instead
                 // of replaying it, because replaying the same name would create another Space.
                 if (namedSaveLatch.press()) {
+                    // Registration happens from a LaunchedEffect after first composition. Resolve
+                    // the owner now so a live window is not mistaken for one that deregistered.
+                    val saveOwner = NamedSaveOwner.capture(windowId)
                     getCurrentWorkspace?.invoke()?.let { currentLayout ->
                         workspaceManager.updateCurrentWorkspace(currentLayout)
                         namedSaveLatch.begin()
@@ -340,21 +379,26 @@ fun WorkspaceButton(
                             name = name,
                             onSaved = { savedWorkspace ->
                                 try {
-                                    // Both a real window id and its originally registered state are
-                                    // required. In particular, null === null must never authorize a rebind.
-                                    if (
-                                        windowId != null &&
-                                        saveOwner != null &&
-                                        SplitViewStateRegistry.getState(windowId) === saveOwner
-                                    ) {
-                                        saveOwner.rebindCurrentWorkspace(savedWorkspace.id)
-                                    } else {
-                                        workspaceButtonLogger.debug(
-                                            LogCategory.WORKSPACE,
-                                            "Named save finished after its window deregistered;" +
-                                                " the rebind is dropped",
-                                            mapOf("workspaceId" to savedWorkspace.id),
-                                        )
+                                    when (saveOwner.rebind(savedWorkspace.id)) {
+                                        NamedSaveRebindOutcome.REBOUND -> {}
+
+                                        NamedSaveRebindOutcome.NEVER_REGISTERED -> {
+                                            workspaceButtonLogger.debug(
+                                                LogCategory.WORKSPACE,
+                                                "Named save began without a registered window;" +
+                                                    " the rebind is dropped",
+                                                mapOf("workspaceId" to savedWorkspace.id),
+                                            )
+                                        }
+
+                                        NamedSaveRebindOutcome.DEREGISTERED -> {
+                                            workspaceButtonLogger.debug(
+                                                LogCategory.WORKSPACE,
+                                                "Named save finished after its window deregistered;" +
+                                                    " the rebind is dropped",
+                                                mapOf("workspaceId" to savedWorkspace.id),
+                                            )
+                                        }
                                     }
                                 } finally {
                                     // Do not replay an overlapping named save: it would mint a duplicate.

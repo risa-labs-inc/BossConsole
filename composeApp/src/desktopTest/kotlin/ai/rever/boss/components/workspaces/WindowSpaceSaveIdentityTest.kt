@@ -1,5 +1,8 @@
 package ai.rever.boss.components.workspaces
 
+import ai.rever.boss.components.window_panel.SplitViewState
+import ai.rever.boss.components.window_panel.SplitViewStateRegistry
+import ai.rever.boss.plugin.api.TabRegistry
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
@@ -161,5 +164,43 @@ class WindowSpaceSaveIdentityTest {
         assertEquals(liveLayout.layout, snapshot.layout)
         assertEquals(liveLayout.projectPath, snapshot.projectPath)
         assertNotEquals(otherWindow.id, snapshot.id)
+    }
+
+    @Test
+    fun `named save resolves an owner registered after composition`() {
+        val windowId = "named-save-late-registration"
+        SplitViewStateRegistry.unregister(windowId)
+        val ownerBeforeRegistration = NamedSaveOwner.capture(windowId)
+        val state = SplitViewState(TabRegistry(), windowId)
+
+        try {
+            SplitViewStateRegistry.register(windowId, state)
+            val ownerAtPress = NamedSaveOwner.capture(windowId)
+
+            assertEquals(NamedSaveRebindOutcome.NEVER_REGISTERED, ownerBeforeRegistration.rebind("stale-space"))
+            assertEquals(NamedSaveRebindOutcome.REBOUND, ownerAtPress.rebind("saved-space"))
+            assertEquals("saved-space", state.currentWorkspaceId)
+        } finally {
+            SplitViewStateRegistry.unregister(windowId)
+            state.dispose()
+        }
+    }
+
+    @Test
+    fun `named save drops a rebind after its captured window deregisters`() {
+        val windowId = "named-save-deregistered"
+        val state = SplitViewState(TabRegistry(), windowId)
+        SplitViewStateRegistry.register(windowId, state)
+        val ownerAtPress = NamedSaveOwner.capture(windowId)
+
+        try {
+            SplitViewStateRegistry.unregister(windowId)
+
+            assertEquals(NamedSaveRebindOutcome.DEREGISTERED, ownerAtPress.rebind("saved-space"))
+            assertNotEquals("saved-space", state.currentWorkspaceId)
+        } finally {
+            SplitViewStateRegistry.unregister(windowId)
+            state.dispose()
+        }
     }
 }
