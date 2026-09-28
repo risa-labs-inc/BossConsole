@@ -782,7 +782,10 @@ size-rotated file (10 MB, five backups) that receives entries at `BOSS_LOG_FILE_
 default is ever switched on. The file threshold is applied after the console level, so it can only narrow: with the
 console at INFO and the file at DEBUG, the file gets INFO. Blank is unset at every step, an
 unrecognised level falls through to the next source rather than to INFO. File and console receive the same
-entries; callers must use `LogSanitizer` before logging sensitive data, since `BossLogger` does not sanitize them.
+entries. `BossLogger` automatically sanitizes `LogEntry.error` (via `LogSanitizer.sanitizeThrowable`) before
+dispatching to sinks (SLF4J, file writer, `recentLogs`, and listeners), replacing sensitive paths in stack frame
+filenames with `[PATH]` and sanitizing messages/causes; however, `message` and `data` are NOT automatically sanitized,
+and callers must use `LogSanitizer` before logging sensitive data in messages or metadata maps.
 `BossLogger.configureFromEnvironment()` in
 `main.kt` is the only host entry point; `configure()` has no host caller. Flipping
 `FILE_LOGGING_ON_BY_DEFAULT` in `BossLogger` makes it default-on at `~/.boss/logs/boss.log` for every
