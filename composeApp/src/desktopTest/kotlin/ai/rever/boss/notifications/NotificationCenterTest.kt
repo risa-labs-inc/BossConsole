@@ -102,6 +102,35 @@ class NotificationCenterTest {
         }
 
     @Test
+    fun `clearBySource removes only matching entries and persists the survivors`() =
+        runBlocking {
+            NotificationCenter.post("Agent mine", source = "swe", origin = NotificationOrigin.AGENT)
+            NotificationCenter.post("Agent other", source = "other", origin = NotificationOrigin.AGENT)
+            // A host notice whose label happens to collide with the stamped agent form:
+            // the origin check, not the label text, is what keeps it.
+            NotificationCenter.post("Host notice", source = "agent: swe", origin = NotificationOrigin.HOST)
+
+            // "swe" normalizes to the stamped "agent: swe", so only the first entry matches.
+            assertEquals(1, NotificationCenter.clearBySource("swe", NotificationOrigin.AGENT))
+            assertEquals(
+                setOf("Agent other", "Host notice"),
+                NotificationCenter.notifications.value
+                    .map { it.title }
+                    .toSet(),
+            )
+            assertEquals(0, NotificationCenter.clearBySource("swe", NotificationOrigin.AGENT))
+
+            NotificationCenter.resetForTesting(tempFile)
+            assertEquals(
+                setOf("Agent other", "Host notice"),
+                NotificationCenter.notifications.value
+                    .map { it.title }
+                    .toSet(),
+                "the survivors were persisted",
+            )
+        }
+
+    @Test
     fun `the inbox is bounded to MAX_ENTRIES newest entries`() =
         runBlocking {
             var t = 0L

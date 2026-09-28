@@ -81,6 +81,13 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
                 )
             }
 
+            // Inbox deletion (#1588): the scoped clear still removes durable shared state, and
+            // the whole-inbox wipe does so unconditionally - HIGH keeps a durable ALLOW behind
+            // Review-then-Confirm for both.
+            normalizedName in INBOX_DESTRUCTIVE_TOOLS -> {
+                McpRiskAssessment(McpRiskLevel.HIGH, "Notification inbox deletion via '$toolName'")
+            }
+
             // Read-only / safe tools
             normalizedName in READ_ONLY_TOOLS -> {
                 McpRiskAssessment(McpRiskLevel.LOW, "Read-only tool (returned data may be sensitive) '$toolName'")
@@ -373,6 +380,12 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
         private val POLICY_WRITING_TOOLS =
             setOf(
                 "pack_apply",
+            )
+
+        private val INBOX_DESTRUCTIVE_TOOLS =
+            setOf(
+                "notifications_clear",
+                "notifications_clear_all",
             )
 
         private val READ_ONLY_TOOLS =

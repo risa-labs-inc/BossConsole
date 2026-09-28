@@ -24,7 +24,8 @@ import kotlinx.serialization.json.put
  * - notifications_list (read-only)
  * - notification_post (mutating)
  * - notification_mark_read (mutating)
- * - notifications_clear (mutating)
+ * - notifications_clear (mutating; scoped to the caller's own agent-labelled entries)
+ * - notifications_clear_all (mutating; the intentional whole-inbox wipe, BossConsole#1588)
  *
  * As in [WorkspaceMcpToolProvider] and [SnippetMcpToolProvider], the read tool declares
  * `readOnly = true` (left at ALLOW by the mutating gate) and the write tools declare
@@ -49,6 +50,7 @@ object NotificationMcpToolProvider : McpToolProvider {
             createPostTool(),
             createMarkReadTool(),
             createClearTool(),
+            createClearAllTool(),
         )
 
     private fun createListTool(): McpToolDefinition =
@@ -116,7 +118,34 @@ object NotificationMcpToolProvider : McpToolProvider {
     private fun createClearTool(): McpToolDefinition =
         McpToolDefinition(
             name = "notifications_clear",
-            description = "Remove every notification from the inbox.",
+            description =
+                "Remove only the caller's own agent-posted notifications: entries whose stored label " +
+                    "matches 'source' after the same normalization notification_post applies (a caller that " +
+                    "posted as 'Updater' clears by passing 'Updater'; omitting 'source' targets the bare " +
+                    "'agent' label). Notifications posted by the host or under any other label are never " +
+                    "removed. This scoping is an accident guard, not an isolation boundary - the handler " +
+                    "cannot authenticate which agent is calling, so any caller may name any label. To " +
+                    "intentionally empty the whole inbox, use notifications_clear_all.",
+            inputSchema =
+                """
+                {
+                    "type": "object",
+                    "properties": {
+                        "source": { "type": "string", "description": "The label the caller posts under; normalized like notification_post's 'source' before matching" }
+                    }
+                }
+                """.trimIndent(),
+            handler = McpToolHandler { args -> handleClear(args) },
+            readOnly = false,
+        )
+
+    private fun createClearAllTool(): McpToolDefinition =
+        McpToolDefinition(
+            name = "notifications_clear_all",
+            description =
+                "Remove every notification from the shared inbox, including host-posted entries and " +
+                    "entries under every label. The only tool that wipes the whole inbox; " +
+                    "notifications_clear stays scoped to the caller's own label.",
             inputSchema =
                 """
                 {
@@ -124,7 +153,7 @@ object NotificationMcpToolProvider : McpToolProvider {
                     "properties": {}
                 }
                 """.trimIndent(),
-            handler = McpToolHandler { handleClear() },
+            handler = McpToolHandler { handleClearAll() },
             readOnly = false,
         )
 
@@ -210,7 +239,30 @@ object NotificationMcpToolProvider : McpToolProvider {
         }
     }
 
-    private suspend fun handleClear(): McpToolResult {
+    /**
+     * Scoped to the caller-supplied label, normalized exactly as [NotificationCenter.post]
+     * stamped it - including the `agent`/`agent: <label>` demotion - so the label that
+     * matches is the label the agent's own posts stored, and nothing else. Entries posted
+     * by the host or under other labels always survive (BossConsole#1588). This is an
+     * accident guard, not an identity check: the handler cannot authenticate the caller,
+     * so a caller that knows another label can name it; what it cannot do is wipe the
+     * shared inbox by accident.
+     */
+    private suspend fun handleClear(args: McpToolArgs): McpToolResult {
+        val removed =
+            NotificationCenter.clearBySource(
+                source = args.string("source").orEmpty(),
+                origin = NotificationOrigin.AGENT,
+            )
+        return McpToolResult(
+            buildJsonObject {
+                put("success", true)
+                put("removed", removed)
+            }.toString(),
+        )
+    }
+
+    private suspend fun handleClearAll(): McpToolResult {
         val removed = NotificationCenter.clear()
         return McpToolResult(
             buildJsonObject {
