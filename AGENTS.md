@@ -17,11 +17,27 @@ BOSS (Business Operating System Service) is a desktop application built with Kot
 ./gradlew build                 # Build application
 ./gradlew packageDmg            # Build macOS DMG
 ./gradlew packageMsi            # Build Windows MSI
+./gradlew :composeApp:desktopTest  # Run Compose desktop tests
 ./gradlew packageDistributionForCurrentOS  # Linux packages
 ./gradlew incrementVersion      # Increment patch version
 ```
 
 ## Workflow Rules
+
+### MCP Sentinel Security Precedence
+
+MCP Sentinel evaluation occurs **BEFORE** all other MCP gates:
+1. MCP Sentinel denial (rug pull, blocked, suspicious, or corrupted baseline)
+2. Authorization / permissions
+3. Provider trust
+4. Session trust
+5. YOLO approval
+
+Sentinel enforcement is fail-closed. If the ToolDNA baseline store is corrupted on disk or an unknown evaluation state occurs, Sentinel refuses invocation (`isAllowed = false`).
+
+### Documentation and Commit Formatting Rules
+
+Documentation, commit messages, and PR descriptions must use `--` instead of raw unicode em-dashes (U+2014) to comply with CI formatting linters.
 
 **IMPORTANT**: Do NOT run `./gradlew run` in a blocking/foreground way just to test - the user runs and tests the app themselves. **Exception:** launching the app **in a dedicated bottom split pane is allowed** (backgrounded so it doesn't wedge the pane).
 

@@ -362,6 +362,7 @@ private fun McpAccessStatusItem(persistedPolicyConfig: McpToolPolicyConfig) {
     var showPolicyManager by remember { mutableStateOf(false) }
     var showTrustedPlugins by remember { mutableStateOf(false) }
     var showSessionTrust by remember { mutableStateOf(false) }
+    var showSentinelPanel by remember { mutableStateOf(false) }
     val yolo by McpToolRegistryImpl.yoloMode.collectAsState()
     val windowId = LocalWindowId.current
     val scope = rememberCoroutineScope()
@@ -391,22 +392,43 @@ private fun McpAccessStatusItem(persistedPolicyConfig: McpToolPolicyConfig) {
                     items =
                         mcpAccessMenuItems(
                             summary = summary,
-                            onPolicies = { showPolicyManager = true },
-                            onSessionTrust = { showSessionTrust = true },
-                            onTrustedPlugins = { showTrustedPlugins = true },
-                            onYolo = {
-                                if (yolo) {
-                                    scope.launch { McpToolRegistryImpl.setYoloMode(false) }
-                                } else {
-                                    windowId?.let(McpYoloPrompt::request)
-                                }
-                            },
+                            actions =
+                                McpAccessMenuActions(
+                                    onPolicies = { showPolicyManager = true },
+                                    onSessionTrust = { showSessionTrust = true },
+                                    onTrustedPlugins = { showTrustedPlugins = true },
+                                    onSentinel = { showSentinelPanel = true },
+                                    onYolo = {
+                                        if (yolo) {
+                                            scope.launch { McpToolRegistryImpl.setYoloMode(false) }
+                                        } else {
+                                            windowId?.let(McpYoloPrompt::request)
+                                        }
+                                    },
+                                ),
                         ),
                     // Opens upward from the item: the bar sits at the bottom edge of the window.
                     alignment = Alignment.BottomStart,
                     offset = IntOffset(0, -anchorHeight),
                     onDismissRequest = { showMenu = false },
                 )
+            }
+        }
+    }
+    if (showSentinelPanel) {
+        ai.rever.boss.plugin.ui.BossDialog(
+            onDismissRequest = { showSentinelPanel = false },
+            properties =
+                androidx.compose.ui.window
+                    .DialogProperties(),
+        ) {
+            androidx.compose.material.Surface(
+                modifier = Modifier.width(900.dp).fillMaxHeight(0.85f),
+                shape = RoundedCornerShape(12.dp),
+                color = BossTheme.colors.panel,
+            ) {
+                ai.rever.boss.components.plugin
+                    .McpSentinelPanel(modifier = Modifier.fillMaxSize())
             }
         }
     }
@@ -538,6 +560,7 @@ internal fun mcpProactivePolicyCandidates(
 private fun McpActivityStatusItem() {
     val recentOps by McpToolRegistryImpl.ledger.recentOperations.collectAsState()
     var showActivityLog by remember { mutableStateOf(false) }
+    var showSentinelPanel by remember { mutableStateOf(false) }
     val tools by McpToolRegistryImpl.tools.collectAsState()
     if (recentOps.isEmpty() && tools.isEmpty() && !showActivityLog) return
     // The most recent CALL: a YOLO on/off marker is in the ledger for audit but is not a call.
@@ -567,8 +590,26 @@ private fun McpActivityStatusItem() {
             ledgerPath = McpToolRegistryImpl.ledger.persistencePath,
             pendingWriteIds = pendingWriteIds,
             droppedWrites = droppedWrites,
+            onSentinel = { showSentinelPanel = true },
             onDismiss = { showActivityLog = false },
         )
+    }
+    if (showSentinelPanel) {
+        ai.rever.boss.plugin.ui.BossDialog(
+            onDismissRequest = { showSentinelPanel = false },
+            properties =
+                androidx.compose.ui.window
+                    .DialogProperties(),
+        ) {
+            androidx.compose.material.Surface(
+                modifier = Modifier.width(900.dp).fillMaxHeight(0.85f),
+                shape = RoundedCornerShape(12.dp),
+                color = BossTheme.colors.panel,
+            ) {
+                ai.rever.boss.components.plugin
+                    .McpSentinelPanel(modifier = Modifier.fillMaxSize())
+            }
+        }
     }
 }
 

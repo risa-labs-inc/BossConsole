@@ -55,6 +55,14 @@ private fun count(
     many: String,
 ): String = "$n ${if (n == 1) one else many}"
 
+internal data class McpAccessMenuActions(
+    val onPolicies: () -> Unit,
+    val onSessionTrust: () -> Unit = {},
+    val onTrustedPlugins: () -> Unit = {},
+    val onSentinel: () -> Unit = {},
+    val onYolo: () -> Unit = {},
+)
+
 /**
  * The menu behind the "MCP access" item, one entry per kind of grant. Entries that would open an
  * empty list are left out rather than disabled, so the menu only ever offers something that does
@@ -64,33 +72,41 @@ private fun count(
  */
 internal fun mcpAccessMenuItems(
     summary: McpAccessSummary,
-    onPolicies: () -> Unit,
-    onSessionTrust: () -> Unit,
-    onTrustedPlugins: () -> Unit,
-    onYolo: () -> Unit = {},
+    actions: McpAccessMenuActions,
 ): List<ContextMenuItem> =
     buildList {
         // Turning YOLO off is the first thing offered while it is on, so it is one click from the
         // red bar item; turning it on sits last, behind a divider and a confirmation.
         if (summary.yolo) {
-            add(ContextMenuItem(text = "Turn off YOLO mode", onClick = onYolo))
+            add(ContextMenuItem(text = "Turn off YOLO mode", onClick = actions.onYolo))
             add(ContextMenuItem(isDivider = true))
         }
         add(
             ContextMenuItem(
                 text = if (summary.savedRules > 0) "Tool policies (${summary.savedRules})..." else "Tool policies...",
-                onClick = onPolicies,
+                onClick = actions.onPolicies,
             ),
         )
         if (summary.sessionGrants > 0) {
-            add(ContextMenuItem(text = "Session trust (${summary.sessionGrants})...", onClick = onSessionTrust))
+            add(
+                ContextMenuItem(
+                    text = "Session trust (${summary.sessionGrants})...",
+                    onClick = actions.onSessionTrust,
+                ),
+            )
         }
         if (summary.trustedPlugins > 0) {
-            add(ContextMenuItem(text = "Trusted plugins (${summary.trustedPlugins})...", onClick = onTrustedPlugins))
+            add(
+                ContextMenuItem(
+                    text = "Trusted plugins (${summary.trustedPlugins})...",
+                    onClick = actions.onTrustedPlugins,
+                ),
+            )
         }
+        add(ContextMenuItem(text = "MCP Sentinel (ToolDNA)...", onClick = actions.onSentinel))
         if (!summary.yolo && summary.yoloAvailable) {
             add(ContextMenuItem(isDivider = true))
-            add(ContextMenuItem(text = "YOLO mode...", onClick = onYolo))
+            add(ContextMenuItem(text = "YOLO mode...", onClick = actions.onYolo))
         }
     }
 
