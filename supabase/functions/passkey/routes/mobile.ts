@@ -1,8 +1,12 @@
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { PasskeyContext } from "../types/context.ts"
 import { getMobileRegistrationHTML, getMobileAuthenticationHTML, getMobileErrorHTML } from "../utils/html.ts"
-import { generateMobileRegistrationPage, generateMobileAuthenticationPage } from "../services/mobile.ts"
-import { getAllowedRpIds } from "../utils/config.ts"
+import {
+  generateLegacyMobileRegistrationPage,
+  generateMobileAuthenticationPage,
+  generateMobileRegistrationPage
+} from "../services/mobile.ts"
+import { getAllowedRpIds, isLegacyMobileRegistrationEnabled } from "../utils/config.ts"
 
 /**
  * The rpId query parameter decides what the credential is pinned to, so it
@@ -63,6 +67,14 @@ const registerMobileRoute = createRoute({
 
 mobile.openapi(registerMobileRoute, async (ctx) => {
   try {
+    if (!isLegacyMobileRegistrationEnabled()) {
+      console.warn('Legacy mobile registration endpoint is disabled')
+      return ctx.html(
+        getMobileErrorHTML('Legacy mobile registration is no longer supported; update BOSS and try again'),
+        400
+      )
+    }
+
     const supabase = ctx.get("supabase")
     // No rpName is read from the query: it lands in `rp.name`, which the OS
     // passkey prompt renders in a trusted system dialog. The service derives
@@ -80,7 +92,7 @@ mobile.openapi(registerMobileRoute, async (ctx) => {
     }
 
     // Generate mobile registration page using service layer
-    const result = await generateMobileRegistrationPage(
+    const result = await generateLegacyMobileRegistrationPage(
       supabase,
       challenge,
       email,
@@ -111,6 +123,111 @@ mobile.openapi(registerMobileRoute, async (ctx) => {
 
   } catch (error) {
     console.error('❌ Mobile registration error:', error)
+    return ctx.html(getMobileErrorHTML('Internal server error'), 500)
+  }
+})
+
+// ============================================================================
+// GET /register/mobile/v2 - Strictly session-bound registration page
+// ============================================================================
+
+const registerMobileV2Route = createRoute({
+  method: 'get',
+  path: '/register/mobile/v2',
+  tags: ['Mobile'],
+  summary: 'Get strictly session-bound mobile registration HTML page',
+  description:
+    'Returns the WebAuthn registration page only when the supplied session ID ' +
+    'matches the session bound when the challenge was issued',
+  request: {
+    query: z.object({
+      challenge: z.string().describe('WebAuthn challenge'),
+      email: z.string().email().describe('User email'),
+      sessionId: z.string().min(1).describe('Session ID bound when the challenge was issued'),
+      rpId: z.string().optional().describe('Relying party ID')
+    })
+  },
+  responses: {
+    200: {
+      description: 'HTML page for mobile registration',
+      content: {
+        'text/html': {
+          schema: z.string()
+        }
+      }
+    },
+    400: {
+      description: 'Missing parameters or invalid session binding',
+      content: {
+        'text/html': {
+          schema: z.string()
+        }
+      }
+    },
+    404: {
+      description: 'Challenge not found or user not found',
+      content: {
+        'text/html': {
+          schema: z.string()
+        }
+      }
+    }
+  }
+})
+
+mobile.openapi(registerMobileV2Route, async (ctx) => {
+  try {
+    const supabase = ctx.get("supabase")
+    const { challenge, email, sessionId, rpId = 'api.risaboss.com' } =
+      ctx.req.valid('query')
+
+    if (!challenge || !email || !sessionId) {
+      return ctx.html(
+        getMobileErrorHTML('Missing required parameters: challenge, email, sessionId'),
+        400
+      )
+    }
+
+    if (!isAllowedRpId(rpId)) {
+      console.error('❌ Mobile registration v2 requested an rpId outside the allow-list')
+      return ctx.html(
+        getMobileErrorHTML('Unsupported relying party for this deployment'),
+        400
+      )
+    }
+
+    const result = await generateMobileRegistrationPage(
+      supabase,
+      challenge,
+      email,
+      sessionId,
+      rpId
+    )
+
+    if (!result.success) {
+      const statusCode = result.error?.includes('not found') ? 404 : 400
+      return ctx.html(
+        getMobileErrorHTML(result.error || 'Failed to generate registration page'),
+        statusCode
+      )
+    }
+
+    const html = await getMobileRegistrationHTML(
+      result.challenge!,
+      result.userId!,
+      result.email!,
+      result.sessionId!,
+      result.rpId!,
+      result.rpName!
+    )
+
+    ctx.header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+    ctx.header('Pragma', 'no-cache')
+    ctx.header('Expires', '0')
+
+    return ctx.html(html, 200)
+  } catch (error) {
+    console.error('❌ Mobile registration v2 error:', error)
     return ctx.html(getMobileErrorHTML('Internal server error'), 500)
   }
 })

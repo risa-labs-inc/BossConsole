@@ -13,7 +13,8 @@ import type { PasskeyContext } from "../types/context.ts"
 import auth from "../routes/auth.ts"
 import register from "../routes/register.ts"
 import management from "../routes/management.ts"
-import { createMockSupabaseClient, type MockSupabaseClient } from "./helpers/mocks.ts"
+import mobile from "../routes/mobile.ts"
+import { createMockSupabaseClient, mockChallenge, type MockSupabaseClient } from "./helpers/mocks.ts"
 import { TEST_ORIGIN } from "./helpers/webauthn.ts"
 
 function buildApp(mockClient: MockSupabaseClient) {
@@ -26,6 +27,7 @@ function buildApp(mockClient: MockSupabaseClient) {
   app.route("/auth", auth)
   app.route("/register", register)
   app.route("/manage", management)
+  app.route("/", mobile)
   return app
 }
 
@@ -437,5 +439,225 @@ Deno.test("POST /manage/list - unexpected route exceptions return a generic 500"
     assertEquals(body.includes(diagnostic), false)
   } finally {
     Deno.env.get = originalEnvGet
+  }
+})
+
+Deno.test("GET /auth/mobile - an unbound direct-login challenge cannot acquire a session", async () => {
+  const client = createMockSupabaseClient()
+  client.mockResponse('passkey_challenges', {
+    data: { ...mockChallenge, session_id: null },
+    error: null
+  }, 'select')
+
+  const app = buildApp(client)
+  const response = await app.request(
+    '/auth/mobile?challenge=mock-challenge-base64&email=user%40example.com&sessionId=attacker&credentialId=credential-abc'
+  )
+
+  assertEquals(response.status, 400)
+  assertEquals(client.getQueryHistory().some(query => query.operation === 'update'), false)
+  assertEquals(client.getQueryHistory().some(query => query.table === 'user_passkeys'), false)
+})
+
+Deno.test("GET /register/mobile - legacy client can claim an unbound challenge", async () => {
+  const client = createMockSupabaseClient()
+
+  client.mockResponse('passkey_challenges', {
+    data: {
+      ...mockChallenge,
+      type: 'registration',
+      session_id: null
+    },
+    error: null
+  }, 'select')
+
+  client.mockResponse('passkey_challenges', {
+    data: {
+      ...mockChallenge,
+      type: 'registration',
+      session_id: 'legacy-session',
+      status: 'in_progress'
+    },
+    error: null
+  }, 'update', {
+    match: { session_id: null }
+  })
+
+  const response = await buildApp(client).request(
+    '/register/mobile?challenge=mock-challenge-base64' +
+      '&email=user%40example.com&sessionId=legacy-session'
+  )
+
+  assertEquals(response.status, 200)
+
+  const update = client.getQueryHistory().find(
+    query => query.table === 'passkey_challenges' && query.operation === 'update'
+  )
+  assertExists(update)
+
+  const nullFilters = update.params.is as Array<{ column: string; value: unknown }>
+
+  assertEquals(
+    nullFilters.some(filter => filter.column === 'session_id' && filter.value === null),
+    true
+  )
+
+  const expiryFilter = update.params.gt as { column: string; value: unknown }
+  assertEquals(expiryFilter.column, 'expires_at')
+  assertEquals(typeof expiryFilter.value, 'string')
+})
+
+Deno.test("GET /register/mobile - a challenge without a user is rejected before claim", async () => {
+  const client = createMockSupabaseClient()
+  client.mockResponse('passkey_challenges', {
+    data: {
+      ...mockChallenge,
+      type: 'registration',
+      user_id: null,
+      session_id: null
+    },
+    error: null
+  }, 'select')
+
+  const response = await buildApp(client).request(
+    '/register/mobile?challenge=mock-challenge-base64' +
+      '&email=user%40example.com&sessionId=legacy-session'
+  )
+
+  assertEquals(response.status, 400)
+  assertEquals(client.getQueryHistory().some(query => query.operation === 'update'), false)
+})
+
+Deno.test("GET /register/mobile - a losing claim cannot render a registration page", async () => {
+  const client = createMockSupabaseClient()
+  client.mockResponse('passkey_challenges', {
+    data: {
+      ...mockChallenge,
+      type: 'registration',
+      session_id: null
+    },
+    error: null
+  }, 'select')
+  client.mockResponse('passkey_challenges', {
+    data: null,
+    error: { code: 'PGRST116' }
+  }, 'update', {
+    match: { session_id: null }
+  })
+
+  const response = await buildApp(client).request(
+    '/register/mobile?challenge=mock-challenge-base64' +
+      '&email=user%40example.com&sessionId=legacy-session'
+  )
+
+  assertEquals(response.status, 400)
+  assertEquals((await response.text()).includes('Invalid registration session'), true)
+})
+
+Deno.test("GET /register/mobile - an authentication challenge cannot be claimed", async () => {
+  const client = createMockSupabaseClient()
+  client.mockResponse('passkey_challenges', {
+    data: {
+      ...mockChallenge,
+      type: 'authentication',
+      session_id: null
+    },
+    error: null
+  }, 'select', {
+    match: { type: 'authentication' }
+  })
+
+  const response = await buildApp(client).request(
+    '/register/mobile?challenge=mock-challenge-base64' +
+      '&email=user%40example.com&sessionId=legacy-session'
+  )
+
+  assertEquals(response.status, 400)
+  assertEquals(client.getQueryHistory().some(query => query.operation === 'update'), false)
+})
+
+Deno.test("GET /register/mobile - deployment can disable the legacy claim path", async () => {
+  const key = 'PASSKEY_LEGACY_MOBILE_REGISTRATION_ENABLED'
+  const previous = Deno.env.get(key)
+  Deno.env.set(key, 'off')
+
+  try {
+    const client = createMockSupabaseClient()
+    const response = await buildApp(client).request(
+      '/register/mobile?challenge=mock-challenge-base64' +
+        '&email=user%40example.com&sessionId=legacy-session'
+    )
+
+    assertEquals(response.status, 400)
+    assertEquals(
+      (await response.text()).includes('Legacy mobile registration is no longer supported'),
+      true
+    )
+    assertEquals(client.getQueryHistory().length, 0)
+  } finally {
+    if (previous === undefined) {
+      Deno.env.delete(key)
+    } else {
+      Deno.env.set(key, previous)
+    }
+  }
+})
+
+Deno.test("GET /register/mobile - legacy route cannot replace an existing binding", async () => {
+  const client = createMockSupabaseClient()
+
+  client.mockResponse('passkey_challenges', {
+    data: {
+      ...mockChallenge,
+      type: 'registration',
+      session_id: 'session-victim'
+    },
+    error: null
+  }, 'select')
+
+  const response = await buildApp(client).request(
+    '/register/mobile?challenge=mock-challenge-base64' +
+      '&email=user%40example.com&sessionId=session-attacker'
+  )
+
+  assertEquals(response.status, 400)
+  assertEquals(
+    client.getQueryHistory().some(query => query.operation === 'update'),
+    false
+  )
+})
+
+Deno.test("GET /register/mobile/v2 - refuses a missing session id", async () => {
+  const response = await buildApp(createMockSupabaseClient()).request(
+    '/register/mobile/v2?challenge=mock-challenge-base64' +
+      '&email=user%40example.com'
+  )
+
+  assertEquals(response.status, 400)
+})
+
+Deno.test("GET /register/mobile/v2 - refuses an unbound or mismatched session", async () => {
+  for (const boundSession of [null, 'session-victim']) {
+    const client = createMockSupabaseClient()
+
+    client.mockResponse('passkey_challenges', {
+      data: {
+        ...mockChallenge,
+        type: 'registration',
+        session_id: boundSession
+      },
+      error: null
+    }, 'select')
+
+    const response = await buildApp(client).request(
+      '/register/mobile/v2?challenge=mock-challenge-base64' +
+        '&email=user%40example.com&sessionId=session-attacker'
+    )
+
+    assertEquals(response.status, 400)
+    assertEquals(
+      client.getQueryHistory().some(query => query.operation === 'update'),
+      false
+    )
   }
 })

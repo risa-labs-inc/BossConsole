@@ -60,6 +60,7 @@ class DesktopPasskeyService : PasskeyService {
         displayName: String,
         challenge: ByteArray,
         rpId: String,
+        sessionId: String,
     ): Result<PasskeyRegistration> =
         withContext(Dispatchers.Main) {
             try {
@@ -69,10 +70,9 @@ class DesktopPasskeyService : PasskeyService {
                 logger.info(LogCategory.PASSKEY, "Starting WebAuthn registration via browser")
 
                 // Build server WebAuthn registration URL using RESTful endpoint
-                val sessionId = UUID.randomUUID().toString()
                 val baseUrl = getSupabaseFunctionUrl()
                 val registrationUrl =
-                    "$baseUrl/passkey/register/mobile?" +
+                    "$baseUrl/passkey/register/mobile/v2?" +
                         "challenge=${URLEncoder.encode(challengeB64, "UTF-8")}&" +
                         "email=${URLEncoder.encode(displayName, "UTF-8")}&" +
                         "sessionId=${URLEncoder.encode(sessionId, "UTF-8")}&" +
@@ -152,7 +152,10 @@ class DesktopPasskeyService : PasskeyService {
 
                 // Always use browser WebAuthn for passkey authentication - this is the correct approach
                 // The browser handles the choice between Touch ID, security keys, or cross-device flow
-                val crossDeviceSessionId = sessionId ?: UUID.randomUUID().toString()
+                val crossDeviceSessionId =
+                    requireNotNull(sessionId) {
+                        "Browser passkey authentication requires the session bound at challenge issuance"
+                    }
                 val challengeB64 = Base64.getUrlEncoder().withoutPadding().encodeToString(challenge)
                 val baseUrl = getSupabaseFunctionUrl()
                 val authUrl =
