@@ -5,6 +5,7 @@ import ai.rever.boss.components.overlays.resetOverlayFieldForTest
 import ai.rever.boss.components.plugin.DynamicPluginInfo
 import ai.rever.boss.mcp.McpPolicyAction
 import ai.rever.boss.mcp.McpProactivePolicyOutcome
+import ai.rever.boss.mcp.McpToolPolicyConfig
 import ai.rever.boss.plugin.api.PluginManifest
 import ai.rever.boss.plugin.api.PluginState
 import ai.rever.boss.plugin.ui.BossBlueprintColorScheme
@@ -121,7 +122,7 @@ class McpProactivePolicyDialogTest {
         var closed = false
         show {
             McpPolicyManagerDialog(
-                rules = (1..30).associate { "saved-$it" to McpPolicyAction.DENY },
+                policy = McpToolPolicyConfig(rules = (1..30).associate { "saved-$it" to McpPolicyAction.DENY }),
                 availableTools = listOf(McpToolIdentity("tool", "provider".repeat(80), 0)),
                 onRevoke = { true },
                 onSetPolicy = { _, _ -> McpProactivePolicyOutcome.Saved },
@@ -144,7 +145,7 @@ class McpProactivePolicyDialogTest {
         assertEquals(emptySet(), sectionSelection(listOf(vault, prefixed), McpSectionMode.View))
         assertEquals(
             McpSectionMode.None,
-            savedSectionMode(listOf(vault), mapOf(vault.toolName to McpPolicyAction.DENY)),
+            savedSectionMode(listOf(vault), McpToolPolicyConfig(rules = mapOf(vault.toolName to McpPolicyAction.DENY))),
         )
     }
 
@@ -153,7 +154,7 @@ class McpProactivePolicyDialogTest {
         var writes = 0
         show(windowSize = IntSize(700, 800)) {
             McpPolicyManagerDialog(
-                emptyMap(),
+                McpToolPolicyConfig(),
                 tools,
                 { true },
                 { _, _ -> McpProactivePolicyOutcome.Saved },
@@ -182,19 +183,90 @@ class McpProactivePolicyDialogTest {
 
     @Test fun `saved policy search matches plugin names and sensitive review includes denials`() {
         val tool = McpToolIdentity("read", "plugin.id::vault", 0, "Read current state", readOnly = true)
-        val rules = mapOf("read" to McpPolicyAction.DENY)
+        val saved = listOf(McpSavedRule("read", tool.providerId, McpPolicyAction.DENY))
+        val policy =
+            McpToolPolicyConfig(providerToolRules = mapOf(tool.providerId to mapOf("read" to McpPolicyAction.DENY)))
         assertEquals("Documents", policySectionName(tool.providerId, mapOf("plugin.id" to "Documents")))
-        assertEquals(rules, filterSavedPolicies(rules, listOf(tool), "Documents", mapOf("plugin.id" to "Documents")))
-        assertEquals(rules, filterSavedPolicies(rules, listOf(tool), "vault", mapOf("plugin.id" to "Documents")))
-        assertEquals(listOf(tool), sensitiveAllows(listOf(tool), setOf("read"), rules))
+        assertEquals(saved, filterSavedPolicies(saved, listOf(tool), "Documents", mapOf("plugin.id" to "Documents")))
+        assertEquals(saved, filterSavedPolicies(saved, listOf(tool), "vault", mapOf("plugin.id" to "Documents")))
+        assertEquals(listOf(tool), sensitiveAllows(listOf(tool), setOf(tool.key), policy))
         // A declared-mutating tool with an innocent name must reach the review gate through the
         // catalog signal too - risk level and saved denials must not be the only ways in (#804).
         val declaredMutating = McpToolIdentity("data_fetch", "plugin.id", 0, "Fetch data", readOnly = false)
         assertEquals(
             listOf(declaredMutating),
-            sensitiveAllows(listOf(declaredMutating), setOf("data_fetch"), emptyMap()),
+            sensitiveAllows(listOf(declaredMutating), setOf(declaredMutating.key), McpToolPolicyConfig()),
         )
         assertEquals("Saved: Ask before running", savedPolicyLabel(McpPolicyAction.ASK))
+    }
+
+    @Test fun `saved policy search does not match a rule through another plugin with a same-named tool`() {
+        val other = McpToolIdentity("read", "other.id", 0, "Read documents", readOnly = true)
+        val saved = listOf(McpSavedRule("read", "plugin.id", McpPolicyAction.DENY))
+        // The rule belongs to plugin.id. A registered "read" from other.id must not make it
+        // findable by that plugin name or description.
+        assertEquals(emptyList(), filterSavedPolicies(saved, listOf(other), "documents", mapOf("other.id" to "Other")))
+        assertEquals(emptyList(), filterSavedPolicies(saved, listOf(other), "Other", mapOf("other.id" to "Other")))
+    }
+
+    @Test fun `saved rules name the plugin each one applies to`() {
+        val policy =
+            McpToolPolicyConfig(
+                rules = mapOf("legacy_tool" to McpPolicyAction.ALLOW),
+                providerToolRules =
+                    mapOf(
+                        "plugin.b" to mapOf("read" to McpPolicyAction.ALLOW),
+                        "plugin.a" to mapOf("read" to McpPolicyAction.DENY),
+                    ),
+            )
+        val names = mapOf("plugin.a" to "Alpha")
+
+        val saved = policy.savedRules()
+
+        assertEquals(
+            listOf(
+                McpSavedRule("legacy_tool", null, McpPolicyAction.ALLOW),
+                McpSavedRule("read", "plugin.a", McpPolicyAction.DENY),
+                McpSavedRule("read", "plugin.b", McpPolicyAction.ALLOW),
+            ),
+            saved,
+        )
+        assertTrue(savedRuleScopeLabel(saved[0], names).startsWith("All plugins"))
+        assertEquals("Plugin: Alpha", savedRuleScopeLabel(saved[1], names))
+    }
+
+    @Test fun `the saved rules list shows each plugin rule for one tool name and resets only that one`() {
+        val policy =
+            McpToolPolicyConfig(
+                providerToolRules =
+                    mapOf(
+                        "alpha" to mapOf("read" to McpPolicyAction.ALLOW),
+                        "beta" to mapOf("read" to McpPolicyAction.ALLOW),
+                    ),
+            )
+        var revoked: McpSavedRule? = null
+        show(windowSize = IntSize(700, 800)) {
+            McpPolicyManagerDialog(
+                policy = policy,
+                availableTools = emptyList(),
+                onRevoke = {
+                    revoked = it
+                    true
+                },
+                onSetPolicy = { _, _ -> McpProactivePolicyOutcome.Saved },
+                onRefreshCandidates = {},
+                onDismiss = {},
+            )
+        }
+        rule.onNodeWithText("Saved rules · 2").assertExists()
+        rule.onNodeWithText("Plugin: Alpha").assertExists()
+        rule.onNodeWithText("Plugin: Beta").assertExists()
+        rule
+            .onAllNodesWithText("Reset")
+            .onLast()
+            .performScrollTo()
+            .performClick()
+        rule.runOnIdle { assertEquals(McpSavedRule("read", "beta", McpPolicyAction.ALLOW), revoked) }
     }
 
     @Test fun `isViewTool treats the catalog as the single classification point`() {
@@ -244,7 +316,7 @@ class McpProactivePolicyDialogTest {
         show(windowSize = IntSize(700, 800)) {
             CompositionLocalProvider(LocalPluginStates provides plugins) {
                 McpPolicyManagerDialog(
-                    emptyMap(),
+                    McpToolPolicyConfig(),
                     tools,
                     { true },
                     { _, _ -> McpProactivePolicyOutcome.Saved },
@@ -276,7 +348,7 @@ class McpProactivePolicyDialogTest {
         var saved = emptyList<ai.rever.boss.mcp.McpSectionPolicyChange>()
         show(light = true) {
             McpPolicyManagerDialog(
-                emptyMap(),
+                McpToolPolicyConfig(),
                 tools,
                 { true },
                 { _, _ -> McpProactivePolicyOutcome.Saved },
@@ -298,18 +370,112 @@ class McpProactivePolicyDialogTest {
         rule.runOnIdle { assertEquals(McpPolicyAction.ALLOW, saved.single().action) }
     }
 
+    @Test fun `saved section mode honors the provider, not just the tool name`() {
+        // "read" has an ALLOW, but it was decided for a different provider ("other-tab").
+        // This tool's own provider ("p") has no rule of its own, so the section must read as
+        // Custom/unset for it, not as though it already holds that ALLOW. A second tool with a
+        // name-wide DENY keeps both tools' rules explicit either way, so only "read" changes.
+        val tools =
+            listOf(
+                McpToolIdentity("read", "p", 0, readOnly = true),
+                McpToolIdentity("k8s_delete", "p", 0, readOnly = true),
+            )
+        val elsewhere =
+            McpToolPolicyConfig(
+                rules = mapOf("k8s_delete" to McpPolicyAction.DENY),
+                providerToolRules = mapOf("other-tab" to mapOf("read" to McpPolicyAction.ALLOW)),
+            )
+        val own =
+            McpToolPolicyConfig(
+                rules = mapOf("k8s_delete" to McpPolicyAction.DENY),
+                providerToolRules = mapOf("p" to mapOf("read" to McpPolicyAction.ALLOW)),
+            )
+
+        assertEquals(McpSectionMode.Custom, savedSectionMode(tools, elsewhere))
+        assertEquals(McpSectionMode.View, savedSectionMode(tools, own))
+    }
+
+    @Test fun `sensitive allow review honors the provider for a same-named tool`() {
+        val tool = McpToolIdentity("read", "p", 0, "Read current state", readOnly = true)
+        val elsewhere =
+            McpToolPolicyConfig(providerToolRules = mapOf("other-tab" to mapOf("read" to McpPolicyAction.DENY)))
+        val own = McpToolPolicyConfig(providerToolRules = mapOf("p" to mapOf("read" to McpPolicyAction.DENY)))
+        // The saved DENY belongs to a different provider, so allowing this tool is not
+        // "replacing an existing denial" and should not force review.
+        assertEquals(emptyList(), sensitiveAllows(listOf(tool), setOf(tool.key), elsewhere))
+        // Scoped to this tool own provider, the DENY is real and still forces review.
+        assertEquals(listOf(tool), sensitiveAllows(listOf(tool), setOf(tool.key), own))
+    }
+
+    @Test fun `a selection names the plugin, so a same-named tool in another plugin is not selected with it`() {
+        val viewTool = McpToolIdentity("read", "a", 0, readOnly = true)
+        val editTool = McpToolIdentity("read", "b", 0, readOnly = false)
+
+        assertEquals(setOf(viewTool.key), sectionSelection(listOf(viewTool, editTool), McpSectionMode.View))
+        assertEquals(setOf(editTool.key), sectionSelection(listOf(viewTool, editTool), McpSectionMode.Edit))
+    }
+
+    @Test fun `section apply is not refused by another provider's same-named rule`() {
+        // Regression for the maintainer's editor-mutation question: before the section UI
+        // resolved rules per provider, expectedRule was captured by raw tool name, so
+        // this tool would be stamped with the other provider's ALLOW as its "expected" current
+        // rule. The engine's own scoped read sees no rule for this provider, the mismatch would
+        // refuse the write, and an operator could never set a policy for a tool whose name
+        // collides with a differently-scoped rule elsewhere.
+        val tool = McpToolIdentity("run_command", "flow-tab", 0, "Run a command", readOnly = false)
+        var applied: List<ai.rever.boss.mcp.McpSectionPolicyChange> = emptyList()
+        show(windowSize = IntSize(700, 800)) {
+            McpPolicyManagerDialog(
+                policy =
+                    McpToolPolicyConfig(
+                        providerToolRules = mapOf("terminal-tab" to mapOf("run_command" to McpPolicyAction.ALLOW)),
+                    ),
+                availableTools = listOf(tool),
+                onRevoke = { true },
+                onSetPolicy = { _, _ -> McpProactivePolicyOutcome.Saved },
+                onRefreshCandidates = {},
+                onDismiss = {},
+                sectionTools = listOf(tool),
+                onApplySection = {
+                    applied = it
+                    McpProactivePolicyOutcome.Saved
+                },
+            )
+        }
+        rule
+            .onAllNodesWithText("All", substring = false)
+            .onLast()
+            .performScrollTo()
+            .performClick()
+        closeIsInsideWindow()
+        // run_command is a known-mutating tool, so allowing it needs the sensitive-review gate
+        // before it applies - same as the reactive approval dialog's own review step.
+        rule.onNodeWithText("Review sensitive allows").performScrollTo().performClick()
+        rule.onNodeWithText("Confirm sensitive allows").performScrollTo().performClick()
+        rule.runOnIdle {
+            val change = applied.single { it.toolName == "run_command" }
+            // The write went through at all, and its expectedRule matches what the engine would
+            // actually see for "flow-tab" - none of its own - not "terminal-tab"'s ALLOW.
+            assertEquals(null, change.expectedRule)
+            assertEquals(McpPolicyAction.ALLOW, change.action)
+        }
+    }
+
     @Test fun `all and update presets cover the entire section and saved mode is restored`() {
         val tools =
             listOf(
                 McpToolIdentity("read", "p", 0, readOnly = true),
                 McpToolIdentity("write", "p", 0, readOnly = false),
             )
-        assertEquals(setOf("read", "write"), sectionSelection(tools, McpSectionMode.All))
-        assertEquals(setOf("write"), sectionSelection(tools, McpSectionMode.Edit))
-        assertEquals(McpSectionMode.Custom, savedSectionMode(tools, emptyMap()))
+        assertEquals(tools.map { it.key }.toSet(), sectionSelection(tools, McpSectionMode.All))
+        assertEquals(setOf(tools[1].key), sectionSelection(tools, McpSectionMode.Edit))
+        assertEquals(McpSectionMode.Custom, savedSectionMode(tools, McpToolPolicyConfig()))
         assertEquals(
             McpSectionMode.View,
-            savedSectionMode(tools, mapOf("read" to McpPolicyAction.ALLOW, "write" to McpPolicyAction.DENY)),
+            savedSectionMode(
+                tools,
+                McpToolPolicyConfig(rules = mapOf("read" to McpPolicyAction.ALLOW, "write" to McpPolicyAction.DENY)),
+            ),
         )
     }
 
@@ -322,7 +488,7 @@ class McpProactivePolicyDialogTest {
         var saved = emptyList<ai.rever.boss.mcp.McpSectionPolicyChange>()
         show(windowSize = IntSize(700, 800)) {
             McpPolicyManagerDialog(
-                emptyMap(),
+                McpToolPolicyConfig(),
                 tools,
                 { true },
                 { _, _ -> McpProactivePolicyOutcome.Saved },
@@ -355,7 +521,7 @@ class McpProactivePolicyDialogTest {
         var writes = 0
         show {
             McpPolicyManagerDialog(
-                emptyMap(),
+                McpToolPolicyConfig(),
                 listOf(McpToolIdentity("ai_compose", "editor-tab", 0, description)),
                 { true },
                 { _, _ ->
@@ -376,7 +542,7 @@ class McpProactivePolicyDialogTest {
         var writes = 0
         show(light = true) {
             McpPolicyManagerDialog(
-                emptyMap(),
+                McpToolPolicyConfig(),
                 listOf(candidate.value),
                 { true },
                 { _, _ ->
@@ -402,7 +568,7 @@ class McpProactivePolicyDialogTest {
         var refreshes = 0
         show {
             McpPolicyManagerDialog(
-                emptyMap(),
+                McpToolPolicyConfig(),
                 listOf(McpToolIdentity("tool", "provider", 0)),
                 { true },
                 { _, _ -> McpProactivePolicyOutcome.Refused },
@@ -420,7 +586,7 @@ class McpProactivePolicyDialogTest {
     @Test fun `unreadable policy explains recovery inside the modal`() {
         show {
             McpPolicyManagerDialog(
-                emptyMap(),
+                McpToolPolicyConfig(),
                 listOf(McpToolIdentity("tool", "provider", 0)),
                 { true },
                 { _, _ -> McpProactivePolicyOutcome.PolicyUnreadable },
@@ -437,7 +603,7 @@ class McpProactivePolicyDialogTest {
     @Test fun `unknown window size retains a usable dialog`() {
         show(windowSize = IntSize.Zero) {
             McpPolicyManagerDialog(
-                emptyMap(),
+                McpToolPolicyConfig(),
                 emptyList(),
                 { true },
                 { _, _ -> McpProactivePolicyOutcome.Saved },
@@ -451,7 +617,7 @@ class McpProactivePolicyDialogTest {
     @Test fun `narrow window keeps close horizontally inside the viewport`() {
         show(windowSize = IntSize(360, 360)) {
             McpPolicyManagerDialog(
-                emptyMap(),
+                McpToolPolicyConfig(),
                 emptyList(),
                 { true },
                 { _, _ -> McpProactivePolicyOutcome.Saved },

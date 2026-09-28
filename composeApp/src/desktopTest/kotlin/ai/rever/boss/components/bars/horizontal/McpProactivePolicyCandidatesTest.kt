@@ -1,6 +1,7 @@
 package ai.rever.boss.components.bars.horizontal
 
 import ai.rever.boss.mcp.McpPolicyAction
+import ai.rever.boss.mcp.McpToolPolicyConfig
 import ai.rever.boss.plugin.api.McpToolDefinition
 import ai.rever.boss.plugin.api.McpToolHandler
 import ai.rever.boss.plugin.api.McpToolResult
@@ -23,9 +24,9 @@ class McpProactivePolicyCandidatesTest {
     @Test
     fun `a tool with an existing rule is excluded`() {
         val tools = listOf(tool("run_command"), tool("k8s_delete"))
-        val rules = mapOf("run_command" to McpPolicyAction.ALLOW)
+        val policy = McpToolPolicyConfig(rules = mapOf("run_command" to McpPolicyAction.ALLOW))
 
-        val result = mcpProactivePolicyCandidates(tools, rules, disabledToolNames = emptySet(), NO_REVOCATION)
+        val result = mcpProactivePolicyCandidates(tools, policy, disabledToolNames = emptySet(), NO_REVOCATION)
 
         assertEquals(listOf("k8s_delete"), result.map { it.toolName })
     }
@@ -37,7 +38,7 @@ class McpProactivePolicyCandidatesTest {
         val result =
             mcpProactivePolicyCandidates(
                 tools,
-                rules = emptyMap(),
+                policy = McpToolPolicyConfig(),
                 disabledToolNames = setOf("k8s_delete"),
                 NO_REVOCATION,
             )
@@ -50,7 +51,12 @@ class McpProactivePolicyCandidatesTest {
         val tools = listOf(tool("zzz_tool"), tool("aaa_tool"), tool("mmm_tool"))
 
         val result =
-            mcpProactivePolicyCandidates(tools, rules = emptyMap(), disabledToolNames = emptySet(), NO_REVOCATION)
+            mcpProactivePolicyCandidates(
+                tools,
+                policy = McpToolPolicyConfig(),
+                disabledToolNames = emptySet(),
+                NO_REVOCATION,
+            )
 
         assertEquals(listOf("aaa_tool", "mmm_tool", "zzz_tool"), result.map { it.toolName })
     }
@@ -58,10 +64,43 @@ class McpProactivePolicyCandidatesTest {
     @Test
     fun `a tool that is both ruled and disabled is still excluded exactly once`() {
         val tools = listOf(tool("run_command"))
-        val rules = mapOf("run_command" to McpPolicyAction.DENY)
+        val policy = McpToolPolicyConfig(rules = mapOf("run_command" to McpPolicyAction.DENY))
 
         val result =
-            mcpProactivePolicyCandidates(tools, rules, disabledToolNames = setOf("run_command"), NO_REVOCATION)
+            mcpProactivePolicyCandidates(tools, policy, disabledToolNames = setOf("run_command"), NO_REVOCATION)
+
+        assertEquals(emptyList(), result)
+    }
+
+    @Test
+    fun `a same-named tool from a different provider is still offered as a candidate`() {
+        // "run_command" has a rule, but it was decided for "terminal-tab" specifically. A second
+        // provider shipping its own "run_command" has no rule of its own yet, so a name-only
+        // exclusion would wrongly hide it from this list even though it is exactly the tool this
+        // candidate list exists to offer a rule for.
+        val tools =
+            listOf(tool("run_command", providerId = "terminal-tab"), tool("run_command", providerId = "flow-tab"))
+        val policy =
+            McpToolPolicyConfig(
+                providerToolRules = mapOf("terminal-tab" to mapOf("run_command" to McpPolicyAction.ALLOW)),
+            )
+
+        val result =
+            mcpProactivePolicyCandidates(tools, policy, disabledToolNames = emptySet(), NO_REVOCATION)
+
+        assertEquals(listOf("flow-tab"), result.map { it.providerId })
+    }
+
+    @Test
+    fun `an unscoped rule excludes every provider's same-named tool`() {
+        // The rule predates per-provider rules (or was hand-edited) and still answers for every
+        // provider, so both registrations stay excluded.
+        val tools =
+            listOf(tool("run_command", providerId = "terminal-tab"), tool("run_command", providerId = "flow-tab"))
+        val policy = McpToolPolicyConfig(rules = mapOf("run_command" to McpPolicyAction.ALLOW))
+
+        val result =
+            mcpProactivePolicyCandidates(tools, policy, disabledToolNames = emptySet(), NO_REVOCATION)
 
         assertEquals(emptyList(), result)
     }
@@ -71,7 +110,12 @@ class McpProactivePolicyCandidatesTest {
         val tools = listOf(tool("run_command", providerId = "terminal-tab"))
 
         val result =
-            mcpProactivePolicyCandidates(tools, rules = emptyMap(), disabledToolNames = emptySet(), NO_REVOCATION)
+            mcpProactivePolicyCandidates(
+                tools,
+                policy = McpToolPolicyConfig(),
+                disabledToolNames = emptySet(),
+                NO_REVOCATION,
+            )
 
         assertEquals("terminal-tab", result.single().providerId)
     }
@@ -85,11 +129,10 @@ class McpProactivePolicyCandidatesTest {
         val result =
             mcpProactivePolicyCandidates(
                 tools,
-                rules = emptyMap(),
+                policy = McpToolPolicyConfig(),
                 disabledToolNames = emptySet(),
-            ) { toolName, providerId ->
-                versions.getValue(toolName to providerId)
-            }
+                revocationVersion = { toolName, providerId -> versions.getValue(toolName to providerId) },
+            )
 
         assertEquals(3L, result.single { it.toolName == "run_command" }.expectedRevocation)
         assertEquals(7L, result.single { it.toolName == "k8s_delete" }.expectedRevocation)

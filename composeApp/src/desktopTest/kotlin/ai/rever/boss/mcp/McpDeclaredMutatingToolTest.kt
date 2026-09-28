@@ -51,17 +51,17 @@ class McpDeclaredMutatingToolTest {
         val config = McpToolPolicyConfig()
         assertEquals(
             config.defaultReadOnlyAction,
-            McpMutatingToolCatalog.resolveAction("data_fetch", config, declaredReadOnly = true),
+            McpMutatingToolCatalog.resolveAction("data_fetch", null, config, declaredReadOnly = true),
         )
         assertEquals(
             config.defaultMutatingAction,
-            McpMutatingToolCatalog.resolveAction("data_fetch", config, declaredReadOnly = false),
+            McpMutatingToolCatalog.resolveAction("data_fetch", null, config, declaredReadOnly = false),
         )
         // An explicit rule still wins over both signals.
         val ruled = config.copy(rules = mapOf("data_fetch" to McpPolicyAction.DENY))
         assertEquals(
             McpPolicyAction.DENY,
-            McpMutatingToolCatalog.resolveAction("data_fetch", ruled, declaredReadOnly = false),
+            McpMutatingToolCatalog.resolveAction("data_fetch", null, ruled, declaredReadOnly = false),
         )
     }
 

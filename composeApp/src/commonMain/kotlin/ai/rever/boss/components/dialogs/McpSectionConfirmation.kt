@@ -3,6 +3,8 @@ package ai.rever.boss.components.dialogs
 import ai.rever.boss.mcp.McpPolicyAction
 import ai.rever.boss.mcp.McpProactivePolicyOutcome
 import ai.rever.boss.mcp.McpSectionPolicyChange
+import ai.rever.boss.mcp.McpToolPolicyConfig
+import ai.rever.boss.mcp.ruleFor
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.material.Button
 import androidx.compose.material.ButtonDefaults
@@ -19,8 +21,8 @@ import kotlinx.coroutines.launch
 @Composable
 internal fun SectionConfirmation(
     tools: List<McpToolIdentity>,
-    rules: Map<String, McpPolicyAction>,
-    selected: Set<String>,
+    policy: McpToolPolicyConfig,
+    selected: Set<McpToolKey>,
     dirty: Boolean,
     onApply: suspend (List<McpSectionPolicyChange>) -> McpProactivePolicyOutcome,
     onRefresh: () -> Unit,
@@ -31,12 +33,12 @@ internal fun SectionConfirmation(
     val colors = BossTheme.colors
     val scope = rememberCoroutineScope()
     var saving by remember { mutableStateOf(false) }
-    var feedback by remember(tools, rules, selected) { mutableStateOf<String?>(null) }
-    var riskConfirmed by remember(tools, rules, selected) { mutableStateOf(false) }
-    val risks = remember(tools, rules, selected) { sensitiveAllows(tools, selected, rules) }
+    var feedback by remember(tools, policy, selected) { mutableStateOf<String?>(null) }
+    var riskConfirmed by remember(tools, policy, selected) { mutableStateOf(false) }
+    val risks = remember(tools, policy, selected) { sensitiveAllows(tools, selected, policy) }
     if (dirty) {
-        PolicyChangeSummary(tools, rules, selected)
-        if (riskConfirmed) PolicyAllowRisks(risks, rules)
+        PolicyChangeSummary(tools, policy, selected)
+        if (riskConfirmed) PolicyAllowRisks(risks, policy)
         Button(
             enabled = !saving,
             colors =
@@ -55,8 +57,8 @@ internal fun SectionConfirmation(
                             it.toolName,
                             it.providerId,
                             it.expectedRevocation,
-                            rules[it.toolName],
-                            if (it.toolName in selected) McpPolicyAction.ALLOW else McpPolicyAction.DENY,
+                            policy.ruleFor(it.toolName, it.providerId),
+                            if (it.key in selected) McpPolicyAction.ALLOW else McpPolicyAction.DENY,
                         )
                     }
                 feedback = null

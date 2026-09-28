@@ -293,7 +293,8 @@ class McpGovernedInvocationTest {
             approvalBus.approve(req.id, trustForSession = false, persistPolicy = true)
             assertFalse(first.await().isError)
             assertEquals(1, callCount)
-            assertEquals(McpPolicyAction.ALLOW, policyEngine.policyFor("helm_uninstall"))
+            // Scoped to "p1" - the provider that actually earned this ALLOW (BossConsole#1360).
+            assertEquals(McpPolicyAction.ALLOW, policyEngine.policyFor("helm_uninstall", "p1"))
             assertEquals(
                 McpApprovalDisposition.PERSISTENTLY_ALLOWED,
                 ledger.recentOperations.value
@@ -346,7 +347,8 @@ class McpGovernedInvocationTest {
             approvalBus.deny(req.id, "not today", persistPolicy = true)
             assertTrue(first.await().isError)
             assertEquals(0, callCount)
-            assertEquals(McpPolicyAction.DENY, policyEngine.policyFor("docker_rm"))
+            // Scoped to "p1" - the provider this DENY was actually decided against (BossConsole#1360).
+            assertEquals(McpPolicyAction.DENY, policyEngine.policyFor("docker_rm", "p1"))
             assertEquals(
                 McpApprovalDisposition.PERSISTENTLY_DENIED,
                 ledger.recentOperations.value

@@ -2236,7 +2236,7 @@ grant would hand an unvetted plugin the approval its sibling earned, and trustin
 meant is the fail-closed direction. Revocation stays name-wide as the operator escape hatch:
 revokeSessionTrust(toolName, providerId = null) still clears every provider's trust for that name, and
 over-removing trust fails closed. The approval dialog's “Always, for this tool” scope (Always allow / Always deny) saves
-a tool-wide rule for all agents and arguments across restarts (except that a saved allow does not cover a shell
+a rule for that tool from that plugin, for all agents and arguments, across restarts (except that a saved allow does not cover a shell
 call the risk evaluator rates CRITICAL - see the destructive-shell gate under the workspace/terminal tools below). Saved rules can be
 reviewed and reset from “Tool policies” in the bottom bar's MCP access menu; a reset removes
 the rule and clears that tool's session trust, so the tool uses the configured default
@@ -2263,8 +2263,14 @@ always for every tool from this plugin) and answers with one Deny / Allow pair w
 the effect; there is no session or provider-wide deny, so under those scopes Deny reads “Deny
 once”. The bottom bar shows all three consent surfaces (session trust, tool policies, trusted
 plugins) behind one “MCP access” item, badged in the alert colour while session trust is live.
-The "Always, for this tool" scope says in the dialog that it is keyed by tool name, so it also
-covers a replacement plugin shipping a tool of that name - the one place the operator is told.
+The "Always, for this tool" scope is saved under the plugin the operator approved (`McpToolPolicyConfig.providerToolRules`,
+providerId to toolName to action), so a replacement or second plugin shipping a tool of that name is asked on its own
+and can neither overwrite nor erase the first plugin's ALLOW or DENY. `McpToolPolicyConfig.rules` (tool name only) is still
+read: a rule written before rules carried a provider has no way to say who it was for, so it keeps answering for every
+plugin. `ruleFor` combines the two and a DENY from either place wins. Every read of a saved rule goes through `ruleFor`,
+never `rules[toolName]`, and the saved-rules list shows the plugin each rule applies to ("All plugins" for a name-only
+one). A section or global write that would lift a name-only DENY is refused, since a rule for one plugin cannot outrank
+it. A downgrade to a build without `providerToolRules` reads the file without those rules and loses them on its next write.
 Provider trust also covers tools added by later versions and replacement plugins claiming
 that provider id. Already queued sibling prompts still ask. Explicit tool ASK rules
 still override provider ALLOW. The Trusted plugins UI lists ALLOW rules only; hand-edited

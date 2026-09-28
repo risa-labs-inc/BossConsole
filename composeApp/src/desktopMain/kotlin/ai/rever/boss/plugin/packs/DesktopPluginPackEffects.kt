@@ -11,6 +11,7 @@ import ai.rever.boss.mcp.McpPolicyEngine
 import ai.rever.boss.mcp.McpPolicyFault
 import ai.rever.boss.mcp.McpProactivePolicyOutcome
 import ai.rever.boss.mcp.McpToolRegistryImpl
+import ai.rever.boss.mcp.ruleFor
 import ai.rever.boss.plugin.MissingDependencyReporter
 import ai.rever.boss.plugin.PluginStoreSetup
 import ai.rever.boss.plugin.api.PluginState
@@ -78,7 +79,15 @@ class DesktopPluginPackEffects(
         return PackSnapshot(
             installed = installed,
             store = listings,
-            toolRules = config.rules,
+            // The rule each pack tool would meet as its own provider sees it, not the raw
+            // name-wide map: a rule scoped to a different plugin's same-named tool is not this
+            // tool's rule and must not read as "already set" or "kept".
+            toolRules =
+                pack.rules
+                    .filter { it.scope == PackRuleScope.TOOL }
+                    .mapNotNull { rule ->
+                        config.ruleFor(rule.subject, providerOf(rule.subject))?.let { rule.subject to it }
+                    }.toMap(),
             providerRules = config.providerRules,
             policyReadable = policy.fault.value !is McpPolicyFault.PersistedPolicyUnreadable,
             stamps = pack.rules.associate { it.subject to stampFor(it) },

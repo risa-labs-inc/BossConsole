@@ -65,7 +65,8 @@ class McpPersistentApprovalTest {
                     }
                     assertEquals(!allow, call.await().isError)
                     val expected = if (allow) McpPolicyAction.ALLOW else McpPolicyAction.DENY
-                    assertEquals(expected, McpPolicyEngine(file).policyFor("run_command"))
+                    // Scoped to "p" - the provider that earned this rule (BossConsole#1360).
+                    assertEquals(expected, McpPolicyEngine(file).policyFor("run_command", "p"))
                     assertTrue(engine.sessionTrustedTools.value.isEmpty())
                 } finally {
                     dir.deleteRecursively()

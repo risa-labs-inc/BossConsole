@@ -138,6 +138,20 @@ data class McpToolPolicyConfig(
      */
     val providerRules: Map<String, McpPolicyAction> = emptyMap(),
     /**
+     * Rules decided for one provider's tool, providerId -> toolName -> action. The provider is
+     * part of the key, so two plugins that ship a tool with the same name each keep their own
+     * decision: a write for one can neither overwrite nor erase the other's ALLOW or DENY.
+     *
+     * [rules] is the older, name-only slot. It is kept, and read, exactly as before: a rule
+     * written before providers were part of the key (or by hand) has no way to say who it was
+     * meant for, so it keeps answering for every provider. See [ruleFor] for how the two combine.
+     *
+     * An older build reading this file ignores this field, so a downgrade drops every scoped
+     * rule until the newer build rewrites it. Nothing here is unsafe in the other direction: the
+     * older build sees fewer rules, not wider ones.
+     */
+    val providerToolRules: Map<String, Map<String, McpPolicyAction>> = emptyMap(),
+    /**
      * Whether `{{secret:<id>}}` references in tool arguments are resolved at all. Off, a
      * secret-bearing call is refused (never passed through with its placeholders intact, which
      * would leave the agent believing a credential was delivered). A rollback switch, not a
@@ -153,6 +167,44 @@ data class McpToolPolicyConfig(
      */
     val resultScrubbingEnabled: Boolean = true,
 )
+
+/**
+ * The rule that applies to [toolName] as [providerId] contributes it: that provider's own rule
+ * for the tool, else the unscoped [McpToolPolicyConfig.rules] entry for the name.
+ *
+ * A DENY from either place holds. A provider cannot write its way past an operator's name-wide
+ * DENY, and an operator's DENY on one provider's tool is not visible to (or erased by) another
+ * provider's tool of the same name. With no [providerId] only the unscoped rule can apply.
+ *
+ * This is the one place the two maps are combined. The engine and every UI read site that shows
+ * or acts on a saved rule call it, so none of them index `rules[toolName]` directly.
+ */
+fun McpToolPolicyConfig.ruleFor(
+    toolName: String,
+    providerId: String?,
+): McpPolicyAction? {
+    val unscoped = rules[toolName]
+    val scoped = providerId?.let { providerToolRules[it]?.get(toolName) }
+    if (scoped == McpPolicyAction.DENY || unscoped == McpPolicyAction.DENY) return McpPolicyAction.DENY
+    return scoped ?: unscoped
+}
+
+/** [McpToolPolicyConfig.providerToolRules] with [toolName] set to [action] for [providerId]. */
+internal fun McpToolPolicyConfig.withProviderRule(
+    providerId: String,
+    toolName: String,
+    action: McpPolicyAction,
+): Map<String, Map<String, McpPolicyAction>> =
+    providerToolRules + (providerId to (providerToolRules[providerId].orEmpty() + (toolName to action)))
+
+/** [McpToolPolicyConfig.providerToolRules] without [providerId]'s rule for [toolName]. */
+internal fun McpToolPolicyConfig.withoutProviderRule(
+    providerId: String,
+    toolName: String,
+): Map<String, Map<String, McpPolicyAction>> {
+    val remaining = providerToolRules[providerId].orEmpty() - toolName
+    return if (remaining.isEmpty()) providerToolRules - providerId else providerToolRules + (providerId to remaining)
+}
 
 /**
  * Known tools and patterns that perform state mutations, infrastructure modifications,
@@ -253,15 +305,16 @@ object McpMutatingToolCatalog {
     }
 
     /**
-     * Resolve the action for a given tool name against [config], honoring the same
+     * Resolve the action for a tool name as [providerId] contributes it, against [config], honoring the same
      * [declaredReadOnly] declaration [isMutating] does.
      */
     fun resolveAction(
         toolName: String,
+        providerId: String?,
         config: McpToolPolicyConfig,
         declaredReadOnly: Boolean? = null,
     ): McpPolicyAction {
-        config.rules[toolName]?.let { return it }
+        config.ruleFor(toolName, providerId)?.let { return it }
         return if (isMutating(toolName, declaredReadOnly)) {
             config.defaultMutatingAction
         } else {

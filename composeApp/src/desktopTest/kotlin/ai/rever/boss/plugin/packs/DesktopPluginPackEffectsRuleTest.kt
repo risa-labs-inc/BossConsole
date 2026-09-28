@@ -2,6 +2,7 @@ package ai.rever.boss.plugin.packs
 
 import ai.rever.boss.mcp.McpPolicyAction
 import ai.rever.boss.mcp.McpPolicyEngine
+import ai.rever.boss.mcp.ruleFor
 import kotlinx.coroutines.runBlocking
 import java.io.File
 import kotlin.test.AfterTest
@@ -72,7 +73,37 @@ class DesktopPluginPackEffectsRuleTest {
         registered["example_tool"] = "com.example"
 
         assertEquals(RuleWrite.DENIED_BY_PROVIDER, effects.addRule(allowTool, stamp))
-        assertNull(policy.config.value.rules["example_tool"], "a rule that would not take effect must not be written")
+        assertNull(
+            policy.config.value.ruleFor("example_tool", "com.example"),
+            "a rule that would not take effect must not be written",
+        )
+    }
+
+    @Test
+    fun `another plugin's rule for a same-named tool is not this tool's existing rule`() {
+        registered["example_tool"] = "com.example"
+        val policy = engine()
+        policy.setToolPolicy("example_tool", McpPolicyAction.DENY, providerId = "com.other")
+        val effects = effects(policy)
+
+        val snapshot = runBlocking { effects.snapshot(PluginPack("team", emptyList(), listOf(allowTool))) }
+
+        assertNull(snapshot.toolRules["example_tool"])
+        assertEquals(RuleWrite.ADDED, effects.addRule(allowTool, snapshot.stamps.getValue("example_tool")))
+        assertEquals(McpPolicyAction.ALLOW, policy.policyFor("example_tool", "com.example"))
+        assertEquals(McpPolicyAction.DENY, policy.policyFor("example_tool", "com.other"))
+    }
+
+    @Test
+    fun `this plugin's own rule for the tool is reported as existing`() {
+        registered["example_tool"] = "com.example"
+        val policy = engine()
+        policy.setToolPolicy("example_tool", McpPolicyAction.DENY, providerId = "com.example")
+        val effects = effects(policy)
+
+        val snapshot = runBlocking { effects.snapshot(PluginPack("team", emptyList(), listOf(allowTool))) }
+
+        assertEquals(McpPolicyAction.DENY, snapshot.toolRules["example_tool"])
     }
 
     @Test
@@ -86,7 +117,7 @@ class DesktopPluginPackEffectsRuleTest {
         registered["example_tool"] = "com.example"
 
         assertEquals(RuleWrite.ADDED, effects.addRule(allowTool, stamp))
-        assertEquals(McpPolicyAction.ALLOW, policy.config.value.rules["example_tool"])
+        assertEquals(McpPolicyAction.ALLOW, policy.config.value.ruleFor("example_tool", "com.example"))
     }
 
     @Test
@@ -100,7 +131,7 @@ class DesktopPluginPackEffectsRuleTest {
         policy.revokeProviderPolicy("com.example")
 
         assertEquals(RuleWrite.REVOKED_SINCE_APPROVAL, effects.addRule(allowTool, stamp))
-        assertNull(policy.config.value.rules["example_tool"])
+        assertNull(policy.config.value.ruleFor("example_tool", "com.example"))
     }
 
     @Test
