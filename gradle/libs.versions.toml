@@ -12,7 +12,7 @@ androidx-lifecycle = "2.11.0"
 # BinaryCompatibilityValidator checks members only under ai.rever.boss.plugin.*;
 # Skia/Skiko signature drift can surface as a runtime NoSuchMethodError instead
 # of an incompatible-plugin rejection at load time.
-compose-multiplatform = "1.12.0"
+compose-multiplatform = "1.12.1"
 compose-icons = "1.1.1"
 decompose = "3.5.0"
 detekt = "1.23.8"
