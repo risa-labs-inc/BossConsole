@@ -9,11 +9,14 @@ import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
+import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 
 /**
@@ -42,6 +45,29 @@ object ChromiumAutoDownloader {
     // staging dir whose executable.name/version.txt happen to exist (e.g. extracted
     // from the archive itself) but whose extraction never actually completed.
     private const val STAGED_COMPLETE_MARKER = ".staging-complete"
+
+    /**
+     * Default caps for [extractWithJava], against a hostile or corrupted release archive: a real
+     * Chromium build has on the order of ten thousand entries and extracts to a few hundred
+     * MB, so both limits sit well above any legitimate archive while still refusing one that
+     * declares a modest central directory but streams unbounded bytes, or one padded with an
+     * unreasonable number of entries to exhaust inodes.
+     *
+     * Constants, not mutable state: a test passes smaller limits as arguments, and nothing at
+     * runtime can loosen the ones production uses.
+     */
+    private const val MAX_ZIP_ENTRIES = 200_000
+    private const val MAX_TOTAL_UNCOMPRESSED_BYTES = 4L * 1024 * 1024 * 1024
+    private const val DEFAULT_COPY_BUFFER_SIZE = 8192
+
+    /**
+     * What one path component of an entry is charged against the byte budget, on top of its
+     * content: a directory or file costs at least a filesystem block and an inode whatever its
+     * size, and a hostile archive can name a deep path over and over for almost no compressed
+     * size. Charging every component keeps the inodes an archive can create, and the disk they
+     * pin, inside the same total the content bytes already answer to.
+     */
+    internal const val PATH_COMPONENT_COST_BYTES = 4096L
 
     /** The engine version matching this build's bundled JxBrowser library. */
     val defaultVersion: String get() = JXBROWSER_VERSION
@@ -765,51 +791,152 @@ object ChromiumAutoDownloader {
 
     /**
      * Extract using Java's ZipInputStream (non-macOS or fallback).
+     *
+     * `internal` rather than `private` so a test can drive it directly against a hand-built
+     * zip, without depending on the macOS-only `ditto` branch [extractZip] picks by platform.
      */
-    private fun extractWithJava(
+    internal fun extractWithJava(
         zipPath: Path,
         targetDir: Path,
+        maxEntries: Int = MAX_ZIP_ENTRIES,
+        maxBytes: Long = MAX_TOTAL_UNCOMPRESSED_BYTES,
     ) {
+        val budget = ExtractionBudget(maxEntries, maxBytes)
         ZipInputStream(Files.newInputStream(zipPath)).use { zis ->
             var entry = zis.nextEntry
             while (entry != null) {
-                val targetPath = targetDir.resolve(entry.name).normalize()
-
-                // Security check: prevent zip slip attack
-                if (!targetPath.startsWith(targetDir)) {
-                    throw SecurityException("Zip entry outside target directory: ${entry.name}")
-                }
-
-                if (entry.isDirectory) {
-                    Files.createDirectories(targetPath)
-                } else {
-                    // Ensure parent directories exist
-                    Files.createDirectories(targetPath.parent)
-
-                    Files.newOutputStream(targetPath).use { output ->
-                        zis.copyTo(output)
-                    }
-
-                    // Preserve executable bit on Unix
-                    if (!System.getProperty("os.name").lowercase().contains("win")) {
-                        val name = entry.name.lowercase()
-                        val isMacOSExecutable = name.contains(".app/contents/macos/")
-                        val isChromium = name.contains("chromium") || name.contains("boss")
-                        val isSharedLib = name.endsWith(".so")
-                        val isShellScript = name.endsWith(".sh")
-                        val fileName = targetPath.fileName.toString()
-                        val hasNoExtension = !fileName.contains(".")
-
-                        if (isMacOSExecutable || isChromium || isSharedLib || isShellScript || hasNoExtension) {
-                            targetPath.toFile().setExecutable(true)
-                        }
-                    }
-                }
-
+                extractEntry(zis, entry, targetDir, budget)
                 zis.closeEntry()
                 entry = zis.nextEntry
             }
         }
+    }
+
+    private fun extractEntry(
+        zis: ZipInputStream,
+        entry: ZipEntry,
+        targetDir: Path,
+        budget: ExtractionBudget,
+    ) {
+        // Counts the entry and charges its path against the budget before anything is
+        // created for it, so the refusal leaves nothing behind for the offending entry.
+        budget.admit(entry.name)
+
+        val targetPath = targetDir.resolve(entry.name).normalize()
+
+        // Security check: prevent zip slip attack
+        if (!targetPath.startsWith(targetDir)) {
+            throw SecurityException("Zip entry outside target directory: ${entry.name}")
+        }
+
+        if (entry.isDirectory) {
+            Files.createDirectories(targetPath)
+            return
+        }
+        // Ensure parent directories exist
+        Files.createDirectories(targetPath.parent)
+
+        Files.newOutputStream(targetPath).use { output ->
+            // ZipEntry.size is unreliable here (-1 in a streaming zip, or simply a lie an
+            // attacker controls), so the cap is enforced against bytes actually read, not the
+            // entry's declared size - this catches both a single oversized entry and many
+            // entries whose sizes sum past the total budget.
+            budget.spend(copyBounded(zis, output, budget.remaining, budget.limit))
+        }
+        markExecutableIfNeeded(entry.name, targetPath)
+    }
+
+    /**
+     * The entry-count and byte limits of one [extractWithJava] run. Content bytes and the
+     * per-path overhead from [entryOverheadBytes] draw from the same [limit].
+     */
+    private class ExtractionBudget(
+        private val maxEntries: Int,
+        val limit: Long,
+    ) {
+        private var entries = 0
+        private var spent = 0L
+
+        val remaining: Long get() = limit - spent
+
+        fun admit(entryName: String) {
+            entries++
+            if (entries > maxEntries) {
+                throw SecurityException(
+                    "Chromium archive has more than $maxEntries entries - refusing to extract",
+                )
+            }
+            spent += entryOverheadBytes(entryName)
+            if (spent > limit) {
+                throw SecurityException(
+                    "Chromium archive exceeds the $limit byte extraction limit - refusing to extract",
+                )
+            }
+        }
+
+        fun spend(bytes: Long) {
+            spent += bytes
+        }
+    }
+
+    /** Preserve the executable bit on Unix for the files an unpacked engine needs to run. */
+    private fun markExecutableIfNeeded(
+        entryName: String,
+        targetPath: Path,
+    ) {
+        if (System.getProperty("os.name").lowercase().contains("win")) return
+        val name = entryName.lowercase()
+        val isMacOSExecutable = name.contains(".app/contents/macos/")
+        val isChromium = name.contains("chromium") || name.contains("boss")
+        val isSharedLib = name.endsWith(".so")
+        val isShellScript = name.endsWith(".sh")
+        val hasNoExtension = !targetPath.fileName.toString().contains(".")
+
+        if (isMacOSExecutable || isChromium || isSharedLib || isShellScript || hasNoExtension) {
+            targetPath.toFile().setExecutable(true)
+        }
+    }
+
+    /**
+     * Copy [input] to [output], refusing once more than [remainingBytes] have been read - the byte
+     * cap [extractWithJava] uses instead of trusting [java.util.zip.ZipEntry.getSize].
+     * [totalLimit] is only the number named in the refusal.
+     */
+    private fun copyBounded(
+        input: InputStream,
+        output: OutputStream,
+        remainingBytes: Long,
+        totalLimit: Long,
+    ): Long {
+        val buffer = ByteArray(DEFAULT_COPY_BUFFER_SIZE)
+        var copied = 0L
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) break
+            copied += read
+            if (copied > remainingBytes) {
+                throw SecurityException(
+                    "Chromium archive exceeds the $totalLimit byte extraction limit - refusing to extract",
+                )
+            }
+            output.write(buffer, 0, read)
+        }
+        return copied
+    }
+
+    /**
+     * What the entry named [name] costs before any content: its path bytes plus
+     * [PATH_COMPONENT_COST_BYTES] for each component, since each one can create a directory or
+     * file. Read from the name alone, so nothing the archive declares about sizes is trusted.
+     *
+     * Both `/` and `\` separate components. Extraction runs on Windows, where a backslash in an
+     * entry name is a path separator to the filesystem, so counting only `/` would charge a
+     * `a\b\c\d` name as one component while it creates three directories. On Linux a backslash
+     * is an ordinary filename character, so this can only overcharge, which is the safe side of a cap.
+     */
+    internal fun entryOverheadBytes(name: String): Long {
+        val components = name.split('/', '\\').count { it.isNotEmpty() }
+        return name.toByteArray(Charsets.UTF_8).size + components * PATH_COMPONENT_COST_BYTES
     }
 
     /**

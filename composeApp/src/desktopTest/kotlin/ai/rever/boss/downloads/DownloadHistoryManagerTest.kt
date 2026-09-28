@@ -1,5 +1,6 @@
 package ai.rever.boss.downloads
 
+import ai.rever.boss.mcp.secrets.captureHostLogs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -116,6 +117,26 @@ class DownloadHistoryManagerTest {
             assertFalse(DownloadHistoryManager.loadFailed)
             assertTrue(json.decodeFromString(DownloadHistory.serializer(), tempFile.readText()).downloads.isEmpty())
         }
+
+    @Test
+    fun `a corrupt history file is logged without its URL or path`() {
+        val secret = "download-token-and-private-path"
+        tempFile.writeText(
+            """{"downloads":[{"url":"https://example.test/file?$secret","filePath":"/private/$secret"""",
+        )
+
+        val (_, logged) =
+            captureHostLogs {
+                DownloadHistoryManager.resetForTesting(tempFile)
+            }
+
+        val failure = logged.single { it.message == "Failed to load download history" }
+        assertNull(failure.error, "the decoder exception includes the document and must not be attached")
+        assertEquals("JsonDecodingException", failure.data?.get("decodeFailure"))
+        for (entry in logged) {
+            assertFalse(secret in "${entry.message} ${entry.data} ${entry.error}", "leaked in: $entry")
+        }
+    }
 
     @Test
     fun `a failed save does not claim an in-memory change`() =

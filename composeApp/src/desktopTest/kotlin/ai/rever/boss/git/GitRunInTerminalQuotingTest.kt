@@ -62,6 +62,8 @@ class GitRunInTerminalQuotingTest {
             )
 
         try {
+            assertUnquotedGlobsExpand(shell, directory)
+
             val unsafeArgument = "; touch ${ShellPathQuoting.posix(sentinel.absolutePath)}; #"
             val unsafeCommand = "set -- safe $unsafeArgument; printf '%s\\000' \"\$@\""
             val positiveControl = runShell(shell, unsafeCommand, directory, "unsafe-control")
@@ -90,16 +92,32 @@ class GitRunInTerminalQuotingTest {
         }
     }
 
+    private fun assertUnquotedGlobsExpand(
+        shell: File,
+        directory: File,
+    ) {
+        directory.resolve("a").writeText("glob fixture")
+        val command = "set -- * ? [a-z]; printf '%s\\000' \"\$@\""
+        val result = runShell(shell, command, directory, "glob-control")
+        assertEquals(0, result.exitCode, result.stderr)
+        assertContentEquals(
+            "a\u0000a\u0000a\u0000".toByteArray(Charsets.UTF_8),
+            result.stdout,
+            "each unquoted glob must expand in the fixture directory",
+        )
+    }
+
     private fun runShell(
         shell: File,
         command: String,
         directory: File,
         name: String,
     ): ShellResult {
-        val stdout = directory.resolve("$name.stdout")
-        val stderr = directory.resolve("$name.stderr")
+        val stdout = directory.resolve(".$name.stdout")
+        val stderr = directory.resolve(".$name.stderr")
         val process =
             ProcessBuilder(shell.absolutePath, "-c", command)
+                .directory(directory)
                 .redirectOutput(stdout)
                 .redirectError(stderr)
                 .start()

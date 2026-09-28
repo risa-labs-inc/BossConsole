@@ -5,12 +5,8 @@ import ai.rever.boss.components.workspaces.LAST_SESSION_ID
 import ai.rever.boss.components.workspaces.LayoutWorkspace
 import ai.rever.boss.components.workspaces.WorkspaceSerializer
 import ai.rever.boss.components.workspaces.WorkspaceSettingsManager
-import ai.rever.boss.components.workspaces.extractRunningWorkspaces
-import ai.rever.boss.components.workspaces.sessionSetOf
 import ai.rever.boss.components.workspaces.sessionSpaceIdentity
 import ai.rever.boss.components.workspaces.workspaceManager
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 /** Preserve legacy recovery data as an ordinary Space when the optional slot is disabled. */
 internal fun prepareSessionSpace(workspace: LayoutWorkspace): LayoutWorkspace {
@@ -30,18 +26,4 @@ internal fun updateSessionSpace(
         splitViewState.rebindCurrentWorkspace(space.id)
     }
     workspaceManager.updateCurrentWorkspace(space)
-}
-
-/** Keep the identity-preserving set as fresh as the legacy crash-recovery snapshot. */
-internal suspend fun saveSessionRecovery(
-    record: LayoutWorkspace,
-    splitViewState: SplitViewState,
-) {
-    workspaceManager.saveLastSessionRecord(record)
-    val spaces =
-        extractRunningWorkspaces(splitViewState, record.projectPath.orEmpty(), identityFor = { id ->
-            workspaceManager.currentWorkspace.value?.takeIf { it.id == id } ?: workspaceManager.savedCopyOf(id)
-        })
-    val set = sessionSetOf(spaces, splitViewState.currentWorkspaceId)
-    withContext(Dispatchers.IO) { workspaceManager.saveLastSessionSetBlocking(set) }
 }

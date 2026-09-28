@@ -4,6 +4,7 @@ import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -61,7 +62,7 @@ object ResolvedHostsStore {
         } catch (e: SerializationException) {
             // A corrupt file just means starting over: the set is a cache of successes,
             // and the only cost of losing it is being cautious about eviction again.
-            logger.warn(LogCategory.BROWSER, "Discarding unreadable resolved hosts", error = e)
+            logger.warn(LogCategory.BROWSER, "Discarding unreadable resolved hosts", decodeFailure(e))
         }
     }
 

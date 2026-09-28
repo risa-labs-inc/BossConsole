@@ -101,6 +101,7 @@ const SCRIPT = `
   var base = cfg.basePath;
   var $ = function (id) { return document.getElementById(id); };
   var pollTimer = null, openTimer = null, cancelledAutoOpen = false;
+  var sessionRequestGeneration = 0;
 
   function show(id) {
     ["signin", "sent", "loading", "list", "opening"].forEach(function (s) {
@@ -168,6 +169,10 @@ const SCRIPT = `
 
   async function signOut(msg) {
     stopPolling();
+    sessionRequestGeneration++;
+    if (openTimer) { clearTimeout(openTimer); openTimer = null; }
+    if (viewing) closeSession("", false);
+    terminalPreferences = null; preferencesOwner = null;
     try { await api("/api/logout", { method: "POST" }); } catch (_) {}
     show("signin");
     if (msg) notice(msg, "error");
@@ -175,9 +180,12 @@ const SCRIPT = `
 
   // 401 means no usable cookie AND no refreshable one (the server already tried); back to the form.
   async function loadSessions(isPoll) {
+    var requestGeneration = ++sessionRequestGeneration;
     if (!isPoll) show("loading");
-    var r = await api("/api/sessions");
+    var r = await api("/api/sessions?terminal_preferences=1");
+    if (requestGeneration !== sessionRequestGeneration) return;
     if (r.status === 401) {
+      terminalPreferences = null; preferencesOwner = null;
       // Keep whatever the landing already said (an expired-link error from GoTrue, a failed
       // /api/session); wiping it here left the user at a blank form with no reason.
       stopPolling(); show("signin");
@@ -185,6 +193,8 @@ const SCRIPT = `
     }
     if (!r.ok) { notice("Could not load sessions (HTTP " + r.status + "). Retrying…", "error"); show("list"); return; }
     var data = await r.json();
+    if (requestGeneration !== sessionRequestGeneration) return;
+    acceptTerminalPreferences(data);
     render(data.sessions || [], data.email || "");
   }
 
@@ -192,6 +202,46 @@ const SCRIPT = `
   // this page and "back" is instant. The host allows framing only for the account link and only
   // by this origin; the frame tells us when the session ends (see onFrameMessage).
   var viewing = null; // { url, label }
+  var terminalPreferences = null;
+  var preferencesOwner = null;
+  function acceptTerminalPreferences(data) {
+    var owner = data.terminal_preferences_owner || null;
+    if (!owner || owner !== preferencesOwner) terminalPreferences = {unfocused_mode: "batch", unfocused_fps: 4, revision: 0};
+    if (viewing && preferencesOwner && owner !== preferencesOwner) closeSession("");
+    preferencesOwner = owner;
+    var value = data.terminal_preferences;
+    if (owner && value && ["batch", "preview"].indexOf(value.unfocused_mode) >= 0 &&
+        Number.isInteger(value.unfocused_fps) && value.unfocused_fps >= 1 && value.unfocused_fps <= 30 &&
+        Number.isSafeInteger(value.revision) && value.revision >= terminalPreferences.revision) {
+      terminalPreferences = value;
+    }
+  }
+  function postTerminalPreferences() {
+    var frame = $("viewerframe");
+    if (!viewing || !terminalPreferences || !frame.contentWindow) return;
+    frame.contentWindow.postMessage({type: "bossterm-terminal-preferences", preferences: terminalPreferences}, new URL(viewing.url).origin);
+  }
+  async function refreshTerminalPreferences() {
+    var owner = viewing;
+    if (!owner) return;
+    var requestGeneration = ++sessionRequestGeneration;
+    var response = await api("/api/sessions?terminal_preferences=1");
+    if (viewing !== owner || requestGeneration !== sessionRequestGeneration) return;
+    if (response.status === 401) { terminalPreferences = null; preferencesOwner = null; closeSession("", false); show("signin"); return; }
+    if (!response.ok) return;
+    var data = await response.json();
+    if (viewing !== owner || requestGeneration !== sessionRequestGeneration) return;
+    acceptTerminalPreferences(data);
+    postTerminalPreferences();
+  }
+  $("viewerframe").addEventListener("load", function () {
+    postTerminalPreferences();
+    refreshTerminalPreferences().catch(function () {});
+  });
+  setInterval(function () {
+    if (viewing && document.visibilityState === "visible") refreshTerminalPreferences().catch(function () {});
+  }, 60000);
+  window.addEventListener("focus", function () { refreshTerminalPreferences().catch(function () {}); });
   // The on-screen keyboard is only visible to the TOP document: on iOS the layout viewport
   // never shrinks, only window.visualViewport does, and a cross-origin iframe sees neither. The
   // viewer pins its key bar to ITS bottom edge, so while a session is embedded the page sizes
@@ -214,6 +264,7 @@ const SCRIPT = `
 
   function openSession(url, label) {
     if (viewing) return;
+    sessionRequestGeneration++;
     viewing = { url: url, label: label };
     stopPolling();
     if (openTimer) { clearTimeout(openTimer); openTimer = null; }
@@ -224,19 +275,20 @@ const SCRIPT = `
     fitViewport();
     try { history.pushState({ view: "session" }, "", location.pathname + location.search); } catch (_) {}
   }
-  function closeSession(reasonText) {
+  function closeSession(reasonText, reload) {
     if (!viewing) return;
+    sessionRequestGeneration++;
     viewing = null;
     $("viewerframe").setAttribute("src", "about:blank");
     document.body.classList.remove("viewing");
     fitViewport();
     cancelledAutoOpen = true; // do not bounce straight back into a session that just ended
     if (reasonText) notice(reasonText, null);
-    loadSessions(false).catch(function () {});
+    if (reload !== false) loadSessions(false).catch(function () {});
   }
   function onFrameMessage(ev) {
     var frame = $("viewerframe");
-    if (!viewing || !frame.contentWindow || ev.source !== frame.contentWindow) return;
+    if (!viewing || !frame.contentWindow || ev.source !== frame.contentWindow || ev.origin !== new URL(viewing.url).origin) return;
     var d = ev.data;
     if (!d || d.type !== "bossterm-session-ended") return;
     closeSession(d.reason === "user" ? "" : "The session ended. Pick another one or wait for it to come back.");
@@ -325,6 +377,7 @@ const SCRIPT = `
     loadSessions(false).catch(function () {});
   });
   document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "visible" && viewing) refreshTerminalPreferences().catch(function () {});
     if (document.visibilityState === "visible" && !$("list").classList.contains("hidden")) {
       loadSessions(true).catch(function () {});
     }

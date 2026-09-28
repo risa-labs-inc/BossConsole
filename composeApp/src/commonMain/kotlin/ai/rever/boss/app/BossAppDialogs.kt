@@ -55,6 +55,7 @@ import ai.rever.boss.dashboard.DashboardStatsManager
 import ai.rever.boss.html.HtmlFileOpenMode
 import ai.rever.boss.html.HtmlFileSettingsManager
 import ai.rever.boss.icons.FileIcons
+import ai.rever.boss.keymap.KeymapRecoveryDialog
 import ai.rever.boss.keymap.KeymapSettingsManager
 import ai.rever.boss.keymap.model.KeymapActions
 import ai.rever.boss.mcp.McpToolRegistryImpl
@@ -122,8 +123,9 @@ internal fun BossAppDialogs(state: BossAppState) {
     val selectedProject by windowProjectState.selectedProject.collectAsState()
     val spotlightFileIndexer = rememberSpotlightFileIndexer(state.spotlightFileIndexes, selectedProject.path)
 
-    // Keymap settings (used by ShortcutHelpDialog)
+    // ShortcutHelpDialog uses the current keymap below.
     val keymapSettings by KeymapSettingsManager.currentSettings.collectAsState()
+    KeymapRecoveryDialog()
 
     // Plugin update confirmation prompt (from "Check for Updates" or the header badge).
     state.pluginUpdatePrompt?.let { prompt ->

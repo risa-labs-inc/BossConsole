@@ -444,9 +444,11 @@ class TrackingPluginContext(
     // its own namespace: a same-id re-registration replaces only the plugin's own previous
     // provider, and unregisterMcpToolProvider re-keys the id below, so a plugin unregistering
     // "boss-workspace" merely no-ops inside its own namespace. A scoped id is also a NEW
-    // provider identity to the policy engine, so a persisted providerRules ALLOW granted to a
-    // raw id cannot auto-apply to tools the plugin registers next. Same pattern as the download
-    // center's per-plugin idPrefix and ScopedPluginStorageFactory: identity is bound once, here.
+    // provider identity for grants, so a persisted providerRules ALLOW granted to a raw id cannot
+    // auto-apply to tools the plugin registers next. Legacy raw DENYs remain fail-closed in the
+    // policy engine because dropping a restriction is not the safe direction. Same pattern as
+    // the download center's per-plugin idPrefix and ScopedPluginStorageFactory: identity is bound
+    // once, here.
     override fun registerMcpToolProvider(provider: McpToolProvider) {
         val scoped = PluginScopedMcpToolProvider(pluginId, provider)
         tracker.recordMcpToolProviderRegistration(pluginId, scoped.providerId)

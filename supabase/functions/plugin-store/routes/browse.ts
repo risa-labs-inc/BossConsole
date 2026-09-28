@@ -1,18 +1,21 @@
-import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
-import type { PluginStoreContext } from "../types/context.ts"
+import { createRoute, z } from "@hono/zod-openapi"
 import {
   ListPluginsQuerySchema,
   SearchPluginsRequestSchema,
   PluginListResponseSchema,
   PluginDetailResponseSchema,
+  PopularTagsQuerySchema,
   PopularTagsResponseSchema,
   ErrorResponseSchema
 } from "../types/schemas.ts"
 import { listPlugins, searchPlugins, getPlugin, getPopularTags } from "../services/plugins.ts"
 import { getPluginVersions } from "../services/versions.ts"
 import { clientKey, rateLimit } from "../utils/rate-limit.ts"
+import { newRouter } from "../utils/router.ts"
 
-const browse = new OpenAPIHono<{ Variables: PluginStoreContext }>()
+// A request that fails its route's schema is answered by the router itself, before any handler
+// runs, with the ErrorResponseSchema 400 the routes below declare: see newRouter.
+const browse = newRouter()
 
 // Per-client limit on the anonymous catalogue routes (/list, /search,
 // /tags/popular): the same in-isolate token bucket the organisation function
@@ -52,6 +55,14 @@ const listRoute = createRoute({
       content: {
         'application/json': {
           schema: PluginListResponseSchema
+        }
+      }
+    },
+    400: {
+      description: 'Invalid page or pageSize',
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
         }
       }
     },
@@ -166,7 +177,9 @@ const searchRoute = createRoute({
 browse.openapi(searchRoute, async (ctx) => {
   try {
     // search_plugins is ILIKE-backed, so an unthrottled anon client burns DB
-    // CPU per request; the limit is consumed before the query is parsed.
+    // CPU per request. The body has already been validated by the time this
+    // runs: a malformed one is refused by the hook above without reaching the
+    // limiter or the database.
     const limit = rateLimit(
       `catalogue:${clientKey(ctx.req.raw.headers)}`,
       CATALOGUE_LIMIT,
@@ -320,11 +333,6 @@ browse.openapi(getPluginRoute, async (ctx) => {
 // GET /tags/popular - Get popular tags
 // ============================================================================
 
-// Same ceiling /search already enforces on pageSize. This route is public and sends the anon
-// key, and the value used to reach `LIMIT p_limit` in get_popular_tags with nothing bounding it
-// on the way - not here, not in getPopularTags, not in the SQL function.
-const POPULAR_TAGS_LIMIT_MAX = 100
-
 const popularTagsRoute = createRoute({
   method: 'get',
   path: '/tags/popular',
@@ -332,12 +340,8 @@ const popularTagsRoute = createRoute({
   summary: 'Get popular tags',
   description: 'Get the most used tags for filtering',
   request: {
-    query: z.object({
-      // BossConsole#1253: cap `limit` so an unauthenticated caller cannot
-      // ask the SECURITY DEFINER `get_popular_tags` RPC for the entire
-      // tag cloud in one request.
-      limit: z.coerce.number().int().min(1).max(100).default(20)
-    })
+    // BossConsole#1253: see PopularTagsQuerySchema for why each bound is there.
+    query: PopularTagsQuerySchema
   },
   responses: {
     429: {
@@ -377,9 +381,9 @@ const popularTagsRoute = createRoute({
 
 browse.openapi(popularTagsRoute, async (ctx) => {
   try {
-    // The rate limit is asked first, so an invalid limit still counts against the caller. Its
-    // result is `gate`, not `limit`: `limit` below is the validated value, and it is the one that
-    // has to reach the database.
+    // The query has already been validated by the time this runs, so `limit` is an integer in
+    // 1..POPULAR_TAGS_LIMIT_MAX: a value outside that is refused by the hook above, before the
+    // limiter and the database. The limiter's result is `gate`, so it cannot be mistaken for it.
     const gate = rateLimit(
       `catalogue:${clientKey(ctx.req.raw.headers)}`,
       CATALOGUE_LIMIT,
@@ -391,19 +395,7 @@ browse.openapi(popularTagsRoute, async (ctx) => {
     }
 
     const supabase = ctx.get("supabase")
-    const { limit: rawLimit } = ctx.req.valid('query')
-
-    // Fail closed before anything touches the database. Two shapes got through before:
-    // an oversized integer, which asked for an arbitrarily large window, and a non-numeric
-    // value, which is worse - Number('abc') is NaN, JSON has no NaN so the RPC payload carries
-    // null, and PostgreSQL treats LIMIT NULL as LIMIT ALL. Number.isInteger rejects NaN,
-    // fractions and Infinity in one test.
-    const limit = Number(rawLimit)
-    if (!Number.isInteger(limit) || limit < 1 || limit > POPULAR_TAGS_LIMIT_MAX) {
-      return ctx.json({
-        error: `limit must be an integer from 1 to ${POPULAR_TAGS_LIMIT_MAX}`
-      }, 400)
-    }
+    const { limit } = ctx.req.valid('query')
 
     const tags = await getPopularTags(supabase, limit)
 

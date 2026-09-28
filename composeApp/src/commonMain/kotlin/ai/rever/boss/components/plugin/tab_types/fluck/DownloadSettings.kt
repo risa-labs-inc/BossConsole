@@ -19,7 +19,8 @@ data class DownloadSettings(
 
 /**
  * Returns the platform-specific default downloads directory.
- * - Windows: %USERPROFILE%\Downloads
+ * - Windows: the shell's Downloads known folder, which the user can move to another drive,
+ *   else %USERPROFILE%\Downloads
  * - macOS: $HOME/Downloads
  * - Linux: XDG user-dirs or $HOME/Downloads
  */

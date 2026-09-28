@@ -158,6 +158,7 @@ class McpOperationLedger(
         // call and error counters the activity log summarises.
         countsAsCall: Boolean = true,
         secretRefs: List<String> = emptyList(),
+        escalated: Boolean = false,
     ): McpOperationRecord {
         val sanitized = sanitizeArguments(rawArgs)
         // Bound regex work before sanitizing. Omit oversized input entirely so cutting through
@@ -183,6 +184,7 @@ class McpOperationLedger(
                 sanitizedArgs = sanitized,
                 errorSnippet = sanitizedErrorSnippet,
                 secretRefs = secretRefs,
+                escalated = escalated,
             )
 
         // Under one lock so queue order always equals ring-buffer order. What does NOT

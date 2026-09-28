@@ -35,6 +35,32 @@ runs race a stale `recent-projects.json` load. This guarantee is deliberately mo
 moving a test that reads `BossDirectories.rootDir` to another module requires equivalent isolation
 there.
 
+### A `@Test` that returns a value never runs
+
+`fun x() = runBlocking { ...; assertIs<T>(y) }` returns whatever its last expression does, and JUnit
+Jupiter does not execute a `@Test` method that returns a value: it reports a WARNING-level discovery
+issue, which Gradle does not print, and counts the method nowhere. Nine `composeApp` tests sat
+unexecuted that way, four of them the MCP approval gate's fail-closed guarantees, and one no longer
+described the code by the time it first ran (#1667). Declare an expression-bodied test `(): Unit =`,
+or write `runBlocking<Unit>`, as `plugin-loader`'s tests already do.
+
+Every module's Gradle `Test` task now sets `junit.platform.discovery.issue.severity.critical=WARNING`
+(root `build.gradle.kts`), `buildSrc` sets it in its own build file because it is a separate build
+the root never reaches, and `composeApp` repeats it in
+`src/desktopTest/resources/junit-platform.properties` so an IDE run meets it too. A discovery issue
+aborts discovery for the whole engine: every test in the module disappears and a single
+`initializationError` names the method. If a toolchain bump introduces an unrelated warning, relax
+the property to `ERROR` in that module's own `build.gradle.kts`, which wins over the root; do not
+delete it.
+
+**The property is only read by JUnit Platform 1.13 and later.** On an older platform it is silently
+ignored, the guard does nothing, and a passing test run looks exactly the same as a working guard.
+That is why `buildSrc` imports the root version catalog and pins `platform(junit-bom)` to
+`libs.versions.junit.jupiter` (#1709): its only other test dependency, `kotlin("test")`, resolves
+JUnit through Gradle's embedded Kotlin (Platform 1.10), and the guard there was inert until the pin.
+The BOM is not a redundant dependency; removing it restores the inert guard. To check a module, run
+a throwaway `@Test fun probe() = 42` and confirm the run fails with "must not return a value".
+
 ### Running commands in a visible terminal pane
 
 When a terminal MCP server is available, prefer it over the plain `Bash` tool for commands worth showing - it runs in a visible BossTerm pane and still returns stdout/stderr/exit code. Two servers may be present depending on which app hosts the session; use whichever the session's `SessionStart` hook designates:
@@ -740,6 +766,13 @@ logger.error(LogCategory.NETWORK, "Request failed", error = exception)
 
 **Security**: Always use `LogSanitizer` for sensitive data:
 - `maskEmail()`, `maskToken()`, `maskCredentialId()`, `maskUserId()`, `maskUriParams()`
+- A local file that fails to decode: log `decodeFailure(e)` as the data, never the decoder's
+  message by any route (`error = e`, `e.message`, `e.toString()`). kotlinx puts the file's content in
+  the exception message, and `decodeFailure` keeps only the exception type, the offset and the JSON
+  path, with map keys masked. Catch `SerializationException` before `Exception` or
+  `IllegalArgumentException`, which it extends. Supabase payloads use `sanitizeSupabaseFailure`
+  (see below). This is the rule for new and converted call sites; older decode sites that still log
+  the exception are tracked in #1711.
 
 **Config**: Set `BOSS_LOG_LEVEL` env var or `boss.log.level` system property (TRACE/DEBUG/INFO/WARN/ERROR)
 
@@ -2242,6 +2275,14 @@ that provider id. Already queued sibling prompts still ask. Explicit tool ASK ru
 still override provider ALLOW. The Trusted plugins UI lists ALLOW rules only; hand-edited
 provider DENY rules currently require policy-file editing to remove.
 
+Plugin provider ids changed from `provider` to `plugin::provider` in #958. A persisted raw
+provider DENY remains authoritative at runtime for every scoped provider with that suffix:
+assigning the old key to one plugin is ambiguous, while dropping it would fail open. Do not copy
+that raw DENY into scoped policy entries; derived copies outlive revocation of the rule the
+operator actually set. Revoking the raw rule must immediately lift its inherited effect. Legacy
+raw ALLOW does not cross the namespace, because that would restore the provider-id aliasing the
+namespace was added to prevent. Keep this compatibility rule asymmetric.
+
 **YOLO mode** makes any call whose policy resolves to ASK run without prompting, for every tool
 and provider, CRITICAL-risk ones and tools registered later included - secret-bearing calls
 excepted: YOLO answers for the tool, never for the vault. Any user can turn it on,
@@ -2298,7 +2339,14 @@ applies any broader approval of an escalated call as once, logging the downgrade
 never overridden, so it is the durable answer there (#1624). Shell tools are rated on every
 string in their arguments. Arguments nested past MAX_MCP_ARGUMENT_DEPTH rate CRITICAL without being
 parsed (every parse on the invoke path checks the same depth guard first); arguments too wide to
-scan fully rate CRITICAL on the part that was not inspected.
+scan fully rate CRITICAL on the part that was not inspected. The call's ledger row carries
+`escalated: true` when this gate overrode a saved ALLOW, so a call that YOLO mode then answered
+(`YOLO_ALLOWED`) can be told apart from a routine call under the same ALLOW (#1655). It does not
+mark every destructive call: under the default ASK policy there is no ALLOW to override, and a
+destructive call YOLO answers there records `escalated: false`. `format` counts only as a
+command (the first word of a command, or with a drive such as `d:` anywhere after it, switches
+first or not), not as the text `format ` anywhere, which rated `--format json`, `clang-format` and
+prose typed through `send_input` CRITICAL.
 
 ### Secret references at the governance boundary
 

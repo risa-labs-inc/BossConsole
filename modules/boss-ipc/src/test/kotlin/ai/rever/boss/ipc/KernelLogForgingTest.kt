@@ -1,10 +1,13 @@
 package ai.rever.boss.ipc
 
 import ai.rever.boss.ipc.auth.ProcessAuthority
+import ai.rever.boss.ipc.proto.InvokeCapabilityRequest
 import ai.rever.boss.ipc.proto.KernelServiceGrpcKt
+import ai.rever.boss.ipc.proto.PluginCapability
 import ai.rever.boss.ipc.proto.ProcessManifest
 import ai.rever.boss.ipc.proto.ProcessState
 import ai.rever.boss.ipc.proto.ProcessStatusRequest
+import ai.rever.boss.ipc.proto.ProcessType
 import ai.rever.boss.ipc.proto.RegisterProcessRequest
 import ai.rever.boss.ipc.proto.ShutdownRequest
 import ai.rever.boss.ipc.proto.StateKey
@@ -31,9 +34,10 @@ import kotlin.test.assertTrue
  * Everything that reads the kernel log - the in-app log panel, the console capture, `boss
  * log-parse`, grep, tail - treats a newline as the end of a record. IPC messages carry text the
  * kernel did not author: a registration manifest's display name, a state key, a supervisor's
- * shutdown target. The identity layer proves who a message came from, not what it says, so a
- * hostile child could make the kernel print a second line reading exactly like a record the kernel
- * produced - a forged ERROR about a sibling, a fake audit line - with no credential involved.
+ * shutdown target, a capability invocation's requested action. The identity layer proves who
+ * a message came from, not what it says, so a hostile child could make the kernel print a
+ * second line reading exactly like a record the kernel produced - a forged ERROR about a
+ * sibling, a fake audit line - with no credential involved.
  *
  * [IpcLogText.neutralize] (the kernel-side twin of the plugin logger's LogLineText) is applied at
  * the log sites only: registration still succeeds, the stored value stays original, and the
@@ -188,6 +192,72 @@ class KernelLogForgingTest {
                     }
                     val requested = records.first { it.contains("Shutdown requested") }
                     assertTrue(requested.contains("beta\\n$forgedMarker"))
+                }
+            }
+        }
+
+    @Test
+    fun `a caller cannot forge records through a refused capability invocation`() =
+        runBlocking<Unit> {
+            val lf = 0x0a.toChar()
+            val kernel = KernelServiceImpl()
+            IpcTestServer(kernel).use { host ->
+                LogCapture(KernelServiceImpl::class.java).use { capture ->
+                    val plugin =
+                        KernelServiceGrpcKt
+                            .KernelServiceCoroutineStub(host.channelFor("capability-plugin", ADDRESS))
+                    val registration =
+                        RegisterProcessRequest
+                            .newBuilder()
+                            .setManifest(
+                                ProcessManifest
+                                    .newBuilder()
+                                    .setProcessId("capability-plugin")
+                                    .setProcessType(ProcessType.PROCESS_TYPE_SERVICE)
+                                    .addCapabilities(
+                                        PluginCapability
+                                            .newBuilder()
+                                            .setAction("echo")
+                                            .setDescription("Echoes the say input")
+                                            .build(),
+                                    ).build(),
+                            ).setIpcAddress(ADDRESS)
+                            .build()
+                    assertTrue(plugin.registerProcess(registration).success)
+
+                    val supervisor =
+                        KernelServiceGrpcKt.KernelServiceCoroutineStub(
+                            host.channelFor("orchestrator", authority = ProcessAuthority.SUPERVISOR),
+                        )
+                    val forgedMarker = "2026-09-25 [ERROR] orchestrator drained the token store"
+                    val hostileAction = "echo" + lf + forgedMarker
+
+                    val response =
+                        supervisor.invokeCapability(
+                            InvokeCapabilityRequest
+                                .newBuilder()
+                                .setPluginId("capability-plugin")
+                                .setAction(hostileAction)
+                                .build(),
+                        )
+
+                    // The refusal names the hostile action verbatim to the authenticated
+                    // caller; neutralizing is for the log, not the message.
+                    assertFalse(response.success)
+                    assertEquals(
+                        "Plugin capability-plugin does not advertise capability: $hostileAction",
+                        response.errorMessage,
+                    )
+                    val records = capture.lines()
+                    records.forEach { record ->
+                        assertTrue(
+                            lf !in record,
+                            "a kernel log record was split onto several lines: $record",
+                        )
+                    }
+                    val refusal = records.first { it.contains("Capability invocation refused") }
+                    assertTrue(refusal.contains("echo\\n$forgedMarker"))
+                    assertEquals(1, records.count { it.contains(forgedMarker) })
                 }
             }
         }

@@ -45,6 +45,14 @@ class McpToolRegistryCoreTest {
         return File(dir, "mcp-disabled-tools.json").also { tempFiles.add(it) }
     }
 
+    private fun tempPolicyFile(): File {
+        val dir =
+            kotlin.io.path
+                .createTempDirectory("mcp-provider-policy-test")
+                .toFile()
+        return File(dir, "mcp-tool-policy.json").also { tempFiles.add(it) }
+    }
+
     @AfterTest
     fun cleanup() {
         tempFiles.forEach { it.parentFile?.deleteRecursively() }
@@ -356,6 +364,71 @@ class McpToolRegistryCoreTest {
 
         val core2 = McpToolRegistryCore(disabledFile = file)
         assertTrue("persisted_tool" in core2.disabledToolNames.value)
+    }
+
+    @Test
+    fun `provider registration does not persist inherited DENY and re-enable keeps it enforced`() {
+        val policyFile = tempPolicyFile()
+        McpPolicyEngine(policyFile).setProviderPolicy("shared-provider", McpPolicyAction.DENY)
+        val policyEngine = McpPolicyEngine(policyFile)
+        val core = McpToolRegistryCore(disabledFile = null, policyEngine = policyEngine)
+        val namespacedId = "plugin-a::shared-provider"
+        val namespacedProvider = provider(namespacedId, echoTool("open_tool"))
+
+        core.registerProvider(namespacedProvider)
+
+        assertEquals(
+            namespacedId,
+            core.tools.value
+                .single()
+                .providerId,
+        )
+        assertFalse(
+            policyEngine.config.value.providerRules
+                .containsKey(namespacedId),
+            "registration must not persist a derived scoped DENY",
+        )
+        assertFalse(
+            McpPolicyEngine(policyFile)
+                .config.value.providerRules
+                .containsKey(namespacedId),
+            "registration must leave the policy file unchanged",
+        )
+        assertEquals(
+            McpPolicyAction.DENY,
+            policyEngine.policyFor("open_tool", namespacedId),
+        )
+
+        core.unregisterProvider(namespacedId)
+        core.registerProvider(namespacedProvider)
+
+        assertEquals(
+            McpPolicyAction.DENY,
+            policyEngine.policyFor("open_tool", namespacedId),
+            "disable and re-enable must not revive a provider the operator denied",
+        )
+    }
+
+    @Test
+    fun `non-namespaced provider registration does not rewrite policy`() {
+        val policyFile = tempPolicyFile()
+        McpPolicyEngine(policyFile).setProviderPolicy("host-provider", McpPolicyAction.DENY)
+        val beforeRegistration = policyFile.readText()
+        val policyEngine = McpPolicyEngine(policyFile)
+        val core = McpToolRegistryCore(disabledFile = null, policyEngine = policyEngine)
+
+        core.registerProvider(provider("host-provider", echoTool("open_tool")))
+
+        assertEquals(
+            beforeRegistration,
+            policyFile.readText(),
+            "registering a host provider must not rewrite its existing policy",
+        )
+        assertNull(policyEngine.fault.value)
+        assertEquals(
+            McpPolicyAction.DENY,
+            policyEngine.policyFor("open_tool", "host-provider"),
+        )
     }
 
     @Test

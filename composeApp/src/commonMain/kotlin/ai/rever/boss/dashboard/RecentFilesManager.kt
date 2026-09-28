@@ -5,6 +5,7 @@ import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.extractFileName
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -19,6 +20,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import java.io.File
 
@@ -226,6 +228,9 @@ object RecentFilesManager {
                     "Loaded recent files",
                     mapOf("count" to present.size, "hidden" to (_allFiles.value.size - present.size)),
                 )
+            } catch (e: SerializationException) {
+                // Recorded paths routinely carry user and project names; log where it failed only.
+                recentFilesLogger.warn(LogCategory.FILE, "Error loading recent files", decodeFailure(e))
             } catch (e: Exception) {
                 recentFilesLogger.warn(LogCategory.FILE, "Error loading recent files", error = e)
             }

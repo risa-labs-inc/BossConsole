@@ -218,6 +218,7 @@ object CrashHandler {
                     name.endsWith("CancellationException") ||
                     name == "io.github.jan.supabase.auth.exception.TokenExpiredException" ||
                     isStaleRealtimeRejoin(t) ||
+                    isRealtimeHeartbeatRace(t) ||
                     (
                         t is java.io.IOException && (
                             msg.contains("Broken pipe", ignoreCase = true) ||
@@ -229,35 +230,6 @@ object CrashHandler {
                     )
             benign
         }
-
-    /**
-     * supabase-kt 3.8.0 can resume scheduleRejoin during the socket reconnect delay.
-     * Its unsubscribe then reads the cleared socket before subscribe can wait for
-     * a connection. The separate reconnect job rejoins registered channels; this
-     * stale attempt must not turn that recovery into a fatal host crash
-     * (BossConsole-Releases#28).
-     * Match the throwing getter and retry path, not arbitrary initialization errors
-     * or direct application calls to unsubscribe before connecting.
-     * The installed-SDK regression test exercises the actual delayed retry, so an
-     * SDK fix or stack change requires re-evaluating this narrow containment rule.
-     */
-    private fun isStaleRealtimeRejoin(throwable: Throwable): Boolean {
-        if (throwable !is IllegalStateException || throwable.message != "Websocket not yet initialized") return false
-        val frames = throwable.stackTrace
-        val realtimePackage = "io.github.jan.supabase.realtime."
-        val expected =
-            listOf(
-                "RealtimeImpl" to "getWebsocket",
-                "RealtimeChannelImpl" to "unsubscribe",
-                "RealtimeChannelImpl" to "resubscribe",
-                "RealtimeChannelImpl" to "scheduleRejoin",
-            )
-        return expected.withIndex().all { (index, frame) ->
-            frames.getOrNull(index)?.let {
-                it.className == realtimePackage + frame.first && it.methodName == frame.second
-            } == true
-        }
-    }
 
     /**
      * Record a crash report for something already contained and recovered from.

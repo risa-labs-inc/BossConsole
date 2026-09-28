@@ -159,7 +159,10 @@ class FileSystemDataProviderProxy(
     ): Result<String> =
         withContext(Dispatchers.Default) {
             try {
-                val fullPath = "$parentPath/$fileName"
+                // Built exactly as the in-process provider builds it, because the plugin compares
+                // this string with host-built paths: a hand-joined "/" mixed separators on Windows
+                // and doubled one after a parent passed with a trailing separator.
+                val fullPath = File(parentPath, fileName).absolutePath
                 fsStub.createFile(
                     CreateFileRequest
                         .newBuilder()
@@ -180,7 +183,7 @@ class FileSystemDataProviderProxy(
     ): Result<String> =
         withContext(Dispatchers.Default) {
             try {
-                val fullPath = "$parentPath/$folderName"
+                val fullPath = File(parentPath, folderName).absolutePath
                 fsStub.createFile(
                     CreateFileRequest
                         .newBuilder()
@@ -217,8 +220,12 @@ class FileSystemDataProviderProxy(
     ): Result<String> =
         withContext(Dispatchers.Default) {
             try {
-                val parent = File(path).parent ?: ""
-                val newPath = if (parent.isNotBlank()) "$parent/$newName" else newName
+                // Same rule as the in-process provider: no parent directory is a failure, not a
+                // bare name, which the kernel would resolve against its own working directory.
+                val parentDir =
+                    File(path).parentFile
+                        ?: return@withContext Result.failure(IllegalStateException("Cannot determine parent directory"))
+                val newPath = File(parentDir, newName).absolutePath
                 fsStub.renameFile(
                     RenameFileRequest
                         .newBuilder()

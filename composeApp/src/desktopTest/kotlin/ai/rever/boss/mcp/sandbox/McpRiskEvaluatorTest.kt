@@ -264,6 +264,12 @@ class McpRiskEvaluatorTest {
             "rm notes.txt\nrm -r build",
             "rm build -r",
             "rm -f build -R",
+            "format d: /q",
+            "cmd /c format e: /fs:ntfs",
+            // Review on #1698: switches before the volume, the order format's own help prints.
+            "cmd /c format /q e:",
+            "cmd /c format /fs:ntfs /v:data e:",
+            "dir && format f:",
         )) {
             val level = evaluator.evaluateRisk("run_command", commandArgs(command)).level
             assertEquals(McpRiskLevel.CRITICAL, level, command)
@@ -283,6 +289,10 @@ class McpRiskEvaluatorTest {
             "git push -u origin main",
             "del notes.txt",
             "git log --format=%h",
+            // #1655: format as a flag or inside another command's name is not the format command.
+            "git log --format %h",
+            "docker ps --format json",
+            "clang-format -i main.c",
         )) {
             val level = evaluator.evaluateRisk("run_command", commandArgs(command)).level
             assertEquals(McpRiskLevel.HIGH, level, command)
@@ -333,6 +343,17 @@ class McpRiskEvaluatorTest {
             assertEquals(McpRiskLevel.CRITICAL, evaluator.evaluateRisk("send_input", args(json)).level, json)
         }
         assertEquals(McpRiskLevel.HIGH, evaluator.evaluateRisk("send_input", args("""{"text":"ls -la"}""")).level)
+        // #1655: prose typed into a terminal is not a format command, so a saved Always Allow on
+        // send_input no longer asks for it. A sentence that opens with the word still asks, which
+        // is the direction a heuristic here has to err in.
+        for (prose in listOf("please format the drive label as bold", "we format dates as ISO")) {
+            val level = evaluator.evaluateRisk("send_input", args("""{"text":"$prose"}""")).level
+            assertEquals(McpRiskLevel.HIGH, level, prose)
+        }
+        assertEquals(
+            McpRiskLevel.CRITICAL,
+            evaluator.evaluateRisk("send_input", args("""{"text":"format the drive label as bold"}""")).level,
+        )
         // Unparseable raw arguments fall back to the named keys rather than failing.
         assertEquals(McpRiskLevel.HIGH, evaluator.evaluateRisk("send_input", args("not json")).level)
     }

@@ -5,7 +5,7 @@
 -- cap below is observable rather than satisfied by a small catalogue.
 
 begin;
-select plan(26);
+select plan(27);
 
 -- ---------------------------------------------------------------------------
 -- Fixtures: 150 published public plugins in one organisation. Each is a minute newer than the
@@ -66,6 +66,9 @@ select is((select jsonb_array_length(plugins) from public.search_plugins(p_page_
     'an oversized page size is clamped to 100');
 select is((select jsonb_array_length(plugins) from public.search_plugins(p_page_size => 101)), 100,
     'one past the cap is clamped to 100');
+-- A deliberate change, not only an error path closed: LIMIT 0 is legal SQL, so a page size of 0
+-- used to return an empty page with a correct total_count. It now returns one row, matching
+-- get_popular_tags (20260922160000); both routes refuse 0, so only a direct call sees it.
 select is((select jsonb_array_length(plugins) from public.search_plugins(p_page_size => 0)), 1,
     'a page size of zero is raised to 1');
 select is((select jsonb_array_length(plugins) from public.search_plugins(p_page_size => -1)), 1,
@@ -129,6 +132,12 @@ select is(
     (select jsonb_array_length(plugins) from public.search_plugins_for_viewer(null::uuid, p_page_size => 101)),
     100,
     'search_plugins_for_viewer clamps an oversized page size to 100');
+-- The floor on the viewer copy's page size: without it, 101 and NULL above still give 100 and 20,
+-- so only a value below 1 shows whether GREATEST(..., 1) is there.
+select is(
+    (select jsonb_array_length(plugins) from public.search_plugins_for_viewer(null::uuid, p_page_size => 0)),
+    1,
+    'search_plugins_for_viewer raises a page size of zero to 1');
 select is(
     (select jsonb_array_length(plugins) from public.search_plugins_for_viewer(null::uuid, p_page => 0)),
     20,
