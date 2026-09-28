@@ -105,7 +105,11 @@ if "%~2"=="" (
     echo Usage: boss workspace ^<config^>
     exit /b 1
 )
-call :urlencode "%~2" ENCODED
+REM %~f2, not %~2: the app resolves the link against its own working directory,
+REM not this shell's, so a relative path has to be expanded here. Safe to read
+REM directly because delayed expansion is off at the top level, so a literal !
+REM in any path component survives.
+call :urlencode "%~f2" ENCODED
 start "" "boss://workspace?config=%ENCODED%"
 goto :eof
 
@@ -115,7 +119,8 @@ if "%~2"=="" (
     echo Usage: boss file ^<path^>
     exit /b 1
 )
-call :urlencode "%~2" ENCODED
+REM %~f2 - see :cmd_workspace
+call :urlencode "%~f2" ENCODED
 start "" "boss://file?path=%ENCODED%"
 goto :eof
 

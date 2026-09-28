@@ -33,6 +33,41 @@ urlencode() {
     echo "${encoded}"
 }
 
+# Resolve a user-typed path against this shell's working directory.
+#
+# The app resolves whatever a deep link carries against its OWN working directory
+# (CLICommandHandler does File(path).absoluteFile), which is never the caller's, so a
+# relative path has to be made absolute before it leaves the shim. `.` and `..` are
+# collapsed while the directory exists, because CLISecurityValidator.isValidPath
+# refuses a workspace path that still contains `..`.
+#
+# A path whose parent does not exist is returned absolute but uncollapsed - there is
+# nothing to resolve against, and reporting a missing path is the app's job.
+absolute_path() {
+    local path="$1"
+    # Only a bare `~` or a leading `~/` is a home reference. Expanding through
+    # ${path/#\~/$HOME} instead would break twice: bash 5.2 reads `&` in a
+    # replacement as the matched text, so a $HOME containing one is corrupted, and
+    # `~notes.md` in the cwd would be rewritten as if it named a home directory.
+    if [ "$path" = "~" ] || [ "${path#\~/}" != "$path" ]; then
+        path="$HOME${path#\~}"
+    fi
+    if [[ ! "$path" =~ ^/ ]]; then
+        path="$(pwd)/$path"
+    fi
+    if [ -d "$path" ]; then
+        (cd "$path" 2>/dev/null && pwd) || echo "$path"
+        return
+    fi
+    local parent
+    if parent="$(cd "$(dirname "$path")" 2>/dev/null && pwd)"; then
+        [[ "$parent" == "/" ]] && parent=""
+        echo "${parent}/$(basename "$path")"
+    else
+        echo "$path"
+    fi
+}
+
 # Detect OS for URL opening
 open_url() {
     if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -72,23 +107,17 @@ detect_and_route() {
     fi
 
     # Expand tilde and relative paths
-    local expanded_path="${arg/#\~/$HOME}"
-    if [[ ! "$expanded_path" =~ ^/ ]]; then
-        expanded_path="$(pwd)/$expanded_path"
-    fi
+    local expanded_path
+    expanded_path="$(absolute_path "$arg")"
 
     # Check if it's a file or directory
     if [ -e "$expanded_path" ]; then
         if [ -f "$expanded_path" ]; then
-            # It's a file - resolve to absolute path
-            expanded_path="$(cd "$(dirname "$expanded_path")" 2>/dev/null && pwd)/$(basename "$expanded_path")"
             encoded_path=$(urlencode "$expanded_path")
             deep_link="boss://file?path=${encoded_path}"
             open_url "$deep_link"
             return 0
         elif [ -d "$expanded_path" ]; then
-            # It's a directory - resolve to absolute path
-            expanded_path="$(cd "$expanded_path" 2>/dev/null && pwd || echo "$expanded_path")"
             encoded_path=$(urlencode "$expanded_path")
             deep_link="boss://folder?path=${encoded_path}"
             open_url "$deep_link"
@@ -158,7 +187,8 @@ case "$1" in
             echo "Usage: boss workspace <config>"
             exit 1
         fi
-        encoded_path=$(urlencode "$2")
+        config_path="$(absolute_path "$2")"
+        encoded_path=$(urlencode "$config_path")
         deep_link="boss://workspace?config=${encoded_path}"
         open_url "$deep_link"
         ;;
@@ -169,7 +199,8 @@ case "$1" in
             echo "Usage: boss file <path>"
             exit 1
         fi
-        encoded_path=$(urlencode "$2")
+        file_path="$(absolute_path "$2")"
+        encoded_path=$(urlencode "$file_path")
         deep_link="boss://file?path=${encoded_path}"
         open_url "$deep_link"
         ;;
@@ -179,11 +210,7 @@ case "$1" in
         if [ -z "$2" ]; then
             folder_path="$HOME"
         else
-            # Expand tilde and relative paths (., .., etc.)
-            folder_path="${2/#\~/$HOME}"
-            if [[ ! "$folder_path" =~ ^/ ]]; then
-                folder_path="$(cd "$folder_path" 2>/dev/null && pwd || echo "$folder_path")"
-            fi
+            folder_path="$(absolute_path "$2")"
         fi
         encoded_path=$(urlencode "$folder_path")
         deep_link="boss://folder?path=${encoded_path}"

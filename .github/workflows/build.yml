@@ -53,6 +53,17 @@ jobs:
       - name: Headless CLI launcher tests
         run: bash scripts/test/test-headless-cli.sh
 
+      - name: CLI shim path resolution tests
+        # boss file / boss workspace forwarded the path as typed, and the app
+        # resolves a link against its own working directory, so a relative path
+        # opened nothing. Drives the real bash shim through a fake xdg-open.
+        run: bash scripts/test/test-cli-shim-paths.sh
+
+      - name: boss.ps1 path resolution tests
+        # The PowerShell half of the same fix. Resolve-BossPath is extracted from
+        # the shipped shim and run directly, so nothing opens a deep link.
+        run: pwsh -NoProfile -File scripts/test/test-boss-ps1-paths.ps1
+
       - name: 🧪 boss.bat :urlencode injection regression (#1057)
         # The shipped Windows CLI shim interpolated the CLI argument into a
         # single-quoted PowerShell string; one quote in any argument executed
