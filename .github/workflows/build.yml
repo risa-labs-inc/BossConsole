@@ -50,6 +50,22 @@ jobs:
           export BOSS_TEST_PWSH
           python3 scripts/test/test-publish-plugin.py
 
+      - name: Executable scripts are pinned to LF
+        # .gitattributes is asserting an invariant, and the way it breaks is not
+        # "a file went CRLF" but "a new script was added without an entry". Only
+        # an attribute check catches that: the Linux runners leave core.autocrlf
+        # unset, so CI could never reproduce the CRLF failure itself.
+        run: |
+          set -euo pipefail
+          executables() { git ls-files -s | awk '$1=="100755" { print $4 }'; }
+          bad=$(executables | xargs -r git check-attr eol -- | grep -v ': eol: lf$' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::executable scripts with no eol=lf attribute (add them to .gitattributes)"
+            echo "$bad"
+            exit 1
+          fi
+          echo "all $(executables | wc -l) executable scripts are pinned to LF"
+
       - name: Headless CLI launcher tests
         run: bash scripts/test/test-headless-cli.sh
 

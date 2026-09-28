@@ -16,6 +16,19 @@ pluginManagement {
     }
 }
 
+plugins {
+    // Every JVM target here asks for exactly 17 (jvmToolchain(17), and
+    // JavaLanguageVersion.of(17) in modules/*), with no download repository
+    // configured, so a machine whose only JDK is another version fails the whole
+    // build at "Cannot find a Java installation ... matching: {languageVersion=17}.
+    // Toolchain download repositories have not been configured." This resolver
+    // makes Gradle provision one instead. Local detection wins when a matching JDK
+    // is already installed, so it is a no-op on CI (every setup-java here pins 17).
+    // The version is a literal because the version catalog is not in scope in a
+    // settings plugins block.
+    id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
+}
+
 dependencyResolutionManagement {
     repositories {
         google {

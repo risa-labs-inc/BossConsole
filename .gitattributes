@@ -1,0 +1,17 @@
+# Scripts run through an interpreter that reads the shebang and, for shell, the
+# line endings themselves. A checkout with core.autocrlf=true (the Git for
+# Windows default) makes them CRLF, which Git Bash tolerates but Linux bash does
+# not: from WSL or a container, scripts/boss fails with "$'\r': command not
+# found", scripts/test/*.sh with "set: pipefail: invalid option name", and
+# gradlew does not start. A trailing \r also breaks the node and python shebangs.
+#
+# Extension globs rather than scripts/**, which would also catch boss.bat and
+# boss.ps1; the two extensionless scripts and gradlew are listed by name. Every
+# mode-100755 file in the tree resolves to eol=lf through one of these, which the
+# "Executable scripts are pinned to LF" CI step asserts.
+*.sh text eol=lf
+*.py text eol=lf
+*.mjs text eol=lf
+gradlew text eol=lf
+scripts/boss text eol=lf
+scripts/publish-plugin text eol=lf
