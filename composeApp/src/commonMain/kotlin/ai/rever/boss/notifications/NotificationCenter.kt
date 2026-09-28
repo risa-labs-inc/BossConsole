@@ -32,6 +32,7 @@ import java.io.File
  * cannot grow without limit. [storageFile] is an overridable test hook, mirroring
  * `RunConfigurationManager`.
  */
+@Suppress("TooManyFunctions") // Post, read and clear all serialise on one mutex and one file.
 object NotificationCenter {
     private val logger = BossLogger.forComponent("NotificationCenter")
 
@@ -279,6 +280,43 @@ object NotificationCenter {
             _notifications.value = emptyList()
             removed
         }
+
+    /**
+     * Remove only the entries posted by [origin] whose stored `source` label equals what
+     * [source] stamps to under [stampedSource]; every other entry is kept, whatever its
+     * origin or label. Returns the number removed.
+     *
+     * The label is normalized by the same path a post takes, so the [source] a caller offers
+     * here matches what an identical [source] stored at post time - flattening, trimming and,
+     * for [NotificationOrigin.AGENT], the `agent`/`agent: <label>` demotion and its length cap
+     * all apply identically. A caller cannot use this to reach entries stamped differently:
+     * asking for `"System"` under [NotificationOrigin.AGENT] targets `"agent: System"`, never
+     * a host notice that happens to carry the bare `"System"` label, and the [origin]
+     * comparison keeps host entries out of an agent-scoped removal even when their stored
+     * labels collide.
+     *
+     * Scoping is an accident guard, not an isolation boundary: a caller chooses the label it
+     * asks about, and nothing here proves the caller is who that label names. The guarantee
+     * this gives is narrower and honest - one label's entries cannot be removed by accident
+     * while another's survive - which is what the scoped `notifications_clear` MCP tool
+     * exposes (BossConsole#1588).
+     */
+    suspend fun clearBySource(
+        source: String = "",
+        origin: NotificationOrigin,
+    ): Int {
+        val stamped = stampedSource(source, origin)
+        return mutex.withLock {
+            val kept = _notifications.value.filterNot { it.origin == origin && it.source == stamped }
+            val removed = _notifications.value.size - kept.size
+            if (removed == 0) return@withLock 0
+            // Persist BEFORE publishing: a failed write must not leave the
+            // in-memory inbox ahead of the disk copy.
+            persist(kept)
+            _notifications.value = kept
+            removed
+        }
+    }
 
     private suspend fun persist(entries: List<BossNotification>) =
         withContext(Dispatchers.IO) {

@@ -192,6 +192,12 @@ object McpMutatingToolCatalog {
             "helm_uninstall",
             // Secrets
             "secret_get",
+            // Operator inbox
+            // The whole-inbox wipe gets the name-level mutating guarantee, not just its
+            // provider's readOnly=false declaration, so a dishonest read claim can never
+            // auto-allow it. The scoped notifications_clear stays declaration-classified
+            // like its sibling write tools (#1588).
+            "notifications_clear_all",
             // Sensitive reads use the approval-requiring default too: download URLs can
             // contain bearer tokens. A read-only declaration must not bypass that default.
             "downloads_history_list",

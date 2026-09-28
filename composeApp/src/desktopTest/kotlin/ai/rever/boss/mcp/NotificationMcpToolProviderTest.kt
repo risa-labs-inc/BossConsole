@@ -10,11 +10,13 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
+import java.io.IOException
 import java.nio.file.Files
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -60,6 +62,7 @@ class NotificationMcpToolProviderTest {
         assertEquals(false, readOnlyByName["notification_post"])
         assertEquals(false, readOnlyByName["notification_mark_read"])
         assertEquals(false, readOnlyByName["notifications_clear"])
+        assertEquals(false, readOnlyByName["notifications_clear_all"])
     }
 
     @Test
@@ -128,14 +131,140 @@ class NotificationMcpToolProviderTest {
             assertTrue(call("notification_mark_read", args()).isError)
         }
 
+    // -----------------------------------------------------------------
+    // Scoped clearing (#1588). notifications_clear removes only the caller's own
+    // agent-posted entries - those whose stored label matches the caller's 'source'
+    // after the same normalization a post applies - and can never touch host entries
+    // or another label's. notifications_clear_all keeps the old whole-inbox wipe.
+    // -----------------------------------------------------------------
+
     @Test
-    fun `clear empties the inbox`() =
+    fun `clear_all empties the inbox`() =
         runBlocking {
             NotificationCenter.post("A", origin = NotificationOrigin.HOST)
-            val result = json(call("notifications_clear", args()))
-            assertEquals(1, result["removed"]!!.jsonPrimitive.content.toInt())
+            call("notification_post", args("title" to "agent note"))
+            val result = json(call("notifications_clear_all", args()))
+            assertEquals(2, result["removed"]!!.jsonPrimitive.content.toInt())
             assertTrue(NotificationCenter.notifications.value.isEmpty())
         }
+
+    @Test
+    fun `clear removes only the caller's own agent-labelled entries`() =
+        runBlocking {
+            call("notification_post", args("title" to "swe note", "source" to "swe"))
+            call("notification_post", args("title" to "other note", "source" to "other"))
+            NotificationCenter.post("Host notice", source = "System", origin = NotificationOrigin.HOST)
+
+            val result = json(call("notifications_clear", args("source" to "swe")))
+
+            assertEquals(1, result["removed"]!!.jsonPrimitive.content.toInt())
+            assertEquals(
+                setOf("other note", "Host notice"),
+                NotificationCenter.notifications.value
+                    .map { it.title }
+                    .toSet(),
+                "other labels and host entries survive",
+            )
+        }
+
+    @Test
+    fun `clear cannot reach host entries even when the stored label collides`() =
+        runBlocking {
+            // A host may label its own notice anything - even the agent-prefixed form - and
+            // it stores verbatim. The origin check, not the label text, is what keeps it out
+            // of an agent-scoped clear.
+            NotificationCenter.post("Host notice", source = "agent: swe", origin = NotificationOrigin.HOST)
+            call("notification_post", args("title" to "agent note", "source" to "swe"))
+
+            val result = json(call("notifications_clear", args("source" to "swe")))
+
+            assertEquals(1, result["removed"]!!.jsonPrimitive.content.toInt())
+            assertEquals(
+                "Host notice",
+                NotificationCenter.notifications.value
+                    .single()
+                    .title,
+            )
+        }
+
+    @Test
+    fun `clear normalizes the supplied label the way a post does`() =
+        runBlocking {
+            call("notification_post", args("title" to "flat", "source" to "Ops\nSystem"))
+            val longLabel = "x".repeat(NotificationCenter.MAX_SOURCE_LABEL_CHARS + 10)
+            call("notification_post", args("title" to "long", "source" to longLabel))
+
+            val flattened = json(call("notifications_clear", args("source" to "Ops\nSystem")))
+            assertEquals(
+                1,
+                flattened["removed"]!!.jsonPrimitive.content.toInt(),
+                "flattening applies on both sides",
+            )
+            val truncated = json(call("notifications_clear", args("source" to longLabel)))
+            assertEquals(
+                1,
+                truncated["removed"]!!.jsonPrimitive.content.toInt(),
+                "the length cap applies on both sides",
+            )
+            assertTrue(NotificationCenter.notifications.value.isEmpty())
+        }
+
+    @Test
+    fun `clear without a source removes only bare-agent entries`() =
+        runBlocking {
+            call("notification_post", args("title" to "unlabelled"))
+            call("notification_post", args("title" to "labelled", "source" to "swe"))
+            NotificationCenter.post("Host notice", origin = NotificationOrigin.HOST)
+
+            val result = json(call("notifications_clear", args()))
+
+            assertEquals(1, result["removed"]!!.jsonPrimitive.content.toInt())
+            assertEquals(
+                setOf("labelled", "Host notice"),
+                NotificationCenter.notifications.value
+                    .map { it.title }
+                    .toSet(),
+            )
+        }
+
+    @Test
+    fun `a failed persist leaves the inbox unchanged`() =
+        runBlocking {
+            NotificationCenter.post("Host notice", origin = NotificationOrigin.HOST)
+            call("notification_post", args("title" to "agent note", "source" to "swe"))
+            // A storage path whose parent is a regular file cannot be written into, so the
+            // persist inside the lock throws before the in-memory inbox is touched.
+            val blocker = File(tempDir, "blocker").apply { writeText("x") }
+            NotificationCenter.storageFile = File(blocker, "notifications.json")
+
+            assertFailsWith<IOException> { call("notifications_clear", args("source" to "swe")) }
+            assertFailsWith<IOException> { call("notifications_clear_all", args()) }
+
+            assertEquals(2, NotificationCenter.notifications.value.size, "memory is not ahead of disk")
+        }
+
+    @Test
+    fun `clear_all is mutating by name, with its own name-keyed approval rule`() {
+        assertTrue(
+            McpMutatingToolCatalog.isMutating("notifications_clear_all", declaredReadOnly = true),
+            "the name signal is final for the whole-inbox wipe; a dishonest read claim cannot upgrade it",
+        )
+        val defaultConfig = McpToolPolicyConfig()
+        assertEquals(
+            defaultConfig.defaultMutatingAction,
+            McpMutatingToolCatalog.resolveAction(
+                "notifications_clear_all",
+                defaultConfig,
+                declaredReadOnly = false,
+            ),
+        )
+        // The operator's per-tool rule still overrides the catalog, in either direction.
+        val allowed = McpToolPolicyConfig(rules = mapOf("notifications_clear_all" to McpPolicyAction.ALLOW))
+        assertEquals(
+            McpPolicyAction.ALLOW,
+            McpMutatingToolCatalog.resolveAction("notifications_clear_all", allowed, declaredReadOnly = false),
+        )
+    }
 
     @Test
     fun `an agent-supplied system source is stamped agent, not echoed`() =
