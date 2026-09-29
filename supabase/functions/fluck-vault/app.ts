@@ -41,9 +41,9 @@
  */
 import {
   type Kind,
-  type LinkClaims,
   MAX_CVV_AGE_SECONDS,
   MAX_VAULT_AGE_SECONDS,
+  peekJti,
   publicKeyBytes,
   type Purpose,
   verifyLink,
@@ -93,7 +93,25 @@ export interface VaultRequestRow {
   last4: string | null
   totalCents: number | null
   currency: string | null
+  /** The install that minted the row and its public keys; null on the legacy env keys. */
+  instance: RowInstance | null
 }
+
+export interface RowInstance {
+  id: string
+  linkPublicKey: string
+  sealPublicKey: string
+}
+
+/** One registered install. Public keys only, standard base64. */
+export interface Instance {
+  instanceId: string
+  userId: string
+  linkPublicKey: string
+  sealPublicKey: string
+}
+
+export type RegisterOutcome = "ok" | "conflict" | "revoked" | "limit" | "invalid" | "unavailable"
 
 /** What the DGX asks this function to write when it mints a link. Non secret facts only. */
 export interface CreateRequest {
@@ -110,6 +128,8 @@ export interface CreateRequest {
   currency: string | null
   /** Unix seconds. The token's own expiry, checked against the policy before it is written. */
   expiresAt: number
+  /** The install whose key signed the mint; null on the legacy env key. */
+  instanceId: string | null
 }
 
 /** One drained inbox row. `ciphertext` is base64; nothing here can open it. */
@@ -139,8 +159,14 @@ export interface Dependencies {
   store(request: StoreRequest): Promise<StoreResult>
   /** Write the row for a link the DGX is about to sign. False if the id is already taken. */
   createRequest(request: CreateRequest): Promise<boolean>
-  /** Return and delete every unclaimed row for one workspace, in one statement. */
-  claimInbox(ws: string): Promise<ClaimedItem[]>
+  /** Return and delete every unclaimed row for one workspace and install (null: legacy rows). */
+  claimInbox(ws: string, instanceId: string | null): Promise<ClaimedItem[]>
+  /** One live install, or null if it is unknown or revoked. */
+  instance(instanceId: string): Promise<Instance | null>
+  /** Upsert one install's keys for its owner. */
+  registerInstance(instance: Instance): Promise<RegisterOutcome>
+  /** The Supabase user id an access token belongs to, or null. */
+  userFromToken(accessToken: string): Promise<string | null>
   /** Milliseconds. Injected so the tests can sit on either side of an expiry. */
   now(): number
   log(line: string): void
@@ -486,6 +512,11 @@ function tag(jti: string): string {
   return jti.slice(0, 8)
 }
 
+/** Names the install on a signed request. Absent means the legacy env key. */
+export const INSTANCE_HEADER = "x-fluck-instance"
+
+export const INSTANCE_ID_PATTERN = /^[A-Za-z0-9_-]{16,64}$/
+
 function baseUrl(deps: Dependencies): string {
   return (deps.env("FLUCK_VAULT_BASE_URL") || DEFAULT_PUBLIC_BASE_URL).replace(/\/+$/, "")
 }
@@ -526,6 +557,13 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         return json(405, { error: "method" })
       }
       return await signedRoute(request, deps, path)
+    }
+    if (path === "/instances") {
+      if (request.method !== "POST") {
+        await request.body?.cancel().catch(() => {})
+        return json(405, { error: "method" })
+      }
+      return await instancesRoute(request, deps)
     }
     // The short link. `/v/<id>` and `/c/<id>` carry no token: the id IS the request's primary
     // key, and the row behind it is the only thing the link can reach.
@@ -610,8 +648,9 @@ function pubkey(deps: Dependencies): Response {
  * Everything a GET needs to agree on: configuration, the id or the token, and the row.
  *
  * `shortJti` is the id a short link already resolved, and null on the old signed route, which
- * has to verify a token to learn the same thing. Either way what comes back is the ROW, because
- * the row is what the page renders and the claims were only ever a way of reaching it.
+ * has to verify a token to learn the same thing. The keys come from the ROW: its install's keys
+ * when an install minted it, the env keys otherwise. On the signed route the jti is read from
+ * the unverified token only to find that row, and the token is then verified with its key.
  *
  * Returns a Response on every failure, and that Response is always the same fixed page. The
  * caller cannot accidentally render a reason, because there is no reason to render.
@@ -621,33 +660,25 @@ async function verified(
   deps: Dependencies,
   purpose: Purpose,
   shortJti: string | null,
-): Promise<VaultRequestRow | Response> {
-  let linkKey: Uint8Array
-  try {
-    linkKey = publicKeyBytes(deps.env("FLUCK_LINK_PUBLIC_KEY"))
-    sealPublicKey(deps.env("FLUCK_SEAL_PUBLIC_KEY"))
-  } catch {
-    deps.log(`${purpose} unconfigured`)
-    return await message(503, COPY.unsetTitle, COPY.unset)
-  }
+): Promise<{ row: VaultRequestRow; sealKey: Uint8Array } | Response> {
   const aud = audience(deps)
   if (!aud) {
     deps.log(`${purpose} unconfigured: base url`)
     return await message(503, COPY.unsetTitle, COPY.unset)
   }
 
-  let claims: LinkClaims | null = null
+  let token: string | null = null
   let jti: string
   if (shortJti !== null) {
     jti = shortJti
   } else {
-    const token = request.method === "GET" ? new URL(request.url).searchParams.get("t") : null
-    claims = token ? await verifyLink(linkKey, token, aud, Math.floor(deps.now() / 1000)) : null
-    if (!claims || claims.purpose !== purpose) {
+    token = request.method === "GET" ? new URL(request.url).searchParams.get("t") : null
+    const peeked = token ? peekJti(token) : null
+    if (peeked === null) {
       deps.log(`${purpose} refused: token`)
       return await message(400, COPY.badTitle, COPY.bad)
     }
-    jti = claims.jti
+    jti = peeked
   }
 
   const row = await deps.describeRequest(jti)
@@ -661,14 +692,30 @@ async function verified(
     deps.log(`${purpose} refused: mismatch [${tag(jti)}]`)
     return await message(400, COPY.badTitle, COPY.bad)
   }
-  // On the signed route the signature and the row must agree as well. They are written by the
-  // same process, so a disagreement is either a bug or somebody presenting a token against a
-  // row it was not minted for.
-  if (claims !== null && row.ws !== claims.ws) {
-    deps.log(`${purpose} refused: mismatch [${tag(jti)}]`)
-    return await message(400, COPY.badTitle, COPY.bad)
+
+  let linkKey: Uint8Array
+  let sealKey: Uint8Array
+  try {
+    linkKey = publicKeyBytes(row.instance?.linkPublicKey ?? deps.env("FLUCK_LINK_PUBLIC_KEY"))
+    sealKey = sealPublicKey(row.instance?.sealPublicKey ?? deps.env("FLUCK_SEAL_PUBLIC_KEY"))
+  } catch {
+    deps.log(`${purpose} unconfigured`)
+    return await message(503, COPY.unsetTitle, COPY.unset)
   }
-  return row
+
+  // On the signed route the signature and the row must agree as well.
+  if (token !== null) {
+    const claims = await verifyLink(linkKey, token, aud, Math.floor(deps.now() / 1000))
+    if (!claims || claims.purpose !== purpose || claims.jti !== jti) {
+      deps.log(`${purpose} refused: token`)
+      return await message(400, COPY.badTitle, COPY.bad)
+    }
+    if (row.ws !== claims.ws) {
+      deps.log(`${purpose} refused: mismatch [${tag(jti)}]`)
+      return await message(400, COPY.badTitle, COPY.bad)
+    }
+  }
+  return { row, sealKey }
 }
 
 /**
@@ -709,7 +756,7 @@ async function get(
 
   const outcome = await verified(request, deps, purpose, shortJti)
   if (outcome instanceof Response) return outcome
-  const row = outcome
+  const { row } = outcome
   const nowMs = deps.now()
 
   if (
@@ -720,9 +767,8 @@ async function get(
     return await message(429, COPY.busyTitle, COPY.busy)
   }
 
-  const sealKey = btoa(
-    String.fromCharCode(...sealPublicKey(deps.env("FLUCK_SEAL_PUBLIC_KEY"))),
-  )
+  // The row's install, or the env key: the blob must open on the box that minted the link.
+  const sealKey = standardBase64(outcome.sealKey)
   // The runtime sees `/fluck-vault/vault`; the phone must post to the public URL, or the
   // gateway answers "requested path is invalid" before this code runs.
   // A short link posts back to ITSELF, so the id never has to be reconstructed and the old
@@ -922,8 +968,18 @@ async function signedRoute(
     deps.log(`signed limited: ip`)
     return json(429, { error: "busy" })
   }
+  // With the header the signature must be that install's; without it, the legacy env key's.
+  const instanceId = request.headers.get(INSTANCE_HEADER)
+  let instance: Instance | null = null
+  if (instanceId !== null) {
+    instance = INSTANCE_ID_PATTERN.test(instanceId) ? await deps.instance(instanceId) : null
+    if (!instance) {
+      deps.log(`signed refused: instance ${path}`)
+      return json(401, { error: "unauthorized" })
+    }
+  }
   const ok = await verifySigned({
-    publicKey: deps.env("FLUCK_LINK_PUBLIC_KEY"),
+    publicKey: instance ? instance.linkPublicKey : deps.env("FLUCK_LINK_PUBLIC_KEY"),
     method: "POST",
     path,
     body,
@@ -947,9 +1003,10 @@ async function signedRoute(
     return json(400, { error: "body" })
   }
 
+  const id = instance?.instanceId ?? null
   return path === "/requests"
-    ? await createRequestRoute(deps, parsed as Record<string, unknown>, nowSeconds)
-    : await claimRoute(deps, parsed as Record<string, unknown>)
+    ? await createRequestRoute(deps, parsed as Record<string, unknown>, nowSeconds, id)
+    : await claimRoute(deps, parsed as Record<string, unknown>, id)
 }
 
 function optionalString(value: unknown): string | null | undefined {
@@ -970,6 +1027,7 @@ async function createRequestRoute(
   deps: Dependencies,
   body: Record<string, unknown>,
   nowSeconds: number,
+  instanceId: string | null,
 ): Promise<Response> {
   const jti = typeof body.jti === "string" ? body.jti : ""
   if (!UUID_PATTERN.test(jti)) return json(400, { error: "jti" })
@@ -1030,6 +1088,7 @@ async function createRequestRoute(
     totalCents: typeof totalCents === "number" ? totalCents : null,
     currency: currency as string | null,
     expiresAt,
+    instanceId,
   })
   if (!created) {
     deps.log(`requests refused: taken [${workspacePrefix(ws)}] [${tag(jti)}]`)
@@ -1039,14 +1098,93 @@ async function createRequestRoute(
   return json(201, { ok: true })
 }
 
-/** Drain one workspace's queue. The rows are deleted by the same statement that returns them. */
+/**
+ * Drain one workspace's queue. The rows are deleted by the same statement that returns them.
+ *
+ * Only the calling install's rows: an install never sees another's blobs, and the legacy key
+ * sees only rows no install minted.
+ */
 async function claimRoute(
   deps: Dependencies,
   body: Record<string, unknown>,
+  instanceId: string | null,
 ): Promise<Response> {
   const ws = typeof body.ws === "string" ? body.ws : ""
   if (ws.length === 0 || ws.length > 200) return json(400, { error: "ws" })
-  const items = await deps.claimInbox(ws)
+  const items = await deps.claimInbox(ws, instanceId)
   deps.log(`inbox claimed [${workspacePrefix(ws)}] [${items.length}]`)
   return json(200, { items })
+}
+
+function standardBase64(bytes: Uint8Array): string {
+  return btoa(String.fromCharCode(...bytes))
+}
+
+/**
+ * `POST /instances`: an install registers its public keys against the signed-in BOSS user.
+ *
+ * Authenticated by the user's Supabase access token. An id already owned by another user is
+ * refused, so one user cannot take over, or re-key, another's install. Keys are validated and
+ * stored normalised: Ed25519 as 32 raw bytes, P-256 as the 65 byte uncompressed point.
+ */
+async function instancesRoute(request: Request, deps: Dependencies): Promise<Response> {
+  const body = await request.text()
+  if (!hit(`ip:${clientAddress(request)}`, IP_LIMIT, IP_WINDOW_MS, deps.now())) {
+    deps.log(`instances limited: ip`)
+    return json(429, { error: "busy" })
+  }
+  const bearer = /^Bearer\s+(\S+)$/i.exec(request.headers.get("authorization") ?? "")
+  const userId = bearer ? await deps.userFromToken(bearer[1]) : null
+  if (!userId) {
+    deps.log(`instances refused: token`)
+    return json(401, { error: "unauthorized" })
+  }
+
+  let parsed: Record<string, unknown>
+  try {
+    const value = JSON.parse(body)
+    if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error()
+    parsed = value
+  } catch {
+    return json(400, { error: "body" })
+  }
+  const instanceId = typeof parsed.instanceId === "string" ? parsed.instanceId : ""
+  if (!INSTANCE_ID_PATTERN.test(instanceId)) return json(400, { error: "instanceId" })
+  let linkPublicKey: string
+  let sealKey: string
+  try {
+    linkPublicKey = standardBase64(publicKeyBytes(stringOrUndefined(parsed.linkPublicKey)))
+  } catch {
+    return json(400, { error: "linkPublicKey" })
+  }
+  try {
+    sealKey = standardBase64(sealPublicKey(stringOrUndefined(parsed.sealPublicKey)))
+  } catch {
+    return json(400, { error: "sealPublicKey" })
+  }
+
+  const outcome = await deps.registerInstance({
+    instanceId,
+    userId,
+    linkPublicKey,
+    sealPublicKey: sealKey,
+  })
+  deps.log(`instances ${outcome} [${instanceId.slice(0, 8)}] [${userId.slice(0, 8)}]`)
+  switch (outcome) {
+    case "ok":
+      return json(200, { ok: true })
+    case "conflict":
+    case "revoked":
+      return json(403, { error: outcome })
+    case "limit":
+      return json(429, { error: outcome })
+    case "invalid":
+      return json(400, { error: outcome })
+    default:
+      return json(503, { error: "unavailable" })
+  }
+}
+
+function stringOrUndefined(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined
 }

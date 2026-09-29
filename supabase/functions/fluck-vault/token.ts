@@ -158,6 +158,27 @@ export async function mintLink(
 }
 
 /**
+ * The `jti` an UNVERIFIED token names, or null.
+ *
+ * Only for finding the row, whose install decides which key the token is then verified with.
+ * Nothing else may be read off a token before `verifyLink` accepts it.
+ */
+export function peekJti(token: string): string | null {
+  const parts = token.split(".")
+  if (parts.length !== 3) return null
+  const payload = decodeBase64(parts[1])
+  if (!payload) return null
+  try {
+    const jti = JSON.parse(new TextDecoder().decode(payload))?.jti
+    return typeof jti === "string" && UUID.test(jti) ? jti : null
+  } catch {
+    return null
+  }
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
  * Verify a link token and return its claims, or null.
  *
  * Null for every failure with no distinction between them. The caller renders ONE fixed page

@@ -20,6 +20,8 @@ import {
   type ClaimedItem,
   createHandler,
   type CreateRequest,
+  type Instance,
+  type RegisterOutcome,
   type StoreRequest,
   type StoreResult,
   type VaultRequestRow,
@@ -42,6 +44,9 @@ interface DescribeRow {
   last4: string | null
   total_cents: number | null
   currency: string | null
+  instance_id: string | null
+  instance_link_public_key: string | null
+  instance_seal_public_key: string | null
 }
 
 Deno.serve(createHandler({
@@ -64,6 +69,9 @@ Deno.serve(createHandler({
     if (error || !Array.isArray(data) || data.length === 0) return null
     const row = data[0] as DescribeRow
     if (row.purpose !== "vault" && row.purpose !== "cvv") return null
+    if (row.instance_id && (!row.instance_link_public_key || !row.instance_seal_public_key)) {
+      return null
+    }
     const kind = row.kind === "password" || row.kind === "card" ? row.kind : null
     return {
       jti,
@@ -77,6 +85,14 @@ Deno.serve(createHandler({
       last4: row.last4,
       totalCents: row.total_cents,
       currency: row.currency,
+      // Describe drops rows of a revoked install, so an id here always comes with its keys.
+      instance: row.instance_id && row.instance_link_public_key && row.instance_seal_public_key
+        ? {
+          id: row.instance_id,
+          linkPublicKey: row.instance_link_public_key,
+          sealPublicKey: row.instance_seal_public_key,
+        }
+        : null,
     }
   },
 
@@ -127,6 +143,7 @@ Deno.serve(createHandler({
       p_total_cents: request.totalCents,
       p_currency: request.currency,
       p_expires_at: new Date(request.expiresAt * 1000).toISOString(),
+      p_instance_id: request.instanceId,
     })
     if (error) return false
     return data === true
@@ -140,8 +157,11 @@ Deno.serve(createHandler({
    * base64, which is transport: the bytes are the ones the page produced and nothing in this
    * process can open them.
    */
-  async claimInbox(ws: string): Promise<ClaimedItem[]> {
-    const { data, error } = await client.rpc("fluck_vault_claim", { p_ws: ws })
+  async claimInbox(ws: string, instanceId: string | null): Promise<ClaimedItem[]> {
+    const { data, error } = await client.rpc("fluck_vault_claim", {
+      p_ws: ws,
+      p_instance_id: instanceId,
+    })
     if (error || !Array.isArray(data)) return []
     return data.map((row: Record<string, unknown>) => ({
       id: String(row.id),
@@ -153,6 +173,44 @@ Deno.serve(createHandler({
       ciphertext: fromHex(String(row.ciphertext)),
       createdAt: String(row.created_at),
     }))
+  },
+
+  async instance(instanceId: string): Promise<Instance | null> {
+    const { data, error } = await client.rpc("fluck_vault_instance", {
+      p_instance_id: instanceId,
+    })
+    if (error || !Array.isArray(data) || data.length === 0) return null
+    const row = data[0] as Record<string, unknown>
+    if (typeof row.link_public_key !== "string" || typeof row.seal_public_key !== "string") {
+      return null
+    }
+    return {
+      instanceId,
+      userId: String(row.user_id),
+      linkPublicKey: row.link_public_key,
+      sealPublicKey: row.seal_public_key,
+    }
+  },
+
+  async registerInstance(instance: Instance): Promise<RegisterOutcome> {
+    const { data, error } = await client.rpc("fluck_vault_register_instance", {
+      p_instance_id: instance.instanceId,
+      p_user_id: instance.userId,
+      p_link_public_key: instance.linkPublicKey,
+      p_seal_public_key: instance.sealPublicKey,
+    })
+    if (error) return "unavailable"
+    return data === "ok" || data === "conflict" || data === "revoked" || data === "limit" ||
+        data === "invalid"
+      ? data
+      : "unavailable"
+  },
+
+  /** The Auth API verifies the token, as the sibling functions do. */
+  async userFromToken(accessToken: string): Promise<string | null> {
+    const { data, error } = await client.auth.getUser(accessToken)
+    if (error || !data.user?.id) return null
+    return data.user.id
   },
 }))
 

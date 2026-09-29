@@ -80,6 +80,7 @@ function vaultRow(overrides: Partial<VaultRequestRow> = {}): VaultRequestRow {
     last4: null,
     totalCents: null,
     currency: null,
+    instance: null,
     ...overrides,
   }
 }
@@ -97,6 +98,7 @@ function cvvRow(overrides: Partial<VaultRequestRow> = {}): VaultRequestRow {
     last4: "4242",
     totalCents: 48_732,
     currency: "USD",
+    instance: null,
     ...overrides,
   }
 }
@@ -139,6 +141,9 @@ function harness(options: {
     // The DGX routes have their own suite; here they only have to exist.
     createRequest: () => Promise.resolve(true),
     claimInbox: () => Promise.resolve([]),
+    instance: () => Promise.resolve(null),
+    registerInstance: () => Promise.resolve("unavailable"),
+    userFromToken: () => Promise.resolve(null),
   }
   return { handler: createHandler(deps), described, stored, logs }
 }
