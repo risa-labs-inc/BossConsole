@@ -74,10 +74,14 @@ function harness(options: { create?: boolean; items?: ClaimedItem[] } = {}): Har
       created.push(request)
       return Promise.resolve(options.create ?? true)
     },
-    claimInbox: (ws) => {
+    claimInbox: (ws, instanceId) => {
+      assertEquals(instanceId, null)
       claimed.push(ws)
       return Promise.resolve(options.items ?? [])
     },
+    instance: () => Promise.resolve(null),
+    registerInstance: () => Promise.resolve("unavailable"),
+    userFromToken: () => Promise.resolve(null),
   }
   return { handler: createHandler(deps), created, claimed, logs }
 }
@@ -314,6 +318,9 @@ Deno.test("the audience is not taken from the project-wide base url", async () =
     store: () => Promise.resolve({ outcome: "gone", kind: null }),
     createRequest: () => Promise.resolve(true),
     claimInbox: () => Promise.resolve([]),
+    instance: () => Promise.resolve(null),
+    registerInstance: () => Promise.resolve("unavailable"),
+    userFromToken: () => Promise.resolve(null),
   }
   const response = await createHandler(deps)(
     new Request(`${DEFAULT_PUBLIC_BASE_URL}/health`),
