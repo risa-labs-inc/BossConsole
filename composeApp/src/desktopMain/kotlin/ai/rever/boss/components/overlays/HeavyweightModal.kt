@@ -2,7 +2,6 @@ package ai.rever.boss.components.overlays
 
 import ai.rever.boss.plugin.browser.LocalAwtWindow
 import ai.rever.boss.window.ApplyBossWindowIcon
-import ai.rever.boss.window.BossWindowIcon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
@@ -11,7 +10,6 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.window.DialogProperties
-import androidx.compose.ui.window.Window
 
 /**
  * Heavyweight modal host for HARDWARE_ACCELERATED browser mode.
@@ -58,15 +56,10 @@ fun HeavyweightModal(
 
     TrackHeavyweightModal()
 
-    Window(
+    OverlayWindow(
         onCloseRequest = onDismissRequest,
         state = state,
-        undecorated = true,
-        transparent = true,
-        alwaysOnTop = true,
         focusable = true,
-        resizable = false,
-        icon = BossWindowIcon.painter,
         onKeyEvent = { event ->
             // dismissOnBackPress is what Compose maps Escape to, and only this window can honour it:
             // Escape is handled here, not by anything inside the content. A caller that passed
@@ -79,7 +72,7 @@ fun HeavyweightModal(
                 false
             }
         },
-    ) {
+    ) { window ->
         EnsureOverlayWindowTransparent(window, kind = "modal")
         ApplyBossWindowIcon(window)
 

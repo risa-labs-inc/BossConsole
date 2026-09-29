@@ -2,6 +2,7 @@ package ai.rever.boss.components.home
 
 import ai.rever.boss.components.overlays.HoverTooltipBox
 import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.theme.sidebarTileFill
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
@@ -37,7 +38,8 @@ internal fun HomeNavigationButton(
     val hovered by interactionSource.collectIsHoveredAsState()
     val focused by interactionSource.collectIsFocusedAsState()
     val tint = if (selected || hovered || focused) MaterialTheme.colors.primary else BossTheme.colors.textPrimary
-    val background = if (selected || hovered || focused) BossTheme.colors.signalWash else BossTheme.colors.raised
+    val background =
+        if (selected || hovered || focused) BossTheme.colors.signalWash else sidebarTileFill(hovered = false)
     HoverTooltipBox(text = "Go Home in this pane") {
         Box(
             modifier =

@@ -9,6 +9,8 @@ import ai.rever.boss.components.overlays.OverlayConfig
 import ai.rever.boss.plugin.api.TabIcon
 import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.theme.sidebarGlassEnabled
+import ai.rever.boss.theme.sidebarSelectionFill
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -320,8 +322,12 @@ fun BossTabButton(
     // the tab bar and could be drawn on another surface elsewhere, and a tint composited over
     // whatever is behind it is right in both places, in either theme. signalWash is the fixed
     // amber-on-ink equivalent and would be a hair off wherever ink is not what is underneath.
+    val glassRow = vertical && sidebarGlassEnabled
     val tabSurface =
         when {
+            glassRow && isSelected && isFocused -> sidebarSelectionFill()
+            glassRow && isSelected -> colors.textPrimary.copy(alpha = 0.12f)
+            glassRow && isHovered -> colors.textPrimary.copy(alpha = 0.08f)
             isSelected && isFocused -> colors.signal.copy(alpha = SELECTED_FILL_ALPHA)
             isSelected -> colors.lineStrong.copy(alpha = INACTIVE_FILL_ALPHA)
             isHovered -> colors.raised.copy(alpha = HOVER_FILL_ALPHA)
@@ -346,7 +352,7 @@ fun BossTabButton(
                 }
                 // Under the content and under the marker, which is drawn last so it stays a hard
                 // edge against the fill rather than being tinted by it.
-                .background(color = tabSurface, shape = RoundedCornerShape(radii.input))
+                .background(color = tabSurface, shape = RoundedCornerShape(if (glassRow) 9.dp else radii.input))
                 .hoverable(interactionSource)
                 .onGloballyPositioned { coordinates ->
                     val pos = coordinates.positionInParent()

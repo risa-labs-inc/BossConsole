@@ -10,12 +10,15 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
+import java.nio.file.attribute.PosixFileAttributeView
+import java.nio.file.attribute.PosixFilePermission
 import java.util.concurrent.Executors
 import javax.swing.SwingUtilities
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlin.test.fail
 
 class BookmarkExportTest {
@@ -194,6 +197,10 @@ class BookmarkExportTest {
             val written = mutableListOf<String>()
             val result =
                 withContext(Dispatchers.Main) {
+                    // invokeAndWait succeeds from any other thread, so without this the test
+                    // would pass without testing anything if Main ever stopped being the event
+                    // thread (a leaked Dispatchers.setMain, or the swing dependency moving).
+                    assertTrue(SwingUtilities.isEventDispatchThread(), "Dispatchers.Main is not the event thread")
                     BookmarkExport.export(
                         listOf(work),
                         chooseFile = {
@@ -227,6 +234,18 @@ class BookmarkExportTest {
                 )
                 val left = dir.listFiles().orEmpty().map { it.name }
                 assertEquals(listOf("bookmarks.html"), left, "no temp file may be left behind")
+
+                // The default writer is atomicWriteText, so the export is owner-only, as the
+                // KDoc on export says. Windows has no POSIX view, so this half runs on Linux
+                // and macOS only.
+                val path = target.toPath()
+                if (Files.getFileAttributeView(path, PosixFileAttributeView::class.java) != null) {
+                    assertEquals(
+                        setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE),
+                        Files.getPosixFilePermissions(path),
+                        "the export must be readable by its owner only (0600)",
+                    )
+                }
             } finally {
                 dir.deleteRecursively()
             }

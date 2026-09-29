@@ -180,7 +180,7 @@ boss mcp invoke workspace_info --json
 
 ---
 
-### 5. `boss mcp ledger <verify|tail|search>`
+### 5. `boss mcp ledger <verify|tail|search|secrets>`
 
 Reads the local, sanitized MCP operation ledger without requiring a running BOSS process.
 
@@ -192,10 +192,35 @@ boss mcp ledger verify
 boss mcp ledger tail -n 20
 boss mcp ledger search --tool run_command --disposition failed --from 2026-09-01 --limit 50
 
+# Which tools received a secret, and when: one summary per secret the matching calls referenced
+boss mcp ledger secrets
+boss mcp ledger secrets --secret 6f1d2c3e-4b5a-4c6d-8e7f-90a1b2c3d4e5 --from 2026-09-01
+boss mcp ledger search --secret 6f1d2c3e-4b5a-4c6d-8e7f-90a1b2c3d4e5.username --provider boss-workspace
+boss mcp ledger secrets --provider secret-manager          # every provider the plugin registered
+boss mcp ledger secrets --provider secret-manager::vault   # one of them
+
 # Machine-readable output or an explicit ledger path
 boss mcp ledger verify --json
 boss mcp ledger tail --file /path/to/mcp-calls.jsonl --json
+boss mcp ledger secrets --json
 ```
+
+`secrets` answers the question to ask before rotating a credential: for each secret the matching
+calls referenced, how many calls named it, how many handed it to a tool's handler and how many
+were withheld (refused, denied, timed out, or voided at the fence before the handler ran), which
+tools and providers asked, and the first, last and last-delivered times. `--secret <id>` matches a
+reference to any field of that secret; `--secret <id>.<field>` matches that field only. The
+ledger records references, never values, so this needs no vault access and works with BOSS
+closed.
+
+`--provider` takes a host provider id (`boss-workspace`), a plugin id, which matches every provider
+that plugin registered, or one plugin provider as `<pluginId>::<providerId>`, which is how the
+ledger records a plugin's tools.
+
+The answer only covers the history rotation has kept: the active file and up to five rotated
+backups, sized by bytes rather than by age. A use older than the oldest backup is not counted, so
+`delivered: never` means "not in the retained ledger", not "never". Run `boss mcp ledger verify`
+beside it to check that the retained history has not been edited.
 
 The chain detects edits, insertions, reordering, and removals from inside retained history. It is
 not a signature: someone able to rewrite the entire chain can recompute it, and removing only the

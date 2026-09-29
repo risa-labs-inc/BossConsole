@@ -17,7 +17,7 @@
 -- per row, because their answer differs per row.
 
 begin;
-select plan(10);
+select plan(14);
 
 -- ---------------------------------------------------------------------------
 -- 1: no statement-constant call is left un-hoisted anywhere in the schema.
@@ -27,6 +27,10 @@ select plan(10);
 -- names. Stripping the helper first would leave the inner session call looking
 -- like a bare one. Both strips require a preceding SELECT, so a genuinely
 -- un-hoisted call survives them and fails this assertion.
+--
+-- auth.role() is detected as well as stripped. Nothing in the schema calls it
+-- today, but it is statement-constant like the other two session calls, and a
+-- strip with no matching detection would let a bare one through.
 -- ---------------------------------------------------------------------------
 select is_empty(
     $$ with pol as (
@@ -46,7 +50,7 @@ select is_empty(
          from pol
        )
        select tbl, polname from stripped
-       where rest ~ '(auth\.uid|auth\.jwt|authorize|is_user_admin)\s*\(' $$,
+       where rest ~ '(auth\.uid|auth\.jwt|auth\.role|authorize|is_user_admin)\s*\(' $$,
     'every statement-constant call in every public policy is hoisted'
 );
 
@@ -81,25 +85,17 @@ select is_empty(
 );
 
 -- ---------------------------------------------------------------------------
--- 4-6: nothing was lost while restating the policies.
+-- 4-5: nothing was lost while restating the policies.
 --
 -- ALTER POLICY carries the command, the TO roles and PERMISSIVE/RESTRICTIVE
 -- over, but that is exactly the kind of thing worth pinning rather than
 -- trusting, because a later switch to DROP and CREATE would have to restate
 -- all three.
 --
--- 114 is the 110 the schema had when 20260923160000 was written plus the four
--- terminal_sessions policies from 20260921120000.
+-- There is deliberately no count of the schema's policies. ALTER POLICY cannot
+-- add or remove one, 4 already names all 84, and a count would fail the next
+-- change that adds a policy anywhere in public, without saying why.
 -- ---------------------------------------------------------------------------
-select is(
-    (select count(*)::int from pg_policy p
-     join pg_class c on c.oid = p.polrelid
-     join pg_namespace n on n.oid = c.relnamespace
-     where n.nspname = 'public'),
-    114,
-    'schema public still has 114 policies'
-);
-
 select is_empty(
     $$ select * from (values
     ('organisation_domains', 'Service role full access to organisation domains', 'PUBLIC'),
@@ -325,7 +321,7 @@ select is_empty(
 );
 
 -- ---------------------------------------------------------------------------
--- 7-8: the rewrite still admits and denies the same rows.
+-- 6-7: the rewrite still admits and denies the same rows.
 --
 -- `users` carries both hoisted shapes at once: "Users can read own data" is the
 -- `(select auth.uid()) = id` hoist, and "Privileged users can read all users" is
@@ -361,7 +357,7 @@ select is(
 reset role;
 
 -- ---------------------------------------------------------------------------
--- 9: the first half of the rule. A call may be hoisted only if its function is
+-- 8: the first half of the rule. A call may be hoisted only if its function is
 -- STABLE or IMMUTABLE, because a VOLATILE one may answer differently on every
 -- call. The rewrite hoists exactly these four, so a later change that makes one
 -- of them VOLATILE fails here instead of changing what a policy admits.
@@ -378,7 +374,7 @@ select is(
 );
 
 -- ---------------------------------------------------------------------------
--- 10: the terminal_sessions follow-up still admits and denies the same rows.
+-- 9: the terminal_sessions follow-up still admits and denies the same rows.
 -- Two fixture sessions, one per user, inserted as the table owner; the plain
 -- user must see their own and not the other one.
 -- ---------------------------------------------------------------------------
@@ -398,6 +394,105 @@ select is(
     'a user sees only their own terminal session through the hoisted owner policy'
 );
 reset role;
+
+-- ---------------------------------------------------------------------------
+-- 10-11: the authorize() hoist still admits and denies the same rows.
+--
+-- 6-7 and 9 run the shapes Supabase's advisor documents. The two this rewrite
+-- goes beyond it with, `(select authorize(...))` and
+-- `(select is_user_admin((select auth.uid())))`, rest on the argument in the
+-- migration header rather than on the advisor, so they get real rows too.
+--
+-- plugin_permissions has exactly one policy, `(select authorize('role.read'))`,
+-- so what a user sees there is that call's answer and nothing else. boss_admin
+-- holds role.read through role_permissions and is not named `admin`, so its
+-- row comes through authorize()'s role lookup, not the admin short-circuit at
+-- the top of it.
+-- ---------------------------------------------------------------------------
+insert into auth.users (id, email) values
+    ('d1987000-0000-4000-8000-000000000003', 'role-admin@pgtap.test'),
+    ('d1987000-0000-4000-8000-000000000004', 'boss-admin@pgtap.test');
+
+insert into public.user_roles (user_id, role_id, assigned_by, assigned_at)
+select u.id::uuid, r.id, null, now()
+  from (values ('d1987000-0000-4000-8000-000000000001', 'user'),
+               ('d1987000-0000-4000-8000-000000000003', 'user'),
+               ('d1987000-0000-4000-8000-000000000003', 'admin'),
+               ('d1987000-0000-4000-8000-000000000004', 'boss_admin')) as u(id, role)
+  join public.roles r on r.name = u.role
+on conflict (user_id, role_id) do nothing;
+
+with p as (
+    insert into public.permissions (name, description, is_system)
+    values ('initplan.probe', 'fixture for rls_initplan_test', false)
+    returning id)
+insert into public.plugin_permissions (permission_id, plugin_id)
+select id, 'pgtap.initplan' from p;
+
+select set_config('request.jwt.claims',
+    '{"sub":"d1987000-0000-4000-8000-000000000001","role":"authenticated"}', true);
+set local role authenticated;
+select is(
+    (select count(*)::int from public.plugin_permissions where plugin_id = 'pgtap.initplan'),
+    0,
+    'a user without role.read sees no plugin permission provenance through the hoisted authorize()'
+);
+reset role;
+
+select set_config('request.jwt.claims',
+    '{"sub":"d1987000-0000-4000-8000-000000000004","role":"authenticated"}', true);
+set local role authenticated;
+select is(
+    (select count(*)::int from public.plugin_permissions where plugin_id = 'pgtap.initplan'),
+    1,
+    'a role.read holder who is not an admin sees it through the hoisted authorize()'
+);
+reset role;
+
+-- ---------------------------------------------------------------------------
+-- 12-14: the is_user_admin() hoist on user_roles DELETE, including the guard
+-- that stops an admin removing their own admin role.
+--
+-- A DELETE its policy refuses deletes nothing and raises nothing, so each case
+-- deletes as `authenticated` and then counts what is left as the table owner.
+-- Every row these DELETEs aim at is one the caller can already see through a
+-- SELECT policy, so the only thing that can refuse it is the DELETE policy.
+-- ---------------------------------------------------------------------------
+select set_config('request.jwt.claims',
+    '{"sub":"d1987000-0000-4000-8000-000000000001","role":"authenticated"}', true);
+set local role authenticated;
+delete from public.user_roles where user_id = 'd1987000-0000-4000-8000-000000000001';
+reset role;
+select is(
+    (select count(*)::int from public.user_roles ur
+     join public.roles r on r.id = ur.role_id
+     where ur.user_id = 'd1987000-0000-4000-8000-000000000001' and r.name = 'user'),
+    1,
+    'a user who is not an admin cannot remove a role, even their own'
+);
+
+select set_config('request.jwt.claims',
+    '{"sub":"d1987000-0000-4000-8000-000000000003","role":"authenticated"}', true);
+set local role authenticated;
+delete from public.user_roles where user_id = 'd1987000-0000-4000-8000-000000000001';
+reset role;
+select is(
+    (select count(*)::int from public.user_roles
+     where user_id = 'd1987000-0000-4000-8000-000000000001'),
+    0,
+    'an admin removes another user''s roles'
+);
+
+set local role authenticated;
+delete from public.user_roles where user_id = 'd1987000-0000-4000-8000-000000000003';
+reset role;
+select is(
+    (select string_agg(r.name, ',' order by r.name) from public.user_roles ur
+     join public.roles r on r.id = ur.role_id
+     where ur.user_id = 'd1987000-0000-4000-8000-000000000003'),
+    'admin',
+    'an admin can remove their own other roles but not their admin role'
+);
 
 select * from finish();
 rollback;

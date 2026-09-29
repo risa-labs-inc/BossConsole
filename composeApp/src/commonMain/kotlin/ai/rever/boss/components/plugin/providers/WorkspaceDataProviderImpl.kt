@@ -13,7 +13,7 @@ class WorkspaceDataProviderImpl(
     private val workspaceManager: WorkspaceManager,
 ) : WorkspaceDataProvider {
     override val workspaces: StateFlow<List<LayoutWorkspace>>
-        get() = workspaceManager.workspaces
+        get() = workspaceManager.visibleWorkspaces
 
     override val currentWorkspace: StateFlow<LayoutWorkspace?>
         get() = workspaceManager.currentWorkspace

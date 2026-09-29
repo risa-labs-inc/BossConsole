@@ -29,6 +29,20 @@ import kotlin.test.assertTrue
  * with anything asserting on stdout.
  */
 class DesktopLogCaptureTrimTest {
+    @Test
+    fun `late tee writes and new listeners cannot restart a stopped dispatcher`() {
+        withCapture { capture ->
+            capture.addListener { }
+            val retainedTee = System.out
+            capture.stop()
+            capture.addListener { }
+            retainedTee.println("late write")
+            val field = DesktopLogCapture::class.java.getDeclaredField("dispatcherThread")
+            field.isAccessible = true
+            assertEquals(null, field.get(capture))
+        }
+    }
+
     /**
      * Runs [block] against a started capture whose tee writes to a null sink.
      *

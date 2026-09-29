@@ -148,7 +148,7 @@ fun BookmarkExportResult.message(): String? =
         is BookmarkExportResult.Exported -> {
             val left = file.skipped
             val leftOut = if (left == 0) "" else ", leaving out $left that ${notWebPage(left)}"
-            "Exported ${count(file.bookmarks, "bookmark")} from ${count(file.collections, "collection")} " +
+            "Exported ${count(file.bookmarks, "bookmark")} from ${count(file.sourceCollections, "collection")} " +
                 "to ${File(path).name}$leftOut."
         }
 

@@ -14,6 +14,7 @@ import {
   DEFAULT_PUBLIC_BASE_URL,
   type Dependencies,
   type NonceClaim,
+  page,
   PAGES,
   routePath,
   type StoreRequest,
@@ -235,6 +236,23 @@ Deno.test("a state for another connector is refused", async () => {
   const response = await callback(h, `code=abc&state=${await state({ cid: "notion" })}`)
   assertEquals(response.status, 400)
   assertEquals(h.requests.length, 0)
+})
+
+Deno.test("an invalid nonce expiry is not called a replay and never reaches Google", async () => {
+  const h = harness({ claim: "invalid" })
+  const response = await callback(h, `code=abc&state=${await state()}`)
+  assertEquals(response.status, 400)
+  const html = await response.text()
+  assertStringIncludes(html, PAGES.stale)
+  assertEquals(html.includes(PAGES.replay), false)
+  assertEquals(h.requests.length, 0)
+  assertEquals(h.stored.length, 0)
+})
+
+Deno.test("HTML output escapes all markup and quote delimiters", async () => {
+  const html = await page(400, '<script>"&', "'unsafe'").text()
+  assertStringIncludes(html, "&lt;script&gt;&quot;&amp;")
+  assertStringIncludes(html, "&#39;unsafe&#39;")
 })
 
 Deno.test("a replayed nonce is refused before the exchange", async () => {

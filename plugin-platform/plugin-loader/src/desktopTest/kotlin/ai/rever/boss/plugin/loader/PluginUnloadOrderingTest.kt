@@ -31,20 +31,22 @@ class PluginUnloadOrderingTest {
     @BeforeTest
     fun resetSharedState() {
         PluginClassLoaderManager.resetSharedApiLayerForTests()
-        UnloadOrderProbe.reset()
+        System.clearProperty(STATE_PROPERTY)
+        System.clearProperty(FAIL_PROPERTY)
     }
 
     @AfterTest
     fun cleanup() {
         PluginClassLoaderManager.resetSharedApiLayerForTests()
-        UnloadOrderProbe.reset()
+        System.clearProperty(STATE_PROPERTY)
+        System.clearProperty(FAIL_PROPERTY)
         tempJars.forEach { it.delete() }
     }
 
     /**
-     * A manifest-only jar. The plugin classloader misses on the mainClass and
-     * (while ACTIVE) delegates to the test classpath, which is where
-     * [OrderProbePlugin] lives — the same trick [ForceUnloadTest] uses.
+     * A jar carrying the fixture's own bytes: a plugin classloader refuses
+     * non-shared names outright, so the manifest's mainClass must come from
+     * the jar, not the test classpath.
      */
     private fun probePluginJar(): String {
         val jar = File.createTempFile("unload-ordering", ".jar")
@@ -65,6 +67,12 @@ class PluginUnloadOrderingTest {
                 """.trimIndent().toByteArray(),
             )
             out.closeEntry()
+            val classPath = OrderProbePlugin::class.java.name.replace('.', '/') + ".class"
+            out.putNextEntry(JarEntry(classPath))
+            requireNotNull(javaClass.classLoader.getResourceAsStream(classPath)) {
+                "fixture class $classPath missing from the test classpath"
+            }.use { it.copyTo(out) }
+            out.closeEntry()
         }
         return jar.absolutePath
     }
@@ -75,17 +83,11 @@ class PluginUnloadOrderingTest {
             val loader = DynamicPluginLoaderImpl()
             loader.loadPlugin(probePluginJar()).getOrThrow()
 
-            UnloadOrderProbe.classLoader =
-                assertNotNull(
-                    loader.getClassLoaderManager().getClassLoader(FIXTURE_ID),
-                    "fixture must have a classloader while loaded",
-                )
-
             loader.unloadPlugin(FIXTURE_ID).getOrThrow()
 
             assertEquals(
-                ClassLoaderState.ACTIVE,
-                UnloadOrderProbe.stateAtDispose,
+                ClassLoaderState.ACTIVE.name,
+                System.getProperty(STATE_PROPERTY),
                 "dispose() must run before the classloader is marked for unload - the refusal " +
                     "in PluginClassLoader.loadClassChildFirst assumes it",
             )
@@ -111,7 +113,7 @@ class PluginUnloadOrderingTest {
             val loader = DynamicPluginLoaderImpl()
             loader.loadPlugin(probePluginJar()).getOrThrow()
             val classLoader = assertNotNull(loader.getClassLoaderManager().getClassLoader(FIXTURE_ID))
-            UnloadOrderProbe.disposalFailure = NoClassDefFoundError("missing disposal dependency")
+            System.setProperty(FAIL_PROPERTY, "true")
 
             loader.unloadPlugin(FIXTURE_ID).getOrThrow()
 
@@ -125,22 +127,22 @@ class PluginUnloadOrderingTest {
     }
 }
 
-/** Cross-classloader handoff between the test and its fixture plugin. */
-object UnloadOrderProbe {
-    @Volatile var classLoader: PluginClassLoader? = null
+/**
+ * System properties are the only state a plugin-loaded fixture can share with
+ * the test. `const val` keeps them compile-time inlined, so the fixture's
+ * bytecode never names a host test class.
+ */
+private const val STATE_PROPERTY = "boss.test.unloadOrder.state"
+private const val FAIL_PROPERTY = "boss.test.unloadOrder.failDispose"
 
-    @Volatile var stateAtDispose: ClassLoaderState? = null
-
-    @Volatile var disposalFailure: Throwable? = null
-
-    fun reset() {
-        disposalFailure = null
-        classLoader = null
-        stateAtDispose = null
-    }
-}
-
-/** Records the classloader state observed from inside `dispose()`. */
+/**
+ * Records the classloader state observed from inside `dispose()` through a
+ * system property: this class runs inside the plugin classloader, so it may
+ * only touch shared (java.*, kotlin.*, plugin-api) types - a direct reference
+ * to a host test object would now be refused as non-shared. The property names
+ * are `const val`, inlined at compile time, so reading them here does not load
+ * the test class either.
+ */
 class OrderProbePlugin : Plugin {
     override val pluginId = "com.example.unload.ordering"
     override val displayName = "Unload Order Probe"
@@ -148,7 +150,17 @@ class OrderProbePlugin : Plugin {
     override fun register(context: PluginContext) = Unit
 
     override fun dispose() {
-        UnloadOrderProbe.stateAtDispose = UnloadOrderProbe.classLoader?.state
-        UnloadOrderProbe.disposalFailure?.let { throw it }
+        val loader = javaClass.classLoader
+        // PluginClassLoader is host-internal, so read its state reflectively
+        // rather than naming the type.
+        val state =
+            loader.javaClass
+                .getMethod("getState")
+                .invoke(loader)
+                .toString()
+        System.setProperty(STATE_PROPERTY, state)
+        if (System.getProperty(FAIL_PROPERTY) == "true") {
+            throw NoClassDefFoundError("missing disposal dependency")
+        }
     }
 }

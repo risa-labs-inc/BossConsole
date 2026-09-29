@@ -18,8 +18,13 @@ object SwiftScriptExecutor {
         fileName: String,
         vararg args: String,
     ): String {
+        // Reject traversal before any filesystem or process work: File(dir,
+        // "../x.swift") resolves outside the script directory and would then
+        // be executed.
+        ScriptFileGuard.requireSimpleName(fileName)
+
         val swiftFilesDir = getSwiftFilesDirectory()
-        val swiftFile = File(swiftFilesDir, fileName)
+        val swiftFile = ScriptFileGuard.resolveInside(swiftFilesDir, fileName)
 
         if (!swiftFile.exists()) {
             throw IllegalArgumentException("Swift file not found: ${swiftFile.absolutePath}")

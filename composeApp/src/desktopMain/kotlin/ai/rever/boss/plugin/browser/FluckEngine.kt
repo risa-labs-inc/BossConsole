@@ -7,6 +7,7 @@ import ai.rever.boss.components.plugin.tab_types.fluck.DownloadStatus
 import ai.rever.boss.config.ChromiumAutoDownloader
 import ai.rever.boss.config.ChromiumFlagKeys
 import ai.rever.boss.config.JxBrowserConfig
+import ai.rever.boss.downloads.DownloadHistoryManager
 import ai.rever.boss.platform.FileNameSanitizer
 import ai.rever.boss.platform.FileSystemUtils
 import ai.rever.boss.platform.MacOSScreenCapture
@@ -33,6 +34,7 @@ import com.teamdev.jxbrowser.engine.Theme
 import com.teamdev.jxbrowser.engine.UserDataDirectoryAlreadyInUseException
 import com.teamdev.jxbrowser.permission.PermissionType
 import com.teamdev.jxbrowser.permission.callback.RequestPermissionCallback
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -45,6 +47,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.awt.Toolkit
+import java.io.File
 import java.nio.file.Files
 import java.nio.file.Paths
 import java.util.*
@@ -3456,12 +3459,13 @@ object FluckEngine {
         // Download finished
         download.on(DownloadFinished::class.java) { event ->
             scope.launch {
-                downloadManager.updateStatus(downloadId, DownloadStatus.COMPLETED)
-                // Remove from tracking maps
+                // The native download is finished. Release its reservations before the first
+                // suspension so cancellation cannot strand the URL or destination path.
                 activeDownloadUrls.remove(url)
                 activeDownloads.remove(downloadId)
-                // The file exists now, so exists() guards the name from here on.
                 FileSystemUtils.releaseFilePath(destinationPath, owner = downloadId)
+                downloadManager.updateStatus(downloadId, DownloadStatus.COMPLETED)
+                recordCompletedDownload(url, destinationPath)
             }
         }
 
@@ -3494,6 +3498,23 @@ object FluckEngine {
                 activeDownloads.remove(downloadId)
                 FileSystemUtils.releaseFilePath(destinationPath, owner = downloadId)
             }
+        }
+    }
+
+    private suspend fun recordCompletedDownload(
+        url: String,
+        destinationPath: String,
+    ) {
+        try {
+            val size =
+                File(destinationPath)
+                    .takeIf { it.isFile }
+                    ?.length()
+            DownloadHistoryManager.record(url, destinationPath, size)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logger.warn(LogCategory.SYSTEM, "Could not record completed download", error = e)
         }
     }
 

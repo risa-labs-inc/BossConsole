@@ -23,10 +23,8 @@ object DownloadsDirectory {
     /**
      * @property userDirsConfig contents of `user-dirs.dirs`, or null when absent. Linux only.
      * @property windowsKnownFolder the shell's Downloads known folder, or null when it cannot
-     *   be read. Nothing wires this yet: provider writes are confined to the home directory,
-     *   so handing back a Downloads folder relocated to another drive would make those writes
-     *   fail a check they currently pass. The hook and its tests exist so that the follow-up
-     *   is a wiring change rather than a redesign.
+     *   be read. Windows only; see [WindowsDownloadsFolder]. The user can move it to another
+     *   drive, which is why the in-process provider admits the resolved folder as well as home.
      * @property isDirectory existence test, injected so tests need no real directories.
      */
     data class Inputs(
@@ -51,8 +49,8 @@ object DownloadsDirectory {
         return preferredFor(inputs)?.takeIf(inputs.isDirectory) ?: conventional
     }
 
-    /** [resolve] for the running system. */
-    fun current(windowsKnownFolder: () -> String? = { null }): String {
+    /** [resolve] for the running system. [windowsKnownFolder] is given `user.home`. */
+    fun current(windowsKnownFolder: (String) -> String? = WindowsDownloadsFolder::current): String {
         val osName = System.getProperty("os.name").orEmpty()
         val userHome = System.getProperty("user.home").orEmpty()
 
@@ -61,7 +59,7 @@ object DownloadsDirectory {
                 osName = osName,
                 userHome = userHome,
                 userDirsConfig = if (isLinux(osName)) readUserDirsConfig(userHome) else null,
-                windowsKnownFolder = if (isWindows(osName)) windowsKnownFolder() else null,
+                windowsKnownFolder = if (isWindows(osName)) windowsKnownFolder(userHome) else null,
                 isDirectory = { File(it).isDirectory },
             ),
         )

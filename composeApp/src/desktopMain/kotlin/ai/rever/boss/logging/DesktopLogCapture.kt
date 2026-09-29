@@ -5,7 +5,6 @@ import ai.rever.boss.utils.logging.LogCategory
 import java.io.ByteArrayOutputStream
 import java.io.OutputStream
 import java.io.PrintStream
-import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
@@ -72,7 +71,7 @@ class DesktopLogCapture {
      * must lose the oldest pending entries, not grow memory or stall the logging thread.
      * Delivery happens on [dispatcherThread], never on the thread that called `println`.
      */
-    private val notificationQueue = ArrayBlockingQueue<LogEntry>(MAX_PENDING_NOTIFICATIONS)
+    private val notificationQueue = LogNotificationQueue(MAX_PENDING_NOTIFICATIONS)
 
     @Volatile
     private var dispatcherThread: Thread? = null
@@ -85,17 +84,14 @@ class DesktopLogCapture {
      * Sets up PrintStream wrappers that tee output to both original streams and our buffer.
      */
     fun start() {
-        if (isCapturing) return
-
-        isCapturing = true
-
-        // Create tee streams that write to both original stream and our buffer
-        val teeOut = TeeOutputStream(originalOut, LogSource.STDOUT, ::record)
-        val teeErr = TeeOutputStream(originalErr, LogSource.STDERR, ::record)
-
-        // Replace System streams
-        System.setOut(PrintStream(teeOut, true, Charsets.UTF_8))
-        System.setErr(PrintStream(teeErr, true, Charsets.UTF_8))
+        synchronized(this) {
+            if (isCapturing) return
+            isCapturing = true
+            val teeOut = TeeOutputStream(originalOut, LogSource.STDOUT, ::record)
+            val teeErr = TeeOutputStream(originalErr, LogSource.STDERR, ::record)
+            System.setOut(PrintStream(teeOut, true, Charsets.UTF_8))
+            System.setErr(PrintStream(teeErr, true, Charsets.UTF_8))
+        }
 
         logger.info(LogCategory.SYSTEM, "Log capture started")
     }
@@ -104,17 +100,15 @@ class DesktopLogCapture {
      * Stop capturing logs and restore original streams.
      */
     fun stop() {
-        if (!isCapturing) return
-
-        // Restore original streams
-        System.setOut(originalOut)
-        System.setErr(originalErr)
-
-        isCapturing = false
-
-        dispatcherThread?.interrupt()
-        dispatcherThread = null
-        notificationQueue.clear()
+        synchronized(this) {
+            if (!isCapturing) return
+            System.setOut(originalOut)
+            System.setErr(originalErr)
+            isCapturing = false
+            dispatcherThread?.interrupt()
+            dispatcherThread = null
+            notificationQueue.clear()
+        }
 
         logger.info(LogCategory.SYSTEM, "Log capture stopped")
     }
@@ -187,10 +181,12 @@ class DesktopLogCapture {
      */
     private fun notifyListeners(entry: LogEntry) {
         if (synchronized(listeners) { listeners.isEmpty() }) return
-        ensureDispatcher()
-        if (!notificationQueue.offer(entry)) {
-            notificationQueue.poll()
-            notificationQueue.offer(entry)
+        synchronized(this) {
+            if (!isCapturing) return
+            ensureDispatcher()
+            // A late tee write cannot restart a stopped dispatcher. The queue itself
+            // atomically replaces the oldest entry against both producers and consumers.
+            notificationQueue.append(entry)
         }
     }
 
@@ -198,11 +194,12 @@ class DesktopLogCapture {
     private fun ensureDispatcher() {
         if (dispatcherThread?.isAlive == true) return
         synchronized(this) {
-            if (dispatcherThread?.isAlive == true) return
+            if (!isCapturing || dispatcherThread?.isAlive == true) return
             dispatcherThread =
-                thread(isDaemon = true, name = "log-capture-dispatcher") {
+                thread(start = false, isDaemon = true, name = "log-capture-dispatcher") {
                     dispatchLoop()
                 }
+            dispatcherThread?.start()
         }
     }
 
@@ -215,7 +212,7 @@ class DesktopLogCapture {
     // would churn the queue forever.
     @Suppress("TooGenericExceptionCaught", "SwallowedException")
     private fun dispatchLoop() {
-        while (true) {
+        while (Thread.currentThread() === dispatcherThread) {
             val entry =
                 try {
                     notificationQueue.take()
@@ -227,6 +224,7 @@ class DesktopLogCapture {
                     listeners.toList()
                 }
             listenersCopy.forEach { listener ->
+                if (Thread.currentThread() !== dispatcherThread) return
                 try {
                     listener(entry)
                 } catch (t: Throwable) {

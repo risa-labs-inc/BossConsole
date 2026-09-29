@@ -19,6 +19,8 @@ data class WorkspaceSettings(
      * [SWITCH_ASK], [SWITCH_KEEP] or [SWITCH_CLOSE].
      */
     val onWorkspaceSwitch: String = SWITCH_ASK,
+    /** Expose the automatic recovery slot as a selectable Space. */
+    val enableLastSessionSpace: Boolean = false,
     /**
      * Schema version of this file, used to apply one-time migrations to installs
      * that already have a settings file written by an older build.

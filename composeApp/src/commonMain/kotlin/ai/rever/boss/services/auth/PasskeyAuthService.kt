@@ -8,7 +8,14 @@ import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.utils.logging.LogSanitizer
 import java.util.Base64
 import java.util.UUID
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.ExperimentalTime
+
+private fun <T> Result<T>.propagateCancellation(): Result<T> {
+    val failure = exceptionOrNull()
+    if (failure is CancellationException) throw failure
+    return this
+}
 
 /**
  * Handles WebAuthn/passkey authentication (core authentication only)
@@ -158,7 +165,8 @@ internal object PasskeyAuthService {
 
             // Step 1: Request authentication challenge from Supabase with sessionId for cross-device coordination
             val sessionId = UUID.randomUUID().toString()
-            val challengeResult = SupabasePasskeyService.requestAuthenticationChallenge(email, sessionId)
+            val challengeResult =
+                SupabasePasskeyService.requestAuthenticationChallenge(email, sessionId).propagateCancellation()
 
             if (challengeResult.isFailure) {
                 return Result.failure(challengeResult.exceptionOrNull() ?: Exception("Failed to get challenge"))
@@ -184,14 +192,15 @@ internal object PasskeyAuthService {
                     it.id to (it.transports ?: emptyList())
                 }
             val assertionResult =
-                passkeyService.authenticateWithPasskey(
-                    challenge = Base64.getUrlDecoder().decode(challenge.challenge),
-                    allowedCredentials = allowedCredentials,
-                    rpId = challenge.rpId,
-                    userEmail = email ?: return Result.failure(Exception("User email is required for passkey authentication")),
-                    sessionId = sessionId,
-                    allowedCredentialTransports = allowedCredentialTransports,
-                )
+                passkeyService
+                    .authenticateWithPasskey(
+                        challenge = Base64.getUrlDecoder().decode(challenge.challenge),
+                        allowedCredentials = allowedCredentials,
+                        rpId = challenge.rpId,
+                        userEmail = email ?: return Result.failure(Exception("User email is required for passkey authentication")),
+                        sessionId = sessionId,
+                        allowedCredentialTransports = allowedCredentialTransports,
+                    ).propagateCancellation()
 
             if (assertionResult.isFailure) {
                 val exception = assertionResult.exceptionOrNull()
@@ -199,18 +208,19 @@ internal object PasskeyAuthService {
                 // Check if this is a cross-device authentication requirement
                 return if (exception is CrossDeviceAuthenticationRequired) {
                     val result =
-                        CrossDeviceAuthService.handleCrossDeviceAuthentication(exception) { authData ->
-                            // Add email to authData if missing (cross-device flow doesn't always return it)
-                            // Note: email is guaranteed non-null here due to check at line 166
-                            val enrichedAuthData =
-                                if (authData.email == null) {
-                                    authData.copy(email = email)
-                                } else {
-                                    authData
-                                }
-                            // Use PasskeySessionHandler for session establishment
-                            PasskeySessionHandler.completeAuthentication(enrichedAuthData)
-                        }
+                        CrossDeviceAuthService
+                            .handleCrossDeviceAuthentication(exception) { authData ->
+                                // Add email to authData if missing (cross-device flow doesn't always return it)
+                                // Note: email is guaranteed non-null here due to check at line 166
+                                val enrichedAuthData =
+                                    if (authData.email == null) {
+                                        authData.copy(email = email)
+                                    } else {
+                                        authData
+                                    }
+                                // Use PasskeySessionHandler for session establishment
+                                PasskeySessionHandler.completeAuthentication(enrichedAuthData)
+                            }.propagateCancellation()
 
                     // Reset passkey state after cross-device authentication
                     if (result.isSuccess) {
@@ -227,10 +237,11 @@ internal object PasskeyAuthService {
 
             // Step 3: Complete authentication with Supabase backend (only for local auth success)
             val authResult =
-                SupabasePasskeyService.completeAuthentication(
-                    assertion = assertion,
-                    challenge = challenge.challenge,
-                )
+                SupabasePasskeyService
+                    .completeAuthentication(
+                        assertion = assertion,
+                        challenge = challenge.challenge,
+                    ).propagateCancellation()
 
             if (authResult.isFailure) {
                 return Result.failure(authResult.exceptionOrNull() ?: Exception("Failed to complete authentication"))
@@ -239,7 +250,7 @@ internal object PasskeyAuthService {
             val authData = authResult.getOrThrow()
 
             // Step 4: Use PasskeySessionHandler to complete authentication
-            val sessionResult = PasskeySessionHandler.completeAuthentication(authData)
+            val sessionResult = PasskeySessionHandler.completeAuthentication(authData).propagateCancellation()
 
             // Reset passkey state on successful authentication
             if (sessionResult.isSuccess) {
@@ -247,6 +258,11 @@ internal object PasskeyAuthService {
             }
 
             return sessionResult
+        } catch (e: CancellationException) {
+            // A superseded attempt must die here, not report failure: the ViewModel's
+            // single-producer invariant depends on cancellation propagating instead of
+            // resurfacing as an ordinary auth failure that stomps the newer attempt's state.
+            throw e
         } catch (e: Exception) {
             logger.error(LogCategory.PASSKEY, "Passkey authentication failed", error = e)
             Result.failure(e)

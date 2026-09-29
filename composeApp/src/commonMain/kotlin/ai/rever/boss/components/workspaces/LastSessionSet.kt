@@ -33,7 +33,9 @@ const val LAST_SESSION_SET_FILE = "Last_Session_Set.json"
  * **Still ONE writer, still app-level.** `LastSessionCoordinator` allows exactly one window to
  * produce a session record per session (Issue #19: every window's dispose used to write its own
  * layout into the one record, so closing a secondary window overwrote the primary's). That has not
- * changed - the same claim now covers both files, written together.
+ * changed - the same claim now covers both files, written together. During the session the same
+ * owner window keeps both current, under `LastSessionCoordinator.ownsSessionRecord` rather than
+ * under the claim, and under the lock the shutdown write takes; see `writeInSessionRecovery`.
  */
 @Serializable
 data class LastSessionSet(
@@ -62,22 +64,9 @@ object LastSessionSetSerializer {
 }
 
 /**
- * The set worth writing for a window running [spaces] and showing [activeWorkspaceId], or null.
- *
- * Null means "write no set file, and delete any that is there". Two reasons, and the second is why
- * the deletion matters:
- *
- * - **Fewer than two Spaces needs no set.** One running Space is exactly what
- *   `Last_Session.json` already records, and a second file saying the same thing is a second thing
- *   that can disagree. So a single-Space session behaves precisely as it did before this existed.
- * - **A stale set file would win.** Restore reads the set in preference to the single-Space file,
- *   so a set left behind from a three-Space session would come back after a one-Space session and
- *   reopen two Spaces the user had closed.
- *
- * [activeWorkspaceId] must name one of [spaces]. If it does not there is nothing to show on
- * restore, and guessing - the first, the last - would put a Space on screen the user was not
- * looking at; falling back to the single-Space file is the honest answer, and that file records
- * the layout that WAS on screen.
+ * Preserve identity even for a single running Space. The legacy recovery file stamps its
+ * contents with `last-session`, so it cannot tell startup which named Space was active.
+ * Empty sessions or an absent active id still delete the set to avoid stale restoration.
  */
 internal fun sessionSetOf(
     spaces: List<LayoutWorkspace>,
@@ -97,15 +86,9 @@ internal fun sessionSetOf(
 internal fun restoreOrder(set: LastSessionSet): List<LayoutWorkspace> =
     set.spaces.filter { it.id != set.activeWorkspaceId } + set.spaces.filter { it.id == set.activeWorkspaceId }
 
-/**
- * Whether [set] is worth restoring, rather than falling back to the single-Space file.
- *
- * The same floor [sessionSetOf] writes at, asked on the way back in: a file with one Space in it
- * (hand-edited, or written by some future version) says nothing `Last_Session.json` does not, and
- * that file is the one the rest of the app agrees about.
- */
+/** A session must contain its active Space; one Space is sufficient. */
 internal fun isRestorable(set: LastSessionSet?): Boolean =
     set != null && set.spaces.size >= MINIMUM_SET_SIZE && set.spaces.any { it.id == set.activeWorkspaceId }
 
-/** Below this a session is a single Space, which `Last_Session.json` already records. */
-private const val MINIMUM_SET_SIZE = 2
+/** Even a single Space needs its original identity on restart. */
+private const val MINIMUM_SET_SIZE = 1

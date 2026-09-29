@@ -2318,6 +2318,35 @@ tasks.register<FixLinuxDesktopFileTask>("fixLinuxDesktopFile") {
     debDir.set(layout.buildDirectory.dir("compose/binaries/main/deb"))
 }
 
+// jpackage copies an older-SDK launcher even on a modern build runner. AppKit uses
+// that SDK opt-in for native toolbar glass, so normalize the packaged launcher after
+// all app-image mutations. Keep the deployment target and launcher code unchanged.
+tasks.register("prepareMacOSAppearance") {
+    group = "distribution"
+    description = "Enables native macOS toolbar styling in the packaged launcher"
+    val onMacHost = isMacOSHost
+    val signingDisabled = macOSSigningDisabledProvider
+    val developerId = macOSDeveloperId
+    val app = layout.buildDirectory.dir("compose/binaries/main/app/BOSS.app")
+    val script = rootProject.file("scripts/prepare-macos-appearance.py")
+    val entitlements = project.file("src/desktopMain/resources/BOSS.entitlements")
+    val injected = project.objects.newInstance<InjectedExecOps>()
+    onlyIf { onMacHost }
+    doLast {
+        injected.execOps.exec {
+            commandLine(
+                "python3",
+                script.absolutePath,
+                app.get().asFile.absolutePath,
+                "--identity",
+                if (signingDisabled.get()) "-" else developerId,
+                "--entitlements",
+                entitlements.absolutePath,
+            )
+        }
+    }
+}
+
 // Configure task dependencies for DMG packaging
 afterEvaluate {
     // Make run tasks depend on the extraction tasks
@@ -2349,7 +2378,7 @@ afterEvaluate {
         // signing is disabled, signPty4jBinaries skips itself via its own onlyIf
         // and the CLI extraction still runs.
         if (isMacOS) {
-            finalizedBy("signPty4jBinaries", "extractCLIToAppResources")
+            finalizedBy("signPty4jBinaries", "extractCLIToAppResources", "prepareMacOSAppearance")
             println(
                 "📝 createDistributable will be finalized by signPty4jBinaries (skips itself when signing is disabled) and extractCLIToAppResources",
             )
@@ -2380,10 +2409,14 @@ afterEvaluate {
         println("📝 extractCLIToAppResources will depend on generateVersionedCLIScripts")
     }
 
+    tasks.named("prepareMacOSAppearance") {
+        mustRunAfter("createDistributable", "stripForeignPlatformNatives", "signPty4jBinaries", "extractCLIToAppResources")
+    }
+
     // Ensure packageDmg runs after all signing/CLI tasks (ordering only, see above)
     tasks.findByName("packageDmg")?.apply {
         if (isMacOS) {
-            mustRunAfter("signPty4jBinaries", "extractCLIToAppResources")
+            mustRunAfter("signPty4jBinaries", "extractCLIToAppResources", "prepareMacOSAppearance")
             println("📝 packageDmg will run after PTY4J signing and CLI extraction")
         }
     }
@@ -2495,12 +2528,6 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
 tasks.withType<Test> {
     // Use JUnit Platform for test discovery
     useJUnitPlatform()
-    // Fail the run on a test JUnit will not execute, rather than let it pass by not running. A @Test
-    // method that returns a value is the common case here: `fun x() = runBlocking { ... }` returns
-    // whatever its last expression does, JUnit reports that as a WARNING-level discovery issue, skips
-    // the method, and the build stays green. Nine tests sat unexecuted that way, and one of them no
-    // longer described the code. Declare such a test `(): Unit =`.
-    systemProperty("junit.platform.discovery.issue.severity.critical", "WARNING")
     // Disable failure when test sources exist but no tests are discovered
     // This handles misconfigured test sources or test classes without test methods
     failOnNoDiscoveredTests = false

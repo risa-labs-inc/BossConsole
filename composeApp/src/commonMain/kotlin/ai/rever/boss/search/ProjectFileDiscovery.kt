@@ -15,11 +15,19 @@ internal data class ProjectFile(
     val relativePath: String,
 )
 
-/** A bounded walk never returns partial results as if they were complete. */
+/** Budget and ignore-policy failures are fatal; inaccessible child folders are explicitly counted. */
 internal data class ProjectDiscoveryResult(
     val files: List<ProjectFile>,
     val incompleteReason: String? = null,
-)
+    val skippedDirectories: Int = 0,
+    val budgetExceeded: Boolean = false,
+) {
+    val warning: String?
+        get() =
+            skippedDirectories.takeIf { it > 0 }?.let {
+                "Search skipped $it unreadable folders; results are partial"
+            }
+}
 
 /** Thrown by content search rather than silently returning a trustworthy-looking partial list. */
 class ProjectDiscoveryIncompleteException(
@@ -41,6 +49,7 @@ internal object ProjectFileDiscovery {
     private val defaultExcludedDirectories =
         setOf(
             ".git",
+            ".worktrees",
             ".hg",
             ".svn",
             ".idea",
@@ -64,7 +73,8 @@ internal object ProjectFileDiscovery {
         )
 
     /** [acceptFile] is applied before the file budget, so filtered searches are not starved. */
-    @Suppress("ReturnCount") // Each early return turns an unsafe partial walk into an explicit incomplete result.
+    // Fatal policy/budget exits and recoverable directory skips stay explicit.
+    @Suppress("ReturnCount", "LoopWithTooManyJumpStatements")
     suspend fun discover(
         projectPath: String,
         acceptFile: (String) -> Boolean = { true },
@@ -79,18 +89,29 @@ internal object ProjectFileDiscovery {
         val seenDirectories = mutableSetOf(root.realPath)
         pending += DirectoryWork(root.absolutePath, emptyList(), emptyList(), setOf(root.realPath))
         var visitedDirectories = 0
+        var skippedDirectories = 0
 
         while (pending.isNotEmpty()) {
             currentCoroutineContext().ensureActive()
             if (++visitedDirectories > maxDirectories) return incomplete("directory budget", projectPath, files)
             val work = pending.removeLast()
+            if (work.path != root.absolutePath && !Files.isReadable(work.path)) {
+                skippedDirectories++
+                continue
+            }
             val ignoreRules = readIgnoreRules(work.path, work.relativePath)
             if (ignoreRules.incomplete) return incomplete(".gitignore", projectPath, files)
             val rules = work.rules + ignoreRules.rules
             val visit = visitDirectory(work, root, rules, pending, seenDirectories, files, acceptFile, maxFiles)
+            if (visit == "directory read" && work.path != root.absolutePath) {
+                skippedDirectories++
+                continue
+            }
             if (visit != null) return incomplete(visit, projectPath, files)
         }
-        return ProjectDiscoveryResult(files)
+        return ProjectDiscoveryResult(files, skippedDirectories = skippedDirectories).also { result ->
+            result.warning?.let { logger.warn(LogCategory.FILE, it, mapOf("path" to projectPath)) }
+        }
     }
 
     @Suppress(
@@ -169,7 +190,8 @@ internal object ProjectFileDiscovery {
                 "fileBudget" to MAX_FILES,
             ),
         )
-        return ProjectDiscoveryResult(files, reason)
+        val budgetExceeded = kind == "file budget" || kind == "directory budget"
+        return ProjectDiscoveryResult(files, reason, budgetExceeded = budgetExceeded)
     }
 
     private fun resolveRoot(projectPath: String): ProjectRoot? {

@@ -2,6 +2,7 @@ package ai.rever.boss.components.model
 
 import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.plugin.api.TabTypeId
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
@@ -124,6 +125,64 @@ class TabDragGestureTest {
                 assertFalse(component.isDragging)
                 assertEquals(1, drops.size)
                 assertNotNull(drops.single())
+            }
+        }
+
+    @Test
+    fun `small mouse slips click without starting a tab drop`() =
+        runComposeUiTest {
+            val component = TabDraggableComponent()
+            var starts = 0
+            var drops = 0
+            var clicks = 0
+            setContent {
+                Box(
+                    Modifier
+                        .size(200.dp)
+                        .testTag("source")
+                        .pointerInput(Unit) {
+                            detectTabDragGestures(
+                                component,
+                                onStart = {
+                                    starts++
+                                    component.startDragging(TestTab, "main", 0, it)
+                                },
+                                onEnd = { drops++ },
+                            )
+                        }.clickable { clicks++ },
+                )
+            }
+            onNodeWithTag("source").performMouseInput {
+                moveTo(Offset(30f, 30f))
+                press()
+                // Repeated jitter must not accumulate into a drag.
+                repeat(10) {
+                    moveTo(Offset(33f, 32f))
+                    moveTo(Offset(30f, 30f))
+                }
+                moveTo(Offset(34f, 33f))
+                release()
+            }
+            runOnIdle {
+                assertEquals(1, clicks)
+                assertEquals(0, starts)
+                assertEquals(0, drops)
+                assertFalse(component.isDragging)
+                assertNull(component.dropTarget)
+            }
+            onNodeWithTag("source").performMouseInput {
+                press()
+                moveTo(Offset(110f, 30f))
+            }
+            runOnIdle {
+                assertEquals(1, starts)
+                assertEquals(Offset(110f, 30f), component.getCurrentPosition())
+            }
+            onNodeWithTag("source").performMouseInput { release() }
+            runOnIdle {
+                assertEquals(1, clicks)
+                assertEquals(1, drops)
+                assertFalse(component.isDragging)
             }
         }
 

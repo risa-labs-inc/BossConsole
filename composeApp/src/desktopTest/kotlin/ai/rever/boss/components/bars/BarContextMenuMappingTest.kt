@@ -18,21 +18,11 @@ import kotlin.test.assertTrue
  */
 class BarContextMenuMappingTest {
     @Test
-    fun `only the status bar starts visible`() {
-        // A window opens as its content, the vertical tab bar, and the status line.
-        //
-        // The three that are hidden are only safe to hide because of where their contents went:
-        // the tab bar's foot carries Sign Out, Settings, Tools and Search, and the Tools launcher
-        // reaches every plugin panel the strips used to hold. Before those existed this default
-        // made plugins unreachable and took Sign Out off screen with the top bar, so if either is
-        // ever removed, these defaults have to move back with them.
-        //
-        // The status bar stays because nothing replaces it: the current URL, memory and transient
-        // status messages are reachable from no menu and no launcher.
+    fun `all optional bars start hidden`() {
+        // These defaults apply on every desktop platform. The View menu can restore each bar.
         val defaults = WindowAppearanceSettings()
 
-        assertTrue(defaults.isBarVisible(ChromeBar.BOTTOM), "the status bar should stay visible")
-        ChromeBar.entries.filter { it != ChromeBar.BOTTOM }.forEach { bar ->
+        ChromeBar.entries.forEach { bar ->
             assertFalse(defaults.isBarVisible(bar), "${bar.name} should default to hidden")
         }
     }

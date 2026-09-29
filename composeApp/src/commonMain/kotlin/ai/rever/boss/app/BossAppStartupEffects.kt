@@ -1,6 +1,5 @@
 package ai.rever.boss.app
 
-import ai.rever.boss.arcade.rushhour.ui.registerRushHourTab
 import ai.rever.boss.components.plugin.DefaultPlugin
 import ai.rever.boss.components.plugin.PluginUpdateRegistry
 import ai.rever.boss.components.plugin.currentPluginHealth
@@ -9,10 +8,12 @@ import ai.rever.boss.components.plugin.tab_types.registerPanelHostTab
 import ai.rever.boss.components.registery.PanelComponentStoreRegistry
 import ai.rever.boss.components.window_panel.RegisterSplitViewState
 import ai.rever.boss.components.window_panel.SplitNode
+import ai.rever.boss.components.window_panel.SplitViewState
 import ai.rever.boss.components.window_panel.SplitViewStateRegistry
 import ai.rever.boss.components.wizard.plugin.PluginWizardIntegration
 import ai.rever.boss.components.workspaces.LAST_SESSION_ID
 import ai.rever.boss.components.workspaces.LAST_SESSION_NAME
+import ai.rever.boss.components.workspaces.LastSessionSet
 import ai.rever.boss.components.workspaces.LayoutWorkspace
 import ai.rever.boss.components.workspaces.ProjectSelectionWorkspace
 import ai.rever.boss.components.workspaces.WorkspaceSettingsManager
@@ -103,7 +104,6 @@ internal fun BossAppStartupEffects(state: BossAppState) {
     // header drag-out resolve the same per-panel split zones the tab drag uses.
     LaunchedEffect(state.tabRegistry) {
         state.tabRegistry.registerPanelHostTab(state.panelComponentStore, state.draggablePanelComponent)
-        state.tabRegistry.registerRushHourTab()
         state.draggablePanelComponent.panelDropZonesProvider = { state.tabDragComponent.panelDropZones }
     }
 
@@ -162,19 +162,9 @@ internal fun BossAppStartupEffects(state: BossAppState) {
             canSave = { state.workspaceRestorationComplete && !state.sessionRestoreRefused },
             // Every Space this window is running, and which one is showing - so a restart brings
             // the whole window back rather than the one Space that happened to be on screen.
-            // Null for a window running fewer than two, which the single-Space record below
-            // already describes on its own; see `sessionSetOf`.
+            // Even one Space needs a set to preserve its id; see `sessionSetOf`.
             extractSet = {
-                sessionSetOf(
-                    spaces =
-                        extractRunningWorkspaces(
-                            splitViewState,
-                            windowProjectState.selectedProject.value.path,
-                            defaultWorkingDirectory = defaultWorkingDirectory,
-                            identityFor = { id -> workspaceManager.savedCopyOf(id) },
-                        ),
-                    activeWorkspaceId = splitViewState.currentWorkspaceId,
-                )
+                liveSessionSet(splitViewState, windowProjectState.selectedProject.value.path, defaultWorkingDirectory)
             },
         ) {
             // Invoked at teardown, possibly from the shutdown-hook thread, so read
@@ -619,8 +609,7 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                     if (isFirstWindow) {
                         // The multi-Space record first, and the single-Space one only when there
                         // is none. An installed build upgrading into this has only
-                        // `Last_Session.json`, and a session that ran one Space deliberately
-                        // writes no set - so the fallback is the normal path, not an error path.
+                        // `Last_Session.json`, so the fallback still preserves older sessions.
                         // Read here rather than up front because this branch is reached at most
                         // once: `loadWorkspace` below sets currentWorkspace, which is the guard
                         // on this whole block.
@@ -645,12 +634,7 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                             state.sessionRestoreRefused = restored.size != sessionSet.spaces.size
                         } else if (lastSessionConfig != null) {
                             // Ensure it has the correct ID
-                            val configWithId =
-                                if (lastSessionConfig.id != LAST_SESSION_ID) {
-                                    lastSessionConfig.copy(id = LAST_SESSION_ID)
-                                } else {
-                                    lastSessionConfig
-                                }
+                            val configWithId = prepareSessionSpace(lastSessionConfig)
                             // Apply the last session workspace FIRST
                             // Before applyWorkspace, which is what selects the recorded
                             // project: the effect watching selectedProject.path has to be
@@ -844,7 +828,7 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                     delay(LAYOUT_SETTLE_MS)
                     if (state.sessionRestoreRefused) return@launch
 
-                    // ONE write, and it is the Last Session record - never the named Space the
+                    // Recovery snapshots only - never the named Space the
                     // user is working in, whose file is written by an explicit save alone. See
                     // `layoutWatcherWrite`, which owns that decision, and note that the manager's
                     // current workspace IS still refreshed: it is the in-memory "Space I am in, as
@@ -855,8 +839,8 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                             live = currentLayout,
                             now = Clock.System.now().toEpochMilliseconds(),
                         )
-                    workspaceManager.updateCurrentWorkspace(write.current)
-                    workspaceManager.saveLastSessionRecord(write.record)
+                    updateSessionSpace(write.current, splitViewState)
+                    saveSessionRecovery(windowId, write.record, splitViewState)
                 }
         }.launchIn(this)
 
@@ -889,6 +873,28 @@ internal fun BossAppStartupEffects(state: BossAppState) {
  * Space stays unsaved "across the watcher's interval" has to be able to say which interval.
  */
 private const val LAYOUT_SETTLE_MS = 2000L
+
+/**
+ * Every Space this window is running, and which one is showing - so a restart brings the whole
+ * window back rather than the one Space that happened to be on screen. Null for a window running
+ * fewer than two, which the single-Space record already describes on its own; see `sessionSetOf`.
+ * One expression for the shutdown write and the in-session write, so the two cannot drift.
+ */
+private fun liveSessionSet(
+    splitViewState: SplitViewState,
+    projectPath: String,
+    defaultWorkingDirectory: String,
+): LastSessionSet? =
+    sessionSetOf(
+        spaces =
+            extractRunningWorkspaces(
+                splitViewState,
+                projectPath,
+                defaultWorkingDirectory = defaultWorkingDirectory,
+                identityFor = { id -> workspaceManager.savedCopyOf(id) },
+            ),
+        activeWorkspaceId = splitViewState.currentWorkspaceId,
+    )
 
 /**
  * Ask the app-level [UpdateCoordinator] to start update checks.

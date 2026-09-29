@@ -112,6 +112,7 @@ class StoreVersionInstallerTest {
         runningJarPath: String? = null,
         loadSucceeds: Boolean = true,
         hasLiveInstance: Boolean = true,
+        firstInstall: Boolean = false,
     ) = install(
         store = repository,
         request =
@@ -121,6 +122,7 @@ class StoreVersionInstallerTest {
                 sourceUrl = "https://store.example/probe.jar",
                 runningJarPath = runningJarPath,
                 hasLiveInstance = hasLiveInstance,
+                firstInstall = firstInstall,
             ),
         unload = { id ->
             unloaded += id
@@ -187,6 +189,45 @@ class StoreVersionInstallerTest {
             val result = installer().run(runningJarPath = null, loadSucceeds = false)
 
             assertTrue(result.isFailure)
+            assertTrue(
+                result.exceptionOrNull()?.message?.contains("could not be restored") == true,
+                "message was: ${result.exceptionOrNull()?.message}",
+            )
+        }
+
+    /**
+     * A plugin pack installs a pinned release of a plugin that is not installed at all. A failed
+     * load there has nothing to put back, so the message must not report a restore that failed or
+     * send the user to reinstall.
+     */
+    @Test
+    fun `a failed first install does not claim a restore failed`() =
+        runTest {
+            val result =
+                installer().run(
+                    runningJarPath = null,
+                    loadSucceeds = false,
+                    hasLiveInstance = false,
+                    firstInstall = true,
+                )
+
+            assertTrue(result.isFailure)
+            assertEquals(
+                "Could not install v$VERSION (it did not start). Nothing was changed.",
+                result.exceptionOrNull()?.message,
+            )
+        }
+
+    /**
+     * No running jar and no live instance is not proof that nothing was running: store recovery
+     * for a refused jar passes both while an older good build may just have been unloaded. Only a
+     * caller that knows it is a first install gets the plainer message.
+     */
+    @Test
+    fun `without first-install knowledge a failed load keeps the restore wording`() =
+        runTest {
+            val result = installer().run(runningJarPath = null, loadSucceeds = false, hasLiveInstance = false)
+
             assertTrue(
                 result.exceptionOrNull()?.message?.contains("could not be restored") == true,
                 "message was: ${result.exceptionOrNull()?.message}",

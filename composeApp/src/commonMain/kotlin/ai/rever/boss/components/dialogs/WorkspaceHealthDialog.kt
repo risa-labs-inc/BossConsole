@@ -50,11 +50,14 @@ import androidx.compose.ui.window.DialogProperties
  * that disappears, and was otherwise visible only by opening Help > Plugin Health & Recovery or
  * running `boss doctor` in a terminal (BossConsole#394). [report] is re-read by the caller while
  * the dialog is open, so a problem fixed from here is seen to clear without reopening it.
+ *
+ * [onFix] is null when there is no screen to send a fix to; the Fix buttons are then left out
+ * rather than shown doing nothing, and each finding's remedy text still says what to do.
  */
 @Composable
 internal fun WorkspaceHealthDialog(
     report: WorkspaceHealthReport,
-    onFix: (HealthFix) -> Unit,
+    onFix: ((HealthFix) -> Unit)?,
     onDismiss: () -> Unit,
 ) {
     val windowSize = LocalWindowInfo.current.containerSize
@@ -77,7 +80,7 @@ internal fun WorkspaceHealthDialog(
 @Composable
 internal fun WorkspaceHealthCard(
     report: WorkspaceHealthReport,
-    onFix: (HealthFix) -> Unit,
+    onFix: ((HealthFix) -> Unit)?,
     onDismiss: () -> Unit,
 ) {
     val colors = BossTheme.colors
@@ -120,7 +123,7 @@ internal fun WorkspaceHealthCard(
 @Composable
 private fun HealthFindingRow(
     finding: HealthFinding,
-    onFix: (HealthFix) -> Unit,
+    onFix: ((HealthFix) -> Unit)?,
 ) {
     val colors = BossTheme.colors
     val severityColor = severityColor(finding.severity)
@@ -142,7 +145,8 @@ private fun HealthFindingRow(
             Spacer(Modifier.height(4.dp))
             Text("What to do: $remedy", fontSize = 12.sp, color = colors.textSecondary)
         }
-        finding.fix?.let { fix ->
+        val fix = finding.fix
+        if (fix != null && onFix != null) {
             Spacer(Modifier.height(8.dp))
             // Explicit colours: OutlinedButton's defaults come from MaterialTheme, whose surface is
             // light, so a themed label on it is white on white.

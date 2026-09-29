@@ -37,19 +37,14 @@ data class WindowAppearanceSettings(
      * The scaffold requires both to agree, so a bar shows when this is true and focus mode is not
      * currently clearing it.
      *
-     * **The top bar and both icon strips are off by default; the status bar stays on.** A window
-     * opens as its content, the vertical tab bar, and the status line along the bottom.
+     * **The top bar, bottom status bar and both icon strips are off by default on desktop.**
+     * A window opens as its content and vertical tab bar; the View menu can restore any bar.
      *
-     * Hiding the other three is only sane because there is now somewhere for what they carried to
-     * go: the tab bar's foot holds Sign Out, Settings, Tools and Search (see
+     * The top bar and icon strips can be hidden because their actions remain available:
+     * the tab bar's foot holds Sign Out, Settings, Tools and Search (see
      * `focusQuickActionsPlacement`), and the Tools launcher reaches every plugin panel the strips
      * used to hold (see `toolLauncherPlacement`). Before those existed, hiding both strips made
      * plugins unreachable and hiding the top bar took Sign Out with it.
-     *
-     * The status bar is the exception because nothing replaces it. It is the only always-on
-     * readout of what the app is doing - the current URL, memory, transient status messages - and
-     * none of that is reachable from a menu or a launcher. It also costs one 30dp row, where a
-     * strip costs 41dp of width and the top bar a whole row of chrome.
      *
      * The **decode default is what moves an existing install**, and that works here because the
      * settings file is written without defaults: a value equal to the default is never stored, so
@@ -65,7 +60,7 @@ data class WindowAppearanceSettings(
     /** Optional duplicate of the browser address-bar zoom controls. */
     val showBrowserZoomBadge: Boolean = false,
     /** Whether the status bar at the bottom of the window is on screen. See [showTopBar]. */
-    val showBottomBar: Boolean = true,
+    val showBottomBar: Boolean = false,
     /** Whether the left icon strip is on screen. See [showTopBar]. */
     val showLeftStrip: Boolean = false,
     /** Whether the right icon strip is on screen. See [showTopBar]. */

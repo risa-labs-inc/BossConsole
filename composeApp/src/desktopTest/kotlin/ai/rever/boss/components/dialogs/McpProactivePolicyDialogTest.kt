@@ -181,9 +181,11 @@ class McpProactivePolicyDialogTest {
     }
 
     @Test fun `saved policy search matches plugin names and sensitive review includes denials`() {
-        val tool = McpToolIdentity("read", "plugin.id", 0, "Read current state", readOnly = true)
+        val tool = McpToolIdentity("read", "plugin.id::vault", 0, "Read current state", readOnly = true)
         val rules = mapOf("read" to McpPolicyAction.DENY)
+        assertEquals("Documents", policySectionName(tool.providerId, mapOf("plugin.id" to "Documents")))
         assertEquals(rules, filterSavedPolicies(rules, listOf(tool), "Documents", mapOf("plugin.id" to "Documents")))
+        assertEquals(rules, filterSavedPolicies(rules, listOf(tool), "vault", mapOf("plugin.id" to "Documents")))
         assertEquals(listOf(tool), sensitiveAllows(listOf(tool), setOf("read"), rules))
         // A declared-mutating tool with an innocent name must reach the review gate through the
         // catalog signal too - risk level and saved denials must not be the only ways in (#804).

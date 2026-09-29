@@ -50,6 +50,24 @@ class DownloadsDirectoryTest {
         }
 
         @Test
+        fun `a Downloads folder moved in the shell is followed from the registry value`() {
+            val moved = File(root, "moved-downloads").absolutePath
+            val key = "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders"
+            val regOutput = "\r\n$key\r\n    {374DE290-123F-4565-9164-39C4925E467B}    REG_SZ    $moved\r\n\r\n"
+
+            val resolved =
+                DownloadsDirectory.resolve(
+                    inputs(
+                        "Windows 11",
+                        windowsKnownFolder = WindowsDownloadsFolder.fromRegQuery(regOutput) { null },
+                        existing = setOf(moved, conventional),
+                    ),
+                )
+
+            assertEquals(moved, resolved)
+        }
+
+        @Test
         fun `a known folder that does not exist is ignored`() {
             val stale = File(root, "deleted-downloads").absolutePath
 
@@ -231,6 +249,18 @@ class DownloadsDirectoryTest {
                         userDirsConfig = "XDG_DOWNLOAD_DIR=\"\$HOME/Gone\"",
                         existing = setOf(conventional),
                     ),
+                )
+
+            assertEquals(conventional, resolved)
+        }
+
+        @Test
+        fun `a Windows known folder is ignored off Windows`() {
+            val moved = File(root, "moved-downloads").absolutePath
+
+            val resolved =
+                DownloadsDirectory.resolve(
+                    inputs("Linux", windowsKnownFolder = moved, existing = setOf(moved, conventional)),
                 )
 
             assertEquals(conventional, resolved)

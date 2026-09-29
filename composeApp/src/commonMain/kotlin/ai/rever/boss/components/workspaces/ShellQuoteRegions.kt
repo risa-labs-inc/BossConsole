@@ -21,7 +21,7 @@ internal class ShellQuoteRegions private constructor(
             var index = 0
             while (index < text.length) {
                 before[index] = quote
-                val character = text[index]
+                val character = delimiter(text[index], escape)
                 val paired =
                     isEscapedNext(character, quote, escape, index, text.length) ||
                         isDoubledApostrophe(character, quote, escape, index, text)
@@ -53,8 +53,13 @@ internal class ShellQuoteRegions private constructor(
             text: CharSequence,
         ): Boolean {
             if (escape != '`' || quote != '\'') return false
-            return character == '\'' && text.getOrNull(index + 1) == '\''
+            return character == '\'' && text.getOrNull(index + 1)?.let { delimiter(it, escape) } == '\''
         }
+
+        private fun delimiter(
+            character: Char,
+            escape: Char,
+        ): Char = if (escape == '`' && character in ShellPathQuoting.POWERSHELL_SINGLE_QUOTES) '\'' else character
 
         private fun nextQuote(
             quote: Char,

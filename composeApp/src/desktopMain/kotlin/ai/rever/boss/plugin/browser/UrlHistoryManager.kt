@@ -5,6 +5,7 @@ import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.utils.logging.LogSanitizer
+import ai.rever.boss.utils.logging.decodeFailure
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -14,6 +15,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
@@ -505,6 +507,9 @@ object UrlHistoryManager {
                 val domain = suggestableHost(entry.url) ?: entry.domain
                 history[distinctPageKey(entry.url)] = entry.copy(domain = domain)
             }
+        } catch (e: SerializationException) {
+            // The file is visited URLs with their query strings, which the decoder's message quotes.
+            logger.warn(LogCategory.BROWSER, "Failed to load browser history", decodeFailure(e))
         } catch (e: Exception) {
             logger.warn(LogCategory.BROWSER, "Failed to load browser history", error = e)
         }

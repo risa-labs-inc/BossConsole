@@ -12,12 +12,13 @@
  */
 
 import { assert, assertEquals } from "@std/assert"
-import { z } from "zod"
 import {
   ListPluginsQuerySchema,
   SearchPluginsRequestSchema,
   PublishFromGitHubRequestSchema,
   PublishFromGitHubMetadataRequestSchema,
+  POPULAR_TAGS_LIMIT_MAX,
+  PopularTagsQuerySchema,
   PopularTagsResponseSchema,
 } from "../types/schemas.ts"
 
@@ -108,14 +109,8 @@ Deno.test("PublishFromGitHubMetadataRequestSchema accepts a real github.com URL"
 
 // (d) /tags/popular  --  BossConsole#1253: unbounded `limit` query param.
 //
-// The Zod schema for the popular-tags route is co-located with the route
-// in browse.ts (it is small and route-specific). The bound shape is
-// reproduced here as a constant so the test pins the upper limit the
-// fix must enforce.
-
-const PopularTagsQuerySchema = z.object({
-  limit: z.coerce.number().int().min(1).max(100).default(20),
-})
+// The route's own schema, imported rather than restated: a local copy stayed green when the
+// route's cap moved, which is the drift these tests exist to catch.
 
 Deno.test("PopularTagsQuerySchema defaults to limit=20", () => {
   const result = PopularTagsQuerySchema.safeParse({})
@@ -126,6 +121,11 @@ Deno.test("PopularTagsQuerySchema defaults to limit=20", () => {
 Deno.test("PopularTagsQuerySchema rejects limit > 100 (BossConsole#1253)", () => {
   const result = PopularTagsQuerySchema.safeParse({ limit: "999999999" })
   assertEquals(result.success, false)
+})
+
+Deno.test("PopularTagsQuerySchema accepts exactly its cap and nothing past it", () => {
+  assert(PopularTagsQuerySchema.safeParse({ limit: String(POPULAR_TAGS_LIMIT_MAX) }).success)
+  assertEquals(PopularTagsQuerySchema.safeParse({ limit: String(POPULAR_TAGS_LIMIT_MAX + 1) }).success, false)
 })
 
 // (e) PopularTagsResponseSchema is the response body shape; ensure we

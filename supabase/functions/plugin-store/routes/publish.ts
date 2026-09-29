@@ -1,5 +1,4 @@
-import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
-import type { PluginStoreContext } from "../types/context.ts"
+import { createRoute, z } from "@hono/zod-openapi"
 import {
   PublishPluginRequestSchema,
   PublishPluginResponseSchema,
@@ -37,8 +36,9 @@ import {
   registerDefinedPermissions,
   validateDeclaredPermissions,
 } from "../utils/permissions.ts"
+import { newRouter } from "../utils/router.ts"
 
-const publish = new OpenAPIHono<{ Variables: PluginStoreContext }>()
+const publish = newRouter()
 
 // ============================================================================
 // POST /publish - Publish a new plugin

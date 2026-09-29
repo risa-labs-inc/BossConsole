@@ -1,5 +1,6 @@
 package ai.rever.boss.snippets
 
+import ai.rever.boss.mcp.secrets.captureHostLogs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -162,6 +163,21 @@ class SnippetLibraryManagerTest {
         tempFile.writeText("{ this is not valid json")
         SnippetLibraryManager.resetForTesting(tempFile)
         assertTrue(SnippetLibraryManager.snippets.value.isEmpty())
+    }
+
+    @Test
+    fun `a corrupt library is logged without its snippet body`() {
+        val secret = "private-snippet-body-${System.nanoTime()}"
+        tempFile.writeText("{\"snippets\":[{\"id\":\"one\",\"title\":\"T\",\"body\":\"$secret")
+
+        val (_, logged) = captureHostLogs { SnippetLibraryManager.resetForTesting(tempFile) }
+
+        val failure = logged.single { it.message == "Failed to load snippets" }
+        assertNull(failure.error, "the decoder exception includes the snippet file and must not be attached")
+        assertEquals("JsonDecodingException", failure.data?.get("decodeFailure"))
+        for (entry in logged) {
+            assertFalse(secret in "${entry.message} ${entry.data} ${entry.error}", "leaked in: $entry")
+        }
     }
 
     @Test

@@ -81,7 +81,7 @@ fun HomeScreen(modifier: Modifier = Modifier) {
     // The same WorkspaceManager the top bar's workspace button, the app menu and the
     // default-workspace setting read. The home screen used to list SplitTemplatesManager
     // instead, a second hand-maintained copy of the same layouts (now deleted).
-    val workspaces by workspaceManager.workspaces.collectAsState()
+    val workspaces by workspaceManager.visibleWorkspaces.collectAsState()
 
     val windowId = LocalWindowId.current
     val openProject: (Project) -> Unit = { project ->

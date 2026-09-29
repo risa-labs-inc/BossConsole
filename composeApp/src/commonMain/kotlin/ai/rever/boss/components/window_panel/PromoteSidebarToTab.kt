@@ -32,7 +32,12 @@ fun BossDraggableComponent.ProcessPendingPromoteToTab(
                 when (val target = request.target) {
                     // Drag-out onto a panel edge → create a split holding the plugin tab.
                     is TabDropTarget.SplitPanel -> {
-                        splitViewState.splitPanel(target.panelId, target.orientation, tabToMove = tabInfo)
+                        splitViewState.splitPanel(
+                            target.panelId,
+                            target.orientation,
+                            tabToMove = tabInfo,
+                            placeBefore = target.placeBefore,
+                        )
                     }
 
                     // Drag-out onto a panel center → add to that panel's tab bar.

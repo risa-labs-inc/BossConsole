@@ -1,7 +1,11 @@
 package ai.rever.boss
 
+import ai.rever.boss.components.model.TabDraggableComponent
 import ai.rever.boss.components.model.TabDropResult
+import ai.rever.boss.components.overlays.PanelDropHighlight
+import ai.rever.boss.components.overlays.panelDropHighlightFor
 import ai.rever.boss.components.plugin.TabUpdateRegistry
+import ai.rever.boss.components.window_panel.SplitNode
 import ai.rever.boss.components.window_panel.SplitOrientation
 import ai.rever.boss.components.window_panel.SplitViewState
 import ai.rever.boss.plugin.api.TabComponentWithUI
@@ -12,6 +16,8 @@ import ai.rever.boss.plugin.api.TabTypeInfo
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import com.arkivanov.decompose.ComponentContext
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -291,6 +297,43 @@ class TabDropResultHandlingTest {
             main.tabsState.value.tabs
                 .isEmpty(),
         )
+    }
+
+    @Test
+    fun `edge drop preview and pane placement agree for all four sides`() {
+        val edges =
+            listOf(
+                Offset(10f, 200f) to PanelDropHighlight.LEFT,
+                Offset(390f, 200f) to PanelDropHighlight.RIGHT,
+                Offset(200f, 10f) to PanelDropHighlight.TOP,
+                Offset(200f, 390f) to PanelDropHighlight.BOTTOM,
+            )
+        for ((position, highlight) in edges) {
+            val state = newSplitViewState()
+            val tab = DropTestTabInfo(id = "direction-tab")
+            state.getPanel("main")!!.tabsComponent.addTab(tab)
+            val drag = TabDraggableComponent()
+            drag.registerPanelDropZones("main", Rect(0f, 0f, 400f, 400f))
+            drag.startDragging(tab, "main", 0, position)
+            assertEquals(highlight, panelDropHighlightFor(drag.dropTarget, "main"))
+            handleTabDropResult(drag.endDrag()!!, state)
+            val before = highlight == PanelDropHighlight.LEFT || highlight == PanelDropHighlight.TOP
+            when (val root = state.rootNode) {
+                is SplitNode.VerticalSplit -> {
+                    assertTrue(highlight == PanelDropHighlight.LEFT || highlight == PanelDropHighlight.RIGHT)
+                    assertEquals("main", ((if (before) root.right else root.left) as SplitNode.Panel).id)
+                }
+
+                is SplitNode.HorizontalSplit -> {
+                    assertTrue(highlight == PanelDropHighlight.TOP || highlight == PanelDropHighlight.BOTTOM)
+                    assertEquals("main", ((if (before) root.bottom else root.top) as SplitNode.Panel).id)
+                }
+
+                else -> {
+                    error("Expected a split for $highlight")
+                }
+            }
+        }
     }
 
     @Test

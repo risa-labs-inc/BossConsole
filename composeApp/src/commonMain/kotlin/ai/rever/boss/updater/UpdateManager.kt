@@ -449,10 +449,14 @@ class UpdateManager private constructor(
      */
     suspend fun installUpdate(downloadPath: String): Boolean {
         val expected = _updateState.value as? UpdateState.ReadyToInstall ?: return false
-        return artifactMutex.withLock {
-            if (_updateState.value === expected) installStagedUpdate(downloadPath) else false
-        }
+        return if (expected.downloadPath == downloadPath) installUpdate(expected) else false
     }
+
+    /** Bind an approved version to its exact staged artifact, even if a later download reuses the path. */
+    internal suspend fun installUpdate(expected: UpdateState.ReadyToInstall): Boolean =
+        artifactMutex.withLock {
+            if (_updateState.value === expected) installStagedUpdate(expected.downloadPath) else false
+        }
 
     private suspend fun installStagedUpdate(downloadPath: String): Boolean {
         // Claim the staged artifact, or do nothing at all.

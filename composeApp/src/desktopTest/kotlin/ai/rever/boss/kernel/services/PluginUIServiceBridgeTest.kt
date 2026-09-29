@@ -621,8 +621,13 @@ class PluginUIServiceBridgeTest {
     fun `an unknown surface unregisters as a no-op, but only for an authenticated caller`(): Unit =
         runBlocking {
             val unknown = UIUnregistration.newBuilder().setSurfaceId("never-registered").build()
+            assertTrue(pluginAs("plugin-b").registerUI(registration(PANEL, process = "plugin-b")).success)
 
             pluginAs("plugin-b").unregisterUI(unknown)
+
+            // A no-op observed, not only the absence of an exception: nothing appeared, nothing went.
+            assertNull(registry.surfaceOf("never-registered"))
+            assertNotNull(registry.surfaceOf(PANEL), "a real surface is untouched by unregistering an unknown one")
 
             val failure = assertFailsWith<StatusException> { anonymousPlugin().unregisterUI(unknown) }
             assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)

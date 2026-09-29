@@ -6,8 +6,9 @@ import ai.rever.boss.services.importer.browser.isImportableUrl
 /**
  * What [NetscapeBookmarkWriter.write] produced.
  *
- * @property collections collections at least one bookmark was written from, which is what the
- *   status message reports. Every collection is still written as a folder, empty ones included.
+ * @property sourceCollections collections at least one bookmark was written from, which is what
+ *   the status message reports. Every collection is still written as a folder, empty ones
+ *   included, so this can be less than the number of folders in [html].
  * @property bookmarks bookmarks written
  * @property skipped bookmarks left out because they are not web pages. A terminal or editor
  *   tab has no URL a browser could open, and a URL the importer refuses (a `javascript:`
@@ -15,7 +16,7 @@ import ai.rever.boss.services.importer.browser.isImportableUrl
  */
 data class NetscapeBookmarkFile(
     val html: String,
-    val collections: Int,
+    val sourceCollections: Int,
     val bookmarks: Int,
     val skipped: Int,
 )
@@ -72,7 +73,7 @@ object NetscapeBookmarkWriter {
                 }
                 appendLine("</DL><p>")
             }
-        return NetscapeBookmarkFile(html, sources, bookmarks, skipped)
+        return NetscapeBookmarkFile(html, sourceCollections = sources, bookmarks = bookmarks, skipped = skipped)
     }
 
     /** Browsers read ADD_DATE as Unix seconds; BOSS stores milliseconds. */

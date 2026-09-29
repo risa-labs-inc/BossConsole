@@ -5,11 +5,13 @@ import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.extractFileName
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
 import ai.rever.boss.window.Project
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.serialization.SerializationException
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
@@ -270,8 +272,16 @@ object ProjectState {
                     }
                 }
             } catch (e: Exception) {
-                logger.warn(LogCategory.FILE, "Failed to load recent projects", error = e)
+                logRecentProjectsLoadFailure(e)
             }
+        }
+
+    /** Keep decoder-provided project paths out of logs while retaining ordinary I/O diagnostics. */
+    private fun logRecentProjectsLoadFailure(error: Exception) =
+        if (error is SerializationException) {
+            logger.warn(LogCategory.FILE, "Failed to load recent projects", decodeFailure(error))
+        } else {
+            logger.warn(LogCategory.FILE, "Failed to load recent projects", error = error)
         }
 
     private suspend fun saveRecentProjects() = saveImmediately()

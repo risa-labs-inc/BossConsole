@@ -89,6 +89,7 @@ class WorkspaceMcpToolProviderTest {
         WorkspaceMcpToolProvider.splitViewStateResolver = null
         WorkspaceMcpToolProvider.terminalTabOpener = null
         WorkspaceMcpToolProvider.splitViewWaitTimeoutMs = 5000L
+        WorkspaceMcpToolProvider.coldStartWindowWaitTimeoutMs = 30_000L
         registeredManagerIds.forEach { unregisterFromManager(it) }
         registeredManagerIds.clear()
         SplitViewStateRegistry.getAllStates().keys.forEach {
@@ -663,6 +664,48 @@ class WorkspaceMcpToolProviderTest {
         runBlocking {
             val resolved = WorkspaceMcpToolProvider.awaitSplitViewState("window-nonexistent", timeoutMillis = 50L)
             assertTrue(resolved == null, "Should return null if window state never registers within timeout")
+        }
+
+    @Test
+    fun `open_terminal opens in a cold-start window that registers past the short bound`() =
+        runBlocking {
+            // A window this call mints still has to compose and register. Model a slow
+            // register landing well past splitViewWaitTimeoutMs (50ms in setUp) but inside
+            // the cold-start bound - the fixed wait used to give up first and report a
+            // generic failure while the window was moments from ready.
+            val windowId = "mcp-cold-start-window"
+            val state = SplitViewState(stubTabRegistry, windowId)
+            createdSplitViewStates.add(state)
+            WorkspaceMcpToolProvider.windowCreator = { windowId }
+            WorkspaceMcpToolProvider.coldStartWindowWaitTimeoutMs = 2_000L
+            launch {
+                delay(300)
+                SplitViewStateRegistry.register(windowId, state)
+            }
+
+            val result = createTestCore().invoke("open_terminal", "{}")
+
+            assertFalse(result.isError, result.text)
+            val json = Json.parseToJsonElement(result.text).jsonObject
+            assertTrue(json["success"]?.jsonPrimitive?.booleanOrNull == true, result.text)
+            assertEquals(windowId, json["windowId"]?.jsonPrimitive?.content)
+        }
+
+    @Test
+    fun `open_terminal reports an unready cold-start window as a retryable timeout`() =
+        runBlocking {
+            // Nothing ever registers for the minted id: the error must say the wait timed
+            // out and that a retry is worthwhile, not the generic "Failed to open" that
+            // told the agent nothing about what went wrong.
+            WorkspaceMcpToolProvider.windowCreator = { "mcp-never-ready-window" }
+            WorkspaceMcpToolProvider.coldStartWindowWaitTimeoutMs = 150L
+
+            val result = createTestCore().invoke("open_terminal", "{}")
+
+            assertTrue(result.isError, result.text)
+            assertTrue(result.text.contains("Timed out"), result.text)
+            assertTrue(result.text.contains("retry"), result.text)
+            assertFalse(result.text.contains("Failed to open terminal"), result.text)
         }
 
     @Test

@@ -160,6 +160,7 @@ class DesktopPluginPackEffects(
                         sourceUrl = null,
                         runningJarPath = null,
                         hasLiveInstance = false,
+                        firstInstall = true,
                     ),
                 unload = { Result.success(Unit) },
                 load = { path -> window.installPlugin(path, enabled = true).map { it.state == PluginState.LOADED } },

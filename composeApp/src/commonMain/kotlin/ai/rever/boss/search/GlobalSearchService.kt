@@ -335,17 +335,37 @@ object GlobalSearchService {
      * Only [FluckTabInfo.currentUrl] and [EditorTabInfo.filePath] are populated on the result - a
      * tab of neither type (terminal, diff, …) still matches on title alone, with both left null.
      */
-    private fun searchTabs(query: String): List<SearchResult.TabResult> {
-        // The holder is a snapshot - refreshed when the search dialog opens and by the plugin
-        // adapter's ~2s poll - so a tab closed since the last refresh is still listed here, and
-        // returning it offers activation of a tab that no longer exists: a phantom result the
-        // caller acts on and then retries. The registry is live state rather than a snapshot -
-        // a closed window unregisters and a closed tab has no location - so an entry with no
-        // live location must not come back as actionable.
-        val tabs =
-            TopOfMindStateHolder.activeTabs.value.filter { tab ->
-                SplitViewStateRegistry.getState(tab.windowId)?.findTabLocation(tab.tabInfo.id) != null
+    private suspend fun snapshotSearchTabs(): List<SearchResult.TabResult> =
+        withContext(Dispatchers.Main) {
+            // The holder is a snapshot - refreshed when the search dialog opens and by the plugin
+            // adapter's ~2s poll - so a tab closed since the last refresh is still listed here, and
+            // returning it offers activation of a tab that no longer exists: a phantom result the
+            // caller acts on and then retries. The registry is live state rather than a snapshot -
+            // a closed window unregisters and a closed tab has no location - so an entry with no
+            // live location must not come back as actionable.
+            TopOfMindStateHolder.activeTabs.value.mapNotNull { tab ->
+                if (SplitViewStateRegistry.getState(tab.windowId)?.findTabLocation(tab.tabInfo.id) == null) {
+                    null
+                } else {
+                    SearchResult.TabResult(
+                        title = tab.tabInfo.title,
+                        tabId = tab.tabInfo.id,
+                        workspaceName = tab.workspaceName,
+                        windowId = tab.windowId,
+                        panelId = tab.panelId,
+                        tabType = tab.tabInfo.typeId.typeId,
+                        url = (tab.tabInfo as? FluckTabInfo)?.currentUrl?.takeIf { it.isNotBlank() },
+                        filePath = (tab.tabInfo as? EditorTabInfo)?.filePath?.takeIf { it.isNotBlank() },
+                        score = 0,
+                        matchRanges = emptyList(),
+                    )
+                }
             }
+        }
+
+    private suspend fun searchTabs(query: String): List<SearchResult.TabResult> {
+        // Only immutable values cross back to the search dispatcher. Matching stays off Main.
+        val tabs = snapshotSearchTabs()
         if (tabs.isEmpty()) {
             return emptyList()
         }
@@ -354,9 +374,9 @@ object GlobalSearchService {
         val results = mutableListOf<SearchResult.TabResult>()
 
         for (tab in tabs) {
-            val title = tab.tabInfo.title
-            val url = (tab.tabInfo as? FluckTabInfo)?.currentUrl?.takeIf { it.isNotBlank() }
-            val filePath = (tab.tabInfo as? EditorTabInfo)?.filePath?.takeIf { it.isNotBlank() }
+            val title = tab.title
+            val url = tab.url
+            val filePath = tab.filePath
 
             val titleMatch = FuzzyMatcher.match(query, title, title.lowercase())
             val titleScore = titleMatch?.score?.takeIf { it >= MIN_SCORE }
@@ -366,15 +386,7 @@ object GlobalSearchService {
             val bestScore = listOfNotNull(titleScore, urlScore, filePathScore).maxOrNull()
             if (bestScore != null) {
                 results.add(
-                    SearchResult.TabResult(
-                        title = title,
-                        tabId = tab.tabInfo.id,
-                        workspaceName = tab.workspaceName,
-                        windowId = tab.windowId,
-                        panelId = tab.panelId,
-                        tabType = tab.tabInfo.typeId.typeId,
-                        url = url,
-                        filePath = filePath,
+                    tab.copy(
                         score = bestScore + 30, // Bonus for tabs (currently visible)
                         // Only ever highlights the title: a URL/file-path-only hit has nothing in
                         // the title to underline, and TabResultItem never renders these fields' own

@@ -33,9 +33,11 @@ import ai.rever.boss.services.terminal.TerminalAPIAccess
 import ai.rever.boss.settings.MicrokernelModePreference
 import ai.rever.boss.settings.microkernelModeMenuLabel
 import ai.rever.boss.settings.needsMicrokernelModeConfirmation
+import ai.rever.boss.theme.LocalWindowGlass
 import ai.rever.boss.updater.UpdateCoordinator
 import ai.rever.boss.utils.CLIInstaller
 import ai.rever.boss.utils.DisplayUtils
+import ai.rever.boss.utils.SystemUtils
 import ai.rever.boss.utils.WindowFocusManager
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -158,8 +160,12 @@ fun ApplicationScope.BossWindow(
         title = windowState.title,
         state = composeWindowState,
         icon = BossWindowIcon.painter,
+        // Alpha backing is fixed at window creation; AppKit restores the native frame.
+        undecorated = SystemUtils.isMacOS,
+        transparent = SystemUtils.isMacOS,
     ) {
         ApplyBossWindowIcon(window)
+        val windowGlass = rememberNativeWindowGlass(window, isFullScreen)
 
         // Apply programmatic resize requests (BossTerm "Fit host to my screen").
         // Lives inside Window {} so it can read this window's `window` (AWT
@@ -249,10 +255,14 @@ fun ApplicationScope.BossWindow(
         // toArgb(), not value.toInt(): Compose Color.value packs ARGB in the
         // UPPER 32 bits of a ULong, so value.toInt() reads the empty low bits.
         window.background =
-            Color(
-                BossThemeController.current.colors.raised
-                    .toArgb(),
-            )
+            if (SystemUtils.isMacOS) {
+                Color(0, 0, 0, 0)
+            } else {
+                Color(
+                    BossThemeController.current.colors.raised
+                        .toArgb(),
+                )
+            }
 
         // Enable native macOS fullscreen support and extend content into title bar
         // This allows the green traffic light button to enter proper native fullscreen,
@@ -1125,7 +1135,9 @@ fun ApplicationScope.BossWindow(
         // here rather than defaulted on, because secondary windows (Settings) are composed from
         // inside this subtree and must opt back out - see SettingsWindow.
         CompositionLocalProvider(
+            LocalWindowGlass provides windowGlass,
             LocalAwtWindow provides window,
+            LocalWindowFullscreen provides isFullScreen,
             LocalHeavyweightOverlays provides true,
         ) {
             // Create independent component context for this window

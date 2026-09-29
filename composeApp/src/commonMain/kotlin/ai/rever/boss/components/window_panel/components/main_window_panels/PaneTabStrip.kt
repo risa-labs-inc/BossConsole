@@ -58,10 +58,8 @@ private val PINNED_RULE_HEIGHT = 14.dp
  * tab meant going to the sidebar, opening that pane's group, and reading names. This puts the
  * pane's own tabs where the pane is.
  *
- * It is an indicator rather than a tab bar, and the difference is the point: no titles, no close
- * buttons, no reorder indicator of its own, 24dp instead of 36. Names live in the sidebar, which
- * has room for them. That is also why bringing this back does not undo the one-bar change - what
- * read badly was two 200dp columns of titles, not a row of marks.
+ * Tabs are 60dp wide, with centered icons and horizontal scrolling.
+ * Close targets keep their width but appear only on hover.
  *
  * A tab can be DRAGGED out of it, though. It cannot be dropped back into it: the chips register no
  * bounds, so every landing place is still the bar's rows or a pane's own drop zones. See
@@ -134,7 +132,7 @@ internal fun PaneTabStrip(
             Modifier
                 .fillMaxWidth()
                 .height(PANE_STRIP_HEIGHT)
-                .background(BossTheme.colors.panel)
+                .background(paneStripBackground())
                 .contextMenu(items = menuItems),
         contentPadding = PaddingValues(horizontal = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
@@ -163,6 +161,8 @@ internal fun PaneTabStrip(
                 TabFaviconChip(
                     tab = tab,
                     isActive = index == activeIndex,
+                    size = 20.dp,
+                    availableWidth = FAVICON_CHIP_SIZE * 3,
                     onClick = { onSelect(index) },
                     contextMenuItems = tabMenuItems(index, tab),
                     tabDragComponent = tabDragComponent,
@@ -196,12 +196,12 @@ private fun NewTabChip(onClick: () -> Unit) {
     HoverTooltipBox(
         text = "New tab in this pane",
         placement = TooltipPlacement.END,
-        modifier = Modifier.size(FAVICON_CHIP_SIZE),
+        modifier = Modifier.size(20.dp),
     ) {
         Box(
             modifier =
                 Modifier
-                    .size(FAVICON_CHIP_SIZE)
+                    .size(20.dp)
                     .clip(RoundedCornerShape(4.dp))
                     .background(if (hovered) colors.raised else Color.Transparent)
                     .hoverable(interactionSource)
@@ -294,3 +294,7 @@ internal fun paneNewTabAction(
         MenuActionsHandler.triggerNewTab(windowId)
     }
 }
+
+@Composable
+private fun paneStripBackground() =
+    if (ai.rever.boss.theme.LocalWindowGlass.current.installed) BossTheme.colors.ink else BossTheme.colors.panel

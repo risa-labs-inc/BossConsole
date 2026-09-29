@@ -310,10 +310,10 @@ class LastSessionCoordinatorTest {
     }
 
     @Test
-    fun `a window running one Space asks for the set to be deleted`() {
+    fun `a window with no restorable set asks for the stale set to be deleted`() {
         // A stale set would WIN on restore, so "no set" has to mean "remove the one there is"
         // rather than "leave it alone". The null comes from `sessionSetOf`, which refuses to build
-        // a set for fewer than two Spaces.
+        // a set with no active Space.
         val sets = CopyOnWriteArrayList<String>()
         val coordinator =
             LastSessionCoordinator(

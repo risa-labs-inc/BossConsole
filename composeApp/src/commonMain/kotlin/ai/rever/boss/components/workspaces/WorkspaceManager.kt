@@ -4,6 +4,7 @@ import ai.rever.boss.plugin.ui.BossThemeController
 import ai.rever.boss.plugin.ui.BossThemes
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
 import androidx.compose.ui.graphics.Color
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -16,6 +17,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerializationException
 import kotlin.time.Clock
 
 /**
@@ -140,6 +142,12 @@ class WorkspaceManager(
     fun savedCopyOf(workspaceId: String): LayoutWorkspace? = _workspaces.value.firstOrNull { it.id == workspaceId }
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+
+    /** Picker list; recovery records remain available internally even when the slot is hidden. */
+    val visibleWorkspaces: StateFlow<List<LayoutWorkspace>> =
+        combine(workspaces, WorkspaceSettingsManager.currentSettings) { spaces, settings ->
+            visibleSessionSpaces(spaces, settings.enableLastSessionSpace)
+        }.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     /**
      * The file each Space was LOADED from, by id, for the ones whose path predates
@@ -470,28 +478,33 @@ class WorkspaceManager(
     }
 
     /**
-     * Write [record] as the Last Session file, and refresh the list entry for it.
+     * Write [record] as the Last Session file on the calling thread, and return whether it landed.
+     * [noteLastSessionRecordWritten] then refreshes the list entry, on the manager's dispatcher,
+     * unless the caller was cancelled meanwhile: the window is going away then, and the file is
+     * already on disk.
      *
-     * The layout watcher's only write. Deliberately does NOT touch [currentWorkspace]: while the
-     * user is working in a named Space that is the Space they are in, and stamping it "Last
-     * Session" would rename it under them. The caller sets it, from
+     * The layout watcher's record write, blocking so it can sit beside the set's inside
+     * `LastSessionCoordinator.writeInSession`, under the lock the shutdown write takes (see
+     * `writeInSessionRecovery`). Deliberately does NOT
+     * touch [currentWorkspace]: while the user is working in a named Space that is the Space they
+     * are in, and stamping it "Last Session" would rename it under them. The caller sets it, from
      * `LayoutWatcherWrite.current`, which is the live layout under the identity it already has.
+     */
+    fun writeLastSessionRecordBlocking(record: LayoutWorkspace): Boolean {
+        if (fileManager.saveWorkspaceBlocking(record, fileNameFor(record)) != null) return true
+        logger.warn(LogCategory.WORKSPACE, "Last Session record write failed")
+        return false
+    }
+
+    /**
+     * Refresh the list entry for a [record] [writeLastSessionRecordBlocking] has just written.
      *
      * The list entry IS refreshed, because [savedCopyOf] reads that list to answer "what is on
      * disk" and the unsaved flag is derived from the answer - an entry left stale would say the
      * Last Session record needs saving when it had just been written.
      */
-    suspend fun saveLastSessionRecord(record: LayoutWorkspace): Boolean {
-        val fileName = fileNameFor(record)
-        val filePath =
-            withContext(Dispatchers.IO) {
-                fileManager.saveWorkspace(record, fileName)
-            }
-        if (filePath == null) {
-            logger.warn(LogCategory.WORKSPACE, "Last Session record write failed")
-            return false
-        }
-        loadedFileNames[record.id] = fileName
+    fun noteLastSessionRecordWritten(record: LayoutWorkspace) {
+        loadedFileNames[record.id] = fileNameFor(record)
         _workspaces.value =
             _workspaces.value.toMutableList().also { workspaces ->
                 // By ID. By NAME this wrote over whatever row happened to be called "Last
@@ -500,7 +513,6 @@ class WorkspaceManager(
                 val existingIndex = workspaces.indexOfFirst { it.id == record.id }
                 if (existingIndex >= 0) workspaces[existingIndex] = record else workspaces.add(record)
             }
-        return true
     }
 
     /**
@@ -529,7 +541,7 @@ class WorkspaceManager(
         _currentWorkspace.value = lastSession
         _workspaces.value =
             _workspaces.value.toMutableList().also { workspaces ->
-                // By ID, for the reason `saveLastSessionRecord` states.
+                // By ID, for the reason `noteLastSessionRecordWritten` states.
                 val existingIndex = workspaces.indexOfFirst { it.id == lastSession.id }
                 if (existingIndex >= 0) workspaces[existingIndex] = lastSession else workspaces.add(lastSession)
             }
@@ -543,7 +555,10 @@ class WorkspaceManager(
      * The shutdown path's other half, beside [saveLastSessionBlocking], and blocking for the same
      * reason: a coroutine queued on `Dispatchers.Main` while the app is closing may never run.
      * Both are called under `LastSessionCoordinator`'s single claim, so the two files are written
-     * together by one window and cannot disagree about which session they describe.
+     * together by one window and cannot disagree about which session they describe. During the
+     * session the same window keeps both current, with this and [writeLastSessionRecordBlocking]
+     * under `LastSessionCoordinator.writeInSession`, so a hard kill finds a set as fresh as the
+     * record rather than the one the previous clean shutdown left.
      *
      * The delete is not tidiness. Restore reads the set in preference to `Last_Session.json`, so a
      * set left behind by a three-Space session would reopen two Spaces after a session that had
@@ -569,7 +584,7 @@ class WorkspaceManager(
      * The multi-Space session record on disk, or null when there is none or it cannot be read.
      *
      * Null is the ordinary answer, not an error: an installed build upgrading into this has only
-     * `Last_Session.json`, and a single-Space session deliberately writes no set. A file that
+     * `Last_Session.json`. New builds write a set even for a single Space to retain its id. A file that
      * cannot be parsed is also null, so a truncated or hand-broken record falls back to the
      * single-Space restore rather than failing the launch.
      */
@@ -577,6 +592,12 @@ class WorkspaceManager(
         val json = fileManager.loadDocument(LAST_SESSION_SET_FILE) ?: return null
         return try {
             LastSessionSetSerializer.deserialize(json)
+        } catch (e: SerializationException) {
+            // Saved session documents can contain tab URLs, project paths and terminal commands.
+            // kotlinx includes the input document in its decoder message, so keep only location
+            // and exception-type diagnostics.
+            logger.warn(LogCategory.WORKSPACE, "Last Session set could not be read", decodeFailure(e))
+            null
         } catch (e: Exception) {
             logger.warn(LogCategory.WORKSPACE, "Last Session set could not be read", error = e)
             null
@@ -626,6 +647,11 @@ class WorkspaceManager(
             }
 
             workspace
+        } catch (e: SerializationException) {
+            // Import JSON has the same private layout data as an on-disk Space. Do not route the
+            // caller-provided document back into logs through the decoder exception.
+            logger.warn(LogCategory.WORKSPACE, "Failed to import workspace from JSON", decodeFailure(e))
+            null
         } catch (e: Exception) {
             logger.warn(LogCategory.WORKSPACE, "Failed to import workspace from JSON", error = e)
             null

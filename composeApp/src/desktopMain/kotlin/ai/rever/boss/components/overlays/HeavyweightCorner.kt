@@ -4,7 +4,6 @@ import ai.rever.boss.plugin.browser.LocalAwtWindow
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.window.ApplyBossWindowIcon
-import ai.rever.boss.window.BossWindowIcon
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -25,7 +24,6 @@ import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogWindow
-import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.rememberWindowState
@@ -182,16 +180,11 @@ fun HeavyweightCorner(
         return
     }
 
-    Window(
+    OverlayWindow(
         onCloseRequest = {},
         state = state,
-        undecorated = true,
-        transparent = true,
-        alwaysOnTop = true,
         focusable = focusable,
-        resizable = false,
-        icon = BossWindowIcon.painter,
-    ) {
+    ) { window ->
         EnsureOverlayWindowTransparent(window, kind = "corner")
         ApplyBossWindowIcon(window)
         measuringContent()

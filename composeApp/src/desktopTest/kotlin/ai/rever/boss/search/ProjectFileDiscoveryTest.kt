@@ -15,6 +15,33 @@ import kotlin.test.assertTrue
 
 class ProjectFileDiscoveryTest {
     @Test
+    fun `unreadable child does not discard readable siblings and retains a warning`(
+        @TempDir root: File,
+    ) = runBlocking {
+        val child = File(root, "unreadable").apply { mkdir() }.toPath()
+        assumeTrue(Files.getFileStore(child).supportsFileAttributeView("posix"))
+        val permissions = Files.getPosixFilePermissions(child)
+        File(root, "visible.txt").writeText("needle")
+        try {
+            Files.setPosixFilePermissions(child, emptySet())
+            assumeTrue(!Files.isReadable(child), "test user bypasses directory permissions")
+            val discovery = ProjectFileDiscovery.discover(root.absolutePath)
+            assertEquals(null, discovery.incompleteReason)
+            assertEquals(1, discovery.skippedDirectories)
+            assertEquals(listOf("visible.txt"), discovery.files.map { it.relativePath })
+            val indexer = FileIndexer()
+            indexer.indexProject(root.absolutePath)
+            assertEquals(1, indexer.indexedFiles.value.size)
+            assertTrue(indexer.indexError.value?.contains("partial") == true)
+            indexer.indexProject(root.absolutePath)
+            assertTrue(indexer.indexError.value?.contains("partial") == true, "cached index must retain the warning")
+            assertEquals(setOf("visible.txt"), contentSuspend(root))
+        } finally {
+            Files.setPosixFilePermissions(child, permissions)
+        }
+    }
+
+    @Test
     fun `file budget and invalid root report incomplete discovery`(
         @TempDir root: File,
     ) = runBlocking {

@@ -5,6 +5,7 @@ import ai.rever.boss.components.settings.shared.SettingsTheme.AccentColor
 import ai.rever.boss.components.settings.shared.SettingsTheme.BorderColor
 import ai.rever.boss.components.settings.shared.SettingsTheme.TextPrimary
 import ai.rever.boss.components.settings.shared.SettingsTheme.TextSecondary
+import ai.rever.boss.components.settings.shared.SettingsToggle
 import ai.rever.boss.components.workspaces.PredefinedWorkspaces
 import ai.rever.boss.components.workspaces.WorkspaceSettings
 import ai.rever.boss.components.workspaces.WorkspaceSettingsManager
@@ -46,6 +47,19 @@ fun WorkspaceSettings() {
                 selectedId = settings.defaultWorkspaceId,
                 onSelect = { id -> coroutineScope.launch { WorkspaceSettingsManager.setDefaultWorkspaceId(id) } },
             )
+        }
+
+        SettingsSection(title = "Session Restore") {
+            SettingsToggle(
+                label = "Enable Last Session Space",
+                checked = settings.enableLastSessionSpace,
+                onCheckedChange = { enabled ->
+                    coroutineScope.launch {
+                        WorkspaceSettingsManager.updateSettings(settings.copy(enableLastSessionSpace = enabled))
+                    }
+                },
+            )
+            NoteItem("Off by default. Reopen the last active Space; hide the automatic Last Session entry.")
         }
 
         SettingsSection(title = "When Switching Spaces") {

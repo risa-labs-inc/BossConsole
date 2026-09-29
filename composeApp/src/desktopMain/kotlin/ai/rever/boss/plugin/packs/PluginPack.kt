@@ -125,9 +125,15 @@ object PluginPackParser {
         if (id == null || !PACK_ID.matches(id)) {
             problems += "\"pack\" must be a lowercase id of letters, digits, '.', '_' or '-' (at most 64)."
         }
-        val plugins = parsePlugins(root[PLUGINS_KEY], problems)
-        val rules = parseRules(root, problems)
-        if (plugins.isEmpty() && rules.isEmpty()) problems += "The pack names no plugins and no rules."
+        val entryProblems = mutableListOf<String>()
+        val plugins = parsePlugins(root[PLUGINS_KEY], entryProblems)
+        val rules = parseRules(root, entryProblems)
+        // Only when nothing was named. A malformed or refused entry has already been reported, and
+        // "names no plugins" beside "must be a list of strings" would contradict the pack as written.
+        if (plugins.isEmpty() && rules.isEmpty() && entryProblems.isEmpty()) {
+            entryProblems += "The pack names no plugins and no rules."
+        }
+        problems += entryProblems
 
         return if (problems.isEmpty() && id != null) {
             Result.success(PluginPack(id, plugins, rules))

@@ -23,7 +23,7 @@ import javax.imageio.ImageIO
 /**
  * Resolves the icon for a page, from the two sources that can supply one.
  *
- * **The page's own favicon wins; Google is only a fallback.** That order is the whole correctness
+ * **The page's own artwork wins; Google is only a fallback.** That order is the whole correctness
  * of this service, and it used to be the other way round:
  *
  * - `FaviconCache` is keyed on the FULL page URL and holds what the tab itself served. Right by
@@ -43,9 +43,10 @@ import javax.imageio.ImageIO
  * the screen-capture picker. Fixing one file left a Gmail entry showing the generic G in the
  * other two.
  *
- * **What that costs, stated plainly:** the dashboard draws its result at 36dp, so a page whose
- * own favicon is 16px is now softer there than Google's 128px guess about its host was. Right
- * site over sharp icon, the same trade as dropping the 32px floor in [acceptResponse].
+ * A larger icon already in the high-quality disk cache may replace a small page icon only
+ * when its sampled artwork matches. This restores sharp bookmark and title-bar icons without
+ * substituting an unrelated host logo or making a network request for an already-cached page.
+ * If no matching larger representation exists, the original page icon remains the fallback.
  *
  * A page whose icon this resolves from cache no longer tells Google which site it is at all,
  * which on the most-used surfaces is most of the requests this service used to make.
@@ -125,7 +126,7 @@ object HighQualityFaviconService {
             standardCacheKey = standardCacheKey,
             // The two slots cannot be swapped by accident: `pageIcon` is not `suspend` and
             // `hostGuess` is, so the compiler rejects the reversal a test would otherwise pin.
-            pageIcon = ::loadStandardFavicon,
+            pageIcon = { key -> loadStandardFavicon(key)?.let { upgradeCachedFavicon(url, it) } },
             hostGuess = { hostIcon(it) },
         )
 

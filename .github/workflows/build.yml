@@ -50,6 +50,9 @@ jobs:
           export BOSS_TEST_PWSH
           python3 scripts/test/test-publish-plugin.py
 
+      - name: macOS launcher appearance tests
+        run: python3 scripts/test/test-prepare-macos-appearance.py
+
       - name: Headless CLI launcher tests
         run: bash scripts/test/test-headless-cli.sh
 

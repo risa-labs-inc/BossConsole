@@ -1545,6 +1545,7 @@ internal class BrowserHandleImpl(
                             if (isValid) {
                                 navigationMainFrameOrNull(browser) {
                                     connectionDead.set(true)
+                                    BrowserTabOwnership.unbind(id)
                                     ActiveBrowserRegistry.republish()
                                     logger.debug(
                                         LogCategory.BROWSER,
@@ -2701,6 +2702,7 @@ internal class BrowserHandleImpl(
         } catch (e: Exception) {
             if (isTransportFailure(e)) {
                 connectionDead.set(true)
+                BrowserTabOwnership.unbind(id)
                 // isValid has just flipped without a disposal, and nothing unregisters here -
                 // the registration is only dropped later by reconcileOrphanedBrowsers or at
                 // window teardown. ActiveBrowserRegistry recomputes only on register/unregister,
@@ -2781,6 +2783,24 @@ internal class BrowserHandleImpl(
 
     /** Diagnostic snapshot of every worker native disposal drains; never a disposal fence. */
     override val hasPendingBrowserCall: Boolean get() = ownedExecutors.any { it.pending > 0 }
+
+    /**
+     * See [BrowserHandle.awaitBrowserCallsQuiescent]. Polls the same workers, diagnostic only.
+     *
+     * Two properties of the count this waits on, deferred from #601's review because a single
+     * snapshot could absorb them and a wait cannot. A count pinned above zero makes one read
+     * merely wrong; it makes every teardown that gates on this burn its whole deadline.
+     *
+     * - `shutdownNow()` or a discarding rejection policy would strand admitted work that never
+     *   runs its decrement. Neither is on the shipped path - `BrowserNativeDisposal` calls
+     *   `shutdown()`, `DrainingBrowserExecutor.shutdownNow` compensates for what it discards, and
+     *   a rejected dispatch decrements - so this is a hazard to preserve, not a live bug.
+     * - The count also sees transient coroutine resumptions, so it can read busy for a moment with
+     *   no browser call outstanding. Over-reporting is the safe direction for a teardown gate; it
+     *   is the wrong direction for anything driving a busy indicator.
+     */
+    override suspend fun awaitBrowserCallsQuiescent(timeoutMs: Long): Boolean =
+        awaitQuiescent(timeoutMs, QUIESCENT_POLL_MS) { hasPendingBrowserCall }
 
     override fun getCurrentUrl(): String = syncCall("url", "") { browser.url() }
 
@@ -3405,6 +3425,14 @@ internal class BrowserHandleImpl(
                 .removePrefix("www.")
         }.getOrDefault("")
 
+    /** Explicit hand-off from the native address field after committing navigation. */
+    internal fun focusPageAfterAddressCommit() {
+        if (isValid && currentViewState != null) {
+            runCatching { browser.focus() }
+                .onFailure { logger.debug(LogCategory.BROWSER, "Could not focus page after address commit") }
+        }
+    }
+
     /**
      * Brings the window holding this tab back to the front.
      *
@@ -3417,6 +3445,7 @@ internal class BrowserHandleImpl(
      * plugin that never registered a fullscreen handler - this degrades to raising the window,
      * which is what it did before and is still useful.
      */
+
     private fun returnToTab() {
         runCatching { WindowFocusManager.focusWindow(currentWindowId) }
         ownerTabId?.let { tabId ->
@@ -3738,6 +3767,7 @@ internal class BrowserHandleImpl(
         // this browser, and the host cannot work it out for itself - the tab is a dynamic
         // plugin's component type, which host code cannot name.
         ownerTabId = tabId
+        BrowserTabOwnership.bind(tabId, id)
 
         audioSource.bind(tabId)
 
@@ -4508,6 +4538,7 @@ internal class BrowserHandleImpl(
             // for instance) must not skip the unregister - pinning the handle for the session is the
             // leak the BrowserClosed routing above exists to close.
             ActiveBrowserRegistry.unregister(id)
+            BrowserTabOwnership.unbind(id)
             // Do not turn a caller deadline into permission to close a live native call.
             // This also covers direct plugin/window disposal and local teardown failures.
             finishLocalBrowserDisposal(
@@ -4579,6 +4610,15 @@ internal class BrowserHandleImpl(
         // covers. Starts an interval in the past so the first suppression is always logged.
         private val pinchSuppressedLoggedAt = AtomicLong(System.nanoTime() - PINCH_SUPPRESSED_LOG_INTERVAL_NS)
         private val pinchSuppressedSinceLog = AtomicInteger(0)
+
+        /**
+         * How often [awaitBrowserCallsQuiescent] re-reads the workers.
+         *
+         * Short enough that a teardown deferred on it is not noticeably delayed once the work
+         * finishes, long enough that waiting out a full deadline costs a bounded number of reads
+         * of the owned workers' counters rather than a spin.
+         */
+        private const val QUIESCENT_POLL_MS = 25L
 
         /**
          * Popup browsers we are currently waiting to capture an upload body for.

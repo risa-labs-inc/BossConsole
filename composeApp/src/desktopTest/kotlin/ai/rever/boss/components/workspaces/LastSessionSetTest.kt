@@ -57,10 +57,9 @@ class LastSessionSetTest {
     }
 
     @Test
-    fun `one running Space writes no set`() {
-        // Not a gap: `Last_Session.json` already records exactly this, and a second file saying
-        // the same thing is a second thing that can disagree with it.
-        assertNull(sessionSetOf(listOf(space("a")), activeWorkspaceId = "a"))
+    fun `one running Space preserves its original identity`() {
+        // The legacy file loses the selected identity, so even one Space needs the set.
+        assertEquals("a", sessionSetOf(listOf(space("a")), activeWorkspaceId = "a")?.activeWorkspaceId)
         assertNull(sessionSetOf(emptyList(), activeWorkspaceId = null))
     }
 
@@ -75,11 +74,10 @@ class LastSessionSetTest {
 
     @Test
     fun `restorable asks the same question on the way back in`() {
-        // A file with one Space in it - hand-edited, or written by some other version - says
-        // nothing the single-Space record does not.
+        // Single-space sessions carry the original identity just like multi-space sessions.
         assertTrue(isRestorable(LastSessionSet("b", listOf(space("a"), space("b")))))
         assertFalse(isRestorable(null))
-        assertFalse(isRestorable(LastSessionSet("a", listOf(space("a")))))
+        assertTrue(isRestorable(LastSessionSet("a", listOf(space("a")))))
         assertFalse(isRestorable(LastSessionSet("c", listOf(space("a"), space("b")))))
     }
 

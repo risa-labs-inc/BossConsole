@@ -124,6 +124,28 @@ class PluginPackParserTest {
         assertTrue(problemsOf("""{"pack":"p"}""").any { "no plugins and no rules" in it })
     }
 
+    /**
+     * A pack whose only entries are malformed or refused has named plugins; it named them
+     * wrongly. Reporting "names no plugins" beside the real problem contradicts the pack as
+     * written, and sends an author looking for a missing list that is right there.
+     */
+    @Test
+    fun `a malformed entry is reported without a false empty-pack problem`() {
+        val malformed =
+            listOf(
+                """{"pack":"p","plugins":"ai.rever.x"}""",
+                """{"pack":"p","plugins":[1]}""",
+                """{"pack":"p","plugins":["Not A Plugin Id"]}""",
+                packJson(listOf("ai.rever.boss.plugin.api")),
+            )
+        malformed.forEach { raw ->
+            val problems = problemsOf(raw)
+            assertTrue(problems.isNotEmpty(), "$raw should be refused")
+            assertTrue(problems.none { "no plugins and no rules" in it }, "$raw also claimed it was empty: $problems")
+        }
+        assertTrue(problemsOf("""{"pack":"p","plugins":[]}""").any { "no plugins and no rules" in it })
+    }
+
     @Test
     fun `the largest accepted pack is shown in full by the approval dialog`() {
         // As long as the parser allows: 40 plugins and 80 rules with long names, kept just under the

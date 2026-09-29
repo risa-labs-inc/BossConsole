@@ -22,9 +22,27 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class TerminalSendQueueTest {
+    @Test
+    fun `non-positive input queue timeout is rejected`() {
+        listOf(0L, -1L).forEach { timeout ->
+            assertFailsWith<IllegalArgumentException> {
+                TerminalSession(
+                    "fixture",
+                    "/fixture",
+                    listOf("fixture"),
+                    BlockedInputProcess(),
+                    80,
+                    24,
+                    inputQueueTimeoutMillis = timeout,
+                )
+            }
+        }
+    }
+
     @Test
     fun `concurrent writers queue and shed with retry-after instead of spinning`() {
         val process = BlockedInputProcess()

@@ -628,6 +628,13 @@ jobs:
 
           echo "✅ macOS DMG build completed successfully"
 
+      - name: Verify native macOS toolbar appearance metadata
+        run: |
+          python3 scripts/prepare-macos-appearance.py \
+            composeApp/build/compose/binaries/main/app/BOSS.app \
+            --entitlements composeApp/src/desktopMain/resources/BOSS.entitlements \
+            --verify-only
+
       - name: 🔍 Verify Built Version (macOS)
         env:
           EXPECTED_VERSION: ${{ needs.prepare-version.outputs.version }}
@@ -1572,7 +1579,8 @@ jobs:
           set -euo pipefail
           # Phase 1 of microkernel-runtime extraction. Produces
           # boss-ipc-<ipcVersion>.jar, boss-ui-sdk-<ipcVersion>.jar,
-          # plugin-api-ipc-<ipcVersion>.jar, plugin-api-core-<ipcVersion>.jar
+          # plugin-api-ipc-<ipcVersion>.jar, plugin-api-core-<ipcVersion>.jar,
+          # plugin-path-utils-<ipcVersion>.jar
           # under build/upstream-artifacts/. The standalone runtime repo
           # downloads these at build time.
           ./gradlew assembleUpstreamJars --no-daemon

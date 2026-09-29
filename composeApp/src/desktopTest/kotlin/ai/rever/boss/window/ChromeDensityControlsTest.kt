@@ -13,12 +13,14 @@ import kotlin.test.assertTrue
 
 class ChromeDensityControlsTest {
     @Test
-    fun `screen defaults preserve the lean rails and the status bar`() {
-        for (height in listOf(null, 956, 1000, 1440)) {
-            val defaults = defaultWindowAppearanceSettings(isMacOs = true, screenHeightDp = height)
-            assertEquals(false, defaults.showLeftStrip)
-            assertEquals(false, defaults.showRightStrip)
-            assertEquals(true, defaults.showBottomBar)
+    fun `desktop screen defaults hide rails and the bottom bar`() {
+        for (isMacOs in listOf(false, true)) {
+            for (height in listOf(null, 956, 1000, 1440)) {
+                val defaults = defaultWindowAppearanceSettings(isMacOs = isMacOs, screenHeightDp = height)
+                assertEquals(false, defaults.showLeftStrip)
+                assertEquals(false, defaults.showRightStrip)
+                assertEquals(false, defaults.showBottomBar)
+            }
         }
     }
 

@@ -7,6 +7,9 @@ import ai.rever.boss.components.overlays.contextMenu
 import ai.rever.boss.components.window_panel.SplitDirection
 import ai.rever.boss.plugin.ui.BossAlertDialog
 import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.theme.sidebarGlassEnabled
+import ai.rever.boss.theme.sidebarSelectionFill
+import ai.rever.boss.theme.sidebarSelectionText
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -319,6 +322,7 @@ private fun MapPane(
 
     val fill =
         when {
+            group.isActive && sidebarGlassEnabled -> sidebarSelectionFill()
             group.isActive -> colors.signal.copy(alpha = MAP_ACTIVE_ALPHA)
             hovered -> colors.lineStrong.copy(alpha = MAP_HOVER_ALPHA)
             else -> colors.line.copy(alpha = MAP_IDLE_ALPHA)
@@ -354,7 +358,7 @@ private fun MapPane(
         ) {
             Text(
                 text = group.label,
-                color = if (group.isActive) colors.onSignal else colors.textSecondary,
+                color = if (group.isActive) sidebarSelectionText() else colors.textSecondary,
                 fontSize = 9.sp,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
@@ -389,7 +393,7 @@ private fun FullScreenMark(
     // the others, textPrimary rather than the label's textSecondary: rendered, a textSecondary
     // glyph at rest all but vanished into the idle pane's grey, which is the one failure a hint
     // that has to be seen without hovering cannot have.
-    val base = if (onActivePane) colors.onSignal else colors.textPrimary
+    val base = if (onActivePane && !sidebarGlassEnabled) colors.onSignal else colors.textPrimary
     Box(
         modifier =
             modifier

@@ -343,7 +343,7 @@ fun BossTabsComponent.rememberTabMenuState(
             // Bookmark dialog (gracefully handles missing bookmarks plugin)
             if (showBookmarkDialog && tabToBookmark != null) {
                 val dialogCollections = rememberBookmarkCollections()
-                val workspaces by workspaceManager.workspaces.collectAsState()
+                val workspaces by workspaceManager.visibleWorkspaces.collectAsState()
                 BookmarkDialog(
                     tabTitle = tabToBookmark!!.title,
                     collections = dialogCollections,

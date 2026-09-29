@@ -97,6 +97,12 @@ use and short lived.
 1. Apply the migration, which creates `public.fluck_oauth_nonces`, `public.fluck_oauth_claim_nonce`
    and `public.fluck_oauth_store_secret`:
 
+   Also apply `20260925080000_fluck_oauth_nonce_clock_skew.sql` before deploying this function. It
+   permits one minute of database/edge clock skew while retaining replay records for the same extra
+   minute. Invalid RPC input raises `22023` (rendered as an invalid link); only a nonce conflict is
+   reported as replay. The edge still independently enforces the signed state's 15-minute lifetime
+   and expiry, so this database tolerance does not extend a link's validity.
+
    ```sh
    supabase db push --project-ref pcnwqamqdnsadranufjv
    # or, to apply this one file against a linked project:

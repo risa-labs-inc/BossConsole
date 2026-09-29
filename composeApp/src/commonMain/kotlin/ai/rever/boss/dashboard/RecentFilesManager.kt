@@ -5,6 +5,7 @@ import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.extractFileName
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -19,6 +20,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import java.io.File
 
@@ -48,7 +50,7 @@ data class RecentFilesData(
  * Persists to ~/.boss/recent-files.json
  *
  * Thread-safe: all file I/O runs on [Dispatchers.IO], every mutation of the recorded list is
- * serialised by [mutationLock], and the file is replaced atomically. Uses StateFlow for reactive
+ * serialised by [stateLock], and the file is replaced atomically. Uses StateFlow for reactive
  * UI updates.
  *
  * The sibling [RecentBrowserPagesManager] had the same three defects and was fixed first; this
@@ -83,15 +85,23 @@ object RecentFilesManager {
      * CAS loop is not usable here because a mutation has to leave *two* flows consistent and the
      * CAS lambda can be retried; a lock is the form that keeps the recorded list single-writer.
      */
-    private val mutationLock = Mutex()
+    private val stateLock = Any()
+
+    /**
+     * Remembers removals and clears that happen while startup I/O is outside [stateLock].
+     *
+     * The same generic guard protects browser-page loads. Keeping the ordering primitive shared
+     * prevents these sibling managers from fixing the same startup race in subtly different ways.
+     */
+    private val loadGuard = InFlightListLoadGuard<RecentFile>()
 
     /**
      * Serialises the derive of [_recentFiles] from [_allFiles], and is deliberately *not*
-     * [mutationLock].
+     * [stateLock].
      *
      * The derive calls `File.exists()` once per entry - up to 20 - and on an unmounted or
      * disconnected share, the exact case [_allFiles] exists for, each can block for seconds.
-     * Holding [mutationLock] across that queued every `recordFileOpen`, `removeFile` and
+     * Holding [stateLock] across that queued every `recordFileOpen`, `removeFile` and
      * `clearAll` behind one slow mount. The recorded list is read inside this lock, so the
      * derive that finishes last is the one that read the freshest recorded list.
      */
@@ -119,7 +129,7 @@ object RecentFilesManager {
     /**
      * Re-derive the displayed list from the recorded one.
      *
-     * Split out of the recorded write so the `File.exists()` calls happen outside [mutationLock];
+     * Split out of the recorded write so the `File.exists()` calls happen outside [stateLock];
      * see [visibilityLock]. The displayed list therefore lags the recorded one for the length of
      * the derive. That is not new - nothing re-derives between mutations either, so a file
      * deleted outside BOSS already stays visible until the next mutation - the window is just
@@ -134,17 +144,17 @@ object RecentFilesManager {
     }
 
     /**
-     * Apply [transform] to the recorded list under [mutationLock] and schedule a save if the
+     * Apply [transform] to the recorded list under [stateLock] and schedule a save if the
      * list changed.
      *
      * The single entry point for user-driven mutation, so no caller can reintroduce the
      * read-then-write race by writing [_allFiles] directly. The startup merge is the one other
-     * path that holds [mutationLock]: its no-op baseline is the decoded file rather than the
+     * path that holds [stateLock]: its no-op baseline is the decoded file rather than the
      * pre-merge list, so it decides its own save (see [loadAsync]).
      */
-    private suspend fun mutate(transform: (List<RecentFile>) -> List<RecentFile>) {
+    private fun mutate(transform: (List<RecentFile>) -> List<RecentFile>) {
         val changed =
-            mutationLock.withLock {
+            synchronized(stateLock) {
                 val before = _allFiles.value
                 val after = transform(before)
                 if (after == before) {
@@ -159,7 +169,7 @@ object RecentFilesManager {
         if (!changed) return
         // Save first: it only arms a timer, while the derive can block on a slow mount.
         scheduleSave()
-        refreshVisible()
+        scope.launch { refreshVisible() }
     }
 
     /**
@@ -170,10 +180,10 @@ object RecentFilesManager {
     private var initialLoadJob: Job? = null
 
     init {
-        initialLoadJob =
-            scope.launch {
-                loadAsync()
-            }
+        val ticket = loadGuard.begin()
+        val job = scope.launch { loadAsync(ticket) }
+        job.invokeOnCompletion { loadGuard.end(ticket) }
+        initialLoadJob = job
     }
 
     /**
@@ -185,19 +195,21 @@ object RecentFilesManager {
      * ordinary launch "changed" and rewrite recent-files.json with its own contents on every
      * start.
      *
-     * Known limitation: the read and decode run before [mutationLock] is taken, so a
-     * `removeFile` or `clearAll` landing inside that window (milliseconds, at launch) is
-     * applied first, and the merge then reapplies the stale decoded contents until the next
-     * real mutation. Re-reading the file under the lock would close the window, but a slow
-     * disk would then hold the mutation lock for the whole read, which is the worse trade.
+     * A [loadGuard] ticket is registered before I/O starts. Any removal or clear that lands while
+     * the file is being read is copied to that ticket, then applied to the decoded snapshot before
+     * it is published. This preserves the user's dismissal without holding [stateLock] across a
+     * slow disk read.
      */
-    internal suspend fun loadAsync(): Boolean =
+    internal suspend fun loadAsync(
+        ticket: InFlightListLoadGuard.Ticket<RecentFile> = loadGuard.begin(),
+        read: suspend (File) -> String = { it.readText() },
+    ): Boolean =
         withContext(Dispatchers.IO) {
             var persist = false
             try {
                 if (!settingsFile.exists()) return@withContext false
 
-                val content = settingsFile.readText()
+                val content = read(settingsFile)
                 val data = json.decodeFromString<RecentFilesData>(content)
 
                 // Merged, not assigned: the load is launched from `init` and races the first
@@ -210,11 +222,13 @@ object RecentFilesManager {
                 // but stays in the recorded list, so an unmounted volume coming back brings its
                 // entries with it. See _allFiles.
                 val (recordedChanged, saveDue) =
-                    mutationLock.withLock {
-                        val after = mergeRecorded(loaded = data.files, recorded = _allFiles.value, max = MAX_FILES)
-                        val changed = after != _allFiles.value
-                        if (changed) _allFiles.value = after
-                        changed to (after != data.files)
+                    loadGuard.publish(ticket, data.files) { surviving ->
+                        synchronized(stateLock) {
+                            val after = mergeRecorded(loaded = surviving, recorded = _allFiles.value, max = MAX_FILES)
+                            val changed = after != _allFiles.value
+                            if (changed) _allFiles.value = after
+                            changed to (after != data.files)
+                        }
                     }
                 persist = saveDue
                 if (persist) scheduleSave()
@@ -226,8 +240,13 @@ object RecentFilesManager {
                     "Loaded recent files",
                     mapOf("count" to present.size, "hidden" to (_allFiles.value.size - present.size)),
                 )
+            } catch (e: SerializationException) {
+                // Recorded paths routinely carry user and project names; log where it failed only.
+                recentFilesLogger.warn(LogCategory.FILE, "Error loading recent files", decodeFailure(e))
             } catch (e: Exception) {
                 recentFilesLogger.warn(LogCategory.FILE, "Error loading recent files", error = e)
+            } finally {
+                loadGuard.end(ticket)
             }
             persist
         }
@@ -258,7 +277,7 @@ object RecentFilesManager {
                 saveJob.also { saveJob = null }
             }
         pendingSave?.cancelAndJoin()
-        mutationLock.withLock {
+        synchronized(stateLock) {
             settingsFile = testFile
             _allFiles.value = emptyList()
         }
@@ -268,7 +287,7 @@ object RecentFilesManager {
         if (!reload) return
         loadAsync()
         if (recorded != null) {
-            mutationLock.withLock { _allFiles.value = recorded }
+            synchronized(stateLock) { _allFiles.value = recorded }
             refreshVisible()
         }
     }
@@ -353,21 +372,19 @@ object RecentFilesManager {
         filePath: String,
         projectPath: String? = null,
     ) {
-        scope.launch {
-            val newFile =
-                RecentFile(
-                    path = filePath,
-                    name = filePath.extractFileName(),
-                    lastOpened = System.currentTimeMillis(),
-                    projectPath = projectPath,
-                )
+        val newFile =
+            RecentFile(
+                path = filePath,
+                name = filePath.extractFileName(),
+                lastOpened = System.currentTimeMillis(),
+                projectPath = projectPath,
+            )
 
-            // Remove existing entry for this path and add to front, over the recorded list rather
-            // than the displayed one, so opening a file does not drop entries that are merely on
-            // an absent volume.
-            mutate { current ->
-                (listOf(newFile) + current.filterNot { it.path == filePath }).take(MAX_FILES)
-            }
+        // Remove existing entry for this path and add to front, over the recorded list rather
+        // than the displayed one, so opening a file does not drop entries that are merely on
+        // an absent volume.
+        mutate { current ->
+            (listOf(newFile) + current.filterNot { it.path == filePath }).take(MAX_FILES)
         }
     }
 
@@ -375,7 +392,7 @@ object RecentFilesManager {
      * Remove a specific file from recent history.
      */
     fun removeFile(filePath: String) {
-        scope.launch {
+        loadGuard.remove({ it.path == filePath }) {
             mutate { current -> current.filterNot { it.path == filePath } }
         }
     }
@@ -384,7 +401,7 @@ object RecentFilesManager {
      * Clear all recent files.
      */
     fun clearAll() {
-        scope.launch {
+        loadGuard.clear {
             mutate { emptyList() }
         }
     }

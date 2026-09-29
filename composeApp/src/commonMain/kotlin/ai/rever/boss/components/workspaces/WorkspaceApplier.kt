@@ -454,7 +454,8 @@ private fun refuseUnbuildableWorkspace(
     )
     StatusMessageManager.showMessage(
         "Could not open \"${workspace.name}\" - some of its tabs cannot be restored. " +
-            "The plugin that provides them may have been removed.",
+            "Enable or reinstall the plugins for these tab types: " +
+            workspace.layout.declaredTabTypes().joinToString() + ". The current layout was kept.",
         durationMs = 6_000,
     )
 }
@@ -463,7 +464,8 @@ private fun refuseUnbuildableWorkspace(
  * The distinct tab-type strings a layout declares, wherever they sit in the tree.
  *
  * A layout with none is empty by design - `applyWorkspace` may clear to it - while one that
- * declares tabs but cannot build any is a failure that must leave the live tree alone.
+ * declares tabs that cannot all build is a failure that must leave the live tree alone.
+ * Partial restore must be an explicit recovery action, not silently drop saved work.
  */
 private fun SplitConfig.declaredTabTypes(): Set<String> =
     when (this) {

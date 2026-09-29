@@ -32,6 +32,22 @@ import kotlin.test.assertEquals
  * normalization, which rewrites it only on Windows, cannot perturb the expectations.
  */
 class PlaceholderPostSubstitutionInvariantTest {
+    @Test
+    fun `PowerShell scanner shares the path quoter's typographic delimiters`() {
+        for (opening in ShellPathQuoting.POWERSHELL_SINGLE_QUOTES) {
+            for (closing in ShellPathQuoting.POWERSHELL_SINGLE_QUOTES) {
+                val text = "echo ${opening}prefix {projectPath}$closing"
+                val regions = ShellQuoteRegions.scan(text, '`')
+                assertEquals('\'', regions.quoteBefore(text.indexOf("{projectPath}")))
+                assertEquals(true, regions.balanced)
+            }
+        }
+        val doubled = ShellQuoteRegions.scan("echo \u2018a\u2019'b\u2019", '`')
+        assertEquals('\'', doubled.quoteBefore(9))
+        assertEquals(true, doubled.balanced)
+        assertEquals(null, ShellQuoteRegions.scan("echo \u2018path\u2019", '\\').quoteBefore(6))
+    }
+
     /** A directory nobody has: no git remote, no Claude session, deterministic values. */
     private val noRepo = "/tmp/placeholder-invariant-no-such-repository"
 

@@ -14,6 +14,7 @@ import ai.rever.boss.filetypes.DefaultAppsOfferHost
 import ai.rever.boss.focusmode.FocusModeSettingsManager
 import ai.rever.boss.layout.ChromeDimens
 import ai.rever.boss.layout.LocalChromeDimens
+import ai.rever.boss.theme.GlassAppSurfaces
 import ai.rever.boss.window.WindowAppearanceSettingsManager
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -77,14 +78,16 @@ fun ComponentContext.BossApp(
             remember(windowAppearanceSettings.density) { ChromeDimens.of(windowAppearanceSettings.density) }
         CompositionLocalProvider(LocalChromeDimens provides chromeDimens) {
             BossAppCompositionLocals(state) {
-                BossAppScaffold(
-                    state = state,
-                    reveal = reveal,
-                    focusModeSettings = focusModeSettings,
-                    revealOffsetDp = with(LocalDensity.current) { focusModeSettings.revealOffsetPx.toDp() },
-                    appearance = windowAppearanceSettings,
-                    onToggleMaximize = onToggleMaximize,
-                )
+                GlassAppSurfaces {
+                    BossAppScaffold(
+                        state = state,
+                        reveal = reveal,
+                        focusModeSettings = focusModeSettings,
+                        revealOffsetDp = with(LocalDensity.current) { focusModeSettings.revealOffsetPx.toDp() },
+                        appearance = windowAppearanceSettings,
+                        onToggleMaximize = onToggleMaximize,
+                    )
+                }
 
                 BossAppDialogs(state)
 

@@ -4,6 +4,7 @@ import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -270,7 +271,7 @@ object SelfHealingSettingsManager {
             _currentSettings.value =
                 json.decodeFromString(SelfHealingSettingsData.serializer(), settingsFile.readText())
         } catch (e: SerializationException) {
-            logger.warn(LogCategory.SYSTEM, "Unreadable self-healing settings - using defaults", error = e)
+            logger.warn(LogCategory.SYSTEM, "Unreadable self-healing settings - using defaults", decodeFailure(e))
         } catch (e: IOException) {
             logger.warn(LogCategory.SYSTEM, "Could not load self-healing settings - using defaults", error = e)
         }

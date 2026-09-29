@@ -19,6 +19,8 @@ import ai.rever.boss.topofmind.TopOfMindStateHolder
 import androidx.compose.runtime.Composable
 import com.arkivanov.decompose.ComponentContext
 import kotlinx.coroutines.runBlocking
+import java.util.concurrent.atomic.AtomicBoolean
+import javax.swing.SwingUtilities
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -39,6 +41,23 @@ import kotlin.test.assertTrue
  * is precisely the phantom that validation removes.
  */
 class GlobalSearchTabsTest {
+    @Test
+    fun `live tab metadata is read on the UI thread`() {
+        val assertThread = AtomicBoolean(false)
+        val original = editorTab(id = "thread-test", title = "ThreadCheck.kt", filePath = "/ThreadCheck.kt")
+        val checkedInfo =
+            object : TabInfo by original.tabInfo {
+                override val title: String
+                    get() {
+                        if (assertThread.get()) assertTrue(SwingUtilities.isEventDispatchThread())
+                        return original.tabInfo.title
+                    }
+            }
+        openTabs(listOf(original.copy(tabInfo = checkedInfo)))
+        assertThread.set(true)
+        assertEquals(1, searchFor("ThreadCheck").size)
+    }
+
     private class StubComponent(
         ctx: ComponentContext,
         override val config: TabInfo,

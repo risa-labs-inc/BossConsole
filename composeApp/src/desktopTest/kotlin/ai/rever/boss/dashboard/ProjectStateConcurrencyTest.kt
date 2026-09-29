@@ -1,6 +1,7 @@
 package ai.rever.boss.dashboard
 
 import ai.rever.boss.components.plugin.panels.left_top.ProjectState
+import ai.rever.boss.mcp.secrets.captureHostLogs
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.plugin.window.Project
 import kotlinx.coroutines.CompletableDeferred
@@ -14,6 +15,8 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -132,4 +135,22 @@ class ProjectStateConcurrencyTest {
                 "An entry touched by both remove and update in the race must not be duplicated",
             )
         }
+
+    @Test
+    fun `a corrupt recent-projects file is logged without its local paths`() {
+        val secret = "private-project-path-${System.nanoTime()}"
+        tempFile.writeText("[{\"name\":\"project\",\"path\":\"C:/Users/$secret/work")
+
+        val (_, logged) =
+            captureHostLogs {
+                runBlocking { ProjectState.resetForTesting(tempFile) }
+            }
+
+        val failure = logged.single { it.message == "Failed to load recent projects" }
+        assertNull(failure.error, "the decoder exception includes recent project paths and must not be attached")
+        assertEquals("JsonDecodingException", failure.data?.get("decodeFailure"))
+        for (entry in logged) {
+            assertFalse(secret in "${entry.message} ${entry.data} ${entry.error}", "leaked in: $entry")
+        }
+    }
 }

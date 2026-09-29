@@ -1,5 +1,6 @@
 package ai.rever.boss.run
 
+import ai.rever.boss.mcp.secrets.captureHostLogs
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -13,6 +14,8 @@ import java.nio.file.Files
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class RunConfigurationPersistenceTest {
@@ -119,6 +122,27 @@ class RunConfigurationPersistenceTest {
                 }
             }
         } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun `a corrupt run settings file is logged without its command`() {
+        val file = Files.createTempFile("run-config-private-", ".json").toFile()
+        val secret = "private-command-${System.nanoTime()}"
+        try {
+            file.writeText("{\"configurations\":[{\"id\":\"one\",\"command\":\"$secret")
+
+            val (_, logged) = captureHostLogs { RunConfigurationManager.resetForTesting(file) }
+
+            val failure = logged.single { it.message == "Failed to load run settings" }
+            assertNull(failure.error, "the decoder exception includes command lines and must not be attached")
+            assertEquals("JsonDecodingException", failure.data?.get("decodeFailure"))
+            for (entry in logged) {
+                assertFalse(secret in "${entry.message} ${entry.data} ${entry.error}", "leaked in: $entry")
+            }
+        } finally {
+            RunConfigurationManager.resetForTesting()
             file.delete()
         }
     }

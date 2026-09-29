@@ -39,9 +39,9 @@ enum class McpApprovalDisposition {
     QUEUE_FULL,
 
     /**
-     * The call was refused before authorization because the argument text was not a JSON
-     * object matching the tool's inputSchema - the handler never ran, so there was never
-     * anything for an operator to approve.
+     * The call was refused before authorization because its arguments were malformed or
+     * failed the tool's declared inputSchema - the handler never ran and no approval was
+     * requested.
      */
     INVALID_ARGUMENTS,
 
@@ -171,6 +171,10 @@ object McpMutatingToolCatalog {
      */
     val KNOWN_MUTATING_TOOLS: Set<String> =
         setOf(
+            // Application updater
+            "app_update_check",
+            "app_update_download",
+            "app_update_install",
             // Kubernetes
             "k8s_delete",
             "k8s_exec",
@@ -192,6 +196,9 @@ object McpMutatingToolCatalog {
             "helm_uninstall",
             // Secrets
             "secret_get",
+            // Sensitive reads use the approval-requiring default too: download URLs can
+            // contain bearer tokens. A read-only declaration must not bypass that default.
+            "downloads_history_list",
             // File & OS Execution
             "codebase_write",
             "run_command",

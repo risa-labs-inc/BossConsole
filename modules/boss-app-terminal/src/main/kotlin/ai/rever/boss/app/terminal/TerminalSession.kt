@@ -4,7 +4,6 @@ import ai.rever.boss.ipc.auth.IpcCall
 import ai.rever.boss.ipc.auth.IpcEnvironment
 import ai.rever.boss.ipc.proto.services.CreateSessionRequest
 import ai.rever.boss.ipc.proto.services.TerminalOutputChunk
-import com.google.protobuf.Any
 import com.google.protobuf.ByteString
 import com.google.protobuf.Duration
 import com.google.rpc.RetryInfo
@@ -20,6 +19,7 @@ import java.io.IOException
 import java.io.OutputStream
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import com.google.protobuf.Any as ProtoAny
 
 @Suppress("LongParameterList") // Owner identity stays immutable alongside the process and terminal dimensions.
 internal class TerminalSession(
@@ -33,6 +33,10 @@ internal class TerminalSession(
     private val inputWriteTimeoutMillis: Long = 5_000,
     private val inputQueueTimeoutMillis: Long = INPUT_QUEUE_TIMEOUT_MILLIS,
 ) {
+    init {
+        require(inputQueueTimeoutMillis > 0) { "inputQueueTimeoutMillis must be positive" }
+    }
+
     val createdAt = System.currentTimeMillis()
     val output = TerminalOutputBuffer()
 
@@ -110,7 +114,7 @@ internal class TerminalSession(
         // Queue on the mutex up to the bound. Failing instantly turns every concurrent
         // caller into a retrying spin exactly when the pipe is busiest; callers that
         // outwait the bound are shed with a retry-after instead.
-        val ticket = kotlin.Any()
+        val ticket = Any()
         if (!acquireInputLock(ticket)) {
             throw inputBusy(inputQueueTimeoutMillis)
         }
@@ -123,7 +127,7 @@ internal class TerminalSession(
         }
     }
 
-    private suspend fun acquireInputLock(ticket: kotlin.Any): Boolean {
+    private suspend fun acquireInputLock(ticket: Any): Boolean {
         val acquired =
             withTimeoutOrNull(inputQueueTimeoutMillis) {
                 inputMutex.lock(ticket)
@@ -219,7 +223,7 @@ internal class TerminalSession(
      * failed write already closed the pipe, finds nothing left to close rather than throwing.
      */
     suspend fun closeStdin() {
-        val ticket = kotlin.Any()
+        val ticket = Any()
         if (!acquireInputLock(ticket)) {
             throw inputBusy(inputQueueTimeoutMillis)
         }
@@ -330,7 +334,7 @@ private fun inputBusy(retryAfterMillis: Long): StatusRuntimeException =
             .setCode(Status.Code.RESOURCE_EXHAUSTED.value())
             .setMessage("Terminal input is busy")
             .addDetails(
-                Any.pack(
+                ProtoAny.pack(
                     RetryInfo
                         .newBuilder()
                         .setRetryDelay(

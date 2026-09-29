@@ -57,6 +57,9 @@ private const val HEALTH_REFRESH_INTERVAL_MS = 5_000L
 /** [HealthSourceWarnings] key for the report as a whole, apart from the per-area and per-window keys. */
 private const val REPORT_WARNING_KEY = "report"
 
+/** This item's [BottomBarHolds] key while its dialog is open. */
+private const val HEALTH_DIALOG_HOLD_KEY = "workspace-health-dialog"
+
 private val logger = BossLogger.forComponent("WorkspaceHealth")
 
 /**
@@ -92,14 +95,22 @@ internal fun WorkspaceHealthStatusItem(
         WorkspaceHealthBadge(report = current, onClick = { showDialog = true })
     }
     if (showDialog) {
+        // The dialog lives inside this item, so it must keep the bar composed while it is open: in
+        // focus mode the bar auto-hides once the pointer moves onto the dialog, taking it along.
+        HoldBottomBar(HEALTH_DIALOG_HOLD_KEY)
         WorkspaceHealthDialog(
             report = current,
-            onFix = { fix ->
-                // Closed first: both fixes open another dialog, and two stacked modals is the kind
-                // of pile-up BossConsole#696 was about.
-                showDialog = false
-                windowId?.let { openHealthFix(fix, it) }
-            },
+            // No window id, no screen to send a fix to: the button would close the dialog and open
+            // nothing, so it is left out and the finding's remedy text says what to do instead.
+            onFix =
+                windowId?.let { id ->
+                    { fix: HealthFix ->
+                        // Closed first: both fixes open another dialog, and two stacked modals is
+                        // the kind of pile-up BossConsole#696 was about.
+                        showDialog = false
+                        openHealthFix(fix, id)
+                    }
+                },
             onDismiss = { showDialog = false },
         )
     }

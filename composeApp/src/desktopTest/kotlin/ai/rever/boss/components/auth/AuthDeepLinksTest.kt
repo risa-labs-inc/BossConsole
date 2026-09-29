@@ -300,6 +300,8 @@ class AuthDeepLinksTest {
         // still names it, which is the point of the check being case-insensitive.
         assertTrue(AuthDeepLinks.isAuthShaped("boss://AUTH/verify?token=t"))
         assertFalse(AuthDeepLinks.isAuthShaped("boss://file/open?path=/tmp/auth/verify&token=x"))
+        assertFalse(AuthDeepLinks.isAuthShaped("boss://file/open/tmp/auth/verify"))
+        assertFalse(AuthDeepLinks.isAuthShaped("boss://workspace/passkey/authenticated"))
         assertFalse(AuthDeepLinks.isAuthShaped("boss://url?target=passkey/authenticated?sessionId=$sessionId"))
         assertFalse(AuthDeepLinks.isAuthShaped("https://auth/verify?token=t"))
     }

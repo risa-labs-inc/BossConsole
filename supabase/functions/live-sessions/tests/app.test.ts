@@ -495,3 +495,38 @@ Deno.test("oversized bodies are refused by Content-Length before being read", wi
   })
   assertEquals(res.status, 400)
 }))
+
+
+Deno.test("optional terminal preferences use the caller JWT and old backend absence stays compatible", withEnv(async () => {
+  const jwt = fakeJwt("owner@example.com")
+  let unavailable = false
+  let malformed = false
+  const stub = stubFetch(({ url, init }) => {
+    if (url.includes("/rpc/get_user_terminal_preferences")) {
+      assertEquals(new Headers(init?.headers).get("Authorization"), `Bearer ${jwt}`)
+      assertEquals(init?.body, "{}")
+      return unavailable ? json({ error: "missing" }, 404) : json({ unfocused_mode: "preview", unfocused_fps: malformed ? 31 : 7, revision: 2 })
+    }
+    return json([ROW])
+  })
+  try {
+    const request = () => app.request(`${BASE}/api/sessions?terminal_preferences=1`, {headers: {Authorization: `Bearer ${jwt}`}})
+    const response = await request()
+    assertEquals(response.status, 200)
+    const current = await response.json()
+    assertEquals(current.terminal_preferences_owner, "u1")
+    assertEquals(current.terminal_preferences, {unfocused_mode: "preview", unfocused_fps: 7, revision: 2})
+    malformed = true
+    assertEquals((await (await request()).json()).terminal_preferences, undefined)
+    unavailable = true
+    const old = await request()
+    assertEquals(old.status, 200)
+    const value = await old.json()
+    assertEquals(value.sessions, [ROW])
+    assertEquals(value.terminal_preferences, undefined)
+    const beforeLegacy = stub.calls.length
+    const legacy = await app.request(`${BASE}/api/sessions`, {headers: {Authorization: `Bearer ${jwt}`}})
+    assertEquals(await legacy.json(), {sessions: [ROW], email: "owner@example.com"})
+    assertEquals(stub.calls.length - beforeLegacy, 1) // Existing consumers incur no extra RPC.
+  } finally { stub.restore() }
+}))

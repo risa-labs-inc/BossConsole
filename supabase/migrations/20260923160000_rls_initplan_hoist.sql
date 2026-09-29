@@ -15,6 +15,12 @@
 -- would have to restate all of them, and getting one TO clause wrong silently
 -- widens access.
 --
+-- The figures in this header are for this file alone. 20260923161000 applies
+-- the same rewrite to the four terminal_sessions policies, which reached dev
+-- after this was written, so across both files the advisor reports 72
+-- policies, and 84 policies across 30 tables are rewritten, hoisting 91 of the
+-- 136 call sites in the schema's policies.
+--
 -- THE RULE, and it is the whole safety argument: a call may be hoisted only if
 -- its result is constant for the entire statement. That takes two things.
 -- The function must be STABLE or IMMUTABLE: a VOLATILE one may answer

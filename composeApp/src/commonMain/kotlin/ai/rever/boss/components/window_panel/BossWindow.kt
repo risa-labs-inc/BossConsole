@@ -32,6 +32,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.flow.Flow
 import kotlin.math.roundToInt
 
 @Composable
@@ -54,6 +55,10 @@ fun BossDraggableComponent.BossWindow(
     onDrawerVisibleChange: (Boolean) -> Unit = {},
     /** See `SplitViewPanel.onBarRailedChange`. */
     onBarRailedChange: (Boolean) -> Unit = {},
+    /** A header toggle replaces the collapsed rail when supplied. Scoped to this window. */
+    sidebarToggleRequests: Flow<Unit>? = null,
+    onSidebarLeadingChange: (Float) -> Unit = {},
+    sidebarExtendsIntoTitleBar: Boolean = true,
     /**
      * Clearance at the top of an open LEFT plugin panel, for the macOS traffic lights.
      *
@@ -187,6 +192,9 @@ fun BossDraggableComponent.BossWindow(
                         verticalBarTopInset = verticalBarTopInset,
                         onDrawerVisibleChange = onDrawerVisibleChange,
                         onBarRailedChange = onBarRailedChange,
+                        sidebarToggleRequests = sidebarToggleRequests,
+                        onSidebarLeadingChange = onSidebarLeadingChange,
+                        sidebarExtendsIntoTitleBar = sidebarExtendsIntoTitleBar,
                     )
                     DragTargetHighlight()
                 }

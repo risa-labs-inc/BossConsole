@@ -1,5 +1,6 @@
 package ai.rever.boss.search
 
+import ai.rever.boss.components.bars.horizontal.StatusMessageManager
 import ai.rever.boss.plugin.api.FileMatch
 import ai.rever.boss.plugin.api.FileReplaceResult
 import ai.rever.boss.plugin.api.ProjectSearchProvider
@@ -131,6 +132,7 @@ class ContentSearchService(
             if (discovery.incompleteReason != null) {
                 throw ProjectDiscoveryIncompleteException(discovery.incompleteReason)
             }
+            discovery.warning?.let { StatusMessageManager.showMessage(it) }
             for (projectFile in discovery.files) {
                 ensureActive()
                 if (results.size >= maxResults) break

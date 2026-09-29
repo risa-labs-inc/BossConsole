@@ -31,7 +31,9 @@ data class EngineDownloadCandidate(
 data class EngineVersionListing(
     val versions: List<String>,
     val failedSources: List<String> = emptyList(),
-)
+) {
+    internal val cacheable: Boolean get() = versions.isNotEmpty() && failedSources.isEmpty()
+}
 
 /**
  * Resolves where BOSS-branded Chromium engine archives can be downloaded from.
@@ -128,8 +130,12 @@ class ChromiumReleaseResolver(
      */
     suspend fun availableVersions(archiveName: String): EngineVersionListing {
         val versions = linkedSetOf<String>()
+        var missingChecksums = false
         try {
             supabaseSource.listReleases().forEach { release ->
+                if (release.assets.any { it.name == archiveName && it.sha256.isNullOrBlank() }) {
+                    missingChecksums = true
+                }
                 if (release.assets.any { it.name == archiveName && !it.sha256.isNullOrBlank() }) {
                     versions += release.tag_name.removePrefix("v")
                 }
@@ -144,6 +150,7 @@ class ChromiumReleaseResolver(
 
         return EngineVersionListing(
             versions = versions.sortedWith(compareByDescending(versionComparator(), ::versionKey)),
+            failedSources = if (missingChecksums) listOf("catalog archive checksums") else emptyList(),
         )
     }
 
@@ -247,8 +254,8 @@ object ChromiumReleaseSource {
         }
         val archiveName = "boss-chromium-${ChromiumAutoDownloader.detectPlatform()}.zip"
         val listing = resolver.availableVersions(archiveName)
-        // Don't cache partial results: a retry should get another chance at the failed source.
-        if (listing.failedSources.isEmpty()) {
+        // Do not pin empty or partially published catalogs while release hashes are arriving.
+        if (listing.cacheable) {
             cachedVersions = System.currentTimeMillis() to listing
         }
         return listing

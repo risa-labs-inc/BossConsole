@@ -58,7 +58,7 @@ internal suspend fun restoreLastSessionSet(
     // Names come from the Space list, not from the set. See `withKnownNames`: an adopted Space's
     // name is derived at load, so a set written before that derivation changed would otherwise
     // show the old name for ever - and so would a Space the user has since renamed.
-    val order = withKnownNames(restoreOrder(set), knownSpaces)
+    val order = withKnownNames(restoreOrder(set), knownSpaces).map(::prepareSessionSpace)
     val applied = mutableListOf<LayoutWorkspace>()
 
     order.forEach { space ->

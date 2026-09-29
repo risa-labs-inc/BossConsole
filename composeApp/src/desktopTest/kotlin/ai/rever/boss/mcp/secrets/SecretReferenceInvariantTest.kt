@@ -344,7 +344,7 @@ class SecretReferenceInvariantTest {
         }
 
     @Test
-    fun `INV2 - malformed JSON and non-object payloads are refused before execution`() =
+    fun `INV2 - malformed JSON and non-object arguments are rejected before secret processing`() =
         runBlocking {
             val h = Harness(CountingVault(listOf(record)))
             var called = false
@@ -355,10 +355,11 @@ class SecretReferenceInvariantTest {
                 },
             )
             val op = with(h) { operator() }
-            // The registry now requires object-shaped JSON even without a secret marker.
+            // A lowercase \u followed by non-hex makes the parse genuinely fail, so these calls
+            // must fail the argument-shape gate even without a secret marker.
             val result = h.core.invoke("write", """{"path":"C:\users\me\notes.txt"}""")
             val listResult = h.core.invoke("write", """["C:\users\me"]""")
-            // A payload that parses but is not an object is refused too.
+            // Valid JSON of the wrong shape is also refused without resolving secrets.
             val arrayResult = h.core.invoke("write", """["\u0041"]""")
             op.cancel()
             assertTrue(result.isError)
@@ -366,9 +367,8 @@ class SecretReferenceInvariantTest {
             assertTrue(arrayResult.isError)
             assertFalse(called)
             assertTrue(
-                h.ledger.recentOperations.value.all {
-                    it.approvalDisposition == McpApprovalDisposition.INVALID_ARGUMENTS
-                },
+                h.ledger.recentOperations.value
+                    .all { it.approvalDisposition == McpApprovalDisposition.INVALID_ARGUMENTS },
             )
         }
 
@@ -509,7 +509,7 @@ class SecretReferenceInvariantTest {
             )
             val deep = """{"a":"\u0041","b":""" + "[".repeat(8_000) + "]".repeat(8_000) + "}"
             val result = h.core.invoke("write", deep)
-            assertTrue(result.isError)
+            assertTrue(result.isError, result.text)
             assertFalse(called)
             assertEquals(1, h.ledger.recentOperations.value.size)
             assertEquals(

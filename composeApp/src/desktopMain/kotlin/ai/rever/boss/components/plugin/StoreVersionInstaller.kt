@@ -60,6 +60,10 @@ class StoreVersionHooks(
  *
  * @param runningJarPath the jar currently loaded for this plugin, which the swap must neither
  *   overwrite while it is open nor lose if the new one fails to load.
+ * @param firstInstall the caller knows no build of this plugin is installed, so a failed load has
+ *   nothing to restore and changed nothing. Only then does the failure message say so; every other
+ *   caller keeps the restore wording, whatever [runningJarPath] and [hasLiveInstance] say, because
+ *   neither of those proves that nothing was running.
  */
 data class StoreVersionRequest(
     val pluginId: String,
@@ -67,6 +71,7 @@ data class StoreVersionRequest(
     val sourceUrl: String?,
     val runningJarPath: String?,
     val hasLiveInstance: Boolean,
+    val firstInstall: Boolean = false,
 )
 
 /**
@@ -225,7 +230,6 @@ internal class StoreVersionInstaller(
         load: suspend (String) -> Result<Boolean>,
     ): Result<String> {
         val pluginId = request.pluginId
-        val version = request.version
         val runningJarPath = request.runningJarPath
         // Vet before loading, for the same reason the dependency installer does: nothing binds a
         // store row to the plugin id its jar declares, and `installPlugin` acts on the incoming
@@ -270,14 +274,7 @@ internal class StoreVersionInstaller(
             hooks.discardFiles(target.absolutePath)
             val restored = restore(pluginId, runningJarPath, load)
             val why = loaded.exceptionOrNull()?.message ?: "it did not start"
-            return failure(
-                if (restored) {
-                    "Could not install v$version ($why). Kept the build you were running."
-                } else {
-                    "Could not install v$version ($why), and the previous build could not be restored. " +
-                        "Reinstall the plugin from the Toolbox."
-                },
-            )
+            return failure(loadFailedMessage(request, why, restored))
         }
 
         // Record the new jar so the next launch loads it, WITH its store source: that is what stops a
@@ -344,6 +341,30 @@ internal class StoreVersionInstaller(
         }
         return restored
     }
+
+    /** What to tell the user when the new build failed to load, given whether the old one came back. */
+    private fun loadFailedMessage(
+        request: StoreVersionRequest,
+        why: String,
+        restored: Boolean,
+    ): String =
+        when {
+            restored -> {
+                "Could not install v${request.version} ($why). Kept the build you were running."
+            }
+
+            // A first install, as a plugin pack's pinned release is: no build was loaded, so there
+            // was nothing to restore and nothing else changed. Claiming a restore failed would send
+            // the user to reinstall a plugin they never had.
+            request.firstInstall && request.runningJarPath == null -> {
+                "Could not install v${request.version} ($why). Nothing was changed."
+            }
+
+            else -> {
+                "Could not install v${request.version} ($why), and the previous build could not be restored. " +
+                    "Reinstall the plugin from the Toolbox."
+            }
+        }
 
     private fun failure(message: String): Result<String> = Result.failure(IllegalStateException(message))
 

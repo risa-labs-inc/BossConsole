@@ -5,6 +5,8 @@ plugins {
 }
 
 group = "ai.rever.boss.plugin"
+// Versioned like plugin-api-ipc, which needs it at runtime: assembleUpstreamJars ships both.
+version = "1.0.0"
 
 kotlin {
     compilerOptions {

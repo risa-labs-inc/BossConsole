@@ -8,6 +8,10 @@ import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.components.overlays.HoverTooltipBox
 import ai.rever.boss.components.overlays.TooltipPlacement
 import ai.rever.boss.components.overlays.contextMenu
+import ai.rever.boss.components.sidebar.PaneChipLabel
+import ai.rever.boss.components.sidebar.paneChipContentBackground
+import ai.rever.boss.components.sidebar.paneChipContentClick
+import ai.rever.boss.components.sidebar.paneChipSurface
 import ai.rever.boss.plugin.api.TabIcon
 import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.plugin.ui.BossTheme
@@ -78,6 +82,7 @@ internal fun TabFaviconChip(
     isActive: Boolean,
     onClick: () -> Unit,
     size: Dp = FAVICON_CHIP_SIZE,
+    availableWidth: Dp? = null,
     // END rather than TOP: a strip at the top of a pane has the window's own chrome above it,
     // and a tooltip placed there would open off the pane entirely.
     placement: TooltipPlacement = TooltipPlacement.END,
@@ -114,7 +119,6 @@ internal fun TabFaviconChip(
      */
     onClose: (() -> Unit)? = null,
 ) {
-    val colors = BossTheme.colors
     val interactionSource = remember { MutableInteractionSource() }
     val hovered by interactionSource.collectIsHoveredAsState()
     val loaded = rememberFaviconLoader(tab)
@@ -122,7 +126,6 @@ internal fun TabFaviconChip(
     // Where this chip sits in the window, so a drag can start from an absolute point. The ghost
     // follows the pointer, and the pointer is in window coordinates.
     var windowPosition by remember { mutableStateOf(Offset.Zero) }
-    val icon = loaded ?: tab.tabIcon
 
     // Read by the drag gesture below, which must not restart when any of them changes. They used
     // to be its `pointerInput` keys, and all three change while a tab is being dragged: a TabInfo
@@ -136,25 +139,12 @@ internal fun TabFaviconChip(
 
     val background =
         when {
-            isActive -> colors.signal.copy(alpha = ACTIVE_CHIP_ALPHA)
-            hovered -> colors.raised
+            isActive -> BossTheme.colors.signal.copy(alpha = ACTIVE_CHIP_ALPHA)
+            hovered -> BossTheme.colors.raised
             else -> Color.Transparent
         }
 
-    // The cross is revealed on hover and takes real width while it is there, so the chips to its
-    // right shift over. That is deliberate rather than tolerated: a 20dp chip has no room to
-    // overlay a target anyone could hit, and reserving the width permanently would cost the strip
-    // about a third of the tabs it can show - the density is the whole reason the strip exists.
-    // The pointer is over the favicon when the cross appears to its RIGHT, so the chip under the
-    // pointer never moves out from under it.
-    // Always shown, not revealed on hover. A cross that appears under the pointer is a cross you
-    // cannot see before you go looking for it: closing a tab from the strip meant hovering each
-    // chip to find out whether it could be closed at all. It also made the chip change WIDTH on
-    // hover, so the strip reflowed under the pointer.
-    //
-    // The cost is real and accepted: every chip is now wider by the cross, so fewer fit before the
-    // strip scrolls. A pane with many tabs is exactly where closing one from here is most useful.
-    val showClose = onClose != null
+    // Pane tabs reserve a close target so hover never moves their neighbours.
 
     HoverTooltipBox(
         text = tab.title,
@@ -164,13 +154,19 @@ internal fun TabFaviconChip(
         // was reaching for - a flicker loop rather than a button.
         modifier = Modifier.hoverable(interactionSource),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = paneChipSurface(availableWidth, background, interactionSource, onClick),
+        ) {
+            if (onClose != null && availableWidth != null) {
+                TabCloseButton(base = background, onClose = onClose, visible = hovered, leading = true)
+            }
             Box(
                 modifier =
                     Modifier
-                        .size(size)
-                        .clip(chipShape(squareTrailingEdge = showClose))
-                        .background(background)
+                        .size(availableWidth?.minus(FAVICON_CHIP_SIZE) ?: size, size)
+                        .clip(chipShape(squareTrailingEdge = onClose != null && availableWidth == null))
+                        .paneChipContentBackground(availableWidth, background)
                         // No hoverable here: it is registered once around the chip AND the cross,
                         // above. Registering the same source twice happens to balance its
                         // enter/exit pairs, which is what let this survive - but it reads as
@@ -195,17 +191,15 @@ internal fun TabFaviconChip(
                                     onDragEnd = { currentOnDragEnd(it) },
                                 )
                             },
-                        ).clickable(onClick = onClick),
+                        ).paneChipContentClick(availableWidth, onClick),
                 contentAlignment = Alignment.Center,
             ) {
-                TabGlyph(icon = icon, tab = tab, isActive = isActive)
+                PaneChipLabel(loaded ?: tab.tabIcon, tab, isActive, availableWidth)
             }
 
-            // `showClose` already carries `onClose != null`; repeating it here only looked like
-            // a null check, and the compiler reads it as always true.
-            if (showClose) {
+            if (onClose != null && availableWidth == null) {
                 // No gap: the cross is part of the chip, not a button next to it.
-                TabCloseButton(base = background, onClose = onClose)
+                TabCloseButton(base = background, onClose = onClose, visible = true)
             }
         }
     }
@@ -289,6 +283,8 @@ private fun Modifier.tabChipDrag(
 private fun TabCloseButton(
     base: Color,
     onClose: () -> Unit,
+    visible: Boolean = true,
+    leading: Boolean = false,
 ) {
     val colors = BossTheme.colors
     val interactionSource = remember { MutableInteractionSource() }
@@ -298,21 +294,27 @@ private fun TabCloseButton(
         modifier =
             Modifier
                 .size(FAVICON_CHIP_SIZE)
+                .alpha(if (visible) 1f else 0f)
                 // Mirror of [chipShape], so the two halves close one pill.
                 .clip(
                     RoundedCornerShape(
-                        topStart = 0.dp,
-                        bottomStart = 0.dp,
-                        topEnd = CHIP_RADIUS,
-                        bottomEnd = CHIP_RADIUS,
+                        topStart = if (leading) CHIP_RADIUS else 0.dp,
+                        bottomStart = if (leading) CHIP_RADIUS else 0.dp,
+                        topEnd = if (leading) 0.dp else CHIP_RADIUS,
+                        bottomEnd = if (leading) 0.dp else CHIP_RADIUS,
                     ),
                 )
                 // Carries the chip's own background rather than starting transparent, or the
                 // pill would be filled on one side and see-through on the other. Its own hover
                 // is what brightens it.
-                .background(if (hovered) colors.lineStrong else base)
-                .hoverable(interactionSource)
-                .clickable(onClick = onClose),
+                .background(
+                    when {
+                        leading -> Color.Transparent
+                        hovered -> colors.lineStrong
+                        else -> base
+                    },
+                ).hoverable(interactionSource)
+                .clickable(enabled = visible, onClick = onClose),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
@@ -331,7 +333,7 @@ private fun TabCloseButton(
  * rather than one that simply has no icon.
  */
 @Composable
-private fun TabGlyph(
+internal fun TabGlyph(
     icon: TabIcon?,
     tab: TabInfo,
     isActive: Boolean,

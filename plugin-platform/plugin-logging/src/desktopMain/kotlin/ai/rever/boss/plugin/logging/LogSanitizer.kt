@@ -543,9 +543,9 @@ object LogSanitizer {
     private val camelCaseBoundary = Regex("""(?<=[a-z0-9])(?=[A-Z])""")
 
     // Exact URL names stay separate: free-text exit_code and status_code are diagnostics.
-    // `sessionid` is the passkey ceremony's own query name (a UUID handle, not a
-    // `session_token` credential), and `email` rides along on the same WebAuthn URL
-    // the ceremony opens, so both must leave masked-URI log lines too.
+    // `sessionid` and `credentialid` are the passkey ceremony's query names, and
+    // `email` rides along on the same WebAuthn URL the ceremony opens, so all three
+    // must leave masked-URI log lines too.
     private val sensitiveUriParamNames =
         setOf(
             "token",
@@ -559,6 +559,7 @@ object LogSanitizer {
             "key",
             "secret",
             "sessionid",
+            "credentialid",
             "email",
         )
 

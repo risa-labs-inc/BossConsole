@@ -189,6 +189,6 @@ class NetscapeBookmarkWriterTest {
 
         // All three are written as folders; only Work gave the file a bookmark.
         assertEquals(3, Regex("<H3 ").findAll(file.html).count())
-        assertEquals(1, file.collections)
+        assertEquals(1, file.sourceCollections)
     }
 }

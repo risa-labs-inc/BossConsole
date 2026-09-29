@@ -97,6 +97,7 @@ fun BossDraggableComponent.BossTopBar(
      * shows through, which is white.
      */
     startInset: Dp = 0.dp,
+    showHostActions: Boolean = true,
 ) {
     val items = rememberBarContextMenuItems(ChromeBar.TOP)
 
@@ -109,13 +110,15 @@ fun BossDraggableComponent.BossTopBar(
             // Run/debug controls (Issue #91 / #321)
             BossTopRunBar()
             Spacer(modifier = Modifier.weight(0.1f))
-            BossTopRightBar(
-                onShowSettings = onShowSettings,
-                toolbox = toolbox,
-                onShowSearch = onShowSearch,
-                onSignOut = onSignOut,
-                toolLauncher = toolLauncher,
-            )
+            if (showHostActions) {
+                BossTopRightBar(
+                    onShowSettings = onShowSettings,
+                    toolbox = toolbox,
+                    onShowSearch = onShowSearch,
+                    onSignOut = onSignOut,
+                    toolLauncher = toolLauncher,
+                )
+            }
         }
     }
     Divider(color = BossTheme.colors.line, thickness = BossChrome.dimens.dividerThickness)

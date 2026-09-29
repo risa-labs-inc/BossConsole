@@ -95,4 +95,11 @@ class TabBarSidebarRevealTest {
         assertEquals(50, region.left)
         assertEquals(region.left, region.right, "the drawer region is zero-width, not negative")
     }
+
+    @Test
+    fun `hidden rail leaves drawer flush with either leading edge`() {
+        val panel = IntRect(left = 40, top = 32, right = 520, bottom = 612)
+        assertEquals(panel, panel.besideLeadingRail(0.dp, LayoutDirection.Ltr))
+        assertEquals(panel, panel.besideLeadingRail(0.dp, LayoutDirection.Rtl))
+    }
 }

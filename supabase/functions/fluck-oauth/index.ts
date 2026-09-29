@@ -39,8 +39,8 @@ Deno.serve(createHandler({
       p_nonce: nonce,
       p_expires_at: new Date(expiresAtSeconds * 1000).toISOString(),
     })
-    if (error) return "unavailable"
-    return data === true ? "claimed" : "replay"
+    if (error) return error.code === "22023" ? "invalid" : "unavailable"
+    return data === true ? "claimed" : data === false ? "replay" : "unavailable"
   },
 
   /**

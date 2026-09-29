@@ -107,8 +107,16 @@ class ChromiumReleaseSourceTest {
             val listing = ChromiumReleaseResolver(supabase, gitHub).availableVersions(archive)
 
             assertEquals(listOf("9.10.0", "9.1.2"), listing.versions)
-            assertTrue(listing.failedSources.isEmpty())
+            assertEquals(listOf("catalog archive checksums"), listing.failedSources)
+            assertTrue(!listing.cacheable)
         }
+
+    @Test
+    fun `empty or incomplete engine catalogs are never cached`() {
+        assertTrue(!EngineVersionListing(emptyList()).cacheable)
+        assertTrue(!EngineVersionListing(listOf("9.1.2"), listOf("catalog archive checksums")).cacheable)
+        assertTrue(EngineVersionListing(listOf("9.1.2")).cacheable)
+    }
 
     // ---- partial failure ----
 

@@ -14,8 +14,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import kotlinx.coroutines.launch
 
 /**
@@ -31,6 +33,7 @@ internal class WorkspaceSwitch internal constructor(
     val request: (LayoutWorkspace) -> Unit,
     /** Carry one out, the question having been settled. */
     val resolve: (workspace: LayoutWorkspace, keepLeaving: Boolean) -> Unit,
+    val requestFromTitleBar: (LayoutWorkspace) -> Unit,
 )
 
 @Composable
@@ -41,8 +44,10 @@ internal fun rememberWorkspaceSwitch(
 ): WorkspaceSwitch {
     val scope = rememberCoroutineScope()
     val settings by WorkspaceSettingsManager.currentSettings.collectAsState()
+    var afterOpen by remember { mutableStateOf<(() -> Unit)?>(null) }
 
     val resolve: (LayoutWorkspace, Boolean) -> Unit = { workspace, keepLeaving ->
+        val completed = afterOpen.also { afterOpen = null }
         scope.launch {
             val leaving = workspaceManager.currentWorkspace.value
             val leavingId = leaving?.id?.takeIf { it.isNotEmpty() }
@@ -77,6 +82,7 @@ internal fun rememberWorkspaceSwitch(
                     // behind would point at work that no longer exists and could never be saved.
                     workspaceManager.setWorkspaceUnsaved(state.windowId, leavingId, false)
                 }
+                completed?.invoke()
             } else {
                 // Refused: nothing was built and nothing was destroyed. Put the leaving tree
                 // back on screen and drop the snapshot just taken of it - it is the same tree,
@@ -112,7 +118,19 @@ internal fun rememberWorkspaceSwitch(
         }
     }
 
-    return remember(state, splitViewState, settings) { WorkspaceSwitch(request, resolve) }
+    return remember(state, splitViewState, settings) {
+        WorkspaceSwitch(
+            request = {
+                afterOpen = null
+                request(it)
+            },
+            resolve = resolve,
+            requestFromTitleBar = {
+                afterOpen = { openRunningSpacesPanel(state, splitViewState) }
+                request(it)
+            },
+        )
+    }
 }
 
 /** The keep-or-close question, while one is outstanding. */

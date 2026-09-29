@@ -1,5 +1,6 @@
 package ai.rever.boss.components.bars.horizontal
 
+import ai.rever.boss.app.shouldShowBottomBar
 import ai.rever.boss.components.dialogs.WorkspaceHealthCard
 import ai.rever.boss.health.BROWSER_ENGINE_SETTINGS_SECTION
 import ai.rever.boss.health.HealthArea
@@ -10,7 +11,13 @@ import ai.rever.boss.health.HealthSeverity
 import ai.rever.boss.health.HealthSourceWarnings
 import ai.rever.boss.health.WorkspaceHealthReport
 import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.window.LocalWindowId
 import ai.rever.boss.window.MenuActionsHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -28,6 +35,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 
 class WorkspaceHealthStatusItemTest {
@@ -209,6 +217,70 @@ class WorkspaceHealthStatusItemTest {
             }
 
         assertEquals("window-1" to BROWSER_ENGINE_SETTINGS_SECTION, opened)
+    }
+
+    /**
+     * Focus mode shows the bottom bar only while the pointer is over it, and the dialog is composed
+     * inside the bar. The bar is wrapped here as the scaffold wraps it: an AnimatedVisibility driven
+     * by the scaffold's own [shouldShowBottomBar], with the window's [BottomBarHolds] provided.
+     * Without the hold, the reveal ending takes the dialog with it.
+     */
+    @Test
+    fun `the dialog keeps an auto-hiding bar composed until it closes`() {
+        val holds = BottomBarHolds()
+        var revealed by mutableStateOf(true)
+        val report = WorkspaceHealthReport(findings = listOf(stoppedPlugin))
+        rule.setContent {
+            AnimatedVisibility(visible = shouldShowBottomBar(holds.active, true, revealed)) {
+                CompositionLocalProvider(LocalBottomBarHolds provides holds) {
+                    WorkspaceHealthStatusItem(readReport = { report })
+                }
+            }
+        }
+        openDialogFromBadge("1 issue")
+
+        // The pointer moves onto the dialog, so focus mode stops revealing the bar.
+        revealed = false
+        rule.waitForIdle()
+        rule.onNodeWithText("Workspace Health").assertExists()
+
+        rule.onNodeWithText("Close").performClick()
+        rule.waitForIdle()
+        assertFalse(holds.active, "closing the dialog must release the bar")
+        rule.onAllNodesWithText("Workspace Health").assertCountEquals(0)
+        rule.onAllNodesWithText("1 issue").assertCountEquals(0)
+    }
+
+    @Test
+    fun `with no window to send a fix to, the dialog offers no fix button`() {
+        rule.setContent {
+            WorkspaceHealthStatusItem(readReport = { WorkspaceHealthReport(findings = listOf(stoppedPlugin)) })
+        }
+        openDialogFromBadge("1 issue")
+
+        rule.onAllNodesWithText(HealthFix.OPEN_PLUGIN_HEALTH.label).assertCountEquals(0)
+        rule.onNodeWithText("What to do:", substring = true).assertExists()
+    }
+
+    @Test
+    fun `in a window, the dialog offers the fix`() {
+        rule.setContent {
+            CompositionLocalProvider(LocalWindowId provides "window-1") {
+                WorkspaceHealthStatusItem(readReport = { WorkspaceHealthReport(findings = listOf(stoppedPlugin)) })
+            }
+        }
+        openDialogFromBadge("1 issue")
+
+        rule.onNodeWithText(HealthFix.OPEN_PLUGIN_HEALTH.label).assertExists()
+    }
+
+    private fun openDialogFromBadge(badge: String) {
+        // The first read happens off the main thread, so wait for it rather than for idle.
+        rule.waitUntil(timeoutMillis = 5_000) { rule.onAllNodesWithText(badge).fetchSemanticsNodes().isNotEmpty() }
+        rule.onNodeWithText(badge).performClick()
+        rule.waitUntil(timeoutMillis = 5_000) {
+            rule.onAllNodesWithText("Workspace Health").fetchSemanticsNodes().isNotEmpty()
+        }
     }
 
     private fun mountCard(

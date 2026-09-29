@@ -35,6 +35,32 @@ runs race a stale `recent-projects.json` load. This guarantee is deliberately mo
 moving a test that reads `BossDirectories.rootDir` to another module requires equivalent isolation
 there.
 
+### A `@Test` that returns a value never runs
+
+`fun x() = runBlocking { ...; assertIs<T>(y) }` returns whatever its last expression does, and JUnit
+Jupiter does not execute a `@Test` method that returns a value: it reports a WARNING-level discovery
+issue, which Gradle does not print, and counts the method nowhere. Nine `composeApp` tests sat
+unexecuted that way, four of them the MCP approval gate's fail-closed guarantees, and one no longer
+described the code by the time it first ran (#1667). Declare an expression-bodied test `(): Unit =`,
+or write `runBlocking<Unit>`, as `plugin-loader`'s tests already do.
+
+Every module's Gradle `Test` task now sets `junit.platform.discovery.issue.severity.critical=WARNING`
+(root `build.gradle.kts`), `buildSrc` sets it in its own build file because it is a separate build
+the root never reaches, and `composeApp` repeats it in
+`src/desktopTest/resources/junit-platform.properties` so an IDE run meets it too. A discovery issue
+aborts discovery for the whole engine: every test in the module disappears and a single
+`initializationError` names the method. If a toolchain bump introduces an unrelated warning, relax
+the property to `ERROR` in that module's own `build.gradle.kts`, which wins over the root; do not
+delete it.
+
+**The property is only read by JUnit Platform 1.13 and later.** On an older platform it is silently
+ignored, the guard does nothing, and a passing test run looks exactly the same as a working guard.
+That is why `buildSrc` imports the root version catalog and pins `platform(junit-bom)` to
+`libs.versions.junit.jupiter` (#1709): its only other test dependency, `kotlin("test")`, resolves
+JUnit through Gradle's embedded Kotlin (Platform 1.10), and the guard there was inert until the pin.
+The BOM is not a redundant dependency; removing it restores the inert guard. To check a module, run
+a throwaway `@Test fun probe() = 42` and confirm the run fails with "must not return a value".
+
 ### Running commands in a visible terminal pane
 
 When a terminal MCP server is available, prefer it over the plain `Bash` tool for commands worth showing - it runs in a visible BossTerm pane and still returns stdout/stderr/exit code. Two servers may be present depending on which app hosts the session; use whichever the session's `SessionStart` hook designates:
@@ -740,6 +766,13 @@ logger.error(LogCategory.NETWORK, "Request failed", error = exception)
 
 **Security**: Always use `LogSanitizer` for sensitive data:
 - `maskEmail()`, `maskToken()`, `maskCredentialId()`, `maskUserId()`, `maskUriParams()`
+- A local file that fails to decode: log `decodeFailure(e)` as the data, never the decoder's
+  message by any route (`error = e`, `e.message`, `e.toString()`). kotlinx puts the file's content in
+  the exception message, and `decodeFailure` keeps only the exception type, the offset and the JSON
+  path, with map keys masked. Catch `SerializationException` before `Exception` or
+  `IllegalArgumentException`, which it extends. Supabase payloads use `sanitizeSupabaseFailure`
+  (see below). This is the rule for new and converted call sites; older decode sites that still log
+  the exception are tracked in #1711.
 
 **Config**: Set `BOSS_LOG_LEVEL` env var or `boss.log.level` system property (TRACE/DEBUG/INFO/WARN/ERROR)
 
@@ -1377,6 +1410,12 @@ it moves; selecting afterwards would need the post-move index, which is what the
 Today the two cannot actually coexist - `showSections` is `!several`, so a multi-pane bar draws no
 separator at all - but the ordering is what makes the rule true if they ever do.
 
+**A tab gesture owns its cleanup (#690).** Both `BossTabButton` and `TabFaviconChip` run
+inside `withDragSession`, whose `finally` clears an interrupted gesture even when pointer input
+is cancelled or restarted without an end/cancel callback. Ownership is the exact `DraggingTabInfo`
+instance, not the tab id: a tab can appear on multiple surfaces and can start a new drag before an
+old handler finishes. Never clear window-wide drag state from a tab-id-only disposal hook.
+
 **A collapsed pane springs open under a dragged tab**, after the same 550ms the Top of Mind panel
 gives its own headers (`SPRING_LOAD_DELAY_MS`, a second constant on purpose: nothing links the two
 repositories at compile time). A pane that is not being worked in shows one row plus a favicon
@@ -1985,14 +2024,19 @@ them all back.
 - **The old file goes on being written, unchanged, every session.** `saveLastSessionBlocking` is
   untouched, so after a new-format save the directory holds BOTH: `Last_Session.json` with the
   layout that was on screen, and `Last_Session_Set.json` with all of them. Three things follow, all
-  deliberate: a downgrade still restores the Space that was showing, the "Last Session" entry the
-  Space list has always had is still there, and restore reads the SET first and falls back to the
+  deliberate: a downgrade still restores the Space that was showing, the "Last Session" entry is
+  available when explicitly enabled, and restore reads the SET first and falls back to the
   single file when there is none.
-- **A set is written only for two or more Spaces, and DELETED otherwise.** One running Space is
-  exactly what the old file records, and a second file saying the same thing is a second thing that
-  can disagree. The delete is not tidiness: the set is read in preference to the single file, so a
-  set left over from a three-Space session would reopen two Spaces the user had closed.
-  `sessionSetOf` answers both, and `isRestorable` asks the same question on the way back in.
+- **A set is written for one or more Spaces.** Even one Space needs its own identity restored;
+  `Last_Session.json` stamps its copy with `last-session` and cannot preserve that identity.
+  Empty sessions or an invalid active id delete the set. `sessionSetOf` and `isRestorable`
+  share this rule. The layout watcher now refreshes the set alongside the legacy recovery file,
+  so a crash cannot prefer an older identity-preserving snapshot over newer edits.
+- **The Last Session picker entry is opt-in.** Settings → Spaces → Session Restore has
+  `enableLastSessionSpace`, default false (including existing files with no field). UI and plugin
+  pickers consume `visibleWorkspaces`; `workspaces` retains recovery records for internal use.
+  Named Spaces restore unchanged. Legacy snapshots with no original identity are kept as a
+  normal Recovered Space instead of losing their tabs. The original recovery file is retained.
 - **Still ONE writer, still app-level (Issue #19).** `LastSessionCoordinator` allows exactly one
   window to produce the session record per session - every window's dispose used to write its own
   layout into the one record, so closing a secondary window overwrote the primary's. That has not
@@ -2231,6 +2275,14 @@ that provider id. Already queued sibling prompts still ask. Explicit tool ASK ru
 still override provider ALLOW. The Trusted plugins UI lists ALLOW rules only; hand-edited
 provider DENY rules currently require policy-file editing to remove.
 
+Plugin provider ids changed from `provider` to `plugin::provider` in #958. A persisted raw
+provider DENY remains authoritative at runtime for every scoped provider with that suffix:
+assigning the old key to one plugin is ambiguous, while dropping it would fail open. Do not copy
+that raw DENY into scoped policy entries; derived copies outlive revocation of the rule the
+operator actually set. Revoking the raw rule must immediately lift its inherited effect. Legacy
+raw ALLOW does not cross the namespace, because that would restore the provider-id aliasing the
+namespace was added to prevent. Keep this compatibility rule asymmetric.
+
 **YOLO mode** makes any call whose policy resolves to ASK run without prompting, for every tool
 and provider, CRITICAL-risk ones and tools registered later included - secret-bearing calls
 excepted: YOLO answers for the tool, never for the vault. Any user can turn it on,
@@ -2287,7 +2339,14 @@ applies any broader approval of an escalated call as once, logging the downgrade
 never overridden, so it is the durable answer there (#1624). Shell tools are rated on every
 string in their arguments. Arguments nested past MAX_MCP_ARGUMENT_DEPTH rate CRITICAL without being
 parsed (every parse on the invoke path checks the same depth guard first); arguments too wide to
-scan fully rate CRITICAL on the part that was not inspected.
+scan fully rate CRITICAL on the part that was not inspected. The call's ledger row carries
+`escalated: true` when this gate overrode a saved ALLOW, so a call that YOLO mode then answered
+(`YOLO_ALLOWED`) can be told apart from a routine call under the same ALLOW (#1655). It does not
+mark every destructive call: under the default ASK policy there is no ALLOW to override, and a
+destructive call YOLO answers there records `escalated: false`. `format` counts only as a
+command (the first word of a command, or with a drive such as `d:` anywhere after it, switches
+first or not), not as the text `format ` anywhere, which rated `--format json`, `clang-format` and
+prose typed through `send_input` CRITICAL.
 
 ### Secret references at the governance boundary
 
@@ -2497,6 +2556,23 @@ update it with the pinned distribution checksum and scaffold validation together
 - Chromium's constructed GitHub backup URL uses the catalog checksum. Primary and backup must contain identical artifact bytes; checksum mismatch fails closed. No pinned catalog hash means no install, and the version picker offers only checksum-backed archives for the current platform. See `docs/dev-935-release-checklist.md` for deployment checks.
 - Browser print is a direct-native exception to the usual AWT ownership rule after macOS manual verification. Pending AWT cancellation is best-effort, not a cross-thread exactly-once guarantee; do not copy this pattern for destructive actions.
 
+## Native Commit dialog repository binding
+
+`CommitDialogRepository` captures the owning window's project when the native Commit dialog
+opens. All its stage, unstage, commit and amend-message reads pass that explicit path. A
+`windowId` only selects which status UI to refresh; it does not select the repository for
+Git commands. Never replace the path with the process-global Git project. A changed or missing
+window project refuses commands, preserving the draft until the dialog is closed. Keep the
+local in-flight guard so a pending command cannot be submitted twice or have its draft edited.
+`CommitDialogRepositoryTest` exercises the dialog adapter with two real disposable repositories
+and the global deliberately pointed at the other one.
+
+Commit dialog sign-off is Git-owned: pass the checkbox flag to `git commit --signoff`,
+never construct a trailer from the OS username. This uses the selected repository
+committer identity and Git trailer deduplication for ordinary commits and amend.
+Keep the original four-argument suspend `GitService.commit` overload and its defaults
+for already compiled callers; it delegates with sign-off disabled.
+
 ## Recent-page loads respect dismissal
 
 RecentBrowserPagesManager registers a load ticket before launching startup IO. Clear and removal
@@ -2515,3 +2591,58 @@ invalidates pending publication and clears scan status; it does not cancel detec
 Cancellation propagates without becoming a scan error. The internal scanner overload lets
 `RunConfigurationScanOwnershipTest` control completion order on the real manager without
 mutating a global detector or reading a user's project.
+
+
+## Native glass themes
+
+Liquid Glass Light/Dark are additional Blueprint palettes; existing platform defaults and
+Space-theme resolution stay unchanged. Glass coverage/style/tint live in app-theme-settings.json,
+independently of palette selection. Only the main macOS window installs a native backdrop;
+Windows/Linux retain opaque palettes. Browser surfaces and plugin-owned opaque backgrounds stay
+opaque. Do not change shared theme colors globally to alpha: dialog windows have no backdrop.
+
+`MacWindowGlass` follows BossTerm's NSGlassEffectView (macOS 26) / NSVisualEffectView approach.
+Use the existing AppKit main-queue dispatcher and exact Skiko NSWindow handle. Never replace
+AWT's contentView, use Auto Layout on it, or use a struct-return objc_msgSend mapping. Java stays
+undecorated/transparent on macOS so Skia retains alpha; AppKit restores the native frame and lights.
+The controller owns/releases only its backdrop, reattaches after frame changes, and respects Reduce
+Transparency. Close it with the window. `LocalWindowGlass` becomes installed only after success;
+failed/unsupported installation paints opaque without overwriting saved preferences. Native toolbar
+background and Compose chrome use the same tint. Menus and dialogs retain opaque theme tokens.
+
+`BOSS_TEST_NATIVE_GLASS=1 ./gradlew :composeApp:desktopTest --tests '*MacWindowGlassSmokeTest'`
+is an opt-in macOS smoke test using its own small unfocusable window. It verifies native install,
+light/clear updates, and detach; it does not establish visual correctness of an entire app layout.
+
+The vertical sidebar uses `SidebarGlass` washes only while the native backdrop is active.
+`IntegratedSidebarSurface` keeps the rounded outline; full-window glass tint belongs to the root.
+`WindowVerticalTabBar.surfacePainted` prevents duplicate fills for sidebar-only coverage. Favorites,
+selection fills and inset hairline separators follow BossTerm's sidebar treatment; do not change
+shared palette tokens, menu surfaces, or the non-glass layout to achieve this.
+
+Fullscreen glass has an owned `MacFullscreenBackdrop` behind the effect view. It reads the
+current display's wallpaper through NSWorkspace, caches the still image while windowed, and
+aspect-fills a CALayer in fullscreen; unreadable/dynamic-only wallpapers get a theme-colored
+fallback. Keep the controller alive across fullscreen transitions so the windowed image survives
+when a fullscreen Space has no desktop-image URL. Do not capture the user's screen, replace AWT's
+contentView, or leave the wallpaper view attached after exiting fullscreen or disabling glass.
+
+Native browser navigation follows `BrowserTabOwnership` for the active tab, with the composed
+browser registry as a fallback for other browser surfaces. Home removes BrowserHandle.Content
+from composition, so ActiveBrowserRegistry alone cannot drive its address field. Bind tab ownership
+when the plugin identifies its handle through setFullscreenHandler, and unbind by handle ID on
+transport failure/disposal so old cleanup cannot remove a replacement. This is host-only state;
+do not add plugin ABI requirements or keep an invisible browser view mounted behind Home.
+
+Host glass follows BossTerm's separate 50% tint / 50% background-opacity defaults.
+GlassAppSurfaces paints the combined main ink fill `1 - (1 - opacity) * (1 - tint)`
+through the title bar and content, excluding the rounded sidebar geometry. The sidebar paints
+its own tint once, including its header extension. This follows BossTerm's root drawBehind /
+sidebar cutout: never flatten the sidebar into the main fill or stack both fills beneath it.
+Scoped ink/panel tokens retain RGB but have zero alpha; MaterialTheme's background alpha
+remains the plugin capability signal. Opaque plugins and browser pages retain their own fills.
+
+Native NSWindow background stays clear in glass mode, including fullscreen. The Space selector keeps its Space name. A separate native NSTextField toolbar item immediately
+after it shows the focused terminal tab's live title and disappears on other tabs.
+GlassSurfaceRenderingTest renders the actual integrated sidebar and verifies that both surfaces
+continue through their headers without tint overlap, in both palettes.

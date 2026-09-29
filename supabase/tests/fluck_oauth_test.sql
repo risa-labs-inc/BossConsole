@@ -8,8 +8,13 @@ SELECT ok(NOT has_function_privilege('authenticated', 'public.fluck_oauth_store_
 SELECT ok(has_function_privilege('service_role', 'public.fluck_oauth_store_secret(uuid,text,text,text,text)', 'EXECUTE'), 'the service role can store verified callbacks');
 SELECT ok(public.fluck_oauth_claim_nonce('oauth-test-once', now() + interval '5 minutes'), 'a fresh nonce is claimed');
 SELECT ok(NOT public.fluck_oauth_claim_nonce('oauth-test-once', now() + interval '5 minutes'), 'a nonce cannot be replayed');
-SELECT ok(NOT public.fluck_oauth_claim_nonce('oauth-test-expired', now()), 'expired nonces are refused');
-SELECT ok(NOT public.fluck_oauth_claim_nonce('oauth-test-long', now() + interval '16 minutes'), 'excessive lifetimes are refused');
+SELECT throws_ok($$SELECT public.fluck_oauth_claim_nonce('oauth-test-expired', now() - interval '61 seconds')$$, '22023', 'invalid OAuth nonce or expiry', 'expired nonces are not misreported as replay');
+SELECT throws_ok($$SELECT public.fluck_oauth_claim_nonce('oauth-test-long', now() + interval '961 seconds')$$, '22023', 'invalid OAuth nonce or expiry', 'excessive lifetimes are refused');
+SELECT ok(public.fluck_oauth_claim_nonce('oauth-test-db-behind', now() + interval '930 seconds'), 'a fresh maximum-lifetime state tolerates a database clock 30 seconds behind');
+SELECT ok(public.fluck_oauth_claim_nonce('oauth-test-db-ahead', now() - interval '30 seconds'), 'an edge-valid state tolerates a database clock 30 seconds ahead');
+SELECT ok(NOT public.fluck_oauth_claim_nonce('oauth-test-db-ahead', now() - interval '30 seconds'), 'cleanup must retain spent nonces throughout the skew window');
+SELECT throws_ok($$SELECT public.fluck_oauth_claim_nonce(NULL, now() + interval '5 minutes')$$, '22023', 'invalid OAuth nonce or expiry', 'null nonce fails closed');
+SELECT throws_ok($$SELECT public.fluck_oauth_claim_nonce(repeat('x',257), now() + interval '5 minutes')$$, '22023', 'invalid OAuth nonce or expiry', 'nonce storage is bounded');
 
 DO $$
 DECLARE existing uuid;

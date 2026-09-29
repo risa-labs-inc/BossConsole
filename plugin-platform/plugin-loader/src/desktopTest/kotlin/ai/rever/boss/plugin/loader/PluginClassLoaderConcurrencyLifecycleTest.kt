@@ -88,14 +88,18 @@ class PluginClassLoaderConcurrencyLifecycleTest {
         val enteredParent = CountDownLatch(1)
         val releaseParent = CountDownLatch(1)
         val waitingStarted = CountDownLatch(1)
-        val name = ParentOnlyConcurrentType::class.java.name
+        // A shared name (kotlin.*) is the only kind that still reaches the
+        // parent; the refused name is a non-shared one the plugin jar does
+        // not carry.
+        val sharedName = "kotlin.Unit"
+        val refusedName = ParentOnlyConcurrentType::class.java.name
         val parent =
             object : ClassLoader(hostLoader) {
                 override fun loadClass(
                     name: String,
                     resolve: Boolean,
                 ): Class<*> {
-                    if (name == ParentOnlyConcurrentType::class.java.name) {
+                    if (name == sharedName) {
                         enteredParent.countDown()
                         check(releaseParent.await(TIMEOUT_SECONDS, TimeUnit.SECONDS))
                     }
@@ -105,19 +109,19 @@ class PluginClassLoaderConcurrencyLifecycleTest {
         PluginClassLoader("unloading-concurrent", emptyArray(), parent).use { loader ->
             val pool = executor()
             try {
-                val admitted = pool.submit(Callable { loader.loadClass(name) })
+                val admitted = pool.submit(Callable { loader.loadClass(sharedName) })
                 assertTrue(enteredParent.await(TIMEOUT_SECONDS, TimeUnit.SECONDS))
                 loader.markUnloading()
                 val waiting =
                     pool.submit(
                         Callable {
                             waitingStarted.countDown()
-                            runCatching { loader.loadClass(name) }
+                            runCatching { loader.loadClass(refusedName) }
                         },
                     )
                 assertTrue(waitingStarted.await(TIMEOUT_SECONDS, TimeUnit.SECONDS))
                 releaseParent.countDown()
-                assertSame(ParentOnlyConcurrentType::class.java, admitted.get(TIMEOUT_SECONDS, TimeUnit.SECONDS))
+                assertSame(Unit::class.java, admitted.get(TIMEOUT_SECONDS, TimeUnit.SECONDS))
                 // Direct loadClass delegation does not register this plugin as an initiating
                 // loader. The waiting call is still a miss and must recheck lifecycle state.
                 assertIs<ClassNotFoundException>(waiting.get(TIMEOUT_SECONDS, TimeUnit.SECONDS).exceptionOrNull())

@@ -61,6 +61,8 @@ import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.runtime.*
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -68,6 +70,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -77,6 +80,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -451,10 +455,6 @@ fun NewTabDialog(
             fileExtensions = emptyList(), // Allow all files
         )
 
-    LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
-    }
-
     // Update suggestions when URL text changes
     LaunchedEffect(urlText, selectedType) {
         if (selectedType == TabType.URL && urlText.isNotEmpty()) {
@@ -509,6 +509,16 @@ fun NewTabDialog(
     // The scrim and centering that used to be hand-rolled here now belong to BossDialog, so every
     // dialog in the app gets the same ones rather than this one being a special case.
     BossDialog(onDismissRequest = onDismiss) {
+        val dialogWindow = LocalWindowInfo.current
+        LaunchedEffect(selectedType, selectedPluginType) {
+            if (selectedPluginType == null && (selectedType == TabType.URL || selectedType == TabType.FILE)) {
+                // Heavyweight dialogs compose in a separate window. Wait for that window,
+                // not the opener, and for its input nodes to be placed before requesting focus.
+                snapshotFlow { dialogWindow.isWindowFocused }.first { it }
+                withFrameNanos { }
+                focusRequester.requestFocus()
+            }
+        }
         // Dialog content with ContextMenu styling
         Box(
             modifier =

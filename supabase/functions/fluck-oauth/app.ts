@@ -58,7 +58,7 @@ const SECRET_NOTE = "Created by Fluck when a service was connected. Do not edit 
 /** Shown as the secret's username when the id_token carried no email. */
 const UNKNOWN_ACCOUNT = "google account"
 
-export type NonceClaim = "claimed" | "replay" | "unavailable"
+export type NonceClaim = "claimed" | "replay" | "invalid" | "unavailable"
 
 export interface StoreRequest {
   userId: string
@@ -197,6 +197,10 @@ async function callback(request: Request, deps: Dependencies): Promise<Response>
   // nonce is what makes a REPLAYED link dead even when the first attempt failed, and claiming
   // it only on success would leave a link that can be retried until one attempt lands.
   const claim = await deps.claimNonce(claims.n, claims.exp)
+  if (claim === "invalid") {
+    deps.log(`callback refused: nonce validity [${workspace}]`)
+    return page(400, "Sign in problem", PAGE_STALE)
+  }
   if (claim === "replay") {
     deps.log(`callback refused: replay [${workspace}]`)
     return page(400, "Sign in problem", PAGE_REPLAY)
@@ -270,6 +274,7 @@ padding:24px;background:#fff;color:#111;font:17px/1.5 -apple-system,BlinkMacSyst
 
 function escapeHtml(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;").replaceAll("'", "&#39;")
 }
 
 export const PAGES = {

@@ -78,7 +78,7 @@ internal object ShellPathQuoting {
             append('\'')
         }
 
-    private const val POWERSHELL_SINGLE_QUOTES = "'\u2018\u2019\u201A\u201B"
+    internal const val POWERSHELL_SINGLE_QUOTES = "'\u2018\u2019\u201A\u201B"
 
     fun posixInsideQuote(
         value: String,

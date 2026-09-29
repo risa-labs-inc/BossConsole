@@ -4,8 +4,10 @@ import ai.rever.boss.utils.SystemUtils
 import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerializationException
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Paths
@@ -110,6 +112,15 @@ actual class WorkspaceFileManager actual constructor(
 
                 val json = file.readText()
                 WorkspaceSerializer.deserialize(json)
+            } catch (e: SerializationException) {
+                // A Space can contain tab URLs, project paths and terminal commands. Decoder
+                // messages quote the input document, so never attach one to a host log entry.
+                logger.warn(
+                    LogCategory.WORKSPACE,
+                    "Failed to load workspace file",
+                    mapOf("fileName" to fileName) + decodeFailure(e),
+                )
+                null
             } catch (e: Exception) {
                 logger.warn(
                     LogCategory.WORKSPACE,

@@ -95,6 +95,13 @@ class LastSessionSetRestoreTest {
         }
 
     @Test
+    fun `a single named Space resumes its own identity and tabs`() {
+        val state = restore(LastSessionSet("solo", listOf(space("solo"))))
+        assertEquals("solo", state.currentWorkspaceId)
+        assertEquals(listOf("solo.kt"), state.titlesIn("solo"))
+    }
+
+    @Test
     fun `a refused first Space is never claimed and the next successful Space restores its project`() =
         runBlocking {
             val refused =

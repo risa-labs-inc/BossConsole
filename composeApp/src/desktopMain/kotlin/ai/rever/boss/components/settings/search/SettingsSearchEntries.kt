@@ -386,6 +386,8 @@ private fun workspaceEntries() =
     section(SettingsSection.WORKSPACE) {
         group("Default Space", "workspace", "workspaces")
         group("When Switching Spaces", "workspace", "workspaces")
+        group("Session Restore", "workspace", "workspaces", "last session", "startup", "restore")
+        setting("Enable Last Session Space", "Session Restore", "startup", "restore", "recovery")
         group("About Spaces", "workspace", "workspaces")
         sectionLevel("workspace", "workspaces", "layout", "template")
     }
@@ -422,6 +424,11 @@ private fun focusModeEntries() =
 private fun themeEntries() =
     section(SettingsSection.THEME) {
         group("App Theme")
+        group("Glass")
+        setting("Glass coverage", "Glass", "liquid", "sidebar", "window", "transparency")
+        setting("Glass style", "Glass", "liquid", "regular", "clear", "blur")
+        setting("Glass tint", "Glass", "liquid", "transparency")
+        setting("Background opacity", "Glass", "liquid", "transparency")
     }
 
 private fun windowAppearanceEntries() =

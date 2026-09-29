@@ -228,8 +228,27 @@ actual object DeepLinkHandler {
         }
     }
 
+    /**
+     * Windows needs the registry entry and nothing else.
+     *
+     * The JDK implements `APP_OPEN_URI` only in the macOS Desktop peer, so the
+     * `setOpenURIHandler` call that used to sit here threw `UnsupportedOperationException` on
+     * every Windows launch: the handler was never registered, no link ever arrived through it,
+     * and the failure was logged at WARN with a stack trace, which read as a broken feature in
+     * every Windows log. The comment claiming it "might not work on all Windows versions" had
+     * no version it did work on.
+     *
+     * `boss://` links and file arguments reach the app through `argv` instead - at cold start
+     * and forwarded to a running instance - which [processCommandLineArgs] handles. (A plain
+     * `http://` argument is extracted there too but is not routed onward; that gap is
+     * pre-existing, identical on Linux, and orthogonal to this removal.)
+     *
+     * #437 closed the same gap for the X11 peer by keeping the call and logging the refusal at
+     * DEBUG. Here the call is removed rather than quietened, because on Windows it has no path
+     * to success at all - the same reason [setupOpenFileHandler] returns early on Windows
+     * instead of registering an APP_OPEN_FILE handler that would throw.
+     */
     private fun setupWindowsHandler() {
-        // Windows requires registry setup and command line argument handling
         try {
             // Called unconditionally: registerProtocol() is idempotent and inspects the
             // actual shell\open\command value, while isProtocolRegistered() only reports
@@ -239,34 +258,6 @@ actual object DeepLinkHandler {
             // never repaired, leaving boss:// broken for that user on every launch. Costs one
             // extra `reg query` per Windows start in the already-correct case, bounded at 5s.
             WindowsProtocolHandler.registerProtocol()
-
-            // On Windows, deep links come through command line args when the app is already running
-            // For new instances, we need to check args in main()
-            if (Desktop.isDesktopSupported()) {
-                // This might not work on all Windows versions, but try it
-                try {
-                    Desktop.getDesktop().setOpenURIHandler { event ->
-                        val uri = event.uri.toString()
-                        logger.info(
-                            LogCategory.SYSTEM,
-                            "Received deep link (Windows via Desktop)",
-                            mapOf("uri" to LogSanitizer.describeUri(uri)),
-                        )
-
-                        // Handle http/https URLs for default browser functionality
-                        // (direct, like the macOS route above — the default-browser contract)
-                        if (uri.startsWith("http://") || uri.startsWith("https://")) {
-                            logger.debug(LogCategory.BROWSER, "Handling as HTTP(S) URL")
-                            URLHandlerService.handleURL(uri, requiresConfirmation = false)
-                        } else {
-                            // Handle boss:// deep links for auth
-                            _deepLinkFlow.value = uri
-                        }
-                    }
-                } catch (e: Exception) {
-                    logger.warn(LogCategory.SYSTEM, "Desktop.setOpenURIHandler not supported on Windows", error = e)
-                }
-            }
         } catch (e: Exception) {
             logger.error(LogCategory.SYSTEM, "Failed to set up Windows deep link handler", error = e)
         }
