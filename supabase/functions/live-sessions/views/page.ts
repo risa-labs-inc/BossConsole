@@ -11,6 +11,10 @@
  * api.risaboss.com sits behind Cloudflare whose Email Obfuscation would inject
  * a script the CSP blocks.
  *
+ * Google / Apple sign-in never touches page script: the two buttons are plain links to
+ * /api/oauth/{google|apple}, and the server does the whole PKCE exchange (app.ts), landing back
+ * here signed in or with `?oauth_error=<code>`, which the script turns into a notice.
+ *
  * Token handling, in order, and why:
  *   1. GoTrue's implicit-flow redirect lands on `/auth#access_token=…`. The
  *      fragment never reaches this server, so the page reads it itself.
@@ -88,6 +92,13 @@ const STYLES = `
   #viewerbar .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #viewerbar button, #viewerbar a.btn { padding: 5px 10px; font-size: 12px; }
   #viewerframe { flex: 1; width: 100%; border: 0; background-color: #000; }
+  .providers { display: grid; gap: 10px; }
+  a.btn.provider { display: flex; align-items: center; justify-content: center; gap: 10px;
+    background-color: transparent; color: var(--text); border-color: var(--line-strong); }
+  a.btn.provider.apple { background-color: var(--text); color: var(--ink); border-color: var(--text); }
+  a.btn.provider svg { width: 18px; height: 18px; flex: none; }
+  .or { display: flex; align-items: center; gap: 10px; color: var(--text-2); font-size: 13px; margin: 16px 0; }
+  .or::before, .or::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
 `
 
 /**
@@ -113,6 +124,23 @@ const SCRIPT = `
     n.textContent = text || "";
     n.className = "notice" + (kind ? " " + kind : "");
     n.classList.toggle("hidden", !text);
+  }
+  // 0. A Google / Apple sign-in that did not complete comes back with ?oauth_error=<code>. Only
+  //    known codes are shown, as fixed text; the parameter then leaves the address bar.
+  var OAUTH_ERRORS = {
+    cancelled: "Sign-in was cancelled.",
+    expired: "That sign-in took too long or was opened in another browser. Please try again.",
+    failed: "Sign-in failed. Please try again.",
+    rate_limited: "Too many attempts. Try again in a few minutes."
+  };
+  function oauthErrorNotice() {
+    var params = new URLSearchParams(location.search);
+    var code = params.get("oauth_error");
+    if (!code) return;
+    params.delete("oauth_error");
+    var rest = params.toString();
+    history.replaceState(null, "", location.pathname + (rest ? "?" + rest : "") + location.hash);
+    notice(Object.prototype.hasOwnProperty.call(OAUTH_ERRORS, code) ? OAUTH_ERRORS[code] : OAUTH_ERRORS.failed, "error");
   }
   // 1. Harvest GoTrue's implicit-flow fragment: hand the tokens to the server (which turns
   //    them into HttpOnly cookies), then strip the fragment from the URL. Resolves to true when
@@ -385,11 +413,25 @@ const SCRIPT = `
 
   // Boot: establish the cookie session from a fragment if there is one, then ask the server.
   // A 401 there is the ordinary "not signed in" answer and shows the form.
+  oauthErrorNotice();
   harvestFragment().then(function () {
     return loadSessions(false);
   }).catch(function () { notice("Network error.", "error"); show("signin"); });
 })();
 `
+
+/** Google's "G" in its brand colours; inline SVG so no image source is needed. */
+const GOOGLE_MARK =
+  `<svg viewBox="0 0 18 18" aria-hidden="true">` +
+  `<path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.87 2.68-6.62z"/>` +
+  `<path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.83.86-3.04.86-2.34 0-4.33-1.58-5.04-3.71H.96v2.33A9 9 0 0 0 9 18z"/>` +
+  `<path fill="#FBBC05" d="M3.96 10.71A5.41 5.41 0 0 1 3.68 9c0-.59.1-1.17.28-1.71V4.96H.96A9 9 0 0 0 0 9c0 1.45.35 2.83.96 4.04l3-2.33z"/>` +
+  `<path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.59A9 9 0 0 0 .96 4.96l3 2.33C4.67 5.16 6.66 3.58 9 3.58z"/>` +
+  `</svg>`
+
+/** The Apple logo, drawn in the button's text colour. */
+const APPLE_MARK =
+  `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M16.37 1.43c0 1.14-.49 2.27-1.18 3.08-.74.9-1.99 1.57-2.99 1.57-.12 0-.23-.02-.3-.03-.01-.06-.04-.22-.04-.39 0-1.15.57-2.27 1.21-2.98.8-.94 2.14-1.64 3.25-1.68.03.13.05.28.05.43zm4.34 15.59c-.03.07-.46 1.58-1.52 3.12-.95 1.34-1.94 2.71-3.43 2.71-1.52 0-1.9-.88-3.63-.88-1.7 0-2.3.91-3.67.91-1.38 0-2.33-1.26-3.43-2.8C3.74 18.26 2.7 15.45 2.7 12.8c0-4.28 2.8-6.55 5.55-6.55 1.45 0 2.68.95 3.6.95.87 0 2.22-1.01 3.9-1.01.61 0 2.89.06 4.37 2.19-.13.09-2.38 1.37-2.38 4.19 0 3.26 2.85 4.32 2.95 4.38z"/></svg>`
 
 export function livePage(model: PageModel, nonce: string): string {
   const cfg = { basePath: model.basePath, liveWindowSeconds: model.liveWindowSeconds }
@@ -414,6 +456,11 @@ export function livePage(model: PageModel, nonce: string): string {
   ${notice}
 
   <section id="signin" class="card hidden">
+    <div class="providers">
+      <a id="oauth-google" class="btn provider" href="${esc(model.basePath)}/api/oauth/google">${GOOGLE_MARK}Continue with Google</a>
+      <a id="oauth-apple" class="btn provider apple" href="${esc(model.basePath)}/api/oauth/apple">${APPLE_MARK}Continue with Apple</a>
+    </div>
+    <div class="or">or</div>
     <form id="signin-form" autocomplete="on">
       <label for="email">Email</label>
       <input id="email" name="email" type="email" required autocomplete="email" inputmode="email" placeholder="you@company.com">

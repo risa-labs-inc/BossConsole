@@ -80,16 +80,20 @@ export function htmlResponse(
   return new Response(build(nonce), { status: options.status ?? 200, headers })
 }
 
-/** A redirect carrying the same security headers. Used for the vanity-host redirect. */
+/**
+ * A redirect carrying the same security headers. Used for the vanity-host redirect and the
+ * Google / Apple sign-in hops. `setCookies` are appended one header each, as for JSON.
+ */
 export function redirectResponse(
   location: string,
-  options: { status?: number; headers?: Record<string, string> } = {},
+  options: { status?: number; headers?: Record<string, string>; setCookies?: string[] } = {},
 ): Response {
   const headers = new Headers({
     Location: location,
     ...baseSecurityHeaders(),
     ...(options.headers ?? {}),
   })
+  for (const c of options.setCookies ?? []) headers.append("Set-Cookie", c)
   return new Response(null, { status: options.status ?? 303, headers })
 }
 

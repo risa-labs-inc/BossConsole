@@ -42,6 +42,29 @@ Points worth knowing before changing it:
   `privaterelay.appleid.com` address and therefore a separate account, and joins no
   domain-based organisation.
 
+## cli.risaboss.com (Live Sessions page)
+
+The `live-sessions` edge function offers the same two buttons. They are plain links to
+`/api/oauth/{google|apple}`; the function does the whole PKCE exchange server-side, so the page
+keeps its no-third-party-script CSP and no token or verifier ever reaches page script:
+
+1. `/api/oauth/:provider` puts a fresh verifier in a 10-minute HttpOnly `boss_live_pkce` cookie
+   and 302s to `<auth URL>/auth/v1/authorize` with `redirect_to=<LIVE_SESSIONS_PUBLIC_BASE_URL>/auth`
+   (`https://cli.risaboss.com/auth`, already in the redirect allow-list).
+2. The provider returns to `/auth?code=`; the function exchanges it at
+   `/auth/v1/token?grant_type=pkce` with the cookie's verifier, sets the usual session cookies and
+   302s to the page. Failures come back as `?oauth_error=cancelled|expired|failed|rate_limited`.
+3. The return deliberately skips the cross-site check (it starts on Google's or Apple's site);
+   the verifier cookie is what makes a planted code useless.
+
+Unlike the page's magic link (`create_user: false`), a first Google or Apple sign-in here creates
+the BOSS account, the same as the desktop apps.
+
+Set `LIVE_SESSIONS_AUTH_PUBLIC_URL=https://api.risaboss.com` on the function so the authorize hop
+uses the custom domain (it falls back to `SUPABASE_URL`, which also works on the hosted platform).
+Locally set it to `http://127.0.0.1:54321`, because the function's own `SUPABASE_URL` is not
+reachable from a browser there.
+
 ## Provider setup (production)
 
 Project `pcnwqamqdnsadranufjv`. Nothing below is committed to the repo.

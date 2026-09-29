@@ -23,6 +23,15 @@
 
 const ACCESS = "boss_live_at"
 const REFRESH = "boss_live_rt"
+const PKCE = "boss_live_pkce"
+
+/**
+ * PKCE verifier for a Google / Apple sign-in in flight. Lives only between the start route and
+ * the provider's return to /auth, so it expires with the attempt. Lax, not Strict: the return is a
+ * top-level navigation that began on the provider's site (Apple posts a form to GoTrue), and
+ * Strict would withhold the verifier on exactly that request.
+ */
+export const PKCE_MAX_AGE_SECONDS = 10 * 60
 
 /** Access cookie: bounded by the JWT's own expiry, so a stale one just 401s and gets rotated. */
 export const ACCESS_MAX_AGE_SECONDS = 60 * 60
@@ -75,6 +84,18 @@ export function sessionCookieHeaders(
   const headers = [setCookie(accessCookieName(secure), accessToken, ACCESS_MAX_AGE_SECONDS, secure, path)]
   if (refreshToken) headers.push(setCookie(refreshCookieName(secure), refreshToken, REFRESH_MAX_AGE_SECONDS, secure, path))
   return headers
+}
+
+export function pkceCookieName(secure: boolean): string {
+  return secure ? `__Secure-${PKCE}` : PKCE
+}
+
+export function pkceCookieHeader(verifier: string, secure: boolean, path: string): string {
+  return setCookie(pkceCookieName(secure), verifier, PKCE_MAX_AGE_SECONDS, secure, path)
+}
+
+export function clearPkceCookieHeader(secure: boolean, path: string): string {
+  return setCookie(pkceCookieName(secure), "", 0, secure, path)
 }
 
 export function clearCookieHeaders(secure: boolean, path: string): string[] {
