@@ -127,8 +127,9 @@ site_url = "boss://auth/verify"
 # redirect function can't tell the apps apart. PRODUCTION: add the same URL under
 # Dashboard -> Auth -> URL Configuration -> Redirect URLs.
 # boss://auth/callback: the Google / Apple sign-in return (PKCE code in the query), see
-# OAuthSignInService.kt. PRODUCTION: add it under Redirect URLs too.
-additional_redirect_urls = ["boss://auth/verify", "boss://auth/callback", "bossterm://auth/verify", "http://127.0.0.1:3000", "https://127.0.0.1:3000",
+# OAuthSignInService.kt; bossterm://auth/callback is BossTerm's (OAuthSignIn.kt). PRODUCTION: add both
+# under Redirect URLs too.
+additional_redirect_urls = ["boss://auth/verify", "boss://auth/callback", "bossterm://auth/verify", "bossterm://auth/callback", "http://127.0.0.1:3000", "https://127.0.0.1:3000",
   # live-sessions web page (functions/live-sessions): magic link lands the browser here with tokens in the fragment
   "https://api.risaboss.com/functions/v1/live-sessions/auth", "https://cli.risaboss.com/auth", "http://127.0.0.1:54321/functions/v1/live-sessions/auth"]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
