@@ -2614,6 +2614,13 @@ background and Compose chrome use the same tint. Menus and dialogs retain opaque
 is an opt-in macOS smoke test using its own small unfocusable window. It verifies native install,
 light/clear updates, and detach; it does not establish visual correctness of an entire app layout.
 
+`MacSidebarToolbar` must keep a unique identifier for each controller lifetime. AppKit implicitly
+synchronizes item insertions/removals among toolbars with the same identifier, even when user
+customization is disabled. Each window's active tab supplies different items, so a shared identifier
+can ask another window's delegate for an unavailable item and abort the process in AppKit.
+`BOSS_TEST_NATIVE_TOOLBAR=1 ./gradlew :composeApp:desktopTest --tests '*MacSidebarToolbarSmokeTest'`
+checks independent item lists, updates, and closing one of two owned unfocusable windows.
+
 The vertical sidebar uses `SidebarGlass` washes only while the native backdrop is active.
 `IntegratedSidebarSurface` keeps the rounded outline; full-window glass tint belongs to the root.
 `WindowVerticalTabBar.surfacePainted` prevents duplicate fills for sidebar-only coverage. Favorites,

@@ -9,6 +9,7 @@ import ai.rever.boss.window.MacToolbarRuntime.string
 import com.sun.jna.Callback
 import com.sun.jna.CallbackReference
 import com.sun.jna.Pointer
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import javax.swing.SwingUtilities
 
@@ -19,6 +20,10 @@ internal class MacSidebarToolbar(
     private val onAction: (String) -> Unit,
 ) : AutoCloseable {
     private val window = Pointer(handle)
+
+    // AppKit synchronizes insertions/removals across all toolbars with the same identifier.
+    // Each window has different active-tab actions, so its delegate cannot serve another's items.
+    private val toolbarIdentifier = "ai.rever.boss.sidebar.${UUID.randomUUID()}"
     private var toolbar: Pointer? = null
     private var delegate: Pointer? = null
     private val items = mutableMapOf<String, Pointer>()
@@ -107,7 +112,7 @@ internal class MacSidebarToolbar(
         MacSidebarToolbarBridge.owners[Pointer.nativeValue(delegate)] = this
         toolbar =
             checkNotNull(
-                pointer(pointer(clazz("NSToolbar"), "alloc"), "initWithIdentifier:", string("ai.rever.boss.sidebar")),
+                pointer(pointer(clazz("NSToolbar"), "alloc"), "initWithIdentifier:", string(toolbarIdentifier)),
             )
         send(toolbar, "setDelegate:", delegate)
         send(toolbar, "setDisplayMode:", 2L)
