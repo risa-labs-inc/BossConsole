@@ -56,10 +56,17 @@ Project `pcnwqamqdnsadranufjv`. Nothing below is committed to the repo.
    which is the callback Supabase advertises) and
    `https://pcnwqamqdnsadranufjv.supabase.co/auth/v1/callback`.
    Configured 2026-09-28: GCP project `boss-455616`, Web client "BOSS Supabase Auth". The app
-   is External and was published to production the same day, with no logo so it needs no
-   Google verification. The consent screen links home https://www.risaboss.com, privacy
-   https://www.risalabs.ai/privacy-policy and terms https://www.risalabs.ai/terms-of-use
-   (BOSS has no pages of its own yet). Adding a logo later triggers verification.
+   is External and was published to production the same day. Brand verification passed on
+   2026-09-29, so the consent screen shows "BOSS" and its logo. The logo is the BossTerm
+   icon: a plain "BOSS" wordmark was rejected as not uniquely identifying the brand. The
+   consent screen links home https://www.risaboss.com, privacy
+   https://www.risaboss.com/privacy/ and terms https://www.risaboss.com/terms/. Those pages
+   live in the BOSSConsole-Website repo and are served at risaboss.com by the
+   `risaboss-proxy` Worker in the RISA Labs, Inc Cloudflare account. risaboss.com and
+   risalabs.ai are both verified in Search Console under shivang@risalabs.ai; keep the
+   `google-site-verification` TXT record on risaboss.com or that verification lapses.
+   Changing the logo, name or links sends the app back through brand verification, and the
+   Console only draws its "Verify branding" control when the window is wide.
 4. Paste the client ID and secret into the Supabase Google provider.
 
 ### Apple
