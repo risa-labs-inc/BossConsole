@@ -12,9 +12,11 @@ import {
   COOKIE_NAME,
   cookieName,
   createHandler,
+  cvvIntro,
   DEFAULT_PUBLIC_BASE_URL,
   type Dependencies,
   looksLikePlaintext,
+  money,
   PAGES,
   resetRateLimits,
   routePath,
@@ -253,9 +255,45 @@ Deno.test("the cvv page names the brand, the last four, the total and the mercha
   const { handler } = harness({ row: cvvRow() })
   const response = await handler(get("/cvv", await cvvToken()))
   const html = await response.text()
-  assertStringIncludes(
-    html,
-    "Checkout: Delta Air Lines. Card: Visa card ending 4242. Total: $487.32. ",
+  assertStringIncludes(html, "<h1>Confirm payment</h1>")
+  assertStringIncludes(html, "<p>Visa ••4242 · $487.32 · Delta Air Lines</p>")
+  assertStringIncludes(html, ">Pay</button>")
+  assertStringIncludes(html, "Used once, never stored.")
+})
+
+Deno.test("the cvv total is shown in the row's own currency", () => {
+  // The live report: an INR checkout rendered as $290.69.
+  assertEquals(
+    cvvIntro(
+      cvvRow({
+        brand: "HSBC",
+        last4: "3585",
+        totalCents: 29_069,
+        currency: "INR",
+        merchant: "zomato.com",
+      }),
+    ),
+    "HSBC ••3585 · ₹290.69 · zomato.com",
+  )
+  assertEquals(money(29_069, "INR"), "₹290.69")
+  assertEquals(money(48_732, "USD"), "$487.32")
+  assertEquals(money(1_050, "GBP"), "£10.50")
+  assertEquals(money(1_050, "EUR"), "€10.50")
+  // Zero decimal currencies are not divided by a hundred.
+  assertEquals(money(1_200, "JPY"), "¥1,200")
+  // An unassigned code is still formatted by Intl, a malformed one falls back to the code.
+  assertEquals(money(29_069, "XQZ"), "XQZ\u00a0290.69")
+  assertEquals(money(29_069, "1AB"), "1AB 290.69")
+  assertEquals(money(29_069, null), "290.69")
+  assertEquals(money(null, "USD"), null)
+})
+
+Deno.test("the cvv line omits what the row does not have", () => {
+  assertEquals(cvvIntro(cvvRow({ brand: null })), "••4242 · $487.32 · Delta Air Lines")
+  assertEquals(cvvIntro(cvvRow({ last4: null, merchant: null })), "Visa · $487.32")
+  assertEquals(
+    cvvIntro(cvvRow({ brand: null, last4: null, merchant: null, totalCents: null })),
+    PAGES.cvvIntro,
   )
 })
 
@@ -600,5 +638,5 @@ Deno.test("a password page names the site it is saving a login for", async () =>
   const response = await handler(get("/vault", await token({ kind: "password" })))
   const html = await response.text()
   assertStringIncludes(html, "Save your united.com login")
-  assertStringIncludes(html, "Service/site: united.com.")
+  assertStringIncludes(html, PAGES.passwordIntro)
 })

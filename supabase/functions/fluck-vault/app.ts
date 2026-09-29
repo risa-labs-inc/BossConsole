@@ -151,24 +151,24 @@ export interface Dependencies {
 // --------------------------------------------------------------------------------------------
 
 const COPY = {
-  passwordTitle: "Save a password",
-  passwordIntro: "Enter the username and password for this site once here. Fluck never sees them in Messages.",
+  passwordTitle: "Save a login",
+  passwordIntro: "Fluck never sees it in Messages.",
   passwordSubmit: "Save",
-  passwordNote: "It is encrypted in this browser before it is sent.",
+  passwordNote: "Encrypted in this browser before it is sent.",
   cardTitle: "Add a card",
-  cardIntro:
-    "Type the card once here. Fluck never sees it in Messages. Use a virtual card with a spending limit.",
+  cardIntro: "Use a virtual card with a spending limit. Fluck never sees it in Messages.",
   cardSubmit: "Add card",
-  cardNote: "It is encrypted in this browser before it is sent.",
-  cvvTitle: "Review checkout details",
-  cvvSubmit: "Submit code",
-  cvvNote: "The code is sent to Fluck's encrypted inbox for this request. This page does not submit payment. Only continue if you requested it; anyone with this link can open it before use, so do not forward it.",
+  cardNote: "Encrypted in this browser before it is sent.",
+  cvvTitle: "Confirm payment",
+  cvvIntro: "Enter the card security code.",
+  cvvSubmit: "Pay",
+  cvvNote: "Used once, never stored.",
   savedTitle: "Saved",
-  saved: "Saved. You can close this and go back to Messages.",
+  saved: "Saved. You can go back to Messages.",
   cardSavedTitle: "Card added",
-  cardSaved: "Card added. It is stored encrypted and only used when you approve a purchase.",
-  cvvDoneTitle: "Code received",
-  cvvDone: "Code received for this request. This does not confirm a payment or mean you were charged. You can close this page.",
+  cardSaved: "Card added. It is only used when you approve a purchase.",
+  cvvDoneTitle: "Sent",
+  cvvDone: "Sent. You can go back to Messages.",
   badTitle: "Link problem",
   bad: "That link is not valid any more. Ask Fluck for a fresh one.",
   busyTitle: "Too many tries",
@@ -671,14 +671,25 @@ async function verified(
   return row
 }
 
-function money(cents: number | null, currency: string | null): string {
-  if (cents === null || !Number.isFinite(cents)) return "the amount shown"
-  const symbol = (currency ?? "USD").toUpperCase() === "GBP"
-    ? "£"
-    : (currency ?? "USD").toUpperCase() === "EUR"
-    ? "€"
-    : "$"
-  return symbol + (cents / 100).toFixed(2)
+/**
+ * A minor unit amount in the row's own currency: `₹290.69`, `$487.32`, `¥1,200`.
+ *
+ * The exponent comes from the currency, so a zero decimal currency is not divided by a hundred.
+ * An unknown code falls back to `XYZ 290.69`; a missing one shows the bare number rather than a
+ * guessed symbol.
+ */
+export function money(minor: number | null, currency: string | null): string | null {
+  if (minor === null || !Number.isFinite(minor)) return null
+  const code = currency?.toUpperCase() ?? null
+  if (code !== null) {
+    try {
+      const format = new Intl.NumberFormat("en", { style: "currency", currency: code })
+      const digits = format.resolvedOptions().maximumFractionDigits ?? 2
+      return format.format(minor / 10 ** digits)
+    } catch { /* an unknown code: fall through */ }
+  }
+  const amount = (minor / 100).toFixed(2)
+  return code === null ? amount : `${code} ${amount}`
 }
 
 /**
@@ -739,9 +750,7 @@ async function get(
     }
     : {
       title: row.alias ? `Save your ${row.alias} login` : COPY.passwordTitle,
-      intro: row.alias
-        ? `Service/site: ${row.alias}. Enter the username and password for this site once here. Fluck never sees them in Messages.`
-        : COPY.passwordIntro,
+      intro: COPY.passwordIntro,
       kind: "password" as const,
       submit: COPY.passwordSubmit,
       note: COPY.passwordNote,
@@ -754,19 +763,15 @@ async function get(
 }
 
 /**
- * The CVV page is the confirmation surface, so it states the whole of what is about to happen.
+ * The CVV page is the confirmation surface: `Visa ••4242 · $487.32 · delta.com`.
  *
- * The row is minted by the DGX and rendered outside model control. Its link is a bearer
- * capability, however, and the browser has no authenticated owner session to compare against.
+ * The row is minted by the DGX and rendered outside model control. Missing parts are omitted.
  */
-function cvvIntro(row: VaultRequestRow): string {
-  const card = row.brand ? `${row.brand} card` : "card"
-  const last4 = row.last4 ? ` ending ${row.last4}` : ""
-  const total = money(row.totalCents, row.currency)
-  const merchant = row.merchant ?? "the merchant"
-  return `Checkout: ${merchant}. Card: ${card}${last4}. Total: ${total}. ` +
-    "Enter the security code only if these details match the checkout you requested. " +
-    "The code is used for this request and is not saved with your card. This page does not approve or submit the purchase."
+export function cvvIntro(row: VaultRequestRow): string {
+  const card = [row.brand, row.last4 ? `••${row.last4}` : null].filter(Boolean).join(" ")
+  const parts = [card, money(row.totalCents, row.currency), row.merchant]
+    .filter((part): part is string => typeof part === "string" && part.length > 0)
+  return parts.length > 0 ? parts.join(" · ") : COPY.cvvIntro
 }
 
 /**
