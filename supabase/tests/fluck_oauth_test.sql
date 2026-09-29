@@ -40,5 +40,20 @@ SELECT is((SELECT public.decrypt_text(password_encrypted) FROM public.secrets WH
 SELECT is((SELECT public.decrypt_text(password_encrypted) FROM public.secrets WHERE user_id = 'd1520000-0000-4000-8000-000000000002'), 'other-token', 'another user keeps their token');
 SELECT throws_ok($$SELECT public.fluck_oauth_store_secret('d1520000-0000-4000-8000-000000000001', 'example.test', 'user', 'token')$$, 'P0001', 'website must be a fluck connector key', 'ordinary vault entries cannot be replaced');
 
+SELECT ok(NOT has_table_privilege('anon', 'public.fluck_oauth_grants', 'SELECT'), 'anonymous callers cannot read grant bindings');
+SELECT ok(NOT has_table_privilege('authenticated', 'public.fluck_oauth_grants', 'SELECT'), 'signed-in clients cannot read grant bindings');
+SELECT ok(NOT has_function_privilege('authenticated', 'public.fluck_oauth_bind_grant(text,uuid)', 'EXECUTE'), 'signed-in clients cannot bind a token to themselves');
+SELECT ok(NOT has_function_privilege('anon', 'public.fluck_oauth_grant_owner(text)', 'EXECUTE'), 'anonymous callers cannot look up grant owners');
+SELECT ok(NOT has_function_privilege('authenticated', 'public.fluck_oauth_forget_grant(text)', 'EXECUTE'), 'signed-in clients cannot drop bindings');
+SELECT ok(has_function_privilege('service_role', 'public.fluck_oauth_bind_grant(text,uuid)', 'EXECUTE'), 'the service role can bind grants');
+SELECT ok(public.fluck_oauth_bind_grant(repeat('a', 64), 'd1520000-0000-4000-8000-000000000001'), 'a grant is bound');
+SELECT is(public.fluck_oauth_grant_owner(repeat('a', 64)), 'd1520000-0000-4000-8000-000000000001'::uuid, 'the binding names its owner');
+SELECT ok(public.fluck_oauth_bind_grant(repeat('a', 64), 'd1520000-0000-4000-8000-000000000001'), 'a retried bind is idempotent');
+SELECT is(public.fluck_oauth_grant_owner(repeat('b', 64)), NULL::uuid, 'an unknown token has no owner');
+SELECT ok(NOT public.fluck_oauth_bind_grant('not-a-hash', 'd1520000-0000-4000-8000-000000000001'), 'a malformed hash is refused');
+SELECT throws_ok($$INSERT INTO public.fluck_oauth_grants (token_sha256, user_id) VALUES (repeat('A', 64), 'd1520000-0000-4000-8000-000000000001')$$, '23514', NULL, 'only lowercase hex is stored');
+SELECT public.fluck_oauth_forget_grant(repeat('a', 64));
+SELECT is(public.fluck_oauth_grant_owner(repeat('a', 64)), NULL::uuid, 'a forgotten grant is unbound');
+
 SELECT * FROM finish();
 ROLLBACK;

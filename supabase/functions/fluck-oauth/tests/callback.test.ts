@@ -22,6 +22,7 @@ import {
 } from "../app.ts"
 import { emailFromIdToken, exchangeCode } from "../google.ts"
 import { mintState } from "../state.ts"
+import { bodyDigest } from "../signed.ts"
 
 const NOW_SECONDS = 1_800_000_000
 const USER_ID = "11111111-2222-3333-4444-555555555555"
@@ -62,6 +63,7 @@ async function state(
 interface Harness {
   handler: (request: Request) => Promise<Response>
   stored: StoreRequest[]
+  bound: { tokenSha256: string; userId: string }[]
   claimed: string[]
   requests: { url: string; body: URLSearchParams }[]
   logs: string[]
@@ -73,9 +75,11 @@ function harness(options: {
   tokenThrows?: boolean
   claim?: NonceClaim
   storeOk?: boolean
+  bindOk?: boolean
   instances?: Record<string, Instance>
 } = {}): Harness {
   const stored: StoreRequest[] = []
+  const bound: { tokenSha256: string; userId: string }[] = []
   const claimed: string[] = []
   const requests: { url: string; body: URLSearchParams }[] = []
   const logs: string[] = []
@@ -123,8 +127,14 @@ function harness(options: {
       stored.push(request)
       return Promise.resolve(options.storeOk ?? true)
     },
+    bindGrant: (tokenSha256, userId) => {
+      bound.push({ tokenSha256, userId })
+      return Promise.resolve(options.bindOk ?? true)
+    },
+    grantOwner: () => Promise.reject(new Error("the callback must not look up a grant")),
+    forgetGrant: () => Promise.reject(new Error("the callback must not forget a grant")),
   }
-  return { handler: createHandler(deps), stored, claimed, requests, logs }
+  return { handler: createHandler(deps), stored, bound, claimed, requests, logs }
 }
 
 async function callback(h: Harness, query: string): Promise<Response> {
@@ -343,6 +353,23 @@ Deno.test("an unreachable token endpoint is not reported as a bad code", async (
   const response = await callback(h, `code=abc&state=${await state()}`)
   assertEquals(response.status, 400)
   assertStringIncludes(await response.text(), PAGES.unreachable)
+})
+
+Deno.test("a good callback binds the refresh token's hash to the state's user", async () => {
+  const h = harness()
+  const response = await callback(h, `code=abc&state=${await state()}`)
+  assertEquals(response.status, 200)
+  assertEquals(h.bound, [{ tokenSha256: await bodyDigest("1//refresh"), userId: USER_ID }])
+  assert(/^[0-9a-f]{64}$/.test(h.bound[0].tokenSha256))
+})
+
+Deno.test("a failed bind fails the callback and writes no secret", async () => {
+  const h = harness({ bindOk: false })
+  const response = await callback(h, `code=abc&state=${await state()}`)
+  assertEquals(response.status, 503)
+  assertStringIncludes(await response.text(), PAGES.storeFailed)
+  assertEquals(h.stored, [])
+  assertEquals(h.logs, ["callback failed: bind [ws-abcde]"])
 })
 
 Deno.test("a failed store is a 503, not a success page", async () => {

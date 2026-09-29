@@ -8,13 +8,15 @@
  * signed.ts, so the canonical string is asserted as a fact about the bytes on the wire.
  */
 import { assert, assertEquals } from "@std/assert"
-import { createHandler, type Dependencies, type Instance } from "../app.ts"
+import { createHandler, type Dependencies, type GrantOwner, type Instance } from "../app.ts"
 import { refreshAccessToken } from "../google.ts"
 import { bodyDigest, signingString } from "../signed.ts"
 
 const NOW_SECONDS = 1_800_000_000
 const INSTANCE_ID = "instance-abcdefgh-0001"
 const USER_ID = "11111111-2222-3333-4444-555555555555"
+const OTHER_USER_ID = "99999999-2222-3333-4444-555555555555"
+const TOKEN_SHA256 = await bodyDigest("1//refresh-token")
 
 const INSTALL = await crypto.subtle.generateKey({ name: "Ed25519" }, true, [
   "sign",
@@ -70,8 +72,13 @@ function harness(options: {
   googleThrows?: boolean
   instances?: Record<string, Instance>
   env?: Record<string, string>
+  /** Token hash to owner. Defaults to the test token bound to USER_ID. */
+  grants?: Record<string, string>
+  grantStoreDown?: boolean
 } = {}) {
   const sent: URLSearchParams[] = []
+  const forgotten: string[] = []
+  const grants = options.grants ?? { [TOKEN_SHA256]: USER_ID }
   const logs: string[] = []
   const env: Record<string, string> = {
     GOOGLE_WEB_CLIENT_ID: "294223497390-test.apps.googleusercontent.com",
@@ -101,8 +108,21 @@ function harness(options: {
       ),
     claimNonce: () => Promise.reject(new Error("refresh must not claim a nonce")),
     storeRefreshToken: () => Promise.reject(new Error("refresh must not store anything")),
+    bindGrant: () => Promise.reject(new Error("refresh must not bind a grant")),
+    grantOwner: (tokenSha256): Promise<GrantOwner> =>
+      Promise.resolve(
+        options.grantStoreDown
+          ? { status: "unavailable" }
+          : grants[tokenSha256]
+          ? { status: "bound", userId: grants[tokenSha256] }
+          : { status: "unbound" },
+      ),
+    forgetGrant: (tokenSha256) => {
+      forgotten.push(tokenSha256)
+      return Promise.resolve()
+    },
   }
-  return { handler: createHandler(deps), sent, logs }
+  return { handler: createHandler(deps), sent, logs, forgotten }
 }
 
 const BODY = JSON.stringify({ refresh_token: "1//refresh-token" })
@@ -167,11 +187,47 @@ Deno.test("the route is the same under every mount point", async () => {
   }
 })
 
-Deno.test("invalid_grant passes through so the plugin can drop a dead grant", async () => {
+Deno.test("invalid_grant passes through and the dead grant's binding is deleted", async () => {
   const h = harness({ google: { error: "invalid_grant", error_description: "Token revoked" } })
   const response = await h.handler(await signed(BODY))
   assertEquals(response.status, 400)
   assertEquals(await response.json(), { error: "invalid_grant" })
+  assertEquals(h.sent.length, 1)
+  assertEquals(h.forgotten, [TOKEN_SHA256])
+})
+
+Deno.test("an unbound token is invalid_grant and never reaches Google", async () => {
+  const h = harness({ grants: {} })
+  const response = await h.handler(await signed(BODY))
+  assertEquals(response.status, 400)
+  assertEquals(await response.json(), { error: "invalid_grant" })
+  assertEquals(h.sent.length, 0)
+  assertEquals(h.forgotten, [])
+  assertEquals(h.logs, ["refresh refused: unbound [instance]"])
+})
+
+Deno.test("a token bound to another user is invalid_grant and never reaches Google", async () => {
+  const h = harness({ grants: { [TOKEN_SHA256]: OTHER_USER_ID } })
+  const response = await h.handler(await signed(BODY))
+  assertEquals(response.status, 400)
+  assertEquals(await response.json(), { error: "invalid_grant" })
+  assertEquals(h.sent.length, 0)
+  assertEquals(h.forgotten, [])
+  assertEquals(h.logs, ["refresh refused: unbound [instance]"])
+})
+
+Deno.test("an unreachable grant store is 502, not invalid_grant", async () => {
+  const h = harness({ grantStoreDown: true })
+  const response = await h.handler(await signed(BODY))
+  assertEquals(response.status, 502)
+  assertEquals(await response.json(), { error: "unavailable" })
+  assertEquals(h.sent.length, 0)
+})
+
+Deno.test("other Google failures keep the binding", async () => {
+  const h = harness({ google: { error: "invalid_client" } })
+  await h.handler(await signed(BODY))
+  assertEquals(h.forgotten, [])
 })
 
 Deno.test("any other Google refusal or outage is 502 unavailable, not invalid_grant", async () => {
