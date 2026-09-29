@@ -246,6 +246,8 @@ Deno.test("a browser GET renders the card form and consumes nothing", async () =
   assertStringIncludes(html, "virtual card with a spending limit")
   assertStringIncludes(html, 'name="f9"')
   assertStringIncludes(html, 'name="f10"')
+  assertStringIncludes(html, 'name="f11"')
+  assertStringIncludes(html, "only your Fluck can read them")
   assertEquals(described, [JTI])
   assertEquals(stored.length, 0)
 })
@@ -263,7 +265,8 @@ Deno.test("the cvv page names the brand, the last four, the total and the mercha
   assertStringIncludes(html, "<h1>Confirm payment</h1>")
   assertStringIncludes(html, "<p>Visa ••4242 · $487.32 · Delta Air Lines</p>")
   assertStringIncludes(html, ">Pay</button>")
-  assertStringIncludes(html, "Used once, never stored.")
+  assertStringIncludes(html, PAGES.cvvNote)
+  assertStringIncludes(html, "Saved, encrypted, for next time.")
 })
 
 Deno.test("the cvv total is shown in the row's own currency", () => {

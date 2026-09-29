@@ -44,7 +44,7 @@ interface Harness {
  */
 function page(kind: string, sealKey: string): Harness {
   const fields: Record<string, Field> = {}
-  for (const name of ["f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10"]) {
+  for (const name of ["f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11"]) {
     const listeners: Record<string, () => void> = {}
     fields[name] = {
       value: "",
@@ -188,6 +188,7 @@ Deno.test("the page seals a card the DGX key opens", async () => {
     f1: "A Person",
     f2: "4111 1111 1111 1111",
     f3: "04/29",
+    f11: "123",
     f4: "1 Street",
     f5: "Town",
     f6: "12345",
@@ -203,6 +204,7 @@ Deno.test("the page seals a card the DGX key opens", async () => {
     // Normalised: the owner types spaces and the DGX gets digits.
     pan: "4111111111111111",
     exp: "04/29",
+    cvv: "123",
     virtual: true,
     limit_minor: 20000,
     currency: "USD",
@@ -218,6 +220,7 @@ Deno.test("a card with no virtual-card attestation and no limit is refused in th
     f1: "A Person",
     f2: "4242424242424242",
     f3: "04/29",
+    f11: "123",
     f6: "12345",
     f9: "200",
     f10: "USD",
@@ -230,6 +233,7 @@ Deno.test("a card with no virtual-card attestation and no limit is refused in th
     f1: "A Person",
     f2: "4242424242424242",
     f3: "04/29",
+    f11: "123",
     f6: "12345",
     f8: true,
     f10: "USD",
@@ -242,6 +246,7 @@ Deno.test("a card with no virtual-card attestation and no limit is refused in th
     f1: "A Person",
     f2: "4242424242424242",
     f3: "04/29",
+    f11: "123",
     f6: "12345",
     f8: true,
     f9: "200",
@@ -330,6 +335,7 @@ Deno.test("four bare digits are accepted as an expiry and a bad month is refused
     f1: "A Person",
     f2: "4111111111111111",
     f3: "0429",
+    f11: "123",
     f6: "12345",
     f8: true,
     f9: "200",
@@ -342,6 +348,7 @@ Deno.test("four bare digits are accepted as an expiry and a bad month is refused
     f1: "A Person",
     f2: "4111111111111111",
     f3: "13/29",
+    f11: "123",
     f6: "12345",
     f8: true,
     f9: "200",
@@ -349,4 +356,38 @@ Deno.test("four bare digits are accepted as an expiry and a bad month is refused
   })
   assertEquals(bad.submitted(), 0)
   assertStringIncludes(bad.error(), "01 to 12")
+})
+
+Deno.test("the card's security code is sealed with it: three digits, four for Amex", async () => {
+  const { base64, privateKey } = await recipient()
+  const card = {
+    f1: "A Person",
+    f3: "04/29",
+    f6: "12345",
+    f8: true,
+    f9: "200",
+    f10: "USD",
+  }
+
+  const missing = page("card", base64)
+  await missing.submit({ ...card, f2: "4111111111111111" })
+  assertEquals(missing.submitted(), 0)
+  assertStringIncludes(missing.error(), "three digit security code")
+
+  const visaFour = page("card", base64)
+  await visaFour.submit({ ...card, f2: "4111111111111111", f11: "1234" })
+  assertEquals(visaFour.submitted(), 0)
+  assertStringIncludes(visaFour.error(), "three digit security code")
+
+  const amexThree = page("card", base64)
+  await amexThree.submit({ ...card, f2: "378282246310005", f11: "123" })
+  assertEquals(amexThree.submitted(), 0)
+  assertStringIncludes(amexThree.error(), "four digit security code")
+
+  const amex = page("card", base64)
+  await amex.submit({ ...card, f2: "3782 822463 10005", f11: "1 234" })
+  assertEquals(amex.submitted(), 1)
+  const opened = JSON.parse(await open(privateKey, JTI, amex.ciphertext()))
+  assertEquals(opened.pan, "378282246310005")
+  assertEquals(opened.cvv, "1234")
 })
