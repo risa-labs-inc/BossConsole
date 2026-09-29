@@ -87,13 +87,18 @@ class PluginWatchdog(
     @Volatile
     private var suspendedSinceHeartbeatMs = 0L
 
-    // Continuous AWAKE ms since this plugin was last seen to beat, reset by a
-    // beat and by any suspend. Once it passes unhealthyThresholdMs the credit
-    // is spent: the host has been running long enough for a live plugin to
-    // have beaten, so whatever the credit was standing in for no longer
-    // explains the silence. Without it the credit is held until a beat that a
-    // dead plugin never sends - worst case a plugin that beats once on the
-    // resume, which double-counts that sleep and buys it a night of silence.
+    // Cumulative AWAKE ms since this plugin was last seen to beat, reset by a
+    // beat alone - not by a suspend, or wakes shorter than the threshold would
+    // never reach it. Once it passes unhealthyThresholdMs the credit is spent:
+    // the host has been running long enough for a live plugin to have beaten,
+    // so whatever the credit was standing in for no longer explains the
+    // silence. Without it the credit is held until a beat that a dead plugin
+    // never sends - worst case a plugin that beats once on the resume, which
+    // double-counts that sleep and buys it a night of silence.
+    //
+    // Each tick adds at most one interval, so a freeze on resume (GC, starved
+    // dispatcher) cannot spend the credit in one tick. Bounded by fully-awake
+    // tick time: a host never awake for a whole tick never catches a dead plugin.
     @Volatile
     private var awakeSinceHeartbeatMs = 0L
 
@@ -164,12 +169,11 @@ class PluginWatchdog(
                     // sleep before it is answered for.
                     if (hostSuspended) {
                         suspendedSinceHeartbeatMs += suspendedMs
-                        awakeSinceHeartbeatMs = 0
                     } else if (sandbox.healthMetrics.value.lastHeartbeat >= beforeWallClock) {
                         suspendedSinceHeartbeatMs = 0
                         awakeSinceHeartbeatMs = 0
                     } else {
-                        awakeSinceHeartbeatMs += monotonicElapsed
+                        awakeSinceHeartbeatMs += monotonicElapsed.coerceAtMost(config.heartbeatIntervalMs)
                         if (awakeSinceHeartbeatMs > config.unhealthyThresholdMs) {
                             suspendedSinceHeartbeatMs = 0
                         }

@@ -427,6 +427,80 @@ class PluginWatchdogTest {
                 h.watchdog.stop()
             }
 
+        /**
+         * The same death at wake, but the host never stays awake long enough in
+         * one run to reach the threshold. The awake bound must accumulate across
+         * sleeps, or a dead plugin buys the whole night.
+         */
+        @Test
+        fun `a plugin that dies at wake is restarted through a night of short sleeps`() =
+            runTest {
+                val h = harness()
+
+                h.tick()
+                h.beat()
+
+                // The beat lands inside the sleeping tick, so this sleep is
+                // counted twice: once in the credit and once by being absent
+                // from the heartbeat age.
+                h.advance(2_000)
+                h.clocks.suspendedMs += 8 * 60 * 60 * 1_000L
+                h.beat()
+                h.advance(3_000)
+
+                // Quarter-hour sleeps, each followed by one awake tick. 200
+                // cycles is 1000s awake, far short of the eight hours the
+                // double-counted sleep would otherwise demand.
+                repeat(200) {
+                    h.clocks.suspendedMs += 900_000
+                    h.tick()
+                    h.tick()
+                }
+
+                assertTrue(
+                    h.restartsRequested.isNotEmpty(),
+                    "the awake bound must survive a sleep, or a dead plugin buys the whole night",
+                )
+
+                h.watchdog.stop()
+            }
+
+        /**
+         * Resume is when a long GC pause or a starved dispatcher is likely. A
+         * plugin that beat on the resume and then sat through a freeze is alive,
+         * and a frozen host runs no heartbeat, so one freeze tick must not spend
+         * the sleep's credit and leave the freeze reading as the plugin's silence.
+         */
+        @Test
+        fun `a freeze right after a resume beat does not spend the credit`() =
+            runTest {
+                val h = harness()
+
+                h.tick()
+
+                repeat(20) {
+                    // Sleeps mid-tick and beats on the resume, inside the same tick.
+                    h.advance(2_000)
+                    h.clocks.suspendedMs += 900_000
+                    h.beat()
+                    h.advance(3_000)
+
+                    // The next tick freezes before the heartbeat job runs again.
+                    h.clocks.frozenMs += 11_000
+                    h.tick()
+
+                    h.beat()
+                    h.tick()
+                }
+
+                assertTrue(
+                    h.restartsRequested.isEmpty(),
+                    "a freeze after a resume beat must not restart a live plugin",
+                )
+
+                h.watchdog.stop()
+            }
+
         @Test
         fun `a plugin that never beats again is still restarted after the stall`() =
             runTest {

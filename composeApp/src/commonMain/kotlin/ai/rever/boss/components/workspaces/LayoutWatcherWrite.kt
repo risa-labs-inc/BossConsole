@@ -80,8 +80,12 @@ internal fun layoutWatcherWrite(
  * An empty layout is not always the user closing their last tab: unloading a plugin takes its tabs
  * with it, and the watcher's next write would put that emptiness over a full session. A window the
  * user really did empty is still recorded at dispose and process exit, via `LastSessionCoordinator`.
+ * That write is once per session, so a secondary window emptied after the primary's write is not.
+ *
+ * Accepted residual: a hard crash after a deliberate emptying restores the last non-empty record.
+ * Restoring closed tabs is a far cheaper failure than discarding open ones.
  */
-internal fun LayoutWorkspace.hasAnyTab(): Boolean = layout.hasAnyTab()
+private fun LayoutWorkspace.hasAnyTab(): Boolean = layout.hasAnyTab()
 
 private fun SplitConfig.hasAnyTab(): Boolean =
     when (this) {

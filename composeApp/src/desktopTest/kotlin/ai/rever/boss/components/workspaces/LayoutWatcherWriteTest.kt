@@ -89,21 +89,11 @@ class LayoutWatcherWriteTest {
      */
     @Test
     fun `the watcher does not write a record with no tabs`() {
-        val disk = disk()
         val emptied = live.copy(layout = SplitConfig.SinglePanel(PanelConfig(id = "main", tabs = emptyList())))
 
-        disk.applyWrite(lastSessionOnDisk)
         val write = layoutWatcherWrite(current = null, live = emptied, now = NOW)
 
-        assertNull(write.record, "an empty layout is not a record worth writing")
-
-        write.record?.let { disk.applyWrite(it) }
-
-        assertEquals(
-            lastSessionOnDisk,
-            disk[LAST_SESSION_ID],
-            "an empty layout must not overwrite the session it is standing in for",
-        )
+        assertNull(write.record, "an empty layout must not overwrite the session it is standing in for")
     }
 
     /** The in-memory copy still follows the window, so a plugin's Save reads what is on screen. */
@@ -127,6 +117,7 @@ class LayoutWatcherWriteTest {
         assertNull(recordFor(SplitConfig.VerticalSplit(empty, empty)))
         assertNotNull(recordFor(SplitConfig.VerticalSplit(empty, occupied)))
         assertNotNull(recordFor(SplitConfig.HorizontalSplit(occupied, empty)))
+        assertNotNull(recordFor(SplitConfig.VerticalSplit(SplitConfig.HorizontalSplit(empty, occupied), empty)))
     }
 
     // ==================== the headline: a named Space stays unsaved ====================
