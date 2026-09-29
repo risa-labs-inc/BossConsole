@@ -1,0 +1,8 @@
+{
+  "note": "Throwaway test vector, generated once by the Deno suite. Not a key that opens anything.",
+  "jti": "3f2a6c1e-9b44-4d21-8f0a-5c7e1d2b3a49",
+  "recipientPublicKeyX962Base64": "BJhLndP/kxTpULKq5cfHM/0dUfwGjxOPlqeLXLBmn47LA82/wx6IIPl5PsWeCXvsBM+ZnLAAA3cOtwJcPU3BsTo=",
+  "recipientPrivateKeyPkcs8Base64": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg6Upa8FVB62W9zBTa2PxKk/sdefFSwkgp6KERCEEgQqKhRANCAASYS53T/5MU6VCyquXHxzP9HVH8Bo8Tj5ani1ywZp+OywPNv8MeiCD5eT7Fngl77ATPmZywAAN3DrcCXD1NwbE6",
+  "sealedBase64": "AQTqyMpJi294kU0z7tv8cZs1mr7ZP5MF7cbsT5l7ht9EUQvravHWiLQh16Kb525H7mmu4tYMSg0VbHBZbYU75zu4uwUehSkTNiMoPaPRvs82LOSdlIhht9F/3rg9Ks1PQo51eUld195ubeK5foX4WNmIp1dUiTiiNoFafmOslaCmfznI+bk4ic6VE0e5OLBMRYuQ9+YcAemciBOVSxszgScGIVfBlLfj1/VpTYLtr00ZH1uBcVy0ak8Azk0nuLgcy1C5d9Hz",
+  "plaintext": "{\"kind\":\"password\",\"username\":\"fixture@example.com\",\"password\":\"not-a-real-password-just-a-test-vector\"}"
+}
