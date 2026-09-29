@@ -84,6 +84,8 @@ if(!luhn(pan))return fail("That card number does not look right.");
 var ed=digits(field("f3"));if(ed.length!==4)return fail("Enter the expiry as MM/YY.");
 var exp=ed.slice(0,2)+"/"+ed.slice(2);var mm=parseInt(ed.slice(0,2),10);
 if(mm<1||mm>12)return fail("The expiry month must be 01 to 12.");
+var amex=/^3[47]/.test(pan);var code=digits(field("f11"));
+if(code.length!==(amex?4:3))return fail(amex?"Enter the four digit security code.":"Enter the three digit security code.");
 var name=field("f1").trim();
 if(!name)return fail("Enter the name on the card.");
 var postal=field("f6").trim();
@@ -95,7 +97,7 @@ var minor=Math.round(parseFloat(lim)*100);
 if(!(minor>0))return fail("Enter the spending limit, like 200 or 200.00.");
 var cur=field("f10").trim().toUpperCase();
 if(!/^[A-Z]{3}$/.test(cur))return fail("Enter the limit currency as three letters, like USD.");
-return{kind:"card",name:name,pan:pan,exp:exp,virtual:true,limit_minor:minor,currency:cur,
+return{kind:"card",name:name,pan:pan,exp:exp,cvv:code,virtual:true,limit_minor:minor,currency:cur,
 billing:{line1:field("f4").trim(),
 city:field("f5").trim(),postal:postal,country:field("f7").trim()}}}
 var cvv=digits(field("f1"));
@@ -241,7 +243,7 @@ export interface FormPage {
 /**
  * The form pages. Three of them, one function, because they differ only in their fields.
  *
- * Field names are `f1`..`f7` rather than `cardnumber` or `cvv`. A password manager, a browser
+ * Field names are `f1`..`f11` rather than `cardnumber` or `cvv`. A password manager, a browser
  * autofill heuristic or a crash reporter that recognises a field by name is one more thing
  * holding the value, and none of them are needed here: the owner is typing it on purpose.
  * `autocomplete="off"` says the same thing to the browsers that honour it.
@@ -254,8 +256,9 @@ export async function form(page: FormPage): Promise<Response> {
     ? `<label>Name on the card<input name="f1" type="text" autocomplete="off" spellcheck="false" required></label>
 <label>Card number<input name="f2" type="text" inputmode="numeric" autocomplete="off" required></label>
 <div class="row"><label>Expiry<input name="f3" type="text" inputmode="numeric" placeholder="MM/YY" maxlength="5" autocomplete="off" required></label>
-<label>Postcode<input name="f6" type="text" autocomplete="off" required></label></div>
+<label>Security code<input name="f11" type="text" inputmode="numeric" maxlength="4" autocomplete="off" required></label></div>
 <label>Billing address<input name="f4" type="text" autocomplete="off"></label>
+<label>Postcode<input name="f6" type="text" autocomplete="off" required></label>
 <div class="row"><label>City<input name="f5" type="text" autocomplete="off"></label>
 <label>Country<input name="f7" type="text" autocomplete="off"></label></div>
 <div class="row"><label>Spending limit<input name="f9" type="text" inputmode="decimal" autocomplete="off" required></label>

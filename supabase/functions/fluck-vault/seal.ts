@@ -47,8 +47,9 @@
  * for one request cannot be replayed into another even by someone holding both rows.
  *
  * The plaintext is compact JSON. For a password: `{"kind":"password","username":…,"password":…}`.
- * For a card: `{"kind":"card","name":…,"pan":…,"exp":"MM/YY","billing":{…}}`. For a CVV:
- * `{"kind":"cvv","cvv":"…"}`. The DGX is the only reader and the only validator of it.
+ * For a card: `{"kind":"card","name":…,"pan":…,"exp":"MM/YY","cvv":"…","billing":{…}}`, the code
+ * being 4 digits for Amex (PAN 34/37) and 3 otherwise; the install re-seals it under a key only it
+ * holds. For a CVV: `{"kind":"cvv","cvv":"…"}`. The DGX is the only reader and the only validator.
  */
 
 /** Version byte at the head of every sealed blob. */
