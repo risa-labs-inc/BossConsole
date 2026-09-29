@@ -103,7 +103,11 @@ class MacSidebarToolbarSmokeTest {
         assertEquals(expected, actual)
     }
 
-    private fun toolbarIdentifier(handle: Long): String? = onAppKit { text(pointer(pointer(Pointer(handle), "toolbar"), "identifier")) }
+    private fun toolbarIdentifier(handle: Long): String? =
+        onAppKit {
+            val toolbar = pointer(Pointer(handle), "toolbar")
+            text(pointer(toolbar, "identifier"))
+        }
 
     private fun text(value: Pointer?): String? = pointer(value, "UTF8String")?.getString(0)
 
