@@ -5,6 +5,7 @@ import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.TestTimeSource
@@ -35,8 +36,8 @@ class OAuthSignInFlowTest {
                 exchangeFailure?.let { throw it }
                 exchanged += code
             },
-            openBrowser = {
-                opened += it
+            openBrowser = { _, url ->
+                opened += url
                 true
             },
             timeSource = time,
@@ -140,8 +141,8 @@ class OAuthSignInFlowTest {
                     prepareVerifier = { error("disk full") },
                     buildAuthorizeUrl = { _, _, _ -> "unused" },
                     exchangeCode = {},
-                    openBrowser = {
-                        opened += it
+                    openBrowser = { _, url ->
+                        opened += url
                         true
                     },
                 )
@@ -159,5 +160,36 @@ class OAuthSignInFlowTest {
             val first = storedVerifier
             flow.start(OAuthProviderKind.GOOGLE)
             assertTrue(first != storedVerifier)
+        }
+
+    @Test
+    fun `Apple opens in Safari on macOS and nothing else picks a browser`() {
+        val url = "https://api.risaboss.com/auth/v1/authorize?provider=apple"
+        assertEquals(
+            listOf("open", "-a", "Safari", url),
+            preferredBrowserCommand(OAuthProviderKind.APPLE, "Mac OS X", url),
+        )
+        assertNull(preferredBrowserCommand(OAuthProviderKind.GOOGLE, "Mac OS X", url))
+        assertNull(preferredBrowserCommand(OAuthProviderKind.APPLE, "Windows 11", url))
+        assertNull(preferredBrowserCommand(OAuthProviderKind.APPLE, "Linux", url))
+    }
+
+    @Test
+    fun `reopening the page passes the waiting provider`(): Unit =
+        runBlocking {
+            val providers = mutableListOf<OAuthProviderKind>()
+            val flow =
+                OAuthSignInFlow(
+                    prepareVerifier = {},
+                    buildAuthorizeUrl = { _, _, _ -> "https://example/authorize" },
+                    exchangeCode = {},
+                    openBrowser = { provider, _ ->
+                        providers += provider
+                        true
+                    },
+                )
+            flow.start(OAuthProviderKind.APPLE)
+            flow.reopenBrowser()
+            assertEquals(listOf(OAuthProviderKind.APPLE, OAuthProviderKind.APPLE), providers)
         }
 }

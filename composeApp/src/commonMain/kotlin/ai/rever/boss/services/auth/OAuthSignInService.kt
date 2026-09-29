@@ -91,7 +91,7 @@ internal class OAuthSignInFlow(
     private val prepareVerifier: suspend (verifier: String) -> Unit,
     private val buildAuthorizeUrl: (provider: OAuthProviderKind, redirectUrl: String, codeChallenge: String) -> String,
     private val exchangeCode: suspend (code: String) -> Unit,
-    private val openBrowser: suspend (url: String) -> Boolean,
+    private val openBrowser: suspend (provider: OAuthProviderKind, url: String) -> Boolean,
     private val timeSource: TimeSource = TimeSource.Monotonic,
     private val attemptTimeout: Duration = ATTEMPT_TIMEOUT,
 ) {
@@ -137,7 +137,7 @@ internal class OAuthSignInFlow(
                 return fail(provider, "Couldn't start ${provider.displayName} sign-in. Please try again.")
             }
         logger.info(LogCategory.AUTH, "OAuth sign-in started", mapOf("provider" to provider.name))
-        if (!openBrowser(url)) {
+        if (!openBrowser(provider, url)) {
             // Stay in WaitingForBrowser: the waiting screen offers to copy the link instead.
             logger.warn(LogCategory.AUTH, "Could not open the system browser for OAuth sign-in")
         }
@@ -147,7 +147,7 @@ internal class OAuthSignInFlow(
     /** Reopen the waiting sign-in's page, for a browser tab the user closed. */
     suspend fun reopenBrowser(): Boolean {
         val waiting = _state.value as? OAuthSignInState.WaitingForBrowser ?: return false
-        return openBrowser(waiting.authorizeUrl)
+        return openBrowser(waiting.provider, waiting.authorizeUrl)
     }
 
     /** Drop the waiting sign-in; its callback is ignored if it still arrives. */
@@ -341,9 +341,50 @@ internal val OAuthSignInService: OAuthSignInFlow by lazy {
             }
         },
         exchangeCode = { code -> SupabaseConfig.client.auth.exchangeCodeForSession(code) },
-        openBrowser = { url -> openInSystemBrowser(url) },
+        openBrowser = { provider, url -> openSignInPage(provider, url) },
     )
 }
+
+/**
+ * The command that opens [provider]'s sign-in page in a specific browser, or null to use the
+ * default browser.
+ *
+ * Apple's page opens in Safari on macOS whatever the default browser is: only Safari can offer
+ * the Mac's own Apple Account with Touch ID there, which is the closest a Developer ID app can
+ * get to the native Sign in with Apple sheet (Apple limits that sheet to Mac App Store apps).
+ * Google stays in the default browser, where the user is usually already signed in to Google.
+ */
+internal fun preferredBrowserCommand(
+    provider: OAuthProviderKind,
+    osName: String,
+    url: String,
+): List<String>? =
+    if (provider == OAuthProviderKind.APPLE && osName.lowercase().contains("mac")) {
+        listOf("open", "-a", "Safari", url)
+    } else {
+        null
+    }
+
+/** Open [provider]'s sign-in [url], in its preferred browser when it has one; false when nothing opened. */
+private suspend fun openSignInPage(
+    provider: OAuthProviderKind,
+    url: String,
+): Boolean {
+    val preferred = preferredBrowserCommand(provider, System.getProperty("os.name").orEmpty(), url)
+    if (preferred != null && runAndWait(preferred)) return true
+    return openInSystemBrowser(url)
+}
+
+/** Whether [command] exited 0 within a few seconds; `open -a` exits non-zero when the app is missing. */
+private suspend fun runAndWait(command: List<String>): Boolean =
+    withContext(Dispatchers.IO) {
+        runCatching {
+            val process = ProcessBuilder(command).redirectErrorStream(true).start()
+            process.waitFor(OPEN_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS) && process.exitValue() == 0
+        }.getOrDefault(false)
+    }
+
+private const val OPEN_TIMEOUT_SECONDS = 10L
 
 /** Open [url] in the user's default browser; false when no method worked. */
 private suspend fun openInSystemBrowser(url: String): Boolean =

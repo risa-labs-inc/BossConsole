@@ -27,6 +27,12 @@ Points worth knowing before changing it:
   open one. The service acts only while a sign-in it started is waiting (10 minutes), and the
   code is useless without the verifier, which never leaves the machine.
 - **The system browser, not JxBrowser.** Google refuses sign-in inside embedded web views.
+- **Apple opens in Safari on macOS**, whatever the default browser is (`preferredBrowserCommand`).
+  Only Safari offers the Mac's own Apple Account with Touch ID on Apple's page. The native Sign in
+  with Apple sheet is not an option: Apple limits the `com.apple.developer.applesignin`
+  entitlement to Mac App Store apps and never includes it in Developer ID provisioning profiles
+  (checked 2026-09-29 against a freshly generated profile for `ai.rever.boss`). If Safari cannot
+  be opened, the default browser is used. Google always uses the default browser.
 - **Linux** now registers `boss://` at startup (`LinuxProtocolHandler`, a hidden
   `boss-url-handler.desktop`), and only when nothing else holds the scheme. The waiting screen
   also accepts a pasted `boss://auth/callback` link for a machine where the hand-off fails.
