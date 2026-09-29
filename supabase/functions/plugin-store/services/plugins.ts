@@ -150,8 +150,9 @@ export async function getPluginForPublish(
  * lookup applies no visibility at all, and user_can_install_plugin stays the one gate, as the
  * routes intend. A caller it refuses still gets the same 404 as a plugin that does not exist.
  *
- * `published = true` matches what get_plugin_with_stats filtered on, so nothing unpublished
- * becomes downloadable through this change.
+ * `published = true` is the ONLY publication guard on the download path. user_can_install_plugin
+ * returns true for an unpublished plugin when the caller is its author or a global admin, so
+ * dropping this filter would make drafts downloadable to them.
  */
 export async function getPluginForDownload(
   supabase: SupabaseClient,

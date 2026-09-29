@@ -44,7 +44,9 @@ function subOf(token: string): string | null {
 
 interface Recorded {
   rpc: { fn: string; args: Record<string, unknown> }[];
+  /** Filters of the most recent plugins-table lookup; each lookup starts fresh. */
   pluginFilters: [string, unknown][];
+  versionFilters: [string, unknown][];
 }
 
 /**
@@ -53,10 +55,14 @@ interface Recorded {
  * whether the plugins-table read finds the row, since the lookup filters on it.
  */
 function stubClient(
-  opts: { published?: boolean } = {},
+  opts: {
+    published?: boolean;
+    requiredPermissions?: string[];
+    lookupError?: string;
+  } = {},
 ): { client: SupabaseClient; recorded: Recorded } {
   const published = opts.published ?? true;
-  const recorded: Recorded = { rpc: [], pluginFilters: [] };
+  const recorded: Recorded = { rpc: [], pluginFilters: [], versionFilters: [] };
 
   const versionRow = {
     id: "33333333-3333-3333-3333-333333333333",
@@ -75,20 +81,34 @@ function stubClient(
   };
 
   interface VersionChain {
-    eq: () => VersionChain;
+    eq: (column: string, value: unknown) => VersionChain;
     neq: () => VersionChain;
     gt: () => VersionChain;
     order: () => VersionChain;
     limit: () => VersionChain;
-    single: () => Promise<{ data: typeof versionRow; error: null }>;
+    single: () => Promise<
+      | { data: typeof versionRow; error: null }
+      | { data: null; error: { code: string; message: string } }
+    >;
   }
   const versionChain: VersionChain = {
-    eq: () => versionChain,
+    eq: (column, value) => {
+      recorded.versionFilters.push([column, value]);
+      return versionChain;
+    },
     neq: () => versionChain,
     gt: () => versionChain,
     order: () => versionChain,
     limit: () => versionChain,
-    single: () => Promise.resolve({ data: versionRow, error: null }),
+    // Only 1.2.1 exists, so a route that ignored the requested version would be caught.
+    single: () => {
+      const asked = recorded.versionFilters.find(([c]) => c === "version");
+      return Promise.resolve(
+        asked && asked[1] !== versionRow.version
+          ? { data: null, error: { code: "PGRST116", message: "no rows" } }
+          : { data: versionRow, error: null },
+      );
+    },
   };
 
   interface PluginChain {
@@ -96,7 +116,7 @@ function stubClient(
     maybeSingle: () => Promise<
       {
         data: { id: string; required_permissions: string[] } | null;
-        error: null;
+        error: { message: string } | null;
       }
     >;
   }
@@ -106,12 +126,23 @@ function stubClient(
       return pluginChain;
     },
     maybeSingle: () => {
+      if (opts.lookupError) {
+        return Promise.resolve({
+          data: null,
+          error: { message: opts.lookupError },
+        });
+      }
       const wantsPublished = recorded.pluginFilters.some(([c, v]) =>
         c === "published" && v === true
       );
       const found = published || !wantsPublished;
       return Promise.resolve({
-        data: found ? { id: PLUGIN_UUID, required_permissions: [] } : null,
+        data: found
+          ? {
+            id: PLUGIN_UUID,
+            required_permissions: opts.requiredPermissions ?? [],
+          }
+          : null,
         error: null,
       });
     },
@@ -156,7 +187,10 @@ function stubClient(
     },
     from: (table: string) => ({
       select: () => {
-        if (table === "plugins") return pluginChain;
+        if (table === "plugins") {
+          recorded.pluginFilters = [];
+          return pluginChain;
+        }
         if (table === "users") {
           const userChain = {
             eq: () => userChain,
@@ -165,6 +199,7 @@ function stubClient(
           };
           return userChain;
         }
+        recorded.versionFilters = [];
         return versionChain;
       },
     }),
@@ -207,6 +242,11 @@ for (const path of ROUTES) {
 
     assertEquals(res.status, 200);
     assertEquals((await res.json()).version, "1.2.1");
+    assertEquals(res.headers.get("Cache-Control"), "private, no-store");
+    assertEquals(
+      recorded.versionFilters.some(([c]) => c === "version"),
+      path.endsWith("/1.2.1"),
+    );
     // The plugin lookup did not decide visibility...
     assertEquals(
       recorded.rpc.some((c) => c.fn === "get_plugin_with_stats"),
@@ -266,4 +306,41 @@ for (const path of ROUTES) {
       });
     });
   }
+
+  Deno.test(`${path}: a member missing a required permission gets 403, not the jar`, async () => {
+    resetRateLimits();
+    const { client } = stubClient({
+      requiredPermissions: ["plugin.example.use"],
+    });
+    const res = await mountApp(client).request(path, {
+      headers: { Authorization: `Bearer ${jwt(MEMBER_ID)}` },
+    });
+
+    assertEquals(res.status, 403);
+    const body = await res.json();
+    assertEquals(body.downloadUrl, undefined);
+    assertEquals(String(body.error).includes("plugin.example.use"), true);
+  });
+
+  Deno.test(`${path}: a failed plugin lookup is a 500 that does not echo the database error`, async () => {
+    resetRateLimits();
+    const { client } = stubClient({ lookupError: "relation plugins_secret" });
+    const res = await mountApp(client).request(path, {
+      headers: { Authorization: `Bearer ${jwt(MEMBER_ID)}` },
+    });
+
+    assertEquals(res.status, 500);
+    assertEquals(await res.json(), { error: "Internal server error" });
+  });
 }
+
+Deno.test("an explicit version that does not exist is 404, not the latest jar", async () => {
+  resetRateLimits();
+  const { client } = stubClient();
+  const res = await mountApp(client).request(`/${PLUGIN_ID}/download/9.9.9`, {
+    headers: { Authorization: `Bearer ${jwt(MEMBER_ID)}` },
+  });
+
+  assertEquals(res.status, 404);
+  assertEquals(await res.json(), { error: "Version not found" });
+});

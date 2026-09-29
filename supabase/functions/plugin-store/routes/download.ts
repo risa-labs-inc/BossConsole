@@ -242,6 +242,9 @@ download.openapi(downloadLatestRoute, async (ctx) => {
       // Don't fail the request if tracking fails
     }
 
+    // Private: the body can describe an org plugin and holds a signed URL, but the path names no
+    // caller, so a shared cache would hand it to the next anonymous request.
+    ctx.header('Cache-Control', 'private, no-store')
     return ctx.json({
       downloadUrl,
       sha256: version.sha256,
@@ -406,6 +409,9 @@ download.openapi(downloadVersionRoute, async (ctx) => {
       console.error('Error tracking download:', e)
     }
 
+    // Private: the body can describe an org plugin and holds a signed URL, but the path names no
+    // caller, so a shared cache would hand it to the next anonymous request.
+    ctx.header('Cache-Control', 'private, no-store')
     return ctx.json({
       downloadUrl,
       sha256: version.sha256,
