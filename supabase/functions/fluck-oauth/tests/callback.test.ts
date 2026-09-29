@@ -13,6 +13,7 @@ import {
   createHandler,
   DEFAULT_PUBLIC_BASE_URL,
   type Dependencies,
+  type Instance,
   type NonceClaim,
   page,
   PAGES,
@@ -20,13 +21,20 @@ import {
   type StoreRequest,
 } from "../app.ts"
 import { emailFromIdToken, exchangeCode } from "../google.ts"
-import { keyBytes, mintState } from "../state.ts"
+import { mintState } from "../state.ts"
 
-const KEY_TEXT = "A".repeat(43)
-const KEY = keyBytes(KEY_TEXT)
 const NOW_SECONDS = 1_800_000_000
 const USER_ID = "11111111-2222-3333-4444-555555555555"
 const WORKSPACE = "ws-abcdefghij"
+const INSTANCE_ID = "instance-abcdefgh-0001"
+
+const INSTALL = await crypto.subtle.generateKey({ name: "Ed25519" }, true, [
+  "sign",
+  "verify",
+]) as CryptoKeyPair
+const INSTALL_PUBLIC = btoa(
+  String.fromCharCode(...new Uint8Array(await crypto.subtle.exportKey("raw", INSTALL.publicKey))),
+)
 
 function idToken(email: string): string {
   const b64 = (value: string) =>
@@ -34,12 +42,18 @@ function idToken(email: string): string {
   return b64('{"alg":"RS256"}') + "." + b64(JSON.stringify({ email })) + ".signature"
 }
 
-async function state(overrides: Partial<Record<"ws" | "uid" | "cid" | "n", string>> = {}) {
-  return await mintState(KEY, {
-    ws: overrides.ws ?? WORKSPACE,
+async function state(
+  overrides: Partial<Record<"ws" | "uid" | "cid" | "nonce" | "iid", string>> & {
+    signer?: CryptoKey
+  } = {},
+) {
+  return await mintState(overrides.signer ?? INSTALL.privateKey, {
+    v: 1,
+    iid: overrides.iid ?? INSTANCE_ID,
     uid: overrides.uid ?? USER_ID,
-    cid: overrides.cid ?? "google",
-    n: overrides.n ?? "nonce-one",
+    ws: overrides.ws ?? WORKSPACE,
+    cid: overrides.cid ?? "conversation-1",
+    nonce: overrides.nonce ?? "nonce-one",
     iat: NOW_SECONDS - 10,
     exp: NOW_SECONDS + 590,
   })
@@ -59,6 +73,7 @@ function harness(options: {
   tokenThrows?: boolean
   claim?: NonceClaim
   storeOk?: boolean
+  instances?: Record<string, Instance>
 } = {}): Harness {
   const stored: StoreRequest[] = []
   const claimed: string[] = []
@@ -67,8 +82,6 @@ function harness(options: {
   const env: Record<string, string> = {
     GOOGLE_WEB_CLIENT_ID: "294223497390-test.apps.googleusercontent.com",
     GOOGLE_WEB_CLIENT_SECRET: "not-a-real-secret",
-    FLUCK_STATE_KEY: KEY_TEXT,
-    FLUCK_USER_ID: USER_ID,
     ...(options.env ?? {}),
   }
   const deps: Dependencies = {
@@ -95,6 +108,13 @@ function harness(options: {
         ),
       )
     }) as typeof fetch,
+    instance: (id) =>
+      Promise.resolve(
+        (options.instances ??
+          { [INSTANCE_ID]: { userId: USER_ID, linkPublicKey: INSTALL_PUBLIC } })[
+            id
+          ] ?? null,
+      ),
     claimNonce: (nonce) => {
       claimed.push(nonce)
       return Promise.resolve(options.claim ?? "claimed")
@@ -129,13 +149,13 @@ Deno.test("health reports readiness as booleans and never a value", async () => 
   const body = await response.json()
   assertEquals(body, {
     ok: true,
-    configured: { clientId: true, clientSecret: true, stateKey: true, userId: true },
+    configured: { clientId: true, clientSecret: true },
   })
   assertEquals(JSON.stringify(body).includes("secret"), false)
 })
 
-Deno.test("health is 503 when the state key is missing", async () => {
-  const h = harness({ env: { FLUCK_STATE_KEY: "" } })
+Deno.test("health is 503 when the client secret is missing", async () => {
+  const h = harness({ env: { GOOGLE_WEB_CLIENT_SECRET: "" } })
   const response = await h.handler(new Request("https://example.test/fluck-oauth/health"))
   assertEquals(response.status, 503)
 })
@@ -156,13 +176,49 @@ Deno.test("a signed state cannot write as a different BOSS user", async () => {
   assertEquals(h.stored, [])
 })
 
-Deno.test("an unbound signing key fails closed", async () => {
-  const h = harness({ env: { FLUCK_USER_ID: "" } })
+Deno.test("an unknown or revoked install is refused before anything is spent", async () => {
+  // `fluck_vault_instance` returns no row for either, so both reach here as null.
+  const h = harness({ instances: {} })
   const response = await callback(h, `code=code&state=${await state()}`)
-  assertEquals(response.status, 503)
+  assertEquals(response.status, 400)
+  assertStringIncludes(await response.text(), PAGES.stale)
   assertEquals(h.claimed, [])
   assertEquals(h.requests, [])
   assertEquals(h.stored, [])
+})
+
+Deno.test("a state signed by another install's key is refused for this install id", async () => {
+  const other = await crypto.subtle.generateKey({ name: "Ed25519" }, true, [
+    "sign",
+    "verify",
+  ]) as CryptoKeyPair
+  const h = harness()
+  const response = await callback(h, `code=code&state=${await state({ signer: other.privateKey })}`)
+  assertEquals(response.status, 400)
+  assertEquals(h.claimed, [])
+  assertEquals(h.stored, [])
+})
+
+Deno.test("any registered install can connect, for its own owner only", async () => {
+  const otherUser = "99999999-2222-3333-4444-555555555555"
+  const h = harness({
+    instances: {
+      [INSTANCE_ID]: { userId: USER_ID, linkPublicKey: INSTALL_PUBLIC },
+      "second-install-000001": { userId: otherUser, linkPublicKey: INSTALL_PUBLIC },
+    },
+  })
+  const ok = await callback(
+    h,
+    `code=abc&state=${await state({ iid: "second-install-000001", uid: otherUser })}`,
+  )
+  assertEquals(ok.status, 200)
+  assertEquals(h.stored[0].userId, otherUser)
+  const crossed = await callback(
+    h,
+    `code=abc&state=${await state({ iid: "second-install-000001", uid: USER_ID })}`,
+  )
+  assertEquals(crossed.status, 400)
+  assertEquals(h.stored.length, 1)
 })
 
 Deno.test("a good callback exchanges, stores, and says one sentence", async () => {
@@ -231,11 +287,11 @@ Deno.test("an unsigned, forged or absent state is refused before anything is spe
   }
 })
 
-Deno.test("a state for another connector is refused", async () => {
+Deno.test("the conversation id is opaque and does not change the write", async () => {
   const h = harness()
-  const response = await callback(h, `code=abc&state=${await state({ cid: "notion" })}`)
-  assertEquals(response.status, 400)
-  assertEquals(h.requests.length, 0)
+  const response = await callback(h, `code=abc&state=${await state({ cid: "any-conversation" })}`)
+  assertEquals(response.status, 200)
+  assertEquals(h.stored[0].website, `fluck/${WORKSPACE}/google/GOOGLE_REFRESH_TOKEN`)
 })
 
 Deno.test("an invalid nonce expiry is not called a replay and never reaches Google", async () => {
@@ -260,7 +316,7 @@ Deno.test("a replayed nonce is refused before the exchange", async () => {
   const response = await callback(h, `code=abc&state=${await state()}`)
   assertEquals(response.status, 400)
   assertStringIncludes(await response.text(), PAGES.replay)
-  assertEquals(h.claimed, ["nonce-one"])
+  assertEquals(h.claimed, [`${INSTANCE_ID}.nonce-one`])
   assertEquals(h.requests.length, 0)
   assertEquals(h.stored.length, 0)
 })
@@ -270,7 +326,7 @@ Deno.test("the nonce is claimed even when the exchange then fails, so a link is 
   const response = await callback(h, `code=abc&state=${await state()}`)
   assertEquals(response.status, 400)
   assertStringIncludes(await response.text(), PAGES.badCode)
-  assertEquals(h.claimed, ["nonce-one"])
+  assertEquals(h.claimed, [`${INSTANCE_ID}.nonce-one`])
   assertEquals(h.stored.length, 0)
 })
 

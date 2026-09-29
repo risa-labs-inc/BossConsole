@@ -120,3 +120,55 @@ export function emailFromIdToken(idToken: string | null): string {
 function stringClaim(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null
 }
+
+export type RefreshResult =
+  | { ok: true; accessToken: string; expiresIn: number; scope: string }
+  | { ok: false; reason: RefreshFailure }
+
+/**
+ * `invalid_grant` is the only failure the plugin acts on (the grant is dead, reconnect); every
+ * other refusal or outage is ours to fix, not the user's, so it is one `unavailable`.
+ */
+export type RefreshFailure = "invalid_grant" | "unavailable"
+
+/**
+ * Trade a refresh token for an access token with the web client secret, which only this
+ * function holds. The refresh token passes through and is never stored or logged here.
+ */
+export async function refreshAccessToken(
+  request: { clientId: string; clientSecret: string; refreshToken: string },
+  fetchImpl: typeof fetch,
+): Promise<RefreshResult> {
+  const body = new URLSearchParams({
+    client_id: request.clientId,
+    client_secret: request.clientSecret,
+    refresh_token: request.refreshToken,
+    grant_type: "refresh_token",
+  })
+  let payload: Record<string, unknown>
+  try {
+    const response = await fetchImpl(TOKEN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+    })
+    payload = await response.json() as Record<string, unknown>
+  } catch {
+    return { ok: false, reason: "unavailable" }
+  }
+  if (typeof payload !== "object" || payload === null) return { ok: false, reason: "unavailable" }
+  const accessToken = stringClaim(payload.access_token)
+  const expiresIn = payload.expires_in
+  if (accessToken && typeof expiresIn === "number" && Number.isFinite(expiresIn)) {
+    return {
+      ok: true,
+      accessToken,
+      expiresIn: Math.trunc(expiresIn),
+      scope: stringClaim(payload.scope) ?? "",
+    }
+  }
+  return {
+    ok: false,
+    reason: payload.error === "invalid_grant" ? "invalid_grant" : "unavailable",
+  }
+}

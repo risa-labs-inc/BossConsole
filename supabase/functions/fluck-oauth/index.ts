@@ -11,7 +11,7 @@
  * the server never binds, so the function deploys and then 503s.
  */
 import { createClient } from "@supabase/supabase-js"
-import { createHandler, type NonceClaim, type StoreRequest } from "./app.ts"
+import { createHandler, type Instance, type NonceClaim, type StoreRequest } from "./app.ts"
 
 const client = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -41,6 +41,20 @@ Deno.serve(createHandler({
     })
     if (error) return error.code === "22023" ? "invalid" : "unavailable"
     return data === true ? "claimed" : data === false ? "replay" : "unavailable"
+  },
+
+  /**
+   * The same RPC fluck-vault uses, so "live install" has one definition: it returns no row for
+   * an unknown or revoked install.
+   */
+  async instance(instanceId: string): Promise<Instance | null> {
+    const { data, error } = await client.rpc("fluck_vault_instance", {
+      p_instance_id: instanceId,
+    })
+    if (error || !Array.isArray(data) || data.length === 0) return null
+    const row = data[0] as Record<string, unknown>
+    if (typeof row.user_id !== "string" || typeof row.link_public_key !== "string") return null
+    return { userId: row.user_id, linkPublicKey: row.link_public_key }
   },
 
   /**
