@@ -438,10 +438,11 @@ entrypoint = "./functions/boss-ai/index.ts"
 enabled = true
 # MUST be false: this function is the redirect target of a Google consent screen - a
 # header-less browser GET that carries no Authorization header and no apikey. Its gate is the
-# `state` parameter, which is an HS256 token signed with a key shared only with the BOSS that
-# minted it, single use through `public.fluck_oauth_claim_nonce`, and valid for ten minutes.
+# `state` parameter, signed by a registered Fluck install's Ed25519 key (fluck_vault_instances),
+# single use through `public.fluck_oauth_claim_nonce`, and valid for at most fifteen minutes.
 # Everything the function writes (the BOSS user id and the secret key) is read out of that
-# signed token, never off the request.
+# signed token and checked against the install row, never off the request. `POST /refresh` is
+# authenticated by a signed install request, since installs hold no Supabase credential.
 verify_jwt = false
 import_map = "./functions/fluck-oauth/deno.json"
 entrypoint = "./functions/fluck-oauth/index.ts"
