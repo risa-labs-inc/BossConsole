@@ -1,13 +1,11 @@
 /**
  * The link token: an EdDSA (Ed25519) JWT the DGX mints and this function can only verify.
  *
- * ## Why asymmetric, when the sibling `fluck-oauth` uses HS256
+ * ## Why asymmetric
  *
- * `fluck-oauth` verifies a state that only decides WHOSE Google grant is being stored, and a
- * forged one buys an attacker nothing they did not already have. A vault link is different: it
- * is a bearer credential that opens a page into which a card number or a CVV is typed. If this
- * function held the minting key, a compromise of the Supabase environment would let an attacker
- * mint vault and CVV links and text them from a trusted path. With Ed25519 the DGX holds the
+ * A vault link is a bearer credential that opens a page into which a card number or a CVV is
+ * typed. If this function held the minting key, a compromise of the Supabase environment would
+ * let an attacker mint vault and CVV links and text them from a trusted path. With Ed25519 the DGX holds the
  * private key and this function holds thirty two bytes of public key, so a compromise here can
  * verify and nothing more. (Red team D5.)
  *

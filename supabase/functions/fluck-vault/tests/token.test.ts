@@ -3,9 +3,8 @@
  *
  * Run: cd supabase/functions/fluck-vault && deno task test
  *
- * The key pair is generated per run rather than fixtured, because unlike `fluck-oauth`'s HS256
- * state there is no shared secret to pin: the DGX holds the private half and this end holds
- * only the public one. What has to be pinned is the FORMAT, and `mintLink` builds the payload
+ * The key pair is generated per run rather than fixtured: the DGX holds the private half and
+ * this end holds only the public one, so there is no shared secret to pin. What has to be pinned is the FORMAT, and `mintLink` builds the payload
  * by concatenation so the byte order is a property of the source rather than of a runtime, and
  * the wire format case below asserts the exact claim order the Kotlin minter must reproduce.
  */

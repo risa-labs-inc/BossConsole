@@ -1,8 +1,9 @@
 # Fluck Google OAuth callback
 
-The OAuth redirect target for Fluck's Google connector. It verifies a signed `state` minted by the
-Fluck plugin, exchanges the authorization code with Google, and writes the resulting refresh token
-into BOSS Secret Manager as the BOSS user named in that state.
+The OAuth redirect target for Fluck's Google connector. It verifies a `state` signed by a Fluck
+install's registered Ed25519 key, exchanges the authorization code with Google, and writes the
+resulting refresh token into BOSS Secret Manager as the BOSS user who owns that install. It is also
+where installs refresh access tokens, since the Google web client secret lives only here.
 
 It replaces a callback Fluck used to serve from the machine it runs on, behind a Tailscale Funnel
 hostname. A redirect URI registered with Google has to keep resolving forever; a tailnet hostname
@@ -10,12 +11,14 @@ ties that to one machine staying awake and staying put, and an edge function doe
 
 ## The flow
 
-1. `connect_service google` on the plugin mints a state token and builds a Google authorization URL.
-   The model texts the link to the user. Nothing is stored yet.
+1. `connect_service google` on the plugin mints a state token, signed with the install's link key,
+   and builds a Google authorization URL. The model texts the link to the user. Nothing is stored
+   yet.
 2. The user taps it and approves on Google's own page.
 3. Google redirects the phone browser to `GET /callback?code=…&state=…`.
-4. This function verifies the state, claims its nonce once, exchanges the code, and stores the
-   refresh token at `fluck/<workspaceId>/google/GOOGLE_REFRESH_TOKEN`.
+4. This function looks the install up in `fluck_vault_instances`, requires it unrevoked and owned by
+   the state's `uid`, verifies the signature, claims its nonce once, exchanges the code, and stores
+   the refresh token at `fluck/<workspaceId>/google/GOOGLE_REFRESH_TOKEN`.
 5. The browser gets one sentence. The plugin, which has been polling the vault for that key every
    five seconds, sees it arrive, enables the Google connectors for that workspace, and tells the
    user in Messages.
@@ -25,13 +28,36 @@ that crosses between them is the secret, through the Secret Manager.
 
 ## Routes
 
-| Route           | Auth               | What it does                                                                |
-| --------------- | ------------------ | --------------------------------------------------------------------------- |
-| `GET /callback` | the signed `state` | Verifies, exchanges, stores, renders one sentence                           |
-| `GET /health`   | none               | `{ ok, configured: { clientId, clientSecret, stateKey } }` as booleans only |
+| Route           | Auth                | What it does                                                    |
+| --------------- | ------------------- | --------------------------------------------------------------- |
+| `GET /callback` | the signed `state`  | Verifies, exchanges, stores, renders one sentence               |
+| `POST /refresh` | signed install call | Refresh token in, access token out; nothing stored or logged    |
+| `GET /health`   | none                | `{ ok, configured: { clientId, clientSecret } }`, booleans only |
 
-`verify_jwt = false` in `supabase/config.toml`, and it must be: the caller is a browser following a
-redirect Google issued and carries no header we chose. The `state` is the entire authentication.
+`verify_jwt = false` in `supabase/config.toml`, and it must be: the callback caller is a browser
+following a redirect Google issued and carries no header we chose, and `/refresh` callers hold no
+Supabase credential. The `state`, and for `/refresh` the request signature, is the entire
+authentication.
+
+### `POST /refresh`
+
+Signed exactly like fluck-vault's machine routes: `X-Fluck-Instance`, `X-Fluck-Timestamp` (unix
+seconds, 120 s skew) and `X-Fluck-Signature` (base64url Ed25519 by the install's link key) over
+
+```
+fluck-vault-signed-v1\nPOST\n/refresh\n<ts>\n<sha256 hex of the raw body>
+```
+
+Body `{"refresh_token":"…"}`. Answers:
+
+| Status | Body                                                 | Meaning                                  |
+| ------ | ---------------------------------------------------- | ---------------------------------------- |
+| 200    | `{"access_token":"…","expires_in":3599,"scope":"…"}` | Fresh access token                       |
+| 400    | `{"error":"invalid_grant"}`                          | Google says the grant is dead; reconnect |
+| 400    | `{"error":"body"}`                                   | Signed, but not a refresh request        |
+| 401    | `{"error":"unauthorized"}`                           | Any auth failure, deliberately uniform   |
+| 502    | `{"error":"unavailable"}`                            | Any other Google refusal or outage       |
+| 503    | `{"error":"unconfigured"}`                           | Client id or secret not set here         |
 
 ## Environment
 
@@ -42,25 +68,11 @@ Set with `supabase secrets set --project-ref pcnwqamqdnsadranufjv …`. `SUPABAS
 | -------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------- |
 | `GOOGLE_WEB_CLIENT_ID`     | yes      | The Google OAuth client of type **Web application**                                                               |
 | `GOOGLE_WEB_CLIENT_SECRET` | yes      | Its client secret. This function is the only holder; the plugin never sees it                                     |
-| `FLUCK_STATE_KEY`          | yes      | 32 random bytes, base64url encoded. Must equal the BOSS secret `fluck-state-key`                                  |
-| `FLUCK_USER_ID`            | yes      | BOSS user UUID authorized for this signing key. Other signed user IDs are refused before any side effects.        |
 | `PUBLIC_BASE_URL`          | no       | Defaults to `https://pcnwqamqdnsadranufjv.functions.supabase.co/fluck-oauth`. Set it when the custom domain lands |
 
-### `FLUCK_STATE_KEY`
-
-The plugin generates this on first use and stores it in BOSS Secret Manager under the website
-`fluck-state-key`. Copying it here is a **manual step the owner performs once**, and there is no
-automatic path for it by design: a function that could read the key out of the vault would be a
-function that could read every secret in the vault.
-
-To read it, open Secret Manager in BOSS, find `fluck-state-key`, and set the same value here. If the
-two ever disagree, every callback answers "That sign in link is no longer valid" and nothing else
-breaks, which is the failure mode this was chosen for.
-
-This deployment serves one BOSS user. Set `FLUCK_USER_ID` to that user's UUID alongside the key. The
-desktop holds the signing key and can mint arbitrary claims; the server-side user binding prevents
-that key from overwriting another user's connector secrets. Serving multiple users requires separate
-key-to-user bindings, not sharing one key among them.
+There is no state key. Each install signs with the Ed25519 key it registered through fluck-vault's
+`POST /instances`, and the install row (not the token) decides whose secrets it may write.
+`FLUCK_STATE_KEY` and `FLUCK_USER_ID` are gone; unset them after deploying.
 
 ### `PUBLIC_BASE_URL`
 
@@ -94,8 +106,8 @@ use and short lived.
 
 ## Deployment
 
-1. Apply the migration, which creates `public.fluck_oauth_nonces`, `public.fluck_oauth_claim_nonce`
-   and `public.fluck_oauth_store_secret`:
+1. Apply the migrations, which create `public.fluck_oauth_nonces`, `public.fluck_oauth_claim_nonce`,
+   `public.fluck_oauth_store_secret`, and (from fluck-vault) `public.fluck_vault_instance`:
 
    Also apply `20260925080000_fluck_oauth_nonce_clock_skew.sql` before deploying this function. It
    permits one minute of database/edge clock skew while retaining replay records for the same extra
@@ -115,8 +127,6 @@ use and short lived.
    supabase secrets set --project-ref pcnwqamqdnsadranufjv \
      GOOGLE_WEB_CLIENT_ID=294223497390-6ndgin5tjc8oqkqn7gc16n28rmkjvjp5.apps.googleusercontent.com
    supabase secrets set --project-ref pcnwqamqdnsadranufjv GOOGLE_WEB_CLIENT_SECRET='…'
-   supabase secrets set --project-ref pcnwqamqdnsadranufjv FLUCK_STATE_KEY='…'
-   supabase secrets set --project-ref pcnwqamqdnsadranufjv FLUCK_USER_ID='<boss-user-uuid>'
    ```
 
 3. Deploy:
@@ -129,15 +139,16 @@ use and short lived.
 
    ```sh
    curl -s https://pcnwqamqdnsadranufjv.functions.supabase.co/fluck-oauth/health
-   # {"ok":true,"configured":{"clientId":true,"clientSecret":true,"stateKey":true}}
+   # {"ok":true,"configured":{"clientId":true,"clientSecret":true}}
    ```
 
 ## The state format is a shared contract
 
 `tests/fluck-oauth-state.fixture.json` is byte identical to the copy in the fluck-agent-imessage
-repo under `src/test/resources/`, and both suites assert the same token. Change the header bytes,
-the claim order or the key derivation in one place and the other suite goes red, which is the point:
-the alternative is a deployment that looks clean and refuses every callback.
+repo under `src/test/resources/`: a fixed Ed25519 seed, the payload bytes and the token. Ed25519 is
+deterministic, so both suites mint the same token from the seed and verify it. Change the signing
+prefix or the claim order in one place and the other suite goes red, which is the point: the
+alternative is a deployment that looks clean and refuses every callback.
 
 ## Tests
 
