@@ -1,5 +1,6 @@
 package ai.rever.boss.sharing
 
+import ai.rever.boss.window.BossWindowIcon
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -124,6 +125,7 @@ class AppScopedInputNativeTest {
         button: JButton,
     ): JFrame =
         JFrame("Synthetic scoped input").apply {
+            iconImages = BossWindowIcon.images
             contentPane =
                 JPanel(BorderLayout()).apply {
                     add(field, BorderLayout.NORTH)

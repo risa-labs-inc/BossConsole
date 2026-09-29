@@ -3,10 +3,10 @@ package ai.rever.boss.sharing
 import ai.rever.boss.config.SupabaseClientConfig
 import ai.rever.boss.services.supabase.AuthService
 import ai.rever.boss.services.supabase.SupabaseConfig
+import ai.rever.boss.services.supabase.supabaseJson
 import io.github.jan.supabase.auth.auth
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
@@ -68,7 +68,7 @@ internal class AppSharingBackend(
             val bytes = response.body().use { it.readNBytes(MAX_BODY_BYTES + 1) }
             if (bytes.size > MAX_BODY_BYTES) throw AppSharingException("response_too_large")
             if (identity()?.first != owner) throw AppSharingException("account_changed")
-            val parsed = runCatching { Json.parseToJsonElement(bytes.decodeToString()).jsonObject }.getOrNull()
+            val parsed = runCatching { supabaseJson.parseToJsonElement(bytes.decodeToString()).jsonObject }.getOrNull()
             if (response.statusCode() !in 200..299) {
                 // Never surface raw bodies: descriptors carry private URLs and media keys.
                 val code = parsed?.get("error")?.let { runCatching { it.jsonPrimitive.contentOrNull }.getOrNull() }
