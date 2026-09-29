@@ -18,7 +18,9 @@ ties that to one machine staying awake and staying put, and an edge function doe
 3. Google redirects the phone browser to `GET /callback?code=…&state=…`.
 4. This function looks the install up in `fluck_vault_instances`, requires it unrevoked and owned by
    the state's `uid`, verifies the signature, claims its nonce once, exchanges the code, and stores
-   the refresh token at `fluck/<workspaceId>/google/GOOGLE_REFRESH_TOKEN`.
+   the refresh token at `fluck/<workspaceId>/google/GOOGLE_REFRESH_TOKEN`. Before that write it
+   binds the token to the state's `uid` in `fluck_oauth_grants` (see below); a failed bind fails the
+   callback and writes no secret.
 5. The browser gets one sentence. The plugin, which has been polling the vault for that key every
    five seconds, sees it arrive, enables the Google connectors for that workspace, and tells the
    user in Messages.
@@ -50,14 +52,29 @@ fluck-vault-signed-v1\nPOST\n/refresh\n<ts>\n<sha256 hex of the raw body>
 
 Body `{"refresh_token":"…"}`. Answers:
 
-| Status | Body                                                 | Meaning                                  |
-| ------ | ---------------------------------------------------- | ---------------------------------------- |
-| 200    | `{"access_token":"…","expires_in":3599,"scope":"…"}` | Fresh access token                       |
-| 400    | `{"error":"invalid_grant"}`                          | Google says the grant is dead; reconnect |
-| 400    | `{"error":"body"}`                                   | Signed, but not a refresh request        |
-| 401    | `{"error":"unauthorized"}`                           | Any auth failure, deliberately uniform   |
-| 502    | `{"error":"unavailable"}`                            | Any other Google refusal or outage       |
-| 503    | `{"error":"unconfigured"}`                           | Client id or secret not set here         |
+| Status | Body                                                 | Meaning                                   |
+| ------ | ---------------------------------------------------- | ----------------------------------------- |
+| 200    | `{"access_token":"…","expires_in":3599,"scope":"…"}` | Fresh access token                        |
+| 400    | `{"error":"invalid_grant"}`                          | Grant dead or not bound to you; reconnect |
+| 400    | `{"error":"body"}`                                   | Signed, but not a refresh request         |
+| 401    | `{"error":"unauthorized"}`                           | Any auth failure, deliberately uniform    |
+| 502    | `{"error":"unavailable"}`                            | Any other Google refusal, or an outage    |
+| 503    | `{"error":"unconfigured"}`                           | Client id or secret not set here          |
+
+### Grant binding
+
+The callback records the SHA-256 of every refresh token it issues, with the BOSS user it was issued
+to, in `public.fluck_oauth_grants` (never the token itself). `/refresh` redeems a token only if its
+hash is bound to the user who owns the calling install. An unbound token, or one bound to another
+user, gets `invalid_grant` without Google being called, and logs
+`refresh refused: unbound [<install id prefix>]`. Without this, any BOSS user who registered an
+install could redeem a stolen refresh token with our client secret. When Google itself answers
+`invalid_grant`, the binding is deleted. A failure to read the binding is a 502, not
+`invalid_grant`, so a database blip never makes the plugin drop a live grant.
+
+Grants made before the binding existed have no row, so their first refresh after the deploy is
+`invalid_grant` and the plugin asks the owner to reconnect once. That is the intended migration for
+them.
 
 ## Environment
 
@@ -120,6 +137,11 @@ use and short lived.
    # or, to apply this one file against a linked project:
    # psql "$DATABASE_URL" -f supabase/migrations/20260924230000_fluck_oauth.sql
    ```
+
+   Also apply `20260929110000_fluck_oauth_grants.sql` (the grant bindings) BEFORE deploying the
+   function version that binds grants: that version calls `fluck_oauth_bind_grant` on every callback
+   and `fluck_oauth_grant_owner` on every refresh, and without the migration every callback fails
+   and every refresh is a 502.
 
 2. Set the environment:
 

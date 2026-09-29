@@ -40,7 +40,9 @@
  *
  * `POST /refresh` is the other route: an install trades its refresh token for an access token
  * through this function, because the web client secret lives only here. It is authenticated by
- * a signed request (see `signed.ts`), never by the state.
+ * a signed request (see `signed.ts`), never by the state, and it only redeems a token the
+ * callback bound (`fluck_oauth_grants`, by SHA-256) to the same BOSS user that owns the calling
+ * install. Without that, any BOSS user who registered an install could redeem a stolen token.
  *
  * ## What is never written down
  *
@@ -51,6 +53,7 @@
 import { INSTANCE_ID_PATTERN, parseState, verifyState } from "./state.ts"
 import { exchangeCode, type ExchangeFailure, refreshAccessToken } from "./google.ts"
 import {
+  bodyDigest,
   INSTANCE_HEADER,
   publicKeyBytes,
   SIGNATURE_HEADER,
@@ -85,6 +88,12 @@ export interface Instance {
   linkPublicKey: string
 }
 
+/** Who a refresh token was issued to, by its SHA-256. */
+export type GrantOwner =
+  | { status: "bound"; userId: string }
+  | { status: "unbound" }
+  | { status: "unavailable" }
+
 export interface StoreRequest {
   userId: string
   website: string
@@ -109,6 +118,12 @@ export interface Dependencies {
   instance(instanceId: string): Promise<Instance | null>
   /** Write the refresh token as the named BOSS user, replacing any earlier row for the key. */
   storeRefreshToken(request: StoreRequest): Promise<boolean>
+  /** Record that the token with this SHA-256 hex was issued to this user. */
+  bindGrant(tokenSha256: string, userId: string): Promise<boolean>
+  /** The user a token hash is bound to. */
+  grantOwner(tokenSha256: string): Promise<GrantOwner>
+  /** Drop a binding whose grant Google has declared dead. */
+  forgetGrant(tokenSha256: string): Promise<void>
   /** Milliseconds. Injected so the tests can sit on either side of an expiry. */
   now(): number
   log(line: string): void
@@ -244,6 +259,14 @@ async function callback(request: Request, deps: Dependencies): Promise<Response>
     return page(400, "Sign in problem", FAILURE_PAGES[exchanged.reason])
   }
 
+  // Bound BEFORE the secret is written: a failed bind then leaves no secret behind for the
+  // plugin to find, whereas a failed store only leaves a hash nobody can redeem.
+  const bound = await deps.bindGrant(await bodyDigest(exchanged.refreshToken), claims.uid)
+  if (!bound) {
+    deps.log(`callback failed: bind [${workspace}]`)
+    return page(503, "Sign in problem", PAGE_STORE_FAILED)
+  }
+
   const stored = await deps.storeRefreshToken({
     userId: claims.uid,
     website: `fluck/${claims.ws}/${GOOGLE_CONNECTOR_ID}/${REFRESH_ENV_VAR}`,
@@ -264,7 +287,9 @@ async function callback(request: Request, deps: Dependencies): Promise<Response>
  *
  * Every auth failure is the same 401. `{"error":"invalid_grant"}` (400) is Google saying the
  * grant is dead, the one answer the plugin acts on; any other Google refusal or outage is a
- * 502 `unavailable`, which is ours to fix and not a reason to drop the grant.
+ * 502 `unavailable`, which is ours to fix and not a reason to drop the grant. A token not bound
+ * to the install's owner is also `invalid_grant`, without asking Google, so the plugin's answer
+ * (ask the owner to reconnect) is the same.
  *
  * Neither token is logged or stored. The log line is the outcome and an install id prefix.
  */
@@ -287,7 +312,7 @@ async function refresh(request: Request, deps: Dependencies): Promise<Response> 
     signature: request.headers.get(SIGNATURE_HEADER),
     nowSeconds: Math.floor(deps.now() / 1000),
   })
-  if (!ok || !instanceId) {
+  if (!ok || !instance || !instanceId) {
     deps.log("refresh refused: unauthorized")
     return json(401, { error: "unauthorized" })
   }
@@ -312,9 +337,22 @@ async function refresh(request: Request, deps: Dependencies): Promise<Response> 
     deps.log("refresh unconfigured: client")
     return json(503, { error: "unconfigured" })
   }
+
+  const tokenSha256 = await bodyDigest(refreshToken)
+  const owner = await deps.grantOwner(tokenSha256)
+  if (owner.status === "unavailable") {
+    deps.log(`refresh failed: grant store [${tag}]`)
+    return json(502, { error: "unavailable" })
+  }
+  if (owner.status === "unbound" || owner.userId !== instance.userId) {
+    deps.log(`refresh refused: unbound [${tag}]`)
+    return json(400, { error: "invalid_grant" })
+  }
+
   const result = await refreshAccessToken({ clientId, clientSecret, refreshToken }, deps.fetch)
   if (!result.ok) {
     deps.log(`refresh failed: ${result.reason} [${tag}]`)
+    if (result.reason === "invalid_grant") await deps.forgetGrant(tokenSha256).catch(() => {})
     return result.reason === "invalid_grant"
       ? json(400, { error: "invalid_grant" })
       : json(502, { error: "unavailable" })
