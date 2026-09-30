@@ -26,6 +26,17 @@ Points worth knowing before changing it:
 - **A callback nobody started is ignored.** `boss://` is registered with the OS, so any page can
   open one. The service acts only while a sign-in it started is waiting (10 minutes), and the
   code is useless without the verifier, which never leaves the machine.
+- **A failed callback does not end the sign-in.** For the same reason, a provider error or a code
+  that does not exchange shows a notice on the waiting screen and the sign-in stays open, so a
+  forged link cannot cancel the one the user started. Only a successful exchange, Cancel, a new
+  start or the 10-minute limit ends it; the waiting screen checks the limit while it is shown.
+- **Cancel wins over an exchange in flight.** The code is exchanged without saving the session
+  (`exchangeCodeForSession(code, saveSession = false)`), and the session is imported only if the
+  same sign-in is still waiting when the exchange returns. A second callback during an exchange
+  is ignored.
+- **GoTrue repeats an error in the query and the fragment.** The parser accepts the same error in
+  both, refuses two different ones, and reads the description from the section it took the error
+  from.
 - **The system browser, not JxBrowser.** Google refuses sign-in inside embedded web views.
 - **Apple opens in Safari on macOS**, whatever the default browser is (`preferredBrowserCommand`).
   Only Safari offers the Mac's own Apple Account with Touch ID on Apple's page. The native Sign in
@@ -55,7 +66,16 @@ keeps its no-third-party-script CSP and no token or verifier ever reaches page s
    `/auth/v1/token?grant_type=pkce` with the cookie's verifier, sets the usual session cookies and
    302s to the page. Failures come back as `?oauth_error=cancelled|expired|failed|rate_limited`.
 3. The return deliberately skips the cross-site check (it starts on Google's or Apple's site);
-   the verifier cookie is what makes a planted code useless.
+   the verifier cookie is what makes a planted code useless to other sites. It is a `__Secure-`
+   cookie, not `__Host-` (which requires `Path=/`), so a compromised sibling subdomain could
+   still set one; the session cookies share that exposure.
+4. A start on any host other than the canonical one is first redirected there, because the
+   verifier cookie has to live on the host the provider returns to. A return carrying both a
+   code and an error is treated as a failure. Returns have their own rate limit (`oauth-return:`,
+   20 per 5 minutes), apart from session establishment.
+5. The page drops the URL fragment along with `?oauth_error=`: GoTrue repeats its error in the
+   fragment, a browser keeps a fragment across a redirect, and the page would otherwise replace
+   its fixed notice with the provider's text.
 
 Unlike the page's magic link (`create_user: false`), a first Google or Apple sign-in here creates
 the BOSS account, the same as the desktop apps.

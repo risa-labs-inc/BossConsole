@@ -1,9 +1,14 @@
 package ai.rever.boss.services.auth
 
 import ai.rever.boss.components.auth.AuthDeepLink
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -12,8 +17,9 @@ import kotlin.time.TestTimeSource
 
 /**
  * The sign-in flow's guarantees: a callback is acted on only while this process's own sign-in
- * is waiting, once, and before it expires; the verifier handed to the cache is the one whose
- * challenge went into the authorize URL.
+ * is waiting and before it expires; a callback that fails does not end that sign-in, since any
+ * page can send one; a session is adopted only if its sign-in is still the one waiting; and the
+ * verifier handed to the cache is the one whose challenge went into the authorize URL.
  */
 class OAuthSignInFlowTest {
     private val time = TestTimeSource()
@@ -21,20 +27,33 @@ class OAuthSignInFlowTest {
     private var sentChallenge: String? = null
     private var sentRedirect: String? = null
     private val exchanged = mutableListOf<String>()
+    private val adopted = mutableListOf<String>()
     private var exchangeFailure: Exception? = null
+    private var adoptFailure: Exception? = null
+
+    /** When set, an exchange waits here after it starts, so a test can act mid-exchange. */
+    private var exchangeGate: CompletableDeferred<Unit>? = null
+    private val exchangeEntered = CompletableDeferred<Unit>()
     private val opened = mutableListOf<String>()
 
-    private val flow =
+    private fun newFlow(prepareVerifier: suspend (String) -> Unit = { storedVerifier = it }) =
         OAuthSignInFlow(
-            prepareVerifier = { storedVerifier = it },
+            prepareVerifier = prepareVerifier,
             buildAuthorizeUrl = { provider, redirect, challenge ->
                 sentRedirect = redirect
                 sentChallenge = challenge
                 "https://example.supabase.co/auth/v1/authorize?provider=${provider.name.lowercase()}"
             },
             exchangeCode = { code ->
+                exchangeEntered.complete(Unit)
+                exchangeGate?.await()
                 exchangeFailure?.let { throw it }
                 exchanged += code
+                val adopt: suspend () -> Unit = {
+                    adoptFailure?.let { throw it }
+                    adopted += code
+                }
+                adopt
             },
             openBrowser = { _, url ->
                 opened += url
@@ -43,7 +62,13 @@ class OAuthSignInFlowTest {
             timeSource = time,
         )
 
+    private val flow = newFlow()
+
     private fun codeCallback(code: String = "the-code") = AuthDeepLink.OAuthCallback(code, null, null)
+
+    private val cancelledByUser = AuthDeepLink.OAuthCallback(null, "access_denied", "User cancelled")
+
+    private fun errorCallback() = cancelledByUser
 
     @Test
     fun `start stores a verifier whose S256 challenge is sent, and opens the browser`(): Unit =
@@ -55,7 +80,9 @@ class OAuthSignInFlowTest {
             assertEquals(OAuthSignInFlow.codeChallengeOf(verifier), sentChallenge)
             assertEquals("boss://auth/callback", sentRedirect)
             assertEquals(1, opened.size)
-            assertIs<OAuthSignInState.WaitingForBrowser>(flow.state.value)
+            val state = assertIs<OAuthSignInState.WaitingForBrowser>(flow.state.value)
+            assertNull(state.notice)
+            assertEquals(OAuthProviderKind.GOOGLE, state.provider)
         }
 
     @Test
@@ -70,19 +97,130 @@ class OAuthSignInFlowTest {
     fun `a callback with no sign-in waiting is ignored and exchanges nothing`(): Unit =
         runBlocking {
             assertEquals(OAuthCompletion.IGNORED, flow.complete(codeCallback()))
+            assertEquals(OAuthCompletion.IGNORED, flow.complete(errorCallback()))
             assertTrue(exchanged.isEmpty())
             assertIs<OAuthSignInState.Idle>(flow.state.value)
         }
 
     @Test
-    fun `a waiting sign-in completes once and a duplicate delivery is ignored`(): Unit =
+    fun `a waiting sign-in completes once and a later delivery is ignored`(): Unit =
         runBlocking {
             flow.start(OAuthProviderKind.APPLE)
 
             assertEquals(OAuthCompletion.SIGNED_IN, flow.complete(codeCallback()))
             assertEquals(OAuthCompletion.IGNORED, flow.complete(codeCallback()))
             assertEquals(listOf("the-code"), exchanged)
+            assertEquals(listOf("the-code"), adopted)
             assertIs<OAuthSignInState.Idle>(flow.state.value)
+        }
+
+    @Test
+    fun `a second callback while one is exchanging is ignored`(): Unit =
+        runBlocking {
+            flow.start(OAuthProviderKind.GOOGLE)
+            exchangeGate = CompletableDeferred()
+
+            val first = async { flow.complete(codeCallback("first")) }
+            exchangeEntered.await()
+            assertIs<OAuthSignInState.Exchanging>(flow.state.value)
+            assertEquals(OAuthCompletion.IGNORED, flow.complete(codeCallback("second")))
+            assertEquals(OAuthCompletion.IGNORED, flow.complete(errorCallback()))
+
+            checkNotNull(exchangeGate).complete(Unit)
+            assertEquals(OAuthCompletion.SIGNED_IN, first.await())
+            assertEquals(listOf("first"), exchanged)
+        }
+
+    @Test
+    fun `a provider error shows a notice and leaves the sign-in open`(): Unit =
+        runBlocking {
+            flow.start(OAuthProviderKind.APPLE)
+
+            assertEquals(OAuthCompletion.FAILED, flow.complete(errorCallback()))
+
+            val state = assertIs<OAuthSignInState.WaitingForBrowser>(flow.state.value)
+            assertEquals("Apple sign-in was cancelled.", state.notice)
+            flow.reopenBrowser()
+            assertNull(assertIs<OAuthSignInState.WaitingForBrowser>(flow.state.value).notice)
+            // A forged error link cannot end the real sign-in: its callback still works.
+            assertEquals(OAuthCompletion.SIGNED_IN, flow.complete(codeCallback()))
+            assertEquals(listOf("the-code"), adopted)
+        }
+
+    @Test
+    fun `a failed exchange shows a notice and the real callback can still sign in`(): Unit =
+        runBlocking {
+            flow.start(OAuthProviderKind.GOOGLE)
+            exchangeFailure = IllegalStateException("network down")
+
+            assertEquals(OAuthCompletion.FAILED, flow.complete(codeCallback("forged")))
+            val state = assertIs<OAuthSignInState.WaitingForBrowser>(flow.state.value)
+            assertEquals("Google sign-in failed. Please try again.", state.notice)
+
+            exchangeFailure = null
+            assertEquals(OAuthCompletion.SIGNED_IN, flow.complete(codeCallback()))
+            assertEquals(listOf("the-code"), adopted)
+        }
+
+    @Test
+    fun `cancelling during the exchange discards the session it returns`(): Unit =
+        runBlocking {
+            flow.start(OAuthProviderKind.GOOGLE)
+            exchangeGate = CompletableDeferred()
+
+            val outcome = async { flow.complete(codeCallback()) }
+            exchangeEntered.await()
+            flow.cancel()
+            assertIs<OAuthSignInState.Idle>(flow.state.value)
+            checkNotNull(exchangeGate).complete(Unit)
+
+            assertEquals(OAuthCompletion.IGNORED, outcome.await())
+            assertEquals(listOf("the-code"), exchanged)
+            assertTrue(adopted.isEmpty())
+            assertIs<OAuthSignInState.Idle>(flow.state.value)
+        }
+
+    @Test
+    fun `a new start during the exchange discards the old session and keeps the new sign-in`(): Unit =
+        runBlocking {
+            flow.start(OAuthProviderKind.GOOGLE)
+            exchangeGate = CompletableDeferred()
+
+            val outcome = async { flow.complete(codeCallback("old")) }
+            exchangeEntered.await()
+            flow.start(OAuthProviderKind.APPLE)
+            checkNotNull(exchangeGate).complete(Unit)
+
+            assertEquals(OAuthCompletion.IGNORED, outcome.await())
+            assertTrue(adopted.isEmpty())
+            val waiting = assertIs<OAuthSignInState.WaitingForBrowser>(flow.state.value)
+            assertEquals(OAuthProviderKind.APPLE, waiting.provider)
+        }
+
+    @Test
+    fun `an exchange whose caller is cancelled goes back to waiting`(): Unit =
+        runBlocking {
+            flow.start(OAuthProviderKind.GOOGLE)
+            exchangeGate = CompletableDeferred()
+
+            val job = launch { flow.complete(codeCallback("interrupted")) }
+            exchangeEntered.await()
+            job.cancelAndJoin()
+
+            assertIs<OAuthSignInState.WaitingForBrowser>(flow.state.value)
+            exchangeGate = null
+            assertEquals(OAuthCompletion.SIGNED_IN, flow.complete(codeCallback()))
+        }
+
+    @Test
+    fun `a session that cannot be saved ends the sign-in with an error`(): Unit =
+        runBlocking {
+            flow.start(OAuthProviderKind.APPLE)
+            adoptFailure = IllegalStateException("keychain locked")
+
+            assertEquals(OAuthCompletion.FAILED, flow.complete(codeCallback()))
+            assertIs<OAuthSignInState.Error>(flow.state.value)
+            assertEquals(OAuthCompletion.IGNORED, flow.complete(codeCallback()))
         }
 
     @Test
@@ -94,6 +232,37 @@ class OAuthSignInFlowTest {
             assertEquals(OAuthCompletion.FAILED, flow.complete(codeCallback()))
             assertTrue(exchanged.isEmpty())
             assertIs<OAuthSignInState.Error>(flow.state.value)
+            assertEquals(OAuthCompletion.IGNORED, flow.complete(codeCallback()))
+        }
+
+    @Test
+    fun `the waiting screen's poll expires a sign-in whose callback never came`(): Unit =
+        runBlocking {
+            assertFalse(flow.expireIfStale())
+            flow.start(OAuthProviderKind.GOOGLE)
+            time += 9.minutes
+            assertFalse(flow.expireIfStale())
+            assertIs<OAuthSignInState.WaitingForBrowser>(flow.state.value)
+
+            time += 2.minutes
+            assertTrue(flow.expireIfStale())
+            val state = assertIs<OAuthSignInState.Error>(flow.state.value)
+            assertEquals("That Google sign-in took too long. Please try again.", state.message)
+            assertFalse(flow.expireIfStale())
+        }
+
+    @Test
+    fun `an exchange in flight is never expired under it`(): Unit =
+        runBlocking {
+            flow.start(OAuthProviderKind.GOOGLE)
+            exchangeGate = CompletableDeferred()
+            val outcome = async { flow.complete(codeCallback()) }
+            exchangeEntered.await()
+
+            time += 11.minutes
+            assertFalse(flow.expireIfStale())
+            checkNotNull(exchangeGate).complete(Unit)
+            assertEquals(OAuthCompletion.SIGNED_IN, outcome.await())
         }
 
     @Test
@@ -107,50 +276,42 @@ class OAuthSignInFlowTest {
         }
 
     @Test
-    fun `a provider error becomes readable text and consumes the attempt`(): Unit =
+    fun `a second press while a start is being prepared opens nothing more`(): Unit =
         runBlocking {
-            flow.start(OAuthProviderKind.APPLE)
+            val gate = CompletableDeferred<Unit>()
+            val entered = CompletableDeferred<Unit>()
+            val slow =
+                newFlow(prepareVerifier = {
+                    entered.complete(Unit)
+                    gate.await()
+                })
 
-            val outcome = flow.complete(AuthDeepLink.OAuthCallback(null, "access_denied", "User cancelled"))
+            val first = async { slow.start(OAuthProviderKind.GOOGLE) }
+            entered.await()
+            assertEquals(OAuthProviderKind.GOOGLE, slow.starting.value)
+            assertTrue(slow.start(OAuthProviderKind.APPLE).isSuccess)
+            gate.complete(Unit)
+            first.await()
 
-            assertEquals(OAuthCompletion.FAILED, outcome)
-            val state = assertIs<OAuthSignInState.Error>(flow.state.value)
-            assertEquals("Apple sign-in was cancelled.", state.message)
-            assertEquals(OAuthCompletion.IGNORED, flow.complete(codeCallback()))
-        }
-
-    @Test
-    fun `a failed exchange reports an error and leaves nothing waiting`(): Unit =
-        runBlocking {
-            flow.start(OAuthProviderKind.GOOGLE)
-            exchangeFailure = IllegalStateException("network down")
-
-            assertEquals(OAuthCompletion.FAILED, flow.complete(codeCallback()))
-            val state = assertIs<OAuthSignInState.Error>(flow.state.value)
-            assertEquals("Google sign-in failed. Please try again.", state.message)
-
-            flow.dismissError()
-            assertIs<OAuthSignInState.Idle>(flow.state.value)
+            assertEquals(1, opened.size)
+            assertNull(slow.starting.value)
+            assertEquals(OAuthProviderKind.GOOGLE, slow.state.value.provider)
         }
 
     @Test
     fun `a verifier that cannot be stored fails the start and opens nothing`(): Unit =
         runBlocking {
-            val broken =
-                OAuthSignInFlow(
-                    prepareVerifier = { error("disk full") },
-                    buildAuthorizeUrl = { _, _, _ -> "unused" },
-                    exchangeCode = {},
-                    openBrowser = { _, url ->
-                        opened += url
-                        true
-                    },
-                )
+            val broken = newFlow(prepareVerifier = { error("disk full") })
 
             assertTrue(broken.start(OAuthProviderKind.GOOGLE).isFailure)
             assertTrue(opened.isEmpty())
+            assertNull(broken.starting.value)
             assertIs<OAuthSignInState.Error>(broken.state.value)
             assertEquals(OAuthCompletion.IGNORED, broken.complete(codeCallback()))
+
+            broken.dismissError()
+            assertIs<OAuthSignInState.Idle>(broken.state.value)
+            assertNull(broken.state.value.provider)
         }
 
     @Test
@@ -182,7 +343,7 @@ class OAuthSignInFlowTest {
                 OAuthSignInFlow(
                     prepareVerifier = {},
                     buildAuthorizeUrl = { _, _, _ -> "https://example/authorize" },
-                    exchangeCode = {},
+                    exchangeCode = { { } },
                     openBrowser = { provider, _ ->
                         providers += provider
                         true

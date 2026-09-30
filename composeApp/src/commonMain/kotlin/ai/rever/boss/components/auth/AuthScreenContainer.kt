@@ -58,6 +58,7 @@ fun AuthScreenContainer(onLoginSuccess: () -> Unit) {
     // Watch AuthService state directly to handle 2FA
     val authState by AuthService.authState.collectAsState()
     val oauthState by AuthService.oauthState.collectAsState()
+    val oauthStarting by AuthService.oauthStarting.collectAsState()
     val oauthScope = rememberCoroutineScope()
 
     // React to AuthState changes (only for certain transitions)
@@ -154,18 +155,21 @@ fun AuthScreenContainer(onLoginSuccess: () -> Unit) {
             when (currentScreen) {
                 AuthScreen.LOGIN -> {
                     // A Google or Apple sign-in in the browser takes over the login step until it
-                    // finishes, fails (back to the form, with its error) or is cancelled.
+                    // finishes, is cancelled, or ends in an error (back to the form, with it). A
+                    // failed callback keeps it here, with a notice.
                     val oauth = oauthState
-                    if (oauth is OAuthSignInState.WaitingForBrowser || oauth is OAuthSignInState.Exchanging) {
+                    val waitingProvider =
+                        oauth.provider.takeIf {
+                            oauth is OAuthSignInState.WaitingForBrowser || oauth is OAuthSignInState.Exchanging
+                        }
+                    if (waitingProvider != null) {
+                        val waiting = oauth as? OAuthSignInState.WaitingForBrowser
                         OAuthWaitingScreen(
-                            provider =
-                                when (oauth) {
-                                    is OAuthSignInState.WaitingForBrowser -> oauth.provider
-                                    is OAuthSignInState.Exchanging -> oauth.provider
-                                    else -> error("unreachable")
-                                },
-                            authorizeUrl = (oauth as? OAuthSignInState.WaitingForBrowser)?.authorizeUrl,
+                            provider = waitingProvider,
+                            authorizeUrl = waiting?.authorizeUrl,
+                            notice = waiting?.notice,
                             exchanging = oauth is OAuthSignInState.Exchanging,
+                            onExpireIfStale = { AuthService.expireStaleOAuth() },
                             onReopenBrowser = { oauthScope.launch { AuthService.reopenOAuthBrowser() } },
                             onPasteCallback = { link -> oauthScope.launch { AuthService.completeOAuth(link) } },
                             onCancel = { oauthScope.launch { AuthService.cancelOAuth() } },
@@ -193,6 +197,7 @@ fun AuthScreenContainer(onLoginSuccess: () -> Unit) {
                                 currentScreen = AuthScreen.PASSKEY_SELECTION
                             },
                             oauthError = (oauth as? OAuthSignInState.Error)?.message,
+                            oauthStarting = oauthStarting,
                             onOAuthSignIn = { provider -> oauthScope.launch { AuthService.signInWithOAuth(provider) } },
                             onDismissOAuthError = { AuthService.dismissOAuthError() },
                         )

@@ -41,6 +41,12 @@ object AuthService {
     /** Where a Google or Apple sign-in stands. */
     val oauthState: StateFlow<OAuthSignInState> get() = OAuthSignInService.state
 
+    /** The provider whose Google or Apple sign-in is being prepared, or null. */
+    val oauthStarting: StateFlow<OAuthProviderKind?> get() = OAuthSignInService.starting
+
+    /** End a waiting Google or Apple sign-in that has run past its time limit. */
+    suspend fun expireStaleOAuth(): Boolean = OAuthSignInService.expireIfStale()
+
     /** Open [provider]'s sign-in page in the system browser; completes via `boss://auth/callback`. */
     suspend fun signInWithOAuth(provider: OAuthProviderKind): Result<Unit> = OAuthSignInService.start(provider)
 

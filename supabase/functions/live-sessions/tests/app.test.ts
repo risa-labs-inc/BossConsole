@@ -649,6 +649,80 @@ Deno.test("a malformed code is refused before any exchange", withEnv(async () =>
   }
 }))
 
+Deno.test("a start on another host goes to the canonical host first, before any verifier is set", withEnv(async () => {
+  const res = await app.request(`${BASE}/api/oauth/google`, {
+    headers: { ...HTTPS, host: "pcnwqamqdnsadranufjv.supabase.co" },
+  })
+  assertEquals(res.status, 302)
+  assertEquals(res.headers.get("location"), "https://api.risaboss.com/functions/v1/live-sessions/api/oauth/google?_alias=1")
+  assert(!setCookies(res).some((c) => c.includes("boss_live_pkce")))
+}))
+
+Deno.test("GET /api/oauth starts for a same-origin navigation and one with no Sec-Fetch-Site", withEnv(async () => {
+  for (const headers of [{ ...HTTPS, "sec-fetch-site": "same-origin" }, HTTPS]) {
+    const res = await app.request(`${BASE}/api/oauth/apple`, { headers })
+    assertEquals(res.status, 302)
+    assert(res.headers.get("location")!.startsWith("https://stack.example/auth/v1/authorize?provider=apple&"))
+  }
+}))
+
+Deno.test("the authorize host falls back to SUPABASE_URL", withEnv(async () => {
+  Deno.env.delete("LIVE_SESSIONS_AUTH_PUBLIC_URL")
+  const res = await app.request(`${BASE}/api/oauth/google`, { headers: HTTPS })
+  assert(res.headers.get("location")!.startsWith("https://stack.example/auth/v1/authorize?"))
+}))
+
+Deno.test("a return with both a code and an error is ambiguous: failed, and never exchanged", withEnv(async () => {
+  const stub = stubFetch(() => json({}, 500))
+  try {
+    const res = await app.request(`${BASE}/auth?code=abc123&error=access_denied`, {
+      headers: { ...HTTPS, cookie: "__Secure-boss_live_pkce=" + "v".repeat(43) },
+    })
+    assertEquals(res.headers.get("location"), "/functions/v1/live-sessions/auth?oauth_error=failed")
+    assertEquals(stub.calls.length, 0)
+    assert(setCookies(res).some((c) => c.startsWith("__Secure-boss_live_pkce=;")))
+  } finally {
+    stub.restore()
+  }
+}))
+
+Deno.test("a provider error is logged only in an error code's shape", withEnv(async () => {
+  const warned: unknown[][] = []
+  const original = console.warn
+  console.warn = (...args: unknown[]) => void warned.push(args)
+  try {
+    await app.request(`${BASE}/auth?error=${encodeURIComponent("x\nFAKE log line")}`, { headers: HTTPS })
+    await app.request(`${BASE}/auth?error=server_error`, { headers: HTTPS })
+  } finally {
+    console.warn = original
+  }
+  assertEquals(warned, [["oauth provider error", "<malformed>"], ["oauth provider error", "server_error"]])
+}))
+
+Deno.test("provider returns have their own rate limit, apart from session establishment", withEnv(async () => {
+  const stub = stubFetch(() => json({ error: "invalid_grant" }, 400))
+  try {
+    const attempt = () =>
+      app.request(`${BASE}/auth?code=abc123`, { headers: { ...HTTPS, cookie: "__Secure-boss_live_pkce=" + "v".repeat(43) } })
+    for (let i = 0; i < 20; i++) {
+      assertEquals((await attempt()).headers.get("location"), "/functions/v1/live-sessions/auth?oauth_error=failed")
+    }
+    assertEquals((await attempt()).headers.get("location"), "/functions/v1/live-sessions/auth?oauth_error=rate_limited")
+    assertEquals(stub.calls.length, 20)
+  } finally {
+    stub.restore()
+  }
+  // The session bucket is untouched: its whole budget is still there for magic-link landings.
+  for (let i = 0; i < 30; i++) {
+    const session = await app.request(`${BASE}/api/session`, {
+      method: "POST",
+      headers: { ...HTTPS, "content-type": "application/json" },
+      body: JSON.stringify({ access_token: "x", refresh_token: "" }),
+    })
+    assert(session.status !== 429, `session route rate limited after ${i} calls`)
+  }
+}))
+
 Deno.test("the page offers Google and Apple as plain links to the start routes", withEnv(async () => {
   const html = await (await app.request(`${BASE}/`)).text()
   assertStringIncludes(html, 'href="/functions/v1/live-sessions/api/oauth/google"')

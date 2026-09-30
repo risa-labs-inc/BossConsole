@@ -11,9 +11,12 @@
  *     api.risaboss.com origin, which was the weakness of the sessionStorage design;
  *   - `Path` keeps them off every other function on the origin.
  *
- * `__Secure-` rather than `__Host-`: the latter mandates `Path=/`. Over plain http (a local
- * stack) the prefix is dropped, because a browser silently discards a Secure cookie set over
- * http and the flow would loop forever with no visible error.
+ * `__Secure-` rather than `__Host-`: the latter mandates `Path=/`. The cost is that `__Secure-`
+ * does not pin the host, so any HTTPS host under the parent domain can set one of these names
+ * for the whole domain; these cookies are protected from other sites, not from a compromised
+ * sibling subdomain. Over plain http (a local stack) the prefix is dropped, because a browser
+ * silently discards a Secure cookie set over http and the flow would loop forever with no
+ * visible error.
  *
  * SameSite=Lax is the right setting, not Strict: the magic link is a TOP-LEVEL navigation from
  * the mail client into /auth, and Strict would withhold the cookies on that very landing.

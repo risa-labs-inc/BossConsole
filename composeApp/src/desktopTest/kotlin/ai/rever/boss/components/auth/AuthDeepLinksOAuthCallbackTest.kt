@@ -44,6 +44,51 @@ class AuthDeepLinksOAuthCallbackTest {
     }
 
     @Test
+    fun `accepts GoTrue's error redirect, which repeats the error in the query and the fragment`() {
+        // supabase/auth redirectErrors writes error, error_code and error_description into both
+        // sections, plus an `sb` marker in the fragment.
+        val link =
+            AuthDeepLinks.parse(
+                "boss://auth/callback?error=access_denied&error_code=user_cancelled&error_description=Query+text" +
+                    "#error=access_denied&error_code=user_cancelled&error_description=Fragment+text&sb",
+            )
+        assertIs<AuthDeepLink.OAuthCallback>(link)
+        assertEquals("access_denied", link.error)
+        // The description comes from the same section as the error it explains.
+        assertEquals("Query text", link.errorDescription)
+    }
+
+    @Test
+    fun `refuses a query and a fragment that disagree about the error`() {
+        assertNull(AuthDeepLinks.parse("boss://auth/callback?error=access_denied#error=server_error"))
+    }
+
+    @Test
+    fun `a fragment-only error takes its description from the fragment`() {
+        val link =
+            AuthDeepLinks.parse(
+                "boss://auth/callback?error_description=planted#error=server_error&error_description=real",
+            )
+        assertIs<AuthDeepLink.OAuthCallback>(link)
+        assertEquals("real", link.errorDescription)
+    }
+
+    @Test
+    fun `a description is bounded, stripped of control characters, and dropped when undecodable`() {
+        val long = AuthDeepLinks.parse("boss://auth/callback?error=server_error&error_description=${"a".repeat(1000)}")
+        assertEquals(300, assertIs<AuthDeepLink.OAuthCallback>(long).errorDescription?.length)
+
+        val controls =
+            AuthDeepLinks.parse("boss://auth/callback?error=server_error&error_description=line%0Aone%1B%5B2J")
+        assertEquals("lineone[2J", assertIs<AuthDeepLink.OAuthCallback>(controls).errorDescription)
+
+        val malformed = AuthDeepLinks.parse("boss://auth/callback?error=server_error&error_description=bad%ZZ")
+        val callback = assertIs<AuthDeepLink.OAuthCallback>(malformed)
+        assertEquals("server_error", callback.error)
+        assertNull(callback.errorDescription)
+    }
+
+    @Test
     fun `refuses a link carrying both a code and an error`() {
         assertNull(AuthDeepLinks.parse("boss://auth/callback?code=$code&error=access_denied"))
         assertNull(AuthDeepLinks.parse("boss://auth/callback?code=$code#error=access_denied"))
@@ -59,7 +104,7 @@ class AuthDeepLinksOAuthCallbackTest {
     fun `refuses duplicates and a code in the fragment`() {
         assertNull(AuthDeepLinks.parse("boss://auth/callback?code=$code&code=other"))
         assertNull(AuthDeepLinks.parse("boss://auth/callback#code=$code"))
-        assertNull(AuthDeepLinks.parse("boss://auth/callback?error=access_denied#error=server_error"))
+        assertNull(AuthDeepLinks.parse("boss://auth/callback?error=access_denied&error=access_denied"))
     }
 
     @Test

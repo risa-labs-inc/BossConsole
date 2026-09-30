@@ -65,6 +65,7 @@ fun LoginFormScreen(
     onPasskeyAuthInitiated: (String) -> Unit = {},
     onPasskeySelectionRequired: (String) -> Unit = {},
     oauthError: String? = null,
+    oauthStarting: OAuthProviderKind? = null,
     onOAuthSignIn: (OAuthProviderKind) -> Unit = {},
     onDismissOAuthError: () -> Unit = {},
 ) {
@@ -92,6 +93,7 @@ fun LoginFormScreen(
         OAuthStep(
             visible = !showAuthOptions,
             enabled = !isLoading && !checkingUserExists,
+            busyProvider = oauthStarting,
             error = oauthError,
             onSignIn = onOAuthSignIn,
         )
@@ -152,24 +154,26 @@ fun LoginFormScreen(
 }
 
 /**
- * Google and Apple, above the email field, with their last error and the "or" divider. Hidden once
- * the email step has moved on to its options, where they would compete with the passkey and
- * magic-link buttons for the same decision.
+ * Google and Apple, above the email field, with their last error and the "or" divider. The buttons
+ * are hidden once the email step has moved on to its options, where they would compete with the
+ * passkey and magic-link buttons for the same decision; their error is not, so a sign-in that
+ * failed is never left unexplained.
  */
 @Composable
 private fun OAuthStep(
     visible: Boolean,
     enabled: Boolean,
+    busyProvider: OAuthProviderKind?,
     error: String?,
     onSignIn: (OAuthProviderKind) -> Unit,
 ) {
-    if (!visible) return
-    OAuthProviderButtons(enabled = enabled, busyProvider = null, onSignIn = onSignIn)
+    if (visible) OAuthProviderButtons(enabled = enabled, busyProvider = busyProvider, onSignIn = onSignIn)
     if (error != null) {
-        Spacer(modifier = Modifier.height(BossTheme.space.sm))
+        if (visible) Spacer(modifier = Modifier.height(BossTheme.space.sm))
         ErrorMessage(error)
+        if (!visible) Spacer(modifier = Modifier.height(BossTheme.space.md))
     }
-    AuthOrDivider()
+    if (visible) AuthOrDivider()
 }
 
 /**

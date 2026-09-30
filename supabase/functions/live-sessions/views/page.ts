@@ -126,7 +126,9 @@ const SCRIPT = `
     n.classList.toggle("hidden", !text);
   }
   // 0. A Google / Apple sign-in that did not complete comes back with ?oauth_error=<code>. Only
-  //    known codes are shown, as fixed text; the parameter then leaves the address bar.
+  //    known codes are shown, as fixed text; the parameter then leaves the address bar. So does
+  //    the fragment: GoTrue repeats its error there, a browser carries a fragment across the
+  //    server's redirect, and step 1 would otherwise replace this notice with the provider's text.
   var OAUTH_ERRORS = {
     cancelled: "Sign-in was cancelled.",
     expired: "That sign-in took too long or was opened in another browser. Please try again.",
@@ -139,7 +141,7 @@ const SCRIPT = `
     if (!code) return;
     params.delete("oauth_error");
     var rest = params.toString();
-    history.replaceState(null, "", location.pathname + (rest ? "?" + rest : "") + location.hash);
+    history.replaceState(null, "", location.pathname + (rest ? "?" + rest : ""));
     notice(Object.prototype.hasOwnProperty.call(OAUTH_ERRORS, code) ? OAUTH_ERRORS[code] : OAUTH_ERRORS.failed, "error");
   }
   // 1. Harvest GoTrue's implicit-flow fragment: hand the tokens to the server (which turns

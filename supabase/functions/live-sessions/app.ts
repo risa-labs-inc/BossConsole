@@ -79,6 +79,15 @@ const OAUTH_LIMIT = 20
 const OAUTH_WINDOW_SECONDS = 300
 /** GoTrue's PKCE auth codes: a UUID today; bounded and URL-safe so a format change still parses. */
 const AUTH_CODE_RE = /^[A-Za-z0-9._~-]{1,512}$/
+/** An OAuth `error` code as GoTrue and the providers write it; anything else is not logged. */
+const OAUTH_ERROR_RE = /^[a-z_]{1,64}$/
+/**
+ * Provider returns get their own budget rather than the `session:` one: a burst of returns
+ * (retries, a user bouncing between providers) must not lock the page out of establishing a
+ * session from a magic link, and vice versa.
+ */
+const OAUTH_RETURN_LIMIT = 20
+const OAUTH_RETURN_WINDOW_SECONDS = 300
 
 /** Columns the page needs. `id` is omitted: the page keys nothing on it. */
 const SESSION_COLUMNS =
@@ -148,6 +157,11 @@ app.get("/api/oauth/:provider", async (ctx) => {
   if (ctx.req.header("sec-fetch-site") === "cross-site") return jsonResponse({ error: "forbidden" }, 403)
   const provider = ctx.req.param("provider")
   if (!OAUTH_PROVIDERS.has(provider)) return jsonResponse({ error: "not_found" }, 404)
+  // The verifier cookie is set on the host that serves this request and the provider returns to
+  // publicBaseUrl(), so a start on any other host would plant the cookie where the return never
+  // looks. Send it to the canonical host first, as the page routes do.
+  const alias = aliasRedirect(ctx, `/api/oauth/${provider}`)
+  if (alias) return alias
   const limit = rateLimit(`oauth:${clientKey(ctx.req.raw.headers)}`, OAUTH_LIMIT, OAUTH_WINDOW_SECONDS)
   if (!limit.allowed) return oauthErrorRedirect("rate_limited")
 
@@ -332,7 +346,13 @@ type RouteCtx = {
  * No Sec-Fetch-Site check here, deliberately: the return legitimately arrives as a navigation that
  * started on accounts.google.com or appleid.apple.com. What protects it is the verifier cookie -
  * a code planted by someone else was issued against THEIR verifier, so it cannot be exchanged
- * with this browser's, and a browser with no sign-in in flight has no verifier at all.
+ * with this browser's, and a browser with no sign-in in flight has no verifier at all. That holds
+ * against other sites, not against a sibling subdomain: a `__Secure-` cookie (it cannot be
+ * `__Host-`, which requires `Path=/`) can still be set for the parent domain by any HTTPS host
+ * under it, the same exposure the session cookies already have.
+ *
+ * A return carrying both a code and an error is ambiguous and is treated as a failure, as the
+ * desktop parser refuses the same shape.
  */
 async function oauthReturn(ctx: RouteCtx): Promise<Response | null> {
   const code = ctx.req.query("code")
@@ -341,14 +361,20 @@ async function oauthReturn(ctx: RouteCtx): Promise<Response | null> {
 
   const secure = isSecureRequest(ctx.req.url, ctx.req.header("x-forwarded-proto") ?? null)
   const clearVerifier = clearPkceCookieHeader(secure, publicBasePath())
+  if (code && providerError) return oauthErrorRedirect("failed", [clearVerifier])
   if (providerError) {
-    console.warn("oauth provider error", providerError.slice(0, 64))
+    // Untrusted text: logged only in the shape a real error code has, so it cannot forge log lines.
+    console.warn("oauth provider error", OAUTH_ERROR_RE.test(providerError) ? providerError : "<malformed>")
     return oauthErrorRedirect(providerError === "access_denied" ? "cancelled" : "failed", [clearVerifier])
   }
   const verifier = cookieToken(ctx.req.header("cookie") ?? null, pkceCookieName(secure))
   if (!code || !AUTH_CODE_RE.test(code) || !verifier) return oauthErrorRedirect("expired", [clearVerifier])
 
-  const limit = rateLimit(`session:${clientKey(ctx.req.raw.headers)}`, SESSION_LIMIT, SESSION_WINDOW_SECONDS)
+  const limit = rateLimit(
+    `oauth-return:${clientKey(ctx.req.raw.headers)}`,
+    OAUTH_RETURN_LIMIT,
+    OAUTH_RETURN_WINDOW_SECONDS,
+  )
   if (!limit.allowed) return oauthErrorRedirect("rate_limited", [clearVerifier])
 
   const cfg = readConfig()

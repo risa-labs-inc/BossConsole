@@ -20,6 +20,7 @@ import androidx.compose.material.Text
 import androidx.compose.material.TextButton
 import androidx.compose.material.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -29,6 +30,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 
 /**
  * Shown while a Google or Apple sign-in is open in the system browser.
@@ -37,14 +39,19 @@ import androidx.compose.ui.unit.dp
  * BOSS handles `boss://`. For a machine where it does not, the page offers to copy the sign-in
  * link (when no browser opened) and to paste the callback link back in by hand.
  *
+ * @param notice why the last callback did not sign in; the sign-in is still open
  * @param exchanging the callback arrived and the session is being established
+ * @param onExpireIfStale ends the sign-in once it has run past its time limit; polled while shown,
+ *     so a sign-in whose callback never arrives does not leave this screen up for ever
  * @param onPasteCallback a pasted `boss://auth/callback` link, already parsed
  */
 @Composable
 fun OAuthWaitingScreen(
     provider: OAuthProviderKind,
     authorizeUrl: String?,
+    notice: String?,
     exchanging: Boolean,
+    onExpireIfStale: suspend () -> Unit,
     onReopenBrowser: () -> Unit,
     onPasteCallback: (AuthDeepLink.OAuthCallback) -> Unit,
     onCancel: () -> Unit,
@@ -59,8 +66,19 @@ fun OAuthWaitingScreen(
                     "BOSS will continue by itself."
             },
     ) {
+        LaunchedEffect(Unit) {
+            while (true) {
+                delay(EXPIRY_POLL_MS)
+                onExpireIfStale()
+            }
+        }
         LoadingIndicator()
         Spacer(modifier = Modifier.height(BossTheme.space.lg))
+
+        if (notice != null && !exchanging) {
+            ErrorMessage(notice)
+            Spacer(modifier = Modifier.height(BossTheme.space.md))
+        }
 
         if (!exchanging) {
             PrimaryActionButton(text = "Reopen browser", onClick = onReopenBrowser)
@@ -75,6 +93,9 @@ fun OAuthWaitingScreen(
         }
     }
 }
+
+/** How often the screen asks whether its sign-in has expired; the limit itself is minutes. */
+private const val EXPIRY_POLL_MS = 15_000L
 
 /** For a machine where no browser opened: the user can open the page wherever they like. */
 @Composable

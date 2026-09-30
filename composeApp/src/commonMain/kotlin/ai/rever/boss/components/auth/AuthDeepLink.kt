@@ -80,8 +80,9 @@ sealed interface AuthDeepLink {
  *   and every character that escapes is a shape no producer's token carries;
  * - the type is the fragment's or else the query's `type`, `[a-z_]` up to 32, defaulting to
  *   `magiclink`.
- * - an OAuth callback carries exactly one of a query `code` or an `error` code, never both,
- *   each exactly once; a `code` in the fragment is a smuggle and refuses the link.
+ * - an OAuth callback carries a query `code` or an `error` code, never both, each at most once
+ *   per section; a `code` in the fragment is a smuggle and refuses the link. An error may sit in
+ *   the query, the fragment, or both with the same value (GoTrue writes both).
  *
  * Anything else is refused with `null`: an unknown host or path, a duplicate of a parameter
  * this parser reads, a missing token, or a value not of the producer's shape. Unknown extra
@@ -233,8 +234,8 @@ object AuthDeepLinks {
 
     /**
      * [sections] as an OAuth callback, or null unless it carries exactly one of a URL-safe
-     * `code` (query only, as the PKCE redirect writes it) or an `error` code (query or
-     * fragment, never both), each exactly once.
+     * `code` (query only, as the PKCE redirect writes it) or an `error` code, each exactly once
+     * per section.
      */
     private fun oauthCallbackOf(sections: Sections): AuthDeepLink? {
         val ambiguous =
@@ -242,36 +243,35 @@ object AuthDeepLinks {
                 isDuplicated(sections.query, CODE_PARAM, ERROR_PARAM, ERROR_DESCRIPTION_PARAM) ||
                 isDuplicated(sections.fragment, ERROR_PARAM, ERROR_DESCRIPTION_PARAM)
         val code = sections.query[CODE_PARAM]?.first()
-        val errors = listOfNotNull(sections.query[ERROR_PARAM]?.first(), sections.fragment[ERROR_PARAM]?.first())
+        val hasError = sections.query.containsKey(ERROR_PARAM) || sections.fragment.containsKey(ERROR_PARAM)
         return when {
-            ambiguous -> {
-                null
-            }
-
-            code != null && errors.isEmpty() -> {
-                code.takeIf(authCodeShape::matches)?.let { AuthDeepLink.OAuthCallback(it, null, null) }
-            }
-
-            code == null && errors.size == 1 -> {
-                val description =
-                    (sections.query[ERROR_DESCRIPTION_PARAM] ?: sections.fragment[ERROR_DESCRIPTION_PARAM])
-                        ?.first()
-                        ?.let(::decodeDescription)
-                errors.single().takeIf(errorShape::matches)?.let { AuthDeepLink.OAuthCallback(null, it, description) }
-            }
-
-            else -> {
-                null
-            }
+            ambiguous || (code != null && hasError) -> null
+            code != null -> code.takeIf(authCodeShape::matches)?.let { AuthDeepLink.OAuthCallback(it, null, null) }
+            else -> errorCallbackOf(sections)
         }
     }
 
-    /** A percent/plus-encoded error description as bounded printable text, or null if undecodable. */
-    private fun decodeDescription(raw: String): String? =
-        runCatching { java.net.URLDecoder.decode(raw, Charsets.UTF_8) }
-            .getOrNull()
-            ?.filter { !it.isISOControl() }
-            ?.take(MAX_ERROR_DESCRIPTION_LENGTH)
+    /**
+     * The error half of [oauthCallbackOf]. GoTrue's redirectErrors writes the error into BOTH the
+     * query and the fragment (the fragment copy is marked for deprecation upstream), so one error
+     * in either section, or the same error in both, is the normal shape. Two DIFFERENT errors are
+     * a smuggle. The description is read from the section the error was read from.
+     */
+    private fun errorCallbackOf(sections: Sections): AuthDeepLink? {
+        val queryError = sections.query[ERROR_PARAM]?.first()
+        val fragmentError = sections.fragment[ERROR_PARAM]?.first()
+        val error = queryError ?: fragmentError
+        if (error == null || (fragmentError != null && fragmentError != error)) return null
+        val section = if (queryError != null) sections.query else sections.fragment
+        // Bounded printable text, or none when the escapes do not decode.
+        val description =
+            section[ERROR_DESCRIPTION_PARAM]
+                ?.first()
+                ?.let { raw -> runCatching { java.net.URLDecoder.decode(raw, Charsets.UTF_8) }.getOrNull() }
+                ?.filter { !it.isISOControl() }
+                ?.take(MAX_ERROR_DESCRIPTION_LENGTH)
+        return error.takeIf(errorShape::matches)?.let { AuthDeepLink.OAuthCallback(null, it, description) }
+    }
 
     /**
      * The `name=value` pairs of one URI section, grouped by name. A repeated name keeps every

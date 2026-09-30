@@ -34,11 +34,11 @@ import org.jetbrains.compose.resources.painterResource
 /**
  * "Continue with Google" and "Continue with Apple", stacked full width.
  *
- * Both follow their brand rules with theme tokens rather than literals. Google's button is neutral
- * with the full-colour "G", which is a brand asset and never tinted. Apple's is solid in the
- * theme's strongest contrast: `textPrimary` fill with an `ink` label reads as Apple's white
- * button on the dark themes and its black button on the light ones, which is the pairing the
- * Human Interface Guidelines ask for.
+ * Both follow their brand rules with theme tokens rather than literals. Google's button is a
+ * neutral `raised` surface with a hairline and the full-colour "G", which is a brand asset and
+ * never tinted. Apple's is solid in the theme's strongest contrast: `textPrimary` fill with an
+ * `ink` label reads as Apple's white button on the dark themes and its black button on the light
+ * ones, which is the pairing the Human Interface Guidelines ask for.
  *
  * @param busyProvider the provider whose sign-in is starting, drawn with a spinner; every button
  *     is disabled while it is set
@@ -57,7 +57,7 @@ fun OAuthProviderButtons(
             label = "Continue with Google",
             enabled = clickable,
             busy = busyProvider == OAuthProviderKind.GOOGLE,
-            background = Color.Transparent,
+            background = colors.raised,
             content = colors.textPrimary,
             border = BorderStroke(1.dp, colors.line),
             onClick = { onSignIn(OAuthProviderKind.GOOGLE) },
