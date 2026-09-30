@@ -83,6 +83,40 @@ function fakeFetchWithJar(body: number[], tailBytes: number) {
   }
 }
 
+/**
+ * A local file header (30 bytes + name) for the entry the CD describes.
+ * The parser reads only the name/extra lengths out of it (offsets +26/+28);
+ * the size fields are filled honestly anyway so the layout is a real JAR's.
+ */
+function localFileHeader(
+  name: string,
+  compressedSize: number,
+  uncompressedSize: number,
+  method = 8,
+): number[] {
+  const nameBytes = Array.from(new TextEncoder().encode(name))
+  return [
+    ...u32(0x04034b50), // local-file signature
+    ...u16(20), ...u16(0), ...u16(method), // version, flags, method
+    ...u16(0), ...u16(0), ...u32(0), // time, date, crc32
+    ...u32(compressedSize), ...u32(uncompressedSize),
+    ...u16(nameBytes.length), ...u16(0), // name-len (read at +26), extra-len (+28)
+    ...nameBytes,
+  ]
+}
+
+/** deflate-raw bytes for the inflate-loop tests: real compressed data. */
+async function deflateRaw(data: Uint8Array<ArrayBuffer>): Promise<Uint8Array> {
+  const cs = new CompressionStream("deflate-raw")
+  const writer = cs.writable.getWriter()
+  // Drain the readable side concurrently: the write above back-pressures on
+  // it, so awaiting the write before reading deadlocks.
+  const out = new Response(cs.readable).arrayBuffer()
+  await writer.write(data)
+  await writer.close()
+  return new Uint8Array(await out)
+}
+
 Deno.test("a central directory declaring a multi-GB size is refused, not fetched", async () => {
   const evilCdSize = 2 * 1024 * 1024 * 1024 // 2GB in the CD header
   // Layout: [CD entry][padding > 65KB][EOCD pointing at the CD with evil size].
@@ -179,6 +213,135 @@ Deno.test("a small compressed entry declaring a huge uncompressedSize is refused
     assertEquals(threw, true, "the deflate-bomb entry must fail the extraction")
     // The declared-uncompressed-size guard must fire before any inflate.
     assertStringIncludes(msg, "uncompressed bytes, above the 524288-byte manifest bound")
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+Deno.test("a plugin.json inflating past the manifest bound is cancelled mid-stream", async () => {
+  // The cancel branch the three tests above never reach: both CD-declared
+  // sizes stay under the bound (uncompressedSize lies), so only the
+  // actual-bytes counter in the inflate loop can stop this one. The entry
+  // fetch must find a real local header and real deflate-raw bytes.
+  const inflated = new Uint8Array(600_000) // > 512KB, compresses to ~600 bytes
+  const compressed = await deflateRaw(inflated)
+  const name = "META-INF/boss-plugin/plugin.json"
+  const lh = localFileHeader(name, compressed.length, inflated.length)
+  // compressedSize is honest; uncompressedSize is the lie that slips the
+  // declared-size guard (64 <= 512KB) while the stream inflates past it.
+  const entry = cdEntry(compressed.length, 64, 8)
+  const cdOffset = lh.length + compressed.length
+  // Whole file fits in the 65KB tail probe, so the CD is read in place.
+  const body = [...lh, ...compressed, ...entry, ...eocd(cdOffset, entry.length)]
+
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = fakeFetchWithJar(body, 0) as typeof fetch
+  try {
+    let threw = false
+    let msg = ""
+    try {
+      await extractManifestFromRemoteJar("https://evil.example/bomb.jar")
+    } catch (e) {
+      threw = true
+      msg = e instanceof Error ? e.message : String(e)
+    }
+    assertEquals(threw, true, "the lying entry must fail the extraction")
+    // The mid-stream cancel message — not either declared-size guard — proves
+    // the reader.cancel() branch ran.
+    assertStringIncludes(msg, "inflated past the 524288-byte manifest bound")
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+Deno.test("a Range-ignoring EOCD host is refused on declared Content-Length before the body is read", async () => {
+  // Declare-then-refuse on the tail probe: the host answers the range request
+  // with the whole file (200), and Content-Length alone already exceeds the
+  // 1MB probe cap — so not one byte of the body may be consumed.
+  let pulled = 0
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = ((_url: string, init?: RequestInit) => {
+    if (init?.method === "HEAD") {
+      return Promise.resolve(new Response(null, {
+        status: 200,
+        headers: { "Content-Length": "2000000" },
+      }))
+    }
+    const stream = new ReadableStream<Uint8Array>({
+      pull(c) {
+        pulled++
+        c.enqueue(new Uint8Array(4))
+      },
+      // highWaterMark 0: the default HWM of 1 pulls once just to fill the
+      // internal queue, which is not the consumer reading the body.
+    }, { highWaterMark: 0 })
+    return Promise.resolve(new Response(stream, {
+      status: 200,
+      headers: { "Content-Length": "2000000" },
+    }))
+  }) as typeof fetch
+  try {
+    let threw = false
+    let msg = ""
+    try {
+      await extractManifestFromRemoteJar("https://evil.example/norange.jar")
+    } catch (e) {
+      threw = true
+      msg = e instanceof Error ? e.message : String(e)
+    }
+    assertEquals(threw, true, "the oversized declared body must fail the probe")
+    assertStringIncludes(msg, "EOCD probe declares 2000000 bytes")
+    assertEquals(pulled, 0, `body was consumed despite the declared cap: ${pulled} pulls`)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+Deno.test("a Range-ignoring CD fetch is refused on declared Content-Length before the body is read", async () => {
+  // Same declare-then-refuse on downloadRange. The CD sits before the 65KB
+  // tail window so it is fetched separately; the stub honors the tail probe
+  // (any range ending at the file's last byte) but answers every other range
+  // with a Range-ignoring 200 that declares 5MB against the 4MB CD cap.
+  const entry = cdEntry(10)
+  const padding = new Array(70_000).fill(0)
+  const eocdBytes = eocd(0, entry.length)
+  const body = [...entry, ...padding, ...eocdBytes]
+  const total = body.length
+
+  let pulled = 0
+  const originalFetch = globalThis.fetch
+  const honest = fakeFetchWithJar(body, 0)
+  globalThis.fetch = ((url: string, init?: RequestInit) => {
+    const range = (init?.headers as Record<string, string>)?.Range ?? ""
+    const m = range.match(/bytes=(\d+)-(\d+)/)
+    if (m && parseInt(m[2], 10) !== total - 1) {
+      const stream = new ReadableStream<Uint8Array>({
+        pull(c) {
+          pulled++
+          c.enqueue(new Uint8Array(4))
+        },
+        // highWaterMark 0: the default HWM of 1 pulls once just to fill the
+        // internal queue, which is not the consumer reading the body.
+      }, { highWaterMark: 0 })
+      return Promise.resolve(new Response(stream, {
+        status: 200,
+        headers: { "Content-Length": "5000000" },
+      }))
+    }
+    return honest(url, init)
+  }) as typeof fetch
+  try {
+    let threw = false
+    let msg = ""
+    try {
+      await extractManifestFromRemoteJar("https://evil.example/cd-norange.jar")
+    } catch (e) {
+      threw = true
+      msg = e instanceof Error ? e.message : String(e)
+    }
+    assertEquals(threw, true, "the oversized declared CD body must fail the fetch")
+    assertStringIncludes(msg, "Range response declares 5000000 bytes, above the 4194304-byte cap")
+    assertEquals(pulled, 0, `body was consumed despite the declared cap: ${pulled} pulls`)
   } finally {
     globalThis.fetch = originalFetch
   }
