@@ -327,12 +327,15 @@ fun main(args: Array<String>) {
     logger.info(LogCategory.SYSTEM, "Successfully acquired single-instance lock")
 
     // -------------------------------------------------------------------------
-    // Phase 6: Chromium engine preflight, overlays, window nets & engine pre-warm
+    // Phase 6: Chromium engine preflight, background warm-ups, overlays, window nets & engine
+    // pre-warm
     // -------------------------------------------------------------------------
-    // Before DefaultWindowIcon.install() creates the AWT toolkit: the native toolkit preload in
-    // here swaps malloc zones, and a free() on any other thread mid-swap traps. Once AppKit runs,
-    // Core Animation frees on the AppKit thread continuously. After the single-instance lock,
-    // because it may rename the engine directory.
+    // The preflight preloads the browser engine's native toolkit, which swaps the process's malloc
+    // zones; a free() on any other thread during the swap is an uncatchable SIGTRAP. So it must run
+    // before DefaultWindowIcon.install() creates the AWT toolkit (after which Core Animation frees
+    // on the AppKit thread continuously) and before the background warm-ups below start. It must
+    // also run only while the single-instance lock is held, because pending-install promotion
+    // renames the engine directory another instance may be booting from.
     val chromiumPreflight = ChromiumBootstrap.preflight()
 
     // Warm settings singletons on IO thread. After the preflight: a thread busy freeing memory

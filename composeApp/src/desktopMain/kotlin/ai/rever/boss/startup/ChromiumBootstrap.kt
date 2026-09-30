@@ -30,11 +30,16 @@ object ChromiumBootstrap {
 
     /**
      * Inspects the browser engine, cleans stale locks, promotes pending downloads, logs the engine
-     * startup verdict and preloads the native toolkit.
+     * startup verdict and, when the engine will boot from disk, preloads the native toolkit.
      *
-     * **Call before anything creates the AWT toolkit** (`DefaultWindowIcon.install()`), and after
-     * the single-instance lock (promotion renames the engine directory another instance could be
-     * running from). Loading the toolkit swaps the process's default malloc zone, and a free() on
+     * On the Download path nothing is preloaded: the engine is not on disk yet, so JxBrowser loads
+     * the toolkit itself once the download finishes, with the app fully running. That is the one
+     * startup path still exposed to the zone-swap race below.
+     *
+     * **Call before anything creates the AWT toolkit** (`DefaultWindowIcon.install()`), and only
+     * while the single-instance lock is held: pending-install promotion renames the engine directory
+     * another instance may be booting from. `StartupOrderingTest` pins both ends of that in
+     * `main`. Loading the toolkit swaps the process's default malloc zone, and a free() on
      * another thread mid-swap traps in the shim. Once AppKit runs, Core Animation frees on the
      * AppKit thread continuously (9.5.33, 2026-09-29: `brk #0` at `libtoolkit+0x4c9f4` under
      * `CA::Transaction::commit`, +1.9s). See [ChromiumToolkitPreload].

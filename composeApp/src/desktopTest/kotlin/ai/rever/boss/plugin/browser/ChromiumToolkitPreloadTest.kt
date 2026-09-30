@@ -145,4 +145,19 @@ class ChromiumToolkitPreloadTest {
 
         assertEquals(0, ChromiumToolkitPreload.preload(dir) { throw IllegalStateException("boom") })
     }
+
+    @Test
+    fun `a preload after the AWT toolkit exists is reported on macOS`() {
+        val reason = ChromiumToolkitPreload.lateLoadReason(createdBy = "DefaultWindowIcon.install", isMac = true)
+        assertEquals("the AWT toolkit was already created by DefaultWindowIcon.install", reason)
+    }
+
+    @Test
+    fun `a preload before the AWT toolkit, or off macOS, is not late`() {
+        assertEquals(null, ChromiumToolkitPreload.lateLoadReason(createdBy = null, isMac = true))
+        assertEquals(
+            null,
+            ChromiumToolkitPreload.lateLoadReason(createdBy = "DefaultWindowIcon.install", isMac = false),
+        )
+    }
 }
