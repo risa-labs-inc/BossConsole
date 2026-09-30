@@ -28,10 +28,21 @@ import java.nio.file.Path
  * (`0x4b250`). The 27 July 2026 release crash (9.2.60, +514ms, libtoolkit on a `free` path under
  * `libxpc` dealloc) has the same signature.
  *
- * **What this changes.** The swap still happens, but on the main thread, before the startup class
- * loading and before the pre-warm thread exists - so the busiest `free()` callers of that moment
- * cannot be in the window. JxBrowser's own later `System.load` of the same canonical path, from
- * the same class loader, is a no-op in the JVM.
+ * A second instance, after this preload shipped (9.5.33, 2026-09-29, JxBrowser 9.5.2 / Chromium
+ * 154.0.8037.58): +1.9s, `brk #0` at `libtoolkit+0x4c9f4` (the same fallback loop, four zones
+ * checked), on the AppKit thread under `CA::Transaction::commit`. The preload then ran after
+ * `DefaultWindowIcon.install()` had created the AWT toolkit, so Core Animation was committing
+ * transactions (and freeing) on the AppKit thread during the swap. Reproduced outside BOSS, same
+ * PC: a JVM with four threads freeing continuously trapped in 3 of 20 runs when it loaded these
+ * libraries after starting them, 0 of 20 when it loaded them first. Memory allocated before the
+ * swap and freed after it is harmless (20,000 blocks, no trap) - only a free() *during* the
+ * swap traps.
+ *
+ * **What this changes.** The swap still happens, but on the main thread, before AWT creates
+ * AppKit, before the startup class loading and before the pre-warm thread exists - so neither
+ * Core Animation nor the busiest `free()` callers of that moment can be in the window.
+ * `ChromiumBootstrap.preflight()` enforces the order. JxBrowser's own later
+ * `System.load` of the same canonical path, from the same class loader, is a no-op in the JVM.
  *
  * **What it does not.** It narrows the race rather than removing it: JVM service threads (GC,
  * JIT) still run. `libawt_toolkit` is deliberately NOT preloaded - it links `@rpath/libjawt.dylib`
@@ -51,6 +62,31 @@ object ChromiumToolkitPreload {
 
     private const val DISABLED_KEY = "BOSS_TOOLKIT_PRELOAD"
     private const val DISABLED_PROPERTY = "boss.toolkit.preload"
+
+    /**
+     * What created the AWT toolkit, once something has. `main` keeps the preload ahead of that, and
+     * `StartupOrderingTest` pins the order in source; this catches the order breaking at runtime by
+     * another route, because the race it lets back in is far too rare to show up in any test run.
+     */
+    @Volatile
+    private var awtToolkitCreatedBy: String? = null
+
+    /**
+     * Called by whatever is about to create the AWT toolkit (today `DefaultWindowIcon.install()`).
+     * The first caller wins, so the report names the real culprit.
+     */
+    fun noteAwtToolkitCreating(by: String) {
+        if (awtToolkitCreatedBy == null) awtToolkitCreatedBy = by
+    }
+
+    /**
+     * Why a preload about to run is late, or null when it is not: on macOS, a toolkit created before
+     * the preload means AppKit and Core Animation are already freeing on the AppKit thread.
+     */
+    internal fun lateLoadReason(
+        createdBy: String?,
+        isMac: Boolean,
+    ): String? = if (isMac && createdBy != null) "the AWT toolkit was already created by $createdBy" else null
 
     /** What [plan] decided: the files to load, in order, or why nothing is loaded. */
     internal sealed interface Plan {
@@ -163,15 +199,16 @@ object ChromiumToolkitPreload {
         if (disabledFrom(System.getenv(DISABLED_KEY), System.getProperty(DISABLED_PROPERTY))) {
             return skipped("disabled by $DISABLED_KEY / -D$DISABLED_PROPERTY")
         }
+        val isMac =
+            System
+                .getProperty("os.name")
+                .orEmpty()
+                .lowercase()
+                .contains("mac")
         val plan =
             plan(
                 engineDir = engineDir,
-                isMac =
-                    System
-                        .getProperty("os.name")
-                        .orEmpty()
-                        .lowercase()
-                        .contains("mac"),
+                isMac = isMac,
                 executableName = {
                     engineDir
                         .resolve("executable.name")
@@ -188,6 +225,13 @@ object ChromiumToolkitPreload {
                 is Plan.Skip -> return skipped(plan.reason)
                 is Plan.Load -> plan.files
             }
+        lateLoadReason(awtToolkitCreatedBy, isMac)?.let { reason ->
+            logger.error(
+                LogCategory.BROWSER,
+                "Native toolkit preload is running after AppKit started; its malloc zone swap can race it",
+                mapOf("reason" to reason),
+            )
+        }
         val startNanos = System.nanoTime()
         var loaded = 0
         for (file in files) {
