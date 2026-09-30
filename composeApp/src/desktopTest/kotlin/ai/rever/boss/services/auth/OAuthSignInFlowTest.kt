@@ -212,6 +212,61 @@ class OAuthSignInFlowTest {
             assertEquals(OAuthCompletion.SIGNED_IN, flow.complete(codeCallback()))
         }
 
+    /**
+     * Cancels [complete]'s caller after the exchange returned but while it waits for the lock: a
+     * second start holds the lock inside its prepareVerifier, then is cancelled itself so the
+     * Google attempt is still the waiting one. Returns the flow once both have finished.
+     */
+    private suspend fun cancelWhileWaitingForTheLock(): OAuthSignInFlow =
+        kotlinx.coroutines.coroutineScope {
+            val lockHeld = CompletableDeferred<Unit>()
+            var starts = 0
+            val flow =
+                newFlow(prepareVerifier = { verifier ->
+                    if (++starts == 1) {
+                        storedVerifier = verifier
+                    } else {
+                        lockHeld.complete(Unit)
+                        kotlinx.coroutines.awaitCancellation()
+                    }
+                })
+            flow.start(OAuthProviderKind.GOOGLE)
+            val gate = CompletableDeferred<Unit>().also { exchangeGate = it }
+
+            val caller = launch { flow.complete(codeCallback()) }
+            exchangeEntered.await()
+            val holder = launch { flow.start(OAuthProviderKind.APPLE) }
+            lockHeld.await()
+            gate.complete(Unit)
+            kotlinx.coroutines.yield() // the exchange returns and queues on the held lock
+            assertIs<OAuthSignInState.Exchanging>(flow.state.value)
+
+            caller.cancel()
+            holder.cancelAndJoin()
+            caller.join()
+            flow
+        }
+
+    @Test
+    fun `an exchange cancelled while it waits for the lock still adopts its session`(): Unit =
+        runBlocking {
+            val flow = cancelWhileWaitingForTheLock()
+
+            assertEquals(listOf("the-code"), adopted)
+            assertIs<OAuthSignInState.Idle>(flow.state.value)
+        }
+
+    @Test
+    fun `a failed exchange cancelled while it waits for the lock goes back to waiting`(): Unit =
+        runBlocking {
+            exchangeFailure = IllegalStateException("bad code")
+            val flow = cancelWhileWaitingForTheLock()
+
+            assertIs<OAuthSignInState.WaitingForBrowser>(flow.state.value)
+            exchangeFailure = null
+            assertEquals(OAuthCompletion.SIGNED_IN, flow.complete(codeCallback("the-real-code")))
+        }
+
     @Test
     fun `a session that cannot be saved ends the sign-in with an error`(): Unit =
         runBlocking {
@@ -289,7 +344,7 @@ class OAuthSignInFlowTest {
             val first = async { slow.start(OAuthProviderKind.GOOGLE) }
             entered.await()
             assertEquals(OAuthProviderKind.GOOGLE, slow.starting.value)
-            assertTrue(slow.start(OAuthProviderKind.APPLE).isSuccess)
+            assertEquals(OAuthStart.IGNORED, slow.start(OAuthProviderKind.APPLE))
             gate.complete(Unit)
             first.await()
 
@@ -303,7 +358,7 @@ class OAuthSignInFlowTest {
         runBlocking {
             val broken = newFlow(prepareVerifier = { error("disk full") })
 
-            assertTrue(broken.start(OAuthProviderKind.GOOGLE).isFailure)
+            assertEquals(OAuthStart.FAILED, broken.start(OAuthProviderKind.GOOGLE))
             assertTrue(opened.isEmpty())
             assertNull(broken.starting.value)
             assertIs<OAuthSignInState.Error>(broken.state.value)

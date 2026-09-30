@@ -48,7 +48,7 @@ object AuthService {
     suspend fun expireStaleOAuth(): Boolean = OAuthSignInService.expireIfStale()
 
     /** Open [provider]'s sign-in page in the system browser; completes via `boss://auth/callback`. */
-    suspend fun signInWithOAuth(provider: OAuthProviderKind): Result<Unit> = OAuthSignInService.start(provider)
+    suspend fun signInWithOAuth(provider: OAuthProviderKind): OAuthStart = OAuthSignInService.start(provider)
 
     /** Finish the waiting Google or Apple sign-in with its deep-link callback. */
     suspend fun completeOAuth(callback: ai.rever.boss.components.auth.AuthDeepLink.OAuthCallback): OAuthCompletion =

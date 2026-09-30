@@ -86,6 +86,18 @@ enum class OAuthCompletion {
     IGNORED,
 }
 
+/** What one [OAuthSignInFlow.start] did. */
+enum class OAuthStart {
+    /** The provider's page was opened, or the link offered to copy when no browser would open. */
+    STARTED,
+
+    /** Nothing was done: another start was still being prepared. */
+    IGNORED,
+
+    /** The sign-in could not be prepared; [OAuthSignInFlow.state] says why. */
+    FAILED,
+}
+
 /**
  * Google and Apple sign-in through Supabase, as a PKCE authorization-code flow in the system
  * browser that returns to `boss://auth/callback`.
@@ -153,8 +165,8 @@ internal class OAuthSignInFlow(
      * replaced: its verifier is overwritten, so its callback can no longer be exchanged. A press
      * while another start is still being prepared is ignored.
      */
-    suspend fun start(provider: OAuthProviderKind): Result<Unit> {
-        if (!_starting.compareAndSet(null, provider)) return Result.success(Unit)
+    suspend fun start(provider: OAuthProviderKind): OAuthStart {
+        if (!_starting.compareAndSet(null, provider)) return OAuthStart.IGNORED
         return try {
             startPrepared(provider)
         } finally {
@@ -162,17 +174,14 @@ internal class OAuthSignInFlow(
         }
     }
 
-    private suspend fun startPrepared(provider: OAuthProviderKind): Result<Unit> {
-        val url =
-            prepare(provider) ?: return Result.failure(
-                IllegalStateException("Couldn't start ${provider.displayName} sign-in"),
-            )
+    private suspend fun startPrepared(provider: OAuthProviderKind): OAuthStart {
+        val url = prepare(provider) ?: return OAuthStart.FAILED
         logger.info(LogCategory.AUTH, "OAuth sign-in started", mapOf("provider" to provider.name))
         if (!openBrowser(provider, url)) {
             // Stay in WaitingForBrowser: the waiting screen offers to copy the link instead.
             logger.warn(LogCategory.AUTH, "Could not open the system browser for OAuth sign-in")
         }
-        return Result.success(Unit)
+        return OAuthStart.STARTED
     }
 
     /** Store a fresh verifier and record the attempt; the authorize URL, or null after showing why not. */
@@ -312,12 +321,18 @@ internal class OAuthSignInFlow(
                     mapOf("provider" to attempt.provider.name),
                     error = e,
                 )
-                return mutex.withLock {
-                    settle(attempt, describeExchangeFailure(attempt.provider, e))
-                    OAuthCompletion.FAILED
+                return withContext(NonCancellable) {
+                    mutex.withLock {
+                        settle(attempt, describeExchangeFailure(attempt.provider, e))
+                        OAuthCompletion.FAILED
+                    }
                 }
             }
-        return mutex.withLock { adopt(attempt, adoptSession) }
+        // Past this point the attempt must settle even if the caller is cancelled while it waits
+        // for the lock: a skipped settle or adopt leaves `exchanging` set, and then every later
+        // callback is ignored and expiry never fires. The code is also spent, so dropping the
+        // session here would strand a sign-in that worked.
+        return withContext(NonCancellable) { mutex.withLock { adopt(attempt, adoptSession) } }
     }
 
     /** Adopt an exchanged session if [attempt] is still the waiting sign-in. Runs under [mutex]. */

@@ -129,7 +129,7 @@ class AuthDeepLinksOAuthCallbackTest {
 
     @Test
     fun `toString never prints the code`() {
-        val link = AuthDeepLinks.parse("boss://auth/callback?code=$code")
+        val link = assertIs<AuthDeepLink.OAuthCallback>(AuthDeepLinks.parse("boss://auth/callback?code=$code"))
         assertFalse(link.toString().contains(code))
     }
 }

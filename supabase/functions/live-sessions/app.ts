@@ -368,6 +368,8 @@ async function oauthReturn(ctx: RouteCtx): Promise<Response | null> {
     return oauthErrorRedirect(providerError === "access_denied" ? "cancelled" : "failed", [clearVerifier])
   }
   const verifier = cookieToken(ctx.req.header("cookie") ?? null, pkceCookieName(secure))
+  // `code` is always set by now (no error, and the first check returned when both were absent);
+  // `!code` is what narrows it to a string for the regex.
   if (!code || !AUTH_CODE_RE.test(code) || !verifier) return oauthErrorRedirect("expired", [clearVerifier])
 
   const limit = rateLimit(
@@ -378,7 +380,8 @@ async function oauthReturn(ctx: RouteCtx): Promise<Response | null> {
   if (!limit.allowed) return oauthErrorRedirect("rate_limited", [clearVerifier])
 
   const cfg = readConfig()
-  if (!cfg.supabaseUrl || !cfg.anonKey) return jsonResponse({ error: "not_configured" }, 503)
+  // Every exit clears the verifier cookie: it belongs to this one attempt.
+  if (!cfg.supabaseUrl || !cfg.anonKey) return jsonResponse({ error: "not_configured" }, 503, [clearVerifier])
   const session = await gotruePkceExchange(cfg, code, verifier)
   if (!session) return oauthErrorRedirect("failed", [clearVerifier])
 

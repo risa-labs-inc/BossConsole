@@ -636,6 +636,22 @@ Deno.test("a refused PKCE exchange reports failed and sets no session", withEnv(
   }
 }))
 
+Deno.test("an OAuth return without Supabase config is 503 and still clears the verifier", withEnv(async () => {
+  Deno.env.delete("SUPABASE_ANON_KEY")
+  const stub = stubFetch(() => json({}, 500))
+  try {
+    const res = await app.request(`${BASE}/auth?code=abc123`, {
+      headers: { ...HTTPS, cookie: "__Secure-boss_live_pkce=" + "v".repeat(43) },
+    })
+    assertEquals(res.status, 503)
+    assert(setCookies(res).some((c) => c.startsWith("__Secure-boss_live_pkce=;") && c.includes("Max-Age=0")))
+    assertEquals(stub.calls.length, 0)
+  } finally {
+    stub.restore()
+    Deno.env.set("SUPABASE_ANON_KEY", "anon-key")
+  }
+}))
+
 Deno.test("a malformed code is refused before any exchange", withEnv(async () => {
   const stub = stubFetch(() => json({}, 500))
   try {
