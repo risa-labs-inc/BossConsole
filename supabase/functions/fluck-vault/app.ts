@@ -1,5 +1,5 @@
 /**
- * `fluck-vault` — the page on which a password, a card or a CVV is typed.
+ * `fluck-vault` — the page on which a password, a card, a CVV or an API key is typed.
  *
  * ## What it is for
  *
@@ -76,17 +76,42 @@ const COOKIE_MAX_AGE_SECONDS = 1800
 
 export type StoreOutcome = "stored" | "gone" | "unavailable"
 
+/** What a vault link saves. `secret` exists only on short links; tokens still name the first two. */
+export type VaultKind = Kind | "secret"
+
+/**
+ * Connectors a secret may name, and the label its page prefills. Non secret: the id travels in
+ * the mint body and back on claim, the label is rendered.
+ */
+export const CONNECTOR_LABELS = {
+  notion: "Notion token",
+  github: "GitHub token",
+  google: "Google token",
+  gmail: "Gmail token",
+  calendar: "Google Calendar token",
+  workspace: "Google Workspace token",
+} as const
+
+export type Connector = keyof typeof CONNECTOR_LABELS
+
+export function isConnector(value: unknown): value is Connector {
+  return typeof value === "string" && Object.hasOwn(CONNECTOR_LABELS, value)
+}
+
+/** The variable name an install exposes a secret as. Same rule as the database check. */
+export const ENV_PATTERN = /^[A-Z][A-Z0-9_]{1,63}$/
+
 export interface StoreResult {
   outcome: StoreOutcome
   /** What was stored, so the POST can render the right sentence without holding a token. */
-  kind: Kind | "cvv" | null
+  kind: VaultKind | "cvv" | null
 }
 
 export interface VaultRequestRow {
   jti: string
   ws: string
   purpose: Purpose
-  kind: Kind | null
+  kind: VaultKind | null
   alias: string | null
   purchaseId: string | null
   merchant: string | null
@@ -96,6 +121,8 @@ export interface VaultRequestRow {
   currency: string | null
   /** The install that minted the row and its public keys; null on the legacy env keys. */
   instance: RowInstance | null
+  /** A secret's connector, for the page's label. Absent or null on every other kind. */
+  connector?: Connector | null
 }
 
 export interface RowInstance {
@@ -154,7 +181,7 @@ export interface CreateRequest {
   jti: string
   ws: string
   purpose: Purpose
-  kind: Kind | null
+  kind: VaultKind | null
   alias: string | null
   purchaseId: string | null
   merchant: string | null
@@ -162,6 +189,9 @@ export interface CreateRequest {
   last4: string | null
   totalCents: number | null
   currency: string | null
+  /** A secret's metadata. Always null on the other kinds. */
+  connector: Connector | null
+  env: string | null
   /** Unix seconds. The token's own expiry, checked against the policy before it is written. */
   expiresAt: number
   /** The install whose key signed the mint; null on the legacy env key. */
@@ -178,6 +208,9 @@ export interface ClaimedItem {
   purchaseId: string | null
   ciphertext: string
   createdAt: string
+  /** A secret's metadata. Present only when set, so the other kinds' items are unchanged. */
+  connector?: string
+  env?: string
 }
 
 export interface StoreRequest {
@@ -231,6 +264,10 @@ const COPY = {
   cvvSubmit: "Send code",
   cvvNote:
     "This does not charge your card. Only continue if these details match a purchase you asked Fluck to make, and do not forward this link. The code is encrypted on this device and held for up to ten minutes until your Fluck collects it; Fluck keeps it, encrypted, for purchases you approve.",
+  secretTitle: "Save a key",
+  secretIntro: "Paste it here. Fluck never sees it in Messages.",
+  secretSubmit: "Save",
+  secretNote: "Encrypted in this browser before it is sent. Only your Fluck can read it.",
   savedTitle: "Saved",
   saved: "Saved. You can go back to Messages.",
   cardSavedTitle: "Card added",
@@ -837,6 +874,17 @@ async function get(
       submit: COPY.cardSubmit,
       note: COPY.cardNote,
     }
+    : row.kind === "secret"
+    ? {
+      title: secretTitle(row),
+      intro: COPY.secretIntro,
+      kind: "secret" as const,
+      submit: COPY.secretSubmit,
+      note: COPY.secretNote,
+      // A connector's label is a constant of ours. Nothing about the stored item, and never
+      // its value, is put on the page: a replace starts from an empty form.
+      label: row.connector ? CONNECTOR_LABELS[row.connector] : undefined,
+    }
     : {
       title: row.alias ? `Save your ${row.alias} login` : COPY.passwordTitle,
       intro: COPY.passwordIntro,
@@ -849,6 +897,13 @@ async function get(
   response.headers.append("Set-Cookie", cookie)
   deps.log(`${purpose} rendered [${workspacePrefix(row.ws)}] [${tag(row.jti)}]`)
   return response
+}
+
+/** `Replace notion-work`, `Connect Notion`, or the plain title. */
+export function secretTitle(row: VaultRequestRow): string {
+  if (row.alias) return `Replace ${row.alias}`
+  if (row.connector) return `Connect ${CONNECTOR_LABELS[row.connector].replace(/ token$/, "")}`
+  return COPY.secretTitle
 }
 
 /**
@@ -1090,8 +1145,24 @@ async function createRequestRoute(
   if (purpose !== "vault" && purpose !== "cvv") return json(400, { error: "purpose" })
 
   const kind = purpose === "vault" ? body.kind : null
-  if (purpose === "vault" && kind !== "password" && kind !== "card") {
+  if (purpose === "vault" && kind !== "password" && kind !== "card" && kind !== "secret") {
     return json(400, { error: "kind" })
+  }
+
+  // Read on a secret only, so the other kinds see exactly the body they always did.
+  let connector: Connector | null = null
+  let env: string | null = null
+  if (kind === "secret") {
+    if (body.connector !== undefined && body.connector !== null) {
+      if (!isConnector(body.connector)) return json(400, { error: "connector" })
+      connector = body.connector
+    }
+    if (body.env !== undefined && body.env !== null) {
+      if (typeof body.env !== "string" || !ENV_PATTERN.test(body.env)) {
+        return json(400, { error: "env" })
+      }
+      env = body.env
+    }
   }
 
   const expiresAt = body.expiresAt
@@ -1146,7 +1217,7 @@ async function createRequestRoute(
     jti,
     ws,
     purpose,
-    kind: (kind as Kind) ?? null,
+    kind: (kind as VaultKind) ?? null,
     alias: alias as string | null,
     purchaseId: purchaseId as string | null,
     merchant: merchant as string | null,
@@ -1154,6 +1225,8 @@ async function createRequestRoute(
     last4: last4 as string | null,
     totalCents: totalCents as number | null,
     currency: currency as string | null,
+    connector,
+    env,
     expiresAt,
     instanceId,
   })
