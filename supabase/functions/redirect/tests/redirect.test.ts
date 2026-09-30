@@ -152,3 +152,25 @@ Deno.test("live-sessions arm accepts the vanity-host landing", async () => {
   assertStringIncludes(html, "redirect_to=" + encodeURIComponent(rt).replace(/&/g, "&amp;"))
   assertStringIncludes(html, "<h1>BossTerm Live Sessions</h1>")
 })
+
+// (f) Optimist chat: same web arm, Optimist brand, exact match only.
+
+Deno.test("optimist redirect_to → bounce to the GoTrue verify URL with the Optimist brand", async () => {
+  const rt = "https://spark-7226.basa-tone.ts.net/auth/callback"
+  const conf = "https://api.risaboss.com/auth/v1/verify?token=tok9"
+  const html = await pageFor(`/redirect?url=${encodeURIComponent(conf)}&type=magiclink&redirect_to=${encodeURIComponent(rt)}`)
+  assertStringIncludes(html, "https://api.risaboss.com/auth/v1/verify?token=tok9&amp;type=magiclink&amp;redirect_to=" + encodeURIComponent(rt).replace(/&/g, "&amp;"))
+  assertStringIncludes(html, "<h1>Optimist</h1>")
+  assert(!html.includes("boss://auth/verify"), "must not deep-link the web flow into the desktop app")
+})
+
+Deno.test("optimist arm refuses a non-first-party confirmation host", async () => {
+  const rt = "https://spark-7226.basa-tone.ts.net/auth/callback"
+  const res = await app.request(`/redirect?url=${encodeURIComponent("https://evil.example/auth/v1/verify?token=t")}&redirect_to=${encodeURIComponent(rt)}`)
+  assertEquals(res.status, 400)
+})
+
+Deno.test("optimist arm is an exact match: another path on the host falls back to BOSS", async () => {
+  const html = await pageFor("/redirect?token=abc&redirect_to=" + encodeURIComponent("https://spark-7226.basa-tone.ts.net/other"))
+  assertStringIncludes(html, "boss://auth/verify?token=abc")
+})
