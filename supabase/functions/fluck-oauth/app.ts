@@ -11,7 +11,8 @@
  *
  * ## The flow, end to end
  *
- * 1. `connect_service google` on the plugin mints a signed `state` (see `state.ts`) and builds
+ * 1. `connect_service google` on the plugin mints a `state` signed with its install key (see
+ *    `state.ts`) and builds
  *    a Google authorization URL. The model texts the link. Nothing is stored yet.
  * 2. The user taps it and approves on Google's own page.
  * 3. Google redirects the phone browser HERE, with `code` and `state`.
@@ -27,14 +28,21 @@
  * caller is a browser following a redirect Google issued and carries no header we chose. The
  * `state` is therefore the entire authentication:
  *
- * - it is signed with a key shared ONLY with the BOSS that minted it, so nobody else can name
- *   a workspace or a user id;
+ * - it is signed with the Ed25519 key of an install registered in `fluck_vault_instances`, and
+ *   the row must be unrevoked and belong to the user the state names, so an install can only
+ *   ever write for its own owner;
  * - its nonce is claimed exactly once, in the database, so a link that leaks into a browser
  *   history or a shared screenshot is dead on its second use;
- * - it expires in ten minutes.
+ * - it expires within fifteen minutes.
  *
  * Nothing about the destination of the write is read off the request. `user_id` and the secret
  * key both come from inside the signed token.
+ *
+ * `POST /refresh` is the other route: an install trades its refresh token for an access token
+ * through this function, because the web client secret lives only here. It is authenticated by
+ * a signed request (see `signed.ts`), never by the state, and it only redeems a token the
+ * callback bound (`fluck_oauth_grants`, by SHA-256) to the same BOSS user that owns the calling
+ * install. Without that, any BOSS user who registered an install could redeem a stolen token.
  *
  * ## What is never written down
  *
@@ -42,12 +50,26 @@
  * the route, the outcome, and the first eight characters of the workspace id, which is enough
  * to line two attempts up against each other and nothing else.
  */
-import { GOOGLE_CONNECTOR_ID, keyBytes, type StateClaims, verifyState } from "./state.ts"
-import { exchangeCode, type ExchangeFailure } from "./google.ts"
+import { INSTANCE_ID_PATTERN, parseState, verifyState } from "./state.ts"
+import { exchangeCode, type ExchangeFailure, refreshAccessToken } from "./google.ts"
+import {
+  bodyDigest,
+  INSTANCE_HEADER,
+  publicKeyBytes,
+  SIGNATURE_HEADER,
+  TIMESTAMP_HEADER,
+  verifySigned,
+} from "./signed.ts"
 
 /** The default public base URL. Overridden by `PUBLIC_BASE_URL` when the custom domain lands. */
 export const DEFAULT_PUBLIC_BASE_URL =
   "https://pcnwqamqdnsadranufjv.functions.supabase.co/fluck-oauth"
+
+/** The one connector this function serves; part of the secret's key. */
+const GOOGLE_CONNECTOR_ID = "google"
+
+/** A refresh request is one small JSON object; anything bigger is not one. */
+const MAX_REFRESH_BODY_BYTES = 4096
 
 /** The env var a secret is keyed under, inside the Fluck key scheme. */
 const REFRESH_ENV_VAR = "GOOGLE_REFRESH_TOKEN"
@@ -59,6 +81,18 @@ const SECRET_NOTE = "Created by Fluck when a service was connected. Do not edit 
 const UNKNOWN_ACCOUNT = "google account"
 
 export type NonceClaim = "claimed" | "replay" | "invalid" | "unavailable"
+
+/** One live install: unknown and revoked are both null. */
+export interface Instance {
+  userId: string
+  linkPublicKey: string
+}
+
+/** Who a refresh token was issued to, by its SHA-256. */
+export type GrantOwner =
+  | { status: "bound"; userId: string }
+  | { status: "unbound" }
+  | { status: "unavailable" }
 
 export interface StoreRequest {
   userId: string
@@ -80,8 +114,16 @@ export interface Dependencies {
   fetch: typeof fetch
   /** Claim a nonce exactly once. `replay` means this state has already been spent. */
   claimNonce(nonce: string, expiresAtSeconds: number): Promise<NonceClaim>
+  /** A live install by id (`fluck_vault_instance`, which drops revoked rows), or null. */
+  instance(instanceId: string): Promise<Instance | null>
   /** Write the refresh token as the named BOSS user, replacing any earlier row for the key. */
   storeRefreshToken(request: StoreRequest): Promise<boolean>
+  /** Record that the token with this SHA-256 hex was issued to this user. */
+  bindGrant(tokenSha256: string, userId: string): Promise<boolean>
+  /** The user a token hash is bound to. */
+  grantOwner(tokenSha256: string): Promise<GrantOwner>
+  /** Drop a binding whose grant Google has declared dead. */
+  forgetGrant(tokenSha256: string): Promise<void>
   /** Milliseconds. Injected so the tests can sit on either side of an expiry. */
   now(): number
   log(line: string): void
@@ -114,6 +156,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
     const path = routePath(new URL(request.url).pathname)
     if (path === "/health") return health(deps)
     if (path === "/callback") return await callback(request, deps)
+    if (path === "/refresh") return await refresh(request, deps)
     return page(404, "Not found", PAGE_NOT_FOUND)
   }
 }
@@ -139,11 +182,8 @@ function health(deps: Dependencies): Response {
   const configured = {
     clientId: Boolean(deps.env("GOOGLE_WEB_CLIENT_ID")),
     clientSecret: Boolean(deps.env("GOOGLE_WEB_CLIENT_SECRET")),
-    stateKey: Boolean(deps.env("FLUCK_STATE_KEY")),
-    userId: Boolean(deps.env("FLUCK_USER_ID")),
   }
-  const ok = configured.clientId && configured.clientSecret && configured.stateKey &&
-    configured.userId
+  const ok = configured.clientId && configured.clientSecret
   return new Response(JSON.stringify({ ok, configured }), {
     status: ok ? 200 : 503,
     headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
@@ -168,35 +208,33 @@ async function callback(request: Request, deps: Dependencies): Promise<Response>
     return page(400, "Sign in problem", PAGE_DECLINED)
   }
 
-  let secret: Uint8Array
   const clientId = deps.env("GOOGLE_WEB_CLIENT_ID")
   const clientSecret = deps.env("GOOGLE_WEB_CLIENT_SECRET")
-  const allowedUserId = deps.env("FLUCK_USER_ID")
-  try {
-    secret = keyBytes(deps.env("FLUCK_STATE_KEY"))
-  } catch {
-    deps.log("callback unconfigured: state key")
-    return page(503, "Sign in problem", PAGE_UNCONFIGURED)
-  }
-  if (!clientId || !clientSecret || !allowedUserId) {
+  if (!clientId || !clientSecret) {
     deps.log("callback unconfigured: client")
     return page(503, "Sign in problem", PAGE_UNCONFIGURED)
   }
 
   const nowSeconds = Math.floor(deps.now() / 1000)
-  const claims: StateClaims | null = state ? await verifyState(secret, state, nowSeconds) : null
-  // The signing key lives on the desktop. Its holder may mint arbitrary claims,
-  // so a valid signature alone must not authorize writes for every BOSS user.
-  if (!claims || claims.uid !== allowedUserId || claims.cid !== GOOGLE_CONNECTOR_ID || !code) {
+  const parsed = state ? parseState(state) : null
+  const instance = parsed ? await deps.instance(parsed.claims.iid) : null
+  const publicKey = instance ? publicKeyBytes(instance.linkPublicKey) : null
+  // The key lives on the desktop and its holder may sign any claims, so the install row, not
+  // the token, decides whose secrets it may write.
+  const verified = parsed && instance && publicKey && instance.userId === parsed.claims.uid &&
+    await verifyState(publicKey, parsed, nowSeconds)
+  if (!parsed || !verified || !code) {
     deps.log("callback refused: state")
     return page(400, "Sign in problem", PAGE_STALE)
   }
+  const claims = parsed.claims
   const workspace = workspacePrefix(claims.ws)
 
   // Claimed BEFORE the exchange, not after. A code is single use at Google anyway, but the
   // nonce is what makes a REPLAYED link dead even when the first attempt failed, and claiming
   // it only on success would leave a link that can be retried until one attempt lands.
-  const claim = await deps.claimNonce(claims.n, claims.exp)
+  // Scoped by install so one install's nonces can never collide with another's.
+  const claim = await deps.claimNonce(`${claims.iid}.${claims.nonce}`, claims.exp)
   if (claim === "invalid") {
     deps.log(`callback refused: nonce validity [${workspace}]`)
     return page(400, "Sign in problem", PAGE_STALE)
@@ -221,6 +259,14 @@ async function callback(request: Request, deps: Dependencies): Promise<Response>
     return page(400, "Sign in problem", FAILURE_PAGES[exchanged.reason])
   }
 
+  // Bound BEFORE the secret is written: a failed bind then leaves no secret behind for the
+  // plugin to find, whereas a failed store only leaves a hash nobody can redeem.
+  const bound = await deps.bindGrant(await bodyDigest(exchanged.refreshToken), claims.uid)
+  if (!bound) {
+    deps.log(`callback failed: bind [${workspace}]`)
+    return page(503, "Sign in problem", PAGE_STORE_FAILED)
+  }
+
   const stored = await deps.storeRefreshToken({
     userId: claims.uid,
     website: `fluck/${claims.ws}/${GOOGLE_CONNECTOR_ID}/${REFRESH_ENV_VAR}`,
@@ -234,6 +280,96 @@ async function callback(request: Request, deps: Dependencies): Promise<Response>
   }
   deps.log(`callback connected [${workspace}]`)
   return page(200, "Connected", PAGE_CONNECTED)
+}
+
+/**
+ * `POST /refresh`: `{"refresh_token":"…"}` in, `{"access_token","expires_in","scope"}` out.
+ *
+ * Every auth failure is the same 401. `{"error":"invalid_grant"}` (400) is Google saying the
+ * grant is dead, the one answer the plugin acts on; any other Google refusal or outage is a
+ * 502 `unavailable`, which is ours to fix and not a reason to drop the grant. A token not bound
+ * to the install's owner is also `invalid_grant`, without asking Google, so the plugin's answer
+ * (ask the owner to reconnect) is the same.
+ *
+ * Neither token is logged or stored. The log line is the outcome and an install id prefix.
+ */
+async function refresh(request: Request, deps: Dependencies): Promise<Response> {
+  if (request.method !== "POST") {
+    await request.body?.cancel().catch(() => {})
+    return json(405, { error: "method" })
+  }
+  const body = await request.text()
+  const instanceId = request.headers.get(INSTANCE_HEADER)
+  const instance = instanceId && INSTANCE_ID_PATTERN.test(instanceId)
+    ? await deps.instance(instanceId)
+    : null
+  const ok = instance !== null && await verifySigned({
+    publicKey: instance.linkPublicKey,
+    method: "POST",
+    path: "/refresh",
+    body,
+    timestamp: request.headers.get(TIMESTAMP_HEADER),
+    signature: request.headers.get(SIGNATURE_HEADER),
+    nowSeconds: Math.floor(deps.now() / 1000),
+  })
+  if (!ok || !instance || !instanceId) {
+    deps.log("refresh refused: unauthorized")
+    return json(401, { error: "unauthorized" })
+  }
+  const tag = instanceId.slice(0, 8)
+
+  let refreshToken: unknown
+  try {
+    if (body.length > MAX_REFRESH_BODY_BYTES) throw new Error()
+    const parsed = JSON.parse(body)
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error()
+    refreshToken = parsed.refresh_token
+  } catch {
+    return json(400, { error: "body" })
+  }
+  if (typeof refreshToken !== "string" || refreshToken.length === 0) {
+    return json(400, { error: "body" })
+  }
+
+  const clientId = deps.env("GOOGLE_WEB_CLIENT_ID")
+  const clientSecret = deps.env("GOOGLE_WEB_CLIENT_SECRET")
+  if (!clientId || !clientSecret) {
+    deps.log("refresh unconfigured: client")
+    return json(503, { error: "unconfigured" })
+  }
+
+  const tokenSha256 = await bodyDigest(refreshToken)
+  const owner = await deps.grantOwner(tokenSha256)
+  if (owner.status === "unavailable") {
+    deps.log(`refresh failed: grant store [${tag}]`)
+    return json(502, { error: "unavailable" })
+  }
+  if (owner.status === "unbound" || owner.userId !== instance.userId) {
+    deps.log(`refresh refused: unbound [${tag}]`)
+    return json(400, { error: "invalid_grant" })
+  }
+
+  const result = await refreshAccessToken({ clientId, clientSecret, refreshToken }, deps.fetch)
+  if (!result.ok) {
+    deps.log(`refresh failed: ${result.reason} [${tag}]`)
+    if (result.reason === "invalid_grant") await deps.forgetGrant(tokenSha256).catch(() => {})
+    return result.reason === "invalid_grant"
+      ? json(400, { error: "invalid_grant" })
+      : json(502, { error: "unavailable" })
+  }
+  deps.log(`refresh ok [${tag}]`)
+  return json(200, {
+    access_token: result.accessToken,
+    expires_in: result.expiresIn,
+    scope: result.scope,
+  })
+}
+
+function json(status: number, value: unknown): Response {
+  return new Response(JSON.stringify(value), {
+    status,
+    headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+  })
 }
 
 /**
