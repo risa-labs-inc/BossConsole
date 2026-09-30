@@ -4,6 +4,16 @@ import { normalizeBase64Url } from "./base64.ts"
 import { maskEmail, maskPasskeyId, maskUserId } from "./logging.ts"
 import { COSE_ALG_ES256 } from "./webauthn.ts"
 
+// SECURITY NOTE (issue #770 follow-up): several helpers below (claimStoredSession,
+// recordPasskeyUse, findPasskeyByCredentialId, findUserByEmail, getUserWithEmail)
+// still return the driver's `error.message` as their `.error` field. That is
+// deliberate and safe only because no route surfaces those specific strings to a
+// response body today - callers log them or fold them into a fixed message. If a
+// new route starts echoing one of them, the PGRST204-class diagnostics (column
+// names, schema cache state) reach the caller again; convert it to a fixed
+// envelope first (see storeChallenge in challenge.ts for the pattern;
+// cleanupExpiredChallenges in challenge.ts follows it too).
+
 /**
  * Normalises a PostgREST result that may be a single row or an array of rows.
  */
@@ -88,7 +98,7 @@ export async function consumeChallengeRow(
 
   if (error) {
     console.error('❌ Failed to consume challenge:', error)
-    return { consumed: false, error: error.message }
+    return { consumed: false, error: 'Failed to consume challenge' }
   }
 
   if (rowsOf(data).length === 0) {
@@ -161,13 +171,15 @@ export async function storeCompletedAuthentication(
       .select()
 
     if (retry.error) {
-      return { success: false, error: retry.error.message || retry.error.code }
+      console.error('❌ Failed to store completed authentication (insert fallback):', retry.error)
+      return { success: false, error: 'Failed to store authentication result' }
     }
 
     return { success: true }
   }
 
-  return { success: false, error: error.message || error.code }
+  console.error('❌ Failed to store completed authentication:', error)
+  return { success: false, error: 'Failed to store authentication result' }
 }
 
 /**
@@ -247,7 +259,7 @@ export async function verifyAndConsumeChallenge(
     return { success: true, challenge: data }
   } catch (error) {
     console.error('Exception verifying challenge:', error)
-    return { success: false, error: (error as Error).message }
+    return { success: false, error: 'Failed to verify challenge' }
   }
 }
 
@@ -306,21 +318,21 @@ export async function storePasskeyInDB(
 
         if (retry.error) {
           console.error('Database error storing passkey:', retry.error)
-          return { success: false, error: retry.error.message }
+          return { success: false, error: 'Failed to store passkey' }
         }
 
         return { success: true, data: retry.data }
       }
 
       console.error('Database error storing passkey:', error)
-      return { success: false, error: error.message }
+      return { success: false, error: 'Failed to store passkey' }
     }
 
     console.log('Passkey stored successfully')
     return { success: true, data }
   } catch (error) {
     console.error('Exception storing passkey:', error)
-    return { success: false, error: (error as Error).message }
+    return { success: false, error: 'Failed to store passkey' }
   }
 }
 
@@ -430,14 +442,14 @@ export async function getUserPasskeys(supabase: SupabaseClient, userId: string) 
 
     if (error) {
       console.error('Database error getting passkeys:', error)
-      return { success: false, error: error.message }
+      return { success: false, error: 'Failed to fetch passkeys' }
     }
 
     console.log(`Found ${data?.length || 0} existing passkeys`)
     return { success: true, passkeys: data }
   } catch (error) {
     console.error('Exception getting passkeys:', error)
-    return { success: false, error: (error as Error).message }
+    return { success: false, error: 'Failed to fetch passkeys' }
   }
 }
 
