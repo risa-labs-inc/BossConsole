@@ -15,6 +15,13 @@ data class ChromiumPreparation(
 )
 
 /**
+ * What [ChromiumBootstrap.preflight] decided about the engine, handed to [ChromiumBootstrap.prepare].
+ */
+internal data class ChromiumPreflight(
+    val engineAction: FluckEngine.EngineStartupAction,
+)
+
+/**
  * Handles browser engine verification, lock cleanup, pending install promotion,
  * and background pre-warming.
  */
@@ -22,11 +29,18 @@ object ChromiumBootstrap {
     private val logger by lazy { BossLogger.forComponent("ChromiumBootstrap") }
 
     /**
-     * Inspects the browser engine, cleans stale locks, promotes pending downloads,
-     * logs engine startup verdicts, and initiates background pre-warming if ready.
+     * Inspects the browser engine, cleans stale locks, promotes pending downloads, logs the engine
+     * startup verdict and preloads the native toolkit.
+     *
+     * **Call before anything creates the AWT toolkit** (`DefaultWindowIcon.install()`), and after
+     * the single-instance lock (promotion renames the engine directory another instance could be
+     * running from). Loading the toolkit swaps the process's default malloc zone, and a free() on
+     * another thread mid-swap traps in the shim. Once AppKit runs, Core Animation frees on the
+     * AppKit thread continuously (9.5.33, 2026-09-29: `brk #0` at `libtoolkit+0x4c9f4` under
+     * `CA::Transaction::commit`, +1.9s). See [ChromiumToolkitPreload].
      */
     @Suppress("TooGenericExceptionCaught")
-    fun prepare(): ChromiumPreparation {
+    internal fun preflight(): ChromiumPreflight {
         // Proactively clean up stale JxBrowser lock files from previous sessions
         try {
             FluckEngine.proactiveCleanupOnStartup()
@@ -45,9 +59,6 @@ object ChromiumBootstrap {
         val cacheHealthy = ChromiumAutoDownloader.isChromiumInstalled()
         val hasUsableEngine = FluckEngine.hasUsableEngine(cacheHealthy)
         val engineAction = FluckEngine.engineStartupAction(hasUsableEngine, cacheHealthy)
-
-        val engineLabel = "BOSS Browser Engine ${ChromiumAutoDownloader.effectiveVersion}"
-        val needsDownload = engineAction == FluckEngine.EngineStartupAction.Download
 
         when (engineAction) {
             FluckEngine.EngineStartupAction.BootAndReport -> {
@@ -72,16 +83,28 @@ object ChromiumBootstrap {
             }
         }
 
-        // Load JxBrowser's native toolkit HERE, on the main thread, before the pre-warm thread
-        // exists: loading it swaps the process's malloc zones, and a free() on another thread
-        // during that swap is an uncatchable SIGTRAP. Same directory the engine will boot from,
-        // so JxBrowser's own System.load later is a no-op. See ChromiumToolkitPreload.
+        // Load JxBrowser's native toolkit HERE, on the main thread, before AppKit starts and
+        // before the pre-warm thread exists: loading it swaps the process's malloc zones, and a
+        // free() on another thread during that swap is an uncatchable SIGTRAP. Same directory the engine
+        // will boot from, so JxBrowser's own System.load later is a no-op. See ChromiumToolkitPreload.
         // Boot only: on Download the engine is not on disk yet, and the boot that follows a
         // first-run download happens once the app is running, where loading here would be no
         // quieter than JxBrowser's own load - that path keeps the original window, knowingly.
         if (engineAction == FluckEngine.EngineStartupAction.Boot) {
             ChromiumToolkitPreload.preload(FluckEngine.resolveEngineDir(cacheHealthy))
         }
+
+        return ChromiumPreflight(engineAction = engineAction)
+    }
+
+    /**
+     * Starts the background engine pre-warm decided by [preflight] and reports whether the
+     * download prompt is needed.
+     */
+    @Suppress("TooGenericExceptionCaught")
+    internal fun prepare(preflight: ChromiumPreflight): ChromiumPreparation {
+        val engineLabel = "BOSS Browser Engine ${ChromiumAutoDownloader.effectiveVersion}"
+        val needsDownload = preflight.engineAction == FluckEngine.EngineStartupAction.Download
 
         // Pre-warm the browser engine off the UI thread so the first browser tab opens quickly
         try {

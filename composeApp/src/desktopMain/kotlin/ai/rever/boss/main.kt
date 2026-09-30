@@ -228,12 +228,6 @@ fun main(args: Array<String>) {
         ai.rever.boss.components.plugin.DesktopPluginLoadRemedyResolver,
     )
 
-    // Warm settings singletons on IO thread
-    startupScope.launch(Dispatchers.IO) {
-        ai.rever.boss.components.workspaces.WorkspaceSettingsManager.currentSettings
-        ai.rever.boss.focusmode.FocusModeSettingsManager.currentSettings
-    }
-
     // Set WM_CLASS for Linux desktop integration (must be before any AWT init)
     PlatformSetup.setLinuxWMClass()
 
@@ -244,9 +238,6 @@ fun main(args: Array<String>) {
     ChromiumFlagsSettingsManager.applyToSystemProperties()
     ai.rever.boss.config.SwipeNavSettingsManager
         .publish()
-    // Start release detection before the browser plugin's home surface can receive gestures.
-    ai.rever.boss.plugin.browser.MacOSScrollGesturePhases
-        .ensureStarted()
     ai.rever.boss.config.AutoPipSettingsManager
         .publish()
 
@@ -336,8 +327,26 @@ fun main(args: Array<String>) {
     logger.info(LogCategory.SYSTEM, "Successfully acquired single-instance lock")
 
     // -------------------------------------------------------------------------
-    // Phase 6: Overlays, window nets & Chromium engine preparation
+    // Phase 6: Chromium engine preflight, overlays, window nets & engine pre-warm
     // -------------------------------------------------------------------------
+    // Before DefaultWindowIcon.install() creates the AWT toolkit: the native toolkit preload in
+    // here swaps malloc zones, and a free() on any other thread mid-swap traps. Once AppKit runs,
+    // Core Animation frees on the AppKit thread continuously. After the single-instance lock,
+    // because it may rename the engine directory.
+    val chromiumPreflight = ChromiumBootstrap.preflight()
+
+    // Warm settings singletons on IO thread. After the preflight: a thread busy freeing memory
+    // while the toolkit swaps malloc zones is exactly what traps.
+    startupScope.launch(Dispatchers.IO) {
+        ai.rever.boss.components.workspaces.WorkspaceSettingsManager.currentSettings
+        ai.rever.boss.focusmode.FocusModeSettingsManager.currentSettings
+    }
+
+    // Start release detection before the browser plugin's home surface can receive gestures.
+    // After the preflight, so its CoreGraphics event-tap thread is not running during the swap.
+    ai.rever.boss.plugin.browser.MacOSScrollGesturePhases
+        .ensureStarted()
+
     // After headless exits and rendering properties: installing the AWT listener creates the
     // toolkit, which reads those properties once. Before any application window can open.
     DefaultWindowIcon.install()
@@ -348,7 +357,7 @@ fun main(args: Array<String>) {
 
     OverlaySetup.configure()
 
-    val (chromiumNeedsDownload, engineLabel) = ChromiumBootstrap.prepare()
+    val (chromiumNeedsDownload, engineLabel) = ChromiumBootstrap.prepare(chromiumPreflight)
 
     // -------------------------------------------------------------------------
     // Phase 7: Post-lock CLI, keyboard interceptor, services & plugins
