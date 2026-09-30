@@ -30,9 +30,13 @@
 --     Either half alone is refused, so a half-finalized row (impossible from
 --     today's single UPDATE, but must not become resolvable via a future one)
 --     still fails closed, and a NULL jar_size fails closed too. Realtime needs
---     no separate change: a subscriber's feed is filtered by the same SELECT
---     policies, so pending inserts stop reaching the anon socket the moment
---     this lands.
+--     no separate change HERE: a subscriber's feed is filtered by the same
+--     SELECT policies, so pending inserts stop reaching the anon socket the
+--     moment this lands. It does need one on the client: the pending INSERT was
+--     never visible to non-owners, so the finalize UPDATE is the only realtime
+--     signal a subscriber gets that a version published -- paired with this
+--     migration, PluginStoreRealtimeService.onVersionAction now answers
+--     PostgresAction.Update, not just Insert.
 --   * "Authors can view own plugin versions" is deliberately NOT gated: the
 --     publisher-facing view keeps its pending rows, which is where an
 --     interrupted publish is repaired -- and the issue leaves those views
