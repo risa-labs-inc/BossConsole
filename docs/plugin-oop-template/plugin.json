@@ -1,16 +1,14 @@
 {
   "manifestVersion": 1,
-  "pluginId": "panel-console",
-  "displayName": "Console",
+  "pluginId": "sample-oop-plugin",
+  "displayName": "Sample OOP Plugin",
   "version": "1.0.0",
   "apiVersion": "1.0.0",
-  "mainClass": "ai.rever.boss.plugin.console.ConsolePanelPlugin",
+  "mainClass": "ai.rever.boss.plugin.sample.SamplePlugin",
   "type": "panel",
-  "description": "Console log viewer panel",
+  "description": "Demonstrates out-of-process plugin capabilities",
 
   "isolationMode": "out-of-process",
-  "fallback": "in-process",
-  "stateHolderClass": "ai.rever.boss.plugin.runtime.stateholders.ConsoleStateHolder",
 
   "sandbox": {
     "maxThreads": 4,
@@ -24,11 +22,11 @@
   },
 
   "panel": {
-    "defaultSlot": "left.top.bottom",
-    "iconName": "terminal"
+    "location": "left.top.bottom",
+    "icon": "extension",
+    "order": 100
   },
 
-  "systemPlugin": false,
   "isDynamic": true,
   "canUnload": true,
   "loadPriority": 100
