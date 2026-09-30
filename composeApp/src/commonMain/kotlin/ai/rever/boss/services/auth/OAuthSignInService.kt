@@ -517,12 +517,19 @@ private suspend fun openSignInPage(
 private suspend fun runAndWait(command: List<String>): Boolean = withContext(Dispatchers.IO) { exitsCleanly(command) }
 
 /** [runAndWait] for a caller already on an IO thread. A command still running at the deadline is killed. */
-private fun exitsCleanly(command: List<String>): Boolean =
+internal fun exitsCleanly(
+    command: List<String>,
+    timeoutSeconds: Long = OPEN_TIMEOUT_SECONDS,
+): Boolean =
     runCatching {
-        val process = ProcessBuilder(command).redirectErrorStream(true).start()
-        // Nothing reads the output; closing our end keeps a chatty opener from blocking on a full pipe.
-        process.inputStream.close()
-        val exited = process.waitFor(OPEN_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)
+        // Discarded, not piped: nothing reads it, and closing a pipe instead would hand an opener that
+        // prints a warning (xdg-open often does) a broken pipe and a non-zero exit, counted as not opened.
+        val process =
+            ProcessBuilder(command)
+                .redirectErrorStream(true)
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                .start()
+        val exited = process.waitFor(timeoutSeconds, java.util.concurrent.TimeUnit.SECONDS)
         if (!exited) process.destroyForcibly()
         exited && process.exitValue() == 0
     }.getOrDefault(false)
