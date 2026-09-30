@@ -229,12 +229,17 @@ begin
   -- any) is either the legacy zero-IV ciphertext every column held before
   -- 20260914000000_randomize_secret_encryption_iv.sql, or - for the three
   -- columns that migration touched - the 'v2:' || base64(iv || ciphertext)
-  -- envelope encrypt_text now writes. This function re-encrypts either shape
+  -- envelope encrypt_text wrote before 20260923171000, or the 'v3:' ||
+  -- base64(PGP) envelope (authenticated: MDC-checked, fresh session key and
+  -- S2K salt per value) it has written since
+  -- 20260923171000_secret_authenticated_encryption_pgp.sql. This function
+  -- re-encrypts every shape
   -- under the new key, preserving its own envelope rather than upgrading one
   -- to the other: that upgrade is the encryption migration's job, not
   -- rotation's, whose contract stays "same shape, new key". A v2 row gets a
-  -- freshly generated IV - rotating the key is a good time to rotate the IV
-  -- too, and it is why this is a function rather than an inline expression:
+  -- freshly generated IV - rotating the key is a good time to rotate the IV -
+  -- and a v3 row a fresh session key and S2K salt - which is also why this
+  -- is a function rather than an inline expression:
   -- gen_random_bytes(16) has to be evaluated exactly once and reused for both
   -- the encrypt_iv call and the stored prefix, which a single SQL expression
   -- cannot guarantee (two calls to it would produce two different values).
@@ -246,6 +251,16 @@ begin
     begin
       if v is null then
         return null;
+      end if;
+      if v like 'v3:%' then
+        return 'v3:' || pg_catalog.encode(
+          extensions.pgp_sym_encrypt(
+            extensions.pgp_sym_decrypt(
+              pg_catalog.decode(substring(v from 4), 'base64'),
+              pg_catalog.convert_from(old_key, 'utf8')),
+            pg_catalog.convert_from(new_key, 'utf8'),
+            'cipher-algo=aes256, compress-algo=0, s2k-digest-algo=sha256'),
+          'base64');
       end if;
       if v like 'v2:%' then
         envelope := pg_catalog.decode(substring(v from 4), 'base64');
