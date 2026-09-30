@@ -1,33 +1,42 @@
 package ai.rever.boss.service.filesystem
 
 import io.grpc.Status
+import java.nio.file.FileSystemLoopException
 import java.nio.file.Files
 import java.nio.file.InvalidPathException
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
+import java.nio.file.NoSuchFileException
 import java.nio.file.Path
+import java.nio.file.attribute.BasicFileAttributes
 
 /**
  * Best-effort system-path guard for host RPCs, not a sandbox against concurrent filesystem mutation.
+ *
+ * Selects an allowed canonical candidate. Only a no-follow handle open may turn it into authority.
+ *
+ * Two tiers: malformed input (parent traversal components, invalid paths) is rejected with
+ * INVALID_ARGUMENT, while a resolved candidate inside a blocked root is denied with
+ * PERMISSION_DENIED. Only a component exactly equal to `..` counts as traversal; ordinary names
+ * such as `report..txt` are accepted.
  */
 internal class FileSystemPathPolicy(
-    private val blockedRoots: List<Path> = systemRoots(),
+    blocked: List<Path> = systemRoots(),
 ) {
-    fun validate(
-        raw: String,
-        followFinalLink: Boolean = true,
-    ) {
+    private val blockedRoots =
+        blocked
+            .flatMap { path ->
+                listOfNotNull(path.toAbsolutePath().normalize(), runCatching { path.toRealPath() }.getOrNull())
+            }.distinct()
+
+    fun validate(raw: String) {
         try {
-            val path = Path.of(raw)
-            if (raw.contains("..")) invalid("Path traversal sequences are not allowed")
-            val absolute = path.toAbsolutePath().normalize()
-            checkBlocked(absolute)
-            // Missing destinations still inherit the real path of their nearest existing parent.
-            var ancestor: Path? = if (followFinalLink) absolute else absolute.parent
-            while (ancestor != null && !Files.exists(ancestor, NOFOLLOW_LINKS)) ancestor = ancestor.parent
-            if (ancestor != null) {
-                val resolved = ancestor.toRealPath().resolve(ancestor.relativize(absolute)).normalize()
-                checkBlocked(resolved)
+            val parsed = Path.of(raw)
+            if (parsed.any { it.toString() == ".." }) {
+                throw Status.INVALID_ARGUMENT
+                    .withDescription("Parent traversal components are not allowed: $raw")
+                    .asRuntimeException()
             }
+            authorize(parsed.toAbsolutePath().normalize())
         } catch (e: InvalidPathException) {
             throw Status.INVALID_ARGUMENT
                 .withDescription("Invalid filesystem path")
@@ -36,15 +45,46 @@ internal class FileSystemPathPolicy(
         }
     }
 
-    private fun checkBlocked(path: Path) {
-        if (blockedRoots.any { path.startsWith(it.toAbsolutePath().normalize()) }) {
-            invalid("Access to system paths is not allowed")
-        }
+    fun allowed(path: Path): Boolean = blockedRoots.none(path::startsWith)
+
+    fun authorize(path: Path) {
+        if (!allowed(path)) throw FilePathDeniedException(path)
     }
 
-    private fun invalid(message: String): Nothing {
-        val status = Status.INVALID_ARGUMENT.withDescription(message)
-        throw status.asRuntimeException()
+    fun authorizeMutation(path: Path) {
+        authorize(path)
+        // Moving an ancestor would relocate a protected subtree beyond the configured denylist.
+        if (blockedRoots.any { it.startsWith(path) }) throw FilePathDeniedException(path)
+    }
+
+    fun resolve(path: Path): Path = resolve(path, 0)
+
+    private fun resolve(
+        path: Path,
+        links: Int,
+    ): Path {
+        if (links >= 40) throw FileSystemLoopException(path.toString())
+        var ancestor = path
+        while (true) {
+            try {
+                // Following exists() would mistake dangling links for missing components.
+                Files.readAttributes(ancestor, BasicFileAttributes::class.java, NOFOLLOW_LINKS)
+                break
+            } catch (failure: NoSuchFileException) {
+                ancestor = ancestor.parent ?: throw failure
+            }
+        }
+        val base =
+            if (Files.isSymbolicLink(ancestor)) {
+                val target = Files.readSymbolicLink(ancestor)
+                val absolute = if (target.isAbsolute) target else ancestor.parent.resolve(target)
+                resolve(absolute, links + 1)
+            } else {
+                ancestor.toRealPath()
+            }
+        val resolved = base.resolve(ancestor.relativize(path)).normalize()
+        authorize(resolved)
+        return resolved
     }
 
     companion object {
@@ -58,3 +98,10 @@ internal class FileSystemPathPolicy(
         }
     }
 }
+
+internal class FilePathDeniedException(
+    path: Path,
+) : io.grpc.StatusRuntimeException(
+        io.grpc.Status.PERMISSION_DENIED
+            .withDescription("Access to system path is not allowed: $path"),
+    )

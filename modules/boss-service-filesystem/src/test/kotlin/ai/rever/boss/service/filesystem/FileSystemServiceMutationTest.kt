@@ -97,22 +97,22 @@ class FileSystemServiceMutationTest {
     }
 
     @Test
-    fun `create with a missing parent reports the deferred I O failure over authenticated transport`() {
+    fun `create with a missing parent reports NOT_FOUND`() {
         val file = testDirectory.resolve("missing-parent/file.txt")
 
         val error = assertFailsWith<StatusException> { createFile(file) }
-        assertEquals(Status.Code.UNKNOWN, error.status.code)
+        assertEquals(Status.Code.NOT_FOUND, error.status.code)
 
         assertFalse(file.exists())
     }
 
     @Test
-    fun `create with a regular-file parent reports the deferred I O failure over authenticated transport`() {
+    fun `create with a regular-file parent reports a structured error`() {
         val parent = testDirectory.resolve("regular-file-parent").apply { createNewFile() }
         val file = parent.resolve("child.txt")
 
         val error = assertFailsWith<StatusException> { createFile(file) }
-        assertEquals(Status.Code.UNKNOWN, error.status.code)
+        assertEquals(Status.Code.INTERNAL, error.status.code)
 
         assertFalse(file.exists())
     }
@@ -189,18 +189,22 @@ class FileSystemServiceMutationTest {
     }
 
     @Test
-    fun `gRPC create with a missing parent retains the deferred UNKNOWN status`() {
+    fun `gRPC create with a missing parent reports NOT_FOUND`() {
         val file = testDirectory.resolve("missing-grpc-parent/file.txt")
         withGrpcService { stub ->
-            // Create IOException mapping is deferred; this pins the actual wire behavior, not the direct exception.
+            // Held-handle creation now maps missing parents explicitly at the wire boundary.
             val error =
                 assertFailsWith<StatusException> {
                     runBlocking {
                         stub.createFile(CreateFileRequest.newBuilder().setPath(file.absolutePath).build())
                     }
                 }
-            assertEquals(Status.Code.UNKNOWN, error.status.code)
-            assertEquals(null, error.status.description)
+            assertEquals(Status.Code.NOT_FOUND, error.status.code)
+            assertTrue(
+                error.status.description
+                    .orEmpty()
+                    .contains("Create failed"),
+            )
             assertFalse(file.exists())
         }
     }
@@ -232,6 +236,45 @@ class FileSystemServiceMutationTest {
         deleteFile(directory, recursive = true)
 
         assertFalse(directory.exists())
+    }
+
+    @Test
+    fun `recursive delete skips a concurrently removed descendant instead of reporting success over a partial tree`() {
+        // The seam removes the nested file at the moment the recursive walk is about to
+        // inspect it: enumeration listed it, then a concurrent actor (an editor atomic save,
+        // a build tool) took it away. The RPC must still remove the rest of the tree and
+        // report success only when nothing is left, never success over a partially
+        // removed tree.
+        val directory = testDirectory.resolve("mid-walk-deleted").apply { mkdir() }
+        val nestedDirectory = directory.resolve("nested").apply { mkdir() }
+        val vanished = nestedDirectory.resolve("child.txt").apply { createNewFile() }
+        val survivor = directory.resolve("survivor.txt").apply { createNewFile() }
+
+        val seamAccess = FileAccess(FileSystemPathPolicy())
+        val seamService =
+            FileSystemServiceImpl(seamAccess) { path ->
+                if (path == vanished.toPath()) vanished.delete()
+            }
+        val seamTransport = AuthenticatedFileService(seamService)
+        try {
+            val seamStub =
+                AuthenticatedFileService.stub(seamTransport.channelFor("mid-walk-host", ProcessAuthority.HOST))
+            runBlocking {
+                seamStub.deleteFile(
+                    DeleteFileRequest
+                        .newBuilder()
+                        .setPath(directory.absolutePath)
+                        .setRecursive(true)
+                        .build(),
+                )
+            }
+        } finally {
+            seamTransport.close()
+        }
+
+        assertFalse(directory.exists(), "the tree must be fully removed, not partially left behind")
+        assertFalse(survivor.exists())
+        assertFalse(vanished.exists())
     }
 
     private fun createFile(file: File) {
