@@ -411,6 +411,9 @@ async function readBoundedArrayBuffer(resp: Response, label: string): Promise<Ar
   // boundary is identical on both the pre-download check and this buffer guard.
   const declared = Number(resp.headers.get("content-length") || "0")
   if (Number.isFinite(declared) && declared >= LARGE_JAR_THRESHOLD) {
+    // Cancel so the remainder of the body isn't transferred, matching the
+    // declare-then-refuse guards on the range paths.
+    try { await resp.body?.cancel() } catch { /* ignore */ }
     throw new Error(`${label} declares ${declared} bytes, at/over the ${LARGE_JAR_THRESHOLD}-byte cap`)
   }
   const buf = await resp.arrayBuffer()

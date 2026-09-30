@@ -2,7 +2,11 @@ import {
   assertEquals,
   assertStringIncludes,
 } from "https://deno.land/std@0.224.0/assert/mod.ts"
-import { extractManifestFromRemoteJar } from "../services/github.ts"
+import {
+  downloadReleaseAsset,
+  extractManifestFromRemoteJar,
+  LARGE_JAR_THRESHOLD,
+} from "../services/github.ts"
 
 /**
  * Regression tests for the #914 caps on the remote-JAR central-directory
@@ -270,7 +274,12 @@ Deno.test("a Range-ignoring EOCD host is refused on declared Content-Length befo
     const stream = new ReadableStream<Uint8Array>({
       pull(c) {
         pulled++
-        c.enqueue(new Uint8Array(4))
+        // Bounded body exceeding the 1MB probe cap, then close: if the
+        // declare-then-refuse guard is ever removed, the probe's post-read
+        // cap throws and this test fails instead of hanging on an endless
+        // stream.
+        c.enqueue(new Uint8Array(65536))
+        if (pulled >= 17) c.close() // 17 x 64KiB = 1,114,112 > 1,048,576
       },
       // highWaterMark 0: the default HWM of 1 pulls once just to fill the
       // internal queue, which is not the consumer reading the body.
@@ -318,7 +327,11 @@ Deno.test("a Range-ignoring CD fetch is refused on declared Content-Length befor
       const stream = new ReadableStream<Uint8Array>({
         pull(c) {
           pulled++
-          c.enqueue(new Uint8Array(4))
+          // Bounded body exceeding the 4MB CD cap, then close: removing the
+          // declare-then-refuse guard makes the post-read cap throw, so this
+          // test fails instead of hanging on an endless stream.
+          c.enqueue(new Uint8Array(65536))
+          if (pulled >= 65) c.close() // 65 x 64KiB = 4,259,840 > 4,194,304
         },
         // highWaterMark 0: the default HWM of 1 pulls once just to fill the
         // internal queue, which is not the consumer reading the body.
@@ -344,5 +357,60 @@ Deno.test("a Range-ignoring CD fetch is refused on declared Content-Length befor
     assertEquals(pulled, 0, `body was consumed despite the declared cap: ${pulled} pulls`)
   } finally {
     globalThis.fetch = originalFetch
+  }
+})
+
+Deno.test("a release-asset download declaring an at/over-cap Content-Length is refused and cancels without reading", async () => {
+  // readBoundedArrayBuffer guards the release-asset path (downloadReleaseAsset's
+  // direct-200 leg). Refusal must cancel the body stream like the range-path
+  // guards do — proven via the stream's own cancel() callback, which only an
+  // explicit body.cancel() triggers (a bare throw leaves the stream
+  // uncancelled while still reporting zero pulls, so pulled===0 alone can't
+  // distinguish refusal-with-cancel from refusal-without).
+  const originalToken = Deno.env.get("GITHUB_TOKEN")
+  Deno.env.set("GITHUB_TOKEN", "test-token") // force the readBoundedArrayBuffer path, not downloadJar
+  let pulled = 0
+  let cancelled = false
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = ((_url: string, _init?: RequestInit) => {
+    const stream = new ReadableStream<Uint8Array>({
+      pull(c) {
+        pulled++
+        c.enqueue(new Uint8Array(65536))
+        if (pulled >= 4) c.close()
+      },
+      cancel() {
+        cancelled = true
+      },
+    }, { highWaterMark: 0 })
+    return Promise.resolve(new Response(stream, {
+      status: 200,
+      headers: { "Content-Length": String(LARGE_JAR_THRESHOLD) },
+    }))
+  }) as typeof fetch
+  try {
+    let threw = false
+    let msg = ""
+    try {
+      const asset = {
+        url: "https://evil.example/plugin.jar",
+        browser_download_url: "https://evil.example/plugin.jar",
+      } as unknown as Parameters<typeof downloadReleaseAsset>[0]
+      await downloadReleaseAsset(asset)
+    } catch (e) {
+      threw = true
+      msg = e instanceof Error ? e.message : String(e)
+    }
+    assertEquals(threw, true, "the at/over-cap declared JAR must fail the download")
+    assertStringIncludes(
+      msg,
+      `Release asset declares ${LARGE_JAR_THRESHOLD} bytes, at/over the ${LARGE_JAR_THRESHOLD}-byte cap`,
+    )
+    assertEquals(cancelled, true, "refusal must cancel the response body")
+    assertEquals(pulled, 0, `body was consumed despite the declared cap: ${pulled} pulls`)
+  } finally {
+    globalThis.fetch = originalFetch
+    if (originalToken === undefined) Deno.env.delete("GITHUB_TOKEN")
+    else Deno.env.set("GITHUB_TOKEN", originalToken)
   }
 })
