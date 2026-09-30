@@ -362,12 +362,17 @@ async function oauthReturn(ctx: RouteCtx): Promise<Response | null> {
   const secure = isSecureRequest(ctx.req.url, ctx.req.header("x-forwarded-proto") ?? null)
   const clearVerifier = clearPkceCookieHeader(secure, publicBasePath())
   if (code && providerError) return oauthErrorRedirect("failed", [clearVerifier])
+  const verifier = cookieToken(ctx.req.header("cookie") ?? null, pkceCookieName(secure))
   if (providerError) {
+    // /auth is also the magic link's landing, and GoTrue reports a spent or expired link the same
+    // way (?error=access_denied&error_code=otp_expired, repeated in the fragment). Without a
+    // verifier cookie no Google or Apple sign-in is in flight, so the error is the page's: it
+    // shows GoTrue's own description from the fragment, as it did before this route existed.
+    if (!verifier) return null
     // Untrusted text: logged only in the shape a real error code has, so it cannot forge log lines.
     console.warn("oauth provider error", OAUTH_ERROR_RE.test(providerError) ? providerError : "<malformed>")
-    return oauthErrorRedirect(providerError === "access_denied" ? "cancelled" : "failed", [clearVerifier])
+    return oauthErrorRedirect(oauthErrorReason(providerError, ctx.req.query("error_code")), [clearVerifier])
   }
-  const verifier = cookieToken(ctx.req.header("cookie") ?? null, pkceCookieName(secure))
   // `code` is always set by now (no error, and the first check returned when both were absent);
   // `!code` is what narrows it to a string for the regex.
   if (!code || !AUTH_CODE_RE.test(code) || !verifier) return oauthErrorRedirect("expired", [clearVerifier])
@@ -389,6 +394,14 @@ async function oauthReturn(ctx: RouteCtx): Promise<Response | null> {
     status: 302,
     setCookies: [...sessionCookieHeaders(session.accessToken, session.refreshToken, secure, publicBasePath()), clearVerifier],
   })
+}
+
+/** The page's notice for a provider-reported error; GoTrue's `error_code` is the more specific of the two. */
+function oauthErrorReason(error: string, errorCode: string | undefined): string {
+  if (errorCode === "otp_expired" || errorCode === "flow_state_expired" || errorCode === "flow_state_not_found") {
+    return "expired"
+  }
+  return error === "access_denied" ? "cancelled" : "failed"
 }
 
 /** Back to the page with a reason the page script turns into a notice. Codes, never free text. */

@@ -88,13 +88,17 @@ internal object LinuxProtocolHandler {
             logger.warn(LogCategory.SYSTEM, "Not registering boss:// - the launcher path cannot go in a desktop entry")
             return Outcome.UNUSABLE_PATH
         }
-        val holder = run(listOf("xdg-mime", "query", "default", SCHEME_MIME))?.trim().orEmpty()
+        // null: xdg-mime is missing or failed, so who holds the scheme is unknown. That is not the
+        // same answer as "" (nothing holds it), or every launch on such a machine would rewrite the file.
+        val queried = run(listOf("xdg-mime", "query", "default", SCHEME_MIME))?.trim()
+        val holder = queried.orEmpty()
         if (holder.isNotEmpty() && holder != DESKTOP_FILE_NAME) {
             logger.debug(LogCategory.SYSTEM, "boss:// already has a handler", mapOf("handler" to holder))
             return Outcome.HELD_ELSEWHERE
         }
         val file = File(applicationsDir, DESKTOP_FILE_NAME)
-        if (holder == DESKTOP_FILE_NAME && file.isFile && file.readText() == content) return Outcome.UP_TO_DATE
+        val current = file.isFile && file.readText() == content
+        if (current && (holder == DESKTOP_FILE_NAME || queried == null)) return Outcome.UP_TO_DATE
         applicationsDir.mkdirs()
         file.writeText(content)
         run(listOf("update-desktop-database", applicationsDir.absolutePath))

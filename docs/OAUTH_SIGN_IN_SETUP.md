@@ -30,6 +30,11 @@ Points worth knowing before changing it:
   that does not exchange shows a notice on the waiting screen and the sign-in stays open, so a
   forged link cannot cancel the one the user started. Only a successful exchange, Cancel, a new
   start or the 10-minute limit ends it; the waiting screen checks the limit while it is shown.
+- **A forged code in flight cannot swallow the real one.** A code that arrives while another is
+  being exchanged is kept, and tried if the one in flight fails. One sign-in may start at most
+  10 exchanges; past that the waiting screen asks the user to cancel and start again.
+- **Cancel and expiry clear the stored verifier.** A failed exchange keeps it, so the user's own
+  callback can still exchange after a forged one fails.
 - **Cancel wins over an exchange in flight.** The code is exchanged without saving the session
   (`exchangeCodeForSession(code, saveSession = false)`), and the session is imported only if the
   same sign-in is still waiting when the exchange returns. A second callback during an exchange
@@ -69,11 +74,16 @@ keeps its no-third-party-script CSP and no token or verifier ever reaches page s
    the verifier cookie is what makes a planted code useless to other sites. It is a `__Secure-`
    cookie, not `__Host-` (which requires `Path=/`), so a compromised sibling subdomain could
    still set one; the session cookies share that exposure.
-4. A start on any host other than the canonical one is first redirected there, because the
+4. `/auth` is also the magic link's landing, and GoTrue reports a spent or expired link as
+   `?error=access_denied&error_code=otp_expired`. An error there counts as a Google or Apple
+   return only when the verifier cookie is present; otherwise the page shows GoTrue's own
+   description, as it always did. With the cookie, `otp_expired` and a missing or expired flow
+   state read as "expired", `access_denied` as "cancelled".
+5. A start on any host other than the canonical one is first redirected there, because the
    verifier cookie has to live on the host the provider returns to. A return carrying both a
    code and an error is treated as a failure. Returns have their own rate limit (`oauth-return:`,
    20 per 5 minutes), apart from session establishment.
-5. The page drops the URL fragment along with `?oauth_error=`: GoTrue repeats its error in the
+6. The page drops the URL fragment along with `?oauth_error=`: GoTrue repeats its error in the
    fragment, a browser keeps a fragment across a redirect, and the page would otherwise replace
    its fixed notice with the provider's text.
 

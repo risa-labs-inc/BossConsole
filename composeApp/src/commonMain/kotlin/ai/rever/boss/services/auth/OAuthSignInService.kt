@@ -126,13 +126,16 @@ enum class OAuthStart {
  */
 // One state machine: each private step runs under the one mutex and shares its fields, so
 // splitting it would only move that state behind another object's API.
-@Suppress("TooManyFunctions")
+// Every constructor parameter is one of the flow's effects, injected so the tests can replace it.
+@Suppress("TooManyFunctions", "LongParameterList")
 internal class OAuthSignInFlow(
     private val prepareVerifier: suspend (verifier: String) -> Unit,
     private val buildAuthorizeUrl: (provider: OAuthProviderKind, redirectUrl: String, codeChallenge: String) -> String,
     /** Exchange a code for a session without adopting it; the returned action adopts it. */
     private val exchangeCode: suspend (code: String) -> suspend () -> Unit,
     private val openBrowser: suspend (provider: OAuthProviderKind, url: String) -> Boolean,
+    /** Remove the stored verifier; called when a sign-in ends without an exchange that spent it. */
+    private val clearVerifier: suspend () -> Unit = {},
     private val timeSource: TimeSource = TimeSource.Monotonic,
     private val attemptTimeout: Duration = ATTEMPT_TIMEOUT,
 ) {
@@ -156,8 +159,18 @@ internal class OAuthSignInFlow(
         val authorizeUrl: String,
         val startedAt: TimeMark,
     ) {
-        /** A callback's code is being exchanged; further callbacks are ignored until it settles. */
+        /** A callback's code is being exchanged; a code arriving meanwhile waits in [queuedCode]. */
         var exchanging = false
+
+        /**
+         * The latest code that arrived while another was being exchanged. Any page can open a
+         * `boss://` link, so the code in flight may be a forged one; if it fails, this one is tried
+         * next rather than lost, so a forged callback cannot swallow the user's own.
+         */
+        var queuedCode: String? = null
+
+        /** Exchanges started for this attempt, capped at [MAX_EXCHANGES_PER_ATTEMPT]. */
+        var exchanges = 0
     }
 
     /**
@@ -221,7 +234,10 @@ internal class OAuthSignInFlow(
     /** Drop the waiting sign-in; its callback is ignored if it still arrives, even mid-exchange. */
     suspend fun cancel() {
         mutex.withLock {
-            if (pending != null) logger.info(LogCategory.AUTH, "OAuth sign-in cancelled")
+            if (pending != null) {
+                logger.info(LogCategory.AUTH, "OAuth sign-in cancelled")
+                clearVerifierSafely()
+            }
             pending = null
             _state.value = OAuthSignInState.Idle
         }
@@ -235,7 +251,10 @@ internal class OAuthSignInFlow(
         mutex.withLock {
             val attempt = pending
             val stale = attempt != null && !attempt.exchanging && attempt.startedAt.elapsedNow() > attemptTimeout
-            if (stale) expire(checkNotNull(attempt))
+            if (stale) {
+                expire(checkNotNull(attempt))
+                clearVerifierSafely()
+            }
             stale
         }
 
@@ -248,11 +267,17 @@ internal class OAuthSignInFlow(
      * Finish the waiting sign-in with [callback]. One callback is exchanged at a time, so a
      * duplicate delivery (one per open window, or a second OS hand-off) is ignored while it runs.
      */
-    suspend fun complete(callback: AuthDeepLink.OAuthCallback): OAuthCompletion =
-        when (val claim = mutex.withLock { claim(callback) }) {
+    suspend fun complete(callback: AuthDeepLink.OAuthCallback): OAuthCompletion {
+        val claim =
+            mutex.withLock {
+                // Cleared under the same lock start() writes under, so it can never hit a newer attempt's verifier.
+                claim(callback).also { if (it is Claim.Done && it.expired) clearVerifierSafely() }
+            }
+        return when (claim) {
             is Claim.Done -> claim.outcome
             is Claim.Exchange -> exchange(claim.attempt, claim.code)
         }
+    }
 
     /** What one callback does to the waiting attempt. Runs under [mutex]; only expiry ends it. */
     private fun claim(callback: AuthDeepLink.OAuthCallback): Claim {
@@ -265,14 +290,19 @@ internal class OAuthSignInFlow(
             }
 
             attempt.exchanging -> {
-                logIgnored("a callback for this sign-in is already being exchanged")
+                if (code != null) {
+                    attempt.queuedCode = code
+                    logIgnored("another code is being exchanged; this one is tried if that fails")
+                } else {
+                    logIgnored("a callback for this sign-in is already being exchanged")
+                }
                 Claim.Done(OAuthCompletion.IGNORED)
             }
 
             attempt.startedAt.elapsedNow() > attemptTimeout -> {
                 logIgnored("the sign-in expired")
                 expire(attempt)
-                Claim.Done(OAuthCompletion.FAILED)
+                Claim.Done(OAuthCompletion.FAILED, expired = true)
             }
 
             callback.error != null -> {
@@ -294,23 +324,56 @@ internal class OAuthSignInFlow(
                 Claim.Done(OAuthCompletion.IGNORED)
             }
 
+            attempt.exchanges >= MAX_EXCHANGES_PER_ATTEMPT -> {
+                logIgnored("too many codes arrived for this sign-in")
+                showWaiting(attempt, tooManyCallbacks(attempt.provider))
+                Claim.Done(OAuthCompletion.FAILED)
+            }
+
             else -> {
-                attempt.exchanging = true
-                _state.value = OAuthSignInState.Exchanging(attempt.provider)
+                beginExchange(attempt)
                 Claim.Exchange(attempt, code)
             }
         }
+    }
+
+    private fun beginExchange(attempt: PendingAttempt) {
+        attempt.exchanging = true
+        attempt.exchanges++
+        _state.value = OAuthSignInState.Exchanging(attempt.provider)
+    }
+
+    /**
+     * An exchange for [attempt] failed with [notice]. Runs under [mutex]. The code that arrived
+     * meanwhile, if there is one and the attempt is still waiting and under its cap, is claimed for
+     * the next exchange and returned; otherwise the attempt goes back to waiting and this is null.
+     */
+    private fun nextQueuedOrSettle(
+        attempt: PendingAttempt,
+        notice: String,
+    ): String? {
+        val next = attempt.queuedCode
+        attempt.queuedCode = null
+        if (next != null && pending === attempt && attempt.exchanges < MAX_EXCHANGES_PER_ATTEMPT) {
+            logger.info(LogCategory.AUTH, "OAuth exchange failed; trying the code that arrived meanwhile")
+            beginExchange(attempt)
+            return next
+        }
+        settle(attempt, notice)
+        return null
     }
 
     // supabase-kt surfaces RestException, HttpRequestException and IO failures alike.
     @Suppress("TooGenericExceptionCaught")
     private suspend fun exchange(
         attempt: PendingAttempt,
-        code: String,
+        firstCode: String,
     ): OAuthCompletion {
-        val adoptSession =
+        var code = firstCode
+        var adoptSession: (suspend () -> Unit)? = null
+        while (adoptSession == null) {
             try {
-                exchangeCode(code)
+                adoptSession = exchangeCode(code)
             } catch (e: CancellationException) {
                 withContext(NonCancellable) { mutex.withLock { settle(attempt, notice = null) } }
                 throw e
@@ -321,18 +384,19 @@ internal class OAuthSignInFlow(
                     mapOf("provider" to attempt.provider.name),
                     error = e,
                 )
-                return withContext(NonCancellable) {
-                    mutex.withLock {
-                        settle(attempt, describeExchangeFailure(attempt.provider, e))
-                        OAuthCompletion.FAILED
+                val next =
+                    withContext(NonCancellable) {
+                        mutex.withLock { nextQueuedOrSettle(attempt, describeExchangeFailure(attempt.provider, e)) }
                     }
-                }
+                code = next ?: return OAuthCompletion.FAILED
             }
+        }
         // Past this point the attempt must settle even if the caller is cancelled while it waits
         // for the lock: a skipped settle or adopt leaves `exchanging` set, and then every later
         // callback is ignored and expiry never fires. The code is also spent, so dropping the
         // session here would strand a sign-in that worked.
-        return withContext(NonCancellable) { mutex.withLock { adopt(attempt, adoptSession) } }
+        val adopted = checkNotNull(adoptSession)
+        return withContext(NonCancellable) { mutex.withLock { adopt(attempt, adopted) } }
     }
 
     /** Adopt an exchanged session if [attempt] is still the waiting sign-in. Runs under [mutex]. */
@@ -376,7 +440,21 @@ internal class OAuthSignInFlow(
         notice: String?,
     ) {
         attempt.exchanging = false
+        attempt.queuedCode = null
         if (pending === attempt) showWaiting(attempt, notice)
+    }
+
+    /** Runs under [mutex]. A failure is logged, never thrown: the sign-in has already ended either way. */
+    // The verifier cache is Auth's encrypted settings store; any of its failures leaves only a stale verifier.
+    @Suppress("TooGenericExceptionCaught")
+    private suspend fun clearVerifierSafely() {
+        try {
+            clearVerifier()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logger.warn(LogCategory.AUTH, "Could not clear the OAuth code verifier", error = e)
+        }
     }
 
     private fun showWaiting(
@@ -396,6 +474,8 @@ internal class OAuthSignInFlow(
     private sealed interface Claim {
         data class Done(
             val outcome: OAuthCompletion,
+            /** The attempt expired, so its verifier is cleared under the same lock. */
+            val expired: Boolean = false,
         ) : Claim
 
         class Exchange(
@@ -410,6 +490,12 @@ internal class OAuthSignInFlow(
 
     companion object {
         const val REDIRECT_URL = "boss://auth/callback"
+
+        /**
+         * Exchanges one sign-in may start. Each forged callback costs a round trip to Supabase, and
+         * a real sign-in needs one; past this the waiting screen asks the user to start again.
+         */
+        const val MAX_EXCHANGES_PER_ATTEMPT = 10
         val ATTEMPT_TIMEOUT = 10.minutes
 
         private const val VERIFIER_BYTES = 48
@@ -426,6 +512,9 @@ internal class OAuthSignInFlow(
             val hash = MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray(Charsets.US_ASCII))
             return Base64.getUrlEncoder().withoutPadding().encodeToString(hash)
         }
+
+        internal fun tooManyCallbacks(provider: OAuthProviderKind): String =
+            "Too many sign-in links arrived for this ${provider.displayName} sign-in. Please cancel and start again."
 
         internal fun describeCallbackError(
             provider: OAuthProviderKind,
@@ -495,6 +584,10 @@ internal val OAuthSignInService: OAuthSignInFlow by lazy {
             adopt
         },
         openBrowser = { provider, url -> openSignInPage(provider, url) },
+        clearVerifier = {
+            SupabaseConfig.client.auth.codeVerifierCache
+                .deleteCodeVerifier()
+        },
     )
 }
 

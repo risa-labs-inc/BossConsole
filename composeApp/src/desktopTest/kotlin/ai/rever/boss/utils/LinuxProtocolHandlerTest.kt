@@ -97,6 +97,25 @@ class LinuxProtocolHandlerTest {
     }
 
     @Test
+    fun `without the xdg tools our entry is written once, not on every launch`() {
+        // Every command "fails", as on a machine with no xdg-utils installed.
+        val absent: (List<String>) -> String? = { command ->
+            commands += command
+            null
+        }
+
+        fun launch() = LinuxProtocolHandler.register("Linux", "/opt/boss/bin/BOSS", dir, absent)
+
+        assertEquals(LinuxProtocolHandler.Outcome.REGISTERED, launch())
+        val written = entry.lastModified()
+        commands.clear()
+
+        assertEquals(LinuxProtocolHandler.Outcome.UP_TO_DATE, launch())
+        assertEquals(1, commands.size, "only the query may run: $commands")
+        assertEquals(written, entry.lastModified())
+    }
+
+    @Test
     fun `nothing is touched off Linux or without a packaged launcher`() {
         assertEquals(LinuxProtocolHandler.Outcome.NOT_LINUX, register(holder = "", osName = "FreeBSD"))
         assertEquals(LinuxProtocolHandler.Outcome.NO_LAUNCHER, register(holder = "", launcher = null))

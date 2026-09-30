@@ -707,8 +707,9 @@ Deno.test("a provider error is logged only in an error code's shape", withEnv(as
   const original = console.warn
   console.warn = (...args: unknown[]) => void warned.push(args)
   try {
-    await app.request(`${BASE}/auth?error=${encodeURIComponent("x\nFAKE log line")}`, { headers: HTTPS })
-    await app.request(`${BASE}/auth?error=server_error`, { headers: HTTPS })
+    const withVerifier = { ...HTTPS, cookie: "__Secure-boss_live_pkce=" + "v".repeat(43) }
+    await app.request(`${BASE}/auth?error=${encodeURIComponent("x\nFAKE log line")}`, { headers: withVerifier })
+    await app.request(`${BASE}/auth?error=server_error`, { headers: withVerifier })
   } finally {
     console.warn = original
   }
@@ -737,6 +738,27 @@ Deno.test("provider returns have their own rate limit, apart from session establ
     })
     assert(session.status !== 429, `session route rate limited after ${i} calls`)
   }
+}))
+
+Deno.test("an expired magic link landing on /auth is the page's to explain, not an OAuth cancellation", withEnv(async () => {
+  // GoTrue's redirectErrors puts the same error in the query and the fragment for a magic link
+  // too. With no PKCE cookie there is no Google or Apple sign-in in flight, so this is not ours.
+  const res = await app.request(
+    `${BASE}/auth?error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired`,
+    { headers: HTTPS },
+  )
+  assertEquals(res.status, 200)
+  assertEquals(res.headers.get("location"), null)
+  assert(!setCookies(res).some((c) => c.includes("boss_live_pkce")), "an unrelated landing must not touch the verifier")
+  assertStringIncludes(await res.text(), "Continue with Google")
+}))
+
+Deno.test("a Google or Apple error return still maps to a notice when a sign-in was in flight", withEnv(async () => {
+  const cookie = { ...HTTPS, cookie: "__Secure-boss_live_pkce=" + "v".repeat(43) }
+  const cancelled = await app.request(`${BASE}/auth?error=access_denied`, { headers: cookie })
+  assertEquals(cancelled.headers.get("location"), "/functions/v1/live-sessions/auth?oauth_error=cancelled")
+  const expired = await app.request(`${BASE}/auth?error=access_denied&error_code=otp_expired`, { headers: cookie })
+  assertEquals(expired.headers.get("location"), "/functions/v1/live-sessions/auth?oauth_error=expired")
 }))
 
 Deno.test("the page offers Google and Apple as plain links to the start routes", withEnv(async () => {

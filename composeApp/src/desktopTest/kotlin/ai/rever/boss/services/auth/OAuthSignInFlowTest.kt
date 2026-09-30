@@ -31,6 +31,10 @@ class OAuthSignInFlowTest {
     private var exchangeFailure: Exception? = null
     private var adoptFailure: Exception? = null
 
+    /** Codes the fake Supabase refuses, as it would a forged one. */
+    private val rejectedCodes = mutableSetOf<String>()
+    private var verifierClears = 0
+
     /** When set, an exchange waits here after it starts, so a test can act mid-exchange. */
     private var exchangeGate: CompletableDeferred<Unit>? = null
     private val exchangeEntered = CompletableDeferred<Unit>()
@@ -48,6 +52,7 @@ class OAuthSignInFlowTest {
                 exchangeEntered.complete(Unit)
                 exchangeGate?.await()
                 exchangeFailure?.let { throw it }
+                if (code in rejectedCodes) error("invalid flow state")
                 exchanged += code
                 val adopt: suspend () -> Unit = {
                     adoptFailure?.let { throw it }
@@ -59,6 +64,7 @@ class OAuthSignInFlowTest {
                 opened += url
                 true
             },
+            clearVerifier = { verifierClears++ },
             timeSource = time,
         )
 
@@ -69,6 +75,67 @@ class OAuthSignInFlowTest {
     private val cancelledByUser = AuthDeepLink.OAuthCallback(null, "access_denied", "User cancelled")
 
     private fun errorCallback() = cancelledByUser
+
+    @Test
+    fun `a forged code in flight cannot swallow the real one that arrives meanwhile`(): Unit =
+        runBlocking {
+            flow.start(OAuthProviderKind.GOOGLE)
+            rejectedCodes += "forged"
+            exchangeGate = CompletableDeferred()
+
+            val forged = async { flow.complete(codeCallback("forged")) }
+            exchangeEntered.await()
+            // The user's own callback lands while the forged one is still with Supabase.
+            assertEquals(OAuthCompletion.IGNORED, flow.complete(codeCallback("real")))
+            checkNotNull(exchangeGate).complete(Unit)
+
+            assertEquals(OAuthCompletion.SIGNED_IN, forged.await())
+            assertEquals(listOf("real"), adopted)
+            assertIs<OAuthSignInState.Idle>(flow.state.value)
+        }
+
+    @Test
+    fun `a sign-in stops exchanging after its cap and asks the user to start again`(): Unit =
+        runBlocking {
+            flow.start(OAuthProviderKind.APPLE)
+            repeat(OAuthSignInFlow.MAX_EXCHANGES_PER_ATTEMPT) { i ->
+                rejectedCodes += "forged-$i"
+                assertEquals(OAuthCompletion.FAILED, flow.complete(codeCallback("forged-$i")))
+            }
+
+            assertEquals(OAuthCompletion.FAILED, flow.complete(codeCallback("real")))
+            assertTrue(exchanged.isEmpty())
+            assertEquals(
+                OAuthSignInFlow.tooManyCallbacks(OAuthProviderKind.APPLE),
+                assertIs<OAuthSignInState.WaitingForBrowser>(flow.state.value).notice,
+            )
+        }
+
+    @Test
+    fun `cancel and expiry clear the verifier, a failed exchange keeps it for the real callback`(): Unit =
+        runBlocking {
+            flow.start(OAuthProviderKind.GOOGLE)
+            rejectedCodes += "forged"
+            flow.complete(codeCallback("forged"))
+            assertEquals(0, verifierClears, "a failed exchange must leave the verifier for a retry")
+
+            flow.cancel()
+            assertEquals(1, verifierClears)
+
+            flow.start(OAuthProviderKind.GOOGLE)
+            time += 11.minutes
+            assertTrue(flow.expireIfStale())
+            assertEquals(2, verifierClears)
+
+            flow.start(OAuthProviderKind.GOOGLE)
+            time += 11.minutes
+            assertEquals(OAuthCompletion.FAILED, flow.complete(codeCallback()))
+            assertEquals(3, verifierClears)
+
+            // Cancelling with nothing waiting touches nothing.
+            flow.cancel()
+            assertEquals(3, verifierClears)
+        }
 
     @Test
     fun `start stores a verifier whose S256 challenge is sent, and opens the browser`(): Unit =
