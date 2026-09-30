@@ -1166,21 +1166,19 @@ fun ApplicationScope.BossWindow(
             with(createBossAppContext) {
                 // Only the first window should load "Last Session" workspace (Issue #129)
                 val isFirstWindow = WindowManager.windowCount == 1
-                ai.rever.boss.sharing.AppSharingChrome(windowState.id) {
-                    BossAppWithAuth(
-                        windowId = windowState.id,
-                        isFirstWindow = isFirstWindow,
-                        panelRegistry = panelRegistry,
-                        onToggleMaximize = {
-                            // Capture state before EDT dispatch to avoid race condition with rapid double-clicks
-                            val shouldMaximize = window.extendedState != Frame.MAXIMIZED_BOTH
-                            java.awt.EventQueue.invokeLater {
-                                window.extendedState = if (shouldMaximize) Frame.MAXIMIZED_BOTH else Frame.NORMAL
-                                // isMaximized will be updated by WindowStateListener
-                            }
-                        },
-                    )
-                }
+                BossAppWithAuth(
+                    windowId = windowState.id,
+                    isFirstWindow = isFirstWindow,
+                    panelRegistry = panelRegistry,
+                    onToggleMaximize = {
+                        // Capture state before EDT dispatch to avoid race condition with rapid double-clicks
+                        val shouldMaximize = window.extendedState != Frame.MAXIMIZED_BOTH
+                        java.awt.EventQueue.invokeLater {
+                            window.extendedState = if (shouldMaximize) Frame.MAXIMIZED_BOTH else Frame.NORMAL
+                            // isMaximized will be updated by WindowStateListener
+                        }
+                    },
+                )
             }
 
             // CLI Installation Dialog

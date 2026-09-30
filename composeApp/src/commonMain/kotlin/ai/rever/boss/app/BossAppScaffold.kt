@@ -61,6 +61,8 @@ import ai.rever.boss.plugin.sandbox.notification.PluginToastHost
 import ai.rever.boss.plugin.sandbox.notification.PluginToastState
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.services.bookmarks.BookmarkAPIAccess
+import ai.rever.boss.sharing.AppSharingChrome
+import ai.rever.boss.sharing.AppSharingChromeVisible
 import ai.rever.boss.updater.UpdateAvailableDialog
 import ai.rever.boss.updater.UpdateBanner
 import ai.rever.boss.updater.UpdateDialogGate
@@ -422,14 +424,16 @@ internal fun BossAppScaffold(
     val bannerVisible by remember(updateHandle) {
         updateHandle.updateState.map { it.drawsBanner() }.distinctUntilChanged()
     }.collectAsState(initial = false)
+    val sharingChromeVisible = AppSharingChromeVisible(state.windowId)
     // Both rows keep the sidebar bubble below the chrome and own its button's selected state.
-    val sidebarBelowTopChrome = bannerVisible || (appearance.showTopBar && reveal.showTopBar)
+    val sidebarBelowTopChrome =
+        sidebarHasTopChrome(bannerVisible, sharingChromeVisible, appearance.showTopBar && reveal.showTopBar)
 
     val trafficLights =
         macTrafficLightInset(
             appearance = drawn.copy(showTitleBar = drawn.showTitleBar || sidebarInHeader),
             isMacOs = SystemUtils.isMacOS,
-            bannerVisible = bannerVisible,
+            bannerVisible = bannerVisible || sharingChromeVisible,
             // The MEASURED rail, not the preference: a bar rails itself on a narrow window too.
             barCollapsed = barRailed,
             // An open panel is a column, and a wide one - which is what lets a window with a
@@ -599,6 +603,12 @@ internal fun BossAppScaffold(
                             updateHandle.resetState()
                         }
                     },
+                )
+
+                // Sharing follows the title inset and update banner, never wrapping the full window.
+                AppSharingChrome(
+                    windowId = state.windowId,
+                    startInset = sharingChromeStartInset(bannerVisible, trafficLights),
                 )
 
                 // Update dialog - dismissible prompt for a new app version,
