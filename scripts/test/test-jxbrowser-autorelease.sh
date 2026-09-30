@@ -194,6 +194,30 @@ run_watch_case \
     {"displayTitle":"BOSS Chromium for JxBrowser 9.4.0","status":"completed","conclusion":"cancelled"}
   ]'
 
+# The two failures below carry an explicit createdAt that postdates the
+# most recent commit touching check-jxbrowser-release.sh, so the script's
+# recovery gate does NOT fire - a real workflow bug should still block.
+recent_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+run_watch_case \
+  repeated_failures_recent false release_repeatedly_failing true \
+  '[[]]' \
+  '[
+    {"displayTitle":"BOSS Chromium for JxBrowser 9.4.0","status":"completed","conclusion":"failure","createdAt":"'"$recent_iso"'"},
+    {"displayTitle":"BOSS Chromium for JxBrowser 9.4.0","status":"completed","conclusion":"failure","createdAt":"'"$recent_iso"'"}
+  ]'
+
+# The two failures below carry an explicit createdAt that predates any
+# plausible script commit (year 2000), so the recovery gate fires -
+# the watcher dispatches and the autorelease workflow auto-closes #747.
+stale_iso='2000-01-01T00:00:00Z'
+run_watch_case \
+  stale_pause_recovered true stale_pause_recovered true \
+  '[[]]' \
+  '[
+    {"displayTitle":"BOSS Chromium for JxBrowser 9.4.0","status":"completed","conclusion":"failure","createdAt":"'"$stale_iso"'"},
+    {"displayTitle":"BOSS Chromium for JxBrowser 9.4.0","status":"completed","conclusion":"failure","createdAt":"'"$stale_iso"'"}
+  ]'
+
 metadata_output="$test_dir/metadata.output"
 PATH="$mock_bin:$PATH" \
   TARGET_VERSION='' \
