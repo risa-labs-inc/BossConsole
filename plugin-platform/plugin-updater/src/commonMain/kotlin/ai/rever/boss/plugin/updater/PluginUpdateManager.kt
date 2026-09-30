@@ -479,8 +479,12 @@ class PluginUpdateManager(
      * @param onInstalling Called once the download is done and the swap begins. The
      *   caller uses it to withdraw its Cancel: from here on, cancelling would leave
      *   the plugin unloaded.
+     * @param validateDownloadedPlugin Called after download and before [onInstalling].
+     *   A failure rejects the downloaded candidate without unloading the existing plugin.
      * @return Result indicating success or failure
      */
+    // Lifecycle hooks and guard returns keep the destructive phases explicit.
+    @Suppress("LongParameterList", "ReturnCount")
     suspend fun updatePlugin(
         pluginId: String,
         downloadPath: String,
@@ -488,6 +492,8 @@ class PluginUpdateManager(
         loadPlugin: suspend (String) -> Result<Unit>,
         onProgress: ((Float) -> Unit)? = null,
         onInstalling: (() -> Unit)? = null,
+        validateDownloadedPlugin: suspend (pluginId: String, downloadedPath: String) -> Result<Unit> =
+            { _, _ -> Result.success(Unit) },
     ): Result<Unit> {
         val update =
             _availableUpdates.value.find { it.pluginId == pluginId }
@@ -510,6 +516,14 @@ class PluginUpdateManager(
         }
 
         val downloadedPath = downloadResult.getOrThrow()
+        val validationResult = validateDownloadedPlugin(pluginId, downloadedPath)
+        if (validationResult.isFailure) {
+            val exception = validationResult.exceptionOrNull()
+            val error = exception?.message ?: "Downloaded plugin validation failed"
+            _state.value = UpdateState.Failed(pluginId, error, exception)
+            listeners.forEach { it.onUpdateFailed(pluginId, error) }
+            return validationResult
+        }
 
         // Download-verify boundary (BossConsole#927): vet the jar's declared identity
         // BEFORE the swap unloads anything, so a mismatched jar is refused while the
