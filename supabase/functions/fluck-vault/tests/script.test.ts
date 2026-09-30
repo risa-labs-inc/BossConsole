@@ -391,3 +391,33 @@ Deno.test("the card's security code is sealed with it: three digits, four for Am
   assertEquals(opened.pan, "378282246310005")
   assertEquals(opened.cvv, "1234")
 })
+
+Deno.test("the page seals a secret's label and value, and disables both before sending", async () => {
+  const { base64, privateKey } = await recipient()
+  const harness = page("secret", base64)
+  await harness.submit({ f1: " Notion token ", f2: "secret_abc 123" })
+  assertEquals(harness.submitted(), 1)
+  assertEquals(harness.enabledFields(), [])
+  assertEquals(JSON.parse(await open(privateKey, JTI, harness.ciphertext())), {
+    kind: "secret",
+    label: "Notion token",
+    // Sent as typed: a key's whitespace is the owner's business.
+    value: "secret_abc 123",
+  })
+})
+
+Deno.test("a secret with no label, no value, or too much of it is refused in the browser", async () => {
+  const { base64 } = await recipient()
+  const cases: [Record<string, string>, string][] = [
+    [{ f1: "", f2: "abc" }, "what this key is for"],
+    [{ f1: "API", f2: "" }, "Paste the key"],
+    [{ f1: "API", f2: "x".repeat(9000) }, "too long"],
+  ]
+  for (const [values, error] of cases) {
+    const harness = page("secret", base64)
+    await harness.submit(values)
+    assertEquals(harness.submitted(), 0)
+    assertEquals(harness.ciphertext(), "")
+    assertStringIncludes(harness.error(), error)
+  }
+})
