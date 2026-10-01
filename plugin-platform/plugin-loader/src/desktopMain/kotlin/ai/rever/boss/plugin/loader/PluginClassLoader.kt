@@ -198,6 +198,12 @@ class PluginClassLoader(
                 // BOSS Plugin type modules (must be from host for Compose stability)
                 "ai.rever.boss.plugin.bookmark.",
                 "ai.rever.boss.plugin.workspace.",
+                // Tab descriptors (TerminalTabInfo/Type, EditorTabInfo, ...): plugin API types from
+                // plugin-api-core that plugins construct to open host tabs. Left out when parent
+                // delegation was confined (dc443ee9c), which made every plugin that opens a
+                // terminal tab - deepseek-harness, docker, kubernetes, tool-creator, tool-evolver -
+                // fail binary validation and load disabled.
+                "ai.rever.boss.plugin.tab.",
                 // Compose (shared UI framework)
                 "androidx.compose.",
                 // Compose exchanges Skia objects with plugins; share its rendering runtime
