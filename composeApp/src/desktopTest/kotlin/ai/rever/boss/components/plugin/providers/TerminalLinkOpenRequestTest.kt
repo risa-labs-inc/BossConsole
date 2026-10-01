@@ -12,6 +12,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class TerminalLinkOpenRequestTest {
     @Test
@@ -20,6 +22,7 @@ class TerminalLinkOpenRequestTest {
             for ((window, terminal, url) in listOf(
                 Triple("window-a", "terminal-a", "https://example.com"),
                 Triple("window-b", "terminal-b", "file:/src/Foo.kt:42:7"),
+                Triple("window-sidebar", ai.rever.boss.plugin.api.SIDEBAR_TERMINAL_ID, "https://example.com/sidebar"),
             )) {
                 val operations =
                     SplitViewOperationsImpl(
@@ -28,6 +31,7 @@ class TerminalLinkOpenRequestTest {
                         scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
                     )
                 try {
+                    assertTrue(operations.supportsOpenTerminalLink)
                     val request =
                         async(start = CoroutineStart.UNDISPATCHED) {
                             TerminalLinkEventBus.linkClickEvents.first()
@@ -42,4 +46,23 @@ class TerminalLinkOpenRequestTest {
                 }
             }
         }
+
+    @Test
+    fun `requests only accept web pages and absolute local file references`() {
+        for (url in listOf(
+            "javascript:alert(1)",
+            "boss://terminal?command=ls",
+            "jar:file:/tmp/x.jar",
+            "file:src/Foo.kt:12",
+            "file://server/share/Foo.kt",
+            "file:////server/share/Foo.kt",
+            "file:%5C%5Cserver%5Cshare%5CFoo.kt",
+            "file:/%5Cserver/share/Foo.kt",
+        )) {
+            assertFalse(isSupportedTerminalLinkRequest(url), url)
+        }
+        for (url in listOf("https://example.com", "http://localhost:3000", "file:/src/a #1?.kt:12", "file:C:/src/Foo.kt:12")) {
+            assertTrue(isSupportedTerminalLinkRequest(url), url)
+        }
+    }
 }

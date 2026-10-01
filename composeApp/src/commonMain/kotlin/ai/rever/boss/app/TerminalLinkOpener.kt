@@ -20,6 +20,7 @@ import ai.rever.boss.utils.extractFileName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Helper function to open a runner terminal in the main panel.
@@ -129,27 +130,32 @@ internal fun openTerminalLink(
         val rawPath = stripFilePrefix(url)
         val parsed = parseFileReference(rawPath)
 
-        when (val result = validateFilePath(parsed.path)) {
-            is FileValidationResult.Invalid -> {
-                return
-            }
+        scope.launch(Dispatchers.Main) {
+            val validation = withContext(Dispatchers.IO) { validateFilePath(parsed.path) }
+            when (val result = validation) {
+                is FileValidationResult.Invalid -> {
+                    return@launch
+                }
 
-            is FileValidationResult.Valid -> {
-                // Continue with validated path - use canonical path for consistency
-                // TOCTOU note: There's a small window between validation and opening where
-                // the file could be deleted. This is acceptable as the editor handles missing
-                // files gracefully, and fully preventing this race is impractical.
-                openTerminalLinkInternal(
-                    url = "file:${result.canonicalPath}",
-                    mode = mode,
-                    splitViewState = splitViewState,
-                    validSourcePanelId = validSourcePanelId,
-                    isFile = true,
-                    fileLine = parsed.line,
-                    fileColumn = parsed.column,
-                    scope = scope,
-                    windowId = windowId,
-                )
+                is FileValidationResult.Valid -> {
+                    // Continue with validated path - use canonical path for consistency
+                    // TOCTOU note: There's a small window between validation and opening where
+                    // the file could be deleted. This is acceptable as the editor handles missing
+                    // files gracefully, and fully preventing this race is impractical.
+                    openTerminalLinkInternal(
+                        url = "file:${result.canonicalPath}",
+                        mode = mode,
+                        splitViewState = splitViewState,
+                        validSourcePanelId =
+                            validSourcePanelId.takeIf { splitViewState.findPanel(it) != null }
+                                ?: splitViewState.activePanelId,
+                        isFile = true,
+                        fileLine = parsed.line,
+                        fileColumn = parsed.column,
+                        scope = scope,
+                        windowId = windowId,
+                    )
+                }
             }
         }
     } else {
