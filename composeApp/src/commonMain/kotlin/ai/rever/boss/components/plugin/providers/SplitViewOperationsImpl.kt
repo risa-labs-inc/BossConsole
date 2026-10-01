@@ -336,10 +336,12 @@ internal fun routePluginDeepLink(
 
 /** Terminal output must not invoke app schemes or network file openers through this API. */
 internal fun isSupportedTerminalLinkRequest(url: String): Boolean {
-    if (url.startsWith("https://", ignoreCase = true) || url.startsWith("http://", ignoreCase = true)) return true
-    if (!url.startsWith("file:")) return false
+    val isWebLink = url.startsWith("https://", ignoreCase = true) || url.startsWith("http://", ignoreCase = true)
+    if (isWebLink || !url.startsWith("file:")) return isWebLink
     val path = parseFileReference(stripFilePrefix(url)).path
-    if (path.length >= 2 && path.take(2).all { it == '/' || it == '\\' }) return false
-    return path.startsWith("/") ||
-        Regex("^[A-Za-z]:[/\\\\\\\\]").containsMatchIn(path)
+    val isNetworkPath = path.length >= 2 && path.take(2).all { it == '/' || it == '\\' }
+    return !isNetworkPath && (
+        path.startsWith("/") ||
+            Regex("^[A-Za-z]:[/\\\\\\\\]").containsMatchIn(path)
+    )
 }

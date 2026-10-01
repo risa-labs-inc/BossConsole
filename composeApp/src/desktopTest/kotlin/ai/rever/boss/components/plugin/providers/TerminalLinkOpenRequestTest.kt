@@ -61,7 +61,12 @@ class TerminalLinkOpenRequestTest {
         )) {
             assertFalse(isSupportedTerminalLinkRequest(url), url)
         }
-        for (url in listOf("https://example.com", "http://localhost:3000", "file:/src/a #1?.kt:12", "file:C:/src/Foo.kt:12")) {
+        for (url in listOf(
+            "https://example.com",
+            "http://localhost:3000",
+            "file:/src/a #1?.kt:12",
+            "file:C:/src/Foo.kt:12",
+        )) {
             assertTrue(isSupportedTerminalLinkRequest(url), url)
         }
     }
