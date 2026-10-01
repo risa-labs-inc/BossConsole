@@ -8,6 +8,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.security.MessageDigest
+import java.util.UUID
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Records that THIS process is waiting for a sign-in callback, and for which account, so the
@@ -17,12 +19,12 @@ import java.security.MessageDigest
  * whichever process started the sign-in. Each process therefore drops a marker in its own `run/`
  * directory when it starts a flow, and the main profile routes a callback by those markers (see
  * `ProfileAuthRelay`). A magic link carries no hint of who asked for it - the token is an opaque
- * hash - so the marker records the email it was sent to, hashed: that is what lets routing refuse
- * an ambiguous link and lets the receiver refuse a session for the wrong account
- * ([expectedEmailHash], checked by `AuthService.verifyEmail`).
+ * hash - so the marker records the email it was sent to, hashed, which [MagicLinkExchange] checks
+ * the minted session against before anything is imported.
  *
- * A marker is claimed at most once: [claim] renames it away atomically, so of two processes that
- * might act on one link, exactly one does.
+ * Every flow has an [Flow.id], its generation. A flow is consumed at most once - [claim] and
+ * [takeForExchange] rename the marker away atomically - and a flow put back after a failed exchange
+ * ([restore]) never replaces a newer one.
  */
 @Suppress("TooManyFunctions") // one small record and the questions asked of it
 object AuthFlowMarker {
@@ -47,23 +49,33 @@ object AuthFlowMarker {
         val startedAtMs: Long,
         /** SHA-256 of the normalised email the link was sent to; null for OAuth. */
         val emailHash: String? = null,
+        /** This flow's generation: a new one per [mark], never reused. */
+        val id: String = "",
+    ) {
+        fun isLive(
+            kind: Kind,
+            now: Long,
+        ): Boolean = this.kind == kind && now - startedAtMs in 0..kind.maxAgeMs
+    }
+
+    /** A flow this process accepted a relayed callback for, bound to that callback's token. */
+    private data class Claim(
+        val flow: Flow,
+        val tokenDigest: String,
     )
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    /**
-     * The flow this process claimed from its marker (a profile accepting a relayed link), held
-     * until the exchange it was claimed for has been checked against it.
-     */
-    @Volatile
-    private var claimed: Flow? = null
+    private val claimed = AtomicReference<Claim?>(null)
 
     fun fileFor(root: File): File = File(File(root, "run"), FILE_NAME)
 
-    fun hashEmail(email: String): String =
+    fun hashEmail(email: String): String = sha256(email.trim().lowercase())
+
+    private fun sha256(value: String): String =
         MessageDigest
             .getInstance("SHA-256")
-            .digest(email.trim().lowercase().toByteArray(Charsets.UTF_8))
+            .digest(value.toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
 
     /** This process started a sign-in that will complete through a `boss://auth` link. */
@@ -71,26 +83,11 @@ object AuthFlowMarker {
         kind: Kind,
         email: String? = null,
         now: Long = System.currentTimeMillis(),
-    ) {
-        val flow = Flow(kind, now, email?.let(::hashEmail))
-        val file = fileFor(BossDirectories.rootDir)
-        // Atomic, because another process reads it; any failure only means no relay, never a crash.
-        runCatching {
-            file.parentFile.mkdirs()
-            file.atomicWriteText(json.encodeToString(Flow.serializer(), flow))
-        }.onFailure { logger.warn(LogCategory.AUTH, "Could not record the pending sign-in", error = it) }
-        claimed = null
-    }
-
-    /** The sign-in completed or was abandoned; stop claiming callbacks. */
-    fun clear() {
-        runCatching { fileFor(BossDirectories.rootDir).delete() }
-        claimed = null
-    }
-
-    /** Forgets a claimed flow whose link turned out not to match it. The pending marker is untouched. */
-    fun dropClaim() {
-        claimed = null
+    ): Flow {
+        val flow = Flow(kind, now, email?.let(::hashEmail), UUID.randomUUID().toString())
+        write(flow)
+        claimed.set(null)
+        return flow
     }
 
     /** [root]'s pending flow of [kind], or null when it is not waiting for one (or it expired). */
@@ -101,53 +98,77 @@ object AuthFlowMarker {
     ): Flow? = read(fileFor(root))?.takeIf { it.isLive(kind, now) }
 
     /**
-     * Takes this process's pending flow of [kind] for a callback that just arrived, so no other
-     * claim can take it too. The marker is renamed away first and read second: the rename is
-     * atomic, so of two concurrent claims exactly one gets the file.
+     * Accepts a relayed callback carrying [token]: takes this process's pending flow of [kind] so
+     * no other callback can, and binds it to that token, so only an exchange of the SAME token can
+     * redeem it ([takeForExchange]).
      */
     fun claim(
         kind: Kind,
+        token: String,
+        now: Long = System.currentTimeMillis(),
+    ): Flow? = takeLive(kind, now)?.also { claimed.set(Claim(it, sha256(token))) }
+
+    /**
+     * The flow an exchange of [token] may spend, consumed so it can be spent once: the flow claimed
+     * for exactly this token if it is still live, else this process's own pending magic-link flow.
+     * Null when this process asked for no link, or only holds a claim bound to another token.
+     */
+    fun takeForExchange(
+        token: String,
         now: Long = System.currentTimeMillis(),
     ): Flow? {
-        val file = fileFor(BossDirectories.rootDir)
-        val taken = File(file.parentFile, "$FILE_NAME.claimed-${System.nanoTime()}")
-        val flow = if (file.isFile && file.renameTo(taken)) read(taken) else null
-        taken.delete()
-        return flow?.takeIf { it.isLive(kind, now) }?.also { claimed = it }
+        val claim = claimed.get()
+        return if (claim != null && claim.tokenDigest == sha256(token)) {
+            claim.flow.takeIf { claimed.compareAndSet(claim, null) && it.isLive(Kind.MAGIC_LINK, now) }
+        } else {
+            takeLive(Kind.MAGIC_LINK, now)
+        }
     }
 
     /**
-     * The account a magic link arriving here is expected to sign in: the flow this process
-     * claimed for it, else its own pending magic-link flow. Null when this process asked for
-     * no link, which is when nothing can be checked.
+     * Puts [flow] back after an exchange that did not sign it in, so the link that does belong to
+     * it can still arrive. Generation-safe: does nothing once a newer flow has been started.
      */
-    fun expectedEmailHash(now: Long = System.currentTimeMillis()): String? =
-        (claimed ?: pending(BossDirectories.rootDir, Kind.MAGIC_LINK, now))?.emailHash
-
-    /** Whether this process has a magic-link flow a link can belong to, claimed or pending. */
-    fun awaitsMagicLink(now: Long = System.currentTimeMillis()): Boolean =
-        claimed?.kind == Kind.MAGIC_LINK || pending(BossDirectories.rootDir, Kind.MAGIC_LINK, now) != null
+    fun restore(
+        flow: Flow,
+        now: Long = System.currentTimeMillis(),
+    ) {
+        if (!fileFor(BossDirectories.rootDir).exists() && flow.isLive(flow.kind, now)) write(flow)
+    }
 
     /**
-     * Whether a magic link must be refused before it is exchanged: a separate-account profile
-     * spends only a link it asked for, so a stray or misrouted one is neither used up nor able to
-     * sign the profile in. The main profile keeps its old behaviour for a link nobody waits for.
+     * Takes this process's marker only if it holds a live [kind] flow: a callback of one kind
+     * never consumes a flow of another. Whatever was taken that turns out not to match goes back.
      */
-    internal fun refuseBeforeExchange(
-        isProfile: Boolean,
-        awaitsLink: Boolean,
-    ): Boolean = isProfile && !awaitsLink
-
-    /** Whether a completed exchange signed in an account other than the one the link was sent to. */
-    internal fun isWrongAccount(
-        expectedEmailHash: String?,
-        signedInEmailHash: String?,
-    ): Boolean = expectedEmailHash != null && signedInEmailHash != expectedEmailHash
-
-    private fun Flow.isLive(
+    @Suppress("ReturnCount") // nothing to take, nothing taken, or taken and matching
+    private fun takeLive(
         kind: Kind,
         now: Long,
-    ): Boolean = this.kind == kind && now - startedAtMs in 0..kind.maxAgeMs
+    ): Flow? {
+        val expected = pending(BossDirectories.rootDir, kind, now) ?: return null
+        val taken = takeMarker() ?: return null
+        if (taken.id == expected.id && taken.isLive(kind, now)) return taken
+        restore(taken, now)
+        return null
+    }
+
+    /** Renames the marker away (atomic: exactly one taker) and returns what it held. */
+    private fun takeMarker(): Flow? {
+        val file = fileFor(BossDirectories.rootDir)
+        val taken = File(file.parentFile, "$FILE_NAME.taken-${UUID.randomUUID()}")
+        val flow = if (file.isFile && file.renameTo(taken)) read(taken) else null
+        taken.delete()
+        return flow
+    }
+
+    private fun write(flow: Flow) {
+        val file = fileFor(BossDirectories.rootDir)
+        // Atomic, because another process reads it; any failure only means no relay, never a crash.
+        runCatching {
+            file.parentFile.mkdirs()
+            file.atomicWriteText(json.encodeToString(Flow.serializer(), flow))
+        }.onFailure { logger.warn(LogCategory.AUTH, "Could not record the pending sign-in", error = it) }
+    }
 
     private fun read(file: File): Flow? =
         if (file.isFile) {

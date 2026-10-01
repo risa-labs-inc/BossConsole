@@ -898,6 +898,13 @@ object FluckEngine {
     // the single shared engine. They are the isolation primitive for running
     // multiple RPAs with different credentials concurrently.
 
+    /**
+     * Runs [block] with the current engine under the engine's own lifecycle lock - the lock a
+     * recycle takes to replace it - so everything [block] does belongs to that one engine. A
+     * snapshot taken outside it can be replaced between two steps (see `WindowBrowserProfiles`).
+     */
+    internal fun <T> withCurrentEngine(block: (Engine) -> T): T = synchronized(engineLock) { block(engine) }
+
     /** Create a fresh isolated profile for an RPA run. Caller must delete it when done. */
     fun newRpaProfile(name: String): com.teamdev.jxbrowser.profile.Profile = synchronized(engineLock) { engine.profiles().newProfile(name) }
 

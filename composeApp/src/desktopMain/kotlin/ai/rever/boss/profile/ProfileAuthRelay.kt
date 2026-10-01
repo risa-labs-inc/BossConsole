@@ -1,5 +1,7 @@
 package ai.rever.boss.profile
 
+import ai.rever.boss.components.auth.AuthDeepLink
+import ai.rever.boss.components.auth.AuthDeepLinks
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.services.auth.AuthFlowMarker
 import ai.rever.boss.utils.DeepLinkHandler
@@ -48,6 +50,17 @@ object ProfileAuthRelay {
 
         /** Ambiguous or unclaimed: act on it nowhere, and tell the user to request a new link. */
         REFUSED,
+
+        /**
+         * Offered, and the reply was lost: a profile may have taken it, so it is offered nowhere
+         * else and not kept here either.
+         */
+        UNCERTAIN,
+    }
+
+    /** How a profile is offered a callback; replaceable so lost replies can be tested. */
+    internal var claimer: (profileId: String, uri: String) -> SingleInstanceManager.AuthClaimAnswer = { id, uri ->
+        SingleInstanceManager.claimAuthAt(BossProfileLauncher.runtimeDirOf(id), uri)
     }
 
     /** The routing decision for one callback, before any profile is asked. */
@@ -84,22 +97,48 @@ object ProfileAuthRelay {
             }
 
             is Route.Offer -> {
-                val claimedBy =
-                    decision.profileIds.firstOrNull { id ->
-                        SingleInstanceManager.claimAuthAt(BossProfileLauncher.runtimeDirOf(id), uri)
-                    }
-                if (claimedBy != null) {
-                    logger.info(
+                offer(decision, uri)
+            }
+        }
+    }
+
+    /**
+     * Offers [uri] down [decision]'s list until a profile claims it. Only an explicit DECLINED moves
+     * on to the next profile: after a lost reply the first one may hold the link, and a second
+     * offer could have it exchanged twice.
+     */
+    internal fun offerForTest(
+        decision: Route.Offer,
+        uri: String,
+    ): Outcome = offer(decision, uri)
+
+    @Suppress("ReturnCount") // a claim and a lost reply each end the offer at once
+    private fun offer(
+        decision: Route.Offer,
+        uri: String,
+    ): Outcome {
+        for (id in decision.profileIds) {
+            when (claimer(id, uri)) {
+                SingleInstanceManager.AuthClaimAnswer.CLAIMED -> {
+                    logger.info(LogCategory.AUTH, "A BOSS profile claimed a sign-in callback", mapOf("profileId" to id))
+                    return Outcome.RELAYED
+                }
+
+                SingleInstanceManager.AuthClaimAnswer.NO_ANSWER -> {
+                    logger.warn(
                         LogCategory.AUTH,
-                        "A BOSS profile claimed a sign-in callback",
-                        mapOf("profileId" to claimedBy),
+                        "A sign-in offer got no reply; not offering it again",
+                        mapOf("profileId" to id),
                     )
-                    Outcome.RELAYED
-                } else {
-                    decision.fallback
+                    return Outcome.UNCERTAIN
+                }
+
+                SingleInstanceManager.AuthClaimAnswer.DECLINED -> {
+                    Unit
                 }
             }
         }
+        return decision.fallback
     }
 
     /**
@@ -170,8 +209,11 @@ object ProfileAuthRelay {
      * when there is no such flow, so a stale or misrouted link is never spent here.
      */
     fun claimHere(uri: String): Boolean {
+        // Bound to the link's own token, so the claimed flow can be redeemed by this link only.
+        val token = (AuthDeepLinks.parse(uri) as? AuthDeepLink.MagicLinkVerify)?.token
         val kind = if (BossDirectories.isProfile) callbackKind(uri) else null
-        val claimed = kind?.let { AuthFlowMarker.claim(it) } != null
+        val claimed =
+            kind == AuthFlowMarker.Kind.MAGIC_LINK && token != null && AuthFlowMarker.claim(kind, token) != null
         if (claimed) DeepLinkHandler.processDeepLink(uri, DeepLinkOrigin.EXTERNAL)
         return claimed
     }

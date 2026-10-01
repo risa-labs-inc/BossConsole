@@ -347,6 +347,14 @@ actual object DeepLinkHandler {
                     Unit
                 }
 
+                ProfileAuthRelay.Outcome.UNCERTAIN -> {
+                    StatusMessageManager.showMessage(
+                        "A sign-in link was passed to another BOSS window. " +
+                            "If no window signs in, request a new link.",
+                        durationMs = REFUSAL_MESSAGE_MS,
+                    )
+                }
+
                 ProfileAuthRelay.Outcome.REFUSED -> {
                     StatusMessageManager.showMessage(
                         "More than one BOSS window is waiting for a sign-in link. " +

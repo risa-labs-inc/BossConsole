@@ -2225,11 +2225,19 @@ What a separate-account profile does not share, and why:
     process waits for nothing, and is ignored while it waits for a link of its own;
   - a Google / Apple callback (`boss://auth/callback`, PKCE-bound) goes to the newest flow first.
 
-  Two checks back that up in `AuthService.verifyEmail`: a separate-account profile refuses a
-  link it did not ask for **before** exchanging it, and an exchange that signed in a different
-  account than the flow's is signed out at once. Passkey, confirmation, invite and recovery links
-  are never routed. The routing check reads only marker files, so with no profile waiting the
-  link takes the old synchronous path.
+  The exchange itself is **quarantined** (`MagicLinkExchange`): whenever this process asked for a
+  link, `AuthService.verifyEmail` calls GoTrue's `/verify` directly instead of
+  `Auth.verifyEmailOtp`, so the minted session never reaches the live client - no import, no
+  persistence, no `sessionStatus` publication - until its account matches the flow's. A session
+  for any other account, or one whose account cannot be read, is revoked and dropped. A claim is
+  bound to the exact token it was offered for, consumed once, and checked for expiry at exchange;
+  a flow put back after a failed exchange never replaces a newer generation. An `AUTH_CLAIM`
+  answer of anything but `DECLINED` stops the offer (a lost reply may mean it was taken), so a
+  link is never offered twice. A separate-account profile that asked for nothing refuses a link
+  without spending it; only the main process asking for nothing keeps the old path. Passkey,
+  confirmation, invite and recovery links are never routed. An opaque token cannot be matched to
+  an account without spending it, so a wrong-account link is spent and revoked rather than kept;
+  avoiding even that would need a server-side check.
 
 **Known limits.** Several plugins build `~/.boss` paths themselves instead of using
 `BossDirectories` (analytics, rparecorder, rpaengine, editor-tab settings, dna-origami,

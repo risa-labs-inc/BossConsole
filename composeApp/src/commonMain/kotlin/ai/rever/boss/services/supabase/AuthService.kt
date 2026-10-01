@@ -5,7 +5,6 @@ import ai.rever.boss.services.auth.*
 import ai.rever.boss.services.passkey.PasskeyInfo
 import ai.rever.boss.services.passkey.PasskeyService
 import ai.rever.boss.services.supabase.models.*
-import io.github.jan.supabase.auth.auth
 import kotlinx.coroutines.flow.StateFlow
 import kotlin.time.ExperimentalTime
 
@@ -52,41 +51,36 @@ object AuthService {
     suspend fun signOut(): Result<Unit> = CoreAuthService.signOut()
 
     /**
-     * Mark email as verified - called when deep link indicates successful verification
+     * Completes a magic link - called when the `boss://auth/verify` deep link arrives.
+     *
+     * When this process asked for a link ([AuthFlowMarker.takeForExchange] finds the flow, claimed
+     * for exactly this token or its own pending one, and consumes it), the link is spent through
+     * [MagicLinkExchange]: the minted session reaches the live client only if it is for the account
+     * the link was sent to. A separate-account profile that asked for no link refuses it without
+     * spending it. Only the main profile, asking for nothing, keeps the old path, unchanged.
      */
-    @Suppress("ReturnCount") // each refusal is its own early exit, before or after the exchange
     suspend fun verifyEmail(
         token: String,
         type: String = "magiclink",
     ): Result<Unit> {
-        // A separate-account BOSS profile only spends a link it asked for: a stray or misrouted
-        // one is refused BEFORE the exchange, so it can neither sign this profile in nor be used up.
-        if (AuthFlowMarker.refuseBeforeExchange(BossDirectories.isProfile, AuthFlowMarker.awaitsMagicLink())) {
-            return Result.failure(Exception("This sign-in link was not requested in this BOSS window."))
-        }
-        val expected = AuthFlowMarker.expectedEmailHash()
-        val verified = EmailAuthService.verifyEmail(token, type)
-        if (verified.isFailure) return verified
-        if (AuthFlowMarker.isWrongAccount(expected, if (expected != null) signedInEmailHash() else null)) {
-            // The link signed in a different account than the one this process sent a link to.
-            // Undo that session at once; the pending flow stays for the link that does belong here.
-            CoreAuthService.signOut()
-            AuthFlowMarker.dropClaim()
-            return Result.failure(
-                Exception("This sign-in link is for a different account than this BOSS window asked for."),
-            )
-        }
-        AuthFlowMarker.clear()
-        return verified
-    }
+        val flow = AuthFlowMarker.takeForExchange(token)
+        return when {
+            flow != null -> {
+                MagicLinkExchange
+                    .exchange(token, type, flow)
+                    .onSuccess { AuthStateManager.setAuthenticatedViaMagicLink(true) }
+                    // Not this flow's link: the one that is may still arrive.
+                    .onFailure { AuthFlowMarker.restore(flow) }
+            }
 
-    private suspend fun signedInEmailHash(): String? {
-        val auth = SupabaseConfig.client.auth
-        val email =
-            auth.currentUserOrNull()?.email
-                ?: runCatching { auth.retrieveUserForCurrentSession(updateSession = false).email }.getOrNull()
-                ?: AuthStateManager.currentUser.value?.email
-        return email?.let(AuthFlowMarker::hashEmail)
+            BossDirectories.isProfile -> {
+                Result.failure(Exception("This sign-in link was not requested in this BOSS window."))
+            }
+
+            else -> {
+                EmailAuthService.verifyEmail(token, type)
+            }
+        }
     }
 
     /**

@@ -5,6 +5,7 @@ import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import java.nio.file.Path
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -62,21 +63,21 @@ class SingleInstanceOtherProfileTest {
         val link = "boss://auth/verify?token=x"
 
         // No handler installed: every link is declined.
-        assertFalse(SingleInstanceManager.claimAuthAt(peerRun, link))
+        assertEquals(SingleInstanceManager.AuthClaimAnswer.DECLINED, SingleInstanceManager.claimAuthAt(peerRun, link))
 
         val offered = mutableListOf<String>()
         SingleInstanceManager.authClaimHandler = { url ->
             offered += url
             false
         }
-        assertFalse(SingleInstanceManager.claimAuthAt(peerRun, link), "a receiver with no flow of its own declines")
+        assertEquals(SingleInstanceManager.AuthClaimAnswer.DECLINED, SingleInstanceManager.claimAuthAt(peerRun, link))
 
         SingleInstanceManager.authClaimHandler = { url ->
             offered += url
             true
         }
-        assertTrue(SingleInstanceManager.claimAuthAt(peerRun, link))
-        assertTrue(offered == listOf(link, link), "the receiver saw exactly the offered link")
+        assertEquals(SingleInstanceManager.AuthClaimAnswer.CLAIMED, SingleInstanceManager.claimAuthAt(peerRun, link))
+        assertEquals(listOf(link, link), offered, "the receiver saw exactly the offered link")
     }
 
     @Test
@@ -85,11 +86,17 @@ class SingleInstanceOtherProfileTest {
         SingleInstanceManager.runtimeDirOverride = peerRun
         assertTrue(SingleInstanceManager.acquireLock())
         SingleInstanceManager.authClaimHandler = { error("boom") }
-        assertFalse(SingleInstanceManager.claimAuthAt(peerRun, "boss://auth/verify?token=x"))
+        assertEquals(
+            SingleInstanceManager.AuthClaimAnswer.DECLINED,
+            SingleInstanceManager.claimAuthAt(peerRun, "boss://auth/verify?token=x"),
+        )
     }
 
     @Test
-    fun `nothing answers a claim where no instance runs`() {
-        assertFalse(SingleInstanceManager.claimAuthAt(File(tempDir.toFile(), "none/run"), "boss://auth/verify?token=x"))
+    fun `nothing is offered where no instance runs`() {
+        assertEquals(
+            SingleInstanceManager.AuthClaimAnswer.DECLINED,
+            SingleInstanceManager.claimAuthAt(File(tempDir.toFile(), "none/run"), "boss://auth/verify?token=x"),
+        )
     }
 }

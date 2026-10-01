@@ -1831,23 +1831,39 @@ object SingleInstanceManager {
         return sendTo(SingleInstanceFiles.readAt(runtimeDirectory), url, origin)
     }
 
+    /** What an instance answered a [VERB_AUTH_CLAIM] offer with. */
+    enum class AuthClaimAnswer {
+        /** It claimed a pending flow of its own for the link and took it on. */
+        CLAIMED,
+
+        /** It has no flow for the link, or no verified instance is there: nothing was taken. */
+        DECLINED,
+
+        /**
+         * The offer went out and no verdict came back - a lost or late reply. The link may have
+         * been taken, so it must be offered nowhere else.
+         */
+        NO_ANSWER,
+    }
+
     /**
      * Offers sign-in callback [url] to the instance under [runtimeDirectory] with [VERB_AUTH_CLAIM].
-     * True only when that instance answered that it claimed a pending flow of its own for it;
-     * any other answer, an unverifiable peer, or no answer at all leaves the link with the caller.
+     * Only a peer whose owner is provably this program ([DescriptorTrust.VERIFIED]) is offered one.
      */
     fun claimAuthAt(
         runtimeDirectory: File,
         url: String,
-    ): Boolean {
-        // A sign-in link only ever goes to a peer whose owner is provably this program.
+    ): AuthClaimAnswer {
         val target =
             SingleInstanceFiles
                 .readAt(runtimeDirectory)
                 ?.takeIf { descriptorTrust(it) == DescriptorTrust.VERIFIED && canFrameOpenUrl(url) }
-        val response =
-            target?.let { peer -> SingleInstanceWire.exchange(peer, formatAuthClaimRequest(peer.token, url)) }
-        return response == RESPONSE_CLAIMED
+                ?: return AuthClaimAnswer.DECLINED
+        return when (SingleInstanceWire.exchange(target, formatAuthClaimRequest(target.token, url))) {
+            RESPONSE_CLAIMED -> AuthClaimAnswer.CLAIMED
+            RESPONSE_DECLINED, RESPONSE_REJECTED -> AuthClaimAnswer.DECLINED
+            else -> AuthClaimAnswer.NO_ANSWER
+        }
     }
 
     @Suppress("ReturnCount")

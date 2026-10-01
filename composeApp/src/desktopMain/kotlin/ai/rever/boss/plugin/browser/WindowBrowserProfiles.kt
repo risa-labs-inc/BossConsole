@@ -3,6 +3,7 @@ package ai.rever.boss.plugin.browser
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import com.teamdev.jxbrowser.engine.Engine
 import com.teamdev.jxbrowser.profile.Profile
 import java.util.concurrent.ConcurrentHashMap
 
@@ -27,11 +28,59 @@ object WindowBrowserProfiles {
 
     private val profileByWindow = ConcurrentHashMap<String, String>()
 
-    /** Which (engine, profile) pairs already have their per-profile handlers. */
-    private val prepared = EnginePerProfileOnce()
+    /**
+     * What a window profile needs from the engine, separable so the same-engine guarantee is
+     * testable without JxBrowser. [withEngine] must hold whatever lock replaces the engine.
+     */
+    internal interface EngineOps<E : Any, P : Any> {
+        fun <T> withEngine(block: (E) -> T): T
 
-    /** Serialises find-or-create, so two tabs opening at once in a fresh window make one profile. */
-    private val creationLock = Any()
+        fun findOrCreate(
+            engine: E,
+            name: String,
+        ): P
+
+        fun prepare(profile: P)
+    }
+
+    /** One window-profile lookup, with its engine, profile and handler claim from one engine. */
+    internal class Resolver<E : Any, P : Any>(
+        private val ops: EngineOps<E, P>,
+    ) {
+        private val prepared = EnginePerProfileOnce()
+
+        fun profileNamed(name: String): P =
+            ops.withEngine { engine ->
+                val profile = ops.findOrCreate(engine, name)
+                if (prepared.claim(engine, name)) {
+                    // Handlers the default profile gets at engine creation; a recycled engine is a
+                    // new object, so they are installed again on its copy of the profile.
+                    runCatching { ops.prepare(profile) }
+                        .onFailure {
+                            prepared.release(engine, name)
+                            logger.warn(LogCategory.BROWSER, "Could not prepare a window browser profile", error = it)
+                        }
+                }
+                profile
+            }
+    }
+
+    private val resolver =
+        Resolver(
+            object : EngineOps<Engine, Profile> {
+                override fun <T> withEngine(block: (Engine) -> T): T = FluckEngine.withCurrentEngine(block)
+
+                override fun findOrCreate(
+                    engine: Engine,
+                    name: String,
+                ): Profile {
+                    val profiles = engine.profiles()
+                    return profiles.list().firstOrNull { it.name() == name } ?: profiles.newProfile(name)
+                }
+
+                override fun prepare(profile: Profile) = FluckEngine.setupPermissionHandlers(profile)
+            },
+        )
 
     /** Runs [windowId]'s browser tabs on BOSS profile [profileId]'s browser profile. */
     fun bind(
@@ -61,18 +110,6 @@ object WindowBrowserProfiles {
      */
     fun jxProfileFor(windowId: String): Profile? {
         val profileId = profileByWindow[windowId] ?: return null
-        val name = jxProfileName(profileId)
-        val engine = FluckEngine.engine
-        val profile = synchronized(creationLock) { FluckEngine.findProfile(name) ?: FluckEngine.newRpaProfile(name) }
-        if (prepared.claim(engine, name)) {
-            // Handlers the default profile gets at engine creation; a recycled engine is a new
-            // object, so they are installed again on its copy of the profile.
-            runCatching { FluckEngine.setupPermissionHandlers(profile) }
-                .onFailure {
-                    prepared.release(engine, name)
-                    logger.warn(LogCategory.BROWSER, "Could not prepare a window browser profile", error = it)
-                }
-        }
-        return profile
+        return resolver.profileNamed(jxProfileName(profileId))
     }
 }

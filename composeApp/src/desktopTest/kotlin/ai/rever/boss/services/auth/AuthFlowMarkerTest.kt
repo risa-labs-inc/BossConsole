@@ -1,104 +1,111 @@
 package ai.rever.boss.services.auth
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.services.auth.AuthFlowMarker.Kind
 import org.junit.jupiter.api.AfterEach
-import org.junit.jupiter.api.io.TempDir
-import java.io.File
+import org.junit.jupiter.api.BeforeEach
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
-import kotlin.test.assertTrue
 
 class AuthFlowMarkerTest {
-    @TempDir
-    lateinit var root: File
+    private val root get() = BossDirectories.rootDir
 
-    private val kind = AuthFlowMarker.Kind.MAGIC_LINK
-
+    @BeforeEach
     @AfterEach
     fun cleanUp() {
-        AuthFlowMarker.clear()
+        AuthFlowMarker.fileFor(root).delete()
+        // Drop any claim a test left behind: a fresh mark resets it.
+        AuthFlowMarker.mark(Kind.OAUTH)
+        AuthFlowMarker.fileFor(root).delete()
     }
 
     @Test
-    fun `a marked flow is pending with the account it was sent to, and clear ends it`() {
-        AuthFlowMarker.mark(kind, "Someone@Example.com ")
-        val flow = assertNotNull(AuthFlowMarker.pending(BossDirectories.rootDir, kind))
-        assertEquals(AuthFlowMarker.hashEmail("someone@example.com"), flow.emailHash, "emails are normalised")
-        assertTrue(AuthFlowMarker.awaitsMagicLink())
-        AuthFlowMarker.clear()
-        assertNull(AuthFlowMarker.pending(BossDirectories.rootDir, kind))
-        assertFalse(AuthFlowMarker.awaitsMagicLink())
+    fun `a marked flow is pending with the account it was sent to and a fresh generation`() {
+        val first = AuthFlowMarker.mark(Kind.MAGIC_LINK, "Someone@Example.com ")
+        val pending = assertNotNull(AuthFlowMarker.pending(root, Kind.MAGIC_LINK))
+        assertEquals(AuthFlowMarker.hashEmail("someone@example.com"), pending.emailHash, "emails are normalised")
+        val second = AuthFlowMarker.mark(Kind.MAGIC_LINK, "someone@example.com")
+        assert(first.id != second.id) { "every mark is a new generation" }
     }
 
     @Test
-    fun `each kind waits as long as its own link is valid`() {
-        AuthFlowMarker.mark(kind, "a@example.com", now = 1_000L)
-        assertNotNull(AuthFlowMarker.pending(BossDirectories.rootDir, kind, now = 1_000L + 59 * 60 * 1000L))
-        assertNull(AuthFlowMarker.pending(BossDirectories.rootDir, kind, now = 1_000L + kind.maxAgeMs + 1))
-        val oauth = AuthFlowMarker.Kind.OAUTH
-        assertNull(AuthFlowMarker.pending(BossDirectories.rootDir, oauth, now = 2_000L), "kinds do not mix")
+    fun `each kind waits as long as its own link is valid, and kinds do not mix`() {
+        AuthFlowMarker.mark(Kind.MAGIC_LINK, "a@example.com", now = 1_000L)
+        assertNotNull(AuthFlowMarker.pending(root, Kind.MAGIC_LINK, now = 1_000L + 59 * 60 * 1000L))
+        assertNull(AuthFlowMarker.pending(root, Kind.MAGIC_LINK, now = 1_000L + Kind.MAGIC_LINK.maxAgeMs + 1))
+        assertNull(AuthFlowMarker.pending(root, Kind.OAUTH, now = 2_000L))
     }
 
     @Test
-    fun `garbled or missing markers are not pending`() {
-        assertNull(AuthFlowMarker.pending(root, kind))
-        AuthFlowMarker.fileFor(root).apply { parentFile.mkdirs() }.writeText("12345")
-        assertNull(AuthFlowMarker.pending(root, kind))
+    fun `a callback of one kind never consumes a flow of another`() {
+        AuthFlowMarker.mark(Kind.OAUTH)
+        assertNull(AuthFlowMarker.claim(Kind.MAGIC_LINK, token = "t"))
+        assertNull(AuthFlowMarker.takeForExchange("t"))
+        assertNotNull(AuthFlowMarker.pending(root, Kind.OAUTH), "the other kind's flow is untouched")
     }
 
     @Test
-    fun `a flow is claimed exactly once, even by concurrent claims`() {
-        AuthFlowMarker.mark(kind, "a@example.com")
-        val claims = AtomicInteger()
+    fun `a flow is taken exactly once, even by concurrent exchanges`() {
+        AuthFlowMarker.mark(Kind.MAGIC_LINK, "a@example.com")
+        val takes = AtomicInteger()
         val start = CountDownLatch(1)
         val threads =
             (1..8).map {
                 thread {
                     start.await()
-                    if (AuthFlowMarker.claim(kind) != null) claims.incrementAndGet()
+                    if (AuthFlowMarker.takeForExchange("t") != null) takes.incrementAndGet()
                 }
             }
         start.countDown()
         threads.forEach { it.join() }
-        assertEquals(1, claims.get())
-        assertNull(AuthFlowMarker.pending(BossDirectories.rootDir, kind), "a claimed flow no longer waits")
+        assertEquals(1, takes.get())
     }
 
     @Test
-    fun `the claimed flow decides which account a link must sign in`() {
-        AuthFlowMarker.mark(kind, "a@example.com")
-        AuthFlowMarker.claim(kind)
-        assertEquals(AuthFlowMarker.hashEmail("a@example.com"), AuthFlowMarker.expectedEmailHash())
-        assertTrue(AuthFlowMarker.awaitsMagicLink(), "a claimed flow is still the one the link is checked against")
+    fun `a claim is bound to its token and redeemed once`() {
+        AuthFlowMarker.mark(Kind.MAGIC_LINK, "a@example.com")
+        val claimed = assertNotNull(AuthFlowMarker.claim(Kind.MAGIC_LINK, token = "token-1"))
+        assertNull(AuthFlowMarker.takeForExchange("token-2"), "another token cannot redeem the claim")
+        assertEquals(claimed, AuthFlowMarker.takeForExchange("token-1"))
+        assertNull(AuthFlowMarker.takeForExchange("token-1"), "a claim is spent once")
     }
 
     @Test
-    fun `an expired flow cannot be claimed`() {
-        AuthFlowMarker.mark(kind, "a@example.com", now = 1_000L)
-        assertNull(AuthFlowMarker.claim(kind, now = 1_000L + kind.maxAgeMs + 1))
+    fun `an expired flow cannot be claimed or taken`() {
+        AuthFlowMarker.mark(Kind.MAGIC_LINK, "a@example.com", now = 1_000L)
+        val late = 1_000L + Kind.MAGIC_LINK.maxAgeMs + 1
+        assertNull(AuthFlowMarker.claim(Kind.MAGIC_LINK, "t", now = late))
+        AuthFlowMarker.mark(Kind.MAGIC_LINK, "a@example.com", now = 1_000L)
+        assertNull(AuthFlowMarker.takeForExchange("t", now = late))
     }
 
     @Test
-    fun `a profile refuses a link it did not ask for before exchanging it`() {
-        assertTrue(AuthFlowMarker.refuseBeforeExchange(isProfile = true, awaitsLink = false))
-        assertFalse(AuthFlowMarker.refuseBeforeExchange(isProfile = true, awaitsLink = true))
-        // The main profile keeps the behaviour it had before profiles existed.
-        assertFalse(AuthFlowMarker.refuseBeforeExchange(isProfile = false, awaitsLink = false))
+    fun `a claim that expires before its exchange cannot be redeemed`() {
+        AuthFlowMarker.mark(Kind.MAGIC_LINK, "a@example.com", now = 1_000L)
+        assertNotNull(AuthFlowMarker.claim(Kind.MAGIC_LINK, "t", now = 2_000L))
+        assertNull(AuthFlowMarker.takeForExchange("t", now = 1_000L + Kind.MAGIC_LINK.maxAgeMs + 1))
     }
 
     @Test
-    fun `an exchange that signed in another account is refused`() {
-        val a = AuthFlowMarker.hashEmail("a@example.com")
-        val b = AuthFlowMarker.hashEmail("b@example.com")
-        assertTrue(AuthFlowMarker.isWrongAccount(a, b))
-        assertTrue(AuthFlowMarker.isWrongAccount(a, null), "an account that cannot be read is not the expected one")
-        assertFalse(AuthFlowMarker.isWrongAccount(a, a))
-        assertFalse(AuthFlowMarker.isWrongAccount(null, b), "nothing to check when no link was asked for")
+    fun `restoring an old flow never replaces a newer one`() {
+        val old = AuthFlowMarker.mark(Kind.MAGIC_LINK, "a@example.com")
+        assertNotNull(AuthFlowMarker.takeForExchange("t"))
+        val newer = AuthFlowMarker.mark(Kind.MAGIC_LINK, "b@example.com")
+        AuthFlowMarker.restore(old)
+        assertEquals(newer.id, AuthFlowMarker.pending(root, Kind.MAGIC_LINK)?.id)
+    }
+
+    @Test
+    fun `a flow restored after a failed exchange waits again`() {
+        val flow = AuthFlowMarker.mark(Kind.MAGIC_LINK, "a@example.com")
+        assertNotNull(AuthFlowMarker.takeForExchange("t"))
+        assertNull(AuthFlowMarker.pending(root, Kind.MAGIC_LINK))
+        AuthFlowMarker.restore(flow)
+        assertEquals(flow.id, AuthFlowMarker.pending(root, Kind.MAGIC_LINK)?.id)
     }
 }

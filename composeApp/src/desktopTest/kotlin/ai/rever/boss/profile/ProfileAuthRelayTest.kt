@@ -13,6 +13,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import ai.rever.boss.utils.SingleInstanceManager.AuthClaimAnswer as Answer
 
 /** Runs in the main profile of composeApp's hermetic test home. */
 class ProfileAuthRelayTest {
@@ -46,11 +47,14 @@ class ProfileAuthRelayTest {
         write(root, """{"kind":"${kind.name}","startedAtMs":$at$hash}""")
     }
 
+    private val savedClaimer = ProfileAuthRelay.claimer
+
     @BeforeEach
     @AfterEach
     fun cleanUp() {
         BossDirectories.profilesDir().deleteRecursively()
-        AuthFlowMarker.clear()
+        AuthFlowMarker.fileFor(BossDirectories.rootDir).delete()
+        ProfileAuthRelay.claimer = savedClaimer
     }
 
     @Test
@@ -158,6 +162,48 @@ class ProfileAuthRelayTest {
     fun `the main process never claims a link for itself through the profile path`() {
         AuthFlowMarker.mark(Kind.MAGIC_LINK, "a@example.com")
         assertFalse(ProfileAuthRelay.claimHere("boss://auth/verify?token=x"))
+        AuthFlowMarker.fileFor(BossDirectories.rootDir).delete()
+    }
+
+    @Test
+    fun `a lost reply from the first receiver stops the offer, so the second never gets the link`() {
+        val offered = mutableListOf<String>()
+        ProfileAuthRelay.claimer = { id, _ ->
+            offered += id
+            if (id == "first") Answer.NO_ANSWER else Answer.CLAIMED
+        }
+        val now = System.currentTimeMillis()
+        // Running state is decided by the launcher; route the decision directly with both live.
+        val route =
+            ProfileAuthRelay.route(
+                Kind.MAGIC_LINK,
+                null,
+                listOf("first" to magic(now, b), "second" to magic(now - 1, b)),
+                setOf("first", "second"),
+            )
+        assertEquals(Route.Offer(listOf("first", "second"), fallback = Outcome.REFUSED), route)
+        val outcome = ProfileAuthRelay.offerForTest(route as Route.Offer, "boss://auth/verify?token=x")
+        assertEquals(Outcome.UNCERTAIN, outcome)
+        assertEquals(listOf("first"), offered)
+    }
+
+    @Test
+    fun `a receiver that declines passes the link to the next, and one that claims ends the offer`() {
+        val offered = mutableListOf<String>()
+        ProfileAuthRelay.claimer = { id, _ ->
+            offered += id
+            if (id == "first") Answer.DECLINED else Answer.CLAIMED
+        }
+        val offer = Route.Offer(listOf("first", "second", "third"), fallback = Outcome.REFUSED)
+        assertEquals(Outcome.RELAYED, ProfileAuthRelay.offerForTest(offer, "boss://auth/verify?token=x"))
+        assertEquals(listOf("first", "second"), offered)
+    }
+
+    @Test
+    fun `when every receiver declines the fallback decides, and for a magic link that is refusal`() {
+        ProfileAuthRelay.claimer = { _, _ -> Answer.DECLINED }
+        val offer = Route.Offer(listOf("first", "second"), fallback = Outcome.REFUSED)
+        assertEquals(Outcome.REFUSED, ProfileAuthRelay.offerForTest(offer, "boss://auth/verify?token=x"))
     }
 
     private fun write(
