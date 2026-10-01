@@ -34,4 +34,17 @@ class AuthFlowMarkerTest {
         mark(5_000L)
         assertNull(AuthFlowMarker.pendingSince(root, now = 1_000L))
     }
+
+    @Test
+    fun `mark records a pending flow in this process's root and clear removes it`() {
+        val root = ai.rever.boss.plugin.pathutils.BossDirectories.rootDir
+        try {
+            AuthFlowMarker.mark()
+            assertEquals(true, AuthFlowMarker.pendingSince(root) != null)
+            AuthFlowMarker.clear()
+            assertNull(AuthFlowMarker.pendingSince(root))
+        } finally {
+            AuthFlowMarker.clear()
+        }
+    }
 }

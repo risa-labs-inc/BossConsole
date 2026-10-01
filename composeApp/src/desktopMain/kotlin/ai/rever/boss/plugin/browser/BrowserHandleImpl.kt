@@ -4636,9 +4636,7 @@ internal class BrowserHandleImpl(
          * period for nothing. Per profile as well, because the callback lives on a profile's
          * network: a window on its own browser profile ([WindowBrowserProfiles]) needs its own.
          */
-        private val uploadCallbackInstalls =
-            java.util.concurrent.ConcurrentHashMap
-                .newKeySet<String>()
+        private val uploadCallbackInstalls = EnginePerProfileOnce()
         private val staticLogger = BossLogger.forComponent("BrowserHandleImpl")
 
         /**
@@ -4777,8 +4775,8 @@ internal class BrowserHandleImpl(
             engine: Engine,
             profile: com.teamdev.jxbrowser.profile.Profile,
         ) {
-            val key = "${System.identityHashCode(engine)}:${profile.name()}"
-            if (!uploadCallbackInstalls.add(key)) return
+            val profileName = profile.name()
+            if (!uploadCallbackInstalls.claim(engine, profileName)) return
             try {
                 profile.network().set(
                     BeforeSendUploadDataCallback::class.java,
@@ -4815,7 +4813,7 @@ internal class BrowserHandleImpl(
                 )
                 staticLogger.debug(LogCategory.BROWSER, "BeforeSendUploadDataCallback installed")
             } catch (e: Exception) {
-                uploadCallbackInstalls.remove(key)
+                uploadCallbackInstalls.release(engine, profileName)
                 staticLogger.warn(LogCategory.BROWSER, "Failed to install upload callback", error = e)
             }
         }

@@ -35,7 +35,12 @@ import java.util.concurrent.ConcurrentHashMap
  */
 class WorkspaceServiceImpl(
     storageDirectory: File =
-        File(System.getenv("BOSS_DATA_DIR") ?: File(System.getProperty("user.home"), ".boss").path, "workspaces"),
+        File(
+            // Blank counts as unset: `export BOSS_DATA_DIR=` must not make the path relative.
+            System.getenv("BOSS_DATA_DIR")?.takeIf { it.isNotBlank() }
+                ?: File(System.getProperty("user.home"), ".boss").path,
+            "workspaces",
+        ),
 ) : WorkspaceServiceGrpcKt.WorkspaceServiceCoroutineImplBase() {
     private val logger = LoggerFactory.getLogger(WorkspaceServiceImpl::class.java)
 

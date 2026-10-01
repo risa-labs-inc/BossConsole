@@ -183,21 +183,28 @@ object BossProfileMcpToolProvider : McpToolProvider {
     ): JsonObject =
         buildJsonObject {
             put("success", true)
-            when (outcome) {
-                is BossProfileLauncher.Outcome.WindowOpened -> {
-                    put("status", "window_opened")
-                    outcome.windowId?.let { put("windowId", it) }
-                }
+            val running =
+                when (outcome) {
+                    is BossProfileLauncher.Outcome.WindowOpened -> {
+                        put("status", "window_opened")
+                        outcome.windowId?.let { put("windowId", it) }
+                        true
+                    }
 
-                is BossProfileLauncher.Outcome.Launched -> {
-                    put("status", "launched")
-                }
+                    is BossProfileLauncher.Outcome.Launched -> {
+                        // Started, not yet answering: profile_list reports when it is up.
+                        put("status", "starting")
+                        false
+                    }
 
-                is BossProfileLauncher.Outcome.Forwarded -> {
-                    put("status", "forwarded")
+                    is BossProfileLauncher.Outcome.Forwarded -> {
+                        // Without a Space there is nothing to hand over; the profile's own window
+                        // is left as it is (bringing another process to the front is not done).
+                        put("status", if (outcome.workspaceFile != null) "forwarded" else "already_running")
+                        true
+                    }
                 }
-            }
-            put("profile", describe(target.profile, running = true))
+            put("profile", describe(target.profile, running))
             target.workspace?.let { put("workspaceId", it.id) }
         }
 

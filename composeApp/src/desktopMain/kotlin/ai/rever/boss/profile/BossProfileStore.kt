@@ -11,11 +11,13 @@ import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.io.IOException
+import java.nio.channels.FileChannel
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
+import java.nio.file.StandardOpenOption
 import java.security.SecureRandom
 
 /** How a BOSS profile signs in, which also decides where its windows run. */
@@ -78,6 +80,7 @@ object BossProfileStore {
     private val logger = BossLogger.forComponent("BossProfileStore")
 
     private const val PROFILE_FILE = "profile.json"
+    private const val STORE_LOCK_FILE = ".store.lock"
     private const val MAX_NAME_LENGTH = 64
 
     private val json =
@@ -99,7 +102,13 @@ object BossProfileStore {
             .sortedBy { it.createdAt }
 
     /** Profile [id], or null when it does not exist (or [id] is not a valid id). */
-    fun get(id: String): BossProfile? = if (BossDirectories.isValidProfileId(id)) read(id) else null
+    fun get(id: String): BossProfile? {
+        val normalized = normalizeId(id)
+        return if (BossDirectories.isValidProfileId(normalized)) read(normalized) else null
+    }
+
+    /** Ids are lowercase everywhere, as `BOSS_PROFILE` resolution already makes them. */
+    fun normalizeId(id: String): String = id.trim().lowercase()
 
     /** The profile [workspaceId] is bound to, if any. */
     fun profileForWorkspace(workspaceId: String): BossProfile? = list().firstOrNull { workspaceId in it.workspaceIds }
@@ -119,9 +128,10 @@ object BossProfileStore {
         runCatching {
             val displayName = name.trim().take(MAX_NAME_LENGTH)
             require(displayName.isNotEmpty()) { "A profile needs a name" }
-            if (id != null) require(BossDirectories.isValidProfileId(id)) { "Invalid profile id '$id'" }
-            synchronized(lock) {
-                val profileId = id ?: uniqueIdFor(displayName)
+            val explicitId = id?.let(::normalizeId)
+            if (explicitId != null) require(BossDirectories.isValidProfileId(explicitId)) { "Invalid profile id '$id'" }
+            withStoreLock {
+                val profileId = explicitId ?: uniqueIdFor(displayName)
                 val root = BossDirectories.profileRoot(profileId)
                 if (File(root, PROFILE_FILE).exists()) {
                     throw FileAlreadyExistsException("Profile '$profileId' already exists")
@@ -156,9 +166,9 @@ object BossProfileStore {
         workspaceId: String,
     ): Result<BossProfile> =
         runCatching {
-            synchronized(lock) {
+            withStoreLock {
                 val profile = get(profileId) ?: error("No BOSS profile '$profileId'")
-                if (workspaceId in profile.workspaceIds) return@synchronized profile
+                if (workspaceId in profile.workspaceIds) return@withStoreLock profile
                 profile.copy(workspaceIds = profile.workspaceIds + workspaceId).also(::write)
             }
         }
@@ -182,6 +192,20 @@ object BossProfileStore {
 
     /** The directory profile [id] keeps its Spaces in (see `DesktopWorkspaceFileManager`). */
     fun workspacesDirOf(id: String): File = File(BossDirectories.profileRoot(id), WORKSPACES_DIR_NAME)
+
+    /**
+     * Runs [block] holding both this process's lock and a file lock on the profiles directory, so
+     * two BOSS processes creating or binding at once cannot interleave a read-modify-write of one
+     * `profile.json`, nor both claim the same new id.
+     */
+    private fun <T> withStoreLock(block: () -> T): T =
+        synchronized(lock) {
+            val dir = BossDirectories.profilesDir().apply { mkdirs() }
+            val lockPath = File(dir, STORE_LOCK_FILE).toPath()
+            FileChannel.open(lockPath, StandardOpenOption.CREATE, StandardOpenOption.WRITE).use { channel ->
+                channel.lock().use { block() }
+            }
+        }
 
     private fun read(id: String): BossProfile? {
         val file = File(BossDirectories.profileRoot(id), PROFILE_FILE)
@@ -230,8 +254,13 @@ object BossProfileStore {
     private fun seedChromium(root: File) {
         val source = File(BossDirectories.baseDir, "boss-chromium")
         if (!source.isDirectory) return
-        runCatching { linkOrCopyTree(source.toPath(), File(root, "boss-chromium").toPath()) }
-            .onFailure { logger.warn(LogCategory.SYSTEM, "Could not seed Chromium into the new profile", error = it) }
+        val target = File(root, "boss-chromium")
+        runCatching { linkOrCopyTree(source.toPath(), target.toPath()) }
+            .onFailure {
+                // A half-copied engine would look installed; without one the profile downloads its own.
+                target.deleteRecursively()
+                logger.warn(LogCategory.SYSTEM, "Could not seed Chromium into the new profile", error = it)
+            }
     }
 
     /**
@@ -257,13 +286,17 @@ object BossProfileStore {
                     Files.copy(jar.toPath(), File(targetDir, jar.name).toPath(), StandardCopyOption.COPY_ATTRIBUTES)
                 }
             File(sourceDir, PluginPersistence.CONFIG_FILE_NAME).takeIf { it.isFile }?.let { config ->
-                val sourcePrefix = sourceDir.absolutePath + File.separator
-                val targetPrefix = targetDir.absolutePath + File.separator
-                val rewritten = PluginPersistence.rebaseJarPaths(config.readText(), sourcePrefix, targetPrefix)
+                val rewritten = PluginPersistence.rebaseJarPaths(config.readText(), sourceDir, targetDir)
                 File(targetDir, PluginPersistence.CONFIG_FILE_NAME).atomicWriteText(rewritten)
             }
             File(root, "pending_wizard_completed").writeText("true")
-        }.onFailure { logger.warn(LogCategory.SYSTEM, "Could not seed plugins into the new profile", error = it) }
+        }.onFailure {
+            // Some jars and an installed.json naming the rest would load a partial set; an empty
+            // directory and no wizard marker instead mean the profile's first launch runs the wizard.
+            targetDir.deleteRecursively()
+            File(root, "pending_wizard_completed").delete()
+            logger.warn(LogCategory.SYSTEM, "Could not seed plugins into the new profile", error = it)
+        }
     }
 
     private fun linkOrCopyTree(

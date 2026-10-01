@@ -1,10 +1,10 @@
 package ai.rever.boss.services.auth
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import java.io.File
-import java.io.IOException
 
 /**
  * Records that THIS process is waiting for a `boss://auth` callback (a Google / Apple sign-in, or
@@ -30,12 +30,11 @@ object AuthFlowMarker {
     /** This process started a sign-in that will complete through a `boss://auth` link. */
     fun mark() {
         val file = fileFor(BossDirectories.rootDir)
-        try {
+        // Atomic, because another process reads it; any failure only means no relay, never a crash.
+        runCatching {
             file.parentFile.mkdirs()
-            file.writeText(System.currentTimeMillis().toString())
-        } catch (e: IOException) {
-            logger.warn(LogCategory.AUTH, "Could not record the pending sign-in", error = e)
-        }
+            file.atomicWriteText(System.currentTimeMillis().toString())
+        }.onFailure { logger.warn(LogCategory.AUTH, "Could not record the pending sign-in", error = it) }
     }
 
     /** The sign-in completed or was abandoned; stop claiming callbacks. */

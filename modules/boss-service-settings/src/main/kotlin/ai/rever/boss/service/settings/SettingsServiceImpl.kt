@@ -35,8 +35,11 @@ class SettingsServiceImpl(
     companion object {
         // BOSS_DATA_DIR is the data root the kernel hands every service (a BOSS profile's root
         // included); the home-directory fallback is for a standalone run.
-        private fun defaultStorageFile(): File =
-            File(System.getenv("BOSS_DATA_DIR") ?: File(System.getProperty("user.home"), ".boss").path, "settings.json")
+        private fun defaultStorageFile(): File {
+            // Blank counts as unset: `export BOSS_DATA_DIR=` must not make the path relative.
+            val root = System.getenv("BOSS_DATA_DIR")?.takeIf { it.isNotBlank() }
+            return File(root ?: File(System.getProperty("user.home"), ".boss").path, "settings.json")
+        }
     }
 
     @Serializable

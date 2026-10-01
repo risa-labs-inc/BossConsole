@@ -27,8 +27,11 @@ object WindowBrowserProfiles {
 
     private val profileByWindow = ConcurrentHashMap<String, String>()
 
-    /** Engine-identity + profile-name keys whose per-profile handlers are installed. */
-    private val prepared = ConcurrentHashMap.newKeySet<String>()
+    /** Which (engine, profile) pairs already have their per-profile handlers. */
+    private val prepared = EnginePerProfileOnce()
+
+    /** Serialises find-or-create, so two tabs opening at once in a fresh window make one profile. */
+    private val creationLock = Any()
 
     /** Runs [windowId]'s browser tabs on BOSS profile [profileId]'s browser profile. */
     fun bind(
@@ -59,14 +62,14 @@ object WindowBrowserProfiles {
     fun jxProfileFor(windowId: String): Profile? {
         val profileId = profileByWindow[windowId] ?: return null
         val name = jxProfileName(profileId)
-        val profile = FluckEngine.findProfile(name) ?: FluckEngine.newRpaProfile(name)
-        val key = "${System.identityHashCode(FluckEngine.currentEngine)}:$name"
-        if (prepared.add(key)) {
+        val engine = FluckEngine.engine
+        val profile = synchronized(creationLock) { FluckEngine.findProfile(name) ?: FluckEngine.newRpaProfile(name) }
+        if (prepared.claim(engine, name)) {
             // Handlers the default profile gets at engine creation; a recycled engine is a new
-            // identity, so they are installed again on its copy of the profile.
+            // object, so they are installed again on its copy of the profile.
             runCatching { FluckEngine.setupPermissionHandlers(profile) }
                 .onFailure {
-                    prepared.remove(key)
+                    prepared.release(engine, name)
                     logger.warn(LogCategory.BROWSER, "Could not prepare a window browser profile", error = it)
                 }
         }

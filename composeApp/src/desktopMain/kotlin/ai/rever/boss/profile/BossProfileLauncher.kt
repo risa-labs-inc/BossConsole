@@ -17,9 +17,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 import java.lang.management.ManagementFactory
 import java.net.URLEncoder
@@ -131,24 +128,24 @@ object BossProfileLauncher {
         check(!BossDirectories.isProfile) {
             "'${profile.name}' shares the main BOSS account; open it from a main BOSS window"
         }
-        val createWindow = { WindowManager.createNewWindow(browserProfileId = profile.id).id }
+        var createdWindowId: String? = null
+        val createWindow = {
+            WindowManager.createNewWindow(browserProfileId = profile.id).id.also { createdWindowId = it }
+        }
         if (workspace == null) {
             val windowId = withContext(Dispatchers.Main) { createWindow() }
             return Outcome.WindowOpened(profile, windowId)
         }
         val result = WorkspaceMcpToolProvider.openWorkspaceInNewWindow(workspace.id, createWindow)
-        check(!result.isError) { result.text }
+        if (result.isError) {
+            // The window is created before the Space is validated and applied; a refusal after
+            // that must not leave an empty profile window behind.
+            createdWindowId?.let { id -> withContext(Dispatchers.Main) { WindowManager.closeWindow(id) } }
+            error(result.text)
+        }
         withContext(Dispatchers.IO) { BossProfileStore.bindWorkspace(profile.id, workspace.id).getOrThrow() }
-        val windowId =
-            runCatching {
-                Json
-                    .parseToJsonElement(result.text)
-                    .jsonObject["windowId"]
-                    ?.jsonPrimitive
-                    ?.content
-            }.getOrNull()
         logger.info(LogCategory.SYSTEM, "Opened a same-account BOSS profile window", mapOf("profileId" to profile.id))
-        return Outcome.WindowOpened(profile, windowId)
+        return Outcome.WindowOpened(profile, createdWindowId)
     }
 
     private suspend fun openSeparateProcess(
@@ -233,13 +230,16 @@ object BossProfileLauncher {
     ) {
         val args = listOfNotNull(workspaceFile?.let(::workspaceLinkFor))
         val command = ProfileLaunchCommand.build(profile.id, args)
-        val consoleLog = File(File(profile.root, "logs").apply { mkdirs() }, "console.log")
+        val consoleLog = File(File(profile.root, "logs").apply { mkdirs() }, "console.log").also(::rotateIfLarge)
 
         withContext(Dispatchers.IO) {
             val builder = ProfileLaunchCommand.detached(command)
             val env = builder.environment()
             INHERITED_ENV_TO_DROP.forEach(env::remove)
             env[BossDirectories.PROFILE_ENV] = profile.id
+            // A packaged launcher takes no JVM flags, so a dev-mode parent's -Dboss.dev.mode would
+            // be lost and the child would root under ~/.boss while its profile lives in ~/.boss_debug.
+            if (BossDirectories.isDevMode) env["BOSS_DEV_MODE"] = "true"
             // A host log file named by the launcher's environment would otherwise be shared.
             if (!env["BOSS_LOG_FILE"].isNullOrBlank() && !env["BOSS_LOG_FILE"].equals("off", ignoreCase = true)) {
                 env["BOSS_LOG_FILE"] = File(profile.root, "logs/boss.log").absolutePath
@@ -257,6 +257,17 @@ object BossProfileLauncher {
             mapOf("profileId" to profile.id, "withSpace" to (workspaceFile != null)),
         )
     }
+
+    /** Keeps one previous `console.log`, so a profile relaunched for months cannot fill the disk. */
+    private fun rotateIfLarge(log: File) {
+        if (log.length() > MAX_CONSOLE_LOG_BYTES) {
+            val previous = File(log.parentFile, "${log.name}.1")
+            previous.delete()
+            log.renameTo(previous)
+        }
+    }
+
+    private const val MAX_CONSOLE_LOG_BYTES = 10L * 1024 * 1024
 
     private fun workspaceLinkFor(file: File): String =
         "boss://workspace?path=" + URLEncoder.encode(file.absolutePath, StandardCharsets.UTF_8)
@@ -289,18 +300,23 @@ internal object ProfileLaunchCommand {
                 .info()
                 .command()
                 .orElseThrow { IllegalStateException("Cannot determine how this BOSS process was started") }
-        return if (isJavaLauncher(launcher)) {
-            val jvmFlags =
-                ManagementFactory
-                    .getRuntimeMXBean()
-                    .inputArguments
-                    .filterNot { flag -> DROPPED_JVM_FLAGS.any { flag.startsWith(it) } }
-            listOf(launcher) + jvmFlags + "-D${BossDirectories.PROFILE_PROPERTY}=$profileId" + MAIN_CLASS + args
+        return commandFor(launcher, ManagementFactory.getRuntimeMXBean().inputArguments, profileId, args)
+    }
+
+    /** [build] with the running process's launcher and JVM flags passed in, so it is testable. */
+    internal fun commandFor(
+        launcher: String,
+        jvmFlags: List<String>,
+        profileId: String,
+        args: List<String>,
+    ): List<String> =
+        if (isJavaLauncher(launcher)) {
+            val kept = jvmFlags.filterNot { flag -> DROPPED_JVM_FLAGS.any { flag.startsWith(it) } }
+            listOf(launcher) + kept + "-D${BossDirectories.PROFILE_PROPERTY}=$profileId" + MAIN_CLASS + args
         } else {
             // jpackage launcher (macOS .app/Contents/MacOS/<App>, Windows .exe, Linux bin/<App>).
             listOf(launcher) + args
         }
-    }
 
     /**
      * The class path a development launch needs, passed as `CLASSPATH` rather than `-cp` so a
@@ -314,8 +330,11 @@ internal object ProfileLaunchCommand {
      * it in the background and exits, so it is re-parented to init and is not this process's
      * descendant (which the performance panel would otherwise count as part of this one).
      */
-    fun detached(command: List<String>): ProcessBuilder =
-        if (isWindows) {
+    fun detached(
+        command: List<String>,
+        windows: Boolean = isWindows,
+    ): ProcessBuilder =
+        if (windows) {
             ProcessBuilder(command)
         } else {
             ProcessBuilder(listOf("/bin/sh", "-c", "\"\$@\" &", "boss-profile") + command)
@@ -323,5 +342,5 @@ internal object ProfileLaunchCommand {
 
     private val JAVA_LAUNCHER = Regex(""".*[/\\](java|javaw)(\.exe)?$""")
 
-    private fun isJavaLauncher(launcher: String): Boolean = JAVA_LAUNCHER.matches(launcher.lowercase())
+    internal fun isJavaLauncher(launcher: String): Boolean = JAVA_LAUNCHER.matches(launcher.lowercase())
 }

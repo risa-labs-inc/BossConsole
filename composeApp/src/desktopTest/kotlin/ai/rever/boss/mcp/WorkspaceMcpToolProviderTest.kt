@@ -1552,4 +1552,94 @@ class WorkspaceMcpToolProviderTest {
             ),
         projectPath = projectPath,
     )
+
+    private fun registerWindow(id: String) {
+        val state = SplitViewState(stubTabRegistry, id)
+        createdSplitViewStates.add(state)
+        SplitViewStateRegistry.register(id, state)
+    }
+
+    @Test
+    fun `newWindow refuses to be combined with windowId or with path`(): Unit =
+        runBlocking {
+            registerWindow("existing-window")
+            val core = createTestCore()
+            val withWindow =
+                core.invoke("open_workspace", """{"workspaceId":"x","newWindow":true,"windowId":"existing-window"}""")
+            assertTrue(withWindow.isError)
+            assertTrue(withWindow.text.contains("not both"), withWindow.text)
+            val withPath = core.invoke("open_workspace", """{"path":"/tmp","newWindow":true}""")
+            assertTrue(withPath.isError)
+            assertTrue(withPath.text.contains("'newWindow'"), withPath.text)
+            assertEquals(0, windowCreatorCalls, "a refused request must not open a window")
+        }
+
+    @Test
+    fun `newWindow opens the Space in a fresh window even while another window is open`(): Unit =
+        runBlocking {
+            // With one window open, the default resolution would reuse it.
+            registerWindow("existing-window")
+            val result =
+                createTestCore().invoke(
+                    "open_workspace",
+                    """{"workspaceId":"${PredefinedWorkspaces.DUAL_TERMINAL_ID}","newWindow":true}""",
+                )
+            assertFalse(result.isError, "Expected success: ${result.text}")
+            val json = Json.parseToJsonElement(result.text).jsonObject
+            assertEquals("test-window-window-1", json["windowId"]?.jsonPrimitive?.content)
+            assertEquals(1, windowCreatorCalls)
+        }
+
+    @Test
+    fun `without newWindow the single open window is reused, as before`(): Unit =
+        runBlocking {
+            registerWindow("existing-window")
+            val result =
+                createTestCore().invoke(
+                    "open_workspace",
+                    """{"workspaceId":"${PredefinedWorkspaces.DUAL_TERMINAL_ID}"}""",
+                )
+            assertFalse(result.isError, "Expected success: ${result.text}")
+            assertEquals(
+                "existing-window",
+                Json
+                    .parseToJsonElement(result.text)
+                    .jsonObject["windowId"]
+                    ?.jsonPrimitive
+                    ?.content,
+            )
+            assertEquals(0, windowCreatorCalls)
+        }
+
+    @Test
+    fun `openWorkspaceInNewWindow uses the caller's window, not the default creator`(): Unit =
+        runBlocking {
+            val result =
+                WorkspaceMcpToolProvider.openWorkspaceInNewWindow(PredefinedWorkspaces.DUAL_TERMINAL_ID) {
+                    "profile-window".also(::registerWindow)
+                }
+            assertFalse(result.isError, "Expected success: ${result.text}")
+            assertEquals(
+                "profile-window",
+                Json
+                    .parseToJsonElement(result.text)
+                    .jsonObject["windowId"]
+                    ?.jsonPrimitive
+                    ?.content,
+            )
+            assertEquals(0, windowCreatorCalls)
+        }
+
+    @Test
+    fun `newWindow without any window creator is a clear error`(): Unit =
+        runBlocking {
+            WorkspaceMcpToolProvider.windowCreator = null
+            val result =
+                createTestCore().invoke(
+                    "open_workspace",
+                    """{"workspaceId":"${PredefinedWorkspaces.DUAL_TERMINAL_ID}","newWindow":true}""",
+                )
+            assertTrue(result.isError)
+            assertTrue(result.text.contains("No window creator"), result.text)
+        }
 }

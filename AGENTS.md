@@ -2162,8 +2162,8 @@ both.
 A **BOSS profile** gives a Space a window of its own with its own browser data, and optionally
 its own BOSS account. It is a **hidden feature**: nothing in the UI creates or opens one, a Space
 opened the ordinary way still opens in the current window under the current profile, and the only
-entry points are the approval-gated MCP tools `profile_list`, `profile_create` and `profile_open`
-(`profile/BossProfileMcpToolProvider.kt`). `open_workspace` separately gained `newWindow`, which
+entry points are the MCP tools in `profile/BossProfileMcpToolProvider.kt`: `profile_list`, which
+only reads, and `profile_create` and `profile_open`, which are approval-gated. `open_workspace` separately gained `newWindow`, which
 opens a Space in a new window of the same profile with nothing else changed.
 
 There are two kinds, and they run in different places:
@@ -2212,8 +2212,11 @@ What a separate-account profile does not share, and why:
   callback reaches the main process. Each process drops `run/auth-pending` (`AuthFlowMarker`) when
   it starts a Google / Apple / magic-link sign-in, and the main process's
   `DeepLinkHandler.emitUnrouted` hands a callback to the profile with the newest pending flow
-  (`ProfileAuthRelay`). The check is local file reads, so with no profile waiting the link takes
-  the old synchronous path, and a misdelivered callback fails its PKCE exchange.
+  (`ProfileAuthRelay`). Only `boss://auth/verify` and `boss://auth/callback` are ever relayed -
+  the two a marker stands for - so passkey, confirmation, invite and recovery links stay in the
+  main process whatever markers exist. The check reads only the marker files, so with no profile
+  waiting the link takes the old synchronous path, and a misdelivered callback fails its PKCE
+  exchange.
 
 **Known limits.** Several plugins build `~/.boss` paths themselves instead of using
 `BossDirectories` (analytics, rparecorder, rpaengine, editor-tab settings, dna-origami,
