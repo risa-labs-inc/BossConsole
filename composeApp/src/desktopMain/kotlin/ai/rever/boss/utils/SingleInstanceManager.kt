@@ -78,6 +78,13 @@ internal const val VERB_MCP_INVOKE = "MCP_INVOKE"
 /** Asks the running instance to reload a plugin in development mode. */
 internal const val VERB_PLUGIN_DEV_RELOAD = "PLUGIN_DEV_RELOAD"
 
+/**
+ * A sign-in callback offered to another BOSS profile's instance, which answers [RESPONSE_CLAIMED]
+ * only once it has claimed a pending flow of its own for it. Unlike [VERB_OPEN], whose OK means
+ * "queued", the answer is the receiver's decision, so a declined link stays with the sender.
+ */
+internal const val VERB_AUTH_CLAIM = "AUTH_CLAIM"
+
 sealed interface ReloadResult {
     data object Success : ReloadResult
 
@@ -101,6 +108,8 @@ sealed interface ReloadResult {
 internal const val RESPONSE_OK = "OK"
 internal const val RESPONSE_PONG = "PONG"
 internal const val RESPONSE_REJECTED = "REJECTED"
+internal const val RESPONSE_CLAIMED = "CLAIMED"
+internal const val RESPONSE_DECLINED = "DECLINED"
 private const val RESPONSE_LLM_TOKEN_PREFIX = "LLM_TOKEN "
 internal const val RESPONSE_STATUS_PREFIX = "STATUS "
 internal const val RESPONSE_MCP_LIST_PREFIX = "MCP_LIST "
@@ -393,6 +402,10 @@ internal fun parseRequestLine(line: String): SingleInstanceRequest? {
             parseMcpInvokeRequest(token, parts)
         }
 
+        VERB_AUTH_CLAIM -> {
+            parseAuthClaimRequest(token, parts)
+        }
+
         VERB_PLUGIN_DEV_RELOAD -> {
             val pluginId = parts.getOrNull(3).orEmpty()
             if (validPluginDevId(pluginId)) {
@@ -407,6 +420,16 @@ internal fun parseRequestLine(line: String): SingleInstanceRequest? {
         }
     }
 }
+
+/** `<protocol> <token> AUTH_CLAIM <url>`: one forwardable URL, no control characters. */
+private fun parseAuthClaimRequest(
+    token: String,
+    parts: List<String>,
+): SingleInstanceRequest? =
+    parts
+        .getOrNull(3)
+        ?.takeIf { parts.size == 4 && it.none(Char::isISOControl) && isForwardableUrl(it) }
+        ?.let { SingleInstanceRequest(token, VERB_AUTH_CLAIM, DeepLinkOrigin.EXTERNAL, it) }
 
 private fun validMcpToolName(toolName: String): Boolean =
     toolName.length in 1..MAX_TOOL_NAME_LENGTH && toolName.none { it.isWhitespace() || it.isISOControl() }
@@ -479,6 +502,12 @@ internal fun formatOpenRequest(
 
 /** Builds a liveness probe line. Never log the result: it carries the token. */
 internal fun formatPingRequest(token: String): String = "$PROTOCOL_VERSION $token $VERB_PING"
+
+/** A [VERB_AUTH_CLAIM] line. Never log the result: it carries the token. */
+internal fun formatAuthClaimRequest(
+    token: String,
+    url: String,
+): String = "$PROTOCOL_VERSION $token $VERB_AUTH_CLAIM $url"
 
 /** Builds a credential request. Never log the result: it carries the channel token. */
 internal fun formatLlmTokenRequest(token: String): String = "$PROTOCOL_VERSION $token $VERB_LLM_TOKEN"
@@ -1245,6 +1274,13 @@ object SingleInstanceManager {
     /** Test seam / host hook for dev plugin reload response. */
     internal var pluginReloadHandlerOverride: ((String) -> Boolean)? = null
 
+    /**
+     * Host hook answering [VERB_AUTH_CLAIM]: true once this process has claimed a pending sign-in
+     * of its own for the link (and taken the link on). Null - every link declined - by default.
+     */
+    @Volatile
+    var authClaimHandler: ((String) -> Boolean)? = null
+
     @Volatile
     private var isListening: Boolean = false
 
@@ -1498,6 +1534,12 @@ object SingleInstanceManager {
 
             request.verb == VERB_PLUGIN_DEV_RELOAD -> {
                 buildPluginDevReloadResponse(request.toolName.orEmpty(), pluginReloadHandlerOverride)
+            }
+
+            request.verb == VERB_AUTH_CLAIM -> {
+                val url = requireNotNull(request.url)
+                val claimed = runCatching { authClaimHandler?.invoke(url) == true }.getOrDefault(false)
+                if (claimed) RESPONSE_CLAIMED else RESPONSE_DECLINED
             }
 
             else -> {
@@ -1787,6 +1829,25 @@ object SingleInstanceManager {
     ): Boolean {
         if (url.isBlank()) return false
         return sendTo(SingleInstanceFiles.readAt(runtimeDirectory), url, origin)
+    }
+
+    /**
+     * Offers sign-in callback [url] to the instance under [runtimeDirectory] with [VERB_AUTH_CLAIM].
+     * True only when that instance answered that it claimed a pending flow of its own for it;
+     * any other answer, an unverifiable peer, or no answer at all leaves the link with the caller.
+     */
+    fun claimAuthAt(
+        runtimeDirectory: File,
+        url: String,
+    ): Boolean {
+        // A sign-in link only ever goes to a peer whose owner is provably this program.
+        val target =
+            SingleInstanceFiles
+                .readAt(runtimeDirectory)
+                ?.takeIf { descriptorTrust(it) == DescriptorTrust.VERIFIED && canFrameOpenUrl(url) }
+        val response =
+            target?.let { peer -> SingleInstanceWire.exchange(peer, formatAuthClaimRequest(peer.token, url)) }
+        return response == RESPONSE_CLAIMED
     }
 
     @Suppress("ReturnCount")

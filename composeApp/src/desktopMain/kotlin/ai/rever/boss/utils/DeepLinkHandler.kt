@@ -326,10 +326,11 @@ actual object DeepLinkHandler {
     /**
      * Hands a link no route claims - in practice a sign-in callback - to the auth/other flow.
      *
-     * Unless another BOSS profile is the one waiting for it: the OS delivers every `boss://`
-     * link to the main profile's process, whichever process started the sign-in, so such a
-     * callback is relayed to that profile instead. The check is local file reads, so with no
-     * profile waiting the link is emitted synchronously exactly as before.
+     * Unless a BOSS profile is waiting for a sign-in too: the OS delivers every `boss://` link to
+     * the main profile's process, whichever process started the sign-in, so such a callback is
+     * routed by [ProfileAuthRelay] - kept, claimed by the profile it belongs to, or, when it
+     * could belong to more than one account, used nowhere. The check is local file reads, so
+     * with no profile waiting the link is emitted synchronously exactly as before.
      */
     private fun emitUnrouted(uri: String) {
         if (!ProfileAuthRelay.mightRelay(uri)) {
@@ -337,7 +338,23 @@ actual object DeepLinkHandler {
             return
         }
         scope.launch(Dispatchers.IO) {
-            if (!ProfileAuthRelay.relayIfAwaitedElsewhere(uri)) _deepLinkFlow.value = uri
+            when (ProfileAuthRelay.relay(uri)) {
+                ProfileAuthRelay.Outcome.KEEP -> {
+                    _deepLinkFlow.value = uri
+                }
+
+                ProfileAuthRelay.Outcome.RELAYED -> {
+                    Unit
+                }
+
+                ProfileAuthRelay.Outcome.REFUSED -> {
+                    StatusMessageManager.showMessage(
+                        "More than one BOSS window is waiting for a sign-in link. " +
+                            "Request a new link from the window that should sign in.",
+                        durationMs = REFUSAL_MESSAGE_MS,
+                    )
+                }
+            }
         }
     }
 

@@ -2208,15 +2208,28 @@ What a separate-account profile does not share, and why:
   but not a shared directory: the auto-downloader swaps its engine directory in place.
 - **The legacy session store.** `EncryptedSessionSettings` skips the machine-wide `java.util.prefs`
   migration in a profile, because what that store holds is the main profile's session.
-- **Sign-in callbacks are relayed.** The OS has one `boss://` handler, so every `boss://auth`
-  callback reaches the main process. Each process drops `run/auth-pending` (`AuthFlowMarker`) when
-  it starts a Google / Apple / magic-link sign-in, and the main process's
-  `DeepLinkHandler.emitUnrouted` hands a callback to the profile with the newest pending flow
-  (`ProfileAuthRelay`). Only `boss://auth/verify` and `boss://auth/callback` are ever relayed -
-  the two a marker stands for - so passkey, confirmation, invite and recovery links stay in the
-  main process whatever markers exist. The check reads only the marker files, so with no profile
-  waiting the link takes the old synchronous path, and a misdelivered callback fails its PKCE
-  exchange.
+- **Sign-in callbacks are routed, and a magic link is bound to the account it was sent to.** The
+  OS has one `boss://` handler, so every `boss://auth` callback reaches the main process. Each
+  process drops `run/auth-pending` (`AuthFlowMarker`) when it starts a sign-in: the kind of flow,
+  when, and for a magic link a hash of the email it was sent to, for as long as the link is valid.
+  The main process's `DeepLinkHandler.emitUnrouted` routes a callback through
+  `ProfileAuthRelay.route`:
+  - nothing else waits: kept here, exactly as before profiles;
+  - a magic link (`boss://auth/verify`) with flows for **different accounts** waiting - or one
+    whose account cannot be told - is ambiguous and is used **nowhere**; the user is told to
+    request a new link from the window that should sign in;
+  - one account waiting in profiles only: offered to them over `AUTH_CLAIM`, newest first, and a
+    profile takes it only after atomically claiming a live flow of its own
+    (`AuthFlowMarker.claim`, a rename, so exactly one process acts on a link); unclaimed, it is
+    not spent in the main process either. A dead profile's flow still counts here while the main
+    process waits for nothing, and is ignored while it waits for a link of its own;
+  - a Google / Apple callback (`boss://auth/callback`, PKCE-bound) goes to the newest flow first.
+
+  Two checks back that up in `AuthService.verifyEmail`: a separate-account profile refuses a
+  link it did not ask for **before** exchanging it, and an exchange that signed in a different
+  account than the flow's is signed out at once. Passkey, confirmation, invite and recovery links
+  are never routed. The routing check reads only marker files, so with no profile waiting the
+  link takes the old synchronous path.
 
 **Known limits.** Several plugins build `~/.boss` paths themselves instead of using
 `BossDirectories` (analytics, rparecorder, rpaengine, editor-tab settings, dna-origami,

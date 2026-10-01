@@ -18,6 +18,7 @@ class SingleInstanceOtherProfileTest {
 
     @AfterEach
     fun tearDown() {
+        SingleInstanceManager.authClaimHandler = null
         SingleInstanceManager.release()
         SingleInstanceManager.runtimeDirOverride = null
     }
@@ -51,5 +52,44 @@ class SingleInstanceOtherProfileTest {
         assertTrue(SingleInstanceManager.acquireLock())
         SingleInstanceManager.release()
         assertFalse(SingleInstanceManager.isInstanceRunningAt(peerRun))
+    }
+
+    @Test
+    fun `a sign-in link is handed over only when the receiver claims it`() {
+        val peerRun = File(tempDir.toFile(), "peer/run")
+        SingleInstanceManager.runtimeDirOverride = peerRun
+        assertTrue(SingleInstanceManager.acquireLock())
+        val link = "boss://auth/verify?token=x"
+
+        // No handler installed: every link is declined.
+        assertFalse(SingleInstanceManager.claimAuthAt(peerRun, link))
+
+        val offered = mutableListOf<String>()
+        SingleInstanceManager.authClaimHandler = { url ->
+            offered += url
+            false
+        }
+        assertFalse(SingleInstanceManager.claimAuthAt(peerRun, link), "a receiver with no flow of its own declines")
+
+        SingleInstanceManager.authClaimHandler = { url ->
+            offered += url
+            true
+        }
+        assertTrue(SingleInstanceManager.claimAuthAt(peerRun, link))
+        assertTrue(offered == listOf(link, link), "the receiver saw exactly the offered link")
+    }
+
+    @Test
+    fun `a receiver that throws declines rather than accepting`() {
+        val peerRun = File(tempDir.toFile(), "peer/run")
+        SingleInstanceManager.runtimeDirOverride = peerRun
+        assertTrue(SingleInstanceManager.acquireLock())
+        SingleInstanceManager.authClaimHandler = { error("boom") }
+        assertFalse(SingleInstanceManager.claimAuthAt(peerRun, "boss://auth/verify?token=x"))
+    }
+
+    @Test
+    fun `nothing answers a claim where no instance runs`() {
+        assertFalse(SingleInstanceManager.claimAuthAt(File(tempDir.toFile(), "none/run"), "boss://auth/verify?token=x"))
     }
 }
