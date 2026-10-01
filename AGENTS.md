@@ -25,6 +25,27 @@ BOSS (Business Operating System Service) is a desktop application built with Kot
 
 **IMPORTANT**: Do NOT run `./gradlew run` in a blocking/foreground way just to test - the user runs and tests the app themselves. **Exception:** launching the app **in a dedicated bottom split pane is allowed** (backgrounded so it doesn't wedge the pane).
 
+### Testing automatic app updates
+
+Automatic Updates in Settings downloads new releases and prepares installation after
+manual quit. It never quits or relaunches BOSS. Release distributions default this on;
+Gradle development runs default it off. Explicit preferences are saved. Update
+banners and prompts stay hidden in automatic mode; progress and errors remain in
+Settings. The next start of a newer version shows a one-time success toast.
+
+Build a separate older distribution for installation testing:
+
+```bash
+./gradlew :composeApp:createDistributable -PtestAutoUpdate=true
+```
+
+This uses v1.0.0, enables automatic updates by default, stores updater preferences in
+`composeApp/build/auto-update-test-settings`, and writes the distribution under
+`composeApp/build/compose-auto-update-test/binaries/main/app/`. On macOS, manually
+launch `BOSS.app` from that directory. Quit manually to let the helper install, then
+open it again after installation finishes. Do not use `run` for installation testing:
+the updater refuses automatic installation from a Gradle development process.
+
 ### `composeApp` test home isolation
 
 Every `composeApp` `Test` task points `user.home` at its own fresh

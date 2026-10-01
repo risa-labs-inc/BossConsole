@@ -187,7 +187,7 @@
     <ID>CyclomaticComplexMethod:TopOfMindDialog.kt$@Composable fun TopOfMindDialog( splitViewState: SplitViewState? = null, // Kept for backward compatibility but not used workspaceManager: WorkspaceManager, onDismiss: () -&gt; Unit, onTabSelect: (ActiveTab) -&gt; Unit, )</ID>
     <ID>CyclomaticComplexMethod:TopOfMindDialog.kt$@Composable private fun ActiveTabDialogItem( activeTab: ActiveTab, isSelected: Boolean, onTabClick: () -&gt; Unit, )</ID>
     <ID>CyclomaticComplexMethod:UpdateInstaller.kt$UpdateInstaller$private fun detectLinuxDistroType(): String</ID>
-    <ID>CyclomaticComplexMethod:UpdateInstaller.kt$UpdateInstaller$suspend fun installUpdate(downloadPath: String): InstallResult</ID>
+    <ID>CyclomaticComplexMethod:UpdateInstaller.kt$UpdateInstaller$suspend fun installUpdate( downloadPath: String, restartAutomatically: Boolean = true, ): InstallResult</ID>
     <ID>CyclomaticComplexMethod:UpdateUI.kt$@Composable fun UpdateSettingsSection(updateCoordinator: UpdateCoordinator = UpdateCoordinator.instance)</ID>
     <ID>CyclomaticComplexMethod:UpdateUI.kt$private fun formatTime(instant: kotlin.time.Instant): String</ID>
     <ID>CyclomaticComplexMethod:UserExistenceService.kt$UserExistenceService$suspend fun checkUserExists(email: String): Result&lt;UserExistence&gt;</ID>
@@ -431,11 +431,11 @@
     <ID>LongMethod:TopOfMindDialog.kt$@Composable fun TopOfMindDialog( splitViewState: SplitViewState? = null, // Kept for backward compatibility but not used workspaceManager: WorkspaceManager, onDismiss: () -&gt; Unit, onTabSelect: (ActiveTab) -&gt; Unit, )</ID>
     <ID>LongMethod:TopOfMindDialog.kt$@Composable private fun ActiveTabDialogItem( activeTab: ActiveTab, isSelected: Boolean, onTabClick: () -&gt; Unit, )</ID>
     <ID>LongMethod:UpdateAvailableDialog.kt$@Composable fun UpdateAvailableDialog( updateInfo: UpdateInfo, onUpdateNow: () -&gt; Unit, onLater: () -&gt; Unit, )</ID>
-    <ID>LongMethod:UpdateInstaller.kt$UpdateInstaller$private suspend fun installMacOSUpdate(downloadFile: File): InstallResult</ID>
-    <ID>LongMethod:UpdateInstaller.kt$UpdateInstaller$suspend fun installUpdate(downloadPath: String): InstallResult</ID>
-    <ID>LongMethod:UpdateScriptGenerator.kt$UpdateScriptGenerator$fun generateLinuxDebUpdateScript( debPath: String, appPid: Long, ): File</ID>
-    <ID>LongMethod:UpdateScriptGenerator.kt$UpdateScriptGenerator$fun generateLinuxRpmUpdateScript( rpmPath: String, appPid: Long, ): File</ID>
-    <ID>LongMethod:UpdateScriptGenerator.kt$UpdateScriptGenerator$fun generateMacOSUpdateScript( dmgPath: String, targetAppPath: String, appPid: Long, ): File</ID>
+    <ID>LongMethod:UpdateInstaller.kt$UpdateInstaller$private suspend fun installMacOSUpdate( downloadFile: File, restartAutomatically: Boolean, ): InstallResult</ID>
+    <ID>LongMethod:UpdateInstaller.kt$UpdateInstaller$suspend fun installUpdate( downloadPath: String, restartAutomatically: Boolean = true, ): InstallResult</ID>
+    <ID>LongMethod:UpdateScriptGenerator.kt$UpdateScriptGenerator$fun generateLinuxDebUpdateScript( debPath: String, appPid: Long, restartAutomatically: Boolean = true, ): File</ID>
+    <ID>LongMethod:UpdateScriptGenerator.kt$UpdateScriptGenerator$fun generateLinuxRpmUpdateScript( rpmPath: String, appPid: Long, restartAutomatically: Boolean = true, ): File</ID>
+    <ID>LongMethod:UpdateScriptGenerator.kt$UpdateScriptGenerator$fun generateMacOSUpdateScript( dmgPath: String, targetAppPath: String, appPid: Long, restartAutomatically: Boolean = true, ): File</ID>
     <ID>LongMethod:UpdateUI.kt$@Composable fun UpdateSettingsSection(updateCoordinator: UpdateCoordinator = UpdateCoordinator.instance)</ID>
     <ID>LongMethod:UserExistenceService.kt$UserExistenceService$suspend fun checkUserExists(email: String): Result&lt;UserExistence&gt;</ID>
     <ID>LongMethod:VersionSelectionDialog.kt$@Composable fun VersionSelectionDialog( currentVersion: Version, versions: List&lt;VersionInfo&gt;, isLoading: Boolean, error: String? = null, onVersionSelected: (VersionInfo) -&gt; Unit, onDismiss: () -&gt; Unit, )</ID>
@@ -1171,12 +1171,12 @@
     <ID>ReturnCount:TabTypeAvailability.kt$TabTypeAvailability$private fun promptFor( typeId: TabTypeId, pluginId: String, purpose: String, ): MissingHandlerPluginPrompt?</ID>
     <ID>ReturnCount:TabTypeAvailability.kt$TabTypeAvailability$suspend fun require( registry: TabRegistry, typeId: TabTypeId, purpose: String, bus: MissingHandlerPluginBus = MissingHandlerPluginEventBus, ): Boolean</ID>
     <ID>ReturnCount:TabUpdateRegistry.kt$TabUpdateRegistry$private fun resolveProvider( tabId: String, typeId: TabTypeId, ): TabUpdateProvider?</ID>
-    <ID>ReturnCount:UpdateInstaller.kt$UpdateInstaller$fun getCurrentApplicationPath(): String?</ID>
+    <ID>ReturnCount:UpdateInstaller.kt$UpdateInstaller$fun getCurrentApplicationPath(allowInstalledFallback: Boolean = true): String?</ID>
     <ID>ReturnCount:UpdateInstaller.kt$UpdateInstaller$private fun detectLinuxDistroType(): String</ID>
     <ID>ReturnCount:UpdateInstaller.kt$UpdateInstaller$private fun findInstalledAppViaSpotlight(): String?</ID>
     <ID>ReturnCount:UpdateInstaller.kt$UpdateInstaller$private fun resolveRealAppPath(path: String): String</ID>
     <ID>ReturnCount:UpdateInstaller.kt$UpdateInstaller$private fun verifyNoDowngrade(downloadFile: File): Boolean</ID>
-    <ID>ReturnCount:UpdateInstaller.kt$UpdateInstaller$suspend fun installUpdate(downloadPath: String): InstallResult</ID>
+    <ID>ReturnCount:UpdateInstaller.kt$UpdateInstaller$suspend fun installUpdate( downloadPath: String, restartAutomatically: Boolean = true, ): InstallResult</ID>
     <ID>ReturnCount:UpdateInstaller.kt$internal fun realAppPathFor( path: String, appExists: (String) -&gt; Boolean, installedAppLookup: () -&gt; String?, ): String</ID>
     <ID>ReturnCount:UpdateManager.kt$UpdateManager$private suspend fun checkForUpdatesInternal(force: Boolean = false): UpdateResult</ID>
     <ID>ReturnCount:UrlOpenValidation.kt$UrlOpenValidation$fun isOpenable(url: String): Boolean</ID>

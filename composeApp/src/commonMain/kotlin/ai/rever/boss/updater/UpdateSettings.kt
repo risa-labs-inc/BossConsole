@@ -7,6 +7,10 @@ package ai.rever.boss.updater
  * Actual implementations handle platform-specific storage (e.g., File I/O on desktop).
  */
 expect object UpdateSettings {
+    /** Download and prepare installation after manual quit, without relaunching. */
+    var autoUpdateEnabled: Boolean
+    val automaticUpdates: kotlinx.coroutines.flow.StateFlow<Boolean>
+
     /**
      * Whether automatic update checks are enabled
      */

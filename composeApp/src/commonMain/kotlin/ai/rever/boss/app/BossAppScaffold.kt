@@ -66,9 +66,12 @@ import ai.rever.boss.sharing.AppSharingChromeVisible
 import ai.rever.boss.updater.UpdateAvailableDialog
 import ai.rever.boss.updater.UpdateBanner
 import ai.rever.boss.updater.UpdateDialogGate
+import ai.rever.boss.updater.UpdateSettings
 import ai.rever.boss.updater.UpdateState
+import ai.rever.boss.updater.bannerState
 import ai.rever.boss.updater.drawsBanner
 import ai.rever.boss.updater.rememberUpdateDialogOwnership
+import ai.rever.boss.updater.shouldShowUpdatePrompt
 import ai.rever.boss.utils.SystemUtils
 import ai.rever.boss.window.LocalWindowGitState
 import ai.rever.boss.window.LocalWindowId
@@ -421,8 +424,10 @@ internal fun BossAppScaffold(
     // whose answer does not change. UpdateBanner still collects the full state for itself, inside
     // the Column, where a progress tick recomposes the banner and nothing else.
     val updateHandle = state.updateHandle
-    val bannerVisible by remember(updateHandle) {
-        updateHandle.updateState.map { it.drawsBanner() }.distinctUntilChanged()
+    val automaticUpdates by UpdateSettings.automaticUpdates.collectAsState()
+    val updateToastState = rememberUpdateToastState()
+    val bannerVisible by remember(updateHandle, automaticUpdates) {
+        updateHandle.updateState.map { it.drawsBanner(automaticUpdates) }.distinctUntilChanged()
     }.collectAsState(initial = false)
     val sharingChromeVisible = AppSharingChromeVisible(state.windowId)
     // Both rows keep the sidebar bubble below the chrome and own its button's selected state.
@@ -578,7 +583,7 @@ internal fun BossAppScaffold(
                 // closing the window mid-install used to cancel the install (leaving
                 // UpdateState on Installing) and could drop a persisted dismissal.
                 UpdateBanner(
-                    updateState = updateState,
+                    updateState = updateState.bannerState(automaticUpdates),
                     // Non-zero only when this banner is the chrome holding the lights, in which
                     // case the bars below it have already given up their own clearance.
                     startInset = trafficLights.bannerStartInset(),
@@ -617,7 +622,7 @@ internal fun BossAppScaffold(
                 val isUpdateDialogOwner = rememberUpdateDialogOwnership(state.windowId)
                 val updateStateForDialog = updateState
                 UpdateDialogGate(
-                    wantDialog = showUpdateDialog,
+                    wantDialog = shouldShowUpdatePrompt(showUpdateDialog, automaticUpdates),
                     isOwner = isUpdateDialogOwner,
                     updateAvailable = updateStateForDialog is UpdateState.UpdateAvailable,
                 ) {
@@ -999,6 +1004,8 @@ internal fun BossAppScaffold(
             state.currentDefaultPlugin?.pluginToastState?.let { toastState ->
                 ToastOverlay(toastState = toastState)
             }
+
+            ToastOverlay(toastState = updateToastState)
 
             TerminalCallOverlay(state.windowId)
 
