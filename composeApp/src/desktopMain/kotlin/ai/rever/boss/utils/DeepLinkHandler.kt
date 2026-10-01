@@ -8,6 +8,7 @@ import ai.rever.boss.components.events.PluginActionEventBus
 import ai.rever.boss.components.plugin.PanelIds
 import ai.rever.boss.components.plugin.panels.left_top.ProjectState
 import ai.rever.boss.plugin.api.PanelId
+import ai.rever.boss.profile.ProfileAuthRelay
 import ai.rever.boss.services.URLHandlerService
 import ai.rever.boss.utils.extractFileName
 import ai.rever.boss.utils.logging.BossLogger
@@ -218,7 +219,7 @@ actual object DeepLinkHandler {
                         // through processDeepLink(uri), which is
                         // DeepLinkOrigin.EXTERNAL — the correct origin for
                         // everything the OS hands over.
-                        _deepLinkFlow.value = uri
+                        emitUnrouted(uri)
                     }
                 }
                 logger.info(LogCategory.SYSTEM, "macOS deep link handler registered successfully")
@@ -278,7 +279,7 @@ actual object DeepLinkHandler {
                         URLHandlerService.handleURL(uri, requiresConfirmation = false)
                     } else {
                         // Handle boss:// deep links for auth
-                        _deepLinkFlow.value = uri
+                        emitUnrouted(uri)
                     }
                 }
             } catch (e: UnsupportedOperationException) {
@@ -321,6 +322,25 @@ actual object DeepLinkHandler {
      * [OsOpenArguments] gives for that case, plus http/https and file paths, and
      * all of them rather than the first.
      */
+
+    /**
+     * Hands a link no route claims - in practice a sign-in callback - to the auth/other flow.
+     *
+     * Unless another BOSS profile is the one waiting for it: the OS delivers every `boss://`
+     * link to the main profile's process, whichever process started the sign-in, so such a
+     * callback is relayed to that profile instead. The check is local file reads, so with no
+     * profile waiting the link is emitted synchronously exactly as before.
+     */
+    private fun emitUnrouted(uri: String) {
+        if (!ProfileAuthRelay.mightRelay(uri)) {
+            _deepLinkFlow.value = uri
+            return
+        }
+        scope.launch(Dispatchers.IO) {
+            if (!ProfileAuthRelay.relayIfAwaitedElsewhere(uri)) _deepLinkFlow.value = uri
+        }
+    }
+
     fun processCommandLineArgs(args: Array<String>) {
         OsOpenArguments.requestsFrom(args).forEach { (link, origin) ->
             logger.info(
@@ -389,7 +409,7 @@ actual object DeepLinkHandler {
                 "Deep link host is not routed, passing to the auth/other flow",
                 mapOf("uri" to LogSanitizer.describeUri(uri)),
             )
-            _deepLinkFlow.value = uri
+            emitUnrouted(uri)
             return null
         }
 

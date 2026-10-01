@@ -20,8 +20,33 @@ object PluginPersistence {
             encodeDefaults = true
         }
 
+    /** The file, inside the plugins directory, that records what is installed. */
+    const val CONFIG_FILE_NAME = "installed.json"
+
     private val configFile: File by lazy {
-        File(PluginStoreSetup.getPluginDir(), "installed.json")
+        File(PluginStoreSetup.getPluginDir(), CONFIG_FILE_NAME)
+    }
+
+    /**
+     * [content] (an `installed.json`) with every `jarPath` under [fromPrefix] moved to
+     * [toPrefix]. Used to seed a new BOSS profile from the main profile's plugins: the paths are
+     * absolute, so a copied file would otherwise load the main profile's jars.
+     */
+    fun rebaseJarPaths(
+        content: String,
+        fromPrefix: String,
+        toPrefix: String,
+    ): String {
+        val config = json.decodeFromString<InstalledPluginsConfig>(content)
+        val rebased =
+            config.plugins.map { entry ->
+                if (entry.jarPath.startsWith(fromPrefix)) {
+                    entry.copy(jarPath = toPrefix + entry.jarPath.removePrefix(fromPrefix))
+                } else {
+                    entry
+                }
+            }
+        return json.encodeToString(InstalledPluginsConfig(rebased.toMutableList()))
     }
 
     /**

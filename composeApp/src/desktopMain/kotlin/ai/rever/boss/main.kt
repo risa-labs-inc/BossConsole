@@ -363,6 +363,9 @@ fun main(args: Array<String>) {
     PluginStoreSetup.initialize()
     ai.rever.boss.plugin.packs.PluginPacks
         .registerMcpTools()
+    // Hidden BOSS profile surface: reachable only through these (approval-gated) tools.
+    ai.rever.boss.profile.BossProfileMcpToolProvider
+        .register()
 
     startupScope.launch {
         AppUpdateRealtimeService.instance.apply {

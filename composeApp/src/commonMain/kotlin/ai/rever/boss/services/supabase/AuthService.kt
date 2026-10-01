@@ -36,7 +36,12 @@ object AuthService {
     /**
      * Send magic link for passwordless authentication
      */
-    suspend fun sendMagicLink(email: String): Result<Unit> = EmailAuthService.sendMagicLink(email)
+    suspend fun sendMagicLink(email: String): Result<Unit> {
+        val sent = EmailAuthService.sendMagicLink(email)
+        // A magic link completes through boss://auth/verify; record that this process waits for it.
+        sent.onSuccess { AuthFlowMarker.mark() }
+        return sent
+    }
 
     /**
      * Sign out the current user
@@ -49,7 +54,7 @@ object AuthService {
     suspend fun verifyEmail(
         token: String,
         type: String = "magiclink",
-    ): Result<Unit> = EmailAuthService.verifyEmail(token, type)
+    ): Result<Unit> = EmailAuthService.verifyEmail(token, type).onSuccess { AuthFlowMarker.clear() }
 
     /**
      * Check if a user exists with the given email address

@@ -33,7 +33,10 @@ class SettingsServiceImpl(
     private val logger = LoggerFactory.getLogger(SettingsServiceImpl::class.java)
 
     companion object {
-        private fun defaultStorageFile(): File = File(System.getProperty("user.home"), ".boss/settings.json")
+        // BOSS_DATA_DIR is the data root the kernel hands every service (a BOSS profile's root
+        // included); the home-directory fallback is for a standalone run.
+        private fun defaultStorageFile(): File =
+            File(System.getenv("BOSS_DATA_DIR") ?: File(System.getProperty("user.home"), ".boss").path, "settings.json")
     }
 
     @Serializable

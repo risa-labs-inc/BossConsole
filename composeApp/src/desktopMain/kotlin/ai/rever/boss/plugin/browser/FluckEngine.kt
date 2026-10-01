@@ -2486,8 +2486,16 @@ object FluckEngine {
     }
 
     private fun setupPermissionHandlers(engine: Engine) {
-        // Set up permission handler for all browsers created from this engine
-        val profile = engine.profiles().defaultProfile()
+        // Set up permission handler for all browsers created on the default profile
+        setupPermissionHandlers(engine.profiles().defaultProfile())
+    }
+
+    /**
+     * Installs the permission policy on [profile]. JxBrowser keeps permission callbacks per
+     * profile, so a window's own browser profile ([WindowBrowserProfiles]) needs it as well as
+     * the default one, or its camera, microphone and notification requests would go unanswered.
+     */
+    internal fun setupPermissionHandlers(profile: com.teamdev.jxbrowser.profile.Profile) {
         val permissions = profile.permissions()
 
         permissions.set(

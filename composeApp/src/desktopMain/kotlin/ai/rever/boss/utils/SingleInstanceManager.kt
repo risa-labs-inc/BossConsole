@@ -638,8 +638,15 @@ private object SingleInstanceFiles {
         }
     }
 
-    fun read(): InstanceDescriptor? {
-        val file = descriptorFile
+    fun read(): InstanceDescriptor? = readFrom(descriptorFile)
+
+    /**
+     * The descriptor published under another BOSS profile's [runtimeDirectory] - how one
+     * profile reaches another's running instance. Same parsing and trust rules as [read].
+     */
+    fun readAt(runtimeDirectory: File): InstanceDescriptor? = readFrom(File(runtimeDirectory, DESCRIPTOR_FILE_NAME))
+
+    private fun readFrom(file: File): InstanceDescriptor? {
         if (!file.isFile) return null
         return try {
             parseInstanceDescriptor(file.readText())
@@ -1754,8 +1761,42 @@ object SingleInstanceManager {
             return false
         }
 
+        return sendTo(SingleInstanceFiles.read(), url, origin)
+    }
+
+    /**
+     * Whether another BOSS profile's instance is answering on its channel, given that
+     * profile's runtime directory (`<profile root>/run`). Same test [isAnotherInstanceRunning]
+     * applies to this profile's own channel.
+     */
+    fun isInstanceRunningAt(runtimeDirectory: File): Boolean =
+        SingleInstanceFiles.readAt(runtimeDirectory)?.let { existing ->
+            (existing.pid == null || isProcessAlive(existing.pid)) &&
+                SingleInstanceWire.respondsToPing(existing)
+        } ?: false
+
+    /**
+     * [sendToExistingInstance] aimed at another BOSS profile's instance, named by that profile's
+     * runtime directory. Every guard is the same: a forged descriptor receives nothing, and an
+     * unverifiable one never receives an auth link.
+     */
+    fun sendToInstanceAt(
+        runtimeDirectory: File,
+        url: String,
+        origin: DeepLinkOrigin = DeepLinkOrigin.EXTERNAL,
+    ): Boolean {
+        if (url.isBlank()) return false
+        return sendTo(SingleInstanceFiles.readAt(runtimeDirectory), url, origin)
+    }
+
+    @Suppress("ReturnCount")
+    private fun sendTo(
+        descriptor: InstanceDescriptor?,
+        url: String,
+        origin: DeepLinkOrigin,
+    ): Boolean {
         val response =
-            SingleInstanceFiles.read()?.let { target ->
+            descriptor?.let { target ->
                 // A refused forward never reaches connect(), so a planted endpoint receives no probe.
                 if (!mayForwardTo(target, url)) return false
                 val request = formatOpenRequest(target.token, origin, url)
