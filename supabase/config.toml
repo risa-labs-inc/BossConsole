@@ -464,6 +464,15 @@ verify_jwt = false
 import_map = "./functions/fluck-oauth/deno.json"
 entrypoint = "./functions/fluck-oauth/index.ts"
 
+[functions.session-fork]
+enabled = true
+# MUST be true: every call carries the caller's access token, and the gateway's verification is
+# the first of two checks (the handler re-validates it with GoTrue and requires it to be fresh).
+# Deploy WITHOUT --no-verify-jwt.
+verify_jwt = true
+import_map = "./functions/session-fork/deno.json"
+entrypoint = "./functions/session-fork/index.ts"
+
 [functions.relay-admission]
 enabled = true
 verify_jwt = false
