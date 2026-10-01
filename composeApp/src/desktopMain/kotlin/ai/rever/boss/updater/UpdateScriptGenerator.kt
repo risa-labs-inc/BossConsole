@@ -304,7 +304,7 @@ object UpdateScriptGenerator {
 
         val tempDir = updaterTempDir()
 
-        val scriptFile = File(tempDir, "update_boss_${System.currentTimeMillis()}.sh")
+        val scriptFile = Files.createTempFile(tempDir.toPath(), "update_boss_", ".sh").toFile()
 
         val script =
             """
@@ -531,7 +531,7 @@ object UpdateScriptGenerator {
 
         val tempDir = updaterTempDir()
 
-        val scriptFile = File(tempDir, "update_boss_${System.currentTimeMillis()}.bat")
+        val scriptFile = Files.createTempFile(tempDir.toPath(), "update_boss_", ".bat").toFile()
 
         // CRLF, not the LF `writeText` would otherwise leave: cmd.exe parses an
         // LF-only batch file by seeking byte offsets that assume CRLF, so `goto` into
@@ -580,7 +580,7 @@ object UpdateScriptGenerator {
         val tempDir = updaterTempDir()
         val escapedUpdaterDir = escapeShellArg(tempDir.absolutePath)
 
-        val scriptFile = File(tempDir, "update_boss_${System.currentTimeMillis()}.sh")
+        val scriptFile = Files.createTempFile(tempDir.toPath(), "update_boss_", ".sh").toFile()
 
         val script =
             """
@@ -796,7 +796,7 @@ ASKPASS_EOF
         val tempDir = updaterTempDir()
         val escapedUpdaterDir = escapeShellArg(tempDir.absolutePath)
 
-        val scriptFile = File(tempDir, "update_boss_${System.currentTimeMillis()}.sh")
+        val scriptFile = Files.createTempFile(tempDir.toPath(), "update_boss_", ".sh").toFile()
 
         val script =
             """
