@@ -181,7 +181,8 @@ intellij-platform = "243.21565.199"
 # merge cuts version + 1 - re-read it when #44 actually merges, because anything landing first
 # moves this and the topofmind pin again.
 # 1.0.94 adds the shared BrowserTitleBarBridge. Release the API before merging this pin.
-boss-plugin-api = "1.0.95"
+# 1.0.97 restores terminal-link destination requests. Release the API before merging this pin.
+boss-plugin-api = "1.0.97"
 
 [libraries]
 bouncycastle-pkix = { module = "org.bouncycastle:bcpkix-jdk18on", version.ref = "bouncycastle" }

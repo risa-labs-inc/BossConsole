@@ -2,6 +2,7 @@ package ai.rever.boss.components.plugin.providers
 
 import ai.rever.boss.components.events.FileEventBus
 import ai.rever.boss.components.events.PanelEventBus
+import ai.rever.boss.components.events.TerminalLinkEventBus
 import ai.rever.boss.components.window_panel.SplitOrientation
 import ai.rever.boss.components.window_panel.SplitViewState
 import ai.rever.boss.components.workspaces.extractRunningWorkspaces
@@ -54,6 +55,15 @@ class SplitViewOperationsImpl(
     ) {
         if (routePluginDeepLink(url, DeepLinkHandler::processDeepLink)) return
         splitViewState.openUrlInActivePanel(url, title, forceNewTab)
+    }
+
+    override fun openTerminalLink(
+        url: String,
+        sourceTerminalId: String?,
+    ) {
+        scope.launch {
+            TerminalLinkEventBus.emitLinkClick(url, sourceTerminalId, windowId)
+        }
     }
 
     override fun openFileInActivePanel(
