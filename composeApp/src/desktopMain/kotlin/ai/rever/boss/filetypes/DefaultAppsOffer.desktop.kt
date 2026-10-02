@@ -79,6 +79,9 @@ internal actual fun DefaultAppsOfferHost(isFirstWindow: Boolean) {
         // was already made and declined on a previous launch.
         DefaultAppsSettingsManager.ensureLoaded()
         if (!DefaultAppsSettingsManager.shouldOfferPrompt()) return@LaunchedEffect
+        // OS default handlers are machine-wide and belong to the main profile; a BOSS profile's
+        // window never asks to take them over.
+        if (ai.rever.boss.plugin.pathutils.BossDirectories.isProfile) return@LaunchedEffect
         val declined = DefaultAppsSettingsManager.declinedCategories()
         val statuses =
             DefaultAppsManager

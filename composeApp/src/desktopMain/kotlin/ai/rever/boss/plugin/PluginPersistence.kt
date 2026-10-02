@@ -8,6 +8,13 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import java.io.File
 
 object PluginPersistence {
@@ -20,22 +27,44 @@ object PluginPersistence {
             encodeDefaults = true
         }
 
+    /** The file, inside the plugins directory, that records what is installed. */
+    const val CONFIG_FILE_NAME = "installed.json"
+
     private val configFile: File by lazy {
-        File(PluginStoreSetup.getPluginDir(), "installed.json")
+        File(PluginStoreSetup.getPluginDir(), CONFIG_FILE_NAME)
     }
 
     /**
-     * One row of `installed.json`.
+     * [content] (an `installed.json`) with every `jarPath` inside [fromDir] moved to the same
+     * name inside [toDir]. Used to seed a new BOSS profile from the main profile's plugins: the
+     * paths are absolute, so a copied file would otherwise load the main profile's jars.
      *
-     * The three build fields exist so a locally built or hot-reloaded plugin can still be
-     * identified as such after a restart. They are deliberately SEPARATE from
-     * [installedVersion]: that one feeds store update checks (`isNewerVersion`) and the
-     * `pluginId|version|sha256` signing anchor, so a suffixed string must never land in it.
-     *
-     * All three are nullable with defaults, and the reader sets `ignoreUnknownKeys`, so a file
-     * written by this build still loads on an older host (it ignores them) and a file written by
-     * an older host still loads here (they come back null).
+     * Paths are compared canonically, so a symlinked home or `/var` vs `/private/var` still
+     * matches. The JSON is edited as a tree, so fields this build does not model survive. A path
+     * outside [fromDir] (a side-loaded jar) is left as it is: there is no copy of it to point at.
      */
+    fun rebaseJarPaths(
+        content: String,
+        fromDir: File,
+        toDir: File,
+    ): String {
+        val from = fromDir.canonicalFile
+        val root = json.parseToJsonElement(content).jsonObject
+        val plugins = root["plugins"]?.jsonArray ?: return content
+        val rebased =
+            plugins.map { element ->
+                val entry = element as? JsonObject ?: return@map element
+                val jarPath = (entry["jarPath"] as? JsonPrimitive)?.contentOrNull ?: return@map element
+                val jar = runCatching { File(jarPath).canonicalFile }.getOrNull()
+                if (jar != null && jar.parentFile == from) {
+                    JsonObject(entry + ("jarPath" to JsonPrimitive(File(toDir, jar.name).absolutePath)))
+                } else {
+                    element
+                }
+            }
+        return json.encodeToString(JsonElement.serializer(), JsonObject(root + ("plugins" to JsonArray(rebased))))
+    }
+
     @Serializable
     data class InstalledPluginEntry(
         val pluginId: String,

@@ -215,6 +215,9 @@ object McpMutatingToolCatalog {
             "terminal_open",
             "close_workspace",
             "workspace_close",
+            // BOSS profiles: start a process, mint a session
+            "profile_create",
+            "profile_open",
         )
 
     private val MUTATING_SUFFIXES =

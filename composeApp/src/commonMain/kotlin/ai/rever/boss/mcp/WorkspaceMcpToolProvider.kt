@@ -202,6 +202,19 @@ object WorkspaceMcpToolProvider : McpToolProvider, McpToolAliasProvider {
         )
     }
 
+    /**
+     * A fresh window for `open_workspace`'s `newWindow`: the Space opens there and every other
+     * window keeps what it shows. Treated as a cold start, since the window is composed only now.
+     */
+    internal suspend fun createTargetWindow(override: (() -> String)? = null): TargetWindowResolution {
+        val creator =
+            override
+                ?: windowCreator
+                ?: return TargetWindowResolution.Failure("No window creator is configured")
+        val newId = withContext(Dispatchers.Main) { creator.invoke() }
+        return TargetWindowResolution.Success(newId, isColdStart = true)
+    }
+
     override val toolAliases: Map<String, String> =
         mapOf(
             "workspace_list" to "list_workspaces",
@@ -257,6 +270,7 @@ object WorkspaceMcpToolProvider : McpToolProvider, McpToolAliasProvider {
                         "name": { "type": "string", "description": "Name if creating workspace" },
                         "projectPath": { "type": "string", "description": "Project root directory" },
                         "windowId": { "type": "string", "description": "Target window ID" },
+                        "newWindow": { "type": "boolean", "description": "Open the workspace in a new window instead of an existing one (workspace-id modes; not with windowId)" },
                         "createIfAbsent": { "type": "boolean", "description": "Create workspace if not found" },
                         "openTerminal": { "type": "boolean", "description": "Automatically open a terminal tab (workspace-id modes; the path bootstrap already includes its first terminal)" }
                     }
@@ -420,8 +434,25 @@ object WorkspaceMcpToolProvider : McpToolProvider, McpToolAliasProvider {
         return McpToolResult(response.toString())
     }
 
+    /**
+     * `open_workspace` for saved Space [workspaceId] in a window [createWindow] makes - how a
+     * same-account BOSS profile opens a Space in a window bound to its own browser profile. Every
+     * check and step of the tool applies, the terminal startup-command refusal included.
+     */
+    internal suspend fun openWorkspaceInNewWindow(
+        workspaceId: String,
+        createWindow: () -> String,
+    ): McpToolResult =
+        handleOpenWorkspace(
+            McpToolArgs(mapOf("workspaceId" to workspaceId, "newWindow" to true)),
+            createWindow,
+        )
+
     @Suppress("CyclomaticComplexMethod", "LongMethod", "ReturnCount")
-    private suspend fun handleOpenWorkspace(args: McpToolArgs): McpToolResult {
+    private suspend fun handleOpenWorkspace(
+        args: McpToolArgs,
+        newWindowCreator: (() -> String)? = null,
+    ): McpToolResult {
         val workspaceId = args.string("workspaceId")
         val workspacePath = args.string("workspacePath")
         val name = args.string("name")
@@ -430,6 +461,10 @@ object WorkspaceMcpToolProvider : McpToolProvider, McpToolAliasProvider {
             return McpToolResult("Invalid workspaceId: expected an identifier, not a path", isError = true)
         }
         val requestedWindowId = args.string("windowId")
+        val newWindow = args.boolean("newWindow") ?: false
+        if (newWindow && !requestedWindowId.isNullOrBlank()) {
+            return McpToolResult("Specify 'newWindow' or 'windowId', not both.", isError = true)
+        }
         val createIfAbsent = args.boolean("createIfAbsent") ?: false
         val openTerminal = args.boolean("openTerminal") ?: false
 
@@ -484,11 +519,17 @@ object WorkspaceMcpToolProvider : McpToolProvider, McpToolAliasProvider {
                     isError = true,
                 )
             }
+            if (newWindow) {
+                return McpToolResult("'newWindow' applies to the workspace-id modes, not to 'path'.", isError = true)
+            }
             return openWorkspaceByPath(path, requestedWindowId)
         }
 
         val (targetWindowId, targetIsColdStart) =
-            when (val resolution = resolveTargetWindow(requestedWindowId)) {
+            when (
+                val resolution =
+                    if (newWindow) createTargetWindow(newWindowCreator) else resolveTargetWindow(requestedWindowId)
+            ) {
                 is TargetWindowResolution.Success -> {
                     resolution.windowId to resolution.isColdStart
                 }

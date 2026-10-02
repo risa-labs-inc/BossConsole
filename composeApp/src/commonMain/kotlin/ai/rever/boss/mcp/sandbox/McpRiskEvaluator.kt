@@ -318,6 +318,9 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
                 "workspace_create",
                 "close_workspace",
                 "workspace_close",
+                // A BOSS profile opens a new process and window, and may mint a session for it.
+                "profile_create",
+                "profile_open",
             )
 
         private val SECRET_MANAGEMENT_TOOLS =

@@ -3035,7 +3035,7 @@ internal class BrowserHandleImpl(
                     // Open as tab in BOSS instead of OS window. Race-resolve a destination URL and
                     // (for POST navigations) the upload body, then dispatch via the data-aware
                     // callback if registered, else the legacy URL-only one.
-                    installUploadCallbackIfNeeded(popupBrowser.engine())
+                    installUploadCallbackIfNeeded(popupBrowser.engine(), popupBrowser.profile())
                     val captureDeferred = CompletableDeferred<PopupCapture?>()
                     pendingPopupCaptures[popupBrowser] = captureDeferred
 
@@ -4629,12 +4629,14 @@ internal class BrowserHandleImpl(
             ConcurrentHashMap<Browser, CompletableDeferred<PopupCapture?>>()
 
         /**
-         * The engine the upload callback is installed on. Not a boolean: FluckEngine discards
-         * and rebuilds its Engine to recover a wedged renderer, and a process-wide flag meant
-         * the replacement never got the callback - so POST capture stayed silently dead for the
-         * rest of the session and every popup paid the full grace period for nothing.
+         * The (engine, profile) pairs the upload callback is installed on. Not a boolean:
+         * FluckEngine discards and rebuilds its Engine to recover a wedged renderer, and a
+         * process-wide flag meant the replacement never got the callback - so POST capture
+         * stayed silently dead for the rest of the session and every popup paid the full grace
+         * period for nothing. Per profile as well, because the callback lives on a profile's
+         * network: a window on its own browser profile ([WindowBrowserProfiles]) needs its own.
          */
-        private val uploadCallbackEngine = AtomicReference<Engine?>(null)
+        private val uploadCallbackInstalls = EnginePerProfileOnce()
         private val staticLogger = BossLogger.forComponent("BrowserHandleImpl")
 
         /**
@@ -4758,8 +4760,8 @@ internal class BrowserHandleImpl(
             )
 
         /**
-         * Install an engine-wide [BeforeSendUploadDataCallback] that captures
-         * POST bodies for popup browsers we're tracking. Idempotent — installs once.
+         * Install a profile-wide [BeforeSendUploadDataCallback] that captures
+         * POST bodies for popup browsers we're tracking. Idempotent: once per engine and profile.
          *
          * The callback proceeds unchanged for every request; it only diverts when
          * a MAIN_FRAME request originates from a browser registered in [pendingPopupCaptures] -
@@ -4769,10 +4771,14 @@ internal class BrowserHandleImpl(
          * tab. The popup coroutine removes the entry on every exit path, so a navigation that
          * carries no body at all leaves nothing behind.
          */
-        private fun installUploadCallbackIfNeeded(engine: Engine) {
-            if (uploadCallbackEngine.getAndSet(engine) === engine) return
+        private fun installUploadCallbackIfNeeded(
+            engine: Engine,
+            profile: com.teamdev.jxbrowser.profile.Profile,
+        ) {
+            val profileName = profile.name()
+            if (!uploadCallbackInstalls.claim(engine, profileName)) return
             try {
-                engine.network().set(
+                profile.network().set(
                     BeforeSendUploadDataCallback::class.java,
                     BeforeSendUploadDataCallback { params ->
                         try {
@@ -4807,7 +4813,7 @@ internal class BrowserHandleImpl(
                 )
                 staticLogger.debug(LogCategory.BROWSER, "BeforeSendUploadDataCallback installed")
             } catch (e: Exception) {
-                uploadCallbackEngine.compareAndSet(engine, null)
+                uploadCallbackInstalls.release(engine, profileName)
                 staticLogger.warn(LogCategory.BROWSER, "Failed to install upload callback", error = e)
             }
         }

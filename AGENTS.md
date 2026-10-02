@@ -2157,6 +2157,96 @@ accents flow: a tint wants a COLOUR and wants it live, a picker wants an IDENTIT
 and Blueprint and Blueprint Light share an accent exactly, so a picker marking by colour ticks
 both.
 
+## BOSS profiles: shared-account windows and separate-account processes
+
+A **BOSS profile** gives a Space a window of its own with its own browser data, and optionally
+its own BOSS account. It is a **hidden feature**: nothing in the UI creates or opens one, a Space
+opened the ordinary way still opens in the current window under the current profile, and the only
+entry points are the MCP tools in `profile/BossProfileMcpToolProvider.kt`: `profile_list`, which
+only reads, and `profile_create` and `profile_open`, which are approval-gated. `open_workspace` separately gained `newWindow`, which
+opens a Space in a new window of the same profile with nothing else changed.
+
+There are two kinds, and they run in different places:
+
+| | `SHARED` (main account) | `SEPARATE` (own sign-in) |
+|---|---|---|
+| Runs in | a new window of the **main** BOSS process | its **own** BOSS process |
+| Sign-in | the main process's; no new session is ever made | the normal BOSS login, possibly another user |
+| Plugins and plugin settings | the main process's | its own (`plugins` = `copy` or `empty`) |
+| Browser data | its own JxBrowser profile in the main engine | its own engine and user data dir |
+| Spaces | the main store, bound by id | its own store, copied in on first open |
+
+**A shared-account window is a window, not a process.** `WindowManager.createNewWindow` takes a
+`browserProfileId`, which `WindowBrowserProfiles` binds to the window id; `BrowserServiceImpl`
+creates every plain tab of that window on JxBrowser profile `boss-window-<id>`. That is
+deliberately NOT the managed-profile machinery RPA uses: a named managed profile holds a fence for
+each browser's lifetime (one browser at a time) and is LRU-evicted under a disk cap, while a
+window profile serves every tab at once and holds the user's logins, so it is never evicted, and
+the orphan sweep only matches `rpa-eph-`. Two things JxBrowser keeps per profile had to follow:
+the permission policy (`FluckEngine.setupPermissionHandlers(profile)`) and the popup POST capture
+(`installUploadCallbackIfNeeded`, now keyed per engine AND profile, since `engine.network()` is
+only the default profile's). A tab keeps the profile it was created on, so a browser tab moved to
+another window keeps its cookies until it is recreated there.
+
+**A separate-account profile is a process.** Auth (`SupabaseConfig`, `AuthStateManager`), the
+browser engine, the plugin registries and `WindowRegistrations` are process-wide singletons, so a
+second account in the same process would mean de-singletonising most of the host. Instead
+`BossDirectories` reads `BOSS_PROFILE` (or `-Dboss.profile`) and roots the process at
+`<base>/profiles/<id>`, which separates everything keyed on the root at once - including
+`run/single-instance`, so the profile has its own lock and forwards its own second launches. With
+neither set, `rootDir == baseDir` and nothing changes. Children inherit the variable; out-of-process
+plugins also get it explicitly, since a system property is not inherited. Ids are validated before
+they become a path segment and kept short because the root carries a Unix-domain socket path.
+
+What a separate-account profile does not share, and why:
+
+- **Plugin data.** `copy` takes jars, `.sig` sidecars and `installed.json` (paths rebased by
+  `PluginPersistence.rebaseJarPaths`) and nothing under `plugin-data/`. Jars are **copied, never
+  hard-linked**: some update paths rewrite a jar in place, and a shared inode would carry that into
+  the main profile.
+- **Chromium.** Hard-linked from the main profile's `boss-chromium` at creation, so no download,
+  but not a shared directory: the auto-downloader swaps its engine directory in place.
+- **The legacy session store.** `EncryptedSessionSettings` skips the machine-wide `java.util.prefs`
+  migration in a profile, because what that store holds is the main profile's session.
+- **Sign-in callbacks are routed, and a magic link is bound to the account it was sent to.** The
+  OS has one `boss://` handler, so every `boss://auth` callback reaches the main process. Each
+  process drops `run/auth-pending` (`AuthFlowMarker`) when it starts a sign-in: the kind of flow,
+  when, and for a magic link a hash of the email it was sent to, for as long as the link is valid.
+  The main process's `DeepLinkHandler.emitUnrouted` routes a callback through
+  `ProfileAuthRelay.route`:
+  - nothing else waits: kept here, exactly as before profiles;
+  - a magic link (`boss://auth/verify`) with flows for **different accounts** waiting - or one
+    whose account cannot be told - is ambiguous and is used **nowhere**; the user is told to
+    request a new link from the window that should sign in;
+  - one account waiting in profiles only: offered to them over `AUTH_CLAIM`, newest first, and a
+    profile takes it only after atomically claiming a live flow of its own
+    (`AuthFlowMarker.claim`, a rename, so exactly one process acts on a link); unclaimed, it is
+    not spent in the main process either. A dead profile's flow still counts here while the main
+    process waits for nothing, and is ignored while it waits for a link of its own;
+  - a Google / Apple callback (`boss://auth/callback`, PKCE-bound) goes to the newest flow first.
+
+  The exchange itself is **quarantined** (`MagicLinkExchange`): whenever this process asked for a
+  link, `AuthService.verifyEmail` calls GoTrue's `/verify` directly instead of
+  `Auth.verifyEmailOtp`, so the minted session never reaches the live client - no import, no
+  persistence, no `sessionStatus` publication - until its account matches the flow's. A session
+  for any other account, or one whose account cannot be read, is revoked and dropped. A claim is
+  bound to the exact token it was offered for, consumed once, and checked for expiry at exchange;
+  a flow put back after a failed exchange never replaces a newer generation. An `AUTH_CLAIM`
+  answer of anything but `DECLINED` stops the offer (a lost reply may mean it was taken), so a
+  link is never offered twice. A separate-account profile that asked for nothing refuses a link
+  without spending it; only the main process asking for nothing keeps the old path. Passkey,
+  confirmation, invite and recovery links are never routed. An opaque token cannot be matched to
+  an account without spending it, so a wrong-account link is spent and revoked rather than kept;
+  avoiding even that would need a server-side check.
+
+**Known limits.** Several plugins build `~/.boss` paths themselves instead of using
+`BossDirectories` (analytics, rparecorder, rpaengine, editor-tab settings, dna-origami,
+secret-manager's `EnvResolver`), so their settings are shared with separate-account profiles until
+each resolves its root through the host. MCP clients that scan ports 7677-7686 instead of reading
+`BOSS_MCP_PORT` may attach to another process's server. A shared-account profile opens only from a
+main BOSS process. Shared-account windows are not restored after a restart. There is no profile
+deletion tool yet.
+
 ## The product word is "Space", the code word is `workspace`
 
 What a person reads in BOSS is a **Space**. What the code calls it is still `workspace`,

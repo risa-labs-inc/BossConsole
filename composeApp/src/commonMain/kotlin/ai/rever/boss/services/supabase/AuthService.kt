@@ -1,5 +1,6 @@
 package ai.rever.boss.services.supabase
 
+import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.services.auth.*
 import ai.rever.boss.services.passkey.PasskeyInfo
 import ai.rever.boss.services.passkey.PasskeyService
@@ -36,7 +37,13 @@ object AuthService {
     /**
      * Send magic link for passwordless authentication
      */
-    suspend fun sendMagicLink(email: String): Result<Unit> = EmailAuthService.sendMagicLink(email)
+    suspend fun sendMagicLink(email: String): Result<Unit> {
+        val sent = EmailAuthService.sendMagicLink(email)
+        // A magic link completes through boss://auth/verify; record that this process waits for
+        // it, and for which account, so the link is routed to and accepted by this process only.
+        sent.onSuccess { AuthFlowMarker.mark(AuthFlowMarker.Kind.MAGIC_LINK, email) }
+        return sent
+    }
 
     /**
      * Sign out the current user
@@ -44,12 +51,37 @@ object AuthService {
     suspend fun signOut(): Result<Unit> = CoreAuthService.signOut()
 
     /**
-     * Mark email as verified - called when deep link indicates successful verification
+     * Completes a magic link - called when the `boss://auth/verify` deep link arrives.
+     *
+     * When this process asked for a link ([AuthFlowMarker.takeForExchange] finds the flow, claimed
+     * for exactly this token or its own pending one, and consumes it), the link is spent through
+     * [MagicLinkExchange]: the minted session reaches the live client only if it is for the account
+     * the link was sent to. A separate-account profile that asked for no link refuses it without
+     * spending it. Only the main profile, asking for nothing, keeps the old path, unchanged.
      */
     suspend fun verifyEmail(
         token: String,
         type: String = "magiclink",
-    ): Result<Unit> = EmailAuthService.verifyEmail(token, type)
+    ): Result<Unit> {
+        val flow = AuthFlowMarker.takeForExchange(token)
+        return when {
+            flow != null -> {
+                MagicLinkExchange
+                    .exchange(token, type, flow)
+                    .onSuccess { AuthStateManager.setAuthenticatedViaMagicLink(true) }
+                    // Not this flow's link: the one that is may still arrive.
+                    .onFailure { AuthFlowMarker.restore(flow) }
+            }
+
+            BossDirectories.isProfile -> {
+                Result.failure(Exception("This sign-in link was not requested in this BOSS window."))
+            }
+
+            else -> {
+                EmailAuthService.verifyEmail(token, type)
+            }
+        }
+    }
 
     /**
      * Check if a user exists with the given email address
