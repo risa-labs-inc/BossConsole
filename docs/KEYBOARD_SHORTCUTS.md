@@ -236,8 +236,8 @@ Two consequences worth knowing before filing a bug:
 
 - **Cmd+[ and Cmd+]** become browser history whenever a browser is the visible surface of the
   active main panel. With a browser there and focus in a sidebar editor, they navigate history
-  rather than outdent and indent. Narrowing further needs a focus signal the menu layer does not
-  have.
+  rather than outdent and indent, because the menu accelerator still fires there. The keyboard
+  path itself no longer does: see [BROWSER context](#browser-context) below.
 - **Cmd+Opt+Left/Right** (and the Cmd+Shift+Bracket alternates) step tabs whenever the active
   panel has two or more, whatever surface has focus - so a terminal or editor does not see them
   in a multi-tab panel. This is the same rule as above, not a different one: the action can act,
@@ -251,6 +251,26 @@ matters because a native menu accelerator fires window-wide whatever the binding
 always-enabled item would take Cmd+[ from an editor, where it is outdent. Browsers do consume
 Cmd+1..9 unconditionally; BOSS does not, because those chords reach surfaces a browser has no
 equivalent of.
+
+### BROWSER context
+
+`AWTKeyboardInterceptor` matches a BROWSER-context binding only while a browser holds the
+keyboard, as `ActiveBrowserRegistry.keyboardOwnerIn` decides (#1566). Both of its answers need the
+window's active browser (the visible tab of the active main panel), and then either:
+
+- **PAGE** - that browser's web page has Chromium focus (JxBrowser `FocusGained` / `FocusLost`).
+  Under HARDWARE_ACCELERATED the page is a native view, so clicking it moves no Compose focus;
+  Chromium's own events are the only truthful signal. While the page has focus, find, reload and
+  print stay with the page's native key callback, which already serves them. This half depends on
+  JxBrowser delivering `FocusLost` whenever the page gives up the keyboard, which is yet to be
+  confirmed live on every platform and rendering mode.
+- **CHROME** - Compose focus is inside the main panel (address bar, find bar), tracked by
+  `MainPanelFocusTracker`.
+
+A sidebar editor next to a browser, a browser in a sidebar slot and the background half of a
+split all answer no, which is what keeps Cmd+L as Go To Line in the editor and Focus Address Bar
+in the browser. A BossTerm terminal still answers TERMINAL from the AWT focus walk, and the Swing
+fullscreen browser still answers BROWSER from it.
 
 ### VS Code Preset
 
