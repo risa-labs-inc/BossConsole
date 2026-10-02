@@ -52,6 +52,7 @@ import kotlinx.serialization.json.*
  * )
  * ```
  */
+@Suppress("TooManyFunctions") // One RPC wrapper per vault operation; the eleventh is the by-id read.
 object SecretService {
     // BossConsole#145: every catch here used to fail silently - the only WARN in the log came
     // from the *calling plugin*, not the code that actually failed, which is why an exception
@@ -99,6 +100,43 @@ object SecretService {
                 LogCategory.NETWORK,
                 "Secret RPC failed",
                 data = mapOf("operation" to "getUserSecrets", "errorType" to e::class.simpleName),
+            )
+            Result.failure(safe)
+        }
+
+    /**
+     * One of the user's secrets by id, decrypted, under exactly [getUserSecrets]' visibility rule
+     * (`get_user_secret_by_id` mirrors the listing's WHERE clause and row shape): the caller's
+     * personal secrets and the secrets of organisations they belong to, never a secret merely
+     * shared with them.
+     *
+     * Added for the MCP secret-reference resolver, which used to find one secret by walking the
+     * listing page by page and decrypting every row on the way. A miss is `null`, not a failure:
+     * the RPC does not distinguish an unknown id from another user's id, so neither can this.
+     *
+     * @return the secret, `null` when no visible secret has that id, or a failure when the RPC
+     *   could not be made or its result could not be decoded
+     */
+    suspend fun getUserSecretById(secretId: String): Result<SecretEntry?> =
+        try {
+            val params = buildJsonObject { put("p_secret_id", secretId) }
+
+            val postgrestResult =
+                client.postgrest.rpc(
+                    function = "get_user_secret_by_id",
+                    parameters = params,
+                )
+
+            val jsonElement = supabaseJson.parseToJsonElement(postgrestResult.data)
+            val secrets = supabaseJson.decodeFromJsonElement<List<SecretEntry>>(jsonElement)
+
+            Result.success(secrets.firstOrNull())
+        } catch (e: Exception) {
+            val safe = sanitizeSupabaseFailure("getUserSecretById", e)
+            logger.warn(
+                LogCategory.NETWORK,
+                "Secret RPC failed",
+                data = mapOf("operation" to "getUserSecretById", "errorType" to e::class.simpleName),
             )
             Result.failure(safe)
         }

@@ -22,6 +22,21 @@ class McpArgumentSanitizerSecretReferenceTest {
     }
 
     @Test
+    fun `every field a reference can name is kept alone and redacted when glued, whatever the enum grows to`() {
+        // Iterates the enum the parser resolves against, so a field added there is covered here
+        // without anyone remembering this test: the sanitizer's own pattern is built from the same
+        // entries, and this pins that it keeps being.
+        // Unmasked, a field would read `[REDACTED]}}` alone and leak `hunter2` glued after it.
+        for (field in SecretField.entries) {
+            val reference = "{{secret:$id.${field.wireName}}}"
+            val sanitize = McpArgumentSanitizer::sanitizeMessage
+            assertEquals("TOKEN=$reference", sanitize("TOKEN=$reference"), field.name)
+            assertEquals("[REDACTED]", sanitize("TOKEN=${reference}hunter2"), field.name)
+            assertEquals("[REDACTED]", sanitize("TOKEN=hunter2$reference"), field.name)
+        }
+    }
+
+    @Test
     fun `a secret assignment that is not a reference is still redacted`() {
         val out = McpArgumentSanitizer.sanitizeMessage("secret: hunter2 and secret=hunter3 and {{secret:$id}}")
         assertFalse(out.contains("hunter2"), out)
@@ -130,5 +145,59 @@ class McpArgumentSanitizerSecretReferenceTest {
         assertTrue(out.contains("{{SECRET:$id}}"), out)
         assertFalse(out.contains("hunter2"), out)
         assertTrue(out.contains("{{secret:[REDACTED]}}"), out)
+    }
+
+    @Test
+    fun `the doc's examples of a rule taking a reference along with its value hold`() {
+        // docs/MCP_SECRET_REFERENCES.md ("What the ledger records") gives these as examples of a
+        // reference recorded as [REDACTED]. That paragraph was wrong twice by claiming a closed
+        // set; this keeps the examples it does give true. A rule that learns to step around a
+        // reference fails here, and the doc should lose that example with it.
+        val reference = "{{secret:$id}}"
+        val redacted =
+            listOf(
+                """{"token":"$reference"}""",
+                "deploy --token $reference",
+                "curl -u deploy:$reference https://registry.example",
+                "curl --cookie $reference https://registry.example",
+                "Authorization: Bearer $reference",
+                "TOKEN=${reference}hunter2",
+            )
+        for (text in redacted) {
+            val out = McpArgumentSanitizer.sanitizeMessage(text)
+            assertTrue(out.contains("[REDACTED]") && !out.contains(reference), "$text -> $out")
+        }
+        // And the ones it gives as staying legible: a reference alone after a sensitive key,
+        // references back to back, and nothing glued to them.
+        val legible =
+            listOf(
+                "TOKEN=$reference",
+                "deploy --token=$reference",
+                "TOKEN=$reference{{secret:$id.username}}",
+                "A=$reference{{secret:$id.username}}",
+            )
+        for (text in legible) {
+            assertEquals(text, McpArgumentSanitizer.sanitizeMessage(text))
+        }
+    }
+
+    @Test
+    fun `plaintext glued after a reference is redacted with it`() {
+        val out = McpArgumentSanitizer.sanitizeMessage("TOKEN={{secret:$id}}hunter2 next")
+        assertFalse(out.contains("hunter2"), out)
+        assertTrue(out.endsWith(" next"), out)
+    }
+
+    @Test
+    fun `plaintext glued before a reference is redacted with it`() {
+        val out = McpArgumentSanitizer.sanitizeMessage("TOKEN=hunter2{{secret:$id}}")
+        assertFalse(out.contains("hunter2"), out)
+    }
+
+    @Test
+    fun `several references each come back in place`() {
+        val other = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+        val text = "A={{secret:$id}} B={{secret:$other.username}} C={{secret:$id.notes}}"
+        assertEquals(text, McpArgumentSanitizer.sanitizeMessage(text))
     }
 }

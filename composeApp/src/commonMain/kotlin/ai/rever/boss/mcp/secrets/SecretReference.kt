@@ -75,18 +75,38 @@ sealed interface SecretReferenceScan {
     ) : SecretReferenceScan
 
     /**
-     * Something that looks like a reference does not parse. [literal] is the offending text,
-     * which must be sanitized before presentation or logging as it may contain agent-authored
-     * plaintext credentials. [offset] and [length] identify where the candidate occurred in
-     * the scanned string so refusal messages can report shape and location without echoing
-     * raw candidate text.
+     * Something that looks like a reference does not parse.
+     *
+     * Deliberately carries no agent text. The offending candidate is exactly the text a value
+     * gets pasted into (`{{secret:hunter2}}`, `{{secret:correct horse battery staple}}`,
+     * `{{secret:<id>.hunter2}}`), and no redaction pass can tell a pasted value from a typo, so
+     * the refusal names the rule that failed and nothing the agent wrote. [reason] is a closed
+     * set of host-authored sentences for the same reason.
      */
     data class Malformed(
-        val literal: String,
-        val reason: String,
-        val offset: Int = 0,
-        val length: Int = literal.length,
+        val reason: MalformedSecretReference,
     ) : SecretReferenceScan
+}
+
+/** Why a reference did not parse, in host-authored words that repeat nothing the agent sent. */
+enum class MalformedSecretReference(
+    val text: String,
+) {
+    NOT_AN_ID("the id is not a secret id (expected a UUID)"),
+    UNKNOWN_FIELD(
+        "unknown field (expected one of " + SecretField.entries.joinToString { it.wireName } + ")",
+    ),
+    UNTERMINATED("the reference is not terminated with }}"),
+    IN_JSON_KEY("a secret reference cannot be a JSON key"),
+    ;
+
+    /**
+     * The refusal the agent reads, which the ledger records as the call's error after running it
+     * through the argument sanitizer. It spells no reference syntax, so the sanitizer has nothing
+     * to rewrite and the two read the same: a `{{secret:...}}` placeholder here was recorded as
+     * `{{[REDACTED]}}`, telling an auditor a value had been there when none had.
+     */
+    val refusal: String get() = "Malformed secret reference: $text"
 }
 
 /**
@@ -128,7 +148,7 @@ object SecretReferenceParser {
      */
     private fun parseBody(
         body: String,
-        onMalformed: (String) -> Unit,
+        onMalformed: (MalformedSecretReference) -> Unit,
     ): SecretReference? {
         val dot = body.indexOf('.')
         val idPart = if (dot < 0) body else body.substring(0, dot)
@@ -136,15 +156,12 @@ object SecretReferenceParser {
         val field = if (fieldPart == null) SecretField.PASSWORD else SecretField.fromWireName(fieldPart)
         return when {
             !uuid.matches(idPart) -> {
-                onMalformed("the id is not a secret id (expected a UUID)")
+                onMalformed(MalformedSecretReference.NOT_AN_ID)
                 null
             }
 
             field == null -> {
-                onMalformed(
-                    "unknown field (expected one of " +
-                        SecretField.entries.joinToString { it.wireName } + ")",
-                )
+                onMalformed(MalformedSecretReference.UNKNOWN_FIELD)
                 null
             }
 
@@ -177,27 +194,15 @@ object SecretReferenceParser {
                 var malformed: SecretReferenceScan.Malformed? = null
                 val ref =
                     parseBody(match.groupValues[1]) { reason ->
-                        malformed =
-                            SecretReferenceScan.Malformed(
-                                literal = match.value,
-                                reason = reason,
-                                offset = match.range.first,
-                                length = match.value.length,
-                            )
+                        malformed = SecretReferenceScan.Malformed(reason)
                     }
                 malformed?.let { return it }
                 if (ref != null) found.add(ref)
             }
-            val unmatchedText = candidate.replace(text, "")
-            val unmatchedMarker = unmatchedText.indexOf(MARKER, ignoreCase = true)
-            if (unmatchedMarker >= 0) {
-                val candidateLength = unmatchedText.length - unmatchedMarker
-                return SecretReferenceScan.Malformed(
-                    literal = unmatchedText.substring(unmatchedMarker).take(120),
-                    reason = "the reference is not terminated with }}",
-                    offset = unmatchedMarker,
-                    length = candidateLength,
-                )
+            // Case-insensitive like the candidate itself, so `{{SECRET:<id>` with no `}}` is
+            // refused as unterminated rather than reaching the handler as literal text.
+            if (candidate.replace(text, "").contains(MARKER, ignoreCase = true)) {
+                return SecretReferenceScan.Malformed(MalformedSecretReference.UNTERMINATED)
             }
         }
         return if (!any) SecretReferenceScan.None else SecretReferenceScan.Found(found)

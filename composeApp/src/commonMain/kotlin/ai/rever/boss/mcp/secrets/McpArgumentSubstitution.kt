@@ -72,13 +72,8 @@ object McpArgumentSubstitution {
      * malformed-wins rule.
      */
     fun scan(arguments: JsonElement): SecretReferenceScan {
-        referenceKey(arguments)?.let { key ->
-            return SecretReferenceScan.Malformed(
-                literal = key,
-                reason = "A secret reference cannot be a JSON key",
-                offset = 0,
-                length = key.length,
-            )
+        if (referenceKey(arguments) != null) {
+            return SecretReferenceScan.Malformed(MalformedSecretReference.IN_JSON_KEY)
         }
         return SecretReferenceParser.findIn(stringValues(arguments))
     }
