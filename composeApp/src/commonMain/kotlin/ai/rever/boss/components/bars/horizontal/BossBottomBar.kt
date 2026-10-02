@@ -8,6 +8,7 @@ import ai.rever.boss.components.buttons.BossActionButton
 import ai.rever.boss.components.dialogs.McpActivityLogDialog
 import ai.rever.boss.components.dialogs.McpPolicyManagerDialog
 import ai.rever.boss.components.dialogs.McpProviderTrustDialog
+import ai.rever.boss.components.dialogs.McpSecretReferenceSettingsDialog
 import ai.rever.boss.components.dialogs.McpSessionTrustDialog
 import ai.rever.boss.components.dialogs.McpToolIdentity
 import ai.rever.boss.components.events.PanelEventBus
@@ -21,9 +22,11 @@ import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
 import ai.rever.boss.components.window_panel.components.main_window_panels.BossTabsComponent
 import ai.rever.boss.layout.BossChrome
 import ai.rever.boss.mcp.McpPolicyAction
+import ai.rever.boss.mcp.McpPolicyFault
 import ai.rever.boss.mcp.McpToolPolicyConfig
 import ai.rever.boss.mcp.McpToolRegistryImpl
 import ai.rever.boss.mcp.McpYoloPrompt
+import ai.rever.boss.mcp.hostSecretSettings
 import ai.rever.boss.performance.PerformanceState
 import ai.rever.boss.plugin.api.PanelId
 import ai.rever.boss.plugin.api.RegisteredMcpTool
@@ -362,6 +365,7 @@ private fun McpAccessStatusItem(persistedPolicyConfig: McpToolPolicyConfig) {
     var showPolicyManager by remember { mutableStateOf(false) }
     var showTrustedPlugins by remember { mutableStateOf(false) }
     var showSessionTrust by remember { mutableStateOf(false) }
+    var showSecretReferences by remember { mutableStateOf(false) }
     val yolo by McpToolRegistryImpl.yoloMode.collectAsState()
     val windowId = LocalWindowId.current
     val scope = rememberCoroutineScope()
@@ -394,6 +398,7 @@ private fun McpAccessStatusItem(persistedPolicyConfig: McpToolPolicyConfig) {
                             onPolicies = { showPolicyManager = true },
                             onSessionTrust = { showSessionTrust = true },
                             onTrustedPlugins = { showTrustedPlugins = true },
+                            onSecretReferences = { showSecretReferences = true },
                             onYolo = {
                                 if (yolo) {
                                     scope.launch { McpToolRegistryImpl.setYoloMode(false) }
@@ -418,6 +423,17 @@ private fun McpAccessStatusItem(persistedPolicyConfig: McpToolPolicyConfig) {
             onRevoke = { McpToolRegistryImpl.policyEngine.revokeSessionTrust(it.toolName, it.providerId) },
             onRevokeAll = { McpToolRegistryImpl.policyEngine.clearSessionTrusts() },
             onDismiss = { showSessionTrust = false },
+        )
+    }
+    if (showSecretReferences) {
+        val policyFault by McpToolRegistryImpl.policyFault.collectAsState()
+        McpSecretReferenceSettingsDialog(
+            saved = persistedPolicyConfig.hostSecretSettings,
+            policyUnreadable = policyFault is McpPolicyFault.PersistedPolicyUnreadable,
+            // Through the registry, never the engine directly: it is the registry that writes the
+            // ledger marker for the change. Both writes run on Dispatchers.IO inside.
+            onSave = McpToolRegistryImpl::setHostSecretSettings,
+            onDismiss = { showSecretReferences = false },
         )
     }
     if (showTrustedPlugins) {

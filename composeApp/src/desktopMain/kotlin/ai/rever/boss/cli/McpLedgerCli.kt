@@ -102,6 +102,7 @@ internal val McpApprovalDisposition.reachedHandler: Boolean
             McpApprovalDisposition.SECRET_UNRESOLVED,
             McpApprovalDisposition.YOLO_ENABLED,
             McpApprovalDisposition.YOLO_DISABLED,
+            McpApprovalDisposition.HOST_SECRET_SETTINGS_CHANGED,
             -> false
         }
 

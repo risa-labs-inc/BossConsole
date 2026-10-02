@@ -90,10 +90,19 @@ enum class McpApprovalDisposition {
      */
     YOLO_ENABLED,
     YOLO_DISABLED,
+
+    /**
+     * Governance event, not a tool call: the operator changed the host's secret-reference switches
+     * ([McpHostSecretSettings]) from the "Secret references" dialog. Recorded in the ledger (tool
+     * name [McpHostSecretSettings.LEDGER_TOOL_NAME]) so when delivery was switched off or on, or
+     * scrubbing given up, is part of the hash-chained audit trail. See [isGovernanceEvent].
+     */
+    HOST_SECRET_SETTINGS_CHANGED,
     ;
 
-    /** True for the [YOLO_ENABLED] / [YOLO_DISABLED] ledger markers, which are not tool calls. */
-    val isGovernanceEvent: Boolean get() = this == YOLO_ENABLED || this == YOLO_DISABLED
+    /** True for the YOLO and host-settings ledger markers, which are not tool calls. */
+    val isGovernanceEvent: Boolean
+        get() = this == YOLO_ENABLED || this == YOLO_DISABLED || this == HOST_SECRET_SETTINGS_CHANGED
 }
 
 /** Constants for YOLO mode's ledger markers. */
@@ -101,6 +110,62 @@ object McpYoloMode {
     const val LEDGER_TOOL_NAME = "yolo_mode"
     const val LEDGER_PROVIDER_ID = "host"
 }
+
+/**
+ * The three host switches that govern `{{secret:<id>}}` references, as the "Secret references"
+ * dialog edits them: [McpToolPolicyConfig.secretReferencesEnabled],
+ * [McpToolPolicyConfig.secretBearingCalls] and [McpToolPolicyConfig.resultScrubbingEnabled].
+ *
+ * Nothing set here weakens the approval model beyond what the file already allows: there is no
+ * ALLOW for secret-bearing calls ([McpSecretPolicyAction]), and turning delivery off refuses
+ * calls rather than passing their placeholders through.
+ */
+data class McpHostSecretSettings(
+    val referencesEnabled: Boolean,
+    val secretBearingCalls: McpSecretPolicyAction,
+    val resultScrubbingEnabled: Boolean,
+) {
+    /**
+     * The ledger marker's arguments: every switch's new value, and which ones changed from
+     * [before]. Keys and values are plain words the argument sanitizer leaves alone (a key that
+     * contained `secret` would be recorded as `[REDACTED]`).
+     */
+    internal fun ledgerArgs(before: McpHostSecretSettings): Map<String, String> =
+        buildMap {
+            put(REFERENCES, onOff(referencesEnabled))
+            put(BEARING_CALLS, secretBearingCalls.name)
+            put(RESULT_SCRUBBING, onOff(resultScrubbingEnabled))
+            val changed =
+                listOfNotNull(
+                    REFERENCES.takeIf { referencesEnabled != before.referencesEnabled },
+                    BEARING_CALLS.takeIf { secretBearingCalls != before.secretBearingCalls },
+                    RESULT_SCRUBBING.takeIf { resultScrubbingEnabled != before.resultScrubbingEnabled },
+                )
+            put("changed", changed.joinToString(","))
+        }
+
+    companion object {
+        const val LEDGER_TOOL_NAME = "host_secret_settings"
+        const val LEDGER_PROVIDER_ID = "host"
+        private const val REFERENCES = "references"
+        private const val BEARING_CALLS = "bearing_calls"
+        private const val RESULT_SCRUBBING = "result_scrubbing"
+
+        private fun onOff(on: Boolean) = if (on) "on" else "off"
+    }
+}
+
+/** The switches [McpHostSecretSettings] edits, as this config holds them. */
+val McpToolPolicyConfig.hostSecretSettings: McpHostSecretSettings
+    get() = McpHostSecretSettings(secretReferencesEnabled, secretBearingCalls, resultScrubbingEnabled)
+
+/** This config with [settings] in place of its three secret switches, every rule unchanged. */
+fun McpToolPolicyConfig.withHostSecretSettings(settings: McpHostSecretSettings): McpToolPolicyConfig =
+    copy(
+        secretReferencesEnabled = settings.referencesEnabled,
+        secretBearingCalls = settings.secretBearingCalls,
+        resultScrubbingEnabled = settings.resultScrubbingEnabled,
+    )
 
 /**
  * What the host does with a call that carries `{{secret:...}}` references.

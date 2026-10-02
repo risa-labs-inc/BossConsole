@@ -456,6 +456,53 @@ class McpPolicyEngine(
             )
         }
 
+    /**
+     * Save the host's three secret-reference switches ([McpHostSecretSettings]) in one durable
+     * write, every rule unchanged.
+     *
+     * [expected] is what the caller showed the operator. A change saved meanwhile (another
+     * window's dialog) refuses this one ([McpProactivePolicyOutcome.Refused]) rather than writing
+     * over a decision the operator never saw. An unreadable file refuses it too
+     * ([McpProactivePolicyOutcome.PolicyUnreadable]): the engine is running on fail-closed defaults
+     * then, and writing them out would replace the operator's file. Settings equal to [expected]
+     * are answered [McpProactivePolicyOutcome.Saved] without a write.
+     *
+     * No revocation bump: a call already past its prompt is fenced by the registry, which reads
+     * these switches again after the prompt (`secretFenceRefusal`), and its result is scrubbed if
+     * scrubbing was on at either reading, so a change can only make that call more careful.
+     */
+    fun setHostSecretSettings(
+        expected: McpHostSecretSettings,
+        updated: McpHostSecretSettings,
+    ): McpProactivePolicyOutcome =
+        synchronized(lock) {
+            val current = _config.value
+            when {
+                _fault.value is McpPolicyFault.PersistedPolicyUnreadable -> {
+                    McpProactivePolicyOutcome.PolicyUnreadable
+                }
+
+                current.hostSecretSettings != expected -> {
+                    McpProactivePolicyOutcome.Refused
+                }
+
+                updated == expected -> {
+                    McpProactivePolicyOutcome.Saved
+                }
+
+                else -> {
+                    writeConfig(
+                        key = HOST_SECRET_SETTINGS_KEY,
+                        logKey = "setting",
+                        updated = current.withHostSecretSettings(updated),
+                        successMessage = "Updated MCP secret reference settings",
+                        failureMessage = "Failed to persist MCP secret reference settings",
+                        faultFor = { k, e -> McpPolicyFault.PolicyPersistFailed(k, e) },
+                    )
+                }
+            }
+        }
+
     /** Save a reviewed section in one durable write; concurrent edits invalidate the whole snapshot. */
     fun setSectionPolicies(changes: List<McpSectionPolicyChange>): McpProactivePolicyOutcome =
         synchronized(lock) {
@@ -724,3 +771,6 @@ class McpPolicyEngine(
         }
     }
 }
+
+/** What a failed host-settings write names in its fault and log line. */
+private const val HOST_SECRET_SETTINGS_KEY = "secret reference settings"

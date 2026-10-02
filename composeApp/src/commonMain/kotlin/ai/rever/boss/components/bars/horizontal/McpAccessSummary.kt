@@ -58,16 +58,19 @@ private fun count(
 /**
  * The menu behind the "MCP access" item, one entry per kind of grant. Entries that would open an
  * empty list are left out rather than disabled, so the menu only ever offers something that does
- * something; "Tool policies" is always present because it is also where a rule is set proactively.
+ * something; "Tool policies" is always present because it is also where a rule is set proactively,
+ * and "Secret references" because it holds the host's secret switches rather than a list.
  *
  * No icons, so on macOS it renders as a real NSMenu (see `ContextMenu`'s `isNativeRepresentable`).
  */
+@Suppress("LongParameterList") // One callback per menu entry; a holder type would only rename them.
 internal fun mcpAccessMenuItems(
     summary: McpAccessSummary,
     onPolicies: () -> Unit,
     onSessionTrust: () -> Unit,
     onTrustedPlugins: () -> Unit,
     onYolo: () -> Unit = {},
+    onSecretReferences: () -> Unit = {},
 ): List<ContextMenuItem> =
     buildList {
         // Turning YOLO off is the first thing offered while it is on, so it is one click from the
@@ -88,6 +91,9 @@ internal fun mcpAccessMenuItems(
         if (summary.trustedPlugins > 0) {
             add(ContextMenuItem(text = "Trusted plugins (${summary.trustedPlugins})...", onClick = onTrustedPlugins))
         }
+        // Always offered, like Tool policies: it is where the host's secret switches are set, not a
+        // list that could be empty.
+        add(ContextMenuItem(text = "Secret references...", onClick = onSecretReferences))
         if (!summary.yolo && summary.yoloAvailable) {
             add(ContextMenuItem(isDivider = true))
             add(ContextMenuItem(text = "YOLO mode...", onClick = onYolo))

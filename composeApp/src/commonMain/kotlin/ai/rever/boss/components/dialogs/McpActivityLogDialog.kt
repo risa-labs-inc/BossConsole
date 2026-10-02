@@ -402,6 +402,7 @@ internal val McpApprovalDisposition.unsuccessfulCategory: McpUnsuccessfulCategor
             McpApprovalDisposition.YOLO_ALLOWED,
             McpApprovalDisposition.YOLO_ENABLED,
             McpApprovalDisposition.YOLO_DISABLED,
+            McpApprovalDisposition.HOST_SECRET_SETTINGS_CHANGED,
             -> McpUnsuccessfulCategory.FAILED
         }
 

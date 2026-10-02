@@ -19,14 +19,24 @@ class McpAccessSummaryTest {
     @Test
     fun `every control the bar used to show is reachable from the menu`() {
         assertEquals(
-            listOf("Tool policies (3)...", "Session trust (1)...", "Trusted plugins (2)...", "---", "YOLO mode..."),
+            listOf(
+                "Tool policies (3)...",
+                "Session trust (1)...",
+                "Trusted plugins (2)...",
+                "Secret references...",
+                "---",
+                "YOLO mode...",
+            ),
             labels(McpAccessSummary(savedRules = 3, trustedPlugins = 2, sessionGrants = 1)),
         )
     }
 
     @Test
-    fun `entries that would do nothing are left out, but tool policies always stays`() {
-        assertEquals(listOf("Tool policies...", "---", "YOLO mode..."), labels(McpAccessSummary(0, 0, 0)))
+    fun `entries that would do nothing are left out, but tool policies and secret references always stay`() {
+        assertEquals(
+            listOf("Tool policies...", "Secret references...", "---", "YOLO mode..."),
+            labels(McpAccessSummary(0, 0, 0)),
+        )
     }
 
     @Test
@@ -37,8 +47,9 @@ class McpAccessSummaryTest {
             onPolicies = { fired += "policies" },
             onSessionTrust = { fired += "session" },
             onTrustedPlugins = { fired += "plugins" },
+            onSecretReferences = { fired += "secrets" },
         ).filterNot { it.isDivider || it.text == "YOLO mode..." }.forEach { it.onClick() }
-        assertEquals(listOf("policies", "session", "plugins"), fired)
+        assertEquals(listOf("policies", "session", "plugins", "secrets"), fired)
     }
 
     @Test
@@ -64,13 +75,16 @@ class McpAccessSummaryTest {
         val on = McpAccessSummary(0, 0, 0, yolo = true)
         assertEquals("MCP: YOLO", on.label)
         assertTrue(on.isVisible(hasTools = false))
-        assertEquals(listOf("Turn off YOLO mode", "---", "Tool policies..."), labels(on))
+        assertEquals(listOf("Turn off YOLO mode", "---", "Tool policies...", "Secret references..."), labels(on))
         assertEquals("MCP access", McpAccessSummary(0, 0, 0).label)
     }
 
     @Test
     fun `a deployment that refuses yolo does not offer it`() {
-        assertEquals(listOf("Tool policies..."), labels(McpAccessSummary(0, 0, 0, yoloAvailable = false)))
+        assertEquals(
+            listOf("Tool policies...", "Secret references..."),
+            labels(McpAccessSummary(0, 0, 0, yoloAvailable = false)),
+        )
     }
 
     @Test
