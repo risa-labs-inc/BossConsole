@@ -9,6 +9,7 @@ import ai.rever.boss.mcp.McpLedgerReadException
 import ai.rever.boss.mcp.McpLedgerVerification
 import ai.rever.boss.mcp.McpOperationLedger
 import ai.rever.boss.mcp.McpOperationRecord
+import ai.rever.boss.mcp.displayableStoredCommand
 import ai.rever.boss.mcp.secrets.SecretField
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import kotlinx.serialization.json.JsonElement
@@ -508,6 +509,17 @@ internal object McpLedgerFormat {
                     if (record.escalated) {
                         append("\n    escalated: rated CRITICAL, so a saved allow did not cover it")
                     }
+                    // Escaped exactly as the approval dialog shows them. A recorded command keeps
+                    // its newlines, U+2028 and escape sequences, and printed raw one could draw a
+                    // forged "stored command" line or a whole record row here, or drive the
+                    // operator's terminal. --json carries the recorded text unchanged.
+                    record.storedCommands.forEachIndexed { index, command ->
+                        append("\n    stored command ${index + 1}: ").append(displayableStoredCommand(command))
+                    }
+                    if (record.approvalKeyStripped) {
+                        append("\n    approval key stripped: the arguments carried approvedStartupCommands, ")
+                        append("which only the host sets")
+                    }
                 }
             }
         val footer =
@@ -644,6 +656,8 @@ internal object McpLedgerFormat {
             put("errorSnippet", record.errorSnippet)
             put("secretRefs", buildJsonArray { record.secretRefs.forEach { add(it) } })
             put("escalated", record.escalated)
+            put("storedCommands", buildJsonArray { record.storedCommands.forEach { add(it) } })
+            put("approvalKeyStripped", record.approvalKeyStripped)
             put("hash", record.hash)
             put("parentHash", record.parentHash)
             put("file", entry.file.name)

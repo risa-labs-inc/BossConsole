@@ -50,6 +50,35 @@ data class McpOperationRecord(
      */
     val escalated: Boolean = false,
     /**
+     * The stored startup commands this call would have run (see `McpStoredCommandSource`), in
+     * full and exactly as the source returned them. The approval prompt and `boss mcp ledger tail`
+     * show them escaped (`displayableStoredCommand`); `--json` gives this text unchanged. Recorded
+     * here rather than in [sanitizedArgs], whose values are capped at 4096 characters: the prompt
+     * shows up to `MAX_STORED_COMMANDS_TOTAL_CHARS`, and an audit record of what was approved must
+     * not be shorter than what was approved.
+     *
+     * Empty for every other call, and for a stored-command call refused before any prompt (too
+     * many, too long, masked by the sanitizer, or a source that failed or did not answer): no
+     * command reached the operator, and [errorSnippet] says why. Hashed only when non-empty. An
+     * older build decodes the field away (`ignoreUnknownKeys`), so `boss mcp ledger verify` on a
+     * downgraded install reports those rows as `RECORD_ALTERED`, as it does for [escalated].
+     */
+    val storedCommands: List<String> = emptyList(),
+    /**
+     * True when the agent's arguments to a stored-command tool (a `McpStoredCommandSource`
+     * provider's) carried the registry's own approval key (`approvedStartupCommands`) and the host
+     * removed it before the policy, the prompt or the handler read them. [sanitizedArgs] records
+     * those arguments without it, so for these tools this is the only trace of the attempt. The
+     * strip is source-only: a call to any other provider's tool is not stripped, has no reader for
+     * the key, and keeps it in [sanitizedArgs], which is its trace. A field of the record rather
+     * than an argument, so no argument an agent writes can forge it.
+     *
+     * Hashed only when true. An older build decodes the field away (`ignoreUnknownKeys`), so
+     * `boss mcp ledger verify` on a downgraded install reports those rows as `RECORD_ALTERED`, as
+     * it does for [escalated].
+     */
+    val approvalKeyStripped: Boolean = false,
+    /**
      * SHA-256 over [parentHash] and this record's [canonicalFormForHashing], so a record edited
      * after the fact no longer agrees with the chain that follows it.
      *
@@ -104,5 +133,12 @@ internal fun McpOperationRecord.canonicalFormForHashing(): String =
         // Written only when set, like secretRefs, so every record without it hashes as it did.
         if (escalated) {
             put("escalated", true)
+        }
+        // Both written only when set, for the same reason.
+        if (storedCommands.isNotEmpty()) {
+            put("storedCommands", JsonArray(storedCommands.map(::JsonPrimitive)))
+        }
+        if (approvalKeyStripped) {
+            put("approvalKeyStripped", true)
         }
     }.toString()

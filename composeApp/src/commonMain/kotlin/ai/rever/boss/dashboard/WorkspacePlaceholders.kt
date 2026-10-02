@@ -36,6 +36,15 @@ object WorkspacePlaceholders {
     private const val CLAUDE_CONTINUE_FLAG_PLACEHOLDER = "{claudeContinueFlag}"
     private const val CURRENT_FILE_PLACEHOLDER = "{currentFile}"
 
+    /** Every placeholder a Space's tabs may carry, as written in the file. */
+    internal val ALL_PLACEHOLDERS: List<String> =
+        listOf(
+            PROJECT_PATH_PLACEHOLDER,
+            GIT_REMOTE_URL_PLACEHOLDER,
+            CURRENT_FILE_PLACEHOLDER,
+            CLAUDE_CONTINUE_FLAG_PLACEHOLDER,
+        )
+
     /**
      * Every token the pipeline substitutes, as ONE alternation: the pipeline is one scan
      * of the template, never of the values. [Regex.replace] with a transform inserts each

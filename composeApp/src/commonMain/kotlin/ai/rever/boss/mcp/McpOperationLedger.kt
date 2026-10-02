@@ -159,6 +159,8 @@ class McpOperationLedger(
         countsAsCall: Boolean = true,
         secretRefs: List<String> = emptyList(),
         escalated: Boolean = false,
+        storedCommands: List<String> = emptyList(),
+        approvalKeyStripped: Boolean = false,
     ): McpOperationRecord {
         val sanitized = sanitizeArguments(rawArgs)
         // Bound regex work before sanitizing. Omit oversized input entirely so cutting through
@@ -185,6 +187,22 @@ class McpOperationLedger(
                 errorSnippet = sanitizedErrorSnippet,
                 secretRefs = secretRefs,
                 escalated = escalated,
+                // Through the sanitizer like every other text here, and bounded first like
+                // errorSnippet, so this record stays safe without relying on its caller. For the
+                // registry both are no-ops: a command only reaches a prompt within
+                // MAX_STORED_COMMAND_CHARS and when the sanitizer leaves it unchanged
+                // (storedCommandShownInFull), so this records it exactly, and in full: no
+                // per-value cap applies to this list. sanitizeMessage answers a rule that
+                // overflows the stack with SANITIZE_FAILED rather than throwing.
+                storedCommands =
+                    storedCommands.map {
+                        if (it.length > MAX_STORED_COMMAND_CHARS) {
+                            "[OMITTED: command too large]"
+                        } else {
+                            McpArgumentSanitizer.sanitizeMessage(it)
+                        }
+                    },
+                approvalKeyStripped = approvalKeyStripped,
             )
 
         // Under one lock so queue order always equals ring-buffer order. What does NOT

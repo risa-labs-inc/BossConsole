@@ -49,6 +49,7 @@ class McpLedgerCliTest {
         secretRefs: List<String> = emptyList(),
         escalated: Boolean = false,
         providerId: String = "provider",
+        storedCommands: List<String> = emptyList(),
     ) {
         ledger.record(
             toolName = toolName,
@@ -60,6 +61,7 @@ class McpLedgerCliTest {
             rawArgs = mapOf("path" to "/project"),
             secretRefs = secretRefs,
             escalated = escalated,
+            storedCommands = storedCommands,
         )
         // Persistence is asynchronous: drain the writer so file asserts below see it.
         assertTrue(ledger.awaitIdle(), "ledger writer never drained")
@@ -215,6 +217,49 @@ class McpLedgerCliTest {
 
         assertEquals(1, Regex("escalated:").findAll(human).count(), human)
         assertEquals(listOf("false", "true").sorted(), flags.sorted())
+    }
+
+    @Test
+    fun `tail prints each stored command on one line, escaped as the approval dialog shows it`() {
+        val file = createTempLedgerFile()
+        val ledger = McpOperationLedger(ledgerFile = file)
+        // Each would draw more than its own line printed raw: a newline carrying a forged entry,
+        // U+2028 (a mandatory line break), and an ANSI sequence that clears the screen.
+        val commands =
+            listOf(
+                "echo one\n    stored command 2: echo forged",
+                "echo two\u2028echo forged",
+                "echo three\u001B[2J",
+            )
+        record(ledger, "open_workspace", storedCommands = commands)
+
+        val human = okText(McpLedgerCli.tail(file.absolutePath, 1, McpLedgerQuery(), json = false))
+        val json = okText(McpLedgerCli.tail(file.absolutePath, 1, McpLedgerQuery(), json = true))
+
+        val lines = human.lines().filter { it.trimStart().startsWith("stored command") }
+        assertEquals(
+            listOf(
+                "    stored command 1: echo one\\u{000A}    stored command 2: echo forged",
+                "    stored command 2: echo two\\u{2028}echo forged",
+                "    stored command 3: echo three\\u{001B}[2J",
+            ),
+            lines,
+            human,
+        )
+        assertFalse(human.any { it == '\u2028' || it == '\u001B' }, human)
+        // The record and the JSON export keep the text as recorded.
+        val recorded =
+            Json
+                .parseToJsonElement(json)
+                .jsonObject
+                .getValue("records")
+                .jsonArray
+                .single()
+                .jsonObject
+                .getValue("storedCommands")
+                .jsonArray
+                .map { it.jsonPrimitive.content }
+        assertEquals(commands, recorded)
     }
 
     @Test

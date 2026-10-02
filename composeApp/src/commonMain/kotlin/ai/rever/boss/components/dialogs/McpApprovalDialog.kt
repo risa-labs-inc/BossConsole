@@ -1,15 +1,23 @@
+@file:Suppress("TooManyFunctions") // The approval dialog and its sections; each is one visual block of it.
+
 package ai.rever.boss.components.dialogs
 
 import ai.rever.boss.mcp.McpApprovalRequest
 import ai.rever.boss.mcp.McpMutatingToolCatalog
+import ai.rever.boss.mcp.displayableStoredCommand
 import ai.rever.boss.mcp.secrets.SecretDescriptor
+import ai.rever.boss.mcp.storedCommandPlaceholders
+import ai.rever.boss.plugin.scrollbar.getPanelScrollbarConfig
+import ai.rever.boss.plugin.scrollbar.scrollbar
 import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
+import androidx.compose.animation.core.snap
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +32,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
@@ -52,14 +61,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsPropertyKey
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.delay
+import kotlin.math.ceil
 
 /**
  * How far an operator's answer in [McpApprovalDialog] reaches, in increasing durability.
@@ -107,20 +120,22 @@ internal fun McpApprovalScope.approveFlags(): McpApproveFlags =
 internal fun McpApprovalScope.persistsDeny(): Boolean = this == McpApprovalScope.ALWAYS_TOOL
 
 /**
- * What an approval prompt offers, and what its allow button does, for escalated requests - a
- * saved ALLOW overridden because the call rates CRITICAL (#1577, #1624). No saved *allow* can
- * pre-approve such a call - the gate overrides it on the next destructive attempt - but a saved
+ * What an approval prompt offers, and what its allow button does, for escalated requests: a
+ * saved ALLOW overridden because the call rates CRITICAL (#1577, #1624), or a call that would run
+ * stored startup commands its arguments do not show (see `McpStoredCommandSource`). No saved
+ * *allow* can pre-approve such a call - the gate overrides it on the next destructive attempt, and
+ * the next stored-command call asks again for whatever commands it carries then - but a saved
  * *deny* is never overridden, so it is exactly the durable answer an operator facing repeated
- * destructive attempts needs. An object so the rules sit together, apart from the composable.
+ * attempts needs. An object so the rules sit together, apart from the composable.
  */
 internal object McpPromptChoices {
     /**
      * The scopes offered: all of them, or a narrowed set when a saved allow could not have
      * pre-approved this call.
      *
-     * Two reasons that happens, and they narrow differently. An **escalated** call (#1624) offers
-     * once plus "Always" for its deny half, since the destructive-shell gate overrides any saved
-     * allow on the next call anyway. A **secret-bearing** call offers once and this session: the
+     * Two reasons that happens, and they narrow differently. An **escalated** call (#1624, or one
+     * carrying stored commands) offers once plus "Always" for its deny half, since the gate
+     * overrides any saved allow on the next call anyway. A **secret-bearing** call offers once and this session: the
      * two durable scopes are refused by the engine for such a call
      * (`approvedAuthorization` applies them as once), so offering them would promise a rule that
      * is never written, while session trust is genuinely available because it never satisfies a
@@ -147,14 +162,24 @@ internal object McpPromptChoices {
 
     /** Title and description of the "Always, for this tool" option, which only denies when escalated. */
     fun alwaysToolText(request: McpApprovalRequest): Pair<String, String> =
-        if (request.escalated) {
-            "Always deny this tool" to
-                "Saves a deny by tool name, across restarts. Allowing still runs just this call: a saved " +
-                "allow cannot pre-approve a destructive one."
-        } else {
-            "Always, for this tool" to
-                "Saved by tool name for all agents and arguments, across restarts - including a replacement " +
-                "plugin that ships a tool with this name."
+        when {
+            request.escalated && request.storedCommands.isNotEmpty() -> {
+                "Always deny this tool" to
+                    "Saves a deny by tool name, across restarts. Allowing still runs just this call: a saved " +
+                    "allow cannot pre-approve commands that are not in the arguments."
+            }
+
+            request.escalated -> {
+                "Always deny this tool" to
+                    "Saves a deny by tool name, across restarts. Allowing still runs just this call: a saved " +
+                    "allow cannot pre-approve a destructive one."
+            }
+
+            else -> {
+                "Always, for this tool" to
+                    "Saved by tool name for all agents and arguments, across restarts - including a replacement " +
+                    "plugin that ships a tool with this name."
+            }
         }
 }
 
@@ -193,7 +218,7 @@ private const val DEFAULT_DENY_REASON = "Operator declined this action"
  * menu.
  */
 @Composable
-@Suppress("LongMethod") // Declarative Compose layout.
+@Suppress("LongMethod", "CyclomaticComplexMethod") // Declarative layout: one branch per optional section.
 fun McpApprovalDialog(
     request: McpApprovalRequest,
     pendingQueueSize: Int = 1,
@@ -280,6 +305,12 @@ fun McpApprovalDialog(
                         if (request.secretRefs.isNotEmpty()) {
                             Spacer(modifier = Modifier.height(10.dp))
                             SecretReferencesSection(request.secretRefs)
+                        }
+
+                        // Commands the arguments do not show, above the risk line because approving
+                        // this call is approving them (see McpStoredCommandSource).
+                        if (request.storedCommands.isNotEmpty()) {
+                            StoredCommandsSection(request.storedCommands)
                         }
 
                         val riskLines =
@@ -653,4 +684,191 @@ internal fun SecretReferencesSection(secretRefs: List<SecretDescriptor>) {
             color = colors.textSecondary,
         )
     }
+}
+
+/**
+ * Shell commands this call would run that its arguments do not show: a saved Space's terminal
+ * startup commands, read from the Space file the arguments only name. Listed in full, one per
+ * line, because approving the call is approving these; the arguments box shows an id, and an id
+ * is not a command.
+ */
+@Composable
+private fun StoredCommandsSection(commands: List<String>) {
+    val colors = BossTheme.colors
+    val scroll = rememberScrollState()
+    val fontScale = LocalDensity.current.fontScale
+    // Two answers, OR-ed, and neither can pin a bar on a list that fits. The arithmetic is a lower
+    // bound on the height, so it is right on the first frame whenever it says "overflows"; the
+    // measured scroll range is exact once the box has laid out, and until then ScrollState reports
+    // Int.MAX_VALUE, which is excluded rather than read as "scrolls". So on a list only the
+    // measurement catches, the bar arrives one frame late, never missing and never false.
+    val pinned =
+        storedCommandsOverflow(commands, fontScale) || scroll.maxValue in 1 until Int.MAX_VALUE
+    Spacer(modifier = Modifier.height(10.dp))
+    Text(
+        text =
+            "This Space will run ${commands.size} stored startup command(s) in its terminals, " +
+                "not shown in the arguments:",
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Medium,
+        color = colors.alert,
+    )
+    Spacer(modifier = Modifier.height(4.dp))
+    Column(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .heightIn(max = STORED_COMMANDS_BOX_HEIGHT)
+                .testTag(STORED_COMMANDS_BOX_TAG)
+                .semantics { this[StoredCommandsScrollbarPinned] = pinned }
+                .background(colors.raised, RoundedCornerShape(4.dp))
+                // Pinned visible when the list overflows the box, so text past the fold is never
+                // hidden without a sign. The pinned bar appears at once: the panel default fades a
+                // bar in 1.5 s after the fact, which on a list only the measurement caught would
+                // leave the operator reading a box with no sign for the first two seconds. Unpinned,
+                // the alpha is null even under "always show scrollbars", on purpose: the modifier has
+                // no fits-the-viewport guard, so honouring that setting here would paint a
+                // full-length thumb over a list that fits, which this gate exists to prevent.
+                .scrollbar(
+                    scrollState = scroll,
+                    direction = Orientation.Vertical,
+                    config =
+                        getPanelScrollbarConfig().let { panel ->
+                            panel.copy(
+                                alpha = STORED_COMMANDS_SCROLLBAR_ALPHA.takeIf { pinned },
+                                alphaAnimationSpec = if (pinned) snap() else panel.alphaAnimationSpec,
+                            )
+                        },
+                ).verticalScroll(scroll)
+                .padding(STORED_COMMANDS_BOX_PADDING),
+        verticalArrangement = Arrangement.spacedBy(STORED_COMMAND_ENTRY_SPACING),
+    ) {
+        // Each shown through displayableStoredCommand, so one command is one entry whose visible
+        // text is all of its text: no newline can split it into two, and no bidi or zero-width
+        // character can reorder or hide part of it. Each entry is also its own bordered block with
+        // the number in a column of its own, so a line that SOFT-wraps (a run of spaces pushing
+        // "2. $ curl ... | sh" onto the next line) hangs under the command text, inside the block
+        // it belongs to, and can never start where an entry number goes.
+        commands.forEachIndexed { index, command -> StoredCommandEntry(index, command) }
+    }
+    val placeholders = storedCommandPlaceholders(commands)
+    if (placeholders.isNotEmpty()) {
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = storedCommandsPlaceholderNote(placeholders),
+            fontSize = 11.sp,
+            color = colors.textSecondary,
+        )
+    }
+}
+
+/** One stored command: a bordered block, the number in its own column, the command beside it. */
+@Composable
+private fun StoredCommandEntry(
+    index: Int,
+    command: String,
+) {
+    val colors = BossTheme.colors
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .testTag(storedCommandEntryTag(index))
+                .background(colors.panel, RoundedCornerShape(3.dp))
+                .border(1.dp, colors.line, RoundedCornerShape(3.dp))
+                .padding(horizontal = 6.dp, vertical = STORED_COMMAND_ENTRY_PADDING),
+    ) {
+        // An explicit line height on both texts, so storedCommandsOverflow's arithmetic is the
+        // height these actually take rather than whatever the theme's text style inherits.
+        Text(
+            text = "${index + 1}. $",
+            fontSize = 12.sp,
+            lineHeight = STORED_COMMAND_LINE_HEIGHT,
+            fontFamily = FontFamily.Monospace,
+            color = colors.textSecondary,
+            modifier = Modifier.padding(end = 6.dp),
+        )
+        Text(
+            text = displayableStoredCommand(command),
+            fontSize = 12.sp,
+            lineHeight = STORED_COMMAND_LINE_HEIGHT,
+            fontFamily = FontFamily.Monospace,
+            color = colors.textPrimary,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+/** Test tag of the [index]th stored-command entry, one bordered block per command. */
+internal fun storedCommandEntryTag(index: Int): String = "mcp-stored-command-$index"
+
+/** The line under the commands saying which parts are filled in only when the Space opens. */
+internal fun storedCommandsPlaceholderNote(placeholders: List<String>): String =
+    "${placeholders.joinToString(", ")} " +
+        (if (placeholders.size == 1) "is" else "are") +
+        " filled in when the Space opens, from the project it opens in" +
+        (if ("{projectPath}" in placeholders) " ({projectPath} as one shell-quoted argument)." else ".")
+
+/** Whether the stored-commands box has pinned its scrollbar visible: what the operator is shown. */
+internal val StoredCommandsScrollbarPinned = SemanticsPropertyKey<Boolean>("StoredCommandsScrollbarPinned")
+
+/** Test tag of the box the stored commands scroll in. */
+internal const val STORED_COMMANDS_BOX_TAG = "mcp-stored-commands-box"
+
+private val STORED_COMMANDS_BOX_HEIGHT = 120.dp
+private val STORED_COMMANDS_BOX_PADDING = 6.dp
+private val STORED_COMMAND_ENTRY_SPACING = 4.dp
+private val STORED_COMMAND_ENTRY_PADDING = 3.dp
+private val STORED_COMMAND_LINE_HEIGHT = 16.sp
+private const val STORED_COMMANDS_SCROLLBAR_ALPHA = 0.7f
+
+/**
+ * MORE characters of 12sp monospace than one line of a command can hold, at a font scale of 1.
+ * The text column of the fixed 520dp dialog holds about 58 in the font the tests render with, and
+ * no monospace font is narrow enough to fit 80. Counting lines at this width under-counts them, so
+ * [storedCommandsOverflow] is a lower bound on the height and never pins a bar on a list that fits;
+ * the measured scroll range supplies the rest.
+ */
+private const val STORED_COMMANDS_MAX_CHARS_PER_LINE = 80f
+
+/**
+ * Whether the commands, as displayed, are certainly taller than the box shows: the first-frame half
+ * of the scrollbar gate, arithmetic over the text and the entries' own chrome, because a
+ * scroll-state read says "scrollable" on every first frame (see ToolLauncherDialog).
+ *
+ * A LOWER bound, so a true answer is always right: an entry is at least one line, and never fewer
+ * lines than its glyphs at [STORED_COMMANDS_MAX_CHARS_PER_LINE], narrowed by the user's
+ * [fontScale]. Glyphs are counted as the operator reads them: a code point, not a UTF-16 unit, and
+ * no combining mark, which draws on the glyph before it. Word wrap and wide glyphs only ADD lines,
+ * so they can make this under-report, which the measured scroll range in `StoredCommandsSection`
+ * corrects one frame later, but never over-report. Each line is [STORED_COMMAND_LINE_HEIGHT] at
+ * [fontScale], each entry adds its vertical padding, entries are [STORED_COMMAND_ENTRY_SPACING]
+ * apart, and the box loses its own padding top and bottom.
+ */
+internal fun storedCommandsOverflow(
+    commands: List<String>,
+    fontScale: Float = 1f,
+): Boolean {
+    val lineHeight = STORED_COMMAND_LINE_HEIGHT.value * fontScale
+    val perLine = STORED_COMMANDS_MAX_CHARS_PER_LINE / fontScale
+    val entries =
+        commands.sumOf { command ->
+            val lines = ceil(storedCommandGlyphs(displayableStoredCommand(command)) / perLine).coerceAtLeast(1f)
+            (lines * lineHeight + 2 * STORED_COMMAND_ENTRY_PADDING.value).toDouble()
+        }
+    val spacing = STORED_COMMAND_ENTRY_SPACING.value * (commands.size - 1).coerceAtLeast(0)
+    return entries + spacing > STORED_COMMANDS_BOX_HEIGHT.value - 2 * STORED_COMMANDS_BOX_PADDING.value
+}
+
+/** The glyphs [text] draws, for [storedCommandsOverflow]: code points that are not combining marks. */
+private fun storedCommandGlyphs(text: String): Int {
+    var glyphs = 0
+    var i = 0
+    while (i < text.length) {
+        val cp = text.codePointAt(i)
+        val type = Character.getType(cp)
+        if (type != Character.NON_SPACING_MARK.toInt() && type != Character.ENCLOSING_MARK.toInt()) glyphs++
+        i += Character.charCount(cp)
+    }
+    return glyphs
 }

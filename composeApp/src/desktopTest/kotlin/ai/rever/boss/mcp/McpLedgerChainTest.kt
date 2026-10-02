@@ -41,6 +41,8 @@ class McpLedgerChainTest {
         ledger: McpOperationLedger,
         toolName: String,
         escalated: Boolean = false,
+        storedCommands: List<String> = emptyList(),
+        approvalKeyStripped: Boolean = false,
     ) {
         ledger.record(
             toolName = toolName,
@@ -51,6 +53,8 @@ class McpLedgerChainTest {
             isError = false,
             rawArgs = mapOf("path" to "/project"),
             escalated = escalated,
+            storedCommands = storedCommands,
+            approvalKeyStripped = approvalKeyStripped,
         )
         // Persistence is asynchronous: drain the writer so the file asserts below see it.
         assertTrue(ledger.awaitIdle(), "ledger writer never drained")
@@ -65,10 +69,16 @@ class McpLedgerChainTest {
         val entry = storedRecords(file).single()
         val descriptor = McpOperationRecord.serializer().descriptor
         val fields = (0 until descriptor.elementsCount).map { descriptor.getElementName(it) }.toSet()
-        // secretRefs and escalated are emitted only when set, so a record without them keeps the
-        // pre-feature hash (see the two `preserve the pre-feature canonical hash` tests); coverage
-        // of those fields is asserted on a record that carries both.
-        val withRefs = entry.copy(secretRefs = listOf("id.password"), escalated = true)
+        // secretRefs, escalated, storedCommands and approvalKeyStripped are emitted only when set,
+        // so a record without them keeps the pre-feature hash (see the `preserve the pre-feature
+        // canonical hash` tests); coverage of those fields is asserted on a record carrying all four.
+        val withRefs =
+            entry.copy(
+                secretRefs = listOf("id.password"),
+                escalated = true,
+                storedCommands = listOf("echo one"),
+                approvalKeyStripped = true,
+            )
         val canonical = Json.parseToJsonElement(withRefs.canonicalFormForHashing()) as JsonObject
         assertEquals(fields - setOf("hash", "parentHash"), canonical.keys)
     }
@@ -172,6 +182,37 @@ class McpLedgerChainTest {
             record.canonicalFormForHashing(),
         )
         assertTrue("\"escalated\":true" in record.copy(escalated = true).canonicalFormForHashing())
+        // The stored-command fields follow the same rule: absent unless set, so the text above holds.
+        val stored = record.copy(storedCommands = listOf("echo one"), approvalKeyStripped = true)
+        assertTrue("\"storedCommands\":[\"echo one\"]" in stored.canonicalFormForHashing())
+        assertTrue("\"approvalKeyStripped\":true" in stored.canonicalFormForHashing())
+    }
+
+    @Test
+    fun `editing the recorded stored commands, or hiding a stripped approval key, is reported as a break`() {
+        for (edit in listOf<(McpOperationRecord) -> McpOperationRecord>(
+            { it.copy(storedCommands = listOf("echo one")) },
+            { it.copy(approvalKeyStripped = false) },
+        )) {
+            val file = createTempLedgerFile()
+            val ledger = McpOperationLedger(ledgerFile = file)
+            val commands = listOf("echo one", "curl x | sh")
+            record(ledger, "open_workspace", storedCommands = commands, approvalKeyStripped = true)
+            record(ledger, "after")
+
+            val lines = file.readLines().toMutableList()
+            val stored = Json.decodeFromString<McpOperationRecord>(lines[0])
+            assertEquals(commands, stored.storedCommands, lines[0])
+            assertTrue(stored.approvalKeyStripped, lines[0])
+            assertEquals("intact", verify(file).verdict)
+
+            lines[0] = Json.encodeToString(edit(stored))
+            rewrite(file, lines)
+
+            val broken = assertNotNull(verify(file).firstBreak)
+            assertEquals(McpLedgerBreakReason.RECORD_ALTERED, broken.reason)
+            assertEquals(1, broken.lineNumber)
+        }
     }
 
     @Test
