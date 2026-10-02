@@ -927,9 +927,15 @@ internal fun BossAppDialogs(state: BossAppState) {
     // Interactive approval dialog for governed MCP tools invoked by an AI agent
     state.pendingMcpApproval?.let { approvalRequest ->
         val pendingList by McpToolRegistryImpl.approvalBus.pendingList.collectAsState()
+        val policyConfig by McpToolRegistryImpl.policyEngine.config.collectAsState()
+        val unresolvedLegacyRules =
+            remember(policyConfig.providerRules) {
+                McpToolRegistryImpl.policyEngine.unresolvedLegacyRules()
+            }
         McpApprovalDialog(
             request = approvalRequest,
             pendingQueueSize = pendingList.size,
+            unresolvedLegacyRules = unresolvedLegacyRules,
             onApprove = { trustForSession, persistPolicy, trustProvider ->
                 McpToolRegistryImpl.approvalBus.approve(
                     approvalRequest.id,

@@ -2,6 +2,7 @@ package ai.rever.boss.components.dialogs
 
 import ai.rever.boss.mcp.McpApprovalRequest
 import ai.rever.boss.mcp.McpArgumentSanitizer
+import ai.rever.boss.mcp.McpPolicyAction
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.VerticalScrollbar
@@ -108,17 +109,9 @@ internal fun ToolDetails(request: McpApprovalRequest) {
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            Text(
-                text = request.providerId,
-                fontSize = 11.sp,
-                color = colors.textSecondary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier =
-                    Modifier
-                        .padding(start = 8.dp)
-                        .border(1.dp, colors.line, RoundedCornerShape(radii.input))
-                        .padding(horizontal = 6.dp, vertical = 1.dp),
+            ProviderIdentityBadge(
+                providerId = request.providerId,
+                modifier = Modifier.padding(start = 8.dp),
             )
         }
 
@@ -145,6 +138,43 @@ internal fun ToolDetails(request: McpApprovalRequest) {
             text = "Policy: ${request.policy?.name ?: "ASK"} · denied automatically when the timer runs out",
             fontSize = 10.sp,
             color = colors.textSecondary,
+        )
+    }
+}
+
+@Composable
+private fun ProviderIdentityBadge(
+    providerId: String,
+    modifier: Modifier = Modifier,
+) {
+    val colors = BossTheme.colors
+    val radii = BossTheme.radius
+    val isNamespaced = providerId.contains("::")
+    val pluginId = if (isNamespaced) providerId.substringBefore("::") else null
+    val pluginDisplayName = if (pluginId != null) mcpPolicyPluginNames()[pluginId] ?: pluginId else null
+    Column(horizontalAlignment = Alignment.End, modifier = modifier) {
+        if (pluginDisplayName != null) {
+            Text(
+                text = "Plugin: $pluginDisplayName",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = colors.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Text(
+            text = providerId,
+            fontSize = 10.sp,
+            fontFamily = FontFamily.Monospace,
+            color = colors.textSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier =
+                Modifier
+                    .padding(top = 2.dp)
+                    .border(1.dp, colors.line, RoundedCornerShape(radii.input))
+                    .padding(horizontal = 6.dp, vertical = 1.dp),
         )
     }
 }
@@ -222,6 +252,64 @@ private fun ArgumentsBlock(
         VerticalScrollbar(
             adapter = rememberScrollbarAdapter(scroll),
             modifier = Modifier.matchParentSize().wrapContentWidth(Alignment.End),
+        )
+    }
+}
+
+internal fun matchingLegacyRuleFor(
+    providerId: String,
+    unresolvedLegacyRules: Map<String, McpPolicyAction>,
+): McpPolicyAction? {
+    val rawId =
+        if (providerId.contains("::")) {
+            providerId.substringAfter("::")
+        } else {
+            providerId
+        }
+    return unresolvedLegacyRules[rawId]
+}
+
+@Composable
+internal fun UnresolvedLegacyRuleBanner(
+    providerId: String,
+    unresolvedLegacyRules: Map<String, McpPolicyAction>,
+) {
+    val rawId =
+        if (providerId.contains("::")) {
+            providerId.substringAfter("::")
+        } else {
+            providerId
+        }
+    val matchingLegacy = matchingLegacyRuleFor(providerId, unresolvedLegacyRules) ?: return
+    val colors = BossTheme.colors
+    val radii = BossTheme.radius
+    val isDeny = matchingLegacy == McpPolicyAction.DENY
+
+    Spacer(modifier = Modifier.height(10.dp))
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .background(colors.raised, RoundedCornerShape(radii.card))
+                .border(
+                    1.dp,
+                    if (isDeny) colors.alert else colors.line,
+                    RoundedCornerShape(radii.card),
+                ).padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val effect =
+            if (isDeny) {
+                " Legacy denial remains in effect."
+            } else {
+                " Legacy grant is inert."
+            }
+        val text = "Unresolved legacy rule for '$rawId': ${matchingLegacy.name}.$effect"
+        Text(
+            text = text,
+            fontSize = 11.sp,
+            color = if (isDeny) colors.alert else colors.textSecondary,
+            modifier = Modifier.weight(1f),
         )
     }
 }

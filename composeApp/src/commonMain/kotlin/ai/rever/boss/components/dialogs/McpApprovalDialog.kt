@@ -2,6 +2,7 @@ package ai.rever.boss.components.dialogs
 
 import ai.rever.boss.mcp.McpApprovalRequest
 import ai.rever.boss.mcp.McpMutatingToolCatalog
+import ai.rever.boss.mcp.McpPolicyAction
 import ai.rever.boss.mcp.PreparedPackDisplayModel
 import ai.rever.boss.mcp.secrets.SecretDescriptor
 import ai.rever.boss.plugin.ui.BossDialog
@@ -213,6 +214,7 @@ fun McpApprovalDialog(
     onApprove: (trustForSession: Boolean, persistPolicy: Boolean, trustProvider: Boolean) -> Unit,
     onDeny: (reason: String, persistPolicy: Boolean) -> Unit,
     onDenyAllPending: () -> Unit = {},
+    unresolvedLegacyRules: Map<String, McpPolicyAction> = emptyMap(),
 ) {
     val colors = BossTheme.colors
     val radii = BossTheme.radius
@@ -287,6 +289,10 @@ fun McpApprovalDialog(
                     ) {
                         ToolDetails(request)
 
+                        UnresolvedLegacyRuleBanner(
+                            providerId = request.providerId,
+                            unresolvedLegacyRules = unresolvedLegacyRules,
+                        )
                         val packModel = request.displayModel as? PreparedPackDisplayModel
                         if (packModel != null) {
                             Spacer(modifier = Modifier.height(10.dp))

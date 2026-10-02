@@ -105,6 +105,9 @@ data class McpSessionTrust(
 @Suppress("TooManyFunctions") // Policy resolution, approval guards and durable updates share one state and lock.
 class McpPolicyEngine(
     private val policyFile: File? = null,
+    private val mappingFile: File? = policyFile?.let { File(it.parentFile, "mcp-provider-mapping.json") },
+    private val getInstalledPluginIds: () -> Set<String> = { emptySet() },
+    private val getRegisteredHostProviderIds: () -> Set<String> = { emptySet() },
     private val onFault: (McpPolicyFault) -> Unit = {},
 ) {
     private val logger = BossLogger.forComponent("McpPolicyEngine")
@@ -122,6 +125,10 @@ class McpPolicyEngine(
 
     private val _config = MutableStateFlow(loadConfig())
     val config: StateFlow<McpToolPolicyConfig> = _config.asStateFlow()
+
+    private val _providerMapping =
+        MutableStateFlow(loadMapping().ifEmpty { _config.value.providerMapping })
+    val providerMapping: StateFlow<Map<String, Set<String>>> = _providerMapping.asStateFlow()
 
     private val _sessionTrustedTools = MutableStateFlow<Set<McpSessionTrust>>(emptySet())
     val sessionTrustedTools: StateFlow<Set<McpSessionTrust>> = _sessionTrustedTools.asStateFlow()
@@ -220,18 +227,33 @@ class McpPolicyEngine(
     ): McpPolicyAction {
         if (_fault.value is McpPolicyFault.PersistedPolicyUnreadable) return McpPolicyAction.DENY
         val configuredTool = _config.value.rules[toolName]
-        if (configuredTool == McpPolicyAction.DENY) {
-            return McpPolicyAction.DENY
-        }
-        val configuredProvider = providerId?.let { _config.value.providerRules[it] }
-        if (isProviderDenied(providerId)) {
+        if (configuredTool == McpPolicyAction.DENY || isProviderDenied(providerId)) {
             return McpPolicyAction.DENY
         }
         if (providerId != null && McpSessionTrust(providerId, toolName) in _sessionTrustedTools.value) {
             return McpPolicyAction.ALLOW
         }
         if (configuredTool != null) return configuredTool
-        if (configuredProvider == McpPolicyAction.ALLOW) return McpPolicyAction.ALLOW
+        if (isProviderAllowed(providerId, _config.value.providerRules[providerId])) {
+            return McpPolicyAction.ALLOW
+        }
+        return defaultActionFor(toolName, declaredReadOnly)
+    }
+
+    private fun isProviderAllowed(
+        providerId: String?,
+        configuredProvider: McpPolicyAction?,
+    ): Boolean {
+        if (providerId == null || configuredProvider != McpPolicyAction.ALLOW) return false
+        return providerId.contains("::") ||
+            providerId in getRegisteredHostProviderIds() ||
+            !isOwnershipAmbiguous(providerId)
+    }
+
+    private fun defaultActionFor(
+        toolName: String,
+        declaredReadOnly: Boolean?,
+    ): McpPolicyAction {
         val risk = DefaultMcpRiskEvaluator().evaluateRisk(toolName, McpToolArgs(emptyMap())).level
         return if (risk >= McpRiskLevel.HIGH || McpMutatingToolCatalog.isMutating(toolName, declaredReadOnly)) {
             _config.value.defaultMutatingAction
@@ -253,11 +275,10 @@ class McpPolicyEngine(
     private fun isProviderDenied(providerId: String?): Boolean {
         val scopedId = providerId ?: return false
         val providerRules = _config.value.providerRules
+        val legacyId = legacyProviderId(scopedId)
 
         return providerRules[scopedId] == McpPolicyAction.DENY ||
-            legacyProviderId(scopedId)?.let { legacyId ->
-                providerRules[legacyId] == McpPolicyAction.DENY
-            } == true
+            (legacyId != null && providerRules[legacyId] == McpPolicyAction.DENY)
     }
 
     private fun legacyProviderId(providerId: String): String? =
@@ -630,6 +651,215 @@ class McpPolicyEngine(
         }
 
     /**
+     * Record a provider registration in the host-owned provider mapping sidecar.
+     * Retained across restarts to detect ambiguity even when a plugin is installed but disabled.
+     * Refuses to record a mapping for a suffix that equals a host provider ID.
+     */
+    fun recordProviderRegistration(providerId: String) {
+        val raw = legacyProviderId(providerId)
+        if (raw == null || raw in getRegisteredHostProviderIds()) return
+
+        synchronized(lock) {
+            val current = _providerMapping.value[raw].orEmpty()
+            if (providerId !in current) {
+                val updated = _providerMapping.value + (raw to (current + providerId))
+                _providerMapping.value = updated
+                val error = persistMapping(updated)
+                if (error != null) {
+                    logger.warn(
+                        LogCategory.SYSTEM,
+                        "Failed to persist MCP provider mapping",
+                        mapOf("provider_mapping" to raw, "error" to error),
+                    )
+                } else {
+                    logger.info(
+                        LogCategory.SYSTEM,
+                        "Recorded provider registration in mapping",
+                        mapOf("provider_mapping" to raw),
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Overload for callers specifying pluginId and providerId separately.
+     */
+    fun recordProviderRegistration(
+        pluginId: String?,
+        providerId: String,
+    ) {
+        val effectiveId =
+            if (providerId.contains("::")) {
+                providerId
+            } else if (pluginId != null) {
+                "$pluginId::$providerId"
+            } else {
+                providerId
+            }
+        recordProviderRegistration(effectiveId)
+    }
+
+    /**
+     * All known candidate identities (namespaced or claimant) matching [rawProviderId].
+     */
+    fun providerCandidates(rawProviderId: String): Set<String> {
+        val raw = legacyProviderId(rawProviderId) ?: rawProviderId
+        if (raw in getRegisteredHostProviderIds()) return emptySet()
+        val recorded = _providerMapping.value[raw].orEmpty() + _config.value.providerMapping[raw].orEmpty()
+        val installed = getInstalledPluginIds()
+        val fromInstalled =
+            if (raw in installed) {
+                setOf("$raw::$raw")
+            } else {
+                emptySet()
+            }
+        return recorded + fromInstalled
+    }
+
+    /**
+     * Whether multiple distinct plugins claim [rawProviderId].
+     * An ambiguous legacy ALLOW is kept inert until resolved.
+     */
+    fun isOwnershipAmbiguous(rawProviderId: String): Boolean {
+        val raw = legacyProviderId(rawProviderId) ?: rawProviderId
+        if (raw in getRegisteredHostProviderIds()) return false
+        val candidates = providerCandidates(raw)
+        val installed = getInstalledPluginIds()
+        val installedClaimants =
+            if (installed.isNotEmpty()) {
+                candidates.filter { candidate ->
+                    val pluginId = candidate.substringBefore("::")
+                    pluginId in installed
+                }
+            } else {
+                candidates
+            }
+        val distinctPlugins =
+            installedClaimants
+                .map { it.substringBefore("::") }
+                .toSet()
+        return distinctPlugins.size > 1
+    }
+
+    /**
+     * Legacy provider rules (keys without '::') that have not yet been migrated.
+     * Excludes currently-registered unnamespaced host provider IDs.
+     */
+    fun unresolvedLegacyRules(): Map<String, McpPolicyAction> {
+        val hostIds = getRegisteredHostProviderIds()
+        return _config.value.providerRules.filterKeys { "::" !in it && it !in hostIds }
+    }
+
+    private data class LegacyReconciliation(
+        val updatedRules: Map<String, McpPolicyAction>,
+        val keysToRetire: Set<String>,
+    )
+
+    private fun computeLegacyReconciliation(
+        legacyEntries: Map<String, McpPolicyAction>,
+        installedPluginIds: Set<String>,
+        providerRules: Map<String, McpPolicyAction>,
+    ): LegacyReconciliation {
+        val updated = providerRules.toMutableMap()
+        val keysToRetire = mutableSetOf<String>()
+
+        if (installedPluginIds.isEmpty()) {
+            return LegacyReconciliation(updated, keysToRetire)
+        }
+
+        for ((legacyKey, action) in legacyEntries) {
+            val recorded =
+                _providerMapping.value[legacyKey].orEmpty() +
+                    _config.value.providerMapping[legacyKey].orEmpty()
+            val installedClaimants =
+                recorded.filter { candidate ->
+                    candidate.substringBefore("::") in installedPluginIds
+                }
+
+            if (installedClaimants.size == 1) {
+                val claimant = installedClaimants.single()
+                val existing = providerRules[claimant]
+
+                if (existing == null) {
+                    updated[claimant] = action
+                    keysToRetire.add(legacyKey)
+                } else if (action == McpPolicyAction.DENY) {
+                    updated[claimant] = McpPolicyAction.DENY
+                    keysToRetire.add(legacyKey)
+                } else {
+                    // Legacy ALLOW or ASK does not weaken an existing scoped rule (DENY or ASK).
+                    // The legacy rule is retired as it is superseded by the explicit scoped rule.
+                    keysToRetire.add(legacyKey)
+                }
+            }
+        }
+        return LegacyReconciliation(updated, keysToRetire)
+    }
+
+    /**
+     * Reconcile legacy MCP provider rules (raw provider IDs without namespacing).
+     *
+     * - Migrate an rule only when ownership is unambiguous. Keep ambiguous ALLOW inert and visible for review.
+     * - Keep a legacy DENY effective against matching candidates until it can be safely migrated,
+     *   so an upgrade cannot silently lift it.
+     * - Persist the reconciled config atomically before retiring old keys.
+     * - On write failure, retain the old denial behavior and surface the existing policy fault.
+     */
+    fun reconcileLegacyEntries(): McpProactivePolicyOutcome {
+        val installedPluginIds = getInstalledPluginIds()
+        return synchronized(lock) {
+            if (_fault.value is McpPolicyFault.PersistedPolicyUnreadable) {
+                return@synchronized McpProactivePolicyOutcome.PolicyUnreadable
+            }
+
+            val hostIds = getRegisteredHostProviderIds()
+            val currentProviderRules = _config.value.providerRules
+            val legacyEntries = currentProviderRules.filterKeys { "::" !in it && it !in hostIds }
+            if (legacyEntries.isEmpty()) {
+                return@synchronized McpProactivePolicyOutcome.Saved
+            }
+
+            val (updatedRules, keysToRetire) =
+                computeLegacyReconciliation(legacyEntries, installedPluginIds, currentProviderRules)
+
+            if (keysToRetire.isEmpty() && updatedRules == currentProviderRules) {
+                return@synchronized McpProactivePolicyOutcome.Saved
+            }
+
+            val finalRules = updatedRules.filterKeys { it !in keysToRetire }
+            val finalConfig = _config.value.copy(providerRules = finalRules)
+
+            val writeError = persistConfig(finalConfig)
+            if (writeError != null) {
+                val faultObj = McpPolicyFault.ProviderPolicyPersistFailed("migration", writeError)
+                if (_fault.value !is McpPolicyFault.PersistedPolicyUnreadable) {
+                    _fault.value = faultObj
+                }
+                notifyFault(faultObj)
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Failed to persist reconciled legacy MCP provider policies",
+                    mapOf("error" to writeError),
+                )
+                return@synchronized McpProactivePolicyOutcome.Failed(writeError)
+            }
+
+            _config.value = finalConfig
+            _fault.value = null
+            logger.info(
+                LogCategory.SYSTEM,
+                "Reconciled legacy MCP provider policies",
+                mapOf(
+                    "retired" to keysToRetire.size,
+                    "remainingLegacy" to _config.value.providerRules.count { "::" !in it.key && it.key !in hostIds },
+                ),
+            )
+            McpProactivePolicyOutcome.Saved
+        }
+    }
+
+    /**
      * The operator-facing undo for [setToolPolicy]'s persistent scope: removes [toolName]'s rule
      * entirely, so the next call falls through to whatever [McpToolPolicyConfig.defaultMutatingAction]
      * / `defaultReadOnlyAction` actually say - not to a hardcoded ASK.
@@ -678,6 +908,34 @@ class McpPolicyEngine(
             saved
         }
 
+    @Suppress("ReturnCount", "TooGenericExceptionCaught")
+    private fun loadMapping(): Map<String, Set<String>> {
+        val file = mappingFile
+        if (file == null || !file.exists()) return emptyMap()
+        return try {
+            val text = file.readText()
+            if (text.isBlank()) emptyMap() else json.decodeFromString<Map<String, Set<String>>>(text)
+        } catch (t: Exception) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Failed to parse MCP provider mapping sidecar file",
+                mapOf("path" to file.path, "error" to (t.message ?: t::class.simpleName ?: "unknown")),
+            )
+            emptyMap()
+        }
+    }
+
+    @Suppress("TooGenericExceptionCaught")
+    private fun persistMapping(mappings: Map<String, Set<String>>): String? {
+        val file = mappingFile ?: return null
+        return try {
+            file.atomicWriteText(json.encodeToString(mappings))
+            null
+        } catch (t: Exception) {
+            t.message ?: t::class.simpleName ?: "unknown write error"
+        }
+    }
+
     // An absent file uses defaults; I/O and JSON failures withhold tools.
     @Suppress("ReturnCount", "TooGenericExceptionCaught")
     private fun loadConfig(): McpToolPolicyConfig {
@@ -717,7 +975,7 @@ class McpPolicyEngine(
     private fun persistConfig(cfg: McpToolPolicyConfig): String? {
         val file = policyFile ?: return null
         return try {
-            file.atomicWriteText(json.encodeToString(cfg))
+            file.atomicWriteText(json.encodeToString(cfg.copy(providerMapping = emptyMap())))
             null
         } catch (t: Exception) {
             t.message ?: t::class.simpleName ?: "unknown write error"

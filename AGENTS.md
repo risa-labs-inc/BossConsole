@@ -2275,13 +2275,15 @@ that provider id. Already queued sibling prompts still ask. Explicit tool ASK ru
 still override provider ALLOW. The Trusted plugins UI lists ALLOW rules only; hand-edited
 provider DENY rules currently require policy-file editing to remove.
 
-Plugin provider ids changed from `provider` to `plugin::provider` in #958. A persisted raw
-provider DENY remains authoritative at runtime for every scoped provider with that suffix:
-assigning the old key to one plugin is ambiguous, while dropping it would fail open. Do not copy
-that raw DENY into scoped policy entries; derived copies outlive revocation of the rule the
-operator actually set. Revoking the raw rule must immediately lift its inherited effect. Legacy
-raw ALLOW does not cross the namespace, because that would restore the provider-id aliasing the
-namespace was added to prevent. Keep this compatibility rule asymmetric.
+Plugin provider ids changed from `provider` to `plugin::provider` in #958. At runtime, a persisted
+raw provider DENY remains authoritative for every scoped provider sharing that raw suffix, resolved
+dynamically rather than copied into scoped policy entries. Legacy raw ALLOW does not cross the
+namespace at runtime while ownership is ambiguous, keeping the runtime compatibility rule asymmetric.
+Reconciliation (`reconcileLegacyEntries`, staged without a production caller today) migrates
+unambiguous legacy rules into scoped identities only when ownership across installed plugins is unique
+and known. Migration will only apply a DENY or fill an unset key, never weaken an existing scoped rule.
+Currently registered unnamespaced host providers (e.g. `boss-workspace`) are unnamespaced by design
+and exempt from legacy rule classification and ambiguity checks.
 
 **YOLO mode** makes any call whose policy resolves to ASK run without prompting, for every tool
 and provider, CRITICAL-risk ones and tools registered later included - secret-bearing calls

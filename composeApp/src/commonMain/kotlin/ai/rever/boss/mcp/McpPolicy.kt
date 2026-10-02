@@ -152,6 +152,12 @@ data class McpToolPolicyConfig(
      * guarantee holds without it (see `ai.rever.boss.mcp.secrets.McpResultScrubber`).
      */
     val resultScrubbingEnabled: Boolean = true,
+    /**
+     * Host-owned mapping from legacy raw provider ID to namespaced identities (`pluginId::providerId`).
+     * Persisted across restarts to detect ambiguity and preserve policy consistency when plugins are installed
+     * or disabled.
+     */
+    val providerMapping: Map<String, Set<String>> = emptyMap(),
 )
 
 /**
