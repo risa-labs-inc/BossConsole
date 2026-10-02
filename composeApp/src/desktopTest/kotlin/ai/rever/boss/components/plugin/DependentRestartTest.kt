@@ -285,8 +285,8 @@ class DependentRestartTest {
 
         assertContains(message, "AI Gateway")
         assertContains(message, "new version")
-        assertEquals("Update and Restart", DependentRestartCopy.confirmLabel(PluginUnloadIntent.UPDATE))
-        assertEquals("Restart dependent plugins?", DependentRestartCopy.title(PluginUnloadIntent.UPDATE))
+        assertEquals("Install and reload plugins", DependentRestartCopy.confirmLabel(PluginUnloadIntent.UPDATE))
+        assertEquals("Reload dependent plugins?", DependentRestartCopy.title(PluginUnloadIntent.UPDATE))
     }
 
     @Test
@@ -301,7 +301,7 @@ class DependentRestartTest {
         // Nothing comes back, so promising a new version here would be a lie.
         assertFalse(message.contains("new version"))
         assertContains(message, "stops working")
-        assertEquals("Remove and Restart", DependentRestartCopy.confirmLabel(PluginUnloadIntent.REMOVE))
+        assertEquals("Remove and reload plugins", DependentRestartCopy.confirmLabel(PluginUnloadIntent.REMOVE))
         assertEquals("Remove a plugin others use?", DependentRestartCopy.title(PluginUnloadIntent.REMOVE))
     }
 

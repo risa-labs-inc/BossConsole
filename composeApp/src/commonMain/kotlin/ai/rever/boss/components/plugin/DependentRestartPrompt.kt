@@ -481,13 +481,14 @@ object DependentRestartCopy {
     fun title(intent: PluginUnloadIntent): String =
         when (intent) {
             PluginUnloadIntent.REMOVE -> "Remove a plugin others use?"
-            PluginUnloadIntent.UPDATE, PluginUnloadIntent.UNSPECIFIED -> "Restart dependent plugins?"
+            PluginUnloadIntent.UPDATE, PluginUnloadIntent.UNSPECIFIED -> "Reload dependent plugins?"
         }
 
     fun confirmLabel(intent: PluginUnloadIntent): String =
         when (intent) {
-            PluginUnloadIntent.REMOVE -> "Remove and Restart"
-            PluginUnloadIntent.UPDATE, PluginUnloadIntent.UNSPECIFIED -> "Update and Restart"
+            PluginUnloadIntent.REMOVE -> "Remove and reload plugins"
+            PluginUnloadIntent.UPDATE -> "Install and reload plugins"
+            PluginUnloadIntent.UNSPECIFIED -> "Continue and reload plugins"
         }
 
     /**
@@ -506,19 +507,19 @@ object DependentRestartCopy {
         val needs = if (dependents.size == 1) "needs" else "need"
         return when (intent) {
             PluginUnloadIntent.UPDATE -> {
-                "Updating $targetDisplayName restarts the plugins below. Their open tabs close, " +
-                    "and reopening one loads it against the new version."
+                "Installing the update for $targetDisplayName reloads the plugins below. Their open tabs close, " +
+                    "and reopening one loads it against the new version. BOSS stays running."
             }
 
             PluginUnloadIntent.REMOVE -> {
                 "The plugins below $needs $targetDisplayName. Removing it closes their open tabs " +
-                    "and restarts $they without it - anything of theirs that needs " +
+                    "and reloads $they without it - anything of theirs that needs " +
                     "$targetDisplayName stops working."
             }
 
             PluginUnloadIntent.UNSPECIFIED -> {
                 "The plugins below depend on $targetDisplayName. Continuing closes their open " +
-                    "tabs and restarts $they."
+                    "tabs and reloads $they. BOSS stays running."
             }
         }
     }

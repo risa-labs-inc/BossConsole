@@ -23,6 +23,7 @@ import ai.rever.boss.components.events.TabEventBus
 import ai.rever.boss.components.plugin.DependentRestartDeclinedException
 import ai.rever.boss.components.plugin.DependentRestartDialog
 import ai.rever.boss.components.plugin.DynamicPluginManager
+import ai.rever.boss.components.plugin.HotReloadPolicy
 import ai.rever.boss.components.plugin.MissingDependencyDialog
 import ai.rever.boss.components.plugin.MissingHandlerPluginDialog
 import ai.rever.boss.components.plugin.MissingHandlerPluginEventBus
@@ -63,6 +64,7 @@ import ai.rever.boss.platform.rememberDirectoryPicker
 import ai.rever.boss.plugin.api.Panel.Companion.left
 import ai.rever.boss.plugin.api.Panel.Companion.top
 import ai.rever.boss.plugin.api.PluginLoaderDelegate
+import ai.rever.boss.plugin.api.PluginState
 import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.plugin.sandbox.notification.ToastMessage
 import ai.rever.boss.plugin.sandbox.notification.ToastType
@@ -129,13 +131,23 @@ internal fun BossAppDialogs(state: BossAppState) {
 
     // Plugin update confirmation prompt (from "Check for Updates" or the header badge).
     state.pluginUpdatePrompt?.let { prompt ->
+        val mgr = state.currentDefaultPlugin?.dynamicPluginManager
+        val restartRequired =
+            mgr?.getPluginInfo(prompt.pluginId)?.state == PluginState.LOADED &&
+                HotReloadPolicy.requiresRestartInsteadOfHotReload(prompt.pluginId)
+        val applyMessage =
+            if (restartRequired) {
+                "The update takes effect after restarting BOSS."
+            } else {
+                "The plugin reloads in BOSS. Its open tabs may close."
+            }
         ConfirmationDialog(
-            title = "Update Available",
-            message = "Update \"${prompt.displayName}\" from v${prompt.currentVersion} to v${prompt.newVersion}?",
-            confirmText = "Update",
+            title = "Plugin update available",
+            message =
+                "Update \"${prompt.displayName}\" from v${prompt.currentVersion} to v${prompt.newVersion}? $applyMessage",
+            confirmText = if (restartRequired) "Install on next restart" else "Install and reload plugin",
             onDismiss = { state.pluginUpdatePrompt = null },
             onConfirm = {
-                val mgr = state.currentDefaultPlugin?.dynamicPluginManager
                 if (mgr != null) {
                     coroutineScope.launch {
                         StatusMessageManager.showMessage("Updating ${prompt.displayName}…")
