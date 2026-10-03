@@ -3,6 +3,7 @@ package ai.rever.boss.keymap
 import ai.rever.boss.keymap.handler.KeymapHandler
 import ai.rever.boss.keymap.handler.MapBasedActionExecutor
 import ai.rever.boss.keymap.model.KeyBinding
+import ai.rever.boss.keymap.model.KeymapActions
 import ai.rever.boss.keymap.model.KeymapSettings
 import ai.rever.boss.keymap.model.ShortcutContext
 import androidx.compose.ui.input.key.Key
@@ -460,9 +461,10 @@ class KeymapHandlerTest {
         assertEquals(1, executionCount)
 
         // Fast typing: Cmd comes up a few ms before N (BossConsole#1568).
-        val modifierKeyUp = createKeyEvent(Key.MetaLeft, KeyEventType.KeyUp, meta = false)
+        val primaryModifier = if (ai.rever.boss.utils.SystemUtils.isMacOS) Key.MetaLeft else Key.CtrlLeft
+        val modifierKeyUp = createKeyEvent(primaryModifier, KeyEventType.KeyUp, meta = false)
         assertFalse(handler.handleKeyEvent(modifierKeyUp, ShortcutContext.GLOBAL, execute))
-        assertFalse(handler.hasPendingShortcut, "The held record is dropped on modifier release")
+        assertTrue(handler.hasPendingShortcut, "The physical-key claim survives modifier release")
 
         // A bare auto-repeat of the still-held key stays swallowed and runs nothing.
         assertTrue(
@@ -536,18 +538,131 @@ class KeymapHandlerTest {
                 execute,
             ),
         )
-        assertTrue(
+        assertFalse(
             handler.handleKeyEvent(
                 createKeyEvent(Key.T, KeyEventType.KeyUp, meta = true),
                 ShortcutContext.TERMINAL,
                 execute,
             ),
+            "a context change retires the old ownership record",
         )
         assertEquals(1, calls, "only the new binding's KeyDown ran it")
     }
 
     @Test
-    fun `a chord the executor does not handle is neither consumed nor held`() {
+    fun `a new modifier combination after a lost release is matched as a new chord`() {
+        val bindings =
+            listOf(
+                KeyBinding(actionId = "primary.action", key = "N", modifiers = listOf("Cmd")),
+                KeyBinding(actionId = "alt.action", key = "N", modifiers = listOf("Alt")),
+            )
+        val handler = KeymapHandler(KeymapSettings.fromBindings(bindings))
+        val calls = mutableListOf<String>()
+        val execute: (String) -> Boolean = {
+            calls.add(it)
+            true
+        }
+
+        assertTrue(
+            handler.handleKeyEvent(
+                createKeyEvent(Key.N, KeyEventType.KeyDown, meta = true),
+                ShortcutContext.GLOBAL,
+                execute,
+            ),
+        )
+        assertFalse(
+            handler.handleKeyEvent(
+                createKeyEvent(
+                    if (ai.rever.boss.utils.SystemUtils.isMacOS) Key.MetaLeft else Key.CtrlLeft,
+                    KeyEventType.KeyUp,
+                ),
+                ShortcutContext.GLOBAL,
+                execute,
+            ),
+        )
+        assertTrue(
+            handler.handleKeyEvent(
+                createKeyEvent(Key.N, KeyEventType.KeyDown, alt = true),
+                ShortcutContext.GLOBAL,
+                execute,
+            ),
+        )
+
+        assertEquals(listOf("primary.action", "alt.action"), calls)
+    }
+
+    @Test
+    fun `an unrelated modifier release leaves the held Compose chord intact`() {
+        val binding = KeyBinding(actionId = "test.action", key = "N", modifiers = listOf("Cmd"))
+        val handler = KeymapHandler(KeymapSettings.fromBindings(listOf(binding)))
+        var calls = 0
+        val execute: (String) -> Boolean = {
+            calls++
+            true
+        }
+
+        assertTrue(
+            handler.handleKeyEvent(
+                createKeyEvent(Key.N, KeyEventType.KeyDown, meta = true),
+                ShortcutContext.GLOBAL,
+                execute,
+            ),
+        )
+        assertFalse(
+            handler.handleKeyEvent(
+                createKeyEvent(Key.ShiftLeft, KeyEventType.KeyUp, meta = true),
+                ShortcutContext.GLOBAL,
+                execute,
+            ),
+        )
+        assertTrue(
+            handler.handleKeyEvent(
+                createKeyEvent(Key.N, KeyEventType.KeyDown, meta = true),
+                ShortcutContext.GLOBAL,
+                execute,
+            ),
+        )
+
+        assertEquals(1, calls)
+    }
+
+    @Test
+    fun `a lock-key release cannot retire a held Compose chord`() {
+        val binding = KeyBinding(actionId = "test.action", key = "N", modifiers = listOf("Cmd"))
+        val handler = KeymapHandler(KeymapSettings.fromBindings(listOf(binding)))
+        var calls = 0
+        val execute: (String) -> Boolean = {
+            calls++
+            true
+        }
+
+        assertTrue(
+            handler.handleKeyEvent(
+                createKeyEvent(Key.N, KeyEventType.KeyDown, meta = true),
+                ShortcutContext.GLOBAL,
+                execute,
+            ),
+        )
+        assertFalse(
+            handler.handleKeyEvent(
+                createKeyEvent(Key.CapsLock, KeyEventType.KeyUp, meta = true),
+                ShortcutContext.GLOBAL,
+                execute,
+            ),
+        )
+        assertTrue(
+            handler.handleKeyEvent(
+                createKeyEvent(Key.N, KeyEventType.KeyDown, meta = true),
+                ShortcutContext.GLOBAL,
+                execute,
+            ),
+        )
+
+        assertEquals(1, calls)
+    }
+
+    @Test
+    fun `a chord the executor declines is attempted once and never consumed`() {
         val binding = KeyBinding(actionId = "test.action", key = "N", modifiers = listOf("Cmd"))
         val handler = KeymapHandler(KeymapSettings.fromBindings(listOf(binding)))
         var calls = 0
@@ -556,12 +671,39 @@ class KeymapHandlerTest {
             false
         }
         val keyDown = createKeyEvent(Key.N, KeyEventType.KeyDown, meta = true)
-        assertFalse(handler.handleKeyEvent(keyDown, ShortcutContext.GLOBAL, decline), "matches the AWT path")
-        assertFalse(handler.hasPendingShortcut)
-        assertFalse(handler.handleKeyEvent(keyDown, ShortcutContext.GLOBAL, decline), "not a swallowed repeat")
-        assertEquals(2, calls)
+        assertFalse(handler.handleKeyEvent(keyDown, ShortcutContext.GLOBAL, decline))
+        assertTrue(handler.hasPendingShortcut, "a declined chord is retained only to identify repeats")
+        repeat(3) {
+            assertFalse(handler.handleKeyEvent(keyDown, ShortcutContext.GLOBAL, decline), "repeat stays unconsumed")
+        }
+        assertEquals(1, calls, "OS repeats must not retry an action the executor already declined")
         val keyUp = createKeyEvent(Key.N, KeyEventType.KeyUp, meta = true)
         assertFalse(handler.handleKeyEvent(keyUp, ShortcutContext.GLOBAL, decline))
+        assertFalse(handler.hasPendingShortcut)
+    }
+
+    @Test
+    fun `Compose browser print runs on KeyDown once and never on release`() {
+        val binding = KeyBinding(actionId = KeymapActions.BROWSER_PRINT, key = "P", modifiers = listOf("Cmd"))
+        val handler = KeymapHandler(KeymapSettings.fromBindings(listOf(binding)))
+        var calls = 0
+        val execute: (String) -> Boolean = {
+            calls++
+            true
+        }
+        val keyDown = createKeyEvent(Key.P, KeyEventType.KeyDown, meta = true)
+
+        assertTrue(handler.handleKeyEvent(keyDown, ShortcutContext.GLOBAL, execute))
+        repeat(3) { assertTrue(handler.handleKeyEvent(keyDown, ShortcutContext.GLOBAL, execute)) }
+        assertEquals(1, calls)
+        assertTrue(
+            handler.handleKeyEvent(
+                createKeyEvent(Key.P, KeyEventType.KeyUp, meta = true),
+                ShortcutContext.GLOBAL,
+                execute,
+            ),
+        )
+        assertEquals(1, calls, "release only closes ownership; AWT owns native print coordination")
     }
 
     @Test
