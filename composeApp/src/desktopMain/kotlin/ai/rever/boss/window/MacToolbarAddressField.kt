@@ -26,6 +26,7 @@ internal class MacToolbarAddressField {
         if (changedBrowser) send(pointer(view, "window"), "makeFirstResponder:", null)
         editing.view = view
         editing.update(input, changedBrowser)
+        claimEditorFocus()
         val searchCell = pointer(pointer(view, "cell"), "searchButtonCell")
         val image =
             favicon.takeIf { input.address?.text == input.value } ?: pointer(
@@ -50,13 +51,21 @@ internal class MacToolbarAddressField {
         val view = field ?: return
         send(pointer(view, "window"), "makeFirstResponder:", view)
         send(view, "selectText:", null)
+        claimEditorFocus()
+    }
+
+    fun claimEditorFocus() {
+        val editor = pointer(editing.view, "currentEditor")
+        if (editor != null && pointer(pointer(editing.view, "window"), "firstResponder") == editor) {
+            editing.notification("begin")
+        }
     }
 
     private fun create(
         item: Pointer,
         target: Pointer?,
     ): Pointer {
-        val view = checkNotNull(pointer(clazz("NSSearchField"), "new"))
+        val view = checkNotNull(pointer(MacAddressFocusField.fieldClass, "new"))
         send(view, "setEditable:", 1.toByte())
         send(view, "setSelectable:", 1.toByte())
         send(view, "setBezeled:", 1.toByte())

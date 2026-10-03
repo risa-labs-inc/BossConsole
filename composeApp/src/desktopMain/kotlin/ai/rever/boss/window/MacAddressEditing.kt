@@ -11,9 +11,13 @@ import javax.swing.SwingUtilities
 
 /** AppKit delegate events are delivered in order to the browser's Compose state on the EDT. */
 internal class MacAddressEditing {
-    var input: NativeTitleBarTextInput? = null
+    @Volatile var input: NativeTitleBarTextInput? = null
     var view: Pointer? = null
-    var closed = false
+
+    @Volatile var closed = false
+
+    @Volatile var active = false
+        private set
     private var typed = ""
     private var revision = -1
     private var completing = false
@@ -23,6 +27,7 @@ internal class MacAddressEditing {
         next: NativeTitleBarTextInput,
         changedBrowser: Boolean,
     ) {
+        if (changedBrowser) notification("end")
         input = next
         val model = next.address
         val editor = pointer(view, "currentEditor")
@@ -65,8 +70,26 @@ internal class MacAddressEditing {
     fun notification(name: String) {
         val current = input ?: return
         when (name) {
+            "begin" -> {
+                if (!active && !closed) {
+                    active = true
+                    deliver {
+                        // Ignore a delayed begin after a page click or a browser switch.
+                        if (active && input?.identity == current.identity) {
+                            val handle =
+                                ai.rever.boss.plugin.browser.ActiveBrowserRegistry
+                                    .handleById(current.identity)
+                            (handle as? ai.rever.boss.plugin.browser.BrowserHandleImpl)?.unfocusPageForAddressEditing()
+                        }
+                    }
+                }
+            }
+
             "end" -> {
-                deliver { current.address?.onFocusLost?.invoke() }
+                if (active) {
+                    active = false
+                    deliver { current.address?.onFocusLost?.invoke() }
+                }
             }
 
             "change" -> {
@@ -79,6 +102,21 @@ internal class MacAddressEditing {
                 deliver { current.address?.onEdit?.invoke(text, selection.first, selection.second) }
             }
         }
+    }
+
+    /** Only resign this field's editor, never a newly focused page or another native control. */
+    @Suppress("ReturnCount") // Explicit guards protect the borrowed native editor before any operation.
+    fun releaseForPage(): Boolean {
+        if (closed || !active) return false
+        val window = pointer(view, "window") ?: return false
+        val editor = pointer(view, "currentEditor")
+        if (editor == null || pointer(window, "firstResponder") != editor) {
+            notification("end")
+            return true
+        }
+        val released = number(window, "makeFirstResponder:", null) != 0L
+        if (released) notification("end")
+        return released
     }
 
     fun command(

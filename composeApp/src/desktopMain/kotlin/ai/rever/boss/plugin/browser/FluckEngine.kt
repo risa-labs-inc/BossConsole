@@ -2810,11 +2810,17 @@ object FluckEngine {
      * recorder, a gesture feature) must extend this callback rather than call `browser.set(...)`
      * again — a second registration replaces this one silently, with no compile error.
      */
-    fun setupSwingPopupDismissOnPageClick(browser: com.teamdev.jxbrowser.browser.Browser) {
+    fun setupSwingPopupDismissOnPageClick(browser: com.teamdev.jxbrowser.browser.Browser) = setupSwingPopupDismissOnPageClick(browser) { }
+
+    internal fun setupSwingPopupDismissOnPageClick(
+        browser: com.teamdev.jxbrowser.browser.Browser,
+        onPagePressed: () -> Unit,
+    ) {
         try {
             browser.set(
                 com.teamdev.jxbrowser.browser.callback.input.PressMouseCallback::class.java,
                 com.teamdev.jxbrowser.browser.callback.input.PressMouseCallback {
+                    onPagePressed()
                     // The callback arrives on a JxBrowser thread; MenuSelectionManager is
                     // Swing state and must only be touched on the EDT.
                     javax.swing.SwingUtilities.invokeLater {
@@ -2913,6 +2919,35 @@ object FluckEngine {
             ai.rever.boss.sharing.AppBrowserKeyDispatch
                 .register(browser)
         }
+        // Chromium delivers typed/released events independently from key-down suppression.
+        browser.set(
+            com.teamdev.jxbrowser.browser.callback.input.TypeKeyCallback::class.java,
+            com.teamdev.jxbrowser.browser.callback.input.TypeKeyCallback {
+                if (ai.rever.boss.window
+                        .nativeAddressOwnsBrowserKeys(zoomTarget?.id)
+                ) {
+                    com.teamdev.jxbrowser.browser.callback.input.TypeKeyCallback.Response
+                        .suppress()
+                } else {
+                    com.teamdev.jxbrowser.browser.callback.input.TypeKeyCallback.Response
+                        .proceed()
+                }
+            },
+        )
+        browser.set(
+            com.teamdev.jxbrowser.browser.callback.input.ReleaseKeyCallback::class.java,
+            com.teamdev.jxbrowser.browser.callback.input.ReleaseKeyCallback {
+                if (ai.rever.boss.window
+                        .nativeAddressOwnsBrowserKeys(zoomTarget?.id)
+                ) {
+                    com.teamdev.jxbrowser.browser.callback.input.ReleaseKeyCallback.Response
+                        .suppress()
+                } else {
+                    com.teamdev.jxbrowser.browser.callback.input.ReleaseKeyCallback.Response
+                        .proceed()
+                }
+            },
+        )
         browser.set(
             com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback::class.java,
             com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback { params ->
@@ -2920,9 +2955,18 @@ object FluckEngine {
                 val modifiers = event.keyModifiers()
                 val keyCode = event.keyCode()
 
-                if (ai.rever.boss.sharing.AppBrowserKeyDispatch
+                val remoteKey =
+                    ai.rever.boss.sharing.AppBrowserKeyDispatch
                         .consume(browser, event, ownerWindowId)
+                // The active AWT window is not enough: its native URL editor may own the key.
+                // Retire a remote permit before rejecting it, so it cannot authorize a later key.
+                if (ai.rever.boss.window
+                        .nativeAddressOwnsBrowserKeys(zoomTarget?.id)
                 ) {
+                    return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response
+                        .suppress()
+                }
+                if (remoteKey) {
                     return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response
                         .proceed()
                 }

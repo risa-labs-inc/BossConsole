@@ -1825,7 +1825,7 @@ internal class BrowserHandleImpl(
         FluckEngine.setupKeyboardInterceptor(browser, ownerWindowId, zoomTarget = this)
 
         // Let a click in the page close any Swing popup menu open over it
-        FluckEngine.setupSwingPopupDismissOnPageClick(browser)
+        FluckEngine.setupSwingPopupDismissOnPageClick(browser, ::focusPageAfterAddressEditing)
 
         // Setup screen capture handler
         FluckEngine.setupCaptureSessionHandler(browser)
@@ -3450,6 +3450,26 @@ internal class BrowserHandleImpl(
                 .orEmpty()
                 .removePrefix("www.")
         }.getOrDefault("")
+
+    /** AppKit and Chromium must never retain independent keyboard focus while editing the URL. */
+    internal fun unfocusPageForAddressEditing() {
+        if (isValid) {
+            runCatching { browser.unfocus() }
+                .onFailure { logger.debug(LogCategory.BROWSER, "Could not unfocus page for address editing") }
+        }
+    }
+
+    private fun focusPageAfterAddressEditing() {
+        if (isValid) {
+            runCatching {
+                if (ai.rever.boss.window
+                        .releaseNativeAddressForPage(id)
+                ) {
+                    focusPageAfterAddressCommit()
+                }
+            }.onFailure { logger.debug(LogCategory.BROWSER, "Could not release address editor for page input") }
+        }
+    }
 
     /** Explicit hand-off from the native address field after committing navigation. */
     internal fun focusPageAfterAddressCommit() {
