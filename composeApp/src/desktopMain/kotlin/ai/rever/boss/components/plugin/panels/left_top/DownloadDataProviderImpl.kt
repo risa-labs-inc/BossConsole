@@ -48,6 +48,62 @@ internal object FluckDownloadEngineController : DownloadEngineController {
 }
 
 /**
+ * True when [path] is a tracked download's destination, compared canonically so a `..` segment or a link
+ * cannot name a tracked file from outside it. A blank path is never tracked, whatever a download's own
+ * destination says.
+ */
+internal fun isTrackedDownload(
+    downloads: List<DownloadItemData>,
+    path: String,
+): Boolean {
+    val requested = path.takeIf { it.isNotBlank() }?.let { runCatching { File(it).canonicalFile }.getOrNull() }
+    return requested != null &&
+        downloads.any { item ->
+            item.destinationPath.isNotBlank() &&
+                runCatching { File(item.destinationPath).canonicalFile }.getOrNull() == requested
+        }
+}
+
+private fun refuseUntracked(call: String) {
+    logger.warn(LogCategory.FILE, "Refused $call: the path is not a tracked download", mapOf("call" to call))
+}
+
+/**
+ * [manager]'s tracked downloads, read live rather than through its throttled `downloads` flow (sampled
+ * every 150ms for the UI). The confinement check needs the download the instant it is tracked and the
+ * instant it stops being tracked, not once the throttle catches up - the same reason `getDownload`
+ * bypasses it for a single id.
+ */
+private fun liveDownloads(manager: DownloadManager): List<DownloadItemData> = manager.allDownloads().map { it.toData() }
+
+private fun DownloadItem.toData(): DownloadItemData =
+    DownloadItemData(
+        id = id,
+        fileName = fileName,
+        destinationPath = destinationPath,
+        url = url,
+        status = status.toData(),
+        receivedBytes = receivedBytes,
+        totalBytes = totalBytes,
+        speed = speed,
+        canPause = canPause,
+        canResume = canResume,
+        errorReason = errorReason,
+        startTime = startedAt,
+        endTime = finishedAt,
+    )
+
+private fun DownloadStatus.toData(): DownloadStatusData =
+    when (this) {
+        DownloadStatus.QUEUED -> DownloadStatusData.QUEUED
+        DownloadStatus.DOWNLOADING -> DownloadStatusData.DOWNLOADING
+        DownloadStatus.PAUSED -> DownloadStatusData.PAUSED
+        DownloadStatus.COMPLETED -> DownloadStatusData.COMPLETED
+        DownloadStatus.FAILED -> DownloadStatusData.FAILED
+        DownloadStatus.CANCELLED -> DownloadStatusData.CANCELLED
+    }
+
+/**
  * Implementation of DownloadDataProvider that wraps FluckEngine's download management.
  *
  * The [downloadManager], [engine] and [collectorContext] seams exist so the
@@ -58,6 +114,8 @@ class DownloadDataProviderImpl internal constructor(
     private val downloadManager: DownloadManager,
     private val engine: DownloadEngineController,
     collectorContext: CoroutineContext,
+    private val opener: (String) -> Unit = FileSystemUtils::openFile,
+    private val revealer: (String) -> Unit = FileSystemUtils::revealInFolder,
 ) : DownloadDataProvider {
     constructor() : this(
         downloadManager = FluckEngine.downloadManager,
@@ -134,12 +192,20 @@ class DownloadDataProviderImpl internal constructor(
             Result.failure(e)
         }
 
-    override fun revealInFolder(path: String) {
-        FileSystemUtils.revealInFolder(path)
+    /**
+     * Opens [path] with the OS default application, but only a path this provider is tracking as a
+     * download. `openFile` is a "launch this file" call, and for an executable that is the same action as
+     * a double-click; without the confinement every installed plugin could launch any file on disk. The
+     * kernel-facing `DownloadServiceBridge` already applies this rule, and it lives here so that the
+     * in-process API and the bridge cannot disagree about it.
+     */
+    override fun openFile(path: String) {
+        if (isTrackedDownload(liveDownloads(downloadManager), path)) opener(path) else refuseUntracked("openFile")
     }
 
-    override fun openFile(path: String) {
-        FileSystemUtils.openFile(path)
+    override fun revealInFolder(path: String) {
+        val tracked = isTrackedDownload(liveDownloads(downloadManager), path)
+        if (tracked) revealer(path) else refuseUntracked("revealInFolder")
     }
 
     /**
@@ -166,34 +232,5 @@ class DownloadDataProviderImpl internal constructor(
         } catch (e: Exception) {
             logger.warn(LogCategory.BROWSER, "Failed to $commandName download", error = e)
             Result.failure(e)
-        }
-
-    // ===== Type Conversion Extension =====
-
-    private fun DownloadItem.toData(): DownloadItemData =
-        DownloadItemData(
-            id = id,
-            fileName = fileName,
-            destinationPath = destinationPath,
-            url = url,
-            status = status.toData(),
-            receivedBytes = receivedBytes,
-            totalBytes = totalBytes,
-            speed = speed,
-            canPause = canPause,
-            canResume = canResume,
-            errorReason = errorReason,
-            startTime = startedAt,
-            endTime = finishedAt,
-        )
-
-    private fun DownloadStatus.toData(): DownloadStatusData =
-        when (this) {
-            DownloadStatus.QUEUED -> DownloadStatusData.QUEUED
-            DownloadStatus.DOWNLOADING -> DownloadStatusData.DOWNLOADING
-            DownloadStatus.PAUSED -> DownloadStatusData.PAUSED
-            DownloadStatus.COMPLETED -> DownloadStatusData.COMPLETED
-            DownloadStatus.FAILED -> DownloadStatusData.FAILED
-            DownloadStatus.CANCELLED -> DownloadStatusData.CANCELLED
         }
 }
