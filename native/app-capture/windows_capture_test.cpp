@@ -42,7 +42,8 @@ public:
         }
         return DefWindowProcW(window, message, first, second);
     }
-    explicit Window(const wchar_t* title, DWORD extendedStyle = WS_EX_NOACTIVATE) {
+    explicit Window(const wchar_t* title, DWORD extendedStyle = WS_EX_NOACTIVATE,
+        HWND owner = nullptr, DWORD style = WS_OVERLAPPEDWINDOW) {
         static const ATOM registered = [] {
             WNDCLASSW type {};
             type.lpfnWndProc = procedure;
@@ -51,8 +52,8 @@ public:
             return RegisterClassW(&type);
         }();
         require(registered != 0, "synthetic GPU window class unavailable");
-        handle = CreateWindowExW(extendedStyle, L"BossSyntheticGpuCaptureFixture", title, WS_OVERLAPPEDWINDOW,
-            100, 100, 360, 270, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        handle = CreateWindowExW(extendedStyle, L"BossSyntheticGpuCaptureFixture", title, style,
+            100, 100, 360, 270, owner, nullptr, GetModuleHandleW(nullptr), nullptr);
         require(handle != nullptr, "synthetic window creation failed");
         DXGI_SWAP_CHAIN_DESC swap {};
         swap.BufferDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
@@ -234,11 +235,53 @@ void assertColor(const std::vector<uint8_t>& pixels, int channel) {
     require(pixel[channel] >= 200 && pixel[3] == 255, "GPU window color/opacity was not captured");
     for (int index = 0; index < 3; ++index) if (index != channel) require(pixel[index] <= 40, "unrelated occluder leaked into capture");
 }
+// Separate case: a nonfocusable owned utility dialog, matching the AWT popup
+// style contract. Never promote the popup to APPWINDOW or activate it to pass.
+void ownedPopup(const wchar_t* helper) {
+    Window owner(L"Synthetic popup owner", WS_EX_APPWINDOW);
+    owner.paint(1, 0, 1);
+    Window popup(L"Synthetic owned nonfocusable popup", WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+        owner.handle, WS_POPUP | WS_CLIPCHILDREN);
+    popup.paint(0, 1, 0);
+    require(GetWindow(popup.handle, GW_OWNER) == owner.handle &&
+        GetAncestor(popup.handle, GA_ROOT) == popup.handle, "synthetic popup ownership unavailable");
+    const auto extended = GetWindowLongPtrW(popup.handle, GWL_EXSTYLE);
+    require((extended & WS_EX_NOACTIVATE) != 0 && (extended & WS_EX_APPWINDOW) == 0,
+        "owned popup must retain its non-activating style");
+    popup.diagnose("owned NOACTIVATE popup before occluder");
+    Window unrelated(L"Synthetic unrelated popup occluder");
+    unrelated.paint(1, 0, 0);
+    require(SetWindowPos(unrelated.handle, HWND_TOPMOST, 80, 80, 420, 340, SWP_NOACTIVATE) != FALSE,
+        "synthetic popup occluder placement failed");
+    pump();
+    popup.diagnose("owned NOACTIVATE popup under occluder");
+    {
+        Child capture(helper, popup.handle);
+        uint64_t sequence = 0;
+        assertColor(capture.frame(sequence), 1);
+        popup.paint(0, 0, 1);
+        bool updated = false;
+        for (int frame = 0; frame < 20 && !updated; ++frame) {
+            auto pixels = capture.frame(sequence);
+            if (pixels[(60 * 160 + 80) * 4] > 200) { assertColor(pixels, 0); updated = true; }
+        }
+        require(updated, "owned popup GPU update did not reach capture");
+        require(GetWindow(popup.handle, GW_OWNER) == owner.handle &&
+            (GetWindowLongPtrW(popup.handle, GWL_EXSTYLE) & WS_EX_NOACTIVATE) != 0,
+            "capture changed popup ownership or focus style");
+        DestroyWindow(popup.handle); popup.handle = nullptr;
+        require(capture.drainExit() == 72, "closed owned popup must end capture");
+        require(IsWindow(owner.handle) && IsWindowVisible(owner.handle),
+            "popup capture must not dispose its owner");
+    }
+    std::cout << "PASS: exact owned NOACTIVATE popup, occluder exclusion, live update, terminal popup close\n";
+}
 } // namespace
 
 int wmain(int count, wchar_t** values) {
     try {
-        require(count == 2, "pass the full helper executable path");
+        const bool popupCase = count == 3 && std::wstring(values[2]) == L"--owned-noactivate-popup";
+        require(count == 2 || popupCase, "pass the full helper path and optional --owned-noactivate-popup");
         // A default CI runner does not establish interactive capture fidelity.
         std::array<wchar_t, 8> enabled {};
         if (GetEnvironmentVariableW(L"BOSS_TEST_WINDOWS_CAPTURE", enabled.data(), static_cast<DWORD>(enabled.size())) != 1 || enabled[0] != L'1') {
@@ -246,6 +289,7 @@ int wmain(int count, wchar_t** values) {
             return 77;
         }
         require(SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) != FALSE, "DPI mode unavailable");
+        if (popupCase) { ownedPopup(values[1]); return 0; }
         // Match a normal application root, while showing without activation.
         // The unrelated occluder retains NOACTIVATE and never receives input.
         Window selected(L"Synthetic selected GPU source", WS_EX_APPWINDOW); selected.paint(0, 1, 0);

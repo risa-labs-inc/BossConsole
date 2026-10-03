@@ -93,7 +93,7 @@ jobs:
         run: |
           $PSNativeCommandUseErrorActionPreference = $false
           $report = Join-Path $PWD 'native/app-capture/build/windows-runtime.xml'
-          ctest --test-dir native/app-capture/build -C Release -R '^exact-windows-window$' --timeout 60 --no-tests=error --output-on-failure --output-junit $report
+          ctest --test-dir native/app-capture/build -C Release -R '^(exact-windows-window|owned-windows-popup)$' --timeout 60 --no-tests=error --output-on-failure --output-junit $report
           $testExit = $LASTEXITCODE
           if ($testExit -eq 0) {
             'Synthetic exact-window capture fixture PASSED. This validates this runner and source fixture, not physical GPU performance or actual BossConsole input.' >> $env:GITHUB_STEP_SUMMARY

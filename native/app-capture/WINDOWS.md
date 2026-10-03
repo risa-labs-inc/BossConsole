@@ -59,6 +59,14 @@ desktop drawable, wrong parent PID, and mismatched aspect ratio before any pixel
 termination on a stalled reader, and
 selected-window destruction. This test does not lock the user's desktop.
 
+A separate `owned-windows-popup` opt-in case creates a `WS_POPUP` window owned
+by a normal app root, retaining `WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW` and no
+`WS_EX_APPWINDOW`. It requires exact popup pixels beneath an unrelated occluder,
+live GPU updates, unchanged ownership/focus style, and terminal popup close while
+the owner stays alive. Manual runtime dispatch runs both cases separately; a popup
+failure cannot be reported as coverage from the normal-root fixture. This is
+native-style coverage, not yet an actual AWT/Compose popup integration test.
+
 Compilation and a skipped test do not establish runtime support. Release evidence
 still requires running this test and the actual BossConsole viewer on Windows:
 accelerated browser/Compose/terminal/editor content, owned dialogs, mixed DPI,
