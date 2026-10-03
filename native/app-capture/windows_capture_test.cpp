@@ -29,8 +29,28 @@ class Window {
     winrt::com_ptr<ID3D11RenderTargetView> target_;
 public:
     HWND handle = nullptr;
+    static LRESULT CALLBACK procedure(HWND window, UINT message, WPARAM first, LPARAM second) {
+        // The swap chain owns client pixels. A predefined STATIC control would
+        // repaint its GDI background over a previously presented GPU color.
+        if (message == WM_ERASEBKGND) return 1;
+        if (message == WM_PAINT) {
+            PAINTSTRUCT paint {};
+            BeginPaint(window, &paint);
+            EndPaint(window, &paint);
+            return 0;
+        }
+        return DefWindowProcW(window, message, first, second);
+    }
     explicit Window(const wchar_t* title) {
-        handle = CreateWindowExW(WS_EX_NOACTIVATE, L"STATIC", title, WS_OVERLAPPEDWINDOW,
+        static const ATOM registered = [] {
+            WNDCLASSW type {};
+            type.lpfnWndProc = procedure;
+            type.hInstance = GetModuleHandleW(nullptr);
+            type.lpszClassName = L"BossSyntheticGpuCaptureFixture";
+            return RegisterClassW(&type);
+        }();
+        require(registered != 0, "synthetic GPU window class unavailable");
+        handle = CreateWindowExW(WS_EX_NOACTIVATE, L"BossSyntheticGpuCaptureFixture", title, WS_OVERLAPPEDWINDOW,
             100, 100, 360, 270, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
         require(handle != nullptr, "synthetic window creation failed");
         DXGI_SWAP_CHAIN_DESC swap {};
@@ -44,7 +64,17 @@ public:
         winrt::com_ptr<ID3D11Texture2D> back;
         winrt::check_hresult(swap_->GetBuffer(0, __uuidof(ID3D11Texture2D), back.put_void()));
         winrt::check_hresult(device_->CreateRenderTargetView(back.get(), nullptr, target_.put()));
+        winrt::com_ptr<IDXGIAdapter> adapter;
+        if (SUCCEEDED(device_.as<IDXGIDevice>()->GetAdapter(adapter.put()))) {
+            DXGI_ADAPTER_DESC description {};
+            if (SUCCEEDED(adapter->GetDesc(&description))) {
+                std::cout << "Synthetic D3D adapter: " << winrt::to_string(description.Description)
+                          << "; vendor=" << description.VendorId << "; device=" << description.DeviceId << '\n';
+            }
+        }
         ShowWindow(handle, SW_SHOWNOACTIVATE);
+        UpdateWindow(handle);
+        pump();
     }
     ~Window() { if (handle) DestroyWindow(handle); }
     void paint(float red, float green, float blue) {
@@ -62,7 +92,9 @@ public:
         require(CreatePipe(&read_, &write, &attributes, 0) && CreatePipe(&input, &control_, &attributes, 0), "test pipes unavailable");
         SetHandleInformation(read_, HANDLE_FLAG_INHERIT, 0);
         SetHandleInformation(control_, HANDLE_FLAG_INHERIT, 0);
-        HANDLE errors = CreateFileW(L"NUL", GENERIC_WRITE, FILE_SHARE_WRITE, &attributes, OPEN_EXISTING, 0, nullptr);
+        HANDLE errors = nullptr;
+        require(DuplicateHandle(GetCurrentProcess(), GetStdHandle(STD_ERROR_HANDLE), GetCurrentProcess(),
+            &errors, 0, TRUE, DUPLICATE_SAME_ACCESS) != FALSE, "test diagnostic pipe unavailable");
         STARTUPINFOW startup {}; startup.cb = sizeof(startup); startup.dwFlags = STARTF_USESTDHANDLES;
         startup.hStdInput = input; startup.hStdOutput = write; startup.hStdError = errors;
         PROCESS_INFORMATION child {};
@@ -93,7 +125,12 @@ public:
         while (done < length && Clock::now() < deadline) {
             pump();
             DWORD available = 0, received = 0;
-            require(PeekNamedPipe(read_, nullptr, 0, nullptr, &available, nullptr) != FALSE, "capture stopped before a complete frame");
+            if (!PeekNamedPipe(read_, nullptr, 0, nullptr, &available, nullptr)) {
+                DWORD status = 0;
+                GetExitCodeProcess(process_, &status);
+                std::cerr << "Capture child pipe ended: exit=" << status << "; bytes=" << done << '/' << length << '\n';
+                throw std::runtime_error("capture stopped before a complete frame");
+            }
             if (available) {
                 const auto amount = static_cast<DWORD>(std::min<size_t>(available, length - done));
                 require(ReadFile(read_, target + done, amount, &received, nullptr) && received, "frame read failed");
@@ -157,6 +194,8 @@ public:
 };
 void assertColor(const std::vector<uint8_t>& pixels, int channel) {
     const auto* pixel = pixels.data() + (60 * 160 + 80) * 4;
+    std::cout << "Captured synthetic center BGRA=" << unsigned(pixel[0]) << ',' << unsigned(pixel[1]) << ','
+              << unsigned(pixel[2]) << ',' << unsigned(pixel[3]) << "; expected color channel=" << channel << '\n';
     require(pixel[channel] >= 200 && pixel[3] == 255, "GPU window color/opacity was not captured");
     for (int index = 0; index < 3; ++index) if (index != channel) require(pixel[index] <= 40, "unrelated occluder leaked into capture");
 }
@@ -222,6 +261,10 @@ int wmain(int count, wchar_t** values) {
         }
         std::cout << "PASS: exact occluded GPU content, live updates, bounded protocol/rate, parent binding, stalled output, window destruction\n";
         return 0;
+    } catch (const winrt::hresult_error& error) {
+        std::cerr << "Synthetic GPU fixture HRESULT 0x" << std::hex <<
+            static_cast<uint32_t>(error.code().value) << '\n';
+        return 1;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n'; return 1;
     } catch (...) {
