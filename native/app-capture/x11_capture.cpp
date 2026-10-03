@@ -366,7 +366,7 @@ public:
         damage_ = XDamageCreate(display_, frame_, XDamageReportNonEmpty);
         XSync(display_, False);
         bytes_.resize(24 + static_cast<size_t>(width_) * height_ * 4);
-        std::memcpy(bytes_.data(), "BSC1", 4);
+        std::memcpy(bytes_.data(), "BSC2", 4);
         put32(bytes_.data() + 4, width_);
         put32(bytes_.data() + 8, height_);
         put32(bytes_.data() + 12, bytes_.size() - 24);
@@ -450,7 +450,9 @@ public:
                 bytes_[at] = channel(pixel, image->blue_mask);
                 bytes_[at + 1] = channel(pixel, image->green_mask);
                 bytes_[at + 2] = channel(pixel, image->red_mask);
-                bytes_[at + 3] = 255;
+                // ARGB32 is premultiplied; Src preserves the selected window's
+                // transparency. XRender supplies alpha 255 for opaque RGB visuals.
+                bytes_[at + 3] = channel(pixel, 0xff000000UL);
             }
         }
         XDestroyImage(image);

@@ -141,11 +141,17 @@ NOACTIVATE alone is not a demonstrated solution. The two ARM black-frame cases
 still need compositor-readiness investigation; they are failures, not validated
 capture. These results compare different operating-system products as well as
 CPU architectures, and do not demonstrate the same failure on Windows 11 x64.
-Popup ownership versus WS_POPUP itself has not been isolated. The next diagnostic
-records same-process `CreateForWindow` eligibility for that exact synthetic
-popup before starting the child helper, to distinguish a cross-process boundary.
-It creates only a capture item, never a frame pool/session or a capture of
-another window, and does not replace the child's required pixel assertions.
+Popup ownership versus WS_POPUP itself has not been isolated.
+[Run 37102404790](https://github.com/risa-labs-inc/BossConsole/actions/runs/37102404790)
+at commit `25a0b6e08` checked same-process `CreateForWindow` eligibility for
+each exact synthetic popup before the child capture. All four Server popup
+variants returned the same E_INVALIDARG in-process, ruling out the helper
+process boundary as the cause for that runner. Windows 11 ARM64 item creation
+succeeded; the required utility popup again passed capture, while the other
+three variants returned an initial black frame, including TOOLWINDOW-only
+which had passed the previous run. Initial compositor readiness still needs
+isolation; no pixel assertion has been relaxed. The same-process diagnostic
+creates only a capture item, never a frame pool/session or another source.
 The documented API minimum lists Windows 10 build 18362 for both client and
 server, without a per-style eligibility contract. Actual Windows BossConsole,
 transparent overlays, mixed DPI, owned dialogs, and session-transition testing

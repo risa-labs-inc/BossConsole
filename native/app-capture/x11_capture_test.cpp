@@ -4,6 +4,136 @@
 #include "x11_capture.cpp"
 #undef main
 
+// Establish the native API and production BSC2 premultiplied-alpha contract.
+// Reads only this exact synthetic redirected window beneath an unrelated occluder.
+void verifyXRenderAlpha() {
+    // Production helpers each own a connection; isolate this fixture's lifecycle
+    // events from the later source fixture for the same reason.
+    DisplayOwner owner;
+    auto* display = owner.display;
+    struct Resources {
+        Display* display;
+        Window selected = 0, occluder = 0;
+        Colormap colormap = 0;
+        Pixmap source = 0, scaled = 0;
+        Picture sourcePicture = 0, scaledPicture = 0;
+        ~Resources() {
+            if (sourcePicture) XRenderFreePicture(display, sourcePicture);
+            if (scaledPicture) XRenderFreePicture(display, scaledPicture);
+            if (source) XFreePixmap(display, source);
+            if (scaled) XFreePixmap(display, scaled);
+            if (occluder) XDestroyWindow(display, occluder);
+            if (selected) XDestroyWindow(display, selected);
+            if (colormap) XFreeColormap(display, colormap);
+        }
+    } resources {display};
+    XVisualInfo query {};
+    query.screen = DefaultScreen(display); query.depth = 32; query.c_class = TrueColor;
+    int count = 0;
+    XVisualInfo* visuals = XGetVisualInfo(display, VisualScreenMask | VisualDepthMask | VisualClassMask, &query, &count);
+    Visual* visual = nullptr;
+    XRenderPictFormat* sourceFormat = nullptr;
+    for (int index = 0; index < count; ++index) {
+        auto* candidate = XRenderFindVisualFormat(display, visuals[index].visual);
+        if (candidate && candidate->type == PictTypeDirect && candidate->direct.alpha == 24 &&
+            candidate->direct.alphaMask == 255 && candidate->direct.red == 16 && candidate->direct.redMask == 255 &&
+            candidate->direct.green == 8 && candidate->direct.greenMask == 255 &&
+            candidate->direct.blue == 0 && candidate->direct.blueMask == 255) {
+            visual = visuals[index].visual; sourceFormat = candidate; break;
+        }
+    }
+    if (visuals) XFree(visuals);
+    require(visual && sourceFormat, "synthetic ARGB visual unavailable");
+    const auto root = DefaultRootWindow(display);
+    resources.colormap = XCreateColormap(display, root, visual, AllocNone);
+    XSetWindowAttributes attributes {};
+    attributes.colormap = resources.colormap;
+    attributes.override_redirect = True;
+    attributes.background_pixel = 0;
+    attributes.border_pixel = 0;
+    resources.selected = XCreateWindow(display, root, 360, 120, 96, 32, 0, 32, InputOutput, visual,
+        CWColormap | CWOverrideRedirect | CWBackPixel | CWBorderPixel, &attributes);
+    require(resources.selected != 0, "synthetic ARGB source unavailable");
+    XMapWindow(display, resources.selected);
+    XCompositeRedirectWindow(display, resources.selected, CompositeRedirectAutomatic);
+    XSync(display, False);
+    verifyOwner(display, resources.selected, getpid());
+    require(frameAncestor(display, resources.selected) == resources.selected, "ARGB probe source was reparented");
+    resources.source = XCompositeNameWindowPixmap(display, resources.selected);
+    require(resources.source != 0, "synthetic ARGB backing pixmap unavailable");
+    auto paint = XCreateGC(display, resources.selected, 0, nullptr);
+    const std::array<unsigned long, 3> expected {0x00000000, 0x80008000, 0xff00ff00};
+    for (int band = 0; band < 3; ++band) {
+        // Explicit premultiplied source pixels: transparent, 50% green, opaque green.
+        XSetForeground(display, paint, expected[band]);
+        XFillRectangle(display, resources.selected, paint, band * 32, 0, 32, 32);
+    }
+    XFreeGC(display, paint);
+    resources.occluder = XCreateSimpleWindow(display, root, 360, 120, 96, 32, 0, 0, 0xff0000);
+    XSetWindowAttributes overlay {};
+    overlay.override_redirect = True;
+    XChangeWindowAttributes(display, resources.occluder, CWOverrideRedirect, &overlay);
+    XMapRaised(display, resources.occluder);
+    XSync(display, False);
+    auto* outputFormat = XRenderFindStandardFormat(display, PictStandardARGB32);
+    require(outputFormat != nullptr, "ARGB scale target format unavailable");
+    resources.sourcePicture = XRenderCreatePicture(display, resources.source, sourceFormat, 0, nullptr);
+    resources.scaled = XCreatePixmap(display, resources.selected, 96, 32, 32);
+    resources.scaledPicture = XRenderCreatePicture(display, resources.scaled, outputFormat, 0, nullptr);
+    for (int divisor : {1, 2}) {
+        XTransform transform {};
+        transform.matrix[0][0] = XDoubleToFixed(divisor);
+        transform.matrix[1][1] = XDoubleToFixed(divisor);
+        transform.matrix[2][2] = XDoubleToFixed(1);
+        XRenderSetPictureTransform(display, resources.sourcePicture, &transform);
+        XRenderSetPictureFilter(display, resources.sourcePicture, FilterBilinear, nullptr, 0);
+        XRenderComposite(display, PictOpSrc, resources.sourcePicture, None, resources.scaledPicture,
+            0, 0, 0, 0, 0, 0, 96 / divisor, 32 / divisor);
+        XImage* image = XGetImage(display, resources.scaled, 0, 0, 96 / divisor, 32 / divisor, AllPlanes, ZPixmap);
+        require(image != nullptr, "ARGB probe readback unavailable");
+        bool matches = true;
+        for (int band = 0; band < 3; ++band) {
+            const auto pixel = XGetPixel(image, (band * 32 + 16) / divisor, 16 / divisor);
+            std::cout << "Synthetic XRender alpha scale1/" << divisor << " band" << band
+                      << " ARGB=0x" << std::hex << pixel << std::dec << '\n';
+            matches = matches && pixel == expected[band];
+        }
+        XDestroyImage(image);
+        require(matches, "XRender premultiplied alpha changed or unrelated occluder leaked");
+    }
+    for (int divisor : {1, 2}) {
+        const int width = 96 / divisor, height = 32 / divisor;
+        WindowStream stream(display, resources.selected, getpid(), width, height);
+        // Redirection can allocate fresh backing storage, so paint after binding.
+        auto streamPaint = XCreateGC(display, resources.selected, 0, nullptr);
+        for (int band = 0; band < 3; ++band) {
+            XSetForeground(display, streamPaint, expected[band]);
+            XFillRectangle(display, resources.selected, streamPaint, band * 32, 0, 32, 32);
+        }
+        XFreeGC(display, streamPaint);
+        XSync(display, False);
+        const auto& packet = stream.next();
+        std::array<uint8_t, 24> header {};
+        std::memcpy(header.data(), "BSC2", 4);
+        put32(header.data() + 4, width);
+        put32(header.data() + 8, height);
+        put32(header.data() + 12, width * height * 4);
+        put32(header.data() + 20, 1);
+        require(packet.size() == header.size() + size_t(width) * height * 4 &&
+                std::memcmp(packet.data(), header.data(), header.size()) == 0,
+                "ARGB production frame header or sequence mismatch");
+        for (int band = 0; band < 3; ++band) {
+            const auto at = 24 + (size_t(16 / divisor) * width + (band * 32 + 16) / divisor) * 4;
+            const auto pixel = uint32_t(packet[at]) | (uint32_t(packet[at + 1]) << 8) |
+                (uint32_t(packet[at + 2]) << 16) | (uint32_t(packet[at + 3]) << 24);
+            std::cout << "Synthetic BSC2 alpha scale1/" << divisor << " band" << band
+                      << " ARGB=0x" << std::hex << pixel << std::dec << '\n';
+            require(pixel == expected[band], "production capture changed alpha or leaked unrelated pixels");
+        }
+    }
+    std::cout << "PASS: exact ARGB alpha survives native/scaled XRender and production BSC2 export\n";
+}
+
 int main(int argc, char** argv) {
     try {
         DisplayOwner owner;
@@ -54,7 +184,10 @@ int main(int argc, char** argv) {
             }
             return 0;
         }
-        require(argc == 1, "invalid native fixture invocation");
+        const bool alphaOnly = argc == 2 && std::string(argv[1]) == "--alpha-only";
+        require(argc == 1 || alphaOnly, "invalid native fixture invocation");
+        verifyXRenderAlpha();
+        if (alphaOnly) return 0;
         auto selected = XCreateSimpleWindow(display, root, 0, 0, 80, 60, 0, 0, 0x1256ca);
         auto unrelated = XCreateSimpleWindow(display, root, 0, 0, 80, 60, 0, 0, 0xff00ff);
         XStoreName(display, selected, "Synthetic selected window");
@@ -87,11 +220,11 @@ int main(int argc, char** argv) {
             WindowStream stream(display, selected, getpid(), outputWidth, outputHeight);
             auto frame = stream.next();
             require(frame.size() == 24 + size_t(outputWidth) * outputHeight * 4 &&
-                    std::memcmp(frame.data(), "BSC1", 4) == 0, "frame protocol mismatch");
+                    std::memcmp(frame.data(), "BSC2", 4) == 0, "frame protocol mismatch");
             auto center = 24 + (clientY * outputWidth + clientX) * 4;
             std::cout << "Selected center BGR " << unsigned(frame[center]) << ','
                       << unsigned(frame[center + 1]) << ',' << unsigned(frame[center + 2]) << '\n';
-            require(frame[center] == 0xca && frame[center + 1] == 0x56 && frame[center + 2] == 0x12,
+            require(frame[center] == 0xca && frame[center + 1] == 0x56 && frame[center + 2] == 0x12 && frame[center + 3] == 255,
                     "capture leaked occluder or lost selected pixels");
             // Drain the initial damage before checking idle capture and a final changed frame.
             if (stream.hasChanges()) stream.next();
@@ -102,7 +235,7 @@ int main(int argc, char** argv) {
             XSync(display, False);
             require(stream.hasChanges(), "last changed frame must be noticed");
             auto changed = stream.next();
-            require(changed[center] == 0x45 && changed[center + 1] == 0xa8 && changed[center + 2] == 0x27,
+            require(changed[center] == 0x45 && changed[center + 1] == 0xa8 && changed[center + 2] == 0x27 && changed[center + 3] == 255,
                     "changed pixels were lost");
             auto paint = XCreateGC(display, selected, 0, nullptr);
             XSetForeground(display, paint, 0xff0000);
@@ -122,7 +255,8 @@ int main(int argc, char** argv) {
                       << "; right " << unsigned(scaled[right]) << ','
                       << unsigned(scaled[right + 1]) << ',' << unsigned(scaled[right + 2]) << '\n';
             require(scaled[left + 2] == 255 && scaled[left] == 0 &&
-                scaled[right + 2] == 0 && scaled[right] == 255, "server scaling lost spatial content");
+                scaled[right + 2] == 0 && scaled[right] == 255 && scaled[left + 3] == 255 &&
+                scaled[right + 3] == 255, "server scaling lost spatial content or opaque alpha");
             bool rejected = false;
             try { WindowStream invalid(display, selected, getpid() + 100000, 40, 30); }
             catch (const GeometryChanged&) { throw std::runtime_error("foreign owner was classified as retryable"); }

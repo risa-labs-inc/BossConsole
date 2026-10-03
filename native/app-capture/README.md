@@ -26,8 +26,15 @@ parent closes/terminates it immediately when sharing demand or authority ends.
 It checks the OS session before every frame and after every backpressured write.
 Blocked writes time out instead of keeping a hidden recording alive.
 
-Protocol version 1 is a 24-byte big-endian header: magic `BSC1`, width, height,
-payload length, and 64-bit sequence, followed by tightly packed opaque BGRA.
+Both pipe protocol versions use a 24-byte big-endian header: four-byte magic,
+width, height, payload length, and 64-bit sequence, followed by tightly packed BGRA.
+`BSC1` retains its opaque-alpha contract and remains the Windows helper format.
+`BSC2` explicitly identifies premultiplied alpha and is emitted by the Linux
+helper: XRender preserves the exact owned ARGB window's alpha during scaling,
+and supplies alpha 255 for opaque RGB visuals. A BSC2-aware host composites these
+surfaces with premultiplied source-over and flattens the final video frame; older
+BSC1 helpers remain accepted as opaque. Bundle this helper with the matching host;
+an older host must reject BSC2 instead of interpreting transparency as opacity.
 Dimensions are positive and at most 1920; pixel count is at most 4,194,304.
 The command is `boss-app-capture PID XID WIDTH HEIGHT FPS`; PID must be the
 actual parent process, FPS is 30 or 60. X11 additionally accepts six trusted host
@@ -66,6 +73,14 @@ Configure with `-DBUILD_TESTING=ON` and run CTest with
 `BOSS_TEST_WINDOWS_CAPTURE=1` in an unlocked Windows GPU session to execute the
 interactive fixture. The default CI compile reports that fixture as skipped,
 while malformed-invocation checks still run.
+
+The Linux native fixture verifies exact premultiplied transparent, half-alpha,
+and opaque pixels through XRender and the production BSC2 frame header/payload,
+at native and half resolution beneath an unrelated occluder. `--alpha-only`
+isolates that check from WM decoration geometry tests. It passed Xvfb, Weston
+1x/2x with XWayland, and KWin with XWayland; separate AWT probes establish their
+trusted host-inset coordinate contract. These synthetic software-compositor
+checks do not establish real accelerated-app or lock/session coverage.
 
 Required release evidence remains a real X11 desktop with a compositor and
 logind: accelerated browser/terminal/editor content, occlusion, decorated frames,

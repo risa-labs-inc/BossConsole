@@ -123,6 +123,9 @@ public:
         const float color[] = {red, green, blue, 1};
         context_->ClearRenderTargetView(target_.get(), color);
         winrt::check_hresult(swap_->Present(0, 0));
+        // Wait for this fixture's submitted surfaces before a later occluder
+        // covers them. First-frame assertions remain strict, without sleeps.
+        winrt::check_hresult(DwmFlush());
     }
 };
 class Child {
