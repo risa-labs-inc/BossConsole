@@ -8,6 +8,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.time.Clock
@@ -25,6 +26,7 @@ class UpdateManager private constructor(
     private val installOperation: (suspend (String) -> InstallOutcome)?,
     private val checkOperation: (suspend () -> UpdateInfo)?,
     private val downloadOperation: (suspend (UpdateInfo, (Float) -> Unit) -> String?)? = null,
+    private val scheduleOperation: (suspend (String) -> InstallOutcome)? = null,
 ) {
     constructor() : this(null, null)
 
@@ -34,7 +36,8 @@ class UpdateManager private constructor(
         installOperation: UpdateInstallOperation,
         checkOperation: suspend () -> UpdateInfo,
         downloadOperation: (suspend (UpdateInfo, (Float) -> Unit) -> String?)? = null,
-    ) : this(installOperation::install, checkOperation, downloadOperation)
+        scheduleOperation: UpdateInstallOperation? = null,
+    ) : this(installOperation::install, checkOperation, downloadOperation, scheduleOperation?.let { it::install })
 
     private val logger = BossLogger.forComponent("UpdateManager")
 
@@ -96,6 +99,57 @@ class UpdateManager private constructor(
 
     companion object {
         val instance = UpdateManager()
+    }
+
+    private val automaticStartMutex = Mutex()
+    private var automaticSettingsJob: Job? = null
+    private var automaticDownloadJob: Job? = null
+
+    internal suspend fun startAutomaticUpdates() =
+        automaticStartMutex.withLock {
+            if (automaticSettingsJob?.isActive == true) return@withLock
+            automaticSettingsJob =
+                scope.launch {
+                    UpdateSettings.automaticUpdates.collect { enabled ->
+                        applyAutomaticSetting(enabled)
+                    }
+                }
+        }
+
+    private suspend fun applyAutomaticSetting(enabled: Boolean) {
+        if (!enabled) return
+        _showUpdateDialog.value = false
+        val ready = _updateState.value as? UpdateState.ReadyToInstall
+        if (ready?.updateInfo?.isNewerVersionAvailable == true) {
+            scheduleAutomatically(ready)
+        } else {
+            checkForUpdates()
+        }
+    }
+
+    private suspend fun scheduleAutomatically(ready: UpdateState.ReadyToInstall) =
+        artifactMutex.withLock {
+            if (_updateState.value === ready && UpdateSettings.autoUpdateEnabled) {
+                installStagedUpdate(ready.downloadPath, restartAutomatically = false)
+            }
+        }
+
+    private fun downloadAndScheduleAutomatically(info: UpdateInfo) {
+        if (automaticDownloadJob?.isActive == true) return
+        automaticDownloadJob =
+            scope.launch {
+                withDownloadOwnership {
+                    val offered = _updateState.value as? UpdateState.UpdateAvailable
+                    if (offered?.updateInfo === info && UpdateSettings.autoUpdateEnabled) {
+                        downloadAvailableUpdate(info)
+                    } else {
+                        UpdateResult.NoUpdateAvailable
+                    }
+                }
+                val ready = _updateState.value as? UpdateState.ReadyToInstall ?: return@launch
+                if (ready.updateInfo !== info || !UpdateSettings.autoUpdateEnabled) return@launch
+                scheduleAutomatically(ready)
+            }
     }
 
     /**
@@ -176,9 +230,7 @@ class UpdateManager private constructor(
         // Error is deliberately rechecked: suppression clears the refusal banner
         // on the next automatic check rather than preserving it indefinitely.
         val current = _updateState.value
-        if (current is UpdateState.Downloading || current is UpdateState.ReadyToInstall ||
-            current is UpdateState.Installing || current is UpdateState.RestartRequired
-        ) {
+        if (current.ownsUpdateArtifact() || automaticDownloadJob?.isActive == true) {
             val info = _updateInfo.value
             return if (info != null) UpdateResult.UpdateAvailable(info) else UpdateResult.NoUpdateAvailable
         }
@@ -197,8 +249,7 @@ class UpdateManager private constructor(
                         _updateState.value = UpdateState.Idle
                         UpdateResult.NoUpdateAvailable
                     } else {
-                        _updateState.value = UpdateState.UpdateAvailable(updateInfo)
-                        _showUpdateDialog.value = true
+                        offerUpdate(updateInfo)
                         UpdateResult.UpdateAvailable(updateInfo)
                     }
                 }
@@ -212,6 +263,12 @@ class UpdateManager private constructor(
             _updateState.value = UpdateState.Error(e.message ?: "Unknown error")
             UpdateResult.Error("Failed to check for updates", e)
         }
+    }
+
+    private fun offerUpdate(info: UpdateInfo) {
+        _updateState.value = UpdateState.UpdateAvailable(info)
+        _showUpdateDialog.value = !UpdateSettings.autoUpdateEnabled
+        if (UpdateSettings.autoUpdateEnabled) downloadAndScheduleAutomatically(info)
     }
 
     private fun isVersionDismissed(latest: Version): Boolean {
@@ -340,7 +397,7 @@ class UpdateManager private constructor(
 
     private suspend fun withDownloadOwnership(operation: suspend () -> UpdateResult): UpdateResult =
         artifactMutex.withLock {
-            if (_updateState.value == UpdateState.RestartRequired) {
+            if (_updateState.value in listOf(UpdateState.RestartRequired, UpdateState.InstallOnNextRestart)) {
                 return@withLock UpdateResult.Error("Restart BOSS before downloading another update")
             }
             downloadJob = currentCoroutineContext()[Job]
@@ -458,7 +515,10 @@ class UpdateManager private constructor(
             if (_updateState.value === expected) installStagedUpdate(expected.downloadPath) else false
         }
 
-    private suspend fun installStagedUpdate(downloadPath: String): Boolean {
+    private suspend fun installStagedUpdate(
+        downloadPath: String,
+        restartAutomatically: Boolean = true,
+    ): Boolean {
         // Claim the staged artifact, or do nothing at all.
         //
         // Both halves of this matter, and the bug was that neither existed. The state moved to
@@ -485,13 +545,20 @@ class UpdateManager private constructor(
             // Use the path won by the claim. A stale UI action must not install an
             // artifact staged later by another download.
             val outcome =
-                if (installOperation != null) {
+                if (!restartAutomatically) {
+                    scheduleOperation?.invoke(claimed.downloadPath)
+                        ?: updateService.scheduleUpdate(claimed.downloadPath)
+                } else if (installOperation != null) {
                     installOperation.invoke(claimed.downloadPath)
                 } else {
                     updateService.installUpdate(claimed.downloadPath)
                 }
             if (outcome.succeeded) {
-                if (!_updateState.compareAndSet(UpdateState.Installing, UpdateState.RestartRequired)) {
+                if (!_updateState.compareAndSet(
+                        UpdateState.Installing,
+                        if (restartAutomatically) UpdateState.RestartRequired else UpdateState.InstallOnNextRestart,
+                    )
+                ) {
                     logger.warn(LogCategory.SYSTEM, "Preserving a newer update state after an installation succeeded")
                 }
             } else {
@@ -579,6 +646,7 @@ class UpdateManager private constructor(
      * Reset update state to idle. Does NOT persist dismissal (see [dismissVersion]).
      */
     fun resetState() {
+        if (_updateState.value == UpdateState.InstallOnNextRestart) return
         _updateState.value = UpdateState.Idle
         _showUpdateDialog.value = false
     }
@@ -608,6 +676,15 @@ internal class UpdateInstallOperation(
 /**
  * Update state sealed class
  */
+internal fun UpdateState.ownsUpdateArtifact(): Boolean =
+    when (this) {
+        is UpdateState.Downloading, is UpdateState.ReadyToInstall, UpdateState.Installing,
+        UpdateState.RestartRequired, UpdateState.InstallOnNextRestart,
+        -> true
+
+        else -> false
+    }
+
 sealed class UpdateState {
     object Idle : UpdateState()
 
@@ -630,6 +707,8 @@ sealed class UpdateState {
     ) : UpdateState()
 
     object Installing : UpdateState()
+
+    object InstallOnNextRestart : UpdateState()
 
     object RestartRequired : UpdateState()
 

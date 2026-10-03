@@ -99,7 +99,14 @@ val versionPropsProvider =
     providers.of(VersionPropertiesValueSource::class.java) {
         parameters.propertiesFile.set(versionPropsFile)
     }
-val appVersion = versionPropsProvider.map { it.getProperty("app.version", "8.8.0") }.get()
+val testAutoUpdateBuild =
+    providers
+        .gradleProperty("testAutoUpdate")
+        .map(String::toBoolean)
+        .orElse(false)
+        .get()
+val desktopOutputDirectory = if (testAutoUpdateBuild) "compose-auto-update-test" else "compose"
+val appVersion = if (testAutoUpdateBuild) "1.0.0" else versionPropsProvider.map { it.getProperty("app.version", "8.8.0") }.get()
 // Base version (without prerelease suffix) for native package formats that don't support semver prereleases
 val baseVersion = appVersion.substringBefore("-")
 
@@ -262,6 +269,7 @@ val generateVersionConstants =
 
         // Use providers for configuration cache compatibility
         val propsProvider = versionPropsProvider
+        val autoUpdateTest = testAutoUpdateBuild
         val majorProvider = propsProvider.map { it.getProperty("app.version.major", "8") }
         val minorProvider = propsProvider.map { it.getProperty("app.version.minor", "8") }
         val patchProvider = propsProvider.map { it.getProperty("app.version.patch", "0") }
@@ -280,10 +288,10 @@ val generateVersionConstants =
         outputs.upToDateWhen { false }
 
         doLast {
-            val major = majorProvider.get()
-            val minor = minorProvider.get()
-            val patch = patchProvider.get()
-            val prerelease = prereleaseProvider.get().takeIf { it.isNotBlank() }
+            val major = if (autoUpdateTest) "1" else majorProvider.get()
+            val minor = if (autoUpdateTest) "0" else minorProvider.get()
+            val patch = if (autoUpdateTest) "0" else patchProvider.get()
+            val prerelease = if (autoUpdateTest) null else prereleaseProvider.get().takeIf { it.isNotBlank() }
             val pluginApiVer = pluginApiProvider.get()
             val jxVersion = jxVersionProvider.get()
 
@@ -1390,6 +1398,12 @@ compose.desktop {
                 }
             }
         jvmArgs(*platformJvmArgs.toTypedArray())
+        // Packaged distributions are release builds; Gradle's JavaExec launches override this below.
+        jvmArgs("-Dboss.build.type=${if (testAutoUpdateBuild) "debug" else "release"}")
+        if (testAutoUpdateBuild) {
+            jvmArgs("-Dboss.autoUpdate.test=true")
+            jvmArgs("-Dboss.autoUpdate.settings.dir=${layout.buildDirectory.dir("auto-update-test-settings").get().asFile.absolutePath}")
+        }
 
         // Bake Supabase config into the packaged app launcher so the shared Supabase
         // client AND the self-updater use the CI-provided values at runtime (via
@@ -1403,6 +1417,7 @@ compose.desktop {
         System.getenv("SUPABASE_FUNCTION_URL")?.takeIf { it.isNotBlank() }?.let { jvmArgs("-DSUPABASE_FUNCTION_URL=$it") }
 
         nativeDistributions {
+            outputBaseDir.set(layout.buildDirectory.dir("$desktopOutputDirectory/binaries"))
             targetFormats(
                 TargetFormat.Dmg, // macOS
                 TargetFormat.Msi, // Windows
@@ -1688,6 +1703,7 @@ tasks.register("runProduction") {
 // Configure all JavaExec tasks with boss.log.level from gradle.properties
 // Also enable dev mode so ./gradlew run uses ~/.boss_debug (not ~/.boss)
 tasks.withType<JavaExec>().configureEach {
+    systemProperty("boss.build.type", "debug")
     val bossLogLevel = project.findProperty("boss.log.level") as? String
     if (bossLogLevel != null) {
         systemProperty("boss.log.level", bossLogLevel)
@@ -1783,7 +1799,7 @@ tasks.register("stripForeignPlatformNatives") {
     // Configuration cache: capture everything the action needs at configuration
     // time. The doLast lambda must not reach the enclosing script object nor
     // call Task.project at execution time -- same rule as extractCLIToAppResources.
-    val appDirProvider = layout.buildDirectory.dir("compose/binaries/main/app")
+    val appDirProvider = layout.buildDirectory.dir("$desktopOutputDirectory/binaries/main/app")
     val osName = System.getProperty("os.name").lowercase()
     val osArch = System.getProperty("os.arch").lowercase()
 
@@ -1919,7 +1935,7 @@ tasks.register("extractCLIToAppResources") {
     val onMacHost = isMacOSHost
     val signingDisabledProvider = macOSSigningDisabledProvider
     val developerId = macOSDeveloperId
-    val appDirProvider = layout.buildDirectory.dir("compose/binaries/main/app")
+    val appDirProvider = layout.buildDirectory.dir("$desktopOutputDirectory/binaries/main/app")
     val generatedCliDirProvider = layout.buildDirectory.dir("generated/resources/cli")
     val entitlementsFile = project.file("src/desktopMain/resources/BOSS.entitlements")
 
@@ -2024,7 +2040,7 @@ tasks.register("signPty4jBinaries") {
     val onMacHost = isMacOSHost
     val signingDisabledProvider = macOSSigningDisabledProvider
     val developerId = macOSDeveloperId
-    val appDirProvider = layout.buildDirectory.dir("compose/binaries/main/app")
+    val appDirProvider = layout.buildDirectory.dir("$desktopOutputDirectory/binaries/main/app")
     val entitlementsFile = project.file("src/desktopMain/resources/BOSS.entitlements")
 
     // Only run on macOS and when signing is enabled (resolved at execution time)
@@ -2343,7 +2359,7 @@ tasks.register<FixLinuxDesktopFileTask>("fixLinuxDesktopFile") {
     val isLinux = System.getProperty("os.name").lowercase().contains("linux")
     onlyIf { isLinux }
 
-    debDir.set(layout.buildDirectory.dir("compose/binaries/main/deb"))
+    debDir.set(layout.buildDirectory.dir("$desktopOutputDirectory/binaries/main/deb"))
 }
 
 // jpackage copies an older-SDK launcher even on a modern build runner. AppKit uses
@@ -2355,7 +2371,7 @@ tasks.register("prepareMacOSAppearance") {
     val onMacHost = isMacOSHost
     val signingDisabled = macOSSigningDisabledProvider
     val developerId = macOSDeveloperId
-    val app = layout.buildDirectory.dir("compose/binaries/main/app/BOSS.app")
+    val app = layout.buildDirectory.dir("$desktopOutputDirectory/binaries/main/app/BOSS.app")
     val script = rootProject.file("scripts/prepare-macos-appearance.py")
     val entitlements = project.file("src/desktopMain/resources/BOSS.entitlements")
     val injected = project.objects.newInstance<InjectedExecOps>()

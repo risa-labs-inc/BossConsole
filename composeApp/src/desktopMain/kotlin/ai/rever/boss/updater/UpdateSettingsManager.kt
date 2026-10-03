@@ -23,7 +23,21 @@ import java.io.File
  * cross-thread visibility. Each field is an independent flag — no invariant
  * spans multiple fields, so per-field volatility is sufficient.
  */
+internal fun defaultAutoUpdateEnabled(
+    buildType: String? =
+        if (System.getProperty("boss.dev.mode").toBoolean()) "debug" else System.getProperty("boss.build.type"),
+    testAutoUpdate: Boolean = System.getProperty("boss.autoUpdate.test").toBoolean(),
+): Boolean = testAutoUpdate || buildType == "release"
+
 actual object UpdateSettings {
+    private val automatic = kotlinx.coroutines.flow.MutableStateFlow(defaultAutoUpdateEnabled())
+    actual val automaticUpdates: kotlinx.coroutines.flow.StateFlow<Boolean> = automatic
+    actual var autoUpdateEnabled: Boolean
+        get() = automatic.value
+        set(value) {
+            automatic.value = value
+        }
+
     /**
      * Whether automatic update checks are enabled
      * Default: true (preserves current behavior)
@@ -64,6 +78,7 @@ actual object UpdateSettings {
  */
 @Serializable
 data class UpdateSettingsData(
+    val autoUpdateEnabled: Boolean = defaultAutoUpdateEnabled(),
     val autoCheckEnabled: Boolean = true,
     val checkIntervalHours: Long = 6,
     val includePreReleases: Boolean = false,
@@ -78,7 +93,10 @@ internal object UpdateSettingsFiles {
     var settingsFileOverride: File? = null
 
     val settingsFile: File
-        get() = settingsFileOverride ?: BossDirectories.resolve("update-settings.json")
+        get() =
+            settingsFileOverride
+                ?: System.getProperty("boss.autoUpdate.settings.dir")?.let { File(it, "update-settings.json") }
+                ?: BossDirectories.resolve("update-settings.json")
 }
 
 /**
@@ -98,6 +116,7 @@ actual object UpdateSettingsManager {
         Json {
             prettyPrint = true
             ignoreUnknownKeys = true
+            encodeDefaults = true
         }
 
     init {
@@ -124,6 +143,7 @@ actual object UpdateSettingsManager {
                 val settings = json.decodeFromString<UpdateSettingsData>(content)
 
                 // Apply loaded settings
+                UpdateSettings.autoUpdateEnabled = settings.autoUpdateEnabled
                 UpdateSettings.autoCheckEnabled = settings.autoCheckEnabled
                 UpdateSettings.checkIntervalHours = settings.checkIntervalHours
                 UpdateSettings.includePreReleases = settings.includePreReleases
@@ -157,6 +177,7 @@ actual object UpdateSettingsManager {
                 try {
                     val settings =
                         UpdateSettingsData(
+                            autoUpdateEnabled = UpdateSettings.autoUpdateEnabled,
                             autoCheckEnabled = UpdateSettings.autoCheckEnabled,
                             checkIntervalHours = UpdateSettings.checkIntervalHours,
                             includePreReleases = UpdateSettings.includePreReleases,

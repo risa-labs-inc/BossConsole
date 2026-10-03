@@ -481,6 +481,38 @@ fun UpdateSettingsSection(updateCoordinator: UpdateCoordinator = UpdateCoordinat
                 )
                 Spacer(modifier = Modifier.height(12.dp))
 
+                val automaticUpdates by UpdateSettings.automaticUpdates.collectAsState()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Automatic Updates", fontSize = 14.sp, color = BossTheme.colors.textPrimary)
+                        Text(
+                            "Download in the background and install after you quit. Open BOSS again manually.",
+                            fontSize = 12.sp,
+                            color = BossTheme.colors.textSecondary,
+                        )
+                    }
+                    Switch(
+                        checked = automaticUpdates,
+                        onCheckedChange = { enabled ->
+                            UpdateSettings.autoUpdateEnabled = enabled
+                            coroutineScope.launch {
+                                UpdateSettingsManager.saveSettings()
+                                updateCoordinator.setPeriodicChecksEnabled(UpdateSettings.autoCheckEnabled || enabled)
+                            }
+                        },
+                        colors =
+                            SwitchDefaults.colors(
+                                checkedThumbColor = BossTheme.colors.signal,
+                                checkedTrackColor = BossTheme.colors.signal.copy(alpha = 0.5f),
+                            ),
+                    )
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+
                 // Automatic Update Check Toggle
                 var autoCheckEnabled by remember { mutableStateOf(UpdateSettings.autoCheckEnabled) }
 
@@ -726,6 +758,14 @@ fun UpdateSettingsSection(updateCoordinator: UpdateCoordinator = UpdateCoordinat
                                 fontSize = 14.sp,
                             )
                         }
+                    }
+
+                    is UpdateState.InstallOnNextRestart -> {
+                        Text(
+                            "Update ready. It will install after you quit BOSS. Open BOSS again manually.",
+                            color = BossTheme.colors.ok,
+                            fontSize = 14.sp,
+                        )
                     }
 
                     is UpdateState.RestartRequired -> {
