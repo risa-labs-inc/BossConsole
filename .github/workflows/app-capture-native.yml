@@ -1,0 +1,71 @@
+name: Native application capture
+
+on:
+  pull_request:
+    branches: [main, dev, develop]
+    paths:
+      - 'native/app-capture/**'
+      - 'scripts/build-app-capture.py'
+      - 'scripts/test/test-app-capture-xwayland.py'
+      - '.github/workflows/app-capture-native.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'native/app-capture/**'
+      - 'scripts/build-app-capture.py'
+      - 'scripts/test/test-app-capture-xwayland.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install X11 capture headers
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ pkg-config libx11-dev libxcomposite-dev libxres-dev libxdamage-dev libxrender-dev libsystemd-dev xvfb xauth weston xwayland openjdk-17-jdk
+      - name: Build packaged capture helper
+        run: python scripts/build-app-capture.py --source native/app-capture --build native/app-capture/build --output native/app-capture/build/resource
+      - name: Verify exact X11 pixels and lifecycle
+        if: runner.os == 'Linux'
+        run: |
+          cmake -S native/app-capture -B native/app-capture/build -DBUILD_TESTING=ON
+          cmake --build native/app-capture/build --parallel 2
+          xvfb-run -a ctest --test-dir native/app-capture/build --output-on-failure
+      - name: Verify real JDK geometry under XWayland
+        if: runner.os == 'Linux'
+        run: |
+          export PATH="/usr/lib/jvm/java-17-openjdk-$(dpkg --print-architecture)/bin:$PATH"
+          python scripts/test/test-app-capture-xwayland.py --test-binary native/app-capture/build/boss-app-capture-test --awt-probe native/app-capture/AwtGeometryProbe.java --compositor-scale 1
+          python scripts/test/test-app-capture-xwayland.py --test-binary native/app-capture/build/boss-app-capture-test --awt-probe native/app-capture/AwtGeometryProbe.java --compositor-scale 2
+      - name: Compile Windows native fixture and run noninteractive boundaries
+        if: runner.os == 'Windows'
+        run: |
+          cmake -S native/app-capture -B native/app-capture/build -DBUILD_TESTING=ON
+          cmake --build native/app-capture/build --config Release --parallel 2
+          ctest --test-dir native/app-capture/build -C Release --output-on-failure
+      - name: Reject malformed capture invocation
+        shell: bash
+        run: |
+          helper=native/app-capture/build/resource/boss-app-capture
+          if [[ "$RUNNER_OS" == Windows ]]; then helper="$helper.exe"; fi
+          if "$helper"; then
+            echo 'Invalid invocation unexpectedly admitted'
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: app-capture-${{ matrix.os }}
+          path: native/app-capture/build/resource/
+          retention-days: 7
