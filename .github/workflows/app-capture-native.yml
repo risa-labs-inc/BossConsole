@@ -15,6 +15,12 @@ on:
       - 'scripts/build-app-capture.py'
       - 'scripts/test/test-app-capture-xwayland.py'
   workflow_dispatch:
+    inputs:
+      windows_capture:
+        description: 'Probe hosted Windows capture and run the synthetic owned-window fixture when supported'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -55,6 +61,55 @@ jobs:
           cmake -S native/app-capture -B native/app-capture/build -DBUILD_TESTING=ON
           cmake --build native/app-capture/build --config Release --parallel 2
           ctest --test-dir native/app-capture/build -C Release --output-on-failure
+      - name: Probe manual Windows capture prerequisites
+        id: windows_runtime_probe
+        if: github.event_name == 'workflow_dispatch' && inputs.windows_capture && runner.os == 'Windows'
+        timeout-minutes: 2
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          $report = 'native/app-capture/build/windows-runtime-capabilities.txt'
+          "Process session: $((Get-Process -Id $PID).SessionId)" | Tee-Object -FilePath $report
+          "UserInteractive: $([Environment]::UserInteractive)" | Tee-Object -FilePath $report -Append
+          Get-CimInstance Win32_VideoController | Select-Object Name, AdapterCompatibility, DriverVersion | Format-List | Out-String | Tee-Object -FilePath $report -Append
+          & native/app-capture/build/Release/boss-app-capture.exe --probe $PID 2>&1 | Tee-Object -FilePath $report -Append
+          $probeExit = $LASTEXITCODE
+          "Production capability probe exit: $probeExit" | Tee-Object -FilePath $report -Append
+          if ($probeExit -eq 0) {
+            'supported=true' >> $env:GITHUB_OUTPUT
+            'Windows session/WGC probe passed; synthetic capture fixture will run.' >> $env:GITHUB_STEP_SUMMARY
+          } else {
+            'supported=false' >> $env:GITHUB_OUTPUT
+            'Windows runtime capture NOT ATTEMPTED: the production session/WGC capability probe rejected this runner. This is not capture validation.' >> $env:GITHUB_STEP_SUMMARY
+          }
+          exit 0
+      - name: Run manual Windows owned-window capture fixture
+        if: github.event_name == 'workflow_dispatch' && inputs.windows_capture && runner.os == 'Windows' && steps.windows_runtime_probe.outputs.supported == 'true'
+        timeout-minutes: 2
+        shell: pwsh
+        env:
+          BOSS_TEST_WINDOWS_CAPTURE: '1'
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          $report = Join-Path $PWD 'native/app-capture/build/windows-runtime.xml'
+          ctest --test-dir native/app-capture/build -C Release -R '^exact-windows-window$' --timeout 60 --no-tests=error --output-on-failure --output-junit $report
+          $testExit = $LASTEXITCODE
+          if ($testExit -eq 0) {
+            'Synthetic exact-window capture fixture PASSED. This validates this runner and source fixture, not physical GPU performance or actual BossConsole input.' >> $env:GITHUB_STEP_SUMMARY
+          } else {
+            "Synthetic exact-window capture fixture FAILED (exit $testExit); inspect runtime artifacts." >> $env:GITHUB_STEP_SUMMARY
+          }
+          exit $testExit
+      - name: Preserve manual Windows runtime evidence
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.windows_capture && runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-capture-runtime-${{ matrix.os }}
+          path: |
+            native/app-capture/build/windows-runtime-capabilities.txt
+            native/app-capture/build/windows-runtime.xml
+            native/app-capture/build/Testing/Temporary/LastTest.log
+          retention-days: 7
       - name: Reject malformed capture invocation
         shell: bash
         run: |
