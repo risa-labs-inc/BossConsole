@@ -124,9 +124,28 @@ nonfocusable utility style on that Server runner. The helper does not change
 the window's style, focus, or owner to bypass the failure, and does not include
 other windows or desktop pixels as a fallback.
 
-These results compare different operating-system products as well as CPU
-architectures. They do not demonstrate the same failure on Windows 11 x64,
-and they do not isolate NOACTIVATE, TOOLWINDOW, or popup ownership individually.
+The follow-up [style matrix run 37102012451](https://github.com/risa-labs-inc/BossConsole/actions/runs/37102012451)
+at commit `3377855bb` retained that required case and separately varied the
+two extended style flags, keeping the exact owned `WS_POPUP` constant:
+
+| Source | Server 2025 x64 | Windows 11 ARM64 |
+|---|---|---|
+| Normal application root | Pass | Pass |
+| Owned NOACTIVATE + TOOLWINDOW | CreateForWindow E_INVALIDARG | Pass |
+| Owned NOACTIVATE only | CreateForWindow E_INVALIDARG | First frame opaque black; pixel assertion failed |
+| Owned TOOLWINDOW only | CreateForWindow E_INVALIDARG | Pass |
+| Owned with neither flag | CreateForWindow E_INVALIDARG | First frame opaque black; pixel assertion failed |
+
+All Server popup variants failed before producing pixels, so removing
+NOACTIVATE alone is not a demonstrated solution. The two ARM black-frame cases
+still need compositor-readiness investigation; they are failures, not validated
+capture. These results compare different operating-system products as well as
+CPU architectures, and do not demonstrate the same failure on Windows 11 x64.
+Popup ownership versus WS_POPUP itself has not been isolated. The next diagnostic
+records same-process `CreateForWindow` eligibility for that exact synthetic
+popup before starting the child helper, to distinguish a cross-process boundary.
+It creates only a capture item, never a frame pool/session or a capture of
+another window, and does not replace the child's required pixel assertions.
 The documented API minimum lists Windows 10 build 18362 for both client and
 server, without a per-style eligibility contract. Actual Windows BossConsole,
 transparent overlays, mixed DPI, owned dialogs, and session-transition testing

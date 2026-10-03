@@ -3,6 +3,8 @@
 #include <d3d11.h>
 #include <dwmapi.h>
 #include <winrt/base.h>
+#include <windows.graphics.capture.interop.h>
+#include <winrt/Windows.Graphics.Capture.h>
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -16,6 +18,10 @@
 
 namespace {
 using Clock = std::chrono::steady_clock;
+struct RuntimeApartment {
+    RuntimeApartment() { winrt::init_apartment(winrt::apartment_type::multi_threaded); }
+    ~RuntimeApartment() { winrt::uninit_apartment(); }
+};
 void require(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
 void pump() {
     MSG message {};
@@ -235,6 +241,21 @@ void assertColor(const std::vector<uint8_t>& pixels, int channel) {
     require(pixel[channel] >= 200 && pixel[3] == 255, "GPU window color/opacity was not captured");
     for (int index = 0; index < 3; ++index) if (index != channel) require(pixel[index] <= 40, "unrelated occluder leaked into capture");
 }
+// Eligibility only for this exact synthetic popup. No capture session, frame
+// pool, monitor, or other window is opened. Local COM objects release on return.
+void diagnoseSameProcessItem(HWND window) {
+    try {
+        using winrt::Windows::Graphics::Capture::GraphicsCaptureItem;
+        auto factory = winrt::get_activation_factory<GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
+        GraphicsCaptureItem item {nullptr};
+        const HRESULT result = factory->CreateForWindow(window, winrt::guid_of<GraphicsCaptureItem>(), winrt::put_abi(item));
+        std::cout << "Same-process popup CreateForWindow HRESULT=0x" << std::hex
+                  << static_cast<uint32_t>(result) << std::dec << std::endl;
+    } catch (const winrt::hresult_error& error) {
+        std::cout << "Same-process popup interop setup HRESULT=0x" << std::hex
+                  << static_cast<uint32_t>(error.code().value) << std::dec << std::endl;
+    }
+}
 DWORD ownedPopupStyle(const std::wstring& mode) {
     if (mode == L"--owned-noactivate-popup") return WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
     if (mode == L"--owned-noactivate-only-popup") return WS_EX_NOACTIVATE;
@@ -264,6 +285,7 @@ void ownedPopup(const wchar_t* helper, DWORD requestedStyle) {
         "synthetic popup occluder placement failed");
     pump();
     popup.diagnose("owned popup under occluder");
+    diagnoseSameProcessItem(popup.handle);
     {
         Child capture(helper, popup.handle);
         uint64_t sequence = 0;
@@ -298,6 +320,7 @@ int wmain(int count, wchar_t** values) {
             std::cout << "SKIP: set BOSS_TEST_WINDOWS_CAPTURE=1 in an unlocked interactive Windows session\n";
             return 77;
         }
+        RuntimeApartment apartment;
         require(SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) != FALSE, "DPI mode unavailable");
         if (popupCase) { ownedPopup(values[1], requestedStyle); return 0; }
         // Match a normal application root, while showing without activation.
