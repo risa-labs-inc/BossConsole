@@ -42,7 +42,7 @@ public:
         }
         return DefWindowProcW(window, message, first, second);
     }
-    explicit Window(const wchar_t* title) {
+    explicit Window(const wchar_t* title, DWORD extendedStyle = WS_EX_NOACTIVATE) {
         static const ATOM registered = [] {
             WNDCLASSW type {};
             type.lpfnWndProc = procedure;
@@ -51,7 +51,7 @@ public:
             return RegisterClassW(&type);
         }();
         require(registered != 0, "synthetic GPU window class unavailable");
-        handle = CreateWindowExW(WS_EX_NOACTIVATE, L"BossSyntheticGpuCaptureFixture", title, WS_OVERLAPPEDWINDOW,
+        handle = CreateWindowExW(extendedStyle, L"BossSyntheticGpuCaptureFixture", title, WS_OVERLAPPEDWINDOW,
             100, 100, 360, 270, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
         require(handle != nullptr, "synthetic window creation failed");
         DXGI_SWAP_CHAIN_DESC swap {};
@@ -246,7 +246,9 @@ int wmain(int count, wchar_t** values) {
             return 77;
         }
         require(SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) != FALSE, "DPI mode unavailable");
-        Window selected(L"Synthetic selected GPU source"); selected.paint(0, 1, 0);
+        // Match a normal application root, while showing without activation.
+        // The unrelated occluder retains NOACTIVATE and never receives input.
+        Window selected(L"Synthetic selected GPU source", WS_EX_APPWINDOW); selected.paint(0, 1, 0);
         selected.diagnose("before occluder");
         Window unrelated(L"Synthetic unrelated occluder"); unrelated.paint(1, 0, 0);
         SetWindowPos(unrelated.handle, HWND_TOPMOST, 80, 80, 420, 340, SWP_NOACTIVATE);
