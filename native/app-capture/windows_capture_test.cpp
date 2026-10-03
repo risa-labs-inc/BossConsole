@@ -1,6 +1,7 @@
 // Interactive Windows integration test. No production user window is captured.
 #include <windows.h>
 #include <d3d11.h>
+#include <dwmapi.h>
 #include <winrt/base.h>
 #include <algorithm>
 #include <array>
@@ -77,6 +78,40 @@ public:
         pump();
     }
     ~Window() { if (handle) DestroyWindow(handle); }
+    void diagnose(const char* stage) const {
+        // Read metadata only from this fixture's own source. No desktop capture,
+        // foreground activation, affinity changes, or system setting changes.
+        DWORD owner = 0, cloaked = 0, affinity = 0;
+        GetWindowThreadProcessId(handle, &owner);
+        const auto cloakResult = DwmGetWindowAttribute(handle, DWMWA_CLOAKED, &cloaked, sizeof(cloaked));
+        const BOOL affinityRead = GetWindowDisplayAffinity(handle, &affinity);
+        BOOL composition = FALSE;
+        const auto compositionResult = DwmIsCompositionEnabled(&composition);
+        RECT outer {}, client {}, visible {};
+        POINT clientOrigin {};
+        const BOOL outerRead = GetWindowRect(handle, &outer);
+        const BOOL clientRead = GetClientRect(handle, &client);
+        const BOOL originRead = ClientToScreen(handle, &clientOrigin);
+        const auto visibleResult = DwmGetWindowAttribute(handle, DWMWA_EXTENDED_FRAME_BOUNDS, &visible, sizeof(visible));
+        const auto extended = GetWindowLongPtrW(handle, GWL_EXSTYLE);
+        std::cout << "Synthetic source " << stage
+                  << ": owned=" << (owner == GetCurrentProcessId())
+                  << "; root=" << (GetAncestor(handle, GA_ROOT) == handle)
+                  << "; visible=" << IsWindowVisible(handle) << "; iconic=" << IsIconic(handle)
+                  << "; foreground=" << (GetForegroundWindow() == handle)
+                  << "; noActivate=" << ((extended & WS_EX_NOACTIVATE) != 0)
+                  << "; toolWindow=" << ((extended & WS_EX_TOOLWINDOW) != 0)
+                  << "; appWindow=" << ((extended & WS_EX_APPWINDOW) != 0)
+                  << "; monitor=" << (MonitorFromWindow(handle, MONITOR_DEFAULTTONULL) != nullptr)
+                  << "; cloakRead=" << SUCCEEDED(cloakResult) << "; cloaked=" << cloaked
+                  << "; affinityRead=" << affinityRead << "; affinity=" << affinity
+                  << "; compositionRead=" << SUCCEEDED(compositionResult) << "; composition=" << composition
+                  << "; outerRead=" << outerRead << "; outer=" << outer.right - outer.left << 'x' << outer.bottom - outer.top
+                  << "; clientRead=" << clientRead << "; client=" << client.right - client.left << 'x' << client.bottom - client.top
+                  << "; originRead=" << originRead << "; inset=" << clientOrigin.x - outer.left << ',' << clientOrigin.y - outer.top
+                  << "; frameRead=" << SUCCEEDED(visibleResult) << "; frame=" << visible.right - visible.left << 'x' << visible.bottom - visible.top
+                  << "; dpi=" << GetDpiForWindow(handle) << std::endl;
+    }
     void paint(float red, float green, float blue) {
         const float color[] = {red, green, blue, 1};
         context_->ClearRenderTargetView(target_.get(), color);
@@ -212,9 +247,11 @@ int wmain(int count, wchar_t** values) {
         }
         require(SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) != FALSE, "DPI mode unavailable");
         Window selected(L"Synthetic selected GPU source"); selected.paint(0, 1, 0);
+        selected.diagnose("before occluder");
         Window unrelated(L"Synthetic unrelated occluder"); unrelated.paint(1, 0, 0);
         SetWindowPos(unrelated.handle, HWND_TOPMOST, 80, 80, 420, 340, SWP_NOACTIVATE);
         pump();
+        selected.diagnose("under occluder");
         {
             Child rejected(values[1], selected.handle, GetCurrentProcessId() + 1);
             require(rejected.rejected(), "wrong parent must terminate without capture");
