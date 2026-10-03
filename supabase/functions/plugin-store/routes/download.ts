@@ -12,8 +12,11 @@ import { clientKey, rateLimit } from "../utils/rate-limit.ts"
 import { isAllowedExternalJarUrl } from "../services/github.ts"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { newRouter } from "../utils/router.ts"
+import { privateNoStore } from "../utils/cache.ts"
 
 const download = newRouter()
+download.use("/:pluginId/download", privateNoStore())
+download.use("/:pluginId/download/:version", privateNoStore())
 
 // Per-client limit on the public download-info routes, the same in-isolate
 // token bucket as the catalogue routes in browse.ts. A separate key prefix
