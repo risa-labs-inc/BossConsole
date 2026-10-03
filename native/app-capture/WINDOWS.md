@@ -66,6 +66,10 @@ live GPU updates, unchanged ownership/focus style, and terminal popup close whil
 the owner stays alive. Manual runtime dispatch runs both cases separately; a popup
 failure cannot be reported as coverage from the normal-root fixture. This is
 native-style coverage, not yet an actual AWT/Compose popup integration test.
+Three additional, separately reported cases use NOACTIVATE only, TOOLWINDOW
+only, and neither flag to isolate eligibility. They retain the same owned
+`WS_POPUP` geometry, exact pixel/update checks, and no-activation assertions;
+they never substitute for the required nonfocusable utility case.
 
 Compilation and a skipped test do not establish runtime support. Release evidence
 still requires running this test and the actual BossConsole viewer on Windows:
@@ -107,9 +111,26 @@ rejected the fixture's `WS_EX_NOACTIVATE`, non-`WS_EX_APPWINDOW` source at
 the renderer or first frame. ARM64 accepted that source setup. Matching the
 selected synthetic source to a normal app root resolved the x64 fixture failure;
 the production helper's capture path and authority checks were unchanged.
-This does not establish capture support for every owned popup or no-activate
-window style. Actual Windows BossConsole, mixed DPI, owned dialogs, and
-session-transition testing remain required.
+The focused owned popup [run 37101631823](https://github.com/risa-labs-inc/BossConsole/actions/runs/37101631823)
+at commit `30f4abf44` then established a remaining platform difference.
+Windows 11 ARM64 passed both the normal root and the owned
+`WS_POPUP | WS_CLIPCHILDREN` source with
+`WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW`; exact popup pixels and live updates
+passed, and closing it ended only its capture. Windows Server 2025 x64 passed
+the normal root but rejected that same valid, non-cloaked owned popup at
+`CreateForWindow` with `E_INVALIDARG` before a frame (terminal exit 72).
+Parenting alone therefore does not establish capture support for the required
+nonfocusable utility style on that Server runner. The helper does not change
+the window's style, focus, or owner to bypass the failure, and does not include
+other windows or desktop pixels as a fallback.
+
+These results compare different operating-system products as well as CPU
+architectures. They do not demonstrate the same failure on Windows 11 x64,
+and they do not isolate NOACTIVATE, TOOLWINDOW, or popup ownership individually.
+The documented API minimum lists Windows 10 build 18362 for both client and
+server, without a per-style eligibility contract. Actual Windows BossConsole,
+transparent overlays, mixed DPI, owned dialogs, and session-transition testing
+remain required.
 
 Primary API references:
 
