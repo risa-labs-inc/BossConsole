@@ -1,5 +1,9 @@
 package ai.rever.boss.sharing
 
+import ai.rever.boss.window.MacToolbarInput
+import ai.rever.boss.window.MacToolbarInputTarget
+import ai.rever.boss.window.OwnedWindowControls
+import ai.rever.boss.window.WindowInputModalBoundary
 import com.teamdev.jxbrowser.ui.KeyCode
 import com.teamdev.jxbrowser.ui.KeyModifiers
 import com.teamdev.jxbrowser.ui.MouseButton
@@ -15,12 +19,14 @@ import com.teamdev.jxbrowser.ui.event.MouseReleased
 import com.teamdev.jxbrowser.ui.event.MouseWheel
 import com.teamdev.jxbrowser.view.swing.BrowserView
 import java.awt.Component
+import java.awt.Frame
 import java.awt.KeyboardFocusManager
 import java.awt.Window
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
 import java.awt.event.MouseEvent
 import java.awt.event.MouseWheelEvent
+import java.util.concurrent.atomic.AtomicLong
 import javax.swing.SwingUtilities
 
 /** Routes only to descendants of the consented window. Never synthesizes global OS input. */
@@ -30,18 +36,32 @@ internal class AwtAppInputSink(
     private val window: Window,
     private val privateSurfaceAllowed: () -> Boolean = { true },
     private val requireForeground: Boolean = true,
+    private val browserSurfaceAt: (Window, Int, Int) -> AppBrowserInputSurface? = ::appBrowserInputSurfaceAt,
 ) : AppScopedInputSink {
     private data class HeldPointer(
         val component: Component,
         val x: Int,
         val y: Int,
+        val browserSurface: AppBrowserInputSurface? = null,
+        val nativeTarget: MacToolbarInputTarget? = null,
     )
 
+    private data class HeldKey(
+        val component: Component,
+        val event: AppInputEvent.Key,
+        val browserSurface: AppBrowserInputSurface?,
+    )
+
+    private val authorityEpoch = AtomicLong()
     private val buttons = mutableMapOf<Int, HeldPointer>()
-    private val keys = mutableMapOf<String, Pair<Component, AppInputEvent.Key>>()
+    private val keys = mutableMapOf<String, HeldKey>()
 
     private var surfaceSnapshot: AppSurfaceSnapshot? = null
+    private var capturePaused = false
     private var keyboardTarget: Component? = null
+    private var keyboardBrowser: AppBrowserInputSurface? = null
+    private var keyboardNative: MacToolbarInputTarget? = null
+    private val nativeKeys = mutableSetOf<String>()
 
     fun updateSurfaces(snapshot: AppSurfaceSnapshot) =
         onEdt {
@@ -49,10 +69,20 @@ internal class AwtAppInputSink(
             require(snapshot.surfaces.all { isOwnedBy(it.window, window) })
             if (surfaceSnapshot != snapshot) releaseAll()
             surfaceSnapshot = snapshot
+            capturePaused = false
+        }
+
+    /** Pixels may disappear before AWT reports native geometry changes. Recovery alone remains usable. */
+    fun pauseCapture() =
+        onEdt {
+            if (!capturePaused) {
+                capturePaused = true
+                releaseAll()
+            }
         }
 
     override fun isAvailable(): Boolean {
-        if (!window.isDisplayable || !window.isShowing || !privateSurfaceAllowed()) return false
+        if (!visibleInputWindow()) return false
         val snapshot = surfaceSnapshot
         val snapshotCurrent = snapshot == null || runCatching { captureSurfaceSnapshot(window) }.getOrNull() == snapshot
         val owned = snapshot?.surfaces?.map { it.window } ?: listOf(window)
@@ -60,34 +90,126 @@ internal class AwtAppInputSink(
             (snapshot != null || window.ownedWindows.none { it.isShowing })
     }
 
+    // Reject unverified surfaces and modal focus before admitting coordinate-free keys.
+    @Suppress("ReturnCount")
+    override fun isAvailableFor(event: AppInputEvent): Boolean {
+        if (event is AppInputEvent.Window) return windowActionAvailable(event)
+        if (event is AppInputEvent.Key && !selectedBrowserIsCurrent()) return false
+        if (event !is AppInputEvent.Key || surfaceSnapshot == null) return isAvailable()
+        val current = currentInputSurfaces() ?: return false
+        val target = scoped(focusedComponent()) ?: return false
+        val targetWindow = SwingUtilities.getWindowAncestor(target) ?: return false
+        val modal = current.surfaces.lastOrNull { it.modal }?.window
+        return current.surfaces.any { it.window === targetWindow } && target.isShowing &&
+            (modal == null || isOwnedBy(targetWindow, modal)) &&
+            (!requireForeground || current.surfaces.any { it.window.isFocused })
+    }
+
+    private fun minimized(): Boolean = window is Frame && window.extendedState and Frame.ICONIFIED != 0
+
+    private fun visibleInputWindow(): Boolean {
+        val visible = !capturePaused && window.isDisplayable && window.isShowing
+        return visible && !minimized() && privateSurfaceAllowed()
+    }
+
+    private fun hasModalOwnedWindow(owner: Window): Boolean =
+        owner.ownedWindows.any { child ->
+            (child.isShowing && WindowInputModalBoundary.isModal(child)) || hasModalOwnedWindow(child)
+        }
+
+    private fun windowActionAvailable(event: AppInputEvent.Window): Boolean {
+        val liveRoot = window.isDisplayable && window.isVisible && privateSurfaceAllowed()
+        val localPolicy = (!requireForeground || window.isFocused) && !hasModalOwnedWindow(window)
+        if (!liveRoot || !localPolicy) return false
+        val recovery = event.action == "restore" || event.action == "exit-fullscreen"
+        val registered = OwnedWindowControls.supports(window, event.action)
+        return if (recovery) registered || MacToolbarInput.supportsRecovery(window) else registered && isAvailable()
+    }
+
+    private fun selectedBrowserIsCurrent(): Boolean {
+        val nativeCurrent = keyboardNative?.isCurrent() != false
+        return nativeCurrent && keyboardBrowser?.isCurrent() != false
+    }
+
+    private fun currentInputSurfaces(): AppSurfaceSnapshot? =
+        if (visibleInputWindow()) {
+            runCatching { captureSurfaceSnapshot(window) }.getOrNull()
+        } else {
+            null
+        }
+
     private fun allowedWindow(candidate: Window?): Boolean =
         candidate != null &&
             (surfaceSnapshot?.surfaces?.any { it.window === candidate } ?: (candidate === window))
 
-    private fun focusedComponent(): Component? =
-        surfaceSnapshot
-            ?.surfaces
-            ?.lastOrNull { it.window.isFocused }
-            ?.window
-            ?.focusOwner
-            ?: window.focusOwner ?: keyboardTarget
+    private fun focusedComponent(): Component? {
+        val local =
+            surfaceSnapshot
+                ?.surfaces
+                ?.lastOrNull { it.window.isFocused }
+                ?.window
+                ?.focusOwner
+                ?: window.focusOwner
+        val remote = keyboardTarget?.takeIf { it.isDisplayable && allowedWindow(SwingUtilities.getWindowAncestor(it)) }
+        val candidate = if (!requireForeground) remote ?: local else local ?: remote
+        val modal = surfaceSnapshot?.surfaces?.lastOrNull { it.modal }?.window
+        return candidate?.takeIf {
+            val owner = SwingUtilities.getWindowAncestor(it)
+            modal == null || (owner != null && isOwnedBy(owner, modal))
+        }
+    }
 
-    override fun apply(event: AppInputEvent): Boolean {
+    override fun apply(event: AppInputEvent): Boolean = apply(event, Long.MAX_VALUE)
+
+    override fun apply(
+        event: AppInputEvent,
+        validUntilMillis: Long,
+    ): Boolean {
         check(SwingUtilities.isEventDispatchThread())
-        if (!isAvailable()) {
+        if (!isAvailableFor(event)) {
             releaseAll()
             return false
         }
         return when (event) {
-            is AppInputEvent.Pointer -> applyPointer(event)
-            is AppInputEvent.Wheel -> applyWheel(event)
-            is AppInputEvent.Key -> applyKey(event)
+            is AppInputEvent.Window -> {
+                // A repeated command from the same authority must not cancel its pending native action.
+                releaseHeldInput()
+                val epoch = authorityEpoch.get()
+                val modalAuthority = WindowInputModalBoundary.captureAuthority(window)
+                val authorized = { authorityEpoch.get() == epoch && windowActionAvailable(event) }
+                if (OwnedWindowControls.supports(window, event.action)) {
+                    OwnedWindowControls.perform(window, event.action, validUntilMillis, authorized)
+                } else {
+                    MacToolbarInput.recover(window, event.action, validUntilMillis) {
+                        authorityEpoch.get() == epoch && modalAuthority()
+                    }
+                }
+            }
+
+            is AppInputEvent.Pointer -> {
+                applyPointer(event, validUntilMillis)
+            }
+
+            is AppInputEvent.Wheel -> {
+                applyWheel(event)
+            }
+
+            is AppInputEvent.Key -> {
+                applyKey(event, validUntilMillis)
+            }
         }
     }
 
+    private fun keyboardFocusChanged(target: HeldPointer): Boolean =
+        keyboardBrowser?.browser !== target.browserSurface?.browser ||
+            keyboardNative?.owner !== target.nativeTarget?.owner || keyboardNative?.id != target.nativeTarget?.id
+
     // Explicit early rejection keeps held-target and duplicate-press checks auditable.
-    @Suppress("ReturnCount")
-    private fun applyPointer(event: AppInputEvent.Pointer): Boolean {
+    @Suppress("ReturnCount", "CyclomaticComplexMethod")
+    private fun applyPointer(
+        event: AppInputEvent.Pointer,
+        validUntilMillis: Long,
+    ): Boolean {
         val hit = hit(event.x, event.y) ?: return false
         val target =
             if (event.action == "up") {
@@ -98,15 +220,26 @@ internal class AwtAppInputSink(
         val position = SwingUtilities.convertPoint(hit.component, hit.x, hit.y, target.component)
         if (event.action == "down") {
             if (buttons.containsKey(event.button)) return false
-            target.component.requestFocusInWindow()
-            keyboardTarget = target.component
-            buttons[event.button] = HeldPointer(target.component, position.x, position.y)
+            if (keyboardFocusChanged(target)) {
+                releaseAll()
+                keyboardBrowser?.takeIf { it.isCurrent() }?.browser?.unfocus()
+            }
+            if (target.nativeTarget?.id == "browser_url" &&
+                !target.nativeTarget.owner.addressClick(target.nativeTarget, validUntilMillis)
+            ) {
+                return false
+            }
+            if (target.nativeTarget == null) target.component.requestFocusInWindow()
+            keyboardTarget = (target.component as? javax.swing.RootPaneContainer)?.contentPane ?: target.component
+            keyboardBrowser = target.browserSurface
+            keyboardNative = target.nativeTarget?.takeIf { it.id == "browser_url" }
+            buttons[event.button] = target.copy(x = position.x, y = position.y)
         }
         buttons.replaceAll { _, held ->
             if (held.component === target.component) held.copy(x = position.x, y = position.y) else held
         }
         pointer(
-            target.component,
+            target.copy(x = position.x, y = position.y),
             event.action,
             if (event.action ==
                 "move"
@@ -115,23 +248,25 @@ internal class AwtAppInputSink(
             } else {
                 event.button
             },
-            position.x,
-            position.y,
+            validUntilMillis,
         )
         return true
     }
 
     private fun applyWheel(event: AppInputEvent.Wheel): Boolean {
         val hit = hit(event.x, event.y) ?: return false
-        val browser = hit.component as? BrowserView
+        val browser = hit.browserSurface?.takeIf { it.isCurrent() }?.browser ?: (hit.component as? BrowserView)?.browser
         if (browser != null) {
-            browser.browser.dispatch(
+            val point = hit.browserSurface?.point(hit.component, hit.x, hit.y) ?: Point.of(hit.x, hit.y)
+            // The sharing protocol uses DOM wheel signs (positive = down/right).
+            // JxBrowser's native wheel API uses the opposite signs on both axes.
+            browser.dispatch(
                 MouseWheel
-                    .newBuilder(Point.of(hit.x, hit.y))
+                    .newBuilder(point)
                     .keyModifiers(
                         browserModifiers(),
-                    ).deltaX(event.deltaX.toFloat())
-                    .deltaY(event.deltaY.toFloat())
+                    ).deltaX(-event.deltaX.toFloat())
+                    .deltaY(-event.deltaY.toFloat())
                     .scrollType(ScrollType.UNIT_SCROLL)
                     .build(),
             )
@@ -157,33 +292,52 @@ internal class AwtAppInputSink(
 
     // Releases must retain their original component instead of using the current focus owner.
     @Suppress("ReturnCount")
-    private fun applyKey(event: AppInputEvent.Key): Boolean {
+    private fun applyKey(
+        event: AppInputEvent.Key,
+        validUntilMillis: Long,
+    ): Boolean {
+        keyboardNative?.let { target ->
+            if (event.action == "up") return nativeKeys.remove(event.code)
+            if (!target.owner.addressKey(target, event, validUntilMillis)) return false
+            nativeKeys.add(event.code)
+            return true
+        }
         val target =
             if (event.action == "up") {
-                keys.remove(event.code)?.first ?: return false
+                keys.remove(event.code) ?: return false
             } else {
-                keys[event.code]?.first ?: scoped(focusedComponent()) ?: return false
+                keys[event.code]
+                    ?: scoped(focusedComponent())?.let { HeldKey(it, event, keyboardBrowser) }
+                    ?: return false
             }
-        if (event.action == "down") keys[event.code] = target to event
-        key(target, event)
+        if (event.action == "down") keys[event.code] = target
+        key(target.component, event, target.browserSurface)
         return true
     }
 
     override fun releaseAll() {
         check(SwingUtilities.isEventDispatchThread())
+        authorityEpoch.incrementAndGet()
+        releaseHeldInput()
+    }
+
+    private fun releaseHeldInput() {
         val heldButtons = buttons.toMap()
         val heldKeys = keys.toMap()
         buttons.clear()
         keys.clear()
-        keyboardTarget = null
+        nativeKeys.clear()
+        // Releasing held input on a geometry change does not change the viewer-selected focus.
+        // focusedComponent rechecks visibility, ownership and modal boundaries before reuse.
         heldButtons.forEach { (button, target) ->
-            runCatching { pointer(target.component, "up", button, target.x, target.y) }
+            if (target.nativeTarget == null) runCatching { pointer(target, "up", button) }
         }
-        heldKeys.values.forEach { (target, event) ->
+        heldKeys.values.forEach { held ->
             runCatching {
                 key(
-                    target,
-                    event.copy(action = "up", alt = false, ctrl = false, meta = false, shift = false),
+                    held.component,
+                    held.event.copy(action = "up", alt = false, ctrl = false, meta = false, shift = false),
+                    held.browserSurface,
                 )
             }
         }
@@ -210,13 +364,16 @@ internal class AwtAppInputSink(
         if (modal != null && !isOwnedBy(targetWindow, modal)) return null
         val localX = px - targetWindow.x
         val localY = py - targetWindow.y
+        MacToolbarInput.hit(targetWindow, localX, localY)?.let { native ->
+            return HeldPointer(targetWindow, localX, localY, nativeTarget = native)
+        }
         val insets = targetWindow.insets
         val inHorizontalBounds = localX >= insets.left && localX < targetWindow.width - insets.right
         val inVerticalBounds = localY >= insets.top && localY < targetWindow.height - insets.bottom
         if (!inHorizontalBounds || !inVerticalBounds) return null
         return SwingUtilities.getDeepestComponentAt(targetWindow, localX, localY)?.let(::scoped)?.let { target ->
             val local = SwingUtilities.convertPoint(targetWindow, localX, localY, target)
-            HeldPointer(target, local.x, local.y)
+            HeldPointer(target, local.x, local.y, browserSurfaceAt(targetWindow, localX, localY))
         }
     }
 
@@ -233,18 +390,37 @@ internal class AwtAppInputSink(
     }
 
     // Parallel AWT/JxBrowser translations deliberately retain every explicit button/action branch.
-    @Suppress("CyclomaticComplexMethod", "LongMethod")
+    @Suppress("CyclomaticComplexMethod", "LongMethod", "ReturnCount")
     private fun pointer(
-        target: Component,
+        held: HeldPointer,
         action: String,
         button: Int,
-        x: Int,
-        y: Int,
+        validUntilMillis: Long = Long.MAX_VALUE,
     ) {
+        val target = held.component
+        val x = held.x
+        val y = held.y
+        val browserSurface = held.browserSurface
+        held.nativeTarget?.let { native ->
+            val current = (target as? Window)?.let { MacToolbarInput.hit(it, x, y) }
+            val releasedOnTarget = current?.owner === native.owner && current.id == native.id
+            val activation = action == "up" && native.id != "browser_url"
+            if (activation && releasedOnTarget && button != 1) {
+                val epoch = authorityEpoch.get()
+                val modalAuthority = WindowInputModalBoundary.captureAuthority(window)
+                native.owner.activate(native, context = button == 2, validUntilMillis = validUntilMillis) {
+                    authorityEpoch.get() == epoch && modalAuthority()
+                }
+            }
+            return
+        }
         // Detached/replaced components must not acquire authority in another window.
         if (!allowedWindow(SwingUtilities.getWindowAncestor(target))) return
-        if (target is BrowserView) {
-            val point = Point.of(x, y)
+        if (browserSurface?.isCurrent() == false) return
+        val browser = browserSurface?.browser ?: (target as? BrowserView)?.browser
+        if (browser != null) {
+            val point = browserSurface?.point(target, x, y) ?: Point.of(x, y)
+            if (action == "down") browser.focus()
             val browserButton =
                 when (button) {
                     1 -> MouseButton.MIDDLE
@@ -253,7 +429,7 @@ internal class AwtAppInputSink(
                 }
             when (action) {
                 "down" -> {
-                    target.browser.dispatch(
+                    browser.dispatch(
                         MousePressed
                             .newBuilder(point)
                             .button(browserButton)
@@ -264,7 +440,7 @@ internal class AwtAppInputSink(
                 }
 
                 "up" -> {
-                    target.browser.dispatch(
+                    browser.dispatch(
                         MouseReleased
                             .newBuilder(point)
                             .button(browserButton)
@@ -276,9 +452,9 @@ internal class AwtAppInputSink(
 
                 else -> {
                     if (buttons.isEmpty()) {
-                        target.browser.dispatch(MouseMoved.newBuilder(point).keyModifiers(browserModifiers()).build())
+                        browser.dispatch(MouseMoved.newBuilder(point).keyModifiers(browserModifiers()).build())
                     } else {
-                        target.browser.dispatch(
+                        browser.dispatch(
                             MouseDragged
                                 .newBuilder(point)
                                 .button(browserButton)
@@ -322,6 +498,7 @@ internal class AwtAppInputSink(
     private fun key(
         target: Component,
         event: AppInputEvent.Key,
+        browserSurface: AppBrowserInputSurface? = null,
     ) {
         if (!allowedWindow(SwingUtilities.getWindowAncestor(target))) return
         val code = awtKeyCode(event.code) ?: return
@@ -331,7 +508,9 @@ internal class AwtAppInputSink(
                 (if (event.meta) InputEvent.META_DOWN_MASK else 0) or
                 (if (event.shift) InputEvent.SHIFT_DOWN_MASK else 0)
         val printable = char != KeyEvent.CHAR_UNDEFINED && !event.ctrl && !event.meta && !event.alt
-        if (target is BrowserView) {
+        if (browserSurface?.isCurrent() == false) return
+        val browser = browserSurface?.browser ?: (target as? BrowserView)?.browser
+        if (browser != null) {
             val browserCode = browserKeyCode(event.code) ?: return
             val mods =
                 KeyModifiers
@@ -343,24 +522,36 @@ internal class AwtAppInputSink(
                     .shiftDown(event.shift)
                     .build()
             if (event.action == "down") {
-                target.browser.dispatch(
+                browser.focus()
+                AppBrowserKeyDispatch.press(
+                    browser,
+                    window,
                     KeyPressed
                         .newBuilder(browserCode)
                         .keyChar(char)
                         .keyModifiers(mods)
                         .build(),
-                )
-                if (printable) {
-                    target.browser.dispatch(
+                ) {
+                    allowedWindow(SwingUtilities.getWindowAncestor(target)) &&
+                        privateSurfaceAllowed() && (browserSurface?.isCurrent() != false)
+                }
+                run {
+                    val browserChar = browserTypedChar(event)
+                    AppBrowserKeyDispatch.type(
+                        browser,
+                        window,
                         KeyTyped
                             .newBuilder(browserCode)
-                            .keyChar(char)
+                            .keyChar(browserChar)
                             .keyModifiers(mods)
                             .build(),
-                    )
+                    ) {
+                        allowedWindow(SwingUtilities.getWindowAncestor(target)) &&
+                            privateSurfaceAllowed() && (browserSurface?.isCurrent() != false)
+                    }
                 }
             } else {
-                target.browser.dispatch(KeyReleased.newBuilder(browserCode).keyModifiers(mods).build())
+                browser.dispatch(KeyReleased.newBuilder(browserCode).keyModifiers(mods).build())
             }
         } else {
             // dispatchEvent(KeyEvent) normally re-enters global focus retargeting. Explicit
@@ -428,6 +619,16 @@ internal class AwtAppInputSink(
                     }
             }
 }
+
+private fun browserTypedChar(event: AppInputEvent.Key): Char =
+    when (event.code) {
+        "Backspace" -> '\b'
+        "Enter" -> '\r'
+        "Tab" -> '\t'
+        "Escape" -> '\u001b'
+        "Delete" -> '\u007f'
+        else -> event.key.singleOrNull()?.takeUnless { it.isISOControl() } ?: '\u0000'
+    }
 
 private fun awtKeyCode(code: String): Int? =
     when {

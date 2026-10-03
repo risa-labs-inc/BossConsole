@@ -9,6 +9,7 @@ import androidx.compose.material.Text
 import androidx.compose.material.TextField
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.awt.ComposeDialog
 import androidx.compose.ui.awt.ComposeWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.dp
@@ -62,7 +63,10 @@ class AppScopedInputNativeTest {
         }
     }
 
-    @Test fun `background Compose delivery types and clicks without OS focus`() {
+    // Keep popup geometry, background focus and cleanup in one real Compose lifecycle.
+    @Suppress("LongMethod")
+    @Test
+    fun `background Compose delivery types and clicks without OS focus`() {
         assumeTrue(System.getenv("BOSS_TEST_APP_CAPTURE") == "1", "Synthetic input smoke is opt-in")
         assumeTrue(!GraphicsEnvironment.isHeadless())
         val text = mutableStateOf("")
@@ -86,6 +90,14 @@ class AppScopedInputNativeTest {
                 }
             }
         val sink = AwtAppInputSink(selected, requireForeground = false)
+        val popup =
+            onEdt {
+                ComposeDialog(selected, java.awt.Dialog.ModalityType.MODELESS, selected.graphicsConfiguration).apply {
+                    focusableWindowState = false
+                    setBounds(selected.x + 100, selected.y + 100, 150, 100)
+                    setContent { Text("Synthetic address suggestions") }
+                }
+            }
         try {
             assertTrue(ready.await(10, TimeUnit.SECONDS), "Compose content must lay out")
             onEdt {
@@ -95,12 +107,32 @@ class AppScopedInputNativeTest {
                 val fieldY = (selected.insets.top + 40.0) / (selected.height - 1)
                 assertTrue(sink.apply(AppInputEvent.Pointer("down", x, fieldY, 0)))
                 assertTrue(sink.apply(AppInputEvent.Pointer("up", x, fieldY, 0)))
+                sink.updateSurfaces(captureSurfaceSnapshot(selected))
             }
             // Compose processes pointer focus asynchronously, outside this test's EDT invocation.
             Thread.sleep(200)
             onEdt {
-                assertTrue(sink.apply(AppInputEvent.Key("down", "KeyA", "a", false, false, false, false)))
-                assertTrue(sink.apply(AppInputEvent.Key("up", "KeyA", "a", false, false, false, false)))
+                // Popup/geometry updates release held input while the background field stays selected.
+                sink.releaseAll()
+                popup.isVisible = true
+                for ((index, char) in "rapidtyping".withIndex()) {
+                    popup.setSize(150, 100 + index)
+                    assertFalse(sink.isAvailable(), "Changed popup must still reject coordinate input")
+                    val key =
+                        AppInputEvent.Key(
+                            action = "down",
+                            code = "Key${char.uppercaseChar()}",
+                            key = char.toString(),
+                            alt = false,
+                            ctrl = false,
+                            meta = false,
+                            shift = false,
+                        )
+                    assertTrue(sink.apply(key))
+                    assertTrue(sink.apply(key.copy(action = "up")))
+                }
+                popup.isVisible = false
+                sink.updateSurfaces(captureSurfaceSnapshot(selected))
                 val x = 100.0 / (selected.width - 1)
                 val buttonY = (selected.insets.top + 120.0) / (selected.height - 1)
                 assertTrue(sink.apply(AppInputEvent.Pointer("down", x, buttonY, 0)))
@@ -108,13 +140,14 @@ class AppScopedInputNativeTest {
             }
             Thread.sleep(200)
             onEdt {
-                assertEquals("a", text.value)
+                assertEquals("rapidtyping", text.value)
                 assertEquals(1, clicks.get())
                 assertFalse(selected.isFocused)
             }
         } finally {
             onEdt {
                 sink.releaseAll()
+                popup.dispose()
                 selected.dispose()
             }
         }

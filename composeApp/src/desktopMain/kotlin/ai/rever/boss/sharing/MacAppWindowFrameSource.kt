@@ -14,12 +14,19 @@ import com.sun.jna.Pointer
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Uses macOS 14+ SCScreenshotManager, not deprecated CGWindowListCreateImage. CaptureSource in
  * JxBrowser 9.5.2 exposes no native window ID, so its title-based picker cannot implement this.
  * The selected SCWindow must match both the live Compose NSWindow's number and this process.
  */
+internal class NativeAppCaptureException(
+    val domain: String,
+    val code: Long,
+) : IllegalStateException("Native capture refused: $domain ($code)")
+
 internal class MacAppWindowFrameSource : ExactWindowFrameSource {
     private val runtime: ScreenCaptureRuntime? by lazy {
         if (!SystemUtils.isMacOS) null else runCatching { ScreenCaptureRuntime() }.getOrNull()
@@ -36,18 +43,23 @@ internal class MacAppWindowFrameSource : ExactWindowFrameSource {
         check(available()) { "Capture unavailable" }
         val api = checkNotNull(runtime)
         val result = CompletableFuture<NativeWindowFrame>()
+        val stage = AtomicReference("AppKit dispatch")
         MacToolbarRuntime.dispatch {
             try {
                 val window = Pointer(nativeHandle)
                 check(MacToolbarRuntime.isLiveWindow(window)) { "The native window is no longer owned by this app" }
                 val number = MacToolbarRuntime.number(window, "windowNumber")
                 check(number > 0)
-                api.capture(number, processId, width, height, result)
+                api.capture(number, processId, width, height, result, stage)
             } catch (error: Throwable) {
                 result.completeExceptionally(error)
             }
         }
-        return result.get(5, TimeUnit.SECONDS)
+        return try {
+            result.get(15, TimeUnit.SECONDS)
+        } catch (timeout: TimeoutException) {
+            throw TimeoutException("Native window capture timed out during ${stage.get()}").apply { initCause(timeout) }
+        }
     }
 }
 
@@ -70,22 +82,27 @@ private class ScreenCaptureRuntime {
     val supported: Boolean = MacToolbarRuntime.clazz("SCScreenshotManager") != null
 
     // Keep retain/release ownership of both nested native completions visible in one scope.
-    @Suppress("LongMethod")
+    @Suppress("LongMethod", "LongParameterList")
     fun capture(
         windowId: Long,
         processId: Long,
         width: Int,
         height: Int,
         result: CompletableFuture<NativeWindowFrame>,
+        stage: AtomicReference<String>,
     ) {
         check(supported)
+        stage.set("shareable window lookup")
         CompletionBlock
             .call { block ->
+                // Use complete SCWindow objects for screenshot filters. The current-process
+                // enumeration API returns redacted content intended for consent-free discovery.
                 MacToolbarRuntime.send(
                     MacToolbarRuntime.clazz("SCShareableContent"),
                     "getShareableContentExcludingDesktopWindows:onScreenWindowsOnly:completionHandler:",
                     1.toByte(),
-                    1.toByte(),
+                    // Background windows still match the exact native ID and owner PID below.
+                    0.toByte(),
                     block,
                 )
             }.whenComplete { content, error ->
@@ -125,13 +142,14 @@ private class ScreenCaptureRuntime {
                     checkNotNull(configuration)
                     MacToolbarRuntime.send(configuration, "setWidth:", width.toLong())
                     MacToolbarRuntime.send(configuration, "setHeight:", height.toLong())
-                    MacToolbarRuntime.send(configuration, "setShowsCursor:", 1.toByte())
+                    MacToolbarRuntime.send(configuration, "setShowsCursor:", 0.toByte())
                     if (MacToolbarRuntime.supports(configuration, "setIncludeChildWindows:")) {
                         MacToolbarRuntime.send(configuration, "setIncludeChildWindows:", 0.toByte())
                     }
                     if (MacToolbarRuntime.supports(configuration, "setIgnoreShadowsSingleWindow:")) {
                         MacToolbarRuntime.send(configuration, "setIgnoreShadowsSingleWindow:", 1.toByte())
                     }
+                    stage.set("window screenshot")
                     val retainedFilter = filter
                     val retainedConfiguration = configuration
                     CompletionBlock
@@ -155,6 +173,7 @@ private class ScreenCaptureRuntime {
                                         captureError ?: IllegalStateException("Empty window image"),
                                     )
                                 } else {
+                                    stage.set("PNG encoding")
                                     result.complete(encode(image, width, height))
                                 }
                             } catch (failure: Throwable) {
@@ -223,7 +242,7 @@ private class ScreenCaptureRuntime {
  * descriptor outlives every copied block. _Block_copy owns native storage; pending keeps the JNA
  * callback alive until invocation. A hard cap stops a wedged OS API accumulating callbacks.
  */
-private object CompletionBlock {
+internal object CompletionBlock {
     private val library = NativeLibrary.getInstance("/usr/lib/libSystem.B.dylib")
     private val descriptor =
         Memory(16).apply {
@@ -240,6 +259,11 @@ private object CompletionBlock {
         )
     }
 
+    private fun safeErrorDomain(domain: String?): String {
+        val allowed = Regex("[a-zA-Z0-9_.-]{1,100}")
+        return domain?.takeIf { it.matches(allowed) } ?: "unknown"
+    }
+
     fun call(
         retain: (Pointer) -> Unit = { MacToolbarRuntime.send(it, "retain") },
         invoke: (Pointer) -> Unit,
@@ -251,7 +275,11 @@ private object CompletionBlock {
             NativeCompletion { _, value, error ->
                 try {
                     if (error != null) {
-                        future.completeExceptionally(IllegalStateException("Native capture was refused"))
+                        val code = MacToolbarRuntime.number(error, "code")
+                        val domain = MacToolbarRuntime.pointer(error, "domain")
+                        val nativeDomain = MacToolbarRuntime.pointer(domain, "UTF8String")?.getString(0)
+                        val safeDomain = safeErrorDomain(nativeDomain)
+                        future.completeExceptionally(NativeAppCaptureException(safeDomain, code))
                     } else {
                         // Transfer a correctly typed retained reference to the completion consumer.
                         if (value != null) retain(value)

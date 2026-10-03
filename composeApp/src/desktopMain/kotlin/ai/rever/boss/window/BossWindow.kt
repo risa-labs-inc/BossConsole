@@ -58,6 +58,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.toArgb
@@ -286,6 +287,39 @@ fun ApplicationScope.BossWindow(
         // state to decide whether to overlay the existing fullscreen Space.
         LaunchedEffect(windowState.id, window, isFullScreen) {
             WindowFocusManager.updateWindowFullscreen(windowState.id, isFullScreen)
+        }
+
+        // OS decorations outside macOS need explicit scoped commands, not global mouse injection.
+        val currentCloseRequest by rememberUpdatedState(onCloseRequest)
+        DisposableEffect(windowState.id, window) {
+            val controls =
+                if (!SystemUtils.isMacOS) {
+                    OwnedWindowControls.register(
+                        windowState.id,
+                        window,
+                        mapOf(
+                            "close" to { currentCloseRequest() },
+                            "minimize" to { composeWindowState.isMinimized = true },
+                            "maximize" to {
+                                if (window.isResizable) composeWindowState.placement = WindowPlacement.Maximized
+                            },
+                            "unmaximize" to {
+                                if (composeWindowState.placement == WindowPlacement.Maximized) {
+                                    composeWindowState.placement = WindowPlacement.Floating
+                                }
+                            },
+                            "restore" to { composeWindowState.isMinimized = false },
+                            "exit-fullscreen" to {
+                                if (composeWindowState.placement == WindowPlacement.Fullscreen) {
+                                    composeWindowState.placement = WindowPlacement.Floating
+                                }
+                            },
+                        ),
+                    )
+                } else {
+                    null
+                }
+            onDispose { controls?.close() }
         }
 
         // Register window for focus management (deep links, etc.) and keyboard interception
@@ -955,7 +989,7 @@ fun ApplicationScope.BossWindow(
                     ai.rever.boss.sharing.AppSharingService
                         .start(windowState.id)
                 })
-                // Capture consent stays in the native menu, outside remotely dispatched content input.
+                // Native menu and local-only title-bar actions share this capture-consent boundary.
                 Item("Share Selected BossConsole Windows", onClick = {
                     ai.rever.boss.sharing.AppSharingService
                         .startSelectedWindows()

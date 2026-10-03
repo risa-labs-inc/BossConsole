@@ -2,6 +2,8 @@ package ai.rever.boss.sharing
 
 import ai.rever.boss.services.supabase.AuthService
 import ai.rever.boss.utils.DeepLinkHandler
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -38,6 +40,10 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
+internal class AppCaptureUnavailableException(
+    message: String,
+) : IllegalStateException(message)
+
 internal data class SharedAppWindow(
     val id: String,
     val title: String,
@@ -65,7 +71,7 @@ internal object AppSharingService {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val backend = AppSharingBackend()
     private val preferenceStore by lazy { AppSharingPreferenceStore() }
-    private val capture by lazy { ExactAppWindowCapture() }
+    private val capture by lazy { AppContinuousWindowCapture() }
     private val instanceId = UUID.randomUUID().toString()
     private val windows = ConcurrentHashMap<String, Window>()
     private val serial = AtomicLong()
@@ -145,7 +151,7 @@ internal object AppSharingService {
         }
     }
 
-    /** Native Window menu only: remotely controlled Compose content must never activate/expand capture. */
+    /** Local native menu/toolbar only: remote input must never activate or expand capture. */
     fun startSelectedWindows() = startWindows(_state.value.selectedWindowIds.toList())
 
     private fun owner(): String =
@@ -299,11 +305,13 @@ internal object AppSharingService {
     private suspend fun preparePublication(targets: List<AppCaptureTarget>): PreparedPublication {
         val owner = owner()
         val preferences = preferenceStore.load()
-        check(preferences.relayEnabled) { "Enable the application relay in Sharing settings first." }
+        if (!preferences.relayEnabled) throw AppSharingException("relay_disabled")
         preferenceStore.save(preferences)
         targets.forEach { target ->
             val capability = onEdt { capture.capability(target) }
-            check(capability.supported) { capability.reason ?: "Window capture is unavailable." }
+            if (!capability.supported) {
+                throw AppCaptureUnavailableException(capability.reason ?: "Window capture is unavailable.")
+            }
         }
         val target = targets.first()
         val identity = AppPublicationIdentity(target)
@@ -339,9 +347,9 @@ internal object AppSharingService {
         val windowId = target.windowId
         val generation = target.generation
         val peer = AppSharingPeerScope(host.sessionId, generation, host.peerId, true, windowId)
-        val page = assetServer().open(config, true) { backend.call(owner, peer.bind(it)) }
+        val page = assetServer().open(appSharingHostConfig(config), true) { backend.call(owner, peer.bind(it)) }
         check(host.resources.own(AutoCloseable { page.close() }))
-        val sink = AwtAppInputSink(window, requireForeground = false)
+        val sink = AwtAppInputSink(window, requireForeground = false).apply { pauseCapture() }
         val media =
             AppSharingMediaHost(page, { handleMediaState(host, windowId, it) }, { input ->
                 host.controller?.let { controller ->
@@ -353,11 +361,15 @@ internal object AppSharingService {
         val captureHandle =
             capture.start(target, { frame ->
                 if (active === host) {
-                    frame.surfaces?.let(sink::updateSurfaces)
-                    host.input.register(AppInputTarget(windowId, generation, frame.geometryRevision, sink))
+                    updateCapturedInput(host.input, target, sink, frame)
                     media.frame(frame)
                 }
-            }, { reason -> stopActive(host, reason) }, { windowId in host.demandedWindows })
+            }, { reason ->
+                stopActive(
+                    host,
+                    reason,
+                )
+            }, { windowId in host.demandedWindows }, media::captureFrameRate, media::capturePixelFormat)
         check(host.resources.own(captureHandle))
     }
 
@@ -366,7 +378,9 @@ internal object AppSharingService {
             while (isActive && active === host) {
                 delay(25_000)
                 try {
-                    backend.call(host.owner, scoped(host, "heartbeat"))
+                    recoverAppSharingRequest {
+                        backend.call(host.owner, scoped(host, "heartbeat"))
+                    }
                 } catch (
                     cancelled: CancellationException,
                 ) {
@@ -381,9 +395,20 @@ internal object AppSharingService {
 
     private fun pollDemand(host: Active) =
         scope.launch {
+            var recovering = false
             while (isActive && active === host) {
                 try {
-                    val result = backend.call(host.owner, scoped(host, "mediaDemand"))
+                    val result =
+                        recoverAppSharingRequest(onInterrupted = {
+                            if (active === host) {
+                                recovering = true
+                                host.demandedWindows = emptySet()
+                                host.input.suspend()
+                                updateHostState(host) { it.copy(status = "Connection interrupted. Reconnecting…") }
+                            }
+                        }) {
+                            backend.call(host.owner, scoped(host, "mediaDemand"))
+                        }
                     ensureActive()
                     if (active !== host) return@launch
                     val counts =
@@ -396,7 +421,13 @@ internal object AppSharingService {
                     val removed = host.demandedWindows - demanded
                     host.demandedWindows = demanded
                     removed.forEach { host.input.remove(it) }
-                    updateHostState(host) { it.copy(viewers = counts.values.sum()) }
+                    updateHostState(host) {
+                        it.copy(
+                            viewers = counts.values.sum(),
+                            status = if (recovering) "Sharing this BossConsole window." else it.status,
+                        )
+                    }
+                    recovering = false
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Exception) {
@@ -427,6 +458,18 @@ internal object AppSharingService {
     ) {
         if (active !== host) return
         when (message["state"]?.jsonPrimitive?.contentOrNull) {
+            "control-suspended" -> {
+                if (windowId == host.windowId) {
+                    host.controller = null
+                    host.input.suspend()
+                    updateHostState(host) { it.copy(controller = false) }
+                }
+            }
+
+            "authority-suspended", "disconnected" -> {
+                updateHostState(host) { it.copy(status = "Connection interrupted. Reconnecting…") }
+            }
+
             "lease" -> {
                 if (windowId != host.windowId) return
                 val lease = message["lease"] as? JsonObject
@@ -457,7 +500,7 @@ internal object AppSharingService {
                 }
             }
 
-            "publishing", "connected", "live", "sharing" -> {
+            "publishing", "connected", "live", "sharing", "authority-restored" -> {
                 updateHostState(host) {
                     it.copy(
                         busy = false,
@@ -472,7 +515,7 @@ internal object AppSharingService {
             }
 
             "error", "failed", "stopped" -> {
-                stopActive(host, "Sharing stopped because encrypted media could not be established.")
+                stopActive(host, appMediaFailureStatus(message["reason"]?.jsonPrimitive?.contentOrNull))
             }
         }
     }
@@ -674,16 +717,33 @@ internal object AppSharingService {
 
     private fun report(error: Throwable) {
         if (error is CancellationException) return
-        val message =
-            when ((error as? AppSharingException)?.reason) {
-                "sign_in_required", "unauthorized", "account_changed" -> "Sign in to BossConsole to share or connect."
-                "sfu_not_configured" -> "The application media relay has not been configured on the server."
-                "approval_required" -> "Automatic access is disabled for this account."
-                "conflict" -> "Sharing settings changed elsewhere. Refresh and try again."
-                "connection_lost" -> "Sharing stopped because the account service could not be reached."
-                "media_unavailable" -> "Sharing stopped because encrypted media could not be established."
-                else -> "Application sharing is unavailable. Check capture permission and the sharing service."
-            }
-        _state.update { it.copy(status = message) }
+        BossLogger.forComponent("AppSharingService").warn(
+            LogCategory.SYSTEM,
+            "Application sharing operation failed",
+            data =
+                mapOf(
+                    "errorType" to error.javaClass.simpleName,
+                    "reason" to (
+                        (error as? AppSharingException)?.reason
+                            ?: (error as? AppCaptureUnavailableException)?.message ?: "unexpected_failure"
+                    ),
+                ),
+        )
+        _state.update { it.copy(status = appSharingFailureStatus(error)) }
+    }
+}
+
+/** Retain recovery authority while pixels are paused, and publish fresh coordinates together on the EDT. */
+private fun updateCapturedInput(
+    input: AppInputDispatcher,
+    target: AppCaptureTarget,
+    sink: AwtAppInputSink,
+    frame: AppRawCapturedFrame?,
+) = onEdt {
+    if (frame == null) {
+        sink.pauseCapture()
+    } else {
+        sink.updateSurfaces(frame.surfaces)
+        input.register(AppInputTarget(target.windowId, target.generation, frame.geometryRevision, sink))
     }
 }

@@ -449,6 +449,15 @@ export function productionDependencies(): Dependencies {
     });
     const value = await response.json().catch(() => ({}));
     if (!response.ok) {
+      if (
+        response.status === 408 || response.status === 429 ||
+        response.status >= 500
+      ) {
+        throw new ApiError(
+          response.status === 429 ? 429 : 503,
+          "upstream_unavailable",
+        );
+      }
       const code = object(value).code;
       throw new ApiError(
         code === "PT409"
@@ -477,6 +486,15 @@ export function productionDependencies(): Dependencies {
         headers: { apikey: key, Authorization: `Bearer ${jwt}` },
         signal: AbortSignal.timeout(5000),
       });
+      if (
+        response.status === 408 || response.status === 429 ||
+        response.status >= 500
+      ) {
+        throw new ApiError(
+          response.status === 429 ? 429 : 503,
+          "upstream_unavailable",
+        );
+      }
       if (!response.ok) return null;
       const user = await response.json();
       return typeof user.id === "string" ? user.id : null;

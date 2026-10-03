@@ -100,6 +100,7 @@ fun HeavyweightCorner(
     inset: DpSize = DpSize.Zero,
     focusable: Boolean = false,
     regionInWindow: IntRect? = null,
+    owned: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val parent = LocalAwtWindow.current
@@ -154,7 +155,8 @@ fun HeavyweightCorner(
         )
     }
 
-    // A FOCUSABLE overlay is hosted by a dialog OWNED by the parent, not by a top-level window, and
+    // Focusable overlays and explicitly owned non-focusable capture overlays use an owned dialog.
+    // Ordinary non-focusable toasts retain their existing host. Ownership provides three behaviors, and
     // the difference is three behaviours rather than a preference:
     //
     //  - **The owner stays active.** An unowned top-level window taking focus deactivates the main
@@ -171,10 +173,11 @@ fun HeavyweightCorner(
     //
     // Non-focusable callers (toasts, the focus-mode cluster) keep the top-level window they have
     // always had, so none of this can regress them.
-    if (focusable && parent != null) {
+    if ((focusable || owned) && parent != null) {
         OwnedCornerDialog(
             parent = parent,
             state = state,
+            focusable = focusable,
             content = measuringContent,
         )
         return
@@ -245,6 +248,7 @@ private fun MeasuredAgainstCeiling(
 private fun OwnedCornerDialog(
     parent: AwtWindow,
     state: WindowState,
+    focusable: Boolean,
     content: @Composable () -> Unit,
 ) {
     DialogWindow(
@@ -253,6 +257,10 @@ private fun OwnedCornerDialog(
                 // Before anything shows it: setType throws on a displayable window, and
                 // setBackground with an alpha is ignored while the dialog is still decorated.
                 isUndecorated = true
+                // Configure Skia before its render device is created; AWT's background alone
+                // leaves an opaque clear behind rounded suggestion cards.
+                isTransparent = true
+                focusableWindowState = focusable
                 runCatching { type = AwtWindow.Type.UTILITY }
                 isResizable = false
                 background = java.awt.Color(0, 0, 0, 0)

@@ -825,6 +825,32 @@ val prepareBundledPluginsResources =
         into(layout.buildDirectory.dir("bundled-plugins-resources/common/bundled-plugins"))
     }
 
+// Capture helpers are built for the packaging host, never downloaded or resolved from PATH at runtime.
+val prepareAppCaptureResources =
+    tasks.register<Exec>("prepareAppCaptureResources") {
+        group = "build"
+        description = "Builds the exact native window capture helper for Windows or Linux"
+        onlyIf { !isMacOSHost }
+        val helperSource = layout.projectDirectory.dir("../native/app-capture")
+        val helperBuild = layout.buildDirectory.dir("native/app-capture")
+        val resourceDir = layout.buildDirectory.dir("bundled-plugins-resources/common/app-capture")
+        inputs.dir(helperSource)
+        inputs.file(layout.projectDirectory.file("../scripts/build-app-capture.py"))
+        outputs.dir(resourceDir)
+        commandLine(
+            if (System.getProperty("os.name").startsWith("Windows")) "python" else "python3",
+            layout.projectDirectory
+                .file("../scripts/build-app-capture.py")
+                .asFile.absolutePath,
+            "--source",
+            helperSource.asFile.absolutePath,
+            "--build",
+            helperBuild.get().asFile.absolutePath,
+            "--output",
+            resourceDir.get().asFile.absolutePath,
+        )
+    }
+
 // Task to generate versioned CLI scripts from templates
 val generateVersionedCLIScripts =
     tasks.register("generateVersionedCLIScripts") {
@@ -921,6 +947,8 @@ kotlin {
                 }
             }
         val desktopTest = getByName("desktopTest")
+        // Synthetic benchmark modules are served by AppSharingAssets only in the test classpath.
+        desktopTest.resources.srcDir(rootProject.file("scripts"))
 
         // Add generated source directory to commonMain
         commonMain {
@@ -2356,7 +2384,7 @@ afterEvaluate {
 
     // Ensure prepareAppResources depends on prepareBundledPluginsResources
     tasks.findByName("prepareAppResources")?.apply {
-        dependsOn("prepareBundledPluginsResources")
+        dependsOn("prepareBundledPluginsResources", "prepareAppCaptureResources")
     }
 
     val isMacOS = isMacOSHost
@@ -2366,7 +2394,7 @@ afterEvaluate {
         // Ensure CLI scripts are generated before distribution tasks run
         dependsOn("generateVersionedCLIScripts")
         // Ensure bundled plugins are prepared
-        dependsOn("prepareBundledPluginsResources")
+        dependsOn("prepareBundledPluginsResources", "prepareAppCaptureResources")
 
         // Every platform trims the app image; only macOS signs it afterwards.
         finalizedBy("stripForeignPlatformNatives")

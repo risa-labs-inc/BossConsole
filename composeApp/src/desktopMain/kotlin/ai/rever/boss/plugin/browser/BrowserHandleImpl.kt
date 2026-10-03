@@ -495,6 +495,8 @@ internal class BrowserHandleImpl(
     // [shouldAllowPinch] for why, and for what replaces it.
     @Volatile private var pointerOverBrowserView = false
 
+    @Volatile private var appInputSurfaceToken: Any? = null
+
     // This view's bounds in Compose-root coordinates, refreshed on every layout pass.
     // The HARDWARE_ACCELERATED substitute for hover: Compose knows where the view IS
     // even when it never learns the pointer entered it. Null until first layout.
@@ -1122,6 +1124,30 @@ internal class BrowserHandleImpl(
 
     /** Expose the raw JxBrowser instance for internal use (e.g. RPA recorder). */
     internal fun getRawBrowser(): Browser = browser
+
+    /** Exact live Compose surface for scoped remote input; hidden/relocated compositions retire authority. */
+    @Suppress("ReturnCount")
+    internal fun appInputSurface(window: Window): ai.rever.boss.sharing.AppBrowserInputSurface? {
+        val token = appInputSurfaceToken ?: return null
+        val bounds = browserViewBoundsInWindow ?: return null
+        val density = browserViewDensity
+        if (!isValid || frameStallHostWindow !== window || !window.isShowing) return null
+        if (!density.isFinite() || density <= 0 || bounds.isEmpty) return null
+        val origin = (window as? javax.swing.RootPaneContainer)?.contentPane ?: return null
+        return ai.rever.boss.sharing.AppBrowserInputSurface(
+            browser,
+            origin,
+            java.awt.geom.Rectangle2D.Double(
+                bounds.left.toDouble() / density,
+                bounds.top.toDouble() / density,
+                bounds.width.toDouble() / density,
+                bounds.height.toDouble() / density,
+            ),
+        ) {
+            appInputSurfaceToken === token && frameStallHostWindow === window &&
+                browserViewBoundsInWindow != null && isValid
+        }
+    }
 
     /** Expose the browser lock for creating [LockedBrowser] wrappers externally. */
     internal fun getBrowserLock(): ReentrantReadWriteLock = browserLock
@@ -4135,6 +4161,8 @@ internal class BrowserHandleImpl(
             // Published for the frame-stall gate, which needs to know whether the window this view
             // lives in is actually showing - composition alone stays alive while it is minimized.
             frameStallHostWindow = awtWindow
+            val inputSurfaceToken = Any()
+            appInputSurfaceToken = inputSurfaceToken
 
             // Reuse a retained surface ONLY while it still belongs to this window. This effect is
             // keyed on hostWindowId precisely so a tab moved to another window rebinds (see the
@@ -4214,6 +4242,7 @@ internal class BrowserHandleImpl(
             }
 
             onDispose {
+                if (appInputSurfaceToken === inputSurfaceToken) appInputSurfaceToken = null
                 pointerOverBrowserView = false
                 // Both gate inputs must go stale together with the listener they gate.
                 // A retained HARDWARE surface outlives this effect, so leaving stale

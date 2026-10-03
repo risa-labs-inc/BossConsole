@@ -120,7 +120,7 @@ export async function createControlCipher(config, lease) {
       const payload = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce(sequence), additionalData: context }, key, bytes);
       return { sequence: Number(sequence), payload_b64: toBase64(new Uint8Array(payload)) };
     },
-    async decrypt(command, geometryRevision) {
+    async decrypt(command, geometryRevision, allowCoordinateFreeGeometry = false) {
       if (!Number.isSafeInteger(command.sequence) || command.sequence < 1) throw new Error('Invalid sequence');
       const sequence = BigInt(command.sequence);
       if (sequence <= received) throw new Error('Replayed input');
@@ -128,7 +128,13 @@ export async function createControlCipher(config, lease) {
       if (payload.length > 8192) throw new Error('Control message too large');
       const bytes = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: nonce(sequence), additionalData: context }, key, payload);
       const message = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
-      if (message.protocol !== 'boss-app-share/1' || message.sessionId !== config.sessionId || message.generation !== config.generation || message.windowId !== config.windowId || message.geometryRevision !== geometryRevision || message.leaseId !== lease.leaseId || message.peerId !== lease.peerId || message.sequence !== command.sequence) throw new Error('Stale input context');
+      // Keys and explicit window recovery have no coordinates. Native dispatch still
+      // verifies the current selected window, ownership, modal scope and action.
+      const coordinateFree = message.event?.type === 'key' ||
+        (message.event?.type === 'window' && ['restore', 'exit-fullscreen'].includes(message.event.action));
+      const geometryMatches = message.geometryRevision === geometryRevision ||
+        (allowCoordinateFreeGeometry && coordinateFree && Number.isSafeInteger(message.geometryRevision) && message.geometryRevision > 0 && message.geometryRevision <= geometryRevision);
+      if (message.protocol !== 'boss-app-share/1' || message.sessionId !== config.sessionId || message.generation !== config.generation || message.windowId !== config.windowId || !geometryMatches || message.leaseId !== lease.leaseId || message.peerId !== lease.peerId || message.sequence !== command.sequence) throw new Error('Stale input context');
       received = sequence;
       return message;
     },

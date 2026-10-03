@@ -2888,7 +2888,8 @@ object FluckEngine {
      * There the callback still suppresses the chord (so a page never sees it) but leaves the
      * dispatch to the AWT layer, which is the keymap's single source of truth.
      *
-     * Window-owned browsers suppress every key event while their AWT window is inactive.
+     * Window-owned browsers suppress key events while their AWT window is inactive, except
+     * a one-shot matching key dispatched by authenticated, window-scoped application control.
      *
      * @param ownerWindowId stable owner used for focus gating and shortcut dispatch; null preserves
      * legacy behavior for the old unscoped browser helper.
@@ -2908,12 +2909,23 @@ object FluckEngine {
         BrowserFindController.register(browser)
         installFindKeyProbe(browser)
         val suppressionLogged = AtomicBoolean(false)
+        if (ownerWindowId != null) {
+            ai.rever.boss.sharing.AppBrowserKeyDispatch
+                .register(browser)
+        }
         browser.set(
             com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback::class.java,
             com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback { params ->
                 val event = params.event()
                 val modifiers = event.keyModifiers()
                 val keyCode = event.keyCode()
+
+                if (ai.rever.boss.sharing.AppBrowserKeyDispatch
+                        .consume(browser, event, ownerWindowId)
+                ) {
+                    return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response
+                        .proceed()
+                }
 
                 val route =
                     resolveBrowserKeyEventRoute(

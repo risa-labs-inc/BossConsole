@@ -41,7 +41,7 @@ internal class MacToolbarAddressField {
     }
 
     fun updateBounds(window: Pointer) {
-        val view = field?.takeIf { pointer(it, "window") == window } ?: return
+        val view = field?.takeIf { ownsNativeToolbarView(window, it) } ?: return
         val next = nativeAddressBounds(view, window) ?: return
         javax.swing.SwingUtilities.invokeLater { if (!editing.closed) bounds.value = next }
     }
@@ -60,9 +60,9 @@ internal class MacToolbarAddressField {
         send(view, "setEditable:", 1.toByte())
         send(view, "setSelectable:", 1.toByte())
         send(view, "setBezeled:", 1.toByte())
-        send(view, "setBezelStyle:", 1L)
         send(view, "setPlaceholderString:", string("Search or enter address"))
         send(view, "setUsesSingleLineMode:", 1.toByte())
+        send(pointer(view, "cell"), "setScrollable:", 1.toByte())
         send(view, "setDelegate:", target)
         send(view, "setSendsWholeSearchString:", 1.toByte())
         send(view, "setSendsSearchStringImmediately:", 0.toByte())
@@ -71,9 +71,9 @@ internal class MacToolbarAddressField {
         // insertNewline command should navigate, never a search-field change action.
         send(view, "setAction:", null)
         copyButton.install(view, target)
-        installNativeAddressBackground(item, view)
-        send(item, "setMinSize:", ToolbarIconSize(180.0, 24.0))
-        send(item, "setMaxSize:", ToolbarIconSize(500.0, 24.0))
+        val height = installNativeAddressBackground(item, view)
+        send(item, "setMinSize:", ToolbarIconSize(180.0, height))
+        send(item, "setMaxSize:", ToolbarIconSize(10_000.0, height))
         send(item, "setVisibilityPriority:", 2000L)
         send(item, "setAutovalidates:", 0.toByte())
         send(item, "setEnabled:", 1.toByte())

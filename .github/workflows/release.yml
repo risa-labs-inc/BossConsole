@@ -796,6 +796,9 @@ jobs:
             echo "BRANDED_CHROMIUM_AVAILABLE=false" >> $GITHUB_ENV
           fi
 
+      - name: Install exact-window capture build dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ pkg-config libx11-dev libxcomposite-dev libxres-dev libxdamage-dev libxrender-dev libsystemd-dev
+
       - name: 🏗️ Build Linux Packages (AMD64)
         run: |
           echo "🏗️ Building Linux AMD64 packages..."
@@ -956,7 +959,7 @@ jobs:
         run: |
           echo "📦 Installing dependencies required for jpackage..."
           sudo apt-get update
-          sudo apt-get install -y fakeroot dpkg rpm unzip
+          sudo apt-get install -y fakeroot dpkg rpm unzip cmake g++ pkg-config libx11-dev libxcomposite-dev libxres-dev libxdamage-dev libxrender-dev libsystemd-dev
 
           # Verify installations
           echo "✅ Installed packages:"

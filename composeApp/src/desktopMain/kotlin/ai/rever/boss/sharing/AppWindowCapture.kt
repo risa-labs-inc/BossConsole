@@ -119,50 +119,79 @@ internal class ExactAppWindowCapture(
             resources.close()
             throw failure
         }
+        val quality = AppCaptureQuality()
+        var previousSize: AppCaptureFrameSize? = null
         var previous: AppSurfaceSnapshot? = null
         var revision = 0L
-        executor.scheduleWithFixedDelay({
-            if (closed.get()) return@scheduleWithFixedDelay
-            try {
-                val geometry = onEdt { captureSurfaceSnapshot(target.awtWindow) }
-                if (!shouldCapture()) return@scheduleWithFixedDelay
-                if (geometry != previous) {
-                    revision++
-                    previous = geometry
-                }
-                val frame = captureSurfaces(geometry, backend)
-                check(
-                    frame.png.size <= 16 * 1024 * 1024 && frame.width == geometry.width &&
-                        frame.height == geometry.height,
-                )
-                // Closing/replacing a session while native capture is pending cannot emit late pixels.
-                val stillExact = onEdt { captureSurfaceSnapshot(target.awtWindow) == geometry }
-                if (!stillExact) return@scheduleWithFixedDelay
-                if (!closed.get() &&
-                    shouldCapture()
-                ) {
-                    onFrame(AppCapturedFrame(frame.png, frame.width, frame.height, revision, geometry))
-                }
-            } catch (failure: Throwable) {
-                if (closed.get()) return@scheduleWithFixedDelay
-                // A dialog closing or a resize during capture invalidates this frame, not the share.
-                val changed = runCatching { onEdt { captureSurfaceSnapshot(target.awtWindow) } }.getOrNull()
-                if (changed != null && changed != previous && !closed.get()) return@scheduleWithFixedDelay
-                runCatching { failureObserver(failure) }
-                if (closed.compareAndSet(false, true)) {
-                    resources.close()
-                    onStopped(
-                        "Capture stopped: the window is unavailable, hidden, or capture permission was lost.",
+        var captureFailures = 0
+        var retryAt = 0L
+        // One native request at a time. Schedule from this tick, without accumulating missed frames.
+        lateinit var tick: Runnable
+        tick =
+            Runnable {
+                val started = System.nanoTime()
+                try {
+                    if (closed.get() || started < retryAt || !shouldCapture()) return@Runnable
+                    val geometry = onEdt { captureSurfaceSnapshot(target.awtWindow) }
+                    val size = appCaptureFrameSize(geometry.width, geometry.height, quality.maxDimension)
+                    if (geometry != previous || size != previousSize) {
+                        revision++
+                        previous = geometry
+                        previousSize = size
+                    }
+                    val frame = captureSurfaces(geometry, backend, quality.maxDimension)
+                    check(
+                        frame.png.size <= 16 * 1024 * 1024 && frame.width == size.width &&
+                            frame.height == size.height,
                     )
-                }
-                // Reporting must never prevent the stop callback, even before app logging is initialized.
-                runCatching {
-                    BossLogger
-                        .forComponent("AppWindowCapture")
-                        .warn(LogCategory.BROWSER, "Exact application-window capture failed", error = failure)
+                    // Closing/replacing a session while native capture is pending cannot emit late pixels.
+                    val stillExact = onEdt { captureSurfaceSnapshot(target.awtWindow) == geometry }
+                    if (!stillExact) return@Runnable
+                    captureFailures = 0
+                    retryAt = 0L
+                    if (!closed.get() &&
+                        shouldCapture()
+                    ) {
+                        onFrame(AppCapturedFrame(frame.png, frame.width, frame.height, revision, geometry))
+                        quality.recordCapture(System.nanoTime() - started)
+                    }
+                } catch (failure: Throwable) {
+                    if (closed.get()) return@Runnable
+                    // A dialog closing or a resize during capture invalidates this frame, not the share.
+                    val changed = runCatching { onEdt { captureSurfaceSnapshot(target.awtWindow) } }.getOrNull()
+                    if (changed != null && changed != previous && !closed.get()) return@Runnable
+                    // Screenshot capture can transiently fail while macOS changes surfaces.
+                    // Retry only a still-owned exact snapshot with current capture permission.
+                    val stillOwned = changed != null && changed == previous
+                    val retryable = captureFailures < 3 && isTransientCaptureFailure(failure)
+                    if (stillOwned && retryable && runCatching { backend.available() }.getOrDefault(false)) {
+                        captureFailures++
+                        retryAt = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(250L * captureFailures)
+                        return@Runnable
+                    }
+                    runCatching { failureObserver(failure) }
+                    if (closed.compareAndSet(false, true)) {
+                        resources.close()
+                        onStopped(captureFailureStatus(failure))
+                    }
+                    // Reporting must never prevent the stop callback, even before app logging is initialized.
+                    runCatching {
+                        BossLogger
+                            .forComponent("AppWindowCapture")
+                            .warn(LogCategory.BROWSER, "Exact application-window capture failed", error = failure)
+                    }
+                } finally {
+                    if (!closed.get()) {
+                        val remaining = (quality.frameIntervalNanos - (System.nanoTime() - started)).coerceAtLeast(0)
+                        try {
+                            executor.schedule(tick, remaining, TimeUnit.NANOSECONDS)
+                        } catch (_: java.util.concurrent.RejectedExecutionException) {
+                            // The capture owner closed between the check and scheduling.
+                        }
+                    }
                 }
             }
-        }, 0, 100, TimeUnit.MILLISECONDS)
+        executor.execute(tick)
         return AutoCloseable {
             closed.set(true)
             resources.close()
@@ -178,6 +207,17 @@ internal data class WindowCaptureGeometry(
     val logicalHeight: Int,
     val x: Int,
     val y: Int,
+    val insets: AppCaptureInsets = AppCaptureInsets(),
+    val nativeWindowNumber: Long? = null,
+    val nativeParentHandle: Long? = null,
+)
+
+/** Immutable native-pixel insets captured on the EDT with the owning window geometry. */
+internal data class AppCaptureInsets(
+    val left: Int = 0,
+    val right: Int = 0,
+    val top: Int = 0,
+    val bottom: Int = 0,
 )
 
 internal data class NativeWindowFrame(
@@ -216,3 +256,33 @@ internal fun exactCaptureWindowIndex(
         .singleOrNull()
         ?.takeIf { it.value.second == processId }
         ?.index
+
+internal fun isTransientCaptureFailure(failure: Throwable): Boolean =
+    generateSequence(failure) { it.cause }.take(8).any {
+        it is AppNativeGeometryChangedException ||
+            (
+                it is NativeAppCaptureException &&
+                    it.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain" && it.code == -3811L
+            )
+    }
+
+internal fun captureFailureStatus(failure: Throwable): String {
+    val denied =
+        generateSequence(failure) { it.cause }.take(8).any {
+            it is NativeAppCaptureException &&
+                it.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain" && it.code == -3801L
+        }
+    return when {
+        denied -> {
+            "macOS denied Screen Recording. Enable access for this app in System Settings, then restart BossConsole."
+        }
+
+        failure is java.util.concurrent.TimeoutException -> {
+            "macOS window capture timed out. Check Screen Recording permission, then restart sharing."
+        }
+
+        else -> {
+            "Capture stopped: the window is unavailable, hidden, or capture permission was lost."
+        }
+    }
+}

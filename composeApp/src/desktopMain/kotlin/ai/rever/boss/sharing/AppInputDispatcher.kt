@@ -31,6 +31,10 @@ internal data class AppInputEnvelope(
 )
 
 internal sealed interface AppInputEvent {
+    data class Window(
+        val action: String,
+    ) : AppInputEvent
+
     data class Pointer(
         val action: String,
         val x: Double,
@@ -60,7 +64,16 @@ internal interface AppScopedInputSink {
     /** Rechecked for each event: exact live surfaces, current geometry, and scoped input policy. */
     fun isAvailable(): Boolean
 
+    /** Coordinate-free keys still require current ownership and modal scope. */
+    fun isAvailableFor(event: AppInputEvent): Boolean = isAvailable()
+
     fun apply(event: AppInputEvent): Boolean
+
+    /** Deferred native work must also finish while this verified lease remains valid. */
+    fun apply(
+        event: AppInputEvent,
+        validUntilMillis: Long,
+    ): Boolean = apply(event)
 
     /** Must release only events held in this sink, never global OS input. */
     fun releaseAll()
@@ -78,6 +91,8 @@ internal data class AppInputTarget(
  * All state transitions and delivery are serialized on the EDT, including immediate host takeover.
  * This avoids holding a lock while waiting on the EDT (which would deadlock local revocation).
  */
+// Lease suspension, retirement and delivery share one EDT owner for atomic authority changes.
+@Suppress("TooManyFunctions")
 internal class AppInputDispatcher(
     private val sessionId: String,
     private val generation: String,
@@ -90,6 +105,7 @@ internal class AppInputDispatcher(
     private var expiry: Timer? = null
     private var activeWindow: String? = null
     private var closed = false
+    private var suspended = false
     private var rateStart = 0L
     private var rateCount = 0
 
@@ -124,6 +140,7 @@ internal class AppInputDispatcher(
                 lastSequence = 0L
             }
             lease = verifiedLease
+            suspended = false
             expiry?.stop()
             expiry =
                 Timer((verifiedLease.expiresAtMillis - nowMillis()).coerceIn(1, 300_000).toInt()) { expire() }
@@ -144,7 +161,7 @@ internal class AppInputDispatcher(
         input: AppInputEnvelope,
     ): Boolean =
         onEdt {
-            if (closed) return@onEdt false
+            if (closed || suspended) return@onEdt false
             expireInternal()
             val current = lease ?: return@onEdt false
             if (!input.validAppEnvelope(
@@ -158,9 +175,7 @@ internal class AppInputDispatcher(
                 return@onEdt false
             }
             val target = targets[input.windowId] ?: return@onEdt false
-            if (target.generation != generation || target.geometryRevision != input.geometryRevision ||
-                !target.sink.isAvailable()
-            ) {
+            if (!target.availableFor(input, generation)) {
                 target.sink.releaseAll()
                 return@onEdt false
             }
@@ -178,7 +193,7 @@ internal class AppInputDispatcher(
             activeWindow = input.windowId
             // Consume the sequence before delivery: a failed native handler must not make replay safe.
             lastSequence = input.sequence
-            runCatching { target.sink.apply(input.event) }.getOrElse {
+            runCatching { target.sink.apply(input.event, current.expiresAtMillis) }.getOrElse {
                 revokeInternal()
                 false
             }
@@ -187,6 +202,13 @@ internal class AppInputDispatcher(
     fun expire() = onEdt { expireInternal() }
 
     fun revoke() = onEdt { revokeInternal() }
+
+    /** A transient authority outage blocks input without forgetting the lease's replay history. */
+    fun suspend() =
+        onEdt {
+            suspended = true
+            targets.values.forEach { runCatching { it.sink.releaseAll() } }
+        }
 
     private fun expireInternal() {
         if (lease?.expiresAtMillis?.let { it <= nowMillis() } == true) revokeInternal()
@@ -208,6 +230,18 @@ internal class AppInputDispatcher(
             closed = true
         }
 }
+
+private fun AppInputTarget.acceptsGeometry(input: AppInputEnvelope): Boolean =
+    geometryRevision == input.geometryRevision ||
+        (
+            (input.event is AppInputEvent.Key || input.event.isWindowRecovery()) &&
+                input.geometryRevision in 1..geometryRevision
+        )
+
+private fun AppInputTarget.availableFor(
+    input: AppInputEnvelope,
+    generation: String,
+): Boolean = this.generation == generation && acceptsGeometry(input) && sink.isAvailableFor(input.event)
 
 private fun validAppLease(
     candidate: AppControlLease,
@@ -233,8 +267,17 @@ private fun AppInputEnvelope.validAppEnvelope(
     return sessionMatches && leaseMatches && sequenceFresh
 }
 
+private fun AppInputEvent.isWindowRecovery(): Boolean {
+    val event = this as? AppInputEvent.Window ?: return false
+    return event.action in setOf("restore", "exit-fullscreen")
+}
+
 internal fun validAppInputEvent(event: AppInputEvent): Boolean =
     when (event) {
+        is AppInputEvent.Window -> {
+            event.action in setOf("restore", "exit-fullscreen", "minimize", "maximize", "unmaximize", "close")
+        }
+
         is AppInputEvent.Pointer -> {
             validPointer(event)
         }
@@ -311,6 +354,10 @@ internal fun parseAppInput(raw: String): AppInputEnvelope? {
         val event = root.getValue("event").jsonObject
         val action =
             when (event.str("type")) {
+                "window" -> {
+                    AppInputEvent.Window(event.str("action"))
+                }
+
                 "pointer" -> {
                     AppInputEvent.Pointer(
                         event.str("action"),

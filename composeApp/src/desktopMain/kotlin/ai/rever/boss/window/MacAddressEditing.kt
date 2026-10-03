@@ -33,14 +33,11 @@ internal class MacAddressEditing {
             send(view, "setStringValue:", string(text))
             typed = text
             if (editor != null && model != null) {
-                send(
-                    editor,
-                    "setSelectedRange:",
-                    MacTextRange(
-                        model.selectionStart.toLong(),
-                        (model.selectionEnd - model.selectionStart).coerceAtLeast(0).toLong(),
-                    ),
-                )
+                val start = minOf(model.selectionStart, model.selectionEnd).coerceIn(0, text.length)
+                val end = maxOf(model.selectionStart, model.selectionEnd).coerceIn(start, text.length)
+                val range = MacTextRange(start.toLong(), (end - start).toLong())
+                send(editor, "setSelectedRange:", range)
+                send(editor, "scrollRangeToVisible:", MacTextRange(end.toLong(), 0L))
             }
         }
         revision = model?.revision ?: -1
@@ -59,6 +56,9 @@ internal class MacAddressEditing {
         send(editor, "setString:", string(suffix))
         val range = MacTextRange(typed.length.toLong(), (suffix.length - typed.length).toLong())
         send(editor, "setSelectedRange:", range)
+        // Keep the insertion point beside the typed prefix visible, rather than jumping
+        // to the end of a long suggested URL or leaving the caret outside the field.
+        send(editor, "scrollRangeToVisible:", MacTextRange(typed.length.toLong(), 0L))
         completing = true
     }
 
@@ -152,6 +152,15 @@ private fun selection(editor: Pointer): Pair<Int, Int> =
         val start = bytes.getLong(0).toInt().coerceAtLeast(0)
         start to (start + bytes.getLong(8).toInt().coerceAtLeast(0))
     }
+
+/** Direct remote editing bypasses AppKit's key-event pass that normally reveals the caret. */
+internal fun revealNativeAddressCaret(editor: Pointer) {
+    val range = selection(editor)
+    if (range.first == range.second) {
+        send(pointer(editor, "layoutManager"), "ensureLayoutForTextContainer:", pointer(editor, "textContainer"))
+        send(editor, "scrollRangeToVisible:", MacTextRange(range.first.toLong(), 0L))
+    }
+}
 
 @Structure.FieldOrder("location", "length")
 internal class MacTextRange(

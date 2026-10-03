@@ -96,6 +96,34 @@ test('control payloads are bounded and invalid sequences cannot decrypt', async 
   await assert.rejects(cipher.decrypt({ sequence: -1, payload_b64: 'AA' }, 0), /sequence/);
 });
 
+test('keyboard geometry can lag a popup but coordinate input and future geometry remain strict', async () => {
+  const lease = { leaseId: crypto.randomUUID(), peerId: crypto.randomUUID(), controlSecret: config.mediaRootKey };
+  const sender = await createControlCipher(config, lease), receiver = await createControlCipher(config, lease);
+  const key = await sender.encrypt({ type: 'key', action: 'down', code: 'KeyA' }, 1);
+  assert.equal((await receiver.decrypt(key, 2, true)).event.code, 'KeyA');
+  await assert.rejects(receiver.decrypt(key, 2, true), /Replayed/);
+  await assert.rejects(receiver.decrypt(await sender.encrypt({ type: 'pointer', action: 'down', x: .5, y: .5 }, 1), 2, true), /Stale/);
+  await assert.rejects(receiver.decrypt(await sender.encrypt({ type: 'key', action: 'down', code: 'KeyA' }, 3), 2, true), /Stale/);
+});
+
+test('window recovery is encrypted, replay protected and limited to current or prior positive geometry', async () => {
+  const lease = { leaseId: crypto.randomUUID(), peerId: crypto.randomUUID(), controlSecret: config.mediaRootKey };
+  const sender = await createControlCipher(config, lease), receiver = await createControlCipher(config, lease);
+  const restore = await sender.encrypt({ type: 'window', action: 'restore' }, 1);
+  assert.equal((await receiver.decrypt(restore, 2, true)).event.action, 'restore');
+  await assert.rejects(receiver.decrypt(restore, 2, true), /Replayed/);
+  const exit = await sender.encrypt({ type: 'window', action: 'exit-fullscreen' }, 2);
+  assert.equal((await receiver.decrypt(exit, 2, true)).event.action, 'exit-fullscreen');
+  for (const [action, revision] of [['restore', 0], ['restore', 3], ['start-capture', 1], ['close', 1], ['minimize', 1], ['maximize', 1], ['unmaximize', 1]]) {
+    await assert.rejects(receiver.decrypt(await sender.encrypt({ type: 'window', action }, revision), 2, true), /Stale/);
+  }
+  for (const action of ['close', 'minimize', 'maximize', 'unmaximize']) {
+    assert.equal((await receiver.decrypt(await sender.encrypt({ type: 'window', action }, 2), 2, true)).event.action, action);
+  }
+  const wrongWindow = await createControlCipher({ ...config, windowId: 'unrelated-window' }, lease);
+  await assert.rejects(wrongWindow.decrypt(await sender.encrypt({ type: 'window', action: 'restore' }, 2), 2, true));
+});
+
 test('letterbox coordinate mapping excludes bars and maps source edges exactly', () => {
   const rect = { left: 10, top: 20, width: 1000, height: 1000 };
   assert.equal(videoPoint(500, 100, rect, 1000, 500), null);

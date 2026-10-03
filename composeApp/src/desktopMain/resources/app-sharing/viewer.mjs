@@ -2,18 +2,104 @@ import { createBridge, closeViewerResources, resolveBridgeRequest, rejectBridgeR
 import { WindowMediaPeer } from './media.mjs';
 import { AppControlChannel, videoPoint } from './control.mjs';
 import { browserViewerConfig } from './browser-bootstrap.mjs';
+import { SharingPerformanceBar } from './performance-bar.mjs';
+import { acquireControlWithRetry, CONTROL_ATTEMPTS } from './control-retry.mjs';
 
 const video = document.getElementById('screen');
 const status = document.getElementById('status');
 const controlButton = document.getElementById('control');
 const windowPicker = document.getElementById('window');
 const windowLabel = document.getElementById('window-label');
+const windowActions = document.getElementById('window-actions');
+const windowActionsLabel = document.getElementById('window-actions-label');
+const recoveryActions = new Set(['restore', 'exit-fullscreen']);
+const recoveryLabels = new Map([
+  ['restore', 'Restore window'], ['exit-fullscreen', 'Exit host fullscreen'],
+  ['minimize', 'Minimize window'], ['maximize', 'Maximize window'],
+  ['unmaximize', 'Restore window size'], ['close', 'Close window'],
+]);
+function updateWindowActions(owner) {
+  if (!windowActions || !windowActionsLabel) return;
+  const actions = owner?.geometry?.windowControls;
+  const supported = Array.isArray(actions) ? [...recoveryLabels].filter(([id]) => actions.includes(id)) : [];
+  windowActionsLabel.hidden = !supported.length;
+  windowActions.disabled = !owner?.lease || owner.failed || paused(owner) || owner.inactive ||
+    document.hidden || owner.control?.channel?.readyState !== 'open';
+  windowActions.replaceChildren();
+  const placeholder = document.createElement('option');
+  placeholder.value = ''; placeholder.textContent = 'Window actions';
+  windowActions.append(placeholder);
+  for (const [id, label] of supported) {
+    const option = document.createElement('option'); option.value = id; option.textContent = label;
+    windowActions.append(option);
+  }
+  windowActions.value = '';
+}
+function cancelWindowRecovery(owner) {
+  if (!owner) return;
+  clearTimeout(owner.windowRecoveryTimer);
+  owner.windowRecoveryEpoch = (owner.windowRecoveryEpoch ?? 0) + 1;
+}
+function recoverWindow() {
+  const owner = current, action = windowActions?.value;
+  if (windowActions) windowActions.value = '';
+  cancelWindowRecovery(owner);
+  if (!owner) return;
+  const lease = owner.lease, epoch = owner.windowRecoveryEpoch;
+  const attempt = number => {
+    // AppKit can ignore a toggle while entering fullscreen. Retry only explicit,
+    // idempotent recovery commands; each retry is freshly encrypted and authorized.
+    if (current !== owner || owner.windowRecoveryEpoch !== epoch || !lease || owner.lease !== lease ||
+        owner.failed || paused(owner) || owner.inactive || document.hidden ||
+        !recoveryLabels.has(action) || !Array.isArray(owner.geometry?.windowControls) ||
+        !owner.geometry.windowControls.includes(action) || owner.control?.channel?.readyState !== 'open') return;
+    if (owner.control.send({ type: 'window', action }) && recoveryActions.has(action) && number < 3) {
+      owner.windowRecoveryTimer = setTimeout(() => attempt(number + 1), 800);
+    }
+  };
+  attempt(0);
+}
 let current = null;
 let navigation = 0;
 function text(value) { status.textContent = value; }
+function paused(owner) { return owner.recovering || owner.hostPaused; }
+function updateViewing(owner) {
+  if (current !== owner) return;
+  updateWindowActions(owner);
+  const retry = ['busy', 'temporary', 'expired'].includes(owner.controlFailure);
+  controlButton.disabled = owner.failed || paused(owner) || !!owner.controlAttempt || owner.config.role === 'view' ||
+    owner.control?.channel?.readyState !== 'open' || ['denied', 'unavailable'].includes(owner.controlFailure);
+  controlButton.textContent = owner.lease ? 'Release control' : owner.controlAttempt ? 'Connecting control…' : retry ? 'Retry control' : 'Take control';
+  text(owner.failed ? 'Connection lost. Reopen this session to reconnect.' : paused(owner) ? 'Connection interrupted. Reconnecting…'
+    : owner.lease ? 'You control this BossConsole window'
+    : owner.controlAttempt ? `Connecting control… (${owner.controlAttempt.number}/${CONTROL_ATTEMPTS})`
+    : owner.controlFailure === 'busy' ? 'Another viewer has control. Retry control when it is released.'
+    : owner.controlFailure === 'temporary' ? 'Could not connect control after three attempts. Select Retry control.'
+    : owner.controlFailure === 'expired' ? 'Control expired. Select Retry control.'
+    : owner.controlFailure === 'released' ? 'Control was released or is no longer allowed. Select Take control to request it again.'
+    : owner.controlFailure === 'denied' ? 'Control is not allowed. Check your sharing settings.'
+    : owner.controlFailure === 'unavailable' ? 'Remote control is unavailable. Reopen this session.'
+    : owner.inactive && owner.wantsControl ? 'Viewing BossConsole. Control resumes when this viewer is active.' : 'Viewing BossConsole');
+}
+function restoreControl(owner) {
+  if (current === owner && owner.wantsControl && !owner.inactive && !document.hidden && !owner.lease && !owner.controlAttempt &&
+      !owner.controlFailure && !paused(owner) && !owner.failed && owner.control?.channel?.readyState === 'open') {
+    return connectControl(owner);
+  }
+}
+function suspendControl(owner) {
+  cancelWindowRecovery(owner);
+  owner.controlAttempt?.abort.abort();
+  // Cancels pending acquisition too; a late grant must be released before resuming.
+  return owner.control?.releaseControl({ reason: 'suspended' });
+}
 function stopOwner() {
   const owner = current; current = null;
+  updateWindowActions(null);
   if (!owner) return;
+  cancelWindowRecovery(owner);
+  owner.wantsControl = false; owner.controlAttempt?.abort.abort();
+  owner.performance?.stop();
   const closing = closeViewerResources(owner); video.srcObject = null;
   controlButton.disabled = true; controlButton.textContent = 'Take control'; text('Disconnected');
   return closing;
@@ -35,37 +121,61 @@ async function start(value) {
   if (attempt !== navigation) return;
   const config = typeof value === 'string' ? JSON.parse(value) : value;
   const bridge = createBridge(config);
-  const owner = { bridge, config }; current = owner; configureWindows(config); text('Connecting securely…');
+  const owner = { bridge, config, wantsControl: config.role !== 'view' && config.autoTakeControl !== false, inactive: !!document.hidden };
+  current = owner; configureWindows(config); text('Connecting securely…');
   try {
     owner.media = new WindowMediaPeer({ config, request: body => bridge.request(body), onState: state => {
       bridge.state({ state });
       if (current !== owner) return;
       if (state === 'connected') {
-        text('Viewing BossConsole');
-        if (owner.control?.channel?.readyState === 'open') controlButton.disabled = config.role === 'view';
+        owner.recovering = false;
+        owner.performance?.resume();
+        updateViewing(owner); restoreControl(owner);
       }
-      if (['failed', 'disconnected', 'stopped'].includes(state)) {
-        text('Connection lost. Reopen this session to reconnect.');
-        if (state === 'disconnected') owner.control?.releaseControl(); else owner.control?.stop();
-        controlButton.disabled = true;
+      if (['failed', 'disconnected', 'recovering', 'stopped'].includes(state)) {
+        owner.recovering = ['disconnected', 'recovering'].includes(state); owner.failed = !owner.recovering;
+        owner.performance?.pause();
+        if (owner.recovering) suspendControl(owner); else { owner.wantsControl = false; owner.controlAttempt?.abort.abort(); owner.control?.stop(); }
+        updateViewing(owner);
       }
     } });
     await owner.media.subscribe(track => { video.srcObject = new MediaStream([track]); video.play().catch(() => text('Select the video to start playback')); });
     if (current !== owner) return;
+    owner.performance = new SharingPerformanceBar(owner.media, video, document.getElementById('client-metrics'), document.getElementById('remote-metrics'));
+    owner.performance.resume();
     owner.control = new AppControlChannel(owner.media, {
-      onLease: lease => {
+      onLease: (lease, details = {}) => {
         if (current !== owner) return;
+        const lost = !!owner.lease && !lease;
+        if (lost) cancelWindowRecovery(owner);
         owner.lease = lease;
-        controlButton.textContent = lease ? 'Release control' : 'Take control';
-        text(lease ? 'You control this BossConsole window' : 'Viewing BossConsole');
+        if (lost && details.reason !== 'suspended') {
+          if (details.retryable) queueMicrotask(() => restoreControl(owner));
+          else {
+            owner.wantsControl = false;
+            owner.controlFailure = details.reason === 'denied' ? 'denied' : details.reason === 'channel' ? 'unavailable'
+              : details.reason === 'expired' ? 'expired' : 'released';
+          }
+        }
+        updateViewing(owner);
       },
-      onGeometry: geometry => { if (current === owner) owner.geometry = geometry; },
-      onError: message => { if (current === owner) text(message); },
+      onGeometry: geometry => {
+        if (current !== owner) return;
+        owner.geometry = geometry;
+        const wasPaused = owner.hostPaused; owner.hostPaused = geometry.authorityAvailable === false;
+        if (owner.hostPaused && !wasPaused) suspendControl(owner);
+        updateViewing(owner); restoreControl(owner);
+      },
+      onMetrics: metrics => { if (current === owner) owner.performance.receiveRemote(metrics); },
+      onError: () => { if (current === owner) { owner.wantsControl = false; owner.controlAttempt?.abort.abort(); owner.controlFailure = 'unavailable'; updateViewing(owner); } },
     });
     try {
       await owner.control.start();
-      if (current === owner) { controlButton.disabled = config.role === 'view'; text('Viewing BossConsole'); }
-    } catch (_) { if (current === owner) text('Viewing BossConsole. Remote control is unavailable.'); }
+      if (current === owner) {
+        updateViewing(owner);
+        await restoreControl(owner);
+      }
+    } catch (_) { if (current === owner) { owner.controlFailure = 'unavailable'; updateViewing(owner); } }
   } catch (_) {
     if (current === owner) { stop(); text('Unable to connect. Reopen the session from BossConsole.'); }
   }
@@ -86,13 +196,42 @@ async function switchWindow() {
 }
 async function takeControl() {
   const owner = current;
-  if (!owner?.control) return;
-  controlButton.disabled = true;
-  try { await owner.control.takeControl(); video.focus(); }
-  catch (_) { text('Control is unavailable or another viewer has control'); }
-  finally { if (current === owner) controlButton.disabled = false; }
+  if (!owner?.control || owner.failed || paused(owner) || owner.config.role === 'view') return;
+  owner.wantsControl = true; owner.controlFailure = null;
+  return restoreControl(owner);
 }
-function releaseControl() { return current?.control?.releaseControl(); }
+async function connectControl(owner) {
+  const attempt = { abort: new AbortController(), number: 1 };
+  owner.controlAttempt = attempt; updateViewing(owner);
+  try {
+    const result = await acquireControlWithRetry(() => owner.control.takeControl(), {
+      signal: attempt.abort.signal,
+      onAttempt: number => { attempt.number = number; updateViewing(owner); },
+    });
+    if (current !== owner || attempt.abort.signal.aborted) return;
+    if (result.kind) owner.controlFailure = result.kind;
+    if (owner.lease && !owner.inactive && !document.hidden) video.focus();
+  } finally {
+    if (owner.controlAttempt === attempt) owner.controlAttempt = null;
+    updateViewing(owner);
+    // Focus/authority can return while cancellation is still retiring a grant.
+    if (attempt.abort.signal.aborted) restoreControl(owner);
+  }
+}
+function releaseControl() {
+  if (!current) return;
+  cancelWindowRecovery(current);
+  current.wantsControl = false; current.controlFailure = null; current.controlAttempt?.abort.abort();
+  return current.control?.releaseControl({ reason: 'suspended' });
+}
+function suspendViewer() {
+  if (!current) return;
+  current.inactive = true; suspendControl(current); updateViewing(current);
+}
+function resumeViewer() {
+  if (!current || document.hidden) return;
+  current.inactive = false; updateViewing(current); restoreControl(current);
+}
 function point(event) {
   const geometry = current?.geometry;
   return geometry && videoPoint(event.clientX, event.clientY, video.getBoundingClientRect(), geometry.width, geometry.height);
@@ -125,12 +264,14 @@ for (const [eventName, action] of [['keydown', 'down'], ['keyup', 'up']]) video.
 });
 video.addEventListener('contextmenu', event => { if (current?.lease) event.preventDefault(); });
 video.addEventListener('click', () => video.play().catch(() => {}));
-globalThis.addEventListener('blur', releaseControl);
-document.addEventListener('visibilitychange', () => { if (document.hidden) releaseControl(); });
+globalThis.addEventListener('blur', suspendViewer);
+globalThis.addEventListener('focus', resumeViewer);
+document.addEventListener('visibilitychange', () => document.hidden ? suspendViewer() : resumeViewer());
 globalThis.addEventListener('pagehide', stop);
 controlButton.addEventListener('click', () => current?.lease ? releaseControl() : takeControl());
 document.getElementById('disconnect').addEventListener('click', stop);
 windowPicker.addEventListener('change', switchWindow);
+windowActions?.addEventListener('change', recoverWindow);
 globalThis.BossAppShareViewer = { start, stop, takeControl, releaseControl, resolve: resolveBridgeRequest, reject: rejectBridgeRequest };
 globalThis.__bossAppShareBridge?.state?.(JSON.stringify({ state: 'ready' }));
 if (globalThis.__bossAppShareConfig && globalThis.__bossAppShareConfig.autoStart !== false) start(globalThis.__bossAppShareConfig);

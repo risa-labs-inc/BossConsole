@@ -1,6 +1,7 @@
 package ai.rever.boss.sharing
 
 import ai.rever.boss.config.JxBrowserConfig
+import ai.rever.boss.plugin.browser.ChromiumToolkitPreload
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import com.sun.net.httpserver.HttpExchange
@@ -92,8 +93,11 @@ class AppSharingMediaSmokeTest {
     private fun createEngine(
         chromium: Path,
         profile: Path,
-    ): Engine =
-        Engine.newInstance(
+    ): Engine {
+        // Match host startup: toolkit loading briefly swaps macOS malloc zones.
+        // Loading before engine threads start narrows that native SIGTRAP race.
+        ChromiumToolkitPreload.preload(chromium)
+        return Engine.newInstance(
             EngineOptions
                 .newBuilder(RenderingMode.OFF_SCREEN)
                 .licenseKey(JxBrowserConfig.licenseKey)
@@ -109,6 +113,7 @@ class AppSharingMediaSmokeTest {
                 .addSwitch("--disable-background-timer-throttling")
                 .build(),
         )
+    }
 
     private fun verifyReport(report: JsonObject) {
         assertEquals(true, report["passed"]?.jsonPrimitive?.boolean, "Synthetic encrypted media smoke failed: $report")
@@ -116,6 +121,16 @@ class AppSharingMediaSmokeTest {
         val audited = report.getValue("audited").jsonObject
         assertTrue(production.getValue("framesDecoded").jsonPrimitive.int > 0)
         assertTrue(audited.getValue("framesDecoded").jsonPrimitive.int > 0)
+        val raw = report.getValue("raw").jsonObject
+        assertTrue(raw.getValue("framesDecoded").jsonPrimitive.int > 0)
+        assertEquals(true, raw.getValue("cleared").jsonPrimitive.boolean)
+        val direct = report.getValue("direct").jsonObject
+        assertTrue(direct.getValue("framesDecoded").jsonPrimitive.int > 0)
+        assertEquals("videoframe", direct.getValue("renderer").jsonPrimitive.content)
+        assertEquals(true, direct.getValue("cleared").jsonPrimitive.boolean)
+        val nv12 = report.getValue("nv12").jsonObject
+        assertTrue(nv12.getValue("framesDecoded").jsonPrimitive.int > 0)
+        assertEquals(true, nv12.getValue("cleared").jsonPrimitive.boolean)
         listOf("encrypted", "decrypted", "tamperRejected", "replayRejected").forEach { field ->
             assertEquals(true, audited.getValue(field).jsonPrimitive.boolean, field)
         }
@@ -140,7 +155,7 @@ private class MediaSmokeServer : AutoCloseable {
     private val origin = "http://127.0.0.1:${server.address.port}"
     val baseUrl = origin + prefix
     private val testAssets = setOf("smoke.html", "smoke.mjs", "smoke-worker.mjs")
-    private val productionAssets = setOf("media.mjs", "crypto.mjs", "encoded-worker.mjs")
+    private val productionAssets = setOf("media.mjs", "crypto.mjs", "encoded-worker.mjs", "stats.mjs", "recovery.mjs")
 
     init {
         server.executor = executor

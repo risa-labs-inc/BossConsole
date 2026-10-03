@@ -1,20 +1,21 @@
 package ai.rever.boss.sharing
 
+import ai.rever.boss.window.WindowInputModalBoundary
 import androidx.compose.ui.awt.ComposeDialog
 import androidx.compose.ui.awt.ComposeWindow
-import java.awt.Dialog
 import java.awt.Frame
 import java.awt.Window
 import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import javax.imageio.ImageIO
+import kotlin.math.roundToInt
 
 /** Local-only geometry; never serialize Window references or native handles into viewer metadata. */
 internal data class AppCapturedSurface(
     val window: Window,
     val geometry: WindowCaptureGeometry,
-    val modal: Boolean = window is Dialog && window.isModal,
+    val modal: Boolean = WindowInputModalBoundary.isModal(window),
 )
 
 internal data class AppSurfaceSnapshot(
@@ -45,6 +46,7 @@ internal fun captureSurfaceSnapshot(root: Window): AppSurfaceSnapshot {
             }
         check(handle != 0L && surfaces.size < 8) { "Shared surface limit exceeded" }
         val scale = window.graphicsConfiguration.defaultTransform
+        val insets = window.insets
         surfaces.add(
             AppCapturedSurface(
                 window,
@@ -56,9 +58,35 @@ internal fun captureSurfaceSnapshot(root: Window): AppSurfaceSnapshot {
                     window.height,
                     window.x,
                     window.y,
+                    AppCaptureInsets(
+                        (insets.left * scale.scaleX).toInt(),
+                        (insets.right * scale.scaleX).toInt(),
+                        (insets.top * scale.scaleY).toInt(),
+                        (insets.bottom * scale.scaleY).toInt(),
+                    ),
                 ),
             ),
         )
+        ai.rever.boss.window.MacToolbarInput.captureSurfaces(window).forEach { chrome ->
+            check(surfaces.size < 8) { "Shared surface limit exceeded" }
+            val bounds = chrome.bounds
+            surfaces.add(
+                AppCapturedSurface(
+                    window,
+                    WindowCaptureGeometry(
+                        chrome.handle,
+                        (bounds.width * scale.scaleX).toInt(),
+                        (bounds.height * scale.scaleY).toInt(),
+                        bounds.width,
+                        bounds.height,
+                        window.x + bounds.left,
+                        window.y + bounds.top,
+                        nativeWindowNumber = chrome.windowNumber,
+                        nativeParentHandle = handle,
+                    ),
+                ),
+            )
+        }
         window.ownedWindows.filter { it.isShowing }.forEach(::visit)
     }
     visit(root)
@@ -76,28 +104,33 @@ internal fun captureSurfaceSnapshot(root: Window): AppSurfaceSnapshot {
 internal fun captureSurfaces(
     snapshot: AppSurfaceSnapshot,
     source: ExactWindowFrameSource,
+    maxDimension: Int = Int.MAX_VALUE,
 ): NativeWindowFrame {
+    val size = appCaptureFrameSize(snapshot.width, snapshot.height, maxDimension)
+    val scaleX = size.width.toDouble() / snapshot.logicalWidth
+    val scaleY = size.height.toDouble() / snapshot.logicalHeight
     val frames =
         snapshot.surfaces.map {
             val geometry = it.geometry
-            source.capture(geometry.nativeHandle, ProcessHandle.current().pid(), geometry.width, geometry.height)
+            val width = (geometry.logicalWidth * scaleX).roundToInt().coerceAtLeast(1)
+            val height = (geometry.logicalHeight * scaleY).roundToInt().coerceAtLeast(1)
+            source.capture(geometry.nativeHandle, ProcessHandle.current().pid(), width, height).also { frame ->
+                check(frame.width == width && frame.height == height)
+            }
         }
     if (frames.size == 1) return frames.single()
-    val canvas = BufferedImage(snapshot.width, snapshot.height, BufferedImage.TYPE_INT_RGB)
+    val canvas = BufferedImage(size.width, size.height, BufferedImage.TYPE_INT_RGB)
     val graphics = canvas.createGraphics()
     try {
         snapshot.surfaces.zip(frames).forEach { (surface, frame) ->
             val geometry = surface.geometry
-            check(frame.width == geometry.width && frame.height == geometry.height)
             val image = checkNotNull(ImageIO.read(ByteArrayInputStream(frame.png)))
-            val scaleX = snapshot.width.toDouble() / snapshot.logicalWidth
-            val scaleY = snapshot.height.toDouble() / snapshot.logicalHeight
             graphics.drawImage(
                 image,
-                ((geometry.x - snapshot.x) * scaleX).toInt(),
-                ((geometry.y - snapshot.y) * scaleY).toInt(),
-                (geometry.logicalWidth * scaleX).toInt(),
-                (geometry.logicalHeight * scaleY).toInt(),
+                ((geometry.x - snapshot.x) * scaleX).roundToInt(),
+                ((geometry.y - snapshot.y) * scaleY).roundToInt(),
+                frame.width,
+                frame.height,
                 null,
             )
         }
@@ -110,7 +143,7 @@ internal fun captureSurfaces(
             output.toByteArray()
         }
     check(bytes.size <= 16 * 1024 * 1024)
-    return NativeWindowFrame(bytes, snapshot.width, snapshot.height)
+    return NativeWindowFrame(bytes, size.width, size.height)
 }
 
 internal fun checkCaptureVisibility(

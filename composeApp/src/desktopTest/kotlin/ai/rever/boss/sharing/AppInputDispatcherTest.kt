@@ -105,6 +105,22 @@ class AppInputDispatcherTest {
         }
     }
 
+    @Test fun `transient suspension releases input and verified recovery retains replay protection`() {
+        Fixture().use { f ->
+            assertTrue(f.dispatcher.dispatch(f.peer, f.event()))
+            val before = f.sink.released
+            f.dispatcher.suspend()
+            assertTrue(f.sink.released > before)
+            assertFalse(f.dispatcher.dispatch(f.peer, f.event(2)))
+            assertTrue(f.dispatcher.installLease(f.lease))
+            assertFalse(f.dispatcher.dispatch(f.peer, f.event()))
+            assertTrue(f.dispatcher.dispatch(f.peer, f.event(2)))
+            f.dispatcher.suspend()
+            f.dispatcher.revoke()
+            assertFalse(f.dispatcher.installLease(f.lease))
+        }
+    }
+
     @Test fun `malformed coordinates unsupported keys and oversized frames are refused`() {
         assertNull(parseAppInput("x".repeat(16_385)))
         assertNull(parseAppInput("{}"))
@@ -113,6 +129,19 @@ class AppInputDispatcherTest {
         assertFalse(validAppInputEvent(AppInputEvent.Wheel(0.5, 0.5, Double.POSITIVE_INFINITY, 0.0)))
         assertFalse(validAppInputEvent(AppInputEvent.Key("down", "LaunchMail", "", false, false, false, false)))
         assertTrue(validAppInputEvent(AppInputEvent.Key("down", "ArrowLeft", "ArrowLeft", false, false, false, false)))
+    }
+
+    @Test fun `keyboard survives popup geometry updates while coordinate input and future revisions are rejected`() {
+        Fixture().use { f ->
+            f.dispatcher.register(AppInputTarget(f.window, f.generation, 2L, f.sink))
+            val key = f.event().copy(event = AppInputEvent.Key("down", "KeyA", "a", false, false, false, false))
+            assertTrue(f.dispatcher.dispatch(f.peer, key))
+            assertFalse(f.dispatcher.dispatch(f.peer, key))
+            assertFalse(f.dispatcher.dispatch(f.peer, key.copy(sequence = 2, geometryRevision = 3)))
+            assertFalse(f.dispatcher.dispatch(f.peer, f.event(2)))
+            f.sink.available = false
+            assertFalse(f.dispatcher.dispatch(f.peer, key.copy(sequence = 2)))
+        }
     }
 
     @Test fun `wire protocol parser delivers valid control and refuses wrong protocol`() {
@@ -127,6 +156,44 @@ class AppInputDispatcherTest {
             assertFalse(f.dispatcher.dispatchJson(f.peer, json))
             assertNull(parseAppInput(json.replace("boss-app-share/1", "boss-app-share/0")))
             assertEquals("ArrowLeft", (f.sink.events.single() as AppInputEvent.Key).code)
+        }
+    }
+
+    @Test fun `window recovery retains lease and identity checks without requiring pixel coordinates`() {
+        Fixture().use { f ->
+            val json =
+                """
+                {"protocol":"boss-app-share/1","sessionId":"${f.session}","generation":"${f.generation}",
+                "windowId":"${f.window}","geometryRevision":1,"leaseId":"${f.lease.id}","peerId":"${f.peer}",
+                "sequence":1,"event":{"type":"window","action":"restore"}}
+                """.trimIndent()
+            f.dispatcher.register(AppInputTarget(f.window, f.generation, 2L, f.sink))
+            assertTrue(f.dispatcher.dispatchJson(f.peer, json))
+            assertFalse(f.dispatcher.dispatchJson(f.peer, json))
+            assertEquals(AppInputEvent.Window("restore"), f.sink.events.single())
+            assertNull(parseAppInput(json.replace("restore", "start-capture")))
+            val next = f.event(2).copy(event = AppInputEvent.Window("exit-fullscreen"))
+            assertFalse(f.dispatcher.dispatch(f.peer, next.copy(geometryRevision = 0)))
+            assertFalse(f.dispatcher.dispatch(f.peer, next.copy(geometryRevision = 3)))
+            assertFalse(f.dispatcher.dispatch(f.peer, next.copy(windowId = UUID.randomUUID().toString())))
+            assertFalse(f.dispatcher.dispatch(UUID.randomUUID().toString(), next))
+            assertTrue(f.dispatcher.dispatch(f.peer, next))
+            f.now = f.lease.expiresAtMillis
+            assertFalse(f.dispatcher.dispatch(f.peer, next.copy(sequence = 3)))
+        }
+    }
+
+    @Test fun `ordinary window commands require current geometry unlike recovery`() {
+        Fixture().use { f ->
+            f.dispatcher.register(AppInputTarget(f.window, f.generation, 2L, f.sink))
+            for ((index, action) in listOf("minimize", "maximize", "unmaximize", "close").withIndex()) {
+                val event = f.event(index.toLong() + 1).copy(event = AppInputEvent.Window(action))
+                assertFalse(f.dispatcher.dispatch(f.peer, event.copy(geometryRevision = 1)))
+                assertTrue(f.dispatcher.dispatch(f.peer, event.copy(geometryRevision = 2)))
+            }
+            assertEquals(4, f.sink.events.size)
+            f.dispatcher.revoke()
+            assertFalse(f.dispatcher.dispatch(f.peer, f.event(5).copy(event = AppInputEvent.Window("close"))))
         }
     }
 

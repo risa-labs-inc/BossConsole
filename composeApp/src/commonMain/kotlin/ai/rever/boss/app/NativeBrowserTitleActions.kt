@@ -5,6 +5,7 @@ import ai.rever.boss.components.common.rememberFaviconCacheKey
 import ai.rever.boss.plugin.browser.ActiveBrowserRegistry
 import ai.rever.boss.plugin.browser.BrowserTabOwnership
 import ai.rever.boss.plugin.browser.BrowserTitleBarBridge
+import ai.rever.boss.sharing.AppSharingTitleBarAction
 import ai.rever.boss.window.NativeTitleBarAction
 import ai.rever.boss.window.NativeTitleBarTextInput
 import androidx.compose.runtime.Composable
@@ -27,7 +28,8 @@ internal fun nativeBrowserTitleActions(state: BossAppState): List<NativeTitleBar
     // and publishes navigation state, even though no webpage view is currently composed.
     val handleId = tabHandles[activeTabId] ?: active[state.windowId]
     val browser = handleId?.let(BrowserTitleBarBridge::state)
-    if (handleId == null || browser == null) return emptyList()
+    val sharingAction = AppSharingTitleBarAction(state.windowId, browser?.share)
+    if (handleId == null || browser == null) return listOf(sharingAction)
     val favicon = activeBrowserFavicon(state, browser.url)
     val focusOwner = remember(handleId) { Any() }
     return buildList {
@@ -66,7 +68,7 @@ internal fun nativeBrowserTitleActions(state: BossAppState): List<NativeTitleBar
                 onClick = browser.bookmark,
             ),
         )
-        browser.share?.let { add(NativeTitleBarAction("browser_share", "Share tab", "qrcode", onClick = it)) }
+        add(sharingAction)
     }
 }
 

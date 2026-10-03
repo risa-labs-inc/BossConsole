@@ -1,71 +1,119 @@
 package ai.rever.boss.sharing
 
-import ai.rever.boss.layout.TRAFFIC_LIGHT_HEIGHT
-import ai.rever.boss.plugin.ui.BossTheme
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material.Text
-import androidx.compose.material.TextButton
+import ai.rever.boss.plugin.sandbox.notification.PluginToastState
+import ai.rever.boss.plugin.sandbox.notification.ToastAction
+import ai.rever.boss.plugin.sandbox.notification.ToastDuration
+import ai.rever.boss.plugin.sandbox.notification.ToastMessage
+import ai.rever.boss.plugin.sandbox.notification.ToastType
+import ai.rever.boss.window.MenuActionsHandler
+import ai.rever.boss.window.NativeTitleBarAction
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 
 @Composable
-internal actual fun AppSharingChromeVisible(windowId: String): Boolean {
+internal actual fun AppSharingActive(windowId: String): Boolean {
     val state by AppSharingService.state.collectAsState()
-    return state.hasChrome(windowId)
+    return windowId in state.activeWindowIds
 }
 
-/** Reserves real layout space below the title bar and above browser surfaces. */
 @Composable
-internal actual fun AppSharingChrome(
+internal actual fun AppSharingTitleBarAction(
     windowId: String,
-    startInset: Dp,
+    shareTab: (() -> Unit)?,
+): NativeTitleBarAction {
+    val state by AppSharingService.state.collectAsState()
+    val tabAction = shareTab?.let { NativeTitleBarAction("browser_share", "Share tab", "qrcode", onClick = it) }
+    return NativeTitleBarAction(
+        id = "sharing",
+        label = "Sharing",
+        symbol = "square.and.arrow.up",
+        active = windowId in state.activeWindowIds,
+        menu = listOfNotNull(tabAction) + appWindowSharingActions(windowId, state),
+        onClick = {},
+    )
+}
+
+internal fun appWindowSharingActions(
+    windowId: String,
+    state: AppSharingState,
+): List<NativeTitleBarAction> =
+    listOfNotNull(
+        NativeTitleBarAction(
+            id = "share_app_window",
+            label = "Share BossConsole Window",
+            active = windowId in state.activeWindowIds,
+            enabled = !state.busy && windowId !in state.activeWindowIds,
+            localOnly = true,
+            onClick = { AppSharingService.start(windowId) },
+        ),
+        NativeTitleBarAction(
+            id = "share_selected_app_windows",
+            label = "Share Selected BossConsole Windows",
+            enabled =
+                !state.busy && state.selectedWindowIds.isNotEmpty() &&
+                    state.selectedWindowIds != state.activeWindowIds,
+            localOnly = true,
+            onClick = { AppSharingService.startSelectedWindows() },
+        ),
+        NativeTitleBarAction(
+            id = "stop_app_sharing",
+            label = if (state.activeWindowIds.isEmpty()) "Cancel BossConsole Sharing" else "Stop BossConsole Sharing",
+            onClick = { AppSharingService.stop() },
+        ).takeIf { state.busy || state.activeWindowIds.isNotEmpty() },
+        NativeTitleBarAction(
+            id = "app_sharing_settings",
+            label = "Sharing Settings",
+            onClick = { MenuActionsHandler.triggerOpenSettings(windowId, "SHARING") },
+        ),
+    )
+
+@Composable
+internal actual fun AppSharingNotifications(
+    windowId: String,
+    toastState: PluginToastState,
 ) {
     val state by AppSharingService.state.collectAsState()
-    val colors = BossTheme.colors
-    if (state.hasChrome(windowId)) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .background(colors.panel)
-                .heightIn(min = TRAFFIC_LIGHT_HEIGHT)
-                .padding(start = startInset + 12.dp, end = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(
-                state.status,
-                color = colors.textPrimary,
-                fontSize = 12.sp,
-                modifier = Modifier.weight(1f),
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
+    val sharing = windowId in state.activeWindowIds
+    val status = state.status.takeIf { sharing || state.statusWindowId == windowId }.orEmpty()
+    val statusId = "boss-app-sharing-$windowId"
+    val controlId = "boss-app-control-$windowId"
+    LaunchedEffect(toastState, sharing, status) {
+        toastState.dismiss(statusId)
+        if (status.isNotBlank()) {
+            toastState.show(
+                ToastMessage(
+                    id = statusId,
+                    type = if (sharing) ToastType.INFO else ToastType.WARNING,
+                    title = if (sharing) "Sharing BossConsole" else "BossConsole sharing",
+                    message = status,
+                    action = if (sharing) ToastAction("Stop sharing") { AppSharingService.stop() } else null,
+                    duration = if (sharing) ToastDuration.INDEFINITE else ToastDuration.LONG,
+                ),
             )
-            if (state.controller) {
-                TextButton(
-                    onClick = { AppSharingService.takeBackControl() },
-                ) { Text("Take back control", color = colors.signal) }
-            }
-            if (windowId in state.activeWindowIds) {
-                TextButton(onClick = { AppSharingService.stop() }) { Text("Stop sharing", color = colors.signal) }
-            } else {
-                TextButton(onClick = { AppSharingService.dismissStatus() }) {
-                    Text("Dismiss", color = colors.signal)
-                }
-            }
+        }
+    }
+    LaunchedEffect(toastState, sharing, state.controller) {
+        toastState.dismiss(controlId)
+        if (sharing && state.controller) {
+            toastState.show(
+                ToastMessage(
+                    id = controlId,
+                    type = ToastType.INFO,
+                    title = "Remote control active",
+                    message = "Another device is controlling this BossConsole window.",
+                    action = ToastAction("Take back control") { AppSharingService.takeBackControl() },
+                    duration = ToastDuration.INDEFINITE,
+                ),
+            )
+        }
+    }
+    DisposableEffect(toastState, windowId) {
+        onDispose {
+            toastState.dismiss(statusId)
+            toastState.dismiss(controlId)
         }
     }
 }
-
-private fun AppSharingState.hasChrome(id: String): Boolean = id in activeWindowIds || statusWindowId == id

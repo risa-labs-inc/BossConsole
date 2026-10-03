@@ -2,6 +2,7 @@ package ai.rever.boss.window
 
 import ai.rever.boss.window.MacToolbarRuntime.number
 import ai.rever.boss.window.MacToolbarRuntime.pointer
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.ui.awt.ComposeWindow
 import com.sun.jna.Pointer
 import org.junit.jupiter.api.Test
@@ -67,6 +68,125 @@ class MacSidebarToolbarSmokeTest {
             onAppKit { Unit }
             SwingUtilities.invokeAndWait { windows.forEach { it.dispose() } }
         }
+    }
+
+    @Test
+    fun `sharing keeps the native toolbar installed for remote input`() {
+        val windows = mutableListOf<ComposeWindow>()
+        val sharing = androidx.compose.runtime.mutableStateOf(false)
+        try {
+            SwingUtilities.invokeAndWait {
+                repeat(2) { index ->
+                    val window =
+                        ComposeWindow().apply {
+                            focusableWindowState = false
+                            setSize(640, 180)
+                        }
+                    val sidebar = NativeTitleBarAction("sidebar", "Sidebar", symbol = "sidebar.left", onClick = {})
+                    window.setContent {
+                        androidx.compose.runtime.CompositionLocalProvider(
+                            ai.rever.boss.plugin.browser.LocalAwtWindow provides window,
+                        ) {
+                            NativeSidebarTitleBar(
+                                "Synthetic toolbar",
+                                listOf(sidebar),
+                                index == 0 && sharing.value,
+                            )
+                        }
+                    }
+                    window.isVisible = true
+                    windows.add(window)
+                }
+            }
+            awaitToolbar(windows[0].windowHandle, true)
+            awaitToolbar(windows[1].windowHandle, true)
+            val firstId = toolbarIdentifier(windows[0].windowHandle)
+            val secondId = toolbarIdentifier(windows[1].windowHandle)
+            SwingUtilities.invokeAndWait { sharing.value = true }
+            onAppKit { Unit }
+            assertEquals(firstId, toolbarIdentifier(windows[0].windowHandle))
+            assertEquals(secondId, toolbarIdentifier(windows[1].windowHandle))
+            SwingUtilities.invokeAndWait { sharing.value = false }
+            awaitToolbar(windows[0].windowHandle, true)
+            assertEquals(firstId, toolbarIdentifier(windows[0].windowHandle))
+            assertEquals(secondId, toolbarIdentifier(windows[1].windowHandle))
+        } finally {
+            SwingUtilities.invokeAndWait { windows.forEach { it.dispose() } }
+            onAppKit { Unit }
+        }
+    }
+
+    @Test
+    fun `sharing and MCP menus tolerate the call button appearing and disappearing`() {
+        lateinit var window: ComposeWindow
+        lateinit var controller: MacSidebarToolbar
+        SwingUtilities.invokeAndWait {
+            window =
+                ComposeWindow().apply {
+                    focusableWindowState = false
+                    setSize(640, 180)
+                    setContent { }
+                    isVisible = true
+                }
+            controller = MacSidebarToolbar(window.windowHandle, {}, {})
+        }
+        try {
+            val sharing =
+                NativeTitleBarAction(
+                    "terminal_sharing",
+                    "Sharing",
+                    symbol = "square.and.arrow.up",
+                    menu = listOf(NativeTitleBarAction("share", "Share window") {}),
+                ) {}
+            val mcp =
+                NativeTitleBarAction(
+                    "terminal_mcp",
+                    "MCP",
+                    icon = androidx.compose.material.icons.Icons.Default.Settings,
+                    menu = listOf(NativeTitleBarAction("activity", "Activity log") {}),
+                ) {}
+            val call = NativeTitleBarAction("terminal_call", "Call", "phone", active = true) {}
+            for (actions in listOf(listOf(sharing, mcp), listOf(sharing, call, mcp), listOf(sharing, mcp))) {
+                controller.update("Test", actions, dark = false, background = -1, icons = emptyMap())
+                val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3)
+                while (System.nanoTime() < deadline &&
+                    onAppKit { controller.groupedMenuView("terminal_mcp") == null }
+                ) {
+                    Thread.sleep(25)
+                }
+                onAppKit {
+                    val items = pointer(pointer(Pointer(window.windowHandle), "toolbar"), "items")
+                    val byId =
+                        (0 until number(items, "count"))
+                            .map { pointer(items, "objectAtIndex:", it) }
+                            .associateBy { text(pointer(it, "itemIdentifier")) }
+                    val subitems = pointer(byId.getValue("terminal_controls"), "subitems")
+                    kotlin.test.assertNotNull(controller.groupedMenuView("terminal_mcp"))
+                    assertEquals(actions.size.toLong(), number(subitems, "count"))
+                    for (index in actions.indices) {
+                        val item = pointer(subitems, "objectAtIndex:", index.toLong())
+                        kotlin.test.assertFalse(MacToolbarRuntime.supports(item, "setShowsIndicator:"))
+                        kotlin.test.assertNotNull(pointer(item, "action"))
+                    }
+                }
+            }
+        } finally {
+            controller.close()
+            onAppKit { Unit }
+            SwingUtilities.invokeAndWait { window.dispose() }
+        }
+    }
+
+    private fun awaitToolbar(
+        handle: Long,
+        present: Boolean,
+    ) {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        while (System.nanoTime() < deadline) {
+            if (onAppKit { (pointer(Pointer(handle), "toolbar") != null) == present }) return
+            Thread.sleep(25)
+        }
+        kotlin.test.fail("Native toolbar presence must become $present")
     }
 
     private fun update(

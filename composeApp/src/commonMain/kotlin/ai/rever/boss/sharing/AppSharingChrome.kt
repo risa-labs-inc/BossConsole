@@ -1,14 +1,22 @@
 package ai.rever.boss.sharing
 
+import ai.rever.boss.plugin.sandbox.notification.PluginToastState
+import ai.rever.boss.window.NativeTitleBarAction
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.unit.Dp
 
-/** Window-scoped sharing status belongs below the scaffold's title-bar inset. */
+/** Sharing uses the window's existing notification surface without reserving layout space. */
 @Composable
-internal expect fun AppSharingChromeVisible(windowId: String): Boolean
+internal expect fun AppSharingActive(windowId: String): Boolean
 
+/** Native title-bar menu; capture-start entries require local input. */
 @Composable
-internal expect fun AppSharingChrome(
+internal expect fun AppSharingTitleBarAction(
     windowId: String,
-    startInset: Dp,
+    shareTab: (() -> Unit)?,
+): NativeTitleBarAction
+
+@Composable
+internal expect fun AppSharingNotifications(
+    windowId: String,
+    toastState: PluginToastState,
 )

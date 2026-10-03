@@ -1,10 +1,59 @@
 // Async dependency fixtures implement production Promise interfaces.
 // deno-lint-ignore-file require-await
 import { assert, assertEquals } from "@std/assert";
-import { ApiError, createApp, type Dependencies } from "./app.ts";
+import {
+  ApiError,
+  createApp,
+  type Dependencies,
+  productionDependencies,
+} from "./app.ts";
 const owner = "11111111-1111-4111-8111-111111111111";
 const session = "22222222-2222-4222-8222-222222222222";
 const generation = "33333333-3333-4333-8333-333333333333";
+Deno.test("upstream auth and database outages remain retryable instead of becoming denials", async () => {
+  const original = globalThis.fetch;
+  try {
+    for (const path of ["/auth/v1/user", "/rest/v1/rpc/app_sharing_command"]) {
+      for (const status of [401, 403, 408, 429, 500, 503]) {
+        globalThis.fetch = async (input) =>
+          String(input).endsWith(path)
+            ? Response.json({}, { status })
+            : Response.json({ id: owner });
+        const response = await createApp(productionDependencies())(
+          new Request("https://api.example", {
+            method: "POST",
+            headers: {
+              Authorization: "Bearer fixture",
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              action: "controlPoll",
+              session_id: session,
+              generation,
+            }),
+          }),
+        );
+        assertEquals(
+          response.status,
+          status === 429
+            ? 429
+            : status >= 500 || status === 408
+            ? 503
+            : path.includes("auth")
+            ? 401
+            : 403,
+        );
+        if (status >= 500 || status === 408 || status === 429) {
+          assertEquals(await response.json(), {
+            error: "upstream_unavailable",
+          });
+        }
+      }
+    }
+  } finally {
+    globalThis.fetch = original;
+  }
+});
 function harness() {
   const calls: { kind: string; op: string; body: Record<string, unknown> }[] =
     [];

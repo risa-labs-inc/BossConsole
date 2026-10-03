@@ -88,6 +88,8 @@ class AppWindowCaptureNativeSmokeTest {
         }
     }
 
+    // Keep captured pixels, modal input boundaries and closing geometry in one owned-dialog lifecycle.
+    @Suppress("LongMethod")
     @Test
     fun `owned Compose dialog has captured pixels and stale surface geometry is rejected`() {
         assumeTrue(System.getenv("BOSS_TEST_APP_CAPTURE") == "1", "Native capture smoke is opt-in")
@@ -111,7 +113,9 @@ class AppWindowCaptureNativeSmokeTest {
             val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15)
             var green = false
             while (!green && System.nanoTime() < deadline) {
-                val frame = captureSurfaces(snapshot, source)
+                val frame = captureSurfaces(snapshot, source, maxDimension = 640)
+                assertTrue(frame.width <= 640 && frame.height <= 640)
+                assertEquals(snapshot, onEdt { captureSurfaceSnapshot(root) })
                 val image = ImageIO.read(ByteArrayInputStream(frame.png))
                 val px =
                     ((dialog.x + dialog.width / 2 - snapshot.x).toDouble() / snapshot.logicalWidth * frame.width)
@@ -128,12 +132,18 @@ class AppWindowCaptureNativeSmokeTest {
                 val sink = AwtAppInputSink(root, requireForeground = false)
                 sink.updateSurfaces(snapshot)
                 assertTrue(sink.isAvailable())
+                val x = (root.x + 30 - snapshot.x).toDouble() / (snapshot.logicalWidth - 1)
+                val y = (root.y + root.height / 2 - snapshot.y).toDouble() / (snapshot.logicalHeight - 1)
+                assertTrue(sink.apply(AppInputEvent.Pointer("down", x, y, 0)))
+                assertTrue(sink.apply(AppInputEvent.Pointer("up", x, y, 0)))
+                sink.releaseAll()
                 dialog.modalityType = java.awt.Dialog.ModalityType.APPLICATION_MODAL
+                val key = AppInputEvent.Key("down", "KeyA", "a", false, false, false, false)
+                assertFalse(sink.apply(key), "New modal child must block keys before the next captured frame")
                 val modalSnapshot = captureSurfaceSnapshot(root)
                 sink.updateSurfaces(modalSnapshot)
-                val x = (root.x + 30 - modalSnapshot.x).toDouble() / (modalSnapshot.logicalWidth - 1)
-                val y = (root.y + root.height / 2 - modalSnapshot.y).toDouble() / (modalSnapshot.logicalHeight - 1)
                 assertFalse(sink.apply(AppInputEvent.Pointer("down", x, y, 0)), "Modal child must block parent clicks")
+                assertFalse(sink.apply(key), "Modal child must block retained parent keyboard focus")
                 dialog.isVisible = false
                 assertFalse(sink.isAvailable(), "Closing an owned surface must invalidate old input geometry")
             }
@@ -243,6 +253,78 @@ class AppWindowCaptureNativeSmokeTest {
             onEdt { window.dispose() }
         }
     }
+
+    @Test
+    fun `transient capture retries are bounded and permission failures stop immediately`() {
+        assumeTrue(System.getenv("BOSS_TEST_APP_CAPTURE") == "1", "Synthetic lifecycle smoke is opt-in")
+        // Recover once; stop a persistent native failure; never retry denied or lost permission.
+        for (scenario in listOf(
+            RetryScenario(-3811L, false, false, 2),
+            RetryScenario(-3811L, true, false, 4),
+            RetryScenario(-3801L, true, false, 1),
+            RetryScenario(-3811L, true, true, 1),
+        )) {
+            val window = syntheticWindow()
+            val calls = AtomicInteger()
+            val delivered = AtomicInteger()
+            val stopped = AtomicInteger()
+            val done = CountDownLatch(1)
+            val monitor =
+                object : AppCaptureSessionMonitor {
+                    override fun supported() = true
+
+                    override fun watch(onUnavailable: () -> Unit) = AutoCloseable { }
+                }
+            val source =
+                object : ExactWindowFrameSource {
+                    override fun available() = !scenario.permissionLost || calls.get() == 0
+
+                    override fun capture(
+                        nativeHandle: Long,
+                        processId: Long,
+                        width: Int,
+                        height: Int,
+                    ): NativeWindowFrame {
+                        val count = calls.incrementAndGet()
+                        if (scenario.persistent || count == 1) {
+                            val domain = "com.apple.ScreenCaptureKit.SCStreamErrorDomain"
+                            val failure = NativeAppCaptureException(domain, scenario.code)
+                            throw java.util.concurrent.ExecutionException(failure)
+                        }
+                        return NativeWindowFrame(byteArrayOf(1), width, height)
+                    }
+                }
+            val session =
+                ExactAppWindowCapture(source, isMac = true, sessionMonitor = monitor).start(
+                    AppCaptureTarget(UUID.randomUUID().toString(), UUID.randomUUID().toString(), window),
+                    {
+                        delivered.incrementAndGet()
+                        done.countDown()
+                    },
+                    {
+                        stopped.incrementAndGet()
+                        done.countDown()
+                    },
+                    { delivered.get() == 0 },
+                )
+            try {
+                assertTrue(done.await(5, TimeUnit.SECONDS), "Capture failed to resolve")
+                assertEquals(scenario.expectedCalls, calls.get())
+                assertEquals(if (scenario.persistent) 0 else 1, delivered.get())
+                assertEquals(if (scenario.persistent) 1 else 0, stopped.get())
+            } finally {
+                session.close()
+                onEdt { window.dispose() }
+            }
+        }
+    }
+
+    private data class RetryScenario(
+        val code: Long,
+        val persistent: Boolean,
+        val permissionLost: Boolean,
+        val expectedCalls: Int,
+    )
 
     private fun syntheticBlue(image: BufferedImage): Boolean =
         listOf(1, 2, 3).all { quarter ->

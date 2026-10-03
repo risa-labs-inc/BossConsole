@@ -28,5 +28,10 @@ Deno.test('viewer assets never serve host publisher and use strict self-only scr
  const never=()=>{throw Error('asset must not authenticate')}
  const response=await appSharingBrowser(new Request(origin+'/app-viewer/?session=11111111-1111-4111-8111-111111111111'),never)
  assertEquals(response.status,200);assertStringIncludes(response.headers.get('Content-Security-Policy')!,"worker-src 'self'")
+ const html=await response.text();assertStringIncludes(html,'id="client-metrics"');assertStringIncludes(html,'id="remote-metrics"')
+ for(const name of ['stats.mjs','performance-bar.mjs']){
+  const asset=await appSharingBrowser(new Request(origin+'/app-viewer/'+name),never)
+  assertEquals(asset.status,200);assertStringIncludes(asset.headers.get('Content-Type')!,'text/javascript')
+ }
  assertEquals((await appSharingBrowser(new Request(origin+'/app-viewer/host.mjs'),never)).status,404)
 }finally{cleanup()}})

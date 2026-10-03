@@ -129,6 +129,9 @@ class AppSharingBoundaryTest {
             val page = server.open(buildJsonObject { put("title", injected) }, true) { buildJsonObject {} }
             val response = get(URI(page.url))
             assertEquals(200, response.statusCode())
+            listOf("host.mjs", "media.mjs", "crypto.mjs", "encoded-worker.mjs").forEach { asset ->
+                assertEquals(200, get(URI(page.url).resolve(asset)).statusCode(), asset)
+            }
             assertFalse(response.body().contains(injected))
             assertFalse(response.body().contains("<script>alert('unsafe')"))
             val bootstrap = response.body().substringAfter("window.__bossAppShareConfig=").substringBefore(";</script>")
@@ -178,6 +181,22 @@ class AppSharingBoundaryTest {
     }
 
     @Test
+    fun `loopback preserves denied status and classifies transport failures as unavailable`() {
+        AppSharingAssets().use { server ->
+            val errors =
+                listOf(AppSharingException("session_retired", 409), java.io.IOException("private transport detail"))
+            errors.forEachIndexed { index, error ->
+                val page = server.open(buildJsonObject {}, true) { throw error }
+                val uri = URI(page.url)
+                val response = post(uri.resolve("rpc"), "${uri.scheme}://${uri.authority}", uri.path.split('/')[1])
+                assertEquals(if (index == 0) 409 else 503, response.statusCode())
+                assertFalse(response.body().contains("private transport detail"))
+                page.close()
+            }
+        }
+    }
+
+    @Test
     fun `idle pages expire while recently used pages retain authority`() {
         var time = 0L
         AppSharingAssets { time }.use { server ->
@@ -190,6 +209,27 @@ class AppSharingBoundaryTest {
             assertEquals(200, get(URI(live.url)).statusCode())
             time = TimeUnit.SECONDS.toNanos(242)
             assertEquals(404, get(URI(live.url)).statusCode())
+        }
+    }
+
+    @Test
+    fun `unauthorized requests cannot keep an idle page alive or resurrect its mailbox`() {
+        val time =
+            java.util.concurrent.atomic
+                .AtomicLong()
+        AppSharingAssets(time::get).use { server ->
+            val page = server.open(buildJsonObject {}, true) { buildJsonObject {} }
+            val uri = URI(page.url)
+            val origin = "${uri.scheme}://${uri.authority}"
+            val token = uri.path.split('/')[1]
+            time.set(TimeUnit.SECONDS.toNanos(90))
+            assertEquals(403, post(uri.resolve("raw-frame"), origin, "wrong-token").statusCode())
+            assertEquals(403, post(uri.resolve("rpc"), "https://attacker.invalid", token).statusCode())
+            time.set(TimeUnit.SECONDS.toNanos(121))
+            assertEquals(404, get(uri).statusCode())
+            val retired = page.rawFrames.latest()
+            page.rawFrames.offer(null)
+            assertEquals(retired, page.rawFrames.latest())
         }
     }
 
@@ -211,6 +251,51 @@ class AppSharingBoundaryTest {
     }
 
     private val client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()
+
+    @Test fun `raw frames require host capability origin and retire with the page`() {
+        AppSharingAssets().use { server ->
+            val page = server.open(buildJsonObject {}, true) { buildJsonObject {} }
+            val uri = URI(page.url)
+            val origin = "${uri.scheme}://${uri.authority}"
+            val token = uri.path.split('/')[1]
+            val raw = uri.resolve("raw-frame")
+            val pixels = byteArrayOf(10, 20, 30, -1, 40, 50, 60, -1)
+            val geometry = AppSurfaceSnapshot(emptyList(), 0, 0, 2, 1, 2, 1)
+            page.rawFrames.offer(AppRawCapturedFrame(AppRawWindowFrame(pixels, 2, 1), 9, geometry))
+            assertEquals(403, post(raw, "https://attacker.invalid", token).statusCode())
+            assertEquals(403, post(raw, origin, "wrong-token").statusCode())
+            val response =
+                HttpClient.newHttpClient().send(
+                    HttpRequest
+                        .newBuilder(raw)
+                        .header("Origin", origin)
+                        .header("X-Boss-App-Token", token)
+                        .header("X-Boss-App-Frame-Rate", "60")
+                        .header("X-Boss-App-Pixel-Format", "NV12")
+                        .POST(HttpRequest.BodyPublishers.noBody())
+                        .build(),
+                    HttpResponse.BodyHandlers.ofByteArray(),
+                )
+            assertEquals(200, response.statusCode())
+            assertTrue(pixels.contentEquals(response.body()))
+            assertEquals("BGRA", response.headers().firstValue("X-Boss-App-Pixel-Format").orElseThrow())
+            assertEquals("NV12", page.rawFrames.pixelFormat)
+            assertEquals(60, page.rawFrames.frameRate)
+            assertEquals(403, post(raw, origin, "wrong-token").statusCode())
+            assertEquals(60, page.rawFrames.frameRate)
+            assertEquals("9", response.headers().firstValue("X-Boss-App-Revision").orElseThrow())
+            assertEquals("application/octet-stream", response.headers().firstValue("Content-Type").orElseThrow())
+            val viewer = server.open(buildJsonObject {}, false) { buildJsonObject {} }
+            val viewerUri = URI(viewer.url)
+            assertEquals(403, post(viewerUri.resolve("raw-frame"), origin, viewerUri.path.split('/')[1]).statusCode())
+            page.rawFrames.offer(null)
+            assertEquals(204, post(raw, origin, token).statusCode())
+            assertEquals(30, page.rawFrames.frameRate) // Older publishers omit the optional rate header.
+            assertEquals("BGRA", page.rawFrames.pixelFormat)
+            page.close()
+            assertEquals(404, post(raw, origin, token).statusCode())
+        }
+    }
 
     private fun get(uri: URI): HttpResponse<String> =
         client.send(

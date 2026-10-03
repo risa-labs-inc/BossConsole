@@ -91,7 +91,8 @@ internal class AppSharingSfuFixture(
     private val origin = "http://127.0.0.1:${server.address.port}"
     val baseUrl = origin + prefix
     private val testAssets = setOf("sfu-smoke.html", "sfu-smoke.mjs")
-    private val productionAssets = setOf("bridge.mjs", "media.mjs", "control.mjs", "crypto.mjs", "encoded-worker.mjs")
+    private val productionAssets =
+        setOf("bridge.mjs", "media.mjs", "control.mjs", "crypto.mjs", "encoded-worker.mjs", "stats.mjs", "recovery.mjs")
     private val actions =
         setOf(
             "register",

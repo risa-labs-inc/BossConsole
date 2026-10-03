@@ -19,6 +19,7 @@ import java.time.Duration
 
 internal class AppSharingException(
     val reason: String,
+    val status: Int? = null,
 ) : IllegalStateException(reason)
 
 /** Host identity stays in the host; trusted viewer assets receive scoped RPC capabilities. */
@@ -41,6 +42,17 @@ internal class AppSharingBackend(
             .connectTimeout(Duration.ofSeconds(10))
             .followRedirects(HttpClient.Redirect.NEVER)
             .build()
+
+    // Never surface raw bodies: descriptors carry private URLs and media keys.
+    private fun responseError(
+        status: Int,
+        parsed: JsonObject?,
+    ): String {
+        val serviceCode = parsed?.get("code")?.let { runCatching { it.jsonPrimitive.contentOrNull }.getOrNull() }
+        if (status == 404 && serviceCode == "NOT_FOUND") return "service_not_deployed"
+        val code = parsed?.get("error")?.let { runCatching { it.jsonPrimitive.contentOrNull }.getOrNull() }
+        return code?.takeIf { it.matches(Regex("[a-z_]{1,80}")) } ?: "service_unavailable"
+    }
 
     suspend fun call(
         owner: String,
@@ -70,9 +82,7 @@ internal class AppSharingBackend(
             if (identity()?.first != owner) throw AppSharingException("account_changed")
             val parsed = runCatching { supabaseJson.parseToJsonElement(bytes.decodeToString()).jsonObject }.getOrNull()
             if (response.statusCode() !in 200..299) {
-                // Never surface raw bodies: descriptors carry private URLs and media keys.
-                val code = parsed?.get("error")?.let { runCatching { it.jsonPrimitive.contentOrNull }.getOrNull() }
-                throw AppSharingException(code?.takeIf { it.matches(Regex("[a-z_]{1,80}")) } ?: "service_unavailable")
+                throw AppSharingException(responseError(response.statusCode(), parsed), response.statusCode())
             }
             parsed ?: throw AppSharingException("invalid_response")
         }

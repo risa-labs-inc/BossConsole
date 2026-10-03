@@ -28,30 +28,55 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 
+/** The system capture indicator can change without a Compose state update. */
+@Composable
+private fun ObserveSharingWindowControls(
+    controller: MacSidebarToolbar?,
+    sharing: Boolean,
+) {
+    LaunchedEffect(controller, sharing) {
+        while (sharing && controller != null) {
+            controller.refreshSharingWindowControls()
+            delay(250)
+        }
+    }
+}
+
 /** True only after AppKit installed and measured the toolbar; callers keep their fallback until then. */
 @Composable
 internal actual fun NativeSidebarTitleBar(
     title: String,
     actions: List<NativeTitleBarAction>,
+    sharing: Boolean,
 ): Boolean {
-    val window = (LocalAwtWindow.current as? ComposeWindow)?.takeIf { SystemUtils.isMacOS } ?: return false
+    val currentWindow = LocalAwtWindow.current as? ComposeWindow
+    val window = currentWindow?.takeIf { SystemUtils.isMacOS } ?: return false
     val currentActions by rememberUpdatedState(actions)
     var controller by remember(window) { mutableStateOf<MacSidebarToolbar?>(null) }
     var headerHeight by remember(window) { mutableStateOf<Double?>(null) }
+    var remoteMenu by remember(window) { mutableStateOf<NativeToolbarMenuRequest?>(null) }
     LaunchedEffect(window) {
         while (!window.isShowing || window.windowHandle == 0L) delay(16)
         controller =
-            MacSidebarToolbar(window.windowHandle, { headerHeight = it }) { id ->
-                currentActions
-                    .flatMap { listOf(it) + it.menu.orEmpty() + it.contextMenu }
-                    .find { it.id == id }
-                    ?.onClick
-                    ?.invoke()
-            }
+            MacSidebarToolbar(
+                window.windowHandle,
+                { headerHeight = it },
+                onAction = { id ->
+                    currentActions
+                        .flatMap { listOf(it) + it.menu.orEmpty() + it.contextMenu }
+                        .find { it.id == id }
+                        ?.onClick
+                        ?.invoke()
+                },
+                onRemoteMenu = { remoteMenu = it },
+            )
     }
     val currentController = controller
     NativeBrowserFieldHosting(currentController, actions, headerHeight != null)
     NativeAddressSuggestions(currentController, actions)
+    if (sharing) remoteMenu?.let { NativeRemoteToolbarMenu(it) { remoteMenu = null } }
+    LaunchedEffect(sharing) { if (!sharing) remoteMenu = null }
+    ObserveSharingWindowControls(currentController, sharing)
     DisposableEffect(currentController) { onDispose { currentController?.close() } }
     val background =
         (if (sidebarGlassEnabled) BossTheme.colors.panel else BossTheme.colors.raised)
@@ -66,6 +91,7 @@ internal actual fun NativeSidebarTitleBar(
     // Compose owns the two glass fills; an NSWindow color would add a third layer.
     val nativeBackground = if (glass.installed) Color.Transparent else background
     SideEffect {
+        currentController?.remoteInput?.enabled = sharing
         currentController?.update(title, actions, background.luminance() < 0.5f, nativeBackground.toArgb(), icons)
     }
     headerHeight?.let { GlassTitleBarInset(it, background, actions.firstOrNull { action -> action.id == "sidebar" }) }

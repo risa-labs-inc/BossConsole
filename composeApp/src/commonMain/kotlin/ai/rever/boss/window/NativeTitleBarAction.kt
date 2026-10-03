@@ -10,6 +10,8 @@ internal data class NativeTitleBarAction(
     val symbol: String? = null,
     val active: Boolean = false,
     val enabled: Boolean = true,
+    /** Capture consent and other local-only actions cannot be invoked by shared-window input. */
+    val localOnly: Boolean = false,
     val textInput: NativeTitleBarTextInput? = null,
     val icon: ImageVector? = null,
     val contextMenu: List<NativeTitleBarAction> = emptyList(),
