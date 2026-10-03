@@ -75,28 +75,33 @@ C++20 to select supported standard coroutines in current C++/WinRT/MSVC.
 
 ## Hosted runtime evidence
 
-Manual [run 37100547159](https://github.com/risa-labs-inc/BossConsole/actions/runs/37100547159)
-at commit `5a4b91e46` actually ran the synthetic fixture in unlocked interactive
-session 2 on both architectures; these were not skipped tests. On Windows 11
-ARM64 it passed exact-source capture through a red occluder, green-to-blue GPU
-updates, rate/framing bounds, invalid source rejection, stalled reader shutdown,
-clean geometry exit 75, and terminal destruction exit 72. Two preceding manual
-runs also passed after the synthetic window stopped letting GDI repaint its GPU
-content. The adapter was Microsoft Basic Render Driver, so these results validate
-functional capture, not physical GPU performance or the actual BossConsole app.
+Manual [run 37100783220](https://github.com/risa-labs-inc/BossConsole/actions/runs/37100783220)
+at commit `60521beb8` passed the actual synthetic fixture on both hosted Windows
+Server 2025 x64 and Windows 11 ARM64, in unlocked interactive session 2. These
+were not skipped tests. Both captured green pixels through the red occluder and
+then the blue GPU source update. The fixture also passed rate/framing bounds,
+invalid source rejection, stalled reader shutdown, clean geometry exit 75, and
+terminal destruction exit 72. Runtime was 1.20 s on x64 and 1.39 s on ARM64.
+The adapter was Microsoft Basic Render Driver on both, so this proves functional
+capture on those runners, not physical GPU performance or the actual BossConsole
+app.
 
-On hosted x64 Windows Server 2025 Datacenter build 26100, the production capability
-probe succeeded, but `GraphicsCaptureItem CreateForWindow` returned
-`E_INVALIDARG (0x80070057)` before the renderer or first frame. The fixture's exact
-owned window was visible, non-minimized, non-cloaked, on a monitor, with display
-affinity zero and DWM composition enabled. This is an unresolved runtime failure,
-not a successful or unsupported/skipped result. The next controlled fixture probe
-uses a normal `WS_OVERLAPPEDWINDOW` selected root with the `WS_EX_APPWINDOW`
-extended style, shown with
-`SW_SHOWNOACTIVATE`; prior failures used a `WS_EX_NOACTIVATE` selected root.
-No production source validation, capture authority, or pixel assertions have
-been relaxed to accommodate the runner. Actual Windows BossConsole, mixed DPI,
-owned dialogs, and session-transition testing remain required.
+The selected fixture is a normal `WS_OVERLAPPEDWINDOW` root with extended
+`WS_EX_APPWINDOW`, shown with `SW_SHOWNOACTIVATE`. Diagnostics confirmed it
+remained out of the foreground, exact-owned, non-minimized, non-cloaked, with
+display affinity zero and DWM composition enabled. The unrelated occluder
+retained `WS_EX_NOACTIVATE`. No foreground activation, global input, or system
+settings were needed.
+
+Earlier x64 [run 37100547159](https://github.com/risa-labs-inc/BossConsole/actions/runs/37100547159)
+rejected the fixture's `WS_EX_NOACTIVATE`, non-`WS_EX_APPWINDOW` source at
+`GraphicsCaptureItem CreateForWindow` with `E_INVALIDARG (0x80070057)`, before
+the renderer or first frame. ARM64 accepted that source setup. Matching the
+selected synthetic source to a normal app root resolved the x64 fixture failure;
+the production helper's capture path and authority checks were unchanged.
+This does not establish capture support for every owned popup or no-activate
+window style. Actual Windows BossConsole, mixed DPI, owned dialogs, and
+session-transition testing remain required.
 
 Primary API references:
 
