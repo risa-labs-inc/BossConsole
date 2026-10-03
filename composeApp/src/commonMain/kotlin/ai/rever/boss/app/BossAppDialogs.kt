@@ -144,7 +144,8 @@ internal fun BossAppDialogs(state: BossAppState) {
         ConfirmationDialog(
             title = "Plugin update available",
             message =
-                "Update \"${prompt.displayName}\" from v${prompt.currentVersion} to v${prompt.newVersion}? $applyMessage",
+                "Update \"${prompt.displayName}\" from v${prompt.currentVersion} to v${prompt.newVersion}? " +
+                    applyMessage,
             confirmText = if (restartRequired) "Install on next restart" else "Install and reload plugin",
             onDismiss = { state.pluginUpdatePrompt = null },
             onConfirm = {
