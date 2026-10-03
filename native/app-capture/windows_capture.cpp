@@ -35,6 +35,20 @@ using winrt::Windows::Graphics::DirectX::Direct3D11::IDirect3DDevice;
 using Clock = std::chrono::steady_clock;
 constexpr GUID sessionDisplayStatus {0x2b84c20e, 0xad23, 0x4ddf, {0x93, 0xdb, 0x05, 0xff, 0xbd, 0x7e, 0xfc, 0xa5}};
 
+// Diagnostics name only the API stage; never log handles, window content, or pixels.
+template <typename Operation>
+decltype(auto) captureOperation(const char* stage, Operation&& operation) {
+    try {
+        return operation();
+    } catch (const winrt::hresult_error&) {
+        std::cerr << "Capture API stage: " << stage << '\n';
+        throw;
+    }
+}
+void captureResult(const char* stage, HRESULT result) {
+    captureOperation(stage, [result] { check_hresult(result); });
+}
+
 void require(bool value, const char* message) {
     if (!value) throw std::runtime_error(message);
 }
@@ -264,9 +278,9 @@ class Renderer {
     int width_, height_;
 public:
     Renderer(int width, int height) : width_(width), height_(height) {
-        check_hresult(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+        captureResult("D3D11CreateDevice", D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
             nullptr, 0, D3D11_SDK_VERSION, device_.put(), nullptr, context_.put()));
-        context_.as<ID3D11Multithread>()->SetMultithreadProtected(TRUE);
+        captureOperation("ID3D11Multithread", [&] { context_.as<ID3D11Multithread>()->SetMultithreadProtected(TRUE); });
         static constexpr char shader[] =
             "struct V{float4 position:SV_POSITION;float2 uv:TEXCOORD0;};"
             "V vertex(uint id:SV_VertexID){V o;o.uv=float2((id<<1)&2,id&2);"
@@ -274,37 +288,39 @@ public:
             "Texture2D source:register(t0);SamplerState linearClamp:register(s0);"
             "float4 pixel(V i):SV_TARGET{return float4(source.Sample(linearClamp,i.uv).rgb,1);}";
         com_ptr<ID3DBlob> vertexCode, pixelCode;
-        check_hresult(D3DCompile(shader, sizeof(shader) - 1, nullptr, nullptr, nullptr, "vertex", "vs_4_0", 0, 0, vertexCode.put(), nullptr));
-        check_hresult(D3DCompile(shader, sizeof(shader) - 1, nullptr, nullptr, nullptr, "pixel", "ps_4_0", 0, 0, pixelCode.put(), nullptr));
-        check_hresult(device_->CreateVertexShader(vertexCode->GetBufferPointer(), vertexCode->GetBufferSize(), nullptr, vertex_.put()));
-        check_hresult(device_->CreatePixelShader(pixelCode->GetBufferPointer(), pixelCode->GetBufferSize(), nullptr, pixel_.put()));
+        captureResult("D3DCompile vertex", D3DCompile(shader, sizeof(shader) - 1, nullptr, nullptr, nullptr, "vertex", "vs_4_0", 0, 0, vertexCode.put(), nullptr));
+        captureResult("D3DCompile pixel", D3DCompile(shader, sizeof(shader) - 1, nullptr, nullptr, nullptr, "pixel", "ps_4_0", 0, 0, pixelCode.put(), nullptr));
+        captureResult("CreateVertexShader", device_->CreateVertexShader(vertexCode->GetBufferPointer(), vertexCode->GetBufferSize(), nullptr, vertex_.put()));
+        captureResult("CreatePixelShader", device_->CreatePixelShader(pixelCode->GetBufferPointer(), pixelCode->GetBufferSize(), nullptr, pixel_.put()));
         D3D11_SAMPLER_DESC sampler {};
         sampler.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
         sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
         sampler.MaxLOD = D3D11_FLOAT32_MAX;
-        check_hresult(device_->CreateSamplerState(&sampler, sampler_.put()));
+        captureResult("CreateSamplerState", device_->CreateSamplerState(&sampler, sampler_.put()));
         D3D11_TEXTURE2D_DESC output {};
         output.Width = static_cast<UINT>(width); output.Height = static_cast<UINT>(height);
         output.MipLevels = output.ArraySize = 1; output.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
         output.SampleDesc.Count = 1; output.Usage = D3D11_USAGE_DEFAULT; output.BindFlags = D3D11_BIND_RENDER_TARGET;
-        check_hresult(device_->CreateTexture2D(&output, nullptr, output_.put()));
-        check_hresult(device_->CreateRenderTargetView(output_.get(), nullptr, target_.put()));
+        captureResult("CreateTexture2D output", device_->CreateTexture2D(&output, nullptr, output_.put()));
+        captureResult("CreateRenderTargetView", device_->CreateRenderTargetView(output_.get(), nullptr, target_.put()));
         output.Usage = D3D11_USAGE_STAGING; output.BindFlags = 0; output.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-        check_hresult(device_->CreateTexture2D(&output, nullptr, staging_.put()));
+        captureResult("CreateTexture2D staging", device_->CreateTexture2D(&output, nullptr, staging_.put()));
     }
     IDirect3DDevice directDevice() const {
-        auto dxgi = device_.as<IDXGIDevice>();
+        auto dxgi = captureOperation("Query IDXGIDevice", [&] { return device_.as<IDXGIDevice>(); });
         com_ptr<IInspectable> wrapped;
-        check_hresult(CreateDirect3D11DeviceFromDXGIDevice(dxgi.get(), wrapped.put()));
-        return wrapped.as<IDirect3DDevice>();
+        captureResult("CreateDirect3D11DeviceFromDXGIDevice", CreateDirect3D11DeviceFromDXGIDevice(dxgi.get(), wrapped.put()));
+        return captureOperation("Query IDirect3DDevice", [&] { return wrapped.as<IDirect3DDevice>(); });
     }
     void read(const Direct3D11CaptureFrame& frame, const RECT& outer, const RECT& visible, std::vector<uint8_t>& bytes) {
-        auto access = frame.Surface().as<::Windows::Graphics::DirectX::Direct3D11::IDirect3DDxgiInterfaceAccess>();
+        auto access = captureOperation("Capture frame surface interface", [&] {
+            return frame.Surface().as<::Windows::Graphics::DirectX::Direct3D11::IDirect3DDxgiInterfaceAccess>();
+        });
         com_ptr<ID3D11Texture2D> source;
-        check_hresult(access->GetInterface(__uuidof(ID3D11Texture2D), source.put_void()));
+        captureResult("Capture surface GetInterface", access->GetInterface(__uuidof(ID3D11Texture2D), source.put_void()));
         D3D11_TEXTURE2D_DESC desc {};
         source->GetDesc(&desc);
-        const auto size = frame.ContentSize();
+        const auto size = captureOperation("Capture frame ContentSize", [&] { return frame.ContentSize(); });
         require(size.Width > 0 && size.Height > 0 && size.Width <= 8192 && size.Height <= 8192 &&
             desc.Width == static_cast<UINT>(size.Width) && desc.Height == static_cast<UINT>(size.Height) &&
             desc.Format == DXGI_FORMAT_B8G8R8A8_UNORM && desc.SampleDesc.Count == 1 && desc.ArraySize == 1 && desc.MipLevels == 1,
@@ -318,8 +334,8 @@ public:
         if (!sample_) {
             desc.Usage = D3D11_USAGE_DEFAULT; desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
             desc.CPUAccessFlags = 0; desc.MiscFlags = 0;
-            check_hresult(device_->CreateTexture2D(&desc, nullptr, sample_.put()));
-            check_hresult(device_->CreateShaderResourceView(sample_.get(), nullptr, texture_.put()));
+            captureResult("CreateTexture2D sample", device_->CreateTexture2D(&desc, nullptr, sample_.put()));
+            captureResult("CreateShaderResourceView", device_->CreateShaderResourceView(sample_.get(), nullptr, texture_.put()));
         }
         D3D11_TEXTURE2D_DESC sampled {};
         sample_->GetDesc(&sampled);
@@ -357,7 +373,7 @@ public:
             result = context_->Map(staging_.get(), 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped);
             if (result == DXGI_ERROR_WAS_STILL_DRAWING) std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
-        check_hresult(result);
+        captureResult("Map staging texture", result);
         for (int y = 0; y < height_; ++y) {
             std::memcpy(bytes.data() + 24 + static_cast<size_t>(y) * width_ * 4,
                 static_cast<const uint8_t*>(mapped.pData) + static_cast<size_t>(y) * mapped.RowPitch,
@@ -401,18 +417,26 @@ void stream(HWND window, DWORD parent, int width, int height, int fps, Session& 
         static_cast<int64_t>(height) * (outer.right - outer.left);
     const int64_t rounding = std::max(outer.right - outer.left, outer.bottom - outer.top);
     require(aspectError >= -rounding && aspectError <= rounding, "native window aspect disagrees with requested geometry");
-    auto factory = get_activation_factory<GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
+    auto factory = captureOperation("GraphicsCaptureItem activation factory", [] {
+        return get_activation_factory<GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
+    });
     GraphicsCaptureItem item {nullptr};
-    check_hresult(factory->CreateForWindow(window, guid_of<GraphicsCaptureItem>(), put_abi(item)));
-    require(item.Size().Width > 0 && item.Size().Height > 0 && item.Size().Width <= 8192 && item.Size().Height <= 8192,
+    captureResult("GraphicsCaptureItem CreateForWindow", factory->CreateForWindow(window, guid_of<GraphicsCaptureItem>(), put_abi(item)));
+    const auto itemSize = captureOperation("GraphicsCaptureItem Size", [&] { return item.Size(); });
+    require(itemSize.Width > 0 && itemSize.Height > 0 && itemSize.Width <= 8192 && itemSize.Height <= 8192,
         "capture item exceeds source bounds");
     auto closed = std::make_shared<std::atomic<bool>>(false);
-    auto closedToken = item.Closed([closed](const auto&, const auto&) { closed->store(true); });
+    auto closedToken = captureOperation("GraphicsCaptureItem Closed subscription", [&] {
+        return item.Closed([closed](const auto&, const auto&) { closed->store(true); });
+    });
     Renderer renderer(width, height);
-    auto pool = Direct3D11CaptureFramePool::CreateFreeThreaded(renderer.directDevice(), DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, item.Size());
-    auto capture = pool.CreateCaptureSession(item);
-    capture.IsCursorCaptureEnabled(false);
-    capture.StartCapture();
+    auto pool = captureOperation("Direct3D11CaptureFramePool CreateFreeThreaded", [&] {
+        return Direct3D11CaptureFramePool::CreateFreeThreaded(renderer.directDevice(),
+            DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, itemSize);
+    });
+    auto capture = captureOperation("CreateCaptureSession", [&] { return pool.CreateCaptureSession(item); });
+    captureOperation("Disable capture cursor", [&] { capture.IsCursorCaptureEnabled(false); });
+    captureOperation("StartCapture", [&] { capture.StartCapture(); });
     std::vector<uint8_t> bytes(24 + static_cast<size_t>(width) * height * 4);
     std::memcpy(bytes.data(), "BSC1", 4);
     put32(bytes.data() + 4, static_cast<uint32_t>(width));
@@ -438,7 +462,7 @@ void stream(HWND window, DWORD parent, int width, int height, int fps, Session& 
             // Free-threaded WGC keeps only two native buffers. Drain at most those
             // two; never let a faster producer create an unbounded processing loop.
             for (int count = 0; count < 2; ++count) {
-                auto next = pool.TryGetNextFrame();
+                auto next = captureOperation("TryGetNextFrame", [&] { return pool.TryGetNextFrame(); });
                 if (!next) break;
                 if (latest) latest.Close();
                 latest = std::move(next);
