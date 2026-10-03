@@ -23,7 +23,7 @@ internal class MacToolbarAddressField {
         val view = field ?: create(item, target)
         field = view
         val changedBrowser = identity != input.identity
-        if (changedBrowser) send(pointer(view, "window"), "makeFirstResponder:", null)
+        if (changedBrowser) editing.releaseForPage()
         editing.view = view
         editing.update(input, changedBrowser)
         claimEditorFocus()

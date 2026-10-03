@@ -120,6 +120,7 @@ class MacBrowserAddressFocusSmokeTest {
             val focusLossesBeforeClick = onEdt { lostFocus.get() }
             clickPage(browser)
             await { !nativeAddressOwnsBrowserKeys(identity) }
+            onAppKit { assertContentResponder(controller) }
             type(browser, window, 'p')
             await { frame.executeJavaScript<String>("field.value") == "p" }
             assertEquals("u", onAppKit { addressText(controller) })
@@ -155,6 +156,14 @@ class MacBrowserAddressFocusSmokeTest {
             onAppKit {
                 assertFalse(nativeAddressOwnsBrowserKeys(identity))
                 assertFalse(nativeAddressOwnsBrowserKeys("next-browser"))
+                assertContentResponder(controller)
+            }
+            controller.focusAddress()
+            onAppKit { assertTrue(nativeAddressOwnsBrowserKeys("next-browser")) }
+            onAppKit {
+                assertTrue(controller.addressField.editing.command("insertNewline:", false))
+                assertFalse(nativeAddressOwnsBrowserKeys("next-browser"))
+                assertContentResponder(controller)
             }
             controller.focusAddress()
             onAppKit { assertTrue(nativeAddressOwnsBrowserKeys("next-browser")) }
@@ -231,6 +240,13 @@ class MacBrowserAddressFocusSmokeTest {
 
     private fun addressText(controller: MacSidebarToolbar): String =
         pointer(pointer(controller.addressField.editing.view, "stringValue"), "UTF8String")?.getString(0).orEmpty()
+
+    private fun assertContentResponder(controller: MacSidebarToolbar) {
+        val nativeWindow = pointer(controller.addressField.editing.view, "window")
+        val responder = pointer(nativeWindow, "firstResponder")
+        assertEquals(pointer(nativeWindow, "contentView"), responder)
+        assertFalse(responder == nativeWindow, "NSWindow cannot handle ordinary text without ringing the bell")
+    }
 
     private fun type(
         browser: Browser,

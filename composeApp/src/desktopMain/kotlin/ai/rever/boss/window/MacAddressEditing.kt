@@ -114,7 +114,10 @@ internal class MacAddressEditing {
             notification("end")
             return true
         }
-        val released = number(window, "makeFirstResponder:", null) != 0L
+        // A nil responder falls back to NSWindow, which beeps for ordinary text input.
+        // Return the native editor to this same window's AWT content view instead.
+        val content = pointer(window, "contentView") ?: return false
+        val released = number(window, "makeFirstResponder:", content) != 0L
         if (released) notification("end")
         return released
     }
@@ -167,7 +170,7 @@ internal class MacAddressEditing {
     fun submit() {
         val current = input ?: return
         if (typed.isBlank()) return
-        send(pointer(view, "window"), "makeFirstResponder:", null)
+        releaseForPage()
         deliver {
             val model = current.address
             if (model != null) model.onCommand("submit") else current.onSubmit(typed)
