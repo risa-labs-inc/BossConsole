@@ -19,6 +19,11 @@ of rounding; incompatible AWT/native DPI geometry fails closed.
 Resize, movement, destruction, minimization, ownership changes, or unknown frame
 geometry end the helper. Kotlin may create a new exact stream after validating
 its authorized geometry, or pause a minimized root until explicit restoration.
+Verified movement or resize of a still-live, exact owned and session-authorized
+HWND exits with code 75 before writing another frame. This permits only a bounded
+host geometry retry at a complete frame boundary. Closed or minimized windows,
+ownership/session changes, API/capture failures, and malformed or partial output
+remain terminal; code 75 never authorizes resuming a stopped share.
 WTS lock/disconnect/logoff, secure-desktop changes, suspend/resume, and display-off
 notifications end the helper permanently. Session state is checked at startup
 and before frames. An independent watchdog bounds a stalled anonymous-pipe write
@@ -57,8 +62,14 @@ still requires running this test and the actual BossConsole viewer on Windows:
 accelerated browser/Compose/terminal/editor content, owned dialogs, mixed DPI,
 resize/move/minimize/restore, session lock/unlock, secure-desktop transitions,
 display/system sleep, and controller/viewer disconnect while output is blocked.
-No Windows compilation or interactive test was available on the macOS development
-machine when this adapter was introduced.
+[Native CI run 37096968583](https://github.com/risa-labs-inc/BossConsole/actions/runs/37096968583)
+compiled and packaged both Windows x64 and ARM64 helpers and test fixtures at
+commit `b371e26c0dc4f1492ce7693f77968f40650be03c`, using MSVC with warnings as
+errors. The two noninteractive tests (invalid parent and unknown mode) passed
+on each architecture. `exact-windows-window` explicitly skipped because no
+interactive GPU session was authorized. This proves compilation and those CLI
+rejections, not capture fidelity or real BossConsole input. Windows targets use
+C++20 to select supported standard coroutines in current C++/WinRT/MSVC.
 
 Primary API references:
 

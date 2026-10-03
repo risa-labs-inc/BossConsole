@@ -37,8 +37,11 @@ size or insets are never accepted from a remote viewer. Stdin accepts four-byte 
 updates (30 or 60); EOF terminates capture. `--watch PID` keeps monitoring session
 authority even while pixels are paused for minimization or missing demand.
 `--probe PID` verifies extensions and
-session monitoring without capturing pixels. Exit is terminal, never permission
-to fall back to a display or another window.
+session monitoring without capturing pixels. Exit 75 identifies only a verified
+live source's geometry transition. The host can retry it at most three times after
+rechecking session/window authority, and only after a clean between-frame EOF;
+truncated frames, malformed protocol and every other exit remain terminal. No exit
+permits fallback to a display or another window.
 
 The adapter accepts active unlocked X11 or Wayland logind sessions only when a
 real X display and the required extensions are available. In a Wayland session,

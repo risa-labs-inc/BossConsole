@@ -125,6 +125,7 @@ int main(int argc, char** argv) {
                 scaled[right + 2] == 0 && scaled[right] == 255, "server scaling lost spatial content");
             bool rejected = false;
             try { WindowStream invalid(display, selected, getpid() + 100000, 40, 30); }
+            catch (const GeometryChanged&) { throw std::runtime_error("foreign owner was classified as retryable"); }
             catch (const std::exception&) { rejected = true; }
             require(rejected, "foreign process source admitted");
             rejected = false;
@@ -134,9 +135,60 @@ int main(int argc, char** argv) {
             XResizeWindow(display, selected, 100, 60);
             XSync(display, False);
             rejected = false;
-            try { stream.next(); }
-            catch (const std::exception&) { rejected = true; }
-            require(rejected, "resize retained stale geometry");
+            auto resizeDeadline = Clock::now() + std::chrono::seconds(3);
+            while (!rejected && Clock::now() < resizeDeadline) {
+                try { stream.next(); }
+                catch (const GeometryChanged&) { rejected = true; }
+                if (!rejected) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            require(rejected, "resize did not report its typed geometry transition");
+        }
+        {
+            auto hidden = XCreateSimpleWindow(display, root, 100, 100, 80, 60, 0, 0, 0x1256ca);
+            XMapWindow(display, hidden);
+            XSync(display, False);
+            if (std::getenv("WAYLAND_DISPLAY")) {
+                auto deadline = Clock::now() + std::chrono::seconds(3);
+                while (frameAncestor(display, hidden) == hidden && Clock::now() < deadline) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                    XSync(display, False);
+                }
+                require(frameAncestor(display, hidden) != hidden, "WM did not decorate hidden-window fixture");
+            }
+            {
+                auto region = captureRegion(display, hidden, frameAncestor(display, hidden));
+                const int outputHeight = (region.height * 40 + region.width / 2) / region.width;
+                WindowStream stream(display, hidden, getpid(), 40, outputHeight);
+                stream.next();
+                XUnmapWindow(display, hidden);
+                XSync(display, False);
+                bool terminal = false;
+                try { stream.next(); }
+                catch (const GeometryChanged&) { throw std::runtime_error("hidden window was classified as retryable"); }
+                catch (const std::exception&) { terminal = true; }
+                require(terminal, "unmapped window was not terminal");
+            }
+            XDestroyWindow(display, hidden);
+        }
+        {
+            // An unmanaged application ancestor is never a WM decoration, even
+            // when it belongs to the same process as the selected child.
+            auto ancestor = XCreateSimpleWindow(display, root, 200, 200, 80, 60, 0, 0, 0xff00ff);
+            XSetWindowAttributes attributes {};
+            attributes.override_redirect = True;
+            XChangeWindowAttributes(display, ancestor, CWOverrideRedirect, &attributes);
+            auto embedded = XCreateSimpleWindow(display, ancestor, 20, 15, 40, 30, 0, 0, 0x1256ca);
+            XMapWindow(display, embedded);
+            XMapWindow(display, ancestor);
+            XSync(display, False);
+            bool rejected = false;
+            try {
+                WindowStream invalid(display, embedded, getpid(), 40, 30, HostWindowGeometry {80, 60, 20, 20, 15, 15});
+            } catch (const GeometryChanged&) {
+                throw std::runtime_error("unmanaged ancestor was classified as retryable geometry");
+            } catch (const std::exception&) { rejected = true; }
+            require(rejected, "unmanaged application ancestor was admitted as a WM frame");
+            XDestroyWindow(display, ancestor);
         }
         XDestroyWindow(display, unrelated);
         XDestroyWindow(display, selected);

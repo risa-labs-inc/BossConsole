@@ -30,6 +30,14 @@ using Clock = std::chrono::steady_clock;
 void require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
 }
+constexpr int geometryChangedExitCode = 75;
+class GeometryChanged final : public std::runtime_error {
+public:
+    explicit GeometryChanged(const char* message) : std::runtime_error(message) {}
+};
+void requireGeometry(bool condition, const char* message) {
+    if (!condition) throw GeometryChanged(message);
+}
 uint64_t number(const char* value) {
     require(value && *value && *value != '-', "invalid argument");
     char* end = nullptr;
@@ -150,6 +158,41 @@ Window frameAncestor(Display* display, Window client) {
     throw std::runtime_error("window ancestry is unbounded");
 }
 
+Window singleWindowProperty(Display* display, Window window, Atom property) {
+    Atom actual = None;
+    int format = 0;
+    unsigned long count = 0, remaining = 0;
+    unsigned char* data = nullptr;
+    require(property != None && XGetWindowProperty(display, window, property, 0, 1, False, XA_WINDOW,
+        &actual, &format, &count, &remaining, &data) == Success, "WM identity property unavailable");
+    const bool valid = actual == XA_WINDOW && format == 32 && count == 1 && remaining == 0 && data;
+    const Window result = valid ? *reinterpret_cast<unsigned long*>(data) : None;
+    if (data) XFree(data);
+    require(valid && result != None, "WM identity property invalid");
+    return result;
+}
+
+pid_t verifiedFrameDecorator(Display* display, Window client, Window frame) {
+    if (frame == client) return windowOwner(display, client);
+    Window root = 0, parent = 0, *children = nullptr;
+    unsigned count = 0;
+    require(XQueryTree(display, frame, &root, &parent, &children, &count), "frame root unavailable");
+    if (children) XFree(children);
+    require(parent == root && frame != root, "frame is not a top-level window");
+    const Atom property = XInternAtom(display, "_NET_SUPPORTING_WM_CHECK", True);
+    const Window wm = singleWindowProperty(display, root, property);
+    require(wm != root && singleWindowProperty(display, wm, property) == wm,
+            "WM identity is stale or inconsistent");
+    Window wmRoot = 0, wmParent = 0;
+    children = nullptr;
+    require(XQueryTree(display, wm, &wmRoot, &wmParent, &children, &count), "WM identity window unavailable");
+    if (children) XFree(children);
+    require(wmRoot == root && wmParent == root, "WM identity belongs to a different root");
+    const pid_t decorator = windowOwner(display, wm);
+    verifyOwner(display, frame, decorator);
+    return decorator;
+}
+
 // The WM frame may contain decorations, but no sibling application client.
 // Stop at the selected client: its embedded browser/Compose descendants are the
 // authorized content. All other branches must belong to the frame's WM process.
@@ -172,6 +215,8 @@ CaptureRegion captureRegion(Display* display, Window client, Window frame,
     XWindowAttributes clientBounds {}, frameBounds {};
     require(XGetWindowAttributes(display, client, &clientBounds) &&
         XGetWindowAttributes(display, frame, &frameBounds), "window geometry unavailable");
+    require(clientBounds.map_state == IsViewable && frameBounds.map_state == IsViewable,
+            "window is hidden or unavailable");
     if (client == frame && !host) return {0, 0, clientBounds.width, clientBounds.height};
     int x = 0, y = 0;
     Window child = 0;
@@ -183,11 +228,11 @@ CaptureRegion captureRegion(Display* display, Window client, Window frame,
         require(host->width > 0 && host->height > 0 && host->width <= 8192 && host->height <= 8192 &&
             host->left >= 0 && host->right >= 0 && host->top >= 0 && host->bottom >= 0,
             "host window geometry invalid");
-        require(clientBounds.width + host->left + host->right == host->width &&
+        requireGeometry(clientBounds.width + host->left + host->right == host->width &&
             clientBounds.height + host->top + host->bottom == host->height,
             "host geometry does not match native client and insets");
         CaptureRegion region {x - host->left, y - host->top, host->width, host->height};
-        require(region.x >= 0 && region.y >= 0 && region.x + region.width <= frameBounds.width &&
+        requireGeometry(region.x >= 0 && region.y >= 0 && region.x + region.width <= frameBounds.width &&
             region.y + region.height <= frameBounds.height, "host crop escapes its verified frame");
         return region;
     }
@@ -266,10 +311,13 @@ public:
           hostGeometry_(hostGeometry) {
         verifyOwner(display_, client_, parent_);
         XWindowAttributes clientAttributes {};
-        require(XGetWindowAttributes(display_, client_, &clientAttributes), "client geometry unavailable");
+        require(XGetWindowAttributes(display_, client_, &clientAttributes) &&
+                clientAttributes.map_state == IsViewable, "client geometry unavailable or hidden");
         clientWidth_ = clientAttributes.width;
         clientHeight_ = clientAttributes.height;
         frame_ = frameAncestor(display_, client_);
+        // An arbitrary unmanaged ancestor is not automatically a trusted WM frame.
+        verifiedFrameDecorator(display_, client_, frame_);
         XWindowAttributes attributes {};
         require(XGetWindowAttributes(display_, frame_, &attributes) && attributes.map_state == IsViewable,
                 "window is not viewable");
@@ -287,7 +335,7 @@ public:
         // different DPI units; stretching into incompatible host dimensions is
         // neither faithful capture nor a valid pointer coordinate contract.
         const int64_t aspectError = int64_t(sourceWidth_) * height_ - int64_t(sourceHeight_) * width_;
-        require(std::abs(aspectError) <= std::max(sourceWidth_, sourceHeight_),
+        requireGeometry(std::abs(aspectError) <= std::max(sourceWidth_, sourceHeight_),
                 "host and native window aspect ratios disagree");
         XSelectInput(display_, client_, StructureNotifyMask);
         if (frame_ != client_) XSelectInput(display_, frame_, StructureNotifyMask);
@@ -331,19 +379,31 @@ public:
         if (pixmap_) XFreePixmap(display_, pixmap_);
         XCompositeUnredirectWindow(display_, frame_, CompositeRedirectAutomatic);
     }
+    [[noreturn]] void changedGeometry(const char* reason) {
+        verifyOwner(display_, client_, parent_);
+        XWindowAttributes attributes {};
+        require(XGetWindowAttributes(display_, client_, &attributes) && attributes.map_state == IsViewable,
+                "client closed or hidden during geometry change");
+        throw GeometryChanged(reason);
+    }
     bool hasChanges() {
         while (XPending(display_)) {
             XEvent event {};
             XNextEvent(display_, &event);
             if (event.type == damageEvent_ + XDamageNotify) dirty_ = true;
-            require(event.type != DestroyNotify && event.type != UnmapNotify &&
-                event.type != ReparentNotify, "window lifecycle changed");
+            require(event.type != DestroyNotify && event.type != UnmapNotify, "window lifecycle changed");
+            if (event.type == ReparentNotify) {
+                changedGeometry("owned window was reparented");
+            }
             if (event.type == ConfigureNotify && event.xconfigure.window == client_) {
-                require(event.xconfigure.width == clientWidth_ && event.xconfigure.height == clientHeight_,
-                        "client resized before its window manager frame");
+                if (event.xconfigure.width != clientWidth_ || event.xconfigure.height != clientHeight_) {
+                    changedGeometry("client resized before its window manager frame");
+                }
             }
             if (event.type == ConfigureNotify && event.xconfigure.window == frame_) {
-                require(event.xconfigure.width == frameWidth_ && event.xconfigure.height == frameHeight_, "window resized");
+                if (event.xconfigure.width != frameWidth_ || event.xconfigure.height != frameHeight_) {
+                    changedGeometry("window resized");
+                }
             }
         }
         return dirty_;
@@ -354,12 +414,12 @@ public:
         // Rearm before reading, so changes racing capture remain queued for the next frame.
         XDamageSubtract(display_, damage_, None, None);
         verifyOwner(display_, client_, parent_);
-        require(frameAncestor(display_, client_) == frame_, "window ancestry changed");
+        requireGeometry(frameAncestor(display_, client_) == frame_, "window ancestry changed");
         auto region = captureRegion(display_, client_, frame_, hostGeometry_);
-        require(region.x == sourceX_ && region.y == sourceY_ &&
+        requireGeometry(region.x == sourceX_ && region.y == sourceY_ &&
             region.width == int(sourceWidth_) && region.height == int(sourceHeight_), "window decorations changed");
         int budget = 256;
-        verifyFrameTree(display_, frame_, client_, windowOwner(display_, frame_), budget);
+        verifyFrameTree(display_, frame_, client_, verifiedFrameDecorator(display_, client_, frame_), budget);
         // Scale on the X server before readback; a 4K source does not cross the pipe
         // or enter the CPU at 4K when WebRTC only needs a smaller output. The source
         // is the verified named backing pixmap, never a screen/root drawable.
@@ -395,9 +455,9 @@ public:
         }
         XDestroyImage(image);
         verifyOwner(display_, client_, parent_);
-        require(frameAncestor(display_, client_) == frame_, "window ancestry changed during capture");
+        requireGeometry(frameAncestor(display_, client_) == frame_, "window ancestry changed during capture");
         budget = 256;
-        verifyFrameTree(display_, frame_, client_, windowOwner(display_, frame_), budget);
+        verifyFrameTree(display_, frame_, client_, verifiedFrameDecorator(display_, client_, frame_), budget);
         ++sequence_;
         put32(bytes_.data() + 16, sequence_ >> 32);
         put32(bytes_.data() + 20, sequence_ & 0xffffffff);
@@ -461,6 +521,9 @@ int main(int argc, char** argv) {
             if (stream.hasChanges()) writeFrame(stream.next(), session);
             std::this_thread::sleep_until(next);
         }
+    } catch (const GeometryChanged& failure) {
+        std::cerr << "Exact window geometry changed: " << failure.what() << '\n';
+        return geometryChangedExitCode;
     } catch (const std::exception& failure) {
         std::cerr << "Exact window capture stopped: " << failure.what() << '\n';
         return 1;

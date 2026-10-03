@@ -53,6 +53,10 @@ uint64_t number(const wchar_t* text) {
     }
     return value;
 }
+class GeometryChanged : public std::runtime_error {
+public:
+    GeometryChanged() : std::runtime_error("exact window geometry changed") {}
+};
 class Handle {
     HANDLE value_ = nullptr;
 public:
@@ -423,7 +427,13 @@ void stream(HWND window, DWORD parent, int width, int height, int fps, Session& 
             fps = readFrameRate(fps);
             verifyWindow(window, parent);
             RECT current {};
-            require(!closed->load() && GetWindowRect(window, &current) && EqualRect(&current, &outer), "capture window changed");
+            require(!closed->load() && GetWindowRect(window, &current), "capture window unavailable");
+            if (!EqualRect(&current, &outer)) {
+                authority.check();
+                verifyWindow(window, parent);
+                require(!closed->load(), "capture item closed during geometry change");
+                throw GeometryChanged();
+            }
             Direct3D11CaptureFrame latest {nullptr};
             // Free-threaded WGC keeps only two native buffers. Drain at most those
             // two; never let a faster producer create an unbounded processing loop.
@@ -438,7 +448,13 @@ void stream(HWND window, DWORD parent, int width, int height, int fps, Session& 
                 latest.Close();
                 authority.check();
                 verifyWindow(window, parent);
-                require(!closed->load() && GetWindowRect(window, &current) && EqualRect(&current, &outer), "capture window changed during frame");
+                require(!closed->load() && GetWindowRect(window, &current), "capture window unavailable during frame");
+                if (!EqualRect(&current, &outer)) {
+                    authority.check();
+                    verifyWindow(window, parent);
+                    require(!closed->load(), "capture item closed during geometry change");
+                    throw GeometryChanged();
+                }
                 ++sequence;
                 put32(bytes.data() + 16, static_cast<uint32_t>(sequence >> 32));
                 put32(bytes.data() + 20, static_cast<uint32_t>(sequence));
@@ -481,6 +497,11 @@ int wmain(int count, wchar_t** values) {
         stream(reinterpret_cast<HWND>(static_cast<uintptr_t>(handle)), static_cast<DWORD>(parentValue),
             static_cast<int>(width), static_cast<int>(height), static_cast<int>(fps), authority);
         return 0;
+    } catch (const GeometryChanged& error) {
+        // Only a still-live, session-authorized, exact owned HWND can reach this
+        // boundary, before writing a new frame. All other failures stay terminal.
+        std::cerr << error.what() << '\n';
+        return 75;
     } catch (const winrt::hresult_error& error) {
         std::cerr << "Exact window capture unavailable (HRESULT 0x" << std::hex <<
             static_cast<uint32_t>(error.code().value) << ")\n";

@@ -127,6 +127,33 @@ public:
         const BOOL readable = PeekNamedPipe(read_, nullptr, 0, nullptr, &available, nullptr);
         return readable ? available == 0 : GetLastError() == ERROR_BROKEN_PIPE;
     }
+    DWORD drainExit() {
+        const auto deadline = Clock::now() + std::chrono::seconds(2);
+        std::vector<uint8_t> pending;
+        while (Clock::now() < deadline) {
+            pump();
+            DWORD available = 0, received = 0;
+            const BOOL readable = PeekNamedPipe(read_, nullptr, 0, nullptr, &available, nullptr);
+            if (readable && available) {
+                require(pending.size() + available <= 4 * (24 + 160 * 120 * 4), "unbounded trailing capture data");
+                const size_t offset = pending.size();
+                pending.resize(offset + available);
+                require(ReadFile(read_, pending.data() + offset, available, &received, nullptr) && received == available,
+                    "trailing capture read failed");
+            } else if (ended(0)) {
+                DWORD status = 0;
+                require(GetExitCodeProcess(process_, &status) != FALSE, "capture exit status unavailable");
+                constexpr size_t packet = 24 + 160 * 120 * 4;
+                require(pending.size() % packet == 0, "geometry exit truncated a frame");
+                for (size_t offset = 0; offset < pending.size(); offset += packet) {
+                    require(std::memcmp(pending.data() + offset, "BSC1", 4) == 0, "geometry exit corrupted framing");
+                }
+                return status;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        throw std::runtime_error("capture did not end after geometry changed");
+    }
 };
 void assertColor(const std::vector<uint8_t>& pixels, int channel) {
     const auto* pixel = pixels.data() + (60 * 160 + 80) * 4;
@@ -181,8 +208,17 @@ int wmain(int count, wchar_t** values) {
         {
             Child capture(values[1], selected.handle);
             uint64_t sequence = 0; capture.frame(sequence);
+            RECT bounds {};
+            require(GetWindowRect(selected.handle, &bounds) != FALSE, "synthetic window bounds unavailable");
+            require(SetWindowPos(selected.handle, nullptr, bounds.left + 12, bounds.top + 12, 0, 0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE) != FALSE, "synthetic window move failed");
+            require(capture.drainExit() == 75, "live owned window movement must end at a clean geometry boundary");
+        }
+        {
+            Child capture(values[1], selected.handle);
+            uint64_t sequence = 0; capture.frame(sequence);
             DestroyWindow(selected.handle); selected.handle = nullptr;
-            require(capture.ended(), "destroyed selected window must terminate capture");
+            require(capture.drainExit() == 72, "destroyed selected window must remain terminal, never geometry retry");
         }
         std::cout << "PASS: exact occluded GPU content, live updates, bounded protocol/rate, parent binding, stalled output, window destruction\n";
         return 0;
