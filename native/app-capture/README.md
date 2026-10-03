@@ -4,7 +4,9 @@ The X11 helper isolates Xlib's process-global error handler from the JVM. It is
 an owned-window capture adapter, never a screen recorder: the supplied client XID
 must belong to the supplied, live parent PID according to XRes. Its topmost
 non-root ancestor is the decorated frame captured using a named XComposite
-pixmap. XDamage emits only changed frames; XRender scales into the requested
+pixmap. A decorated ancestor must belong to the actual WM, verified through the
+root/self `_NET_SUPPORTING_WM_CHECK` identity and XRes PID; an unmanaged
+application ancestor is never treated as decoration. XDamage emits only changed frames; XRender scales into the requested
 output resolution on the server before pixel readback, retaining the final changed
 frame when the window becomes idle. Reparenting, resizing, losing the client, or losing the active unlocked
 logind session terminates the helper. Kotlin retires/recreates it when the
