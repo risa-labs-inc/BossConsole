@@ -95,8 +95,12 @@ object ChromiumBootstrap {
         // Boot only: on Download the engine is not on disk yet, and the boot that follows a
         // first-run download happens once the app is running, where loading here would be no
         // quieter than JxBrowser's own load - that path keeps the original window, knowingly.
+        // The preload also records what it loaded for the native agent, which repeats it before
+        // the JVM starts its threads on the next launch; any other verdict clears that record.
         if (engineAction == FluckEngine.EngineStartupAction.Boot) {
             ChromiumToolkitPreload.preload(FluckEngine.resolveEngineDir(cacheHealthy))
+        } else {
+            ChromiumToolkitPreload.forgetNextLaunch("engine verdict $engineAction")
         }
 
         return ChromiumPreflight(engineAction = engineAction)
