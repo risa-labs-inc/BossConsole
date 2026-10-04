@@ -9,6 +9,7 @@ import java.awt.event.KeyEvent
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
 import java.lang.ref.WeakReference
+import java.util.concurrent.atomic.AtomicReference
 import javax.swing.AbstractAction
 import javax.swing.JComponent
 import javax.swing.JFrame
@@ -17,7 +18,7 @@ import javax.swing.SwingUtilities
 
 internal val fullscreenBrowserInput = FullscreenBrowserInput<Browser>()
 
-/** EDT-owned publication; Chromium reads only an immutable snapshot, never AWT state. */
+/** AWT snapshots are published on the EDT; atomic retirement also fences concurrent cleanup. */
 internal class FullscreenBrowserInput<B : Any> {
     private data class Target<B>(
         val browser: WeakReference<B>,
@@ -27,7 +28,7 @@ internal class FullscreenBrowserInput<B : Any> {
         val focused: Boolean,
     )
 
-    @Volatile private var target: Target<B>? = null
+    private val target = AtomicReference<Target<B>?>(null)
 
     fun attach(
         browser: B,
@@ -36,7 +37,7 @@ internal class FullscreenBrowserInput<B : Any> {
         focused: Boolean,
     ): Any {
         val token = Any()
-        target = Target(WeakReference(browser), owner, token, showing, focused)
+        target.set(Target(WeakReference(browser), owner, token, showing, focused))
         return token
     }
 
@@ -45,8 +46,8 @@ internal class FullscreenBrowserInput<B : Any> {
         showing: Boolean,
         focused: Boolean,
     ) {
-        target?.takeIf { it.token === token }?.let {
-            target = it.copy(showing = showing, focused = focused)
+        target.updateAndGet { current ->
+            if (current?.token === token) current.copy(showing = showing, focused = focused) else current
         }
     }
 
@@ -55,28 +56,32 @@ internal class FullscreenBrowserInput<B : Any> {
         browser: B,
         owner: String?,
     ): Boolean? {
-        val current = target?.takeIf { it.browser.get() === browser && it.showing } ?: return null
-        // A different owner must not authorize keys for the fullscreen session.
-        return current.owner == owner && current.focused
+        val current =
+            target.get()?.takeIf { it.browser.get() === browser && it.showing && it.owner == owner } ?: return null
+        // Unknown or changed owners retain their actual host focus check, never fullscreen authority.
+        return current.focused
     }
 
     fun detach(token: Any) {
-        if (target?.token === token) clear()
+        target.updateAndGet { current -> if (current?.token === token) null else current }
     }
 
     fun clear() {
-        target = null
+        target.set(null)
     }
 }
 
-/** Called after the fullscreen lifecycle checks its epoch, for both native and replacement frames. */
+/** Both epoch-checked entry paths (native frame and overlay replacement) already execute on the EDT. */
 internal fun observeFullscreenBrowserInput(
     browser: Browser,
     owner: String?,
     window: Window,
 ) {
     check(SwingUtilities.isEventDispatchThread())
-    if (owner == null) return
+    if (owner == null) {
+        fullscreenBrowserInput.clear()
+        return
+    }
     val token = fullscreenBrowserInput.attach(browser, owner, window.isShowing, window.isFocused)
     val visibility =
         object : ComponentAdapter() {

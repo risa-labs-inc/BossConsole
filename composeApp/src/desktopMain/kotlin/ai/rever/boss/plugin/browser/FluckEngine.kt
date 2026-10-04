@@ -2648,8 +2648,8 @@ object FluckEngine {
         when {
             ownerWindowId == null -> {
                 BrowserKeyEventRoute(
-                    acceptsInput = true,
-                    shortcutWindowId = fallbackFocusedWindowId,
+                    acceptsInput = fullscreenSurfaceFocused ?: true,
+                    shortcutWindowId = if (fullscreenSurfaceFocused == false) null else fallbackFocusedWindowId,
                 )
             }
 

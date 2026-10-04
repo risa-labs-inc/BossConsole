@@ -4,6 +4,7 @@ import ai.rever.boss.config.JxBrowserConfig
 import ai.rever.boss.plugin.browser.ChromiumToolkitPreload
 import ai.rever.boss.plugin.browser.FluckEngine
 import ai.rever.boss.sharing.onEdt
+import ai.rever.boss.window.BossWindowIcon
 import com.teamdev.jxbrowser.browser.Browser
 import com.teamdev.jxbrowser.browser.callback.input.ReleaseKeyCallback
 import com.teamdev.jxbrowser.engine.Engine
@@ -56,6 +57,7 @@ class FullscreenBrowserInputSmokeTest {
         val window =
             onEdt {
                 JFrame("Synthetic detached browser input").apply {
+                    iconImages = BossWindowIcon.images
                     focusableWindowState = false
                     setBounds(120, 600, 400, 160)
                     add(BrowserView.newInstance(browser))
@@ -70,7 +72,7 @@ class FullscreenBrowserInputSmokeTest {
             page.executeJavaScript<Any?>("globalThis.keys=0;document.addEventListener('keydown',()=>keys++);")
             browser.focus()
             press(browser)
-            assertEquals(0.0, page.executeJavaScript<Double>("keys"))
+            assertKeysStay(browser, 0.0)
             onEdt {
                 val event = WindowEvent(window, WindowEvent.WINDOW_GAINED_FOCUS)
                 window.windowFocusListeners.forEach { it.windowGainedFocus(event) }
@@ -102,7 +104,7 @@ class FullscreenBrowserInputSmokeTest {
                 assertEquals(1, exits)
             }
             press(browser)
-            assertEquals(1.0, page.executeJavaScript<Double>("keys"))
+            assertKeysStay(browser, 1.0)
             onEdt { window.isVisible = false }
             onEdt { Unit }
             assertNull(fullscreenBrowserInput.focusFor(browser, "unregistered-host"))
@@ -113,6 +115,22 @@ class FullscreenBrowserInputSmokeTest {
             }
             engine.close()
         }
+    }
+
+    private fun assertKeysStay(
+        browser: Browser,
+        expected: Double,
+    ) {
+        val page = browser.mainFrame().orElseThrow()
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(250)
+        do {
+            assertEquals(
+                expected,
+                page.executeJavaScript<Double>("keys"),
+                "Rejected keys must remain absent after renderer delivery settles",
+            )
+            Thread.sleep(25)
+        } while (System.nanoTime() < deadline)
     }
 
     private fun press(browser: Browser) {

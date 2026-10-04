@@ -22,9 +22,49 @@ class FullscreenBrowserInputTest {
             )
         assertTrue(route.acceptsInput)
         assertEquals("host", route.shortcutWindowId)
-        assertEquals(false, input.focusFor(browser, "another-window"))
-        assertEquals(false, input.focusFor(browser, null))
+        assertNull(input.focusFor(browser, "another-window"))
+        assertNull(input.focusFor(browser, null))
         assertNull(input.focusFor(Any(), "host"))
+    }
+
+    @Test
+    fun `owner changes require the new hosts actual focus`() {
+        val browser = Any()
+        val input = FullscreenBrowserInput<Any>()
+        input.attach(browser, "old-host", showing = true, focused = true)
+        for (focused in listOf(true, false)) {
+            val route =
+                FluckEngine.resolveBrowserKeyEventRoute(
+                    "new-host",
+                    focused,
+                    null,
+                    input.focusFor(browser, "new-host"),
+                )
+            assertEquals(focused, route.acceptsInput)
+            assertEquals(if (focused) "new-host" else null, route.shortcutWindowId)
+        }
+    }
+
+    @Test
+    fun `an explicit unfocused surface rejects unowned input without routing a shortcut`() {
+        val route = FluckEngine.resolveBrowserKeyEventRoute(null, false, "legacy-window", false)
+        assertFalse(route.acceptsInput)
+        assertNull(route.shortcutWindowId)
+        val focused = FluckEngine.resolveBrowserKeyEventRoute(null, false, "legacy-window", true)
+        assertTrue(focused.acceptsInput)
+        assertEquals("legacy-window", focused.shortcutWindowId)
+    }
+
+    @Test
+    fun `unowned browsers retain the legacy shortcut fallback without inheriting a fullscreen snapshot`() {
+        val browser = Any()
+        val input = FullscreenBrowserInput<Any>()
+        input.attach(browser, "host", showing = true, focused = false)
+        val focus = input.focusFor(browser, null)
+        assertNull(focus)
+        val route = FluckEngine.resolveBrowserKeyEventRoute(null, false, "legacy-window", focus)
+        assertTrue(route.acceptsInput)
+        assertEquals("legacy-window", route.shortcutWindowId)
     }
 
     @Test
