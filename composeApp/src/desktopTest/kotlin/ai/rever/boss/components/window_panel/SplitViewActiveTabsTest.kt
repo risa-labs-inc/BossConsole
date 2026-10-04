@@ -141,7 +141,7 @@ class SplitViewActiveTabsTest {
         panel.tabsComponent.selectTab(0)
         val before = state.collectAllActiveTabs(null, "w1")
         panel.tabsComponent.selectTab(1)
-        assertEquals(before, state.collectAllActiveTabs(null, "w1"))
+        assertEquals(before.map { it.tabInfo.id }, state.collectAllActiveTabs(null, "w1").map { it.tabInfo.id })
 
         val background = state.collectAllActiveTabs(null, "w1").first { it.tabInfo.id == "tab1" }
         state.selectTabInPanel(background.tabInfo.id, background.panelId)

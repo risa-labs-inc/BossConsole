@@ -612,6 +612,19 @@ class McpRiskEvaluatorTest {
     }
 
     @Test
+    fun `workspace context tools evaluate to HIGH risk for sensitive read disclosure`() {
+        val workspaceTools = setOf("get_workspace_context", "get_active_editor_file")
+        for (name in workspaceTools) {
+            val assessment = evaluator.evaluateRisk(name, emptyArgs)
+            assertEquals(McpRiskLevel.HIGH, assessment.level, name)
+            assertTrue(
+                assessment.reason.contains("Discloses open URLs, file paths, and project structure"),
+                "$name reason: ${assessment.reason}",
+            )
+        }
+    }
+
+    @Test
     fun `evaluations are pure so a fresh evaluator per call reproduces them`() {
         // McpPolicyEngine.policyFor constructs a new DefaultMcpRiskEvaluator on every check;
         // identical inputs must keep producing the identical assessment.

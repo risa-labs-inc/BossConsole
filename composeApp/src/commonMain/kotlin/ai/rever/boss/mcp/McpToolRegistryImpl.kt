@@ -1,6 +1,7 @@
 package ai.rever.boss.mcp
 
 import ai.rever.boss.components.bars.horizontal.StatusMessageManager
+import ai.rever.boss.mcp.context.WorkspaceContextMcpProvider
 import ai.rever.boss.mcp.sandbox.DefaultMcpRiskEvaluator
 import ai.rever.boss.mcp.sandbox.McpRiskLevel
 import ai.rever.boss.mcp.secrets.McpResultFilter
@@ -171,6 +172,7 @@ object McpToolRegistryImpl : McpToolRegistry {
         registerProvider(SnippetMcpToolProvider)
         registerProvider(NotificationMcpToolProvider)
         registerProvider(IntrospectionMcpToolProvider)
+        registerProvider(WorkspaceContextMcpProvider())
     }
 
     override val allTools: StateFlow<List<RegisteredMcpTool>> get() = core.allTools

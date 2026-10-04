@@ -900,6 +900,9 @@ restart. There is no Settings row and no per-site exclusion.
   paths outside it, canonical and symlink-checked. A plugin that needs project
   search should be vetted the same way one that subscribes to the bus is.
 
+- **`WorkspaceContextMcpProvider` exposes open file paths and browser URLs to MCP agents under explicit permission and policy gates.**
+  Where `IntrospectionMcpToolProvider` intentionally emits magnitudes only (counts of tabs/terminals, deliberately refusing to disclose file paths or browser URLs), `get_workspace_context` and `get_active_editor_file` exist specifically to let operator-attached AI coding agents inspect active workspace context, locate open files, and reference current browser URLs. `get_workspace_context` inventories tabs across all Spaces (current and preserved workspaces across all open windows). To prevent ungated exposure of background workspace paths and cross-window URLs to untrusted callers, both tools require the `workspace.context` permission (which admin status bypasses under the standard RBAC rules) and are enrolled in `McpMutatingToolCatalog.KNOWN_MUTATING_TOOLS` as sensitive reads, routing invocations through the approval-requiring ASK default so operator approval remains mandatory.
+
 ## Two-finger swipe navigation (macOS)
 
 A two-finger horizontal trackpad swipe navigates back/forward. It is detected **inside the page**
