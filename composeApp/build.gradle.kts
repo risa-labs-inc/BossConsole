@@ -838,7 +838,10 @@ val prepareAppCaptureResources =
     tasks.register<Exec>("prepareAppCaptureResources") {
         group = "build"
         description = "Builds the exact native window capture helper for Windows or Linux"
-        onlyIf { !isMacOSHost }
+        // Execution predicates must capture values, not the enclosing Gradle script.
+        // The script object is unavailable when the configuration cache is restored.
+        val onMacHost = isMacOSHost
+        onlyIf { !onMacHost }
         val helperSource = layout.projectDirectory.dir("../native/app-capture")
         val helperBuild = layout.buildDirectory.dir("native/app-capture")
         val resourceDir = layout.buildDirectory.dir("bundled-plugins-resources/common/app-capture")

@@ -271,10 +271,20 @@ jobs:
           ./gradlew --stop || true
         shell: bash
 
+      - name: Install packaged capture helper dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ pkg-config libx11-dev libxcomposite-dev libxres-dev libxdamage-dev libxrender-dev libsystemd-dev
+
       - name: 🔨 Build and Test Application
         shell: bash
         run: |
           echo "🔨 Building application for ${{ matrix.os }}"
+          # Normal JVM builds never execute this release dependency. Verify both
+          # cache serialization and restoration before a packaging-only bug ships.
+          # --rerun-tasks also exercises the Windows/Linux helper after restoration.
+          for pass in 1 2; do
+            ./gradlew :composeApp:prepareAppCaptureResources --configuration-cache --configuration-cache-problems=fail --rerun-tasks -PskipLint
+          done
           # detekt and ktlintCheck are authoritative in the code-quality job;
           # skip the redundant per-OS runs the plugins wire into check
           # (3x waste + confusing signal).
