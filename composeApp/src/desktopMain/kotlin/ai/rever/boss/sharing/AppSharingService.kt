@@ -346,14 +346,11 @@ internal object AppSharingService {
         }
         val target = targets.first()
         val identity = AppPublicationIdentity(target)
-        val title =
-            _state.value.windows
-                .firstOrNull { it.id == target.windowId }
-                ?.title ?: "BossConsole"
         val sharedWindows =
-            targets.map { selected ->
-                _state.value.windows.first { it.id == selected.windowId }
+            onEdt {
+                targets.map { selected -> SharedAppWindow(selected.windowId, appSharingWindowTitle(selected)) }
             }
+        val title = appSharingSessionName(sharedWindows.first().title)
         val registration = identity.registration(preferences.deviceId, instanceId, title, sharedWindows)
         val result = backend.call(owner, appSharingRequest("register", registration))
         val host =

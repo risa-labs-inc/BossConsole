@@ -77,7 +77,7 @@ internal actual fun AppSharingNotifications(
 ) {
     val state by AppSharingService.state.collectAsState()
     val sharing = windowId in state.activeWindowIds
-    val status = state.status.takeIf { sharing || state.statusWindowId == windowId }.orEmpty()
+    val status = state.status.takeIf { !sharing && state.statusWindowId == windowId }.orEmpty()
     val statusId = "boss-app-sharing-$windowId"
     val controlId = "boss-app-control-$windowId"
     LaunchedEffect(toastState, sharing, status) {
@@ -86,11 +86,10 @@ internal actual fun AppSharingNotifications(
             toastState.show(
                 ToastMessage(
                     id = statusId,
-                    type = if (sharing) ToastType.INFO else ToastType.WARNING,
-                    title = if (sharing) "Sharing BossConsole" else "BossConsole sharing",
+                    type = ToastType.WARNING,
+                    title = "BossConsole sharing",
                     message = status,
-                    action = if (sharing) ToastAction("Stop sharing") { AppSharingService.stop() } else null,
-                    duration = if (sharing) ToastDuration.INDEFINITE else ToastDuration.LONG,
+                    duration = ToastDuration.LONG,
                 ),
             )
         }
