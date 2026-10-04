@@ -46,6 +46,6 @@ internal fun appSharingWindowTitle(target: AppCaptureTarget): String {
     return sharingLabel(title).ifBlank { "BossConsole" }.take(120)
 }
 
-internal fun appSharingSessionName(title: String): String = "$sharingDeviceName · ${sharingLabel(title)}".take(120)
+internal fun appSharingSessionName(): String = "$sharingDeviceName · BOSS"
 
 private fun sharingLabel(value: String): String = value.replace(Regex("[\\p{Cntrl}\\s]+"), " ").trim()

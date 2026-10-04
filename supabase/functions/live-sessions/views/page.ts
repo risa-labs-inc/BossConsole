@@ -376,7 +376,7 @@ const SCRIPT = `
     appSessions.forEach(function (s) {
       if (!s || typeof s.name !== "string" || !/^[0-9a-f-]{36}$/i.test(s.session_id)) return;
       var li = document.createElement("li");
-      li.innerHTML = '<div><div class="name">' + esc(s.name) + '<span class="pill ok">BossConsole</span></div><div class="meta">Shared application windows · encrypted media</div></div><a class="btn" rel="noopener noreferrer" target="_blank">Open</a>';
+      li.innerHTML = '<div><div class="name">' + esc(s.name) + '<span class="pill ok" title="Media encrypted between host and viewer; the BOSS account service distributes the session key">E2E</span></div><div class="meta">Shared application windows · encrypted media</div></div><a class="btn" rel="noopener noreferrer" target="_blank">Open</a>';
       li.querySelector("a").setAttribute("href", base + "/app-viewer/?session=" + encodeURIComponent(s.session_id));
       appUl.appendChild(li);
     });

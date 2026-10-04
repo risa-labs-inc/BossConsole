@@ -350,7 +350,7 @@ internal object AppSharingService {
             onEdt {
                 targets.map { selected -> SharedAppWindow(selected.windowId, appSharingWindowTitle(selected)) }
             }
-        val title = appSharingSessionName(sharedWindows.first().title)
+        val title = appSharingSessionName()
         val registration = identity.registration(preferences.deviceId, instanceId, title, sharedWindows)
         val result = backend.call(owner, appSharingRequest("register", registration))
         val host =
