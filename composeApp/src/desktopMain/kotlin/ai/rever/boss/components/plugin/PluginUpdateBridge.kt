@@ -75,6 +75,18 @@ actual object PluginUpdateBridge {
         )
     }
 
+    private suspend fun performAdmittedUpdate(
+        pluginId: String,
+        manager: DynamicPluginManager,
+        automaticUpdate: UpdateInfo? = null,
+    ): Result<String> {
+        val lease =
+            PluginUpdateLease
+                .acquire(PluginStoreSetup.getPluginDir(), pluginId)
+                .getOrElse { return Result.failure(it) }
+        return lease.use { performLockedUpdate(pluginId, manager, automaticUpdate) }
+    }
+
     // Guard returns preserve the protected-id short-circuit and the uninitialized-store
     // failure as distinct outcomes before any store traffic.
     @Suppress("ReturnCount")
@@ -129,7 +141,7 @@ actual object PluginUpdateBridge {
 
     // Guard returns preserve the distinct preflight failures before any destructive update stage.
     @Suppress("ReturnCount")
-    private suspend fun performAdmittedUpdate(
+    private suspend fun performLockedUpdate(
         pluginId: String,
         manager: DynamicPluginManager,
         automaticUpdate: UpdateInfo? = null,
@@ -184,46 +196,66 @@ actual object PluginUpdateBridge {
             PluginRollbackStore.snapshot(pluginDir, pluginId, installedJar)
         }
 
-        val context = PluginUpdateApplyContext(pluginId, manager, automatic, deferHotReload, runningJarPath)
-        val result = downloadAndActivate(update, targetFile, context)
+        val artifact = PluginUpdateArtifact(targetFile)
+        val context =
+            PluginUpdateApplyContext(
+                pluginId,
+                manager,
+                automatic,
+                deferHotReload,
+                runningJarPath,
+                artifact::promote,
+            )
+        val result = downloadAndActivate(update, artifact, context)
         return if (result.isSuccess) {
             PluginUpdateRegistry.clear(pluginId)
             reconcileUpdatedPlugin(pluginDir, pluginId, context.deferred)
             Result.success(update.newVersion)
         } else {
-            discardIfUnswapped(context.activationStarted, targetFile)
+            artifact.discardRejected().onFailure {
+                logger.warn(LogCategory.SYSTEM, "Could not quarantine a rejected update", error = it)
+            }
             Result.failure(result.exceptionOrNull() ?: Exception("Update failed"))
         }
     }
 
+    @Suppress("TooGenericExceptionCaught") // Arbitrary plugin/store callbacks cannot strand downloaded artifacts.
     private suspend fun downloadAndActivate(
         update: UpdateInfo,
-        targetFile: File,
+        artifact: PluginUpdateArtifact,
         context: PluginUpdateApplyContext,
     ): Result<Unit> {
         val mgr = checkNotNull(PluginStoreSetup.updateManager)
         val ownsTransfer = beginTransfer(context.pluginId, update, currentCoroutineContext()[Job])
-        var swapStarted = false
         return try {
             mgr.updatePluginSnapshot(
                 update = update,
-                downloadPath = targetFile.absolutePath,
+                downloadPath = artifact.download.absolutePath,
                 unloadPlugin = context::unload,
-                loadPlugin = { path ->
-                    context.load(path) {
-                        activateUpdate(context.pluginId, path, context.manager, context.deferred)
-                    }
+                loadPlugin = { _ ->
+                    context
+                        .load(artifact.target.absolutePath) {
+                            activateUpdate(
+                                context.pluginId,
+                                artifact.target.absolutePath,
+                                context.manager,
+                                context.deferred,
+                            )
+                        }.onSuccess { artifact.commit() }
                 },
                 onProgress = { DownloadCenter.progress(context.pluginId, it) },
                 onInstalling = {
-                    swapStarted = true
-                    context.activationStarted = true
                     DownloadCenter.phase(context.pluginId, TransferPhase.INSTALLING)
                 },
             )
         } catch (e: CancellationException) {
-            discardIfUnswapped(swapStarted, targetFile)
+            artifact.discardRejected().onFailure {
+                logger.warn(LogCategory.SYSTEM, "Could not quarantine a rejected update", error = it)
+            }
             throw e
+        } catch (e: Exception) {
+            artifact.discardRejected().onFailure { cleanup -> e.addSuppressed(cleanup) }
+            Result.failure(e)
         } finally {
             if (ownsTransfer) DownloadCenter.end(context.pluginId)
         }

@@ -9,17 +9,30 @@ internal class PluginUpdateApplyContext(
     private val automatic: Boolean,
     var deferred: Boolean,
     private val previousPath: String?,
+    private val prepareArtifact: () -> Result<Unit> = { Result.success(Unit) },
 ) {
-    var activationStarted: Boolean = false
-
     suspend fun unload(id: String): Result<Unit> {
-        if (automatic && !UpdateSettings.isPluginAutomaticUpdateEnabled(pluginId)) {
-            return Result.failure(IllegalStateException("Automatic plugin updates were disabled"))
-        }
-        if (automatic && automaticPluginUpdatePlan(id, manager) != AutomaticPluginUpdatePlan.RELOAD) {
-            deferred = true
-        }
-        return if (deferred) Result.success(Unit) else manager.uninstallPlugin(id, force = true).map { }
+        val decision =
+            if (automatic) {
+                automaticActivationAfterDownload(
+                    automaticPluginUpdatePlan(id, manager),
+                    UpdateSettings.isPluginAutomaticUpdateEnabled(pluginId),
+                )
+            } else {
+                Result.success(deferred)
+            }
+        return decision.fold(
+            onFailure = { Result.failure(it) },
+            onSuccess = { stage ->
+                deferred = stage
+                prepareArtifact().fold(
+                    onFailure = { Result.failure(it) },
+                    onSuccess = {
+                        if (deferred) Result.success(Unit) else manager.uninstallPlugin(id, force = true).map { }
+                    },
+                )
+            },
+        )
     }
 
     suspend fun load(
@@ -32,3 +45,16 @@ internal class PluginUpdateApplyContext(
             fallback()
         }
 }
+
+internal class PluginViewsBusyException : IllegalStateException("Waiting for plugin views to close")
+
+internal fun automaticActivationAfterDownload(
+    plan: AutomaticPluginUpdatePlan,
+    enabled: Boolean = true,
+): Result<Boolean> =
+    when {
+        !enabled -> Result.failure(IllegalStateException("Automatic plugin updates were disabled"))
+        plan == AutomaticPluginUpdatePlan.WAIT -> Result.failure(PluginViewsBusyException())
+        plan == AutomaticPluginUpdatePlan.STAGE -> Result.success(true)
+        else -> Result.success(false)
+    }

@@ -116,36 +116,57 @@ actual object PluginStoreVersionBridge {
             // offers cancels THAT job - the one actually downloading. Cancelling the
             // window's coroutine would only abandon the wait: the swap is detached
             // precisely so closing a window cannot stop it mid-flight.
-            val job = currentCoroutineContext()[Job]
-            val ownsTransfer =
-                DownloadCenter.begin(
-                    id = pluginId,
-                    title = displayName,
-                    kind = TransferKind.PLUGIN_INSTALL,
-                    detail = "Store version v$version",
-                    onCancel = { job?.cancel() },
+            val lease =
+                PluginUpdateLease
+                    .acquire(PluginStoreSetup.getPluginDir(), pluginId)
+                    .getOrElse { return@run Result.failure(it) }
+            lease.use {
+                installTracked(
+                    store,
+                    StoreVersionRequest(
+                        pluginId = pluginId,
+                        version = version,
+                        sourceUrl = sourceUrl,
+                        runningJarPath = manager.getPluginInfo(pluginId)?.jarPath,
+                        hasLiveInstance = manager.getPluginInfo(pluginId)?.state == PluginState.LOADED,
+                    ),
+                    displayName,
+                    manager,
                 )
-            try {
-                installer.install(
-                    store = store,
-                    request =
-                        StoreVersionRequest(
-                            pluginId = pluginId,
-                            version = version,
-                            sourceUrl = sourceUrl,
-                            runningJarPath = manager.getPluginInfo(pluginId)?.jarPath,
-                            hasLiveInstance = manager.getPluginInfo(pluginId)?.state == PluginState.LOADED,
-                        ),
-                    unload = { id -> manager.uninstallPlugin(id, force = true).map { } },
-                    load = { path ->
-                        manager.installPlugin(path, enabled = true).map { it.state == PluginState.LOADED }
-                    },
-                    onProgress = { DownloadCenter.progress(pluginId, it) },
-                    onInstalling = { DownloadCenter.phase(pluginId, TransferPhase.INSTALLING) },
-                )
-            } finally {
-                if (ownsTransfer) DownloadCenter.end(pluginId)
             }
+        }
+    }
+
+    private suspend fun installTracked(
+        store: ai.rever.boss.plugin.repository.PluginRepository,
+        request: StoreVersionRequest,
+        displayName: String,
+        manager: DynamicPluginManager,
+    ): Result<String> {
+        val pluginId = request.pluginId
+        val version = request.version
+        val job = currentCoroutineContext()[Job]
+        val ownsTransfer =
+            DownloadCenter.begin(
+                id = pluginId,
+                title = displayName,
+                kind = TransferKind.PLUGIN_INSTALL,
+                detail = "Store version v$version",
+                onCancel = { job?.cancel() },
+            )
+        return try {
+            installer.install(
+                store = store,
+                request = request,
+                unload = { id -> manager.uninstallPlugin(id, force = true).map { } },
+                load = { path ->
+                    manager.installPlugin(path, enabled = true).map { it.state == PluginState.LOADED }
+                },
+                onProgress = { DownloadCenter.progress(pluginId, it) },
+                onInstalling = { DownloadCenter.phase(pluginId, TransferPhase.INSTALLING) },
+            )
+        } finally {
+            if (ownsTransfer) DownloadCenter.end(pluginId)
         }
     }
 }

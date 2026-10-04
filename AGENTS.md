@@ -53,13 +53,19 @@ on in packaged release builds and off in Gradle development runs. Preferences pe
 Every eligible plugin is included by default. The per-plugin list stores explicit opt-outs,
 so newly installed plugins update automatically too. Opt-outs are rechecked before activation.
 The worker starts after workspace restoration, uses compatible store candidates, and
-waits for all plugin tabs and mounted panels to close. It rechecks views after download.
+waits for all plugin tabs and mounted panels to close. It rechecks views after download;
+a reopened view defers installation again. Downloads use `.part` files until admitted.
+Failed promoted artifacts are quarantined; a `.rejected-update` marker fences startup
+selection if a live loader prevents removal. Host and Toolbox updates/installVersion
+share SHA-256 plugin-ID file locks under `.plugin-update-locks`; never delete lock files.
 Ordinary idle plugins reload without restarting BOSS; native plugins, disabled plugins,
 plugins with loaded dependents, and multiwindow updates are staged for the next manual
 start. Disabled plugins remain disabled. Protected API/runtime ids use their existing
 host-managed lifecycle. Activation failures attempt to restore the previous JAR; status
 and errors appear in Settings. Supabase Realtime is the primary trigger, with a six-hour
-fallback and a local 30-second check for views closing.
+fallback and a local 30-second check for views closing. Three failed attempts pause
+that release for this process; a new release gets a fresh budget. Busy views and another
+installer's lock do not consume attempts.
 
 Toolbox honors the optional `boss.plugins.autoUpdate.enabled` JVM property to suppress
 manual update toasts in automatic mode. The `boss.plugins.autoUpdate.optOuts` property

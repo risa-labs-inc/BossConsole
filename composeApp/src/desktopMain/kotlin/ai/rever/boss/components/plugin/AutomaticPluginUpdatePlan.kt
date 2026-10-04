@@ -58,7 +58,7 @@ internal fun initialPluginUpdatePlan(
         else -> {
             when (automaticPluginUpdatePlan(pluginId, manager)) {
                 AutomaticPluginUpdatePlan.WAIT -> {
-                    Result.failure(IllegalStateException("Waiting for plugin views to close"))
+                    Result.failure(PluginViewsBusyException())
                 }
 
                 AutomaticPluginUpdatePlan.STAGE -> {

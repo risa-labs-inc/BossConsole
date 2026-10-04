@@ -619,7 +619,7 @@ class PluginUpdateManager(
         // Remove from available updates
         _availableUpdates.value =
             _availableUpdates.value.filter {
-                it.pluginId != pluginId || it.newVersion != update.newVersion
+                it.pluginId != pluginId || isNewerVersion(it.newVersion, update.newVersion)
             }
 
         logger.info(

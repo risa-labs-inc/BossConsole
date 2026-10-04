@@ -2092,7 +2092,8 @@ object PluginStoreSetup {
                 // This handles cases where user manually added a newer version with different filename.
                 val existingJarsInPluginDir =
                     _pluginDir.listFiles()?.filter {
-                        it.name.endsWith(".jar") && readPluginManifest(it)?.pluginId == pluginId
+                        it.name.endsWith(".jar") && !File("${it.absolutePath}.rejected-update").exists() &&
+                            readPluginManifest(it)?.pluginId == pluginId
                     } ?: emptyList()
 
                 logger.info(

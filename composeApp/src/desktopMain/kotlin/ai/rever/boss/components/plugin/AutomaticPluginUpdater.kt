@@ -32,7 +32,7 @@ internal object AutomaticPluginUpdater {
     private var pending = emptyList<UpdateInfo>()
     private val _status = MutableStateFlow("No automatic plugin updates yet")
     val status = _status.asStateFlow()
-    private val retryAfter = mutableMapOf<String, Long>()
+    private val retries = AutomaticPluginRetryPolicy()
 
     @Suppress("TooGenericExceptionCaught") // Isolate third-party/network failures at the process worker boundary.
     fun start() {
@@ -94,7 +94,11 @@ internal object AutomaticPluginUpdater {
             if (applyPendingUpdate(update, managers)) remaining.add(update)
         }
         pending = remaining
-        if (remaining.isNotEmpty() && remaining.none { (retryAfter[it.pluginId] ?: 0L) > System.currentTimeMillis() }) {
+        if (remaining.isNotEmpty() &&
+            remaining.none {
+                !retries.canAttempt(it.pluginId, it.newVersion, System.currentTimeMillis())
+            }
+        ) {
             _status.value = "Waiting for views to close for ${remaining.size} plugin update(s)"
         }
     }
@@ -137,7 +141,7 @@ internal object AutomaticPluginUpdater {
         }
         val owner = managers.firstOrNull { it.getPluginInfo(update.pluginId) != null } ?: return false
         if (automaticPluginUpdatePlan(update.pluginId, owner) == AutomaticPluginUpdatePlan.WAIT ||
-            System.currentTimeMillis() < (retryAfter[update.pluginId] ?: 0L)
+            !retries.canAttempt(update.pluginId, update.newVersion, System.currentTimeMillis())
         ) {
             return true
         }
@@ -154,9 +158,21 @@ internal object AutomaticPluginUpdater {
         _status.value = "Updating ${update.displayName}..."
         val result = PluginUpdateBridge.performAutomaticUpdate(update, owner)
         if (result.isFailure) {
-            retryAfter[update.pluginId] = System.currentTimeMillis() + 5 * 60_000
+            val error = result.exceptionOrNull()
+            if (error is PluginViewsBusyException || error is PluginUpdateLeaseBusyException ||
+                error is PluginUpdateAlreadyInProgressException
+            ) {
+                return true
+            }
+            val retry = retries.failed(update.pluginId, update.newVersion, System.currentTimeMillis())
             val errorMessage = result.exceptionOrNull()?.message ?: "Update failed"
-            _status.value = "${update.displayName}: $errorMessage. Will retry."
+            _status.value =
+                if (retry) {
+                    "${update.displayName}: $errorMessage. Will retry."
+                } else {
+                    "${update.displayName} automatic update paused after three failures. " +
+                        "Update manually or wait for a new release."
+                }
             logger.warn(
                 LogCategory.SYSTEM,
                 "Could not automatically update plugin",
@@ -164,7 +180,7 @@ internal object AutomaticPluginUpdater {
                 error = result.exceptionOrNull(),
             )
         } else {
-            retryAfter.remove(update.pluginId)
+            retries.clear(update.pluginId)
             _status.value =
                 if (owner.getPluginInfo(update.pluginId)?.manifest?.version == update.newVersion) {
                     "${update.displayName} updated to v${update.newVersion}"

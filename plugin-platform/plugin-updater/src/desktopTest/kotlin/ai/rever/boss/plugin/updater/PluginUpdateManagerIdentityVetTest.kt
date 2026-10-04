@@ -35,6 +35,27 @@ class PluginUpdateManagerIdentityVetTest {
     }
 
     @Test
+    fun `snapshot activation removes older offers from the shared list`() =
+        runTest {
+            val mgr = manager(vet = { _, _ -> Result.success(Unit) })
+            val pending =
+                mgr
+                    .checkForUpdates(mapOf(pluginId to "1.0.0"))
+                    .availableUpdates
+                    .single()
+                    .copy(newVersion = "3.0.0")
+            val result =
+                mgr.updatePluginSnapshot(
+                    pending,
+                    "/tmp/does-not-matter.jar",
+                    unloadPlugin = { Result.success(Unit) },
+                    loadPlugin = { Result.success(Unit) },
+                )
+            assertTrue(result.isSuccess)
+            assertTrue(mgr.availableUpdates.value.isEmpty(), "the older 2.0.0 offer must not allow a downgrade")
+        }
+
+    @Test
     fun `pending candidate downloads its version after another check clears the shared list`() =
         runTest {
             val repository = FakeSingleVersionRepository(candidate())
