@@ -64,19 +64,18 @@ object ChromiumToolkitPreload {
     private const val DISABLED_PROPERTY = "boss.toolkit.preload"
 
     /**
-     * What created the AWT toolkit, once something has. `main` keeps the preload ahead of that, and
-     * `StartupOrderingTest` pins the order in source; this catches the order breaking at runtime by
-     * another route, because the race it lets back in is far too rare to show up in any test run.
+     * First instrumented toolkit-creation entry point. This diagnostic covers calls to
+     * [noteAwtToolkitCreating]; it does not probe uninstrumented library initialization.
+     * `StartupOrderingTest` separately pins the known startup order and the icon entry point.
      */
-    @Volatile
-    private var awtToolkitCreatedBy: String? = null
+    private val awtToolkitOrigin = ToolkitCreationOrigin()
 
     /**
      * Called by whatever is about to create the AWT toolkit (today `DefaultWindowIcon.install()`).
      * The first caller wins, so the report names the real culprit.
      */
     fun noteAwtToolkitCreating(by: String) {
-        if (awtToolkitCreatedBy == null) awtToolkitCreatedBy = by
+        awtToolkitOrigin.record(by)
     }
 
     /**
@@ -225,7 +224,7 @@ object ChromiumToolkitPreload {
                 is Plan.Skip -> return skipped(plan.reason)
                 is Plan.Load -> plan.files
             }
-        lateLoadReason(awtToolkitCreatedBy, isMac)?.let { reason ->
+        lateLoadReason(awtToolkitOrigin.createdBy, isMac)?.let { reason ->
             logger.error(
                 LogCategory.BROWSER,
                 "Native toolkit preload is running after AppKit started; its malloc zone swap can race it",

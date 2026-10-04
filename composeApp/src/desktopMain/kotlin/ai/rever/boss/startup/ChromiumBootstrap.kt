@@ -103,8 +103,8 @@ object ChromiumBootstrap {
     }
 
     /**
-     * Starts the background engine pre-warm decided by [preflight] and reports whether the
-     * download prompt is needed.
+     * Requests the background engine pre-warm and reports whether [preflight] requires a download.
+     * The engine's existing pre-warm path performs its own usability checks.
      */
     @Suppress("TooGenericExceptionCaught")
     internal fun prepare(preflight: ChromiumPreflight): ChromiumPreparation {

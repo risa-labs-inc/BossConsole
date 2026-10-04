@@ -16,11 +16,12 @@ class StartupOrderingTest {
     private val main: String by lazy {
         val root =
             generateSequence(File(System.getProperty("user.dir"))) { it.parentFile }
-                .first { File(it, "settings.gradle.kts").isFile }
-        // Comment lines blanked, so a comment naming a call is not mistaken for the call.
+                .firstOrNull { File(it, "settings.gradle.kts").isFile }
+                ?: error("Cannot locate the BOSS source root from ${System.getProperty("user.dir")}")
+        // Prose and literals cannot be mistaken for startup calls.
         File(root, "composeApp/src/desktopMain/kotlin/ai/rever/boss/main.kt")
-            .readLines()
-            .joinToString("\n") { line -> if (line.trimStart().startsWith("//")) "" else line }
+            .readText()
+            .let(::startupCodeOnly)
     }
 
     private fun at(call: String): Int {
@@ -40,7 +41,7 @@ class StartupOrderingTest {
     @Test
     fun `preflight runs before anything creates the AWT toolkit`() {
         assertTrue(preflight < at("DefaultWindowIcon.install()"))
-        // Nothing AWT-creating may sneak in between main's start and the preflight.
+        // Pin known direct entry points; helper implementations still require code review.
         val beforePreflight = main.substring(0, preflight)
         listOf("Toolkit.getDefaultToolkit()", "SwingUtilities.invoke", "EventQueue.invoke", "Taskbar.")
             .forEach { call -> assertTrue(call !in beforePreflight, "$call runs before the preflight") }
@@ -50,6 +51,29 @@ class StartupOrderingTest {
     fun `background warm-ups start after the preflight`() {
         assertTrue(preflight < at("WorkspaceSettingsManager.currentSettings"))
         assertTrue(preflight < at("MacOSScrollGesturePhases"))
+    }
+
+    @Test
+    fun `icon creation records its entry point before accessing the toolkit`() {
+        val source = File(System.getProperty("user.dir"))
+        val root =
+            generateSequence(source) { it.parentFile }
+                .firstOrNull { File(it, "settings.gradle.kts").isFile }
+                ?: error("Cannot locate the BOSS source root from $source")
+        val icon =
+            startupCodeOnly(
+                File(
+                    root,
+                    "composeApp/src/desktopMain/kotlin/ai/rever/boss/window/WindowIcon.kt",
+                ).readText(),
+            )
+        val install = icon.indexOf("fun install()")
+        val marker = icon.indexOf(".noteAwtToolkitCreating(", install)
+        val toolkit = icon.indexOf("Toolkit.getDefaultToolkit()", install)
+        assertTrue(
+            install >= 0 && marker > install && toolkit > marker,
+            "Window icon installation must record creation before accessing AWT",
+        )
     }
 
     @Test
