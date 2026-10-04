@@ -2643,6 +2643,7 @@ object FluckEngine {
         ownerWindowId: String?,
         ownerWindowIsFocused: Boolean,
         fallbackFocusedWindowId: String?,
+        fullscreenSurfaceFocused: Boolean? = null,
     ): BrowserKeyEventRoute =
         when {
             ownerWindowId == null -> {
@@ -2652,7 +2653,7 @@ object FluckEngine {
                 )
             }
 
-            ownerWindowIsFocused -> {
+            (fullscreenSurfaceFocused ?: ownerWindowIsFocused) -> {
                 BrowserKeyEventRoute(
                     acceptsInput = true,
                     shortcutWindowId = ownerWindowId,
@@ -2975,10 +2976,11 @@ object FluckEngine {
                 val route =
                     resolveBrowserKeyEventRoute(
                         ownerWindowId = ownerWindowId,
-                        ownerWindowIsFocused =
+                        ownerWindowIsFocused = ownerWindowId?.let(WindowFocusManager::isWindowFocused) == true,
+                        // Fullscreen changes the input surface, while shortcuts retain their tab's owner.
+                        fullscreenSurfaceFocused =
                             ai.rever.boss.tabfullscreen.fullscreenBrowserInput
-                                .focusFor(browser, ownerWindowId)
-                                ?: (ownerWindowId?.let(WindowFocusManager::isWindowFocused) == true),
+                                .focusFor(browser, ownerWindowId),
                         fallbackFocusedWindowId =
                             if (ownerWindowId == null) {
                                 WindowFocusManager.focusedWindowFlow.value

@@ -8,21 +8,17 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class FullscreenBrowserInputTest {
-    private class Surface(
-        var focused: Boolean = true,
-        var showing: Boolean = true,
-    )
-
     @Test
-    fun `fullscreen accepts typing with an inactive host and keeps shortcuts with that host`() {
+    fun `fullscreen receives keys with an inactive host and preserves shortcut ownership`() {
         val browser = Any()
-        val input = FullscreenBrowserInput<Any, Surface> { it.focused && it.showing }
-        input.attach(browser, "host", Surface())
+        val input = FullscreenBrowserInput<Any>()
+        input.attach(browser, "host", showing = true, focused = true)
         val route =
             FluckEngine.resolveBrowserKeyEventRoute(
                 "host",
-                input.focusFor(browser, "host") ?: false,
+                false,
                 "another-window",
+                input.focusFor(browser, "host"),
             )
         assertTrue(route.acceptsInput)
         assertEquals("host", route.shortcutWindowId)
@@ -32,29 +28,57 @@ class FullscreenBrowserInputTest {
     }
 
     @Test
-    fun `unfocused or hidden fullscreen cannot fall back to a focused host`() {
+    fun `visible unfocused fullscreen rejects keys even when the original host is focused`() {
         val browser = Any()
-        val surface = Surface()
-        val input = FullscreenBrowserInput<Any, Surface> { it.focused && it.showing }
-        input.attach(browser, "host", surface)
-        surface.focused = false
-        assertFalse(input.focusFor(browser, "host") ?: true)
-        surface.focused = true
-        surface.showing = false
-        assertFalse(input.focusFor(browser, "host") ?: true)
+        val input = FullscreenBrowserInput<Any>()
+        val token = input.attach(browser, "host", showing = true, focused = true)
+        input.update(token, showing = true, focused = false)
+        assertFalse(
+            FluckEngine
+                .resolveBrowserKeyEventRoute(
+                    "host",
+                    true,
+                    null,
+                    input.focusFor(browser, "host"),
+                ).acceptsInput,
+        )
     }
 
     @Test
-    fun `overlay replacement retires the previous frame and exit restores ordinary routing`() {
+    fun `hidden or retired fullscreen restores the actual host focus check`() {
         val browser = Any()
-        val input = FullscreenBrowserInput<Any, Surface> { it.focused && it.showing }
-        input.attach(browser, "host", Surface())
-        val replacement = Surface(focused = false)
-        input.attach(browser, "host", replacement)
+        val input = FullscreenBrowserInput<Any>()
+        val token = input.attach(browser, "host", showing = true, focused = true)
+        input.update(token, showing = false, focused = false)
+        for (hostFocused in listOf(true, false)) {
+            assertEquals(
+                hostFocused,
+                FluckEngine
+                    .resolveBrowserKeyEventRoute(
+                        "host",
+                        hostFocused,
+                        null,
+                        input.focusFor(browser, "host"),
+                    ).acceptsInput,
+            )
+        }
+        input.detach(token)
+        assertNull(input.focusFor(browser, "host"))
+    }
+
+    @Test
+    fun `late focus and close events from a replaced frame cannot retire the replacement`() {
+        val browser = Any()
+        val input = FullscreenBrowserInput<Any>()
+        val old = input.attach(browser, "host", showing = true, focused = true)
+        val replacement = input.attach(browser, "host", showing = true, focused = false)
+        input.update(old, showing = true, focused = true)
+        input.detach(old)
         assertEquals(false, input.focusFor(browser, "host"))
-        replacement.focused = true
+        input.update(replacement, showing = true, focused = true)
         assertEquals(true, input.focusFor(browser, "host"))
         input.clear()
+        input.update(replacement, showing = true, focused = true)
         assertNull(input.focusFor(browser, "host"))
     }
 }

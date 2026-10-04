@@ -782,7 +782,7 @@ object FullscreenBrowserWindow {
 
             fullscreenFrame = frame
             currentBrowserView = browserView
-            fullscreenBrowserInput.attach(browser, checkNotNull(currentOwnerWindowId), frame)
+            observeFullscreenBrowserInput(browser, currentOwnerWindowId, frame)
 
             if (isMacOS) {
                 enterMacOSFullscreen(frame, browser, ownerWindow, expectedEpoch)
@@ -962,7 +962,7 @@ object FullscreenBrowserWindow {
             )
         fullscreenFrame = overlay.frame
         currentBrowserView = overlay.browserView
-        fullscreenBrowserInput.attach(browser, checkNotNull(currentOwnerWindowId), overlay.frame)
+        observeFullscreenBrowserInput(browser, currentOwnerWindowId, overlay.frame)
         usesNativeMacOSFullscreen = false
         hasReachedFullscreen = true
         overlay.frame.isAlwaysOnTop = true
