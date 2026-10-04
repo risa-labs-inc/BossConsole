@@ -63,6 +63,32 @@ class HostIconResolutionTest {
             assertFalse(fetched, "a fresh entry still cost a request")
         }
 
+    @Test
+    fun `a small quality entry older than a day can refresh even before the ordinary TTL`(): Unit =
+        runTest {
+            writeEntry(ageMs = 2 * DAY)
+            val sharper = iconStub()
+            var fetched = false
+            val icon =
+                HighQualityFaviconService.hostIcon(URL, NOW, dir, refreshSmallIcon = true) { _, _ ->
+                    fetched = true
+                    FaviconFetch.Icon(sharper)
+                }
+            assertTrue(fetched)
+            assertSame(sharper, icon)
+        }
+
+    @Test
+    fun `a recently cached small quality entry still skips the network`(): Unit =
+        runTest {
+            writeEntry(ageMs = DAY / 2)
+            assertNotNull(
+                HighQualityFaviconService.hostIcon(URL, NOW, dir, refreshSmallIcon = true) { _, _ ->
+                    error("recent small entry fetched again")
+                },
+            )
+        }
+
     /** Offline should cost sharpness, not the icon - and must not be irreversible. */
     @Test
     fun `no answer leaves an expired entry serving`() =
@@ -209,8 +235,8 @@ class HostIconResolutionTest {
                 FaviconFetch.NoAnswer
             }
 
-            assertNull(HighQualityFaviconService.hostIcon(null, NOW, dir, fetch))
-            assertNull(HighQualityFaviconService.hostIcon("file:///Users/someone/notes.md", NOW, dir, fetch))
+            assertNull(HighQualityFaviconService.hostIcon(null, NOW, dir, fetch = fetch))
+            assertNull(HighQualityFaviconService.hostIcon("file:///Users/someone/notes.md", NOW, dir, fetch = fetch))
             assertFalse(fetched)
         }
 

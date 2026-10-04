@@ -44,12 +44,12 @@ import javax.imageio.ImageIO
  * other two.
  *
  * A larger icon already in the high-quality disk cache may replace a small page icon only
- * when its sampled artwork matches. This restores sharp bookmark and title-bar icons without
- * substituting an unrelated host logo or making a network request for an already-cached page.
+ * when its artwork matches, allowing transparent padding and monochrome theme variants.
+ * Existing HQ entries are refreshed when expired, or daily when still below the requested size.
  * If no matching larger representation exists, the original page icon remains the fallback.
  *
- * A page whose icon this resolves from cache no longer tells Google which site it is at all,
- * which on the most-used surfaces is most of the requests this service used to make.
+ * A cached page never starts a new Google lookup for a host with no HQ entry. Refreshing an
+ * existing HQ entry reuses the lookup already made for that host.
  *
  * Performance:
  * - Async HTTP with Ktor client (non-blocking), everything on [Dispatchers.IO]
@@ -126,8 +126,9 @@ object HighQualityFaviconService {
             standardCacheKey = standardCacheKey,
             // The two slots cannot be swapped by accident: `pageIcon` is not `suspend` and
             // `hostGuess` is, so the compiler rejects the reversal a test would otherwise pin.
-            pageIcon = { key -> loadStandardFavicon(key)?.let { upgradeCachedFavicon(url, it) } },
+            pageIcon = ::loadStandardFavicon,
             hostGuess = { hostIcon(it) },
+            qualityUpgrade = { pageUrl, icon -> upgradeCachedFavicon(pageUrl, icon) },
         )
 
     /**
@@ -136,22 +137,27 @@ object HighQualityFaviconService {
      * back, and inside a composable - where it used to live - it was unpinnable.
      *
      * Swapping the two calls below fails `the page's own icon wins and Google is not even asked`.
-     * The second half of that name is what a "which icon wins" assertion alone would miss: a page
-     * whose icon is already cached must not tell a third party which site it is.
+     * A cached page cannot fall through to a blind host guess. The optional quality upgrade
+     * considers only an existing HQ entry and must preserve the page's artwork.
      */
     internal suspend fun resolve(
         url: String?,
         standardCacheKey: String?,
         pageIcon: (String?) -> TabIcon.Image?,
         hostGuess: suspend (String?) -> TabIcon.Image?,
+        qualityUpgrade: suspend (String?, TabIcon.Image) -> TabIcon.Image = { _, icon -> icon },
     ): TabIcon.Image? =
         withContext(Dispatchers.IO) {
             // Each source is attempted separately, so a corrupt standard-cache entry cannot cost
             // the host guess as well. `FaviconCache.loadFavicon` catches its own exceptions today,
             // which makes this belt and braces - but "happens to be total" is not a guarantee this
             // function should be spending on the caller's behalf.
-            sourceOrNull("the page's own icon") { pageIcon(standardCacheKey) }
-                ?: sourceOrNull("Google's guess about the host") { hostGuess(url) }
+            val page = sourceOrNull("the page's own icon") { pageIcon(standardCacheKey) }
+            if (page == null) {
+                sourceOrNull("Google's guess about the host") { hostGuess(url) }
+            } else {
+                sourceOrNull("a sharper representation of the page's icon") { qualityUpgrade(url, page) } ?: page
+            }
         }
 
     /**
@@ -201,6 +207,7 @@ object HighQualityFaviconService {
         url: String?,
         nowMs: Long = System.currentTimeMillis(),
         dir: File = HqFaviconDiskCache.defaultDir,
+        refreshSmallIcon: Boolean = false,
         fetch: suspend (String, String) -> FaviconFetch = { host, key ->
             fetchSemaphore.withPermit { fetchFromGoogle(host, key, dir, nowMs) }
         },
@@ -210,7 +217,8 @@ object HighQualityFaviconService {
         val cached = HqFaviconDiskCache.load(cacheKey, dir)
 
         return when {
-            cached != null && !FaviconFreshness.isEntryExpired(cached.fetchedAtMs, nowMs) -> {
+            cached != null && !FaviconFreshness.isEntryExpired(cached.fetchedAtMs, nowMs) &&
+                (!refreshSmallIcon || !qualityRefreshDue(cached, nowMs)) -> {
                 cached.icon
             }
 
