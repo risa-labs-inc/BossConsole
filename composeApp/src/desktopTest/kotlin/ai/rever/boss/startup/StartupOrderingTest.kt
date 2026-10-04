@@ -23,10 +23,12 @@ class StartupOrderingTest {
     }
 
     private fun at(call: String): Int {
-        val index = main.indexOf(call)
-        assertTrue(index >= 0, "main.kt no longer calls $call")
-        assertTrue(main.indexOf(call, index + 1) < 0, "main.kt calls $call more than once")
-        return index
+        // Kotlin allows a newline before a member-access dot. Match the call, not its type name.
+        val pattern = Regex(call.split('.').joinToString("\\s*\\.\\s*") { Regex.escape(it) })
+        val matches = pattern.findAll(main).toList()
+        assertTrue(matches.isNotEmpty(), "main.kt no longer calls $call")
+        assertTrue(matches.size == 1, "main.kt calls $call more than once")
+        return matches.single().range.first
     }
 
     private val preflight get() = at("ChromiumBootstrap.preflight()")
@@ -48,7 +50,7 @@ class StartupOrderingTest {
     @Test
     fun `background warm-ups start after the preflight`() {
         assertTrue(preflight < at("WorkspaceSettingsManager.currentSettings"))
-        assertTrue(preflight < at("MacOSScrollGesturePhases"))
+        assertTrue(preflight < at("MacOSScrollGesturePhases.ensureStarted()"))
     }
 
     @Test
