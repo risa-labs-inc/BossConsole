@@ -514,7 +514,7 @@ export function livePage(model: PageModel, nonce: string): string {
       <span class="name" id="viewer-name"></span>
       <a id="viewer-newtab" class="btn secondary" target="_blank" rel="noopener noreferrer" href="#">Open in new tab</a>
     </div>
-    <iframe id="viewerframe" title="Shared terminal" allow="clipboard-write" src="about:blank"></iframe>
+    <iframe id="viewerframe" title="Shared terminal" allow="clipboard-write; fullscreen" allowfullscreen src="about:blank"></iframe>
   </div>
 
   <footer>Only you can see this list. Links open the live share-viewer end to end encrypted when the badge shows <code>E2E</code>.</footer>
