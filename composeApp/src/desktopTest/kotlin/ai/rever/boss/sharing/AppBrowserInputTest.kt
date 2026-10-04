@@ -32,8 +32,10 @@ class AppBrowserInputTest {
         onEdt {
             Fixture().use { fixture ->
                 click(fixture, fixture.left)
+                assertTrue(fixture.activePane === fixture.left)
                 type(fixture.sink, "left")
                 click(fixture, fixture.right)
+                assertTrue(fixture.activePane === fixture.right)
                 type(fixture.sink, "right")
                 assertEquals("left", fixture.first.typed.toString())
                 assertEquals("right", fixture.second.typed.toString())
@@ -173,6 +175,7 @@ class AppBrowserInputTest {
         val first = RecordingBrowser()
         val second = RecordingBrowser()
         var firstCurrent = true
+        var activePane: Component? = null
         val window =
             JFrame("Synthetic browser routing").apply {
                 iconImages = BossWindowIcon.images
@@ -218,7 +221,8 @@ class AppBrowserInputTest {
                     component.width.toDouble(),
                     component.height.toDouble(),
                 ),
-                current,
+                activate = { activePane = component },
+                current = current,
             )
         }
 

@@ -22,6 +22,7 @@ test('browser admission uses cookie+CSRF, pins account registry key and consumes
   try {
     const result = await browserViewerConfig(globalThis.location, async () => Response.json({ csrf: 'csrf-token-long-enough' }));
     assert.equal(result.mediaRootKey, 'AUTHORIZED'); assert.equal(result.windowId, 'owned');
+    assert.equal(result.returnUrl, 'https://api.example/functions/v1/live-sessions/');
     assert.deepEqual(calls.map(call => call.action), ['list', 'admit', 'consume']);
     assert.equal(calls[1].role, 'control'); assert.equal(calls[2].ticket, 'single-use-ticket');
     assert.equal(calls[1].device_id, calls[2].device_id);

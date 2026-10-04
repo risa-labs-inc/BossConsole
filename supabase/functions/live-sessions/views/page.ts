@@ -54,6 +54,9 @@ const STYLES = `
   main { max-width: 640px; margin: 0 auto; padding: 32px 16px 48px; }
   header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
   h1 { font-size: 20px; margin: 0; letter-spacing: -0.2px; }
+  h2 { font-size: 16px; margin: 0 0 4px; }
+  .session-group + .session-group { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--line); }
+  .session-group > .sub { margin-bottom: 16px; }
   .sub { color: var(--text-2); font-size: 13px; }
   .card { background-color: var(--raised); border: 1px solid var(--line); border-radius: 10px; padding: 20px; }
   .card + .card { margin-top: 12px; }
@@ -331,7 +334,9 @@ const SCRIPT = `
     $("who").textContent = email || "";
     if (viewing) return; // the frame is up; leave the list alone until it closes (closeSession reloads)
     var ul = $("sessions");
+    var appUl = $("app-sessions");
     ul.innerHTML = "";
+    appUl.innerHTML = "";
     if (sessions.length === 1 && appSessions.length === 0 && !cancelledAutoOpen && !openTimer) {
       var s = sessions[0], url = safeHttpUrl(s.control_url);
       if (url) {
@@ -343,8 +348,11 @@ const SCRIPT = `
         return;
       }
     }
-    if (sessions.length === 0 && appSessions.length === 0) {
-      ul.innerHTML = '<li><div><div class="name">No live sessions</div><div class="meta">Share a tab from a signed-in BossTerm and it will appear here.</div></div></li>';
+    if (sessions.length === 0) {
+      ul.innerHTML = '<li><div><div class="name">No live terminal sessions</div><div class="meta">Share a terminal from BossTerm or BossConsole to see it here.</div></div></li>';
+    }
+    if (appSessions.length === 0) {
+      appUl.innerHTML = '<li><div><div class="name">No live BossConsole sessions</div><div class="meta">Open BossConsole and sign in with this account to see it here.</div></div></li>';
     }
     sessions.forEach(function (s) {
       var url = safeHttpUrl(s.control_url); if (!url) return;
@@ -370,7 +378,7 @@ const SCRIPT = `
       var li = document.createElement("li");
       li.innerHTML = '<div><div class="name">' + esc(s.name) + '<span class="pill ok">BossConsole</span></div><div class="meta">Shared application windows · encrypted media</div></div><a class="btn" rel="noopener noreferrer" target="_blank">Open</a>';
       li.querySelector("a").setAttribute("href", base + "/app-viewer/?session=" + encodeURIComponent(s.session_id));
-      ul.appendChild(li);
+      appUl.appendChild(li);
     });
     show("list");
     startPolling();
@@ -453,7 +461,7 @@ export function livePage(model: PageModel, nonce: string): string {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex, nofollow">
-<title>BossTerm Live Sessions</title>
+<title>BOSS Live Sessions</title>
 <link rel="icon" type="image/svg+xml" href="${esc(model.basePath)}/app-viewer/boss-logo.svg">
 <style nonce="${esc(nonce)}">${STYLES}</style>
 </head>
@@ -461,7 +469,7 @@ export function livePage(model: PageModel, nonce: string): string {
 <!--email_off-->
 <main>
   <header>
-    <div><h1>BossTerm live sessions</h1><div class="sub">Terminal sessions shared from BossTerm, signed in with your BOSS account</div></div>
+    <div><h1>BOSS live sessions</h1><div class="sub">Your BossTerm terminals and BossConsole windows, using the same BOSS account</div></div>
     <div class="sub" id="who"></div>
   </header>
   ${notice}
@@ -477,7 +485,7 @@ export function livePage(model: PageModel, nonce: string): string {
       <input id="email" name="email" type="email" required autocomplete="email" inputmode="email" placeholder="you@company.com">
       <div class="row">
         <button id="send" type="submit">Email me a sign-in link</button>
-        <span class="sub">Uses the same account you signed into BossTerm with.</span>
+        <span class="sub">Use the same account as BossTerm and BossConsole.</span>
       </div>
     </form>
   </section>
@@ -500,11 +508,20 @@ export function livePage(model: PageModel, nonce: string): string {
   </section>
 
   <section id="list" class="card hidden">
-    <ul id="sessions" class="sessions"></ul>
+    <section class="session-group" aria-labelledby="bossterm-heading">
+      <h2 id="bossterm-heading">BossTerm live sessions</h2>
+      <div class="sub">Terminals shared from BossTerm or inside BossConsole</div>
+      <ul id="sessions" class="sessions"></ul>
+    </section>
+    <section class="session-group" aria-labelledby="bossconsole-heading">
+      <h2 id="bossconsole-heading">BossConsole live sessions</h2>
+      <div class="sub">Shared BossConsole application windows</div>
+      <ul id="app-sessions" class="sessions"></ul>
+    </section>
     <div class="row">
       <button id="refresh" class="secondary" type="button">Refresh</button>
       <button id="signout" class="secondary" type="button">Sign out</button>
-      <span class="sub">Sessions disappear about ${esc(String(model.liveWindowSeconds))} seconds after BossTerm stops sharing or closes.</span>
+      <span class="sub">Terminal sessions disappear about ${esc(String(model.liveWindowSeconds))} seconds after sharing stops or the app closes.</span>
     </div>
   </section>
 

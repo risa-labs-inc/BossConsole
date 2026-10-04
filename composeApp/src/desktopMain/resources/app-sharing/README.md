@@ -33,6 +33,23 @@ key never leaves the publisher's trusted page. A relay transport cannot read
 the pixel-bearing payload, but the owner registry intentionally holds the root
 key inside the account-only viewer URL.
 
+The host's local `automaticSharingEnabled` policy defaults to true. After sign-in,
+the coordinator publishes the currently visible, registered BossConsole windows;
+it never selects a display or another application's window. Saved opt-outs remain
+off. Stop pauses automatic sharing until the next sign-in or explicit enable, and
+manual window selection is retained for that publication. A new window does not
+restart an existing publication. Screen Recording permission is still required.
+
+Cursor feedback is an optional standard CSS shape in signed geometry metadata.
+Native cursor changes wake the protected raw-frame reader with a metadata-only
+204 response; unchanged pixels are not copied or painted again. Cursor updates
+do not change the geometry revision or control lease. Older hosts/viewers continue
+without this field. The client applies it only while controlling the stream.
+
+The authenticated hosted viewer returns to its same-origin session list after a
+terminal media failure or Disconnect. Transient failures keep their existing
+recovery window. Native viewers retain their local disconnect behavior.
+
 Host calls `BossAppShareHost.frame({png,width,height,geometryRevision})` using
 standard base64 PNG snapshots from the exactly selected native capture source.
 The canvas retains only the latest waiting snapshot, requests one encoded video

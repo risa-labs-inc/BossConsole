@@ -328,8 +328,9 @@ internal class AppSharingAssets(
             after: Long?,
         ) {
             exchange.responseHeaders.set("X-Boss-App-Sequence", latest.sequence.toString())
+            exchange.responseHeaders.set("X-Boss-App-Cursor", latest.cursor)
             val frame = latest.frame
-            if (frame == null || after == latest.sequence) {
+            if (frame == null || (after != null && after >= latest.frameSequence)) {
                 exchange.responseHeaders.set("X-Boss-App-Empty", (frame == null).toString())
                 exchange.responseHeaders.set("Cache-Control", "no-store")
                 exchange.sendResponseHeaders(204, -1)

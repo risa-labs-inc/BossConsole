@@ -6,6 +6,7 @@ import { SharingPerformanceBar } from './performance-bar.mjs';
 import { acquireControlWithRetry, CONTROL_ATTEMPTS } from './control-retry.mjs';
 import { setupViewerFullscreen } from './fullscreen.mjs';
 import { StreamPlaceholder } from './placeholder.mjs';
+import { remoteCursor } from './cursor.mjs';
 
 const video = document.getElementById('screen');
 const status = document.getElementById('status');
@@ -69,8 +70,13 @@ setupViewerFullscreen({ document, root: document.documentElement, button: docume
   focusStream: () => { if (current?.lease && !document.hidden) video.focus(); } });
 function text(value) { status.textContent = value; placeholder.text(value); }
 function paused(owner) { return owner.recovering || owner.hostPaused; }
+function updateCursor(owner) {
+  video.style.cursor = owner?.lease && owner.pointerInside && !owner.failed && !paused(owner) && !owner.inactive && !document.hidden
+    ? remoteCursor(owner.geometry?.cursor) : 'default';
+}
 function updateViewing(owner) {
   if (current !== owner) return;
+  updateCursor(owner);
   updateWindowActions(owner);
   placeholder.unavailable(owner.failed || paused(owner));
   const retry = ['busy', 'temporary', 'expired'].includes(owner.controlFailure);
@@ -102,6 +108,7 @@ function suspendControl(owner) {
 }
 function stopOwner() {
   const owner = current; current = null;
+  updateCursor(null);
   heldKeys.clear();
   placeholder.reset(); placeholder.unavailable(false);
   updateWindowActions(null);
@@ -114,6 +121,17 @@ function stopOwner() {
   return closing;
 }
 function stop() { navigation++; return stopOwner(); }
+function leaveViewer(owner = current) {
+  if (current !== owner) return;
+  // Only the cookie-authenticated hosted entry supplies this field. Derive the
+  // destination again so a supplied config cannot redirect to another site.
+  const returnUrl = owner?.config.returnUrl;
+  const destination = new URL('../', globalThis.location.href).href;
+  stop();
+  // releaseControl/mediaClose start their keepalive requests synchronously.
+  // An unhealthy network must not leave this page waiting on their responses.
+  if (returnUrl === destination && !globalThis.__bossAppShareBridge) globalThis.location.replace(destination);
+}
 function configureWindows(config) {
   windowPicker.replaceChildren();
   for (const window of config.windows ?? []) {
@@ -146,6 +164,7 @@ async function start(value) {
         owner.performance?.pause();
         if (owner.recovering) suspendControl(owner); else { owner.wantsControl = false; owner.controlAttempt?.abort.abort(); owner.control?.stop(); }
         updateViewing(owner);
+        if (owner.failed && owner.config.returnUrl) leaveViewer(owner);
       }
     } });
     await owner.media.subscribe(track => {
@@ -191,7 +210,7 @@ async function start(value) {
       }
     } catch (_) { if (current === owner) { owner.controlFailure = 'unavailable'; updateViewing(owner); } }
   } catch (_) {
-    if (current === owner) { stop(); text('Unable to connect. Reopen the session from BossConsole.'); }
+    if (current === owner) { leaveViewer(owner); text('Unable to connect. Reopen the session from BossConsole.'); }
   }
 }
 async function switchWindow() {
@@ -252,8 +271,9 @@ function point(event) {
 }
 for (const [eventName, action] of [['pointermove', 'move'], ['pointerdown', 'down'], ['pointerup', 'up']]) {
   video.addEventListener(eventName, event => {
-    if (!current?.lease) return;
     const coordinates = point(event);
+    if (current) { current.pointerInside = !!coordinates; updateCursor(current); }
+    if (!current?.lease) return;
     // Releasing outside the image cannot leave a held host button behind.
     if (!coordinates) { if (action === 'up') releaseControl(); return; }
     if (event.button > 2) return;
@@ -262,6 +282,7 @@ for (const [eventName, action] of [['pointermove', 'move'], ['pointerdown', 'dow
     current.control.send({ type: 'pointer', action, ...coordinates, button: event.button < 0 ? 0 : event.button });
   });
 }
+video.addEventListener('pointerleave', () => { if (current) { current.pointerInside = false; updateCursor(current); } });
 video.addEventListener('pointercancel', releaseControl);
 video.addEventListener('wheel', event => {
   if (!current?.lease) return;
@@ -293,7 +314,7 @@ globalThis.addEventListener('focus', resumeViewer);
 document.addEventListener('visibilitychange', () => document.hidden ? suspendViewer() : resumeViewer());
 globalThis.addEventListener('pagehide', stop);
 controlButton.addEventListener('click', () => current?.lease ? releaseControl() : takeControl());
-document.getElementById('disconnect').addEventListener('click', stop);
+document.getElementById('disconnect').addEventListener('click', () => leaveViewer());
 windowPicker.addEventListener('change', switchWindow);
 windowActions?.addEventListener('change', recoverWindow);
 globalThis.BossAppShareViewer = { start, stop, takeControl, releaseControl, resolve: resolveBridgeRequest, reject: rejectBridgeRequest };

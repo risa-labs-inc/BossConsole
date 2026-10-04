@@ -11,9 +11,10 @@ import java.util.UUID
 internal data class AppSharingLocalPreferences(
     val relayEnabled: Boolean = true,
     val deviceId: String = UUID.randomUUID().toString(),
+    val automaticSharingEnabled: Boolean = true,
 )
 
-/** Contains no auto-start or window grants: loading preferences never starts capture. */
+/** Loading only reads policy. The host coordinator checks account and window ownership before capture. */
 internal class AppSharingPreferenceStore(
     private val file: File = BossDirectories.resolve("app-sharing.json"),
 ) {
@@ -30,7 +31,7 @@ internal class AppSharingPreferenceStore(
             } else {
                 AppSharingLocalPreferences()
             }
-        }.getOrDefault(AppSharingLocalPreferences())
+        }.getOrDefault(AppSharingLocalPreferences(automaticSharingEnabled = false))
 
     fun save(preferences: AppSharingLocalPreferences) {
         require(UUID.fromString(preferences.deviceId).toString() == preferences.deviceId)

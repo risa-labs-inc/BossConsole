@@ -1,6 +1,7 @@
 import { createControlCipher, fromBase64, toBase64 } from './crypto.mjs';
 import { monitorMediaStats, validMediaMetrics } from './stats.mjs';
 import { SHARING_RECOVERY_MS, transientSharingFailure } from './recovery.mjs';
+import { remoteCursor } from './cursor.mjs';
 
 const utf8 = new TextEncoder();
 const MAX_BUFFER = 65536;
@@ -99,8 +100,8 @@ export class AppControlChannel {
     }
   }
   setGeometry(geometry) {
-    const changed = this.geometry?.geometryRevision !== geometry.geometryRevision;
-    this.geometry = geometry;
+    const changed = this.geometry?.geometryRevision !== geometry.geometryRevision || remoteCursor(this.geometry?.cursor) !== remoteCursor(geometry.cursor);
+    this.geometry = { ...geometry, cursor: remoteCursor(geometry.cursor) };
     // Notify viewers as soon as a popup or resize changes input coordinates.
     if (this.host && changed && !this.closed) {
       this.geometryAnnouncement = (this.geometryAnnouncement ?? Promise.resolve())

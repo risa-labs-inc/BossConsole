@@ -37,6 +37,7 @@ internal class AwtAppInputSink(
     private val window: Window,
     private val privateSurfaceAllowed: () -> Boolean = { true },
     private val requireForeground: Boolean = true,
+    private val onCursor: (String) -> Unit = {},
     private val browserSurfaceAt: (Window, Int, Int) -> AppBrowserInputSurface? = ::appBrowserInputSurfaceAt,
 ) : AppScopedInputSink {
     private data class HeldPointer(
@@ -231,6 +232,7 @@ internal class AwtAppInputSink(
                 return false
             }
             if (target.nativeTarget == null) target.component.requestFocusInWindow()
+            target.browserSurface?.activatePanel()
             keyboardTarget = (target.component as? javax.swing.RootPaneContainer)?.contentPane ?: target.component
             keyboardBrowser = target.browserSurface
             keyboardNative = target.nativeTarget?.takeIf { it.id == "browser_url" }
@@ -251,7 +253,28 @@ internal class AwtAppInputSink(
             },
             validUntilMillis,
         )
+        publishCursor(target)
         return true
+    }
+
+    /** Compose updates hover icons asynchronously. Fence feedback against retired input authority. */
+    private fun publishCursor(target: HeldPointer) {
+        val epoch = authorityEpoch.get()
+        SwingUtilities.invokeLater {
+            if (authorityEpoch.get() != epoch || !visibleInputWindow()) return@invokeLater
+            if (target.component.isShowing &&
+                allowedWindow(SwingUtilities.getWindowAncestor(target.component)) &&
+                target.browserSurface?.isCurrent() != false
+            ) {
+                val cursor =
+                    when {
+                        target.nativeTarget?.id == "browser_url" -> "text"
+                        target.nativeTarget != null || target.browserSurface != null -> "default"
+                        else -> appCursorCss(target.component.cursor)
+                    }
+                onCursor(cursor)
+            }
+        }
     }
 
     private fun applyWheel(event: AppInputEvent.Wheel): Boolean {
@@ -332,6 +355,7 @@ internal class AwtAppInputSink(
     override fun releaseAll() {
         check(SwingUtilities.isEventDispatchThread())
         authorityEpoch.incrementAndGet()
+        onCursor("default")
         releaseHeldInput()
     }
 

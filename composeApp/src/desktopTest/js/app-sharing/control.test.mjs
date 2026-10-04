@@ -176,10 +176,15 @@ test('changed geometry is signed and sent immediately without waiting for lease 
     host.setGeometry({ width: 1000, height: 700, geometryRevision: 4 });
     await host.geometryAnnouncement;
     assert.equal(h.sent.length, 1);
+    host.setGeometry({ width: 1000, height: 700, geometryRevision: 4, cursor: 'ew-resize' });
+    await host.geometryAnnouncement;
+    assert.equal(h.sent.length, 2);
+    assert.equal(h.sent[1].body.cursor, 'ew-resize');
+    assert.equal(h.sent[1].body.geometryRevision, 4);
     host.stop();
     host.setGeometry({ width: 1000, height: 700, geometryRevision: 5 });
     await host.geometryAnnouncement;
-    assert.equal(h.sent.length, 1);
+    assert.equal(h.sent.length, 2);
   } finally { host.stop(); }
 });
 
