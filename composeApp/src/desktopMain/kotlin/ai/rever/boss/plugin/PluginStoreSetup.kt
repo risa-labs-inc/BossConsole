@@ -259,6 +259,8 @@ object PluginStoreSetup {
      * This should be called early in the application lifecycle.
      */
     fun initialize() {
+        ai.rever.boss.updater.UpdateSettingsManager
+            .ensureLoaded()
         if (initialized) {
             logger.debug(LogCategory.SYSTEM, "Plugin store already initialized")
             return

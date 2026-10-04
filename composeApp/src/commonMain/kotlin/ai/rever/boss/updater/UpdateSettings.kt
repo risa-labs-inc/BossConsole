@@ -7,7 +7,20 @@ package ai.rever.boss.updater
  * Actual implementations handle platform-specific storage (e.g., File I/O on desktop).
  */
 expect object UpdateSettings {
-    /** Download and prepare installation after manual quit, without relaunching. */
+    /** Install compatible plugins automatically once their views are closed. */
+    var autoPluginUpdatesEnabled: Boolean
+    val automaticPluginUpdates: kotlinx.coroutines.flow.StateFlow<Boolean>
+
+    val pluginAutoUpdateOptOuts: kotlinx.coroutines.flow.StateFlow<Set<String>>
+
+    fun setPluginAutomaticUpdates(
+        pluginId: String,
+        enabled: Boolean,
+    )
+
+    fun isPluginAutomaticUpdateEnabled(pluginId: String): Boolean
+
+    /** Download and prepare application installation after manual quit, without relaunching. */
     var autoUpdateEnabled: Boolean
     val automaticUpdates: kotlinx.coroutines.flow.StateFlow<Boolean>
 

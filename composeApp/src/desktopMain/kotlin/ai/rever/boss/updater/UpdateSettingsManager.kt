@@ -30,6 +30,39 @@ internal fun defaultAutoUpdateEnabled(
 ): Boolean = testAutoUpdate || buildType == "release"
 
 actual object UpdateSettings {
+    private val pluginOptOuts = kotlinx.coroutines.flow.MutableStateFlow<Set<String>>(emptySet())
+    actual val pluginAutoUpdateOptOuts: kotlinx.coroutines.flow.StateFlow<Set<String>> = pluginOptOuts
+
+    actual fun setPluginAutomaticUpdates(
+        pluginId: String,
+        enabled: Boolean,
+    ) {
+        pluginOptOuts.value = if (enabled) pluginOptOuts.value - pluginId else pluginOptOuts.value + pluginId
+        System.setProperty("boss.plugins.autoUpdate.optOuts", pluginOptOuts.value.joinToString(","))
+    }
+
+    internal fun restorePluginOptOuts(ids: Set<String>) {
+        pluginOptOuts.value = ids
+        System.setProperty("boss.plugins.autoUpdate.optOuts", ids.joinToString(","))
+    }
+
+    actual fun isPluginAutomaticUpdateEnabled(pluginId: String): Boolean {
+        val optedOut = pluginId in pluginOptOuts.value
+        return autoPluginUpdatesEnabled && !optedOut
+    }
+
+    private val automaticPlugins =
+        kotlinx.coroutines.flow.MutableStateFlow(defaultAutoUpdateEnabled()).also {
+            System.setProperty("boss.plugins.autoUpdate.enabled", it.value.toString())
+        }
+    actual val automaticPluginUpdates: kotlinx.coroutines.flow.StateFlow<Boolean> = automaticPlugins
+    actual var autoPluginUpdatesEnabled: Boolean
+        get() = automaticPlugins.value
+        set(value) {
+            System.setProperty("boss.plugins.autoUpdate.enabled", value.toString())
+            automaticPlugins.value = value
+        }
+
     private val automatic = kotlinx.coroutines.flow.MutableStateFlow(defaultAutoUpdateEnabled())
     actual val automaticUpdates: kotlinx.coroutines.flow.StateFlow<Boolean> = automatic
     actual var autoUpdateEnabled: Boolean
@@ -78,6 +111,8 @@ actual object UpdateSettings {
  */
 @Serializable
 data class UpdateSettingsData(
+    val pluginAutoUpdateOptOuts: Set<String> = emptySet(),
+    val autoPluginUpdatesEnabled: Boolean = defaultAutoUpdateEnabled(),
     val autoUpdateEnabled: Boolean = defaultAutoUpdateEnabled(),
     val autoCheckEnabled: Boolean = true,
     val checkIntervalHours: Long = 6,
@@ -143,6 +178,8 @@ actual object UpdateSettingsManager {
                 val settings = json.decodeFromString<UpdateSettingsData>(content)
 
                 // Apply loaded settings
+                UpdateSettings.restorePluginOptOuts(settings.pluginAutoUpdateOptOuts)
+                UpdateSettings.autoPluginUpdatesEnabled = settings.autoPluginUpdatesEnabled
                 UpdateSettings.autoUpdateEnabled = settings.autoUpdateEnabled
                 UpdateSettings.autoCheckEnabled = settings.autoCheckEnabled
                 UpdateSettings.checkIntervalHours = settings.checkIntervalHours
@@ -177,6 +214,8 @@ actual object UpdateSettingsManager {
                 try {
                     val settings =
                         UpdateSettingsData(
+                            pluginAutoUpdateOptOuts = UpdateSettings.pluginAutoUpdateOptOuts.value,
+                            autoPluginUpdatesEnabled = UpdateSettings.autoPluginUpdatesEnabled,
                             autoUpdateEnabled = UpdateSettings.autoUpdateEnabled,
                             autoCheckEnabled = UpdateSettings.autoCheckEnabled,
                             checkIntervalHours = UpdateSettings.checkIntervalHours,

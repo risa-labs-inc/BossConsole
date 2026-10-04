@@ -46,6 +46,27 @@ launch `BOSS.app` from that directory. Quit manually to let the helper install, 
 open it again after installation finishes. Do not use `run` for installation testing:
 the updater refuses automatic installation from a Gradle development process.
 
+### Automatic plugin updates
+
+Settings > Updates has an independent Automatic Plugin Updates switch. It defaults
+on in packaged release builds and off in Gradle development runs. Preferences persist.
+Every eligible plugin is included by default. The per-plugin list stores explicit opt-outs,
+so newly installed plugins update automatically too. Opt-outs are rechecked before activation.
+The worker starts after workspace restoration, uses compatible store candidates, and
+waits for all plugin tabs and mounted panels to close. It rechecks views after download.
+Ordinary idle plugins reload without restarting BOSS; native plugins, disabled plugins,
+plugins with loaded dependents, and multiwindow updates are staged for the next manual
+start. Disabled plugins remain disabled. Protected API/runtime ids use their existing
+host-managed lifecycle. Activation failures attempt to restore the previous JAR; status
+and errors appear in Settings. Supabase Realtime is the primary trigger, with a six-hour
+fallback and a local 30-second check for views closing.
+
+Toolbox honors the optional `boss.plugins.autoUpdate.enabled` JVM property to suppress
+manual update toasts in automatic mode. The `boss.plugins.autoUpdate.optOuts` property
+keeps manual prompts available for explicitly excluded plugins. Its companion change needs to ship too; older
+Toolbox builds may still show a manual prompt. Turning the mode off stops pending work
+before activation; already-staged updates apply at the next manual start.
+
 ### `composeApp` test home isolation
 
 Every `composeApp` `Test` task points `user.home` at its own fresh

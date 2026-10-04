@@ -729,6 +729,13 @@ internal fun BossAppStartupEffects(state: BossAppState) {
         }
     }
 
+    LaunchedEffect(state.currentDefaultPlugin, state.workspaceRestorationComplete) {
+        if (state.currentDefaultPlugin != null && state.workspaceRestorationComplete) {
+            ai.rever.boss.components.plugin.PluginUpdateBridge
+                .startAutomaticUpdates()
+        }
+    }
+
     // Keep the badges honest whoever applies an update. The registry used to be
     // cleared only by the host's own update path, so a plugin updated from the
     // Toolbox or from its update toast kept offering a version it was already

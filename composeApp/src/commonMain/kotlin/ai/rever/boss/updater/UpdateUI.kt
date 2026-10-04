@@ -513,6 +513,45 @@ fun UpdateSettingsSection(updateCoordinator: UpdateCoordinator = UpdateCoordinat
                 }
                 Spacer(modifier = Modifier.height(12.dp))
 
+                val automaticPluginUpdates by UpdateSettings.automaticPluginUpdates.collectAsState()
+                val pluginUpdateStatus by ai.rever.boss.components.plugin.PluginUpdateBridge
+                    .automaticUpdateStatus
+                    .collectAsState()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Automatic Plugin Updates", fontSize = 14.sp, color = BossTheme.colors.textPrimary)
+                        Text(
+                            "Install compatible updates after plugin views close. " +
+                                "Updates that need a restart wait for your next manual start.",
+                            fontSize = 12.sp,
+                            color = BossTheme.colors.textSecondary,
+                        )
+                    }
+                    Switch(
+                        checked = automaticPluginUpdates,
+                        onCheckedChange = { enabled ->
+                            UpdateSettings.autoPluginUpdatesEnabled = enabled
+                            coroutineScope.launch { UpdateSettingsManager.saveSettings() }
+                        },
+                        colors =
+                            SwitchDefaults.colors(
+                                checkedThumbColor = BossTheme.colors.signal,
+                                checkedTrackColor = BossTheme.colors.signal.copy(alpha = 0.5f),
+                            ),
+                    )
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+
+                if (automaticPluginUpdates) {
+                    Text(pluginUpdateStatus, fontSize = 12.sp, color = BossTheme.colors.textSecondary)
+                    PluginAutomaticUpdatePreferences()
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+
                 // Automatic Update Check Toggle
                 var autoCheckEnabled by remember { mutableStateOf(UpdateSettings.autoCheckEnabled) }
 

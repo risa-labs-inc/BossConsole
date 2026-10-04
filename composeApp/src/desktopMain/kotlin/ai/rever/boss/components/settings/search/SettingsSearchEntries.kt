@@ -209,6 +209,7 @@ private fun updatesEntries() =
     section(SettingsSection.UPDATES) {
         group("Version Information", "build", "current version")
         group("Update Settings")
+        setting("Automatic Plugin Updates", "Update Settings", "plugin updates", "auto install")
         setting("Automatic Update Checks", "Update Settings", "auto update")
         setting("Include Pre-release Versions", "Update Settings", "beta", "alpha", "rc")
     }

@@ -35,6 +35,34 @@ class PluginUpdateManagerIdentityVetTest {
     }
 
     @Test
+    fun `pending candidate downloads its version after another check clears the shared list`() =
+        runTest {
+            val repository = FakeSingleVersionRepository(candidate())
+            val repositories = PluginRepositoryManager().apply { addRepository(repository) }
+            val mgr = PluginUpdateManager(repositories, verifyDownloadedJar = { _, _ -> Result.success(Unit) })
+            val pending = mgr.checkForUpdates(mapOf(pluginId to "1.0.0")).availableUpdates.single()
+            mgr.checkForUpdates(mapOf(pluginId to "2.0.0"))
+            assertTrue(mgr.availableUpdates.value.isEmpty())
+            var loaded = false
+
+            val result =
+                mgr.updatePluginSnapshot(
+                    update = pending,
+                    downloadPath = "/tmp/does-not-matter.jar",
+                    unloadPlugin = { Result.success(Unit) },
+                    loadPlugin = {
+                        loaded = true
+                        Result.success(Unit)
+                    },
+                )
+
+            assertTrue(result.isSuccess)
+            assertTrue(loaded)
+            assertEquals("2.0.0", repository.downloadedVersion)
+            assertEquals(UpdateState.Completed(pluginId, "2.0.0"), mgr.state.value)
+        }
+
+    @Test
     fun `a jar the vet rejects is refused before the unload`() =
         runTest {
             var unloaded = 0
