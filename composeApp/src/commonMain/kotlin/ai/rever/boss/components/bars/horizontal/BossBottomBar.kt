@@ -28,7 +28,6 @@ import ai.rever.boss.plugin.sandbox.ui.PluginExtensionBoundary
 import ai.rever.boss.plugin.tab.codeeditor.EditorTabInfo
 import ai.rever.boss.plugin.tab.terminal.TerminalTabInfo
 import ai.rever.boss.plugin.ui.BossTheme
-import ai.rever.boss.plugin.ui.TerminalTitleBarBridge
 import ai.rever.boss.utils.SystemUtils
 import ai.rever.boss.window.LocalWindowId
 import ai.rever.boss.window.LocalWindowProjectState
@@ -250,10 +249,7 @@ fun BossRightBottomBar() {
     // TextButtons, taller than the bar itself, so their labels were clipped), which spent most of
     // the bar on grants that are usually empty or rarely touched.
     val persistedPolicyConfig by McpToolRegistryImpl.policyEngine.config.collectAsState()
-    val mcpInTitleBar =
-        windowId != null && TerminalTitleBarBridge.isHosted(windowId) &&
-            TerminalTitleBarBridge.actions(windowId).any { it.id == "mcp" }
-    if (!mcpInTitleBar) McpAccessStatusItem(persistedPolicyConfig)
+    McpAccessStatusItem(persistedPolicyConfig)
 
     val policyFault by McpToolRegistryImpl.policyFault.collectAsState()
     policyFault?.let { fault ->
@@ -271,7 +267,7 @@ fun BossRightBottomBar() {
     // because this line used to be the ONLY visibility into MCP activity - every call before
     // the current one, and the policy/approval decision behind it, was reachable only by
     // opening the rotated MCP ledger file in a text editor.
-    if (!mcpInTitleBar) McpActivityStatusItem()
+    McpActivityStatusItem()
 
     // Status message (temporary messages like "Space Saved")
     val statusMessage by StatusMessageManager.currentMessage.collectAsState()
