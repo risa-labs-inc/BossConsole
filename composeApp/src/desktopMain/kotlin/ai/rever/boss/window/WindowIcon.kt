@@ -214,10 +214,10 @@ object DefaultWindowIcon {
      * before the first window - see the call site for why both ends of that are fenced.
      */
     fun install() {
-        // getDefaultToolkit() below is what creates the toolkit (and with it AppKit on macOS).
-        ai.rever.boss.plugin.browser.ChromiumToolkitPreload
-            .noteAwtToolkitCreating("DefaultWindowIcon.install")
         runCatching {
+            // getDefaultToolkit() below is what creates the toolkit (and with it AppKit on macOS).
+            ai.rever.boss.plugin.browser.ChromiumToolkitPreload
+                .noteAwtToolkitCreating("DefaultWindowIcon.install")
             Toolkit.getDefaultToolkit().addAWTEventListener({ event ->
                 if (event.id == WindowEvent.WINDOW_OPENED) {
                     ((event as? WindowEvent)?.window as? Frame)?.let(::brandIfUnbranded)

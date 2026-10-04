@@ -224,6 +224,7 @@ object ChromiumToolkitPreload {
                 is Plan.Skip -> return skipped(plan.reason)
                 is Plan.Load -> plan.files
             }
+        // Report the late entry, but do not skip: JxBrowser would load the same toolkit later anyway.
         lateLoadReason(awtToolkitOrigin.createdBy, isMac)?.let { reason ->
             logger.error(
                 LogCategory.BROWSER,

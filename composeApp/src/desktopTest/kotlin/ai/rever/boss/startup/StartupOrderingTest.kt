@@ -1,5 +1,6 @@
 package ai.rever.boss.startup
 
+import ai.rever.boss.testsupport.repoRoot
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertTrue
@@ -13,11 +14,8 @@ import kotlin.test.assertTrue
  * instead. The runtime half is `ChromiumToolkitPreload.lateLoadReason`.
  */
 class StartupOrderingTest {
+    private val root: File by lazy { repoRoot() }
     private val main: String by lazy {
-        val root =
-            generateSequence(File(System.getProperty("user.dir"))) { it.parentFile }
-                .firstOrNull { File(it, "settings.gradle.kts").isFile }
-                ?: error("Cannot locate the BOSS source root from ${System.getProperty("user.dir")}")
         // Prose and literals cannot be mistaken for startup calls.
         File(root, "composeApp/src/desktopMain/kotlin/ai/rever/boss/main.kt")
             .readText()
@@ -55,11 +53,6 @@ class StartupOrderingTest {
 
     @Test
     fun `icon creation records its entry point before accessing the toolkit`() {
-        val source = File(System.getProperty("user.dir"))
-        val root =
-            generateSequence(source) { it.parentFile }
-                .firstOrNull { File(it, "settings.gradle.kts").isFile }
-                ?: error("Cannot locate the BOSS source root from $source")
         val icon =
             startupCodeOnly(
                 File(
@@ -67,11 +60,12 @@ class StartupOrderingTest {
                     "composeApp/src/desktopMain/kotlin/ai/rever/boss/window/WindowIcon.kt",
                 ).readText(),
             )
-        val install = icon.indexOf("fun install()")
+        val owner = icon.indexOf("object DefaultWindowIcon")
+        val install = icon.indexOf("fun install()", owner)
         val marker = icon.indexOf(".noteAwtToolkitCreating(", install)
         val toolkit = icon.indexOf("Toolkit.getDefaultToolkit()", install)
         assertTrue(
-            install >= 0 && marker > install && toolkit > marker,
+            owner >= 0 && install > owner && marker > install && toolkit > marker,
             "Window icon installation must record creation before accessing AWT",
         )
     }
