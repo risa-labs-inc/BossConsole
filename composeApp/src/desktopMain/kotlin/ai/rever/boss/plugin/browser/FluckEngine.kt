@@ -2635,8 +2635,9 @@ object FluckEngine {
 
     /**
      * Resolves both input acceptance and the destination for application shortcuts.
-     * A window-owned browser is accepted only while its owner is focused, and its
-     * stable owner always wins over the legacy process-focused fallback.
+     * A window-owned browser is accepted only while its input surface is focused, and its
+     * stable owner always wins over the legacy process-focused fallback. HTML fullscreen
+     * moves that surface to an owned Swing window without changing shortcut ownership.
      */
     internal fun resolveBrowserKeyEventRoute(
         ownerWindowId: String?,
@@ -2974,7 +2975,10 @@ object FluckEngine {
                 val route =
                     resolveBrowserKeyEventRoute(
                         ownerWindowId = ownerWindowId,
-                        ownerWindowIsFocused = ownerWindowId?.let(WindowFocusManager::isWindowFocused) == true,
+                        ownerWindowIsFocused =
+                            ai.rever.boss.tabfullscreen.fullscreenBrowserInput
+                                .focusFor(browser, ownerWindowId)
+                                ?: (ownerWindowId?.let(WindowFocusManager::isWindowFocused) == true),
                         fallbackFocusedWindowId =
                             if (ownerWindowId == null) {
                                 WindowFocusManager.focusedWindowFlow.value
