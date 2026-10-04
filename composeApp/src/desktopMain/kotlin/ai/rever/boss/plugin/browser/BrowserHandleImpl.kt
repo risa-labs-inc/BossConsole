@@ -116,7 +116,6 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.awt.GraphicsEnvironment
 import java.awt.Window
-import java.lang.ref.WeakReference
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -263,34 +262,6 @@ internal fun ContextMenuTarget.toContextMenuInfo(
         menuContext = menuContext,
     )
 }
-
-/** Per-handle authority; navigation or callback replacement revokes previously issued tokens. */
-internal class BrowserMenuContextAuthority {
-    private val generation = AtomicLong()
-
-    fun invalidate() {
-        generation.incrementAndGet()
-    }
-
-    fun snapshot(): Long = generation.get()
-
-    fun capture(
-        frame: Frame?,
-        capturedGeneration: Long = snapshot(),
-    ): BrowserMenuContext = BrowserMenuContextImpl(WeakReference(frame), this, capturedGeneration)
-
-    fun resolve(context: BrowserMenuContext): Frame? {
-        val token = context as? BrowserMenuContextImpl ?: return null
-        val frame = token.frameRef.get()
-        return frame.takeIf { token.owner === this && token.generation == generation.get() }
-    }
-}
-
-private class BrowserMenuContextImpl(
-    val frameRef: WeakReference<Frame>,
-    val owner: BrowserMenuContextAuthority,
-    val generation: Long,
-) : BrowserMenuContext
 
 /**
  * Desktop implementation of [BrowserHandle] that wraps a JxBrowser [Browser] instance.
@@ -1873,6 +1844,18 @@ internal class BrowserHandleImpl(
         browser.set(
             ShowContextMenuCallback::class.java,
             ShowContextMenuCallback { params, tell ->
+                val remoteClick =
+                    try {
+                        ai.rever.boss.sharing.AppBrowserMenuDispatch
+                            .consume(browser, params.location())
+                    } catch (_: Exception) {
+                        closeContextMenuQuietly(tell)
+                        return@ShowContextMenuCallback
+                    }
+                if (remoteClick != null && !runCatching(remoteClick.current).getOrDefault(false)) {
+                    closeContextMenuQuietly(tell)
+                    return@ShowContextMenuCallback
+                }
                 val callback = contextMenuCallback
                 if (callback == null) {
                     // Nobody is going to draw a menu, so hand the request back rather than
@@ -1902,7 +1885,7 @@ internal class BrowserHandleImpl(
                         // grant an old frame a new generation. Missing frames retain an invalid token.
                         val menuGeneration = menuContextAuthority.snapshot()
                         val frame = params.frame().orElse(null)
-                        val menuContext = menuContextAuthority.capture(frame, menuGeneration)
+                        val menuContext = menuContextAuthority.capture(frame, menuGeneration, remoteClick)
                         val target =
                             ContextMenuTarget(
                                 contentTypes = params.contentTypes(),
@@ -1977,7 +1960,7 @@ internal class BrowserHandleImpl(
                     // interrupt the blocking call either, so check before delivering rather
                     // than pushing a menu at a tab that is gone.
                     if (disposed.get()) return@launch
-                    deliverContextMenu(current, info.copy(formFieldInfo = formFieldInfo))
+                    deliverContextMenu(current, info.withFormField(formFieldInfo))
                 }
             },
         )

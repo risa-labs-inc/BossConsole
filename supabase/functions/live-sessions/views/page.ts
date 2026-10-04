@@ -454,6 +454,7 @@ export function livePage(model: PageModel, nonce: string): string {
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex, nofollow">
 <title>BossTerm Live Sessions</title>
+<link rel="icon" type="image/svg+xml" href="${esc(model.basePath)}/app-viewer/boss-logo.svg">
 <style nonce="${esc(nonce)}">${STYLES}</style>
 </head>
 <body>

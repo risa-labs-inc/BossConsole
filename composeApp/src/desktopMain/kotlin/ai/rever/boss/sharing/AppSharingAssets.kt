@@ -271,7 +271,7 @@ internal class AppSharingAssets(
         page: Page,
         name: String,
     ) {
-        val validName = name.matches(Regex("[a-z][a-z0-9-]*[.](html|mjs|js|css)"))
+        val validName = name.matches(Regex("[a-z][a-z0-9-]*[.](html|mjs|js|css|svg)"))
         val expectedHtml = if (page.host) "host.html" else "viewer.html"
         checkRequest(exchange.requestMethod == "GET" && validName, 404)
         checkRequest(!name.endsWith(".html") || name == expectedHtml, 404)
@@ -293,6 +293,7 @@ internal class AppSharingAssets(
             when (name.substringAfterLast('.')) {
                 "html" -> "text/html; charset=utf-8"
                 "css" -> "text/css"
+                "svg" -> "image/svg+xml"
                 else -> "text/javascript"
             }
         exchange.responseHeaders.set(

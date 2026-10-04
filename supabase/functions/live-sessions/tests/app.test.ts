@@ -75,6 +75,7 @@ Deno.test("GET / renders the page with a nonce'd script and CSP, no-store", with
   assertStringIncludes(html, `<style nonce="${nonce}">`)
   assertStringIncludes(html, 'id="signin-form"')
   assertStringIncludes(html, 'id="opening"') // single-session auto-open state exists
+  assertStringIncludes(html, 'rel="icon" type="image/svg+xml" href="/functions/v1/live-sessions/app-viewer/boss-logo.svg"')
   assertStringIncludes(html, '"basePath":"/functions/v1/live-sessions"')
   assertEquals(res.headers.get("cache-control"), "no-store, max-age=0")
   assertEquals(res.headers.get("x-frame-options"), "DENY")
@@ -769,4 +770,3 @@ Deno.test("the page offers Google and Apple as plain links to the start routes",
   assertStringIncludes(html, "Continue with Apple")
   assertStringIncludes(html, "oauth_error")
 }))
-

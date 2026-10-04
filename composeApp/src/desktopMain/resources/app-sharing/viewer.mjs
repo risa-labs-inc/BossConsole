@@ -4,9 +4,12 @@ import { AppControlChannel, videoPoint } from './control.mjs';
 import { browserViewerConfig } from './browser-bootstrap.mjs';
 import { SharingPerformanceBar } from './performance-bar.mjs';
 import { acquireControlWithRetry, CONTROL_ATTEMPTS } from './control-retry.mjs';
+import { setupViewerFullscreen } from './fullscreen.mjs';
+import { StreamPlaceholder } from './placeholder.mjs';
 
 const video = document.getElementById('screen');
 const status = document.getElementById('status');
+const placeholder = new StreamPlaceholder(video, document.getElementById('placeholder'), document.getElementById('placeholder-status'));
 const controlButton = document.getElementById('control');
 const windowPicker = document.getElementById('window');
 const windowLabel = document.getElementById('window-label');
@@ -60,12 +63,16 @@ function recoverWindow() {
   attempt(0);
 }
 let current = null;
+const heldKeys = new Map();
 let navigation = 0;
-function text(value) { status.textContent = value; }
+setupViewerFullscreen({ document, root: document.documentElement, button: document.getElementById('fullscreen'),
+  focusStream: () => { if (current?.lease && !document.hidden) video.focus(); } });
+function text(value) { status.textContent = value; placeholder.text(value); }
 function paused(owner) { return owner.recovering || owner.hostPaused; }
 function updateViewing(owner) {
   if (current !== owner) return;
   updateWindowActions(owner);
+  placeholder.unavailable(owner.failed || paused(owner));
   const retry = ['busy', 'temporary', 'expired'].includes(owner.controlFailure);
   controlButton.disabled = owner.failed || paused(owner) || !!owner.controlAttempt || owner.config.role === 'view' ||
     owner.control?.channel?.readyState !== 'open' || ['denied', 'unavailable'].includes(owner.controlFailure);
@@ -95,6 +102,8 @@ function suspendControl(owner) {
 }
 function stopOwner() {
   const owner = current; current = null;
+  heldKeys.clear();
+  placeholder.reset(); placeholder.unavailable(false);
   updateWindowActions(null);
   if (!owner) return;
   cancelWindowRecovery(owner);
@@ -139,7 +148,11 @@ async function start(value) {
         updateViewing(owner);
       }
     } });
-    await owner.media.subscribe(track => { video.srcObject = new MediaStream([track]); video.play().catch(() => text('Select the video to start playback')); });
+    await owner.media.subscribe(track => {
+      if (current !== owner) return;
+      video.srcObject = new MediaStream([track]); placeholder.attach(track);
+      video.play().catch(() => text('Select the video to start playback'));
+    });
     if (current !== owner) return;
     owner.performance = new SharingPerformanceBar(owner.media, video, document.getElementById('client-metrics'), document.getElementById('remote-metrics'));
     owner.performance.resume();
@@ -147,6 +160,7 @@ async function start(value) {
       onLease: (lease, details = {}) => {
         if (current !== owner) return;
         const lost = !!owner.lease && !lease;
+        if (!lease) heldKeys.clear();
         if (lost) cancelWindowRecovery(owner);
         owner.lease = lease;
         if (lost && details.reason !== 'suspended') {
@@ -256,12 +270,22 @@ video.addEventListener('wheel', event => {
   const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 400 : 1;
   current.control.send({ type: 'wheel', ...coordinates, deltaX: Math.max(-1000, Math.min(1000, event.deltaX * unit)), deltaY: Math.max(-1000, Math.min(1000, event.deltaY * unit)) });
 }, { passive: false });
-for (const [eventName, action] of [['keydown', 'down'], ['keyup', 'up']]) video.addEventListener(eventName, event => {
-  if (!current?.lease) return;
+function sendKey(action, event) {
+  const owner = current;
+  if (!owner?.lease || event.isComposing) return;
+  if (action === 'down') heldKeys.set(event.code, { owner, leaseId: owner.lease.leaseId });
+  else {
+    const held = heldKeys.get(event.code); heldKeys.delete(event.code);
+    if (held?.owner !== owner || held.leaseId !== owner.lease.leaseId) return;
+  }
   event.preventDefault();
-  if (event.isComposing) return;
-  current.control.send({ type: 'key', action, code: event.code, key: event.key, alt: event.altKey, ctrl: event.ctrlKey, meta: event.metaKey, shift: event.shiftKey });
-});
+  owner.control.send({ type: 'key', action, code: event.code, key: event.key, alt: event.altKey, ctrl: event.ctrlKey, meta: event.metaKey, shift: event.shiftKey });
+}
+video.addEventListener('keydown', event => sendKey('down', event));
+video.addEventListener('keyup', event => sendKey('up', event));
+// A button can take focus while a remote modifier is held. Release only keys that
+// began on this stream; ordinary footer keyboard navigation stays in the viewer.
+document.addEventListener('keyup', event => sendKey('up', event), true);
 video.addEventListener('contextmenu', event => { if (current?.lease) event.preventDefault(); });
 video.addEventListener('click', () => video.play().catch(() => {}));
 globalThis.addEventListener('blur', suspendViewer);

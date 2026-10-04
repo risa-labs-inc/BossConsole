@@ -1,5 +1,6 @@
 package ai.rever.boss.sharing
 
+import ai.rever.boss.utils.SystemUtils
 import ai.rever.boss.window.MacToolbarInput
 import ai.rever.boss.window.MacToolbarInputTarget
 import ai.rever.boss.window.OwnedWindowControls
@@ -311,7 +312,20 @@ internal class AwtAppInputSink(
                     ?: return false
             }
         if (event.action == "down") keys[event.code] = target
+        if (event.action == "down" && target.browserSurface == null && target.component !is BrowserView) {
+            if (traverseFocus(event)) return true
+        }
         key(target.component, event, target.browserSurface)
+        return true
+    }
+
+    /** redispatchEvent bypasses AWT traversal; move only the viewer's scoped target, never OS focus. */
+    private fun traverseFocus(event: AppInputEvent.Key): Boolean {
+        val target = scoped(focusedComponent())
+        val destination = target?.let { scoped(appTraversalTarget(it, event)) } ?: return false
+        keyboardTarget = destination
+        keyboardBrowser = null
+        if (requireForeground) destination.requestFocusInWindow()
         return true
     }
 
@@ -330,7 +344,7 @@ internal class AwtAppInputSink(
         // Releasing held input on a geometry change does not change the viewer-selected focus.
         // focusedComponent rechecks visibility, ownership and modal boundaries before reuse.
         heldButtons.forEach { (button, target) ->
-            if (target.nativeTarget == null) runCatching { pointer(target, "up", button) }
+            if (target.nativeTarget == null) runCatching { pointer(target, "up", button, popupAllowed = false) }
         }
         heldKeys.values.forEach { held ->
             runCatching {
@@ -396,6 +410,7 @@ internal class AwtAppInputSink(
         action: String,
         button: Int,
         validUntilMillis: Long = Long.MAX_VALUE,
+        popupAllowed: Boolean = true,
     ) {
         val target = held.component
         val x = held.x
@@ -420,6 +435,28 @@ internal class AwtAppInputSink(
         val browser = browserSurface?.browser ?: (target as? BrowserView)?.browser
         if (browser != null) {
             val point = browserSurface?.point(target, x, y) ?: Point.of(x, y)
+            if (action != "move" && button == 2) {
+                val epoch = authorityEpoch.get()
+                AppBrowserMenuDispatch.record(
+                    browser,
+                    MouseEvent(
+                        target,
+                        if (action == "down") MouseEvent.MOUSE_PRESSED else MouseEvent.MOUSE_RELEASED,
+                        System.currentTimeMillis(),
+                        modifiers(),
+                        x,
+                        y,
+                        1,
+                        true,
+                        MouseEvent.BUTTON3,
+                    ),
+                    point,
+                ) {
+                    popupAllowed && epoch == authorityEpoch.get() &&
+                        allowedWindow(SwingUtilities.getWindowAncestor(target)) &&
+                        privateSurfaceAllowed() && browserSurface?.isCurrent() != false
+                }
+            }
             if (action == "down") browser.focus()
             val browserButton =
                 when (button) {
@@ -486,7 +523,7 @@ internal class AwtAppInputSink(
                     x,
                     y,
                     if (action == "move") 0 else 1,
-                    false,
+                    popupAllowed && button == 2 && action == (if (SystemUtils.isMacOS) "down" else "up"),
                     if (action == "move") MouseEvent.NOBUTTON else awtButton,
                 ),
             )
@@ -528,7 +565,7 @@ internal class AwtAppInputSink(
                     window,
                     KeyPressed
                         .newBuilder(browserCode)
-                        .keyChar(char)
+                        .keyChar(browserTypedChar(event))
                         .keyModifiers(mods)
                         .build(),
                 ) {
