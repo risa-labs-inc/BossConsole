@@ -1,25 +1,14 @@
 package ai.rever.boss.components.common
 
+import ai.rever.boss.cache.loadHighQualityFavicon
 import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
 import ai.rever.boss.plugin.api.TabIcon
 import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.runtime.*
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 private val faviconLogger = BossLogger.forComponent("FaviconLoader")
-
-/**
- * Hook that loads favicon from cache for a given tab
- * Returns loaded favicon or null if unavailable/error
- *
- * Handles:
- * - Async loading on IO thread (non-blocking)
- * - Error handling with logging
- * - Efficient caching with remember
- */
 
 /**
  * The standard-cache key for [tabInfo], or null when it has none.
@@ -58,35 +47,49 @@ fun rememberFaviconCacheKey(tabInfo: TabInfo): String? =
     }
 
 @Composable
-fun rememberFaviconLoader(tabInfo: TabInfo): ai.rever.boss.plugin.api.TabIcon.Image? {
+fun rememberFaviconLoader(tabInfo: TabInfo): TabIcon.Image? {
     val faviconCacheKey = rememberFaviconCacheKey(tabInfo)
+    val pageUrl = remember(tabInfo) { faviconPageUrl(tabInfo) }
 
-    // State to hold the loaded favicon
-    var loadedFavicon by remember(faviconCacheKey) {
-        mutableStateOf<ai.rever.boss.plugin.api.TabIcon.Image?>(null)
+    var loadedFavicon by remember(pageUrl, faviconCacheKey) {
+        mutableStateOf<TabIcon.Image?>(null)
     }
 
-    // Load favicon asynchronously on IO thread
-    LaunchedEffect(faviconCacheKey) {
-        if (faviconCacheKey != null) {
-            loadedFavicon =
-                withContext(Dispatchers.IO) {
-                    try {
-                        ai.rever.boss.cache
-                            .loadFaviconFromCache(faviconCacheKey)
-                    } catch (e: Exception) {
-                        faviconLogger.debug(
-                            LogCategory.BROWSER,
-                            "Error loading favicon",
-                            mapOf("key" to faviconCacheKey, "error" to e.toString()),
-                        )
-                        null
-                    }
-                }
-        } else {
-            loadedFavicon = null
+    // The resolver performs IO off the UI thread and preserves cancellation. A sharper cached
+    // icon is used only when its artwork matches the page's own favicon.
+    LaunchedEffect(pageUrl, faviconCacheKey) {
+        if (pageUrl != null || faviconCacheKey != null) {
+            loadedFavicon = loadHighQualityFavicon(pageUrl, faviconCacheKey)
         }
     }
 
     return loadedFavicon
 }
+
+/** Only browser tabs have a page URL; a file or terminal must never trigger a host lookup. */
+internal fun faviconPageUrl(tabInfo: TabInfo): String? =
+    when {
+        tabInfo is FluckTabInfo -> {
+            tabInfo.currentUrl
+        }
+
+        tabInfo.typeId.typeId == "fluck" -> {
+            // The browser plugin's concrete tab type belongs to another classloader.
+            try {
+                val properties = tabInfo::class.members
+                properties.firstOrNull { it.name == "currentUrl" }?.call(tabInfo) as? String
+                    ?: properties.firstOrNull { it.name == "initialUrl" }?.call(tabInfo) as? String
+            } catch (e: Exception) {
+                faviconLogger.debug(
+                    LogCategory.BROWSER,
+                    "Browser favicon URL reflection probe failed",
+                    mapOf("error" to e.toString()),
+                )
+                null
+            }
+        }
+
+        else -> {
+            null
+        }
+    }
