@@ -7,6 +7,8 @@ import ai.rever.boss.mcp.McpPolicyAction
 import ai.rever.boss.plugin.ui.BossBlueprintColorScheme
 import ai.rever.boss.plugin.ui.BossBlueprintLightColorScheme
 import ai.rever.boss.plugin.ui.BossOverlayHost
+import ai.rever.boss.plugin.ui.BossThemeController
+import ai.rever.boss.plugin.ui.BossThemes
 import ai.rever.boss.plugin.ui.LocalBossColors
 import ai.rever.boss.plugin.ui.LocalHeavyweightOverlays
 import androidx.compose.foundation.layout.Box
@@ -45,8 +47,10 @@ class McpActivityLogLayoutTest {
     @get:Rule val rule = createComposeRule()
     private val previousRenderer = BossOverlayHost.modalRenderer
     private val previousHeavyweight = BossOverlayHost.useHeavyweightOverlays
+    private var previousThemeId = BossThemeController.currentId
 
     @Before fun setup() {
+        previousThemeId = BossThemeController.currentId
         resetOverlayFieldForTest("modalRenderer")
         resetOverlayFieldForTest("useHeavyweightOverlays")
         BossOverlayHost.useHeavyweightOverlays = true
@@ -54,6 +58,7 @@ class McpActivityLogLayoutTest {
     }
 
     @After fun cleanup() {
+        BossThemeController.select(previousThemeId)
         resetOverlayFieldForTest("modalRenderer")
         resetOverlayFieldForTest("useHeavyweightOverlays")
         BossOverlayHost.modalRenderer = previousRenderer
@@ -69,6 +74,7 @@ class McpActivityLogLayoutTest {
         content: @Composable () -> Unit,
     ) {
         captureTheme = if (light) "light" else "dark"
+        BossThemeController.select(if (light) BossThemes.LIQUID_GLASS_LIGHT.id else BossThemes.LIQUID_GLASS_DARK.id)
         val colors = if (light) BossBlueprintLightColorScheme else BossBlueprintColorScheme
         rule.setContent {
             CompositionLocalProvider(
@@ -186,6 +192,28 @@ class McpActivityLogLayoutTest {
 
     @Test fun `trusted plugins card is opaque with a translucent light panel token`() {
         show(light = true, panelAlpha = 0.25f) {
+            McpProviderTrustDialog(emptyMap(), onRevoke = { true }, onDismiss = {})
+        }
+        assertOpaqueCard("Trusted Plugins", light = true)
+    }
+
+    @Test fun `activity card is opaque with a transparent dark glass panel token`() {
+        show(panelAlpha = 0f) { McpActivityLogDialog(emptyList(), 0, 0, onDismiss = {}) }
+        assertOpaqueCard("MCP Activity Log", light = false)
+    }
+
+    @Test fun `activity card is opaque with a transparent light glass panel token`() {
+        show(light = true, panelAlpha = 0f) { McpActivityLogDialog(emptyList(), 0, 0, onDismiss = {}) }
+        assertOpaqueCard("MCP Activity Log", light = true)
+    }
+
+    @Test fun `trusted plugins card is opaque with a transparent dark glass panel token`() {
+        show(panelAlpha = 0f) { McpProviderTrustDialog(emptyMap(), onRevoke = { true }, onDismiss = {}) }
+        assertOpaqueCard("Trusted Plugins", light = false)
+    }
+
+    @Test fun `trusted plugins card is opaque with a transparent light glass panel token`() {
+        show(light = true, panelAlpha = 0f) {
             McpProviderTrustDialog(emptyMap(), onRevoke = { true }, onDismiss = {})
         }
         assertOpaqueCard("Trusted Plugins", light = true)

@@ -6,6 +6,7 @@ import ai.rever.boss.mcp.McpPolicyAction
 import ai.rever.boss.plugin.ui.BossColorScheme
 import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.theme.dialogPanelColor
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -87,7 +88,7 @@ fun McpActivityLogDialog(
                     .width(560.dp)
                     .heightIn(max = maxHeight)
                     .clip(RoundedCornerShape(radii.dialog))
-                    .background(colors.panel.copy(alpha = 1f)),
+                    .background(dialogPanelColor),
         ) {
             Column(modifier = Modifier.padding(24.dp)) {
                 Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {

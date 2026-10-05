@@ -6,6 +6,7 @@ import ai.rever.boss.mcp.PreparedPackDisplayModel
 import ai.rever.boss.mcp.secrets.SecretDescriptor
 import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.theme.dialogPanelColor
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.VerticalScrollbar
@@ -261,7 +262,7 @@ fun McpApprovalDialog(
                     .heightIn(max = maxHeight)
                     .border(1.dp, colors.line, RoundedCornerShape(radii.dialog))
                     .clip(RoundedCornerShape(radii.dialog))
-                    .background(colors.panel.copy(alpha = 1f)),
+                    .background(dialogPanelColor),
         ) {
             // Three bands: the header (with the one countdown) and the actions are pinned, and only
             // the body between them scrolls, so the answer is reachable at any window height.
