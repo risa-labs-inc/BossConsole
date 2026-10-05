@@ -12,7 +12,7 @@
   Fourth brand (optimist): Optimist chat (risa-labs-inc/optimist-chat) opens its own web callback;
   lockstep with redirect/app.ts OPTIMIST_REDIRECTS and config.toml.
 */}}{{ $bossterm := eq .RedirectTo "bossterm://auth/verify" -}}
-{{ $optimist := or (eq .RedirectTo "https://optimist.risalabs.ai/auth/callback") (eq .RedirectTo "https://spark-7226.basa-tone.ts.net/auth/callback") -}}
+{{ $optimist := eq .RedirectTo "https://optimist.risalabs.ai/auth/callback" -}}
 {{ $web := or (eq .RedirectTo "https://cli.risaboss.com/auth") (eq .RedirectTo "https://api.risaboss.com/functions/v1/live-sessions/auth") -}}
 <!DOCTYPE html>
 <html lang="en">

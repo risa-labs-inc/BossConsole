@@ -130,7 +130,7 @@ additional_redirect_urls = ["boss://auth/verify", "bossterm://auth/verify", "htt
   # live-sessions web page (functions/live-sessions): magic link lands the browser here with tokens in the fragment
   "https://api.risaboss.com/functions/v1/live-sessions/auth", "https://cli.risaboss.com/auth", "http://127.0.0.1:54321/functions/v1/live-sessions/auth",
   # Optimist chat web callback (redirect/app.ts OPTIMIST_REDIRECTS)
-  "https://optimist.risalabs.ai/auth/callback", "https://spark-7226.basa-tone.ts.net/auth/callback"]
+  "https://optimist.risalabs.ai/auth/callback", "http://127.0.0.1:8796/auth/callback"]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
 # Path to JWT signing key. DO NOT commit your signing keys file to git.
