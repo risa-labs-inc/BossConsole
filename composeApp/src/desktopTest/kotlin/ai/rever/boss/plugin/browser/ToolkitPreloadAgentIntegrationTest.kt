@@ -44,6 +44,7 @@ class ToolkitPreloadAgentIntegrationTest {
     /** A fake engine whose two libraries are loadable dylibs, plus a manifest written by Kotlin. */
     private inner class Fixture(
         stamp: String = STAMP,
+        ipcIsLoadable: Boolean = true,
     ) {
         val root: Path = Files.createTempDirectory("agent-it").also { created.add(it) }
         val engine: Path = root.resolve("boss-chromium")
@@ -58,7 +59,7 @@ class ToolkitPreloadAgentIntegrationTest {
         init {
             Files.createDirectories(libraries)
             agent().copyTo(toolkit)
-            agent().copyTo(ipc)
+            if (ipcIsLoadable) agent().copyTo(ipc) else ipc.writeText("not a Mach-O image")
             engine.resolve("version.txt").toFile().writeText("1\n")
             engine.resolve("executable.name").toFile().writeText("BOSS\n")
             settings.writeText("{}")
@@ -93,8 +94,12 @@ class ToolkitPreloadAgentIntegrationTest {
         val process =
             ProcessBuilder(command)
                 .redirectErrorStream(true)
-                .also { pb -> env.forEach { (k, v) -> pb.environment()[k] = v } }
-                .start()
+                .also { pb ->
+                    // Hermetic: a developer's exported switch must not change what the agent sees.
+                    pb.environment().remove("BOSS_TOOLKIT_PRELOAD")
+                    pb.environment().remove("BOSS_DEV_MODE")
+                    env.forEach { (k, v) -> pb.environment()[k] = v }
+                }.start()
         val output = process.inputStream.bufferedReader().readText()
         assertTrue(process.waitFor(60, TimeUnit.SECONDS), "child JVM hung")
         val report =
@@ -159,9 +164,38 @@ class ToolkitPreloadAgentIntegrationTest {
     }
 
     @Test
-    fun `the off switch is honoured before anything is read`() {
+    fun `the off switch is honoured before anything is read, spelled as Kotlin accepts it`() {
         if (!isMac) return
-        assertSkipped(Fixture(), "disabled", env = mapOf("BOSS_TOOLKIT_PRELOAD" to "false"))
+        // Every spelling ChromiumToolkitPreload.disabledFrom accepts, so the two layers cannot drift.
+        listOf("false", "0", "no", "off", " OFF ", "false ").forEach { value ->
+            assertTrue(ChromiumToolkitPreload.disabledFrom(value, null), "Kotlin side: '$value'")
+            assertSkipped(Fixture(), "disabled", env = mapOf("BOSS_TOOLKIT_PRELOAD" to value))
+        }
+    }
+
+    @Test
+    fun `a library that fails to load stops the agent and is reported as a partial load`() {
+        if (!isMac) return
+        val fixture = Fixture(ipcIsLoadable = false)
+        val (exit, report) = launch(fixture)
+        assertEquals(0, exit)
+        val result = ToolkitPreloadManifest.parseAgentResult(report)
+        assertEquals(listOf(fixture.toolkit.canonicalPath), assertIs<AgentResult.Loaded>(result, report).paths)
+        assertEquals(
+            ToolkitPreloadManifest.AgentVerdict.PARTIAL,
+            ToolkitPreloadManifest.verdict(result, listOf(fixture.toolkit.canonicalPath, fixture.ipc.canonicalPath)),
+        )
+    }
+
+    @Test
+    fun `an unreadable record is told apart from a missing one`() {
+        if (!isMac) return
+        val fixture =
+            Fixture().apply {
+                manifest.delete()
+                manifest.mkdirs() // fopen succeeds on a directory, reading it does not
+            }
+        assertSkipped(fixture, "unreadable manifest")
     }
 
     @Test

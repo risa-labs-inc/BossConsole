@@ -67,13 +67,18 @@ static int is_truthy(const char *v) {
     return strcasecmp(v, "true") == 0 || strcmp(v, "1") == 0 || strcasecmp(v, "yes") == 0;
 }
 
-/* Matches ChromiumToolkitPreload.disabledFrom: "false", "0", "no", "off" (any case). */
+/* Matches ChromiumToolkitPreload.disabledFrom: "false", "0", "no", "off" (any case), trimmed. */
 static int is_disabling(const char *v) {
     if (v == NULL) return 0;
     while (*v == ' ' || *v == '\t') v++;
-    if (*v == '\0') return 0;
-    return strcasecmp(v, "false") == 0 || strcmp(v, "0") == 0 || strcasecmp(v, "no") == 0 ||
-           strcasecmp(v, "off") == 0;
+    size_t n = strlen(v);
+    while (n > 0 && (v[n - 1] == ' ' || v[n - 1] == '\t')) n--;
+    if (n == 0 || n > 5) return 0;
+    char word[6];
+    memcpy(word, v, n);
+    word[n] = '\0';
+    return strcasecmp(word, "false") == 0 || strcmp(word, "0") == 0 || strcasecmp(word, "no") == 0 ||
+           strcasecmp(word, "off") == 0;
 }
 
 /* A system property from the command line, or NULL. Caller frees with jvmti Deallocate. */
@@ -128,9 +133,13 @@ static int ends_with(const char *s, const char *suffix) {
     return n >= m && strcmp(s + n - m, suffix) == 0;
 }
 
-/* Reads the whole manifest into a NUL-terminated buffer, or returns NULL. */
-static char *read_manifest(const char *path) {
+/*
+ * Reads the whole manifest into a NUL-terminated buffer, or returns NULL with *missing set when
+ * the file does not exist (as opposed to unreadable, empty or oversized).
+ */
+static char *read_manifest(const char *path, int *missing) {
     FILE *f = fopen(path, "r");
+    *missing = f == NULL && errno == ENOENT;
     if (f == NULL) return NULL;
     char *buf = malloc(MAX_MANIFEST + 1);
     if (buf == NULL) {
@@ -266,10 +275,11 @@ static void run(void) {
         return;
     }
 
-    char *buf = read_manifest(manifest_path);
+    int missing = 0;
+    char *buf = read_manifest(manifest_path, &missing);
     if (buf == NULL) {
         release(stamp);
-        report("skipped no manifest");
+        report(missing ? "skipped no manifest" : "skipped unreadable manifest");
         return;
     }
     char *loads[MAX_LOADS];
@@ -292,13 +302,16 @@ static void run(void) {
     char paths[PATH_MAX * MAX_LOADS];
     paths[0] = '\0';
     for (int i = 0; i < load_count; i++) {
+        /* Never load what cannot be reported: the report is how Java learns what is in-process. */
+        size_t need = strlen(loads[i]) + (loaded ? 1 : 0);
+        if (need >= sizeof paths - used) break;
         /* Same mode HotSpot's os::dll_load uses, so its later System.load finds this image. */
         if (dlopen(loads[i], RTLD_LAZY) == NULL) {
             debug("dlopen failed: %s", dlerror());
             break;
         }
         int n = snprintf(paths + used, sizeof paths - used, "%s%s", loaded ? "|" : "", loads[i]);
-        if (n > 0 && (size_t)n < sizeof paths - used) used += (size_t)n;
+        used += (size_t)n;
         loaded++;
     }
     if (loaded == 0) {

@@ -194,13 +194,15 @@ object ChromiumToolkitPreload {
     // TooGenericExceptionCaught: the guarantee is "never throws"; LinkageError covers
     // UnsatisfiedLinkError, which is an Error, and nothing narrower would keep the promise.
     @Suppress("TooGenericExceptionCaught")
+    // handOff defaults to null rather than AgentHandOff.live(): a default argument is evaluated
+    // in the caller's bridge, outside this try, so a throwing live() would escape preflight().
     internal fun preload(
         engineDir: Path?,
-        handOff: AgentHandOff = AgentHandOff.live(),
+        handOff: AgentHandOff? = null,
         load: (String) -> Unit = System::load,
     ): Int =
         try {
-            preloadUnguarded(engineDir, load, handOff)
+            preloadUnguarded(engineDir, load, handOff ?: AgentHandOff.live())
         } catch (e: Exception) {
             runCatching { logger.warn(LogCategory.BROWSER, "Native toolkit preload aborted", error = e) }
             0
@@ -308,6 +310,7 @@ object ChromiumToolkitPreload {
         handOff: AgentHandOff,
     ): Int {
         logger.info(LogCategory.BROWSER, "Native toolkit preload skipped", mapOf("reason" to reason))
+        handOff.reportAgentWithoutPlan(reason)
         handOff.forget(reason)
         return 0
     }

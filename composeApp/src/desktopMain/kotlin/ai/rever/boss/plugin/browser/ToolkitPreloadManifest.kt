@@ -69,11 +69,54 @@ internal object ToolkitPreloadManifest {
         if (value.startsWith("skipped ")) return AgentResult.Skipped(value.removePrefix("skipped "))
         val loaded = LOADED.matchEntire(value) ?: return AgentResult.Skipped("unrecognised report: $value")
         val paths = loaded.groupValues[3].split('|').filter { it.isNotEmpty() }
-        if (paths.size != loaded.groupValues[1].toInt()) return AgentResult.Skipped("unrecognised report: $value")
+        // toIntOrNull: the property is command-line text, and a count that overflows Int must not throw.
+        val count = loaded.groupValues[1].toIntOrNull()
+        if (count == null || paths.size != count) return AgentResult.Skipped("unrecognised report: $value")
         return AgentResult.Loaded(paths, loaded.groupValues[2].toIntOrNull())
     }
 
     private val LOADED = Regex("loaded (\\d+) threads=(-?\\d+) (.+)")
+
+    /** How the agent's work relates to what this launch resolved. */
+    enum class AgentVerdict {
+        /** No agent in this launcher, or it reported a skip: nothing was loaded before main. */
+        NOTHING_LOADED,
+
+        /** The agent loaded exactly the libraries this launch resolved. */
+        MATCHED,
+
+        /** The agent loaded a leading part of them and then failed; the rest load in the JVM. */
+        PARTIAL,
+
+        /** The agent loaded something this launch would not have: a second image is coming. */
+        DIFFERENT,
+    }
+
+    fun verdict(
+        result: AgentResult,
+        expected: List<String>,
+    ): AgentVerdict =
+        when (result) {
+            AgentResult.NotInstalled, is AgentResult.Skipped -> {
+                AgentVerdict.NOTHING_LOADED
+            }
+
+            is AgentResult.Loaded -> {
+                when {
+                    result.paths == expected -> {
+                        AgentVerdict.MATCHED
+                    }
+
+                    result.paths.size < expected.size && expected.take(result.paths.size) == result.paths -> {
+                        AgentVerdict.PARTIAL
+                    }
+
+                    else -> {
+                        AgentVerdict.DIFFERENT
+                    }
+                }
+            }
+        }
 
     /**
      * The guard for [path], or null when the file does not exist (the caller records it as
@@ -223,32 +266,58 @@ internal class AgentHandOff(
      * on; the manifest rewritten after this launch makes the next one consistent.
      */
     fun reportAgent(expected: List<String>) {
-        when (val result = agentResult) {
-            ToolkitPreloadManifest.AgentResult.NotInstalled -> {
-                Unit
-            }
-
-            is ToolkitPreloadManifest.AgentResult.Skipped -> {
-                logger.info(LogCategory.BROWSER, "Native toolkit agent skipped", mapOf("reason" to result.reason))
-            }
-
-            is ToolkitPreloadManifest.AgentResult.Loaded -> {
-                if (result.paths == expected) {
-                    logger.info(
-                        LogCategory.BROWSER,
-                        "Native toolkit loaded by the agent before the JVM started its threads",
-                        mapOf("libraries" to result.paths.size, "threads" to (result.threads ?: -1)),
-                    )
-                } else {
-                    logger.error(
-                        LogCategory.BROWSER,
-                        "Native toolkit agent loaded a different engine than this launch resolved",
-                        mapOf("agent" to result.paths.joinToString("|"), "resolved" to expected.joinToString("|")),
-                    )
+        val result = agentResult
+        when (ToolkitPreloadManifest.verdict(result, expected)) {
+            ToolkitPreloadManifest.AgentVerdict.NOTHING_LOADED -> {
+                if (result is ToolkitPreloadManifest.AgentResult.Skipped) {
+                    logger.info(LogCategory.BROWSER, "Native toolkit agent skipped", mapOf("reason" to result.reason))
                 }
+            }
+
+            ToolkitPreloadManifest.AgentVerdict.MATCHED -> {
+                val loaded = result as ToolkitPreloadManifest.AgentResult.Loaded
+                logger.info(
+                    LogCategory.BROWSER,
+                    "Native toolkit loaded by the agent before the JVM started its threads",
+                    mapOf("libraries" to loaded.paths.size, "threads" to (loaded.threads ?: -1)),
+                )
+            }
+
+            ToolkitPreloadManifest.AgentVerdict.PARTIAL -> {
+                // The swap happened with the first library, so the race is still closed; the
+                // remaining ones load in the JVM below. Worth a warning, not a hunt for duplicates.
+                logger.warn(
+                    LogCategory.BROWSER,
+                    "Native toolkit agent loaded only part of the toolkit; the JVM loads the rest",
+                    mapOf("agent" to describe(result), "resolved" to expected.joinToString("|")),
+                )
+            }
+
+            ToolkitPreloadManifest.AgentVerdict.DIFFERENT -> {
+                logger.error(
+                    LogCategory.BROWSER,
+                    "Native toolkit agent loaded a different engine than this launch resolved",
+                    mapOf("agent" to describe(result), "resolved" to expected.joinToString("|")),
+                )
             }
         }
     }
+
+    /**
+     * For a launch that resolved nothing to load: if the agent loaded something anyway, that image
+     * is in the process whatever this launch decides, and nobody would otherwise know.
+     */
+    fun reportAgentWithoutPlan(reason: String) {
+        val result = agentResult as? ToolkitPreloadManifest.AgentResult.Loaded ?: return
+        logger.error(
+            LogCategory.BROWSER,
+            "Native toolkit agent loaded a toolkit this launch did not resolve",
+            mapOf("agent" to describe(result), "reason" to reason),
+        )
+    }
+
+    private fun describe(result: ToolkitPreloadManifest.AgentResult): String =
+        (result as? ToolkitPreloadManifest.AgentResult.Loaded)?.paths?.joinToString("|").orEmpty()
 
     /** Removes the record, so the next launch's agent loads nothing. */
     fun forget(reason: String) {

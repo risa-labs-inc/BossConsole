@@ -114,6 +114,36 @@ class ToolkitPreloadManifestTest {
     }
 
     @Test
+    fun `a count that overflows Int is an unrecognised report, not an exception`() {
+        val report = ToolkitPreloadManifest.parseAgentResult("loaded 99999999999 threads=1 /x.dylib")
+        assertIs<AgentResult.Skipped>(report)
+    }
+
+    @Test
+    fun `the agent's work is classified against what this launch resolved`() {
+        val toolkit = "/e/libtoolkit.dylib"
+        val ipc = "/e/libipc.dylib"
+        val expected = listOf(toolkit, ipc)
+
+        fun verdictOf(result: AgentResult) = ToolkitPreloadManifest.verdict(result, expected)
+
+        assertEquals(ToolkitPreloadManifest.AgentVerdict.NOTHING_LOADED, verdictOf(AgentResult.NotInstalled))
+        assertEquals(ToolkitPreloadManifest.AgentVerdict.NOTHING_LOADED, verdictOf(AgentResult.Skipped("x")))
+        assertEquals(ToolkitPreloadManifest.AgentVerdict.MATCHED, verdictOf(AgentResult.Loaded(expected, 3)))
+        // libtoolkit loaded, libipc failed: the swap already happened, so this is not a second engine.
+        assertEquals(ToolkitPreloadManifest.AgentVerdict.PARTIAL, verdictOf(AgentResult.Loaded(listOf(toolkit), 3)))
+        assertEquals(
+            ToolkitPreloadManifest.AgentVerdict.DIFFERENT,
+            verdictOf(AgentResult.Loaded(listOf("/other/libtoolkit.dylib"), 3)),
+        )
+        assertEquals(ToolkitPreloadManifest.AgentVerdict.DIFFERENT, verdictOf(AgentResult.Loaded(listOf(ipc), 3)))
+        assertEquals(
+            ToolkitPreloadManifest.AgentVerdict.DIFFERENT,
+            verdictOf(AgentResult.Loaded(expected + "/e/extra.dylib", 3)),
+        )
+    }
+
+    @Test
     fun `a guard is what stat reports, and a missing file has none`() {
         if (!isMac()) return
         val file = tempDir().resolve("lib.dylib").toFile().apply { writeText("x".repeat(123)) }
