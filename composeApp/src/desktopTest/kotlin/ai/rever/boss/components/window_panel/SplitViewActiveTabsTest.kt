@@ -60,6 +60,29 @@ class SplitViewActiveTabsTest {
     private fun createTab(id: String) = TestTabInfo(id = id, title = "Title $id")
 
     @Test
+    fun `unassigned window includes every split and dynamic browser tab`() {
+        val left = state.getPanel(state.activePanelId)!!
+        left.tabsComponent.addTab(createTab("terminal"))
+        val rightId = state.splitPanel(left.id, SplitOrientation.VERTICAL)
+        val browserType =
+            object : TabTypeInfo {
+                override val typeId = TabTypeId("fluck", "dynamic.browser")
+                override val displayName = "Dynamic Browser"
+                override val icon = Icons.Outlined.Language
+            }
+        tabRegistry.registerTabType(browserType) { config, ctx -> TestTabComponent(ctx, config) }
+        val browser = TestTabInfo("browser", browserType.typeId)
+        state.getPanel(rightId)!!.tabsComponent.addTab(browser)
+
+        assertNull(state.currentWorkspaceId)
+        val tabs = state.collectAllActiveTabs(null, "w1")
+        assertEquals(setOf("terminal", "browser"), tabs.map { it.tabInfo.id }.toSet())
+        assertTrue(tabs.all { it.workspaceId == "unsaved-window-w1" })
+        assertEquals(listOf("browser"), state.collectAllActiveFluckTabs("w1").map { it.tabInfo.id })
+        assertNull(state.currentWorkspaceId, "Inventory must not assign or persist a workspace")
+    }
+
+    @Test
     fun `single panel includes background tabs for search and lookup`() {
         val panel = state.getPanel(state.activePanelId)!!
 
