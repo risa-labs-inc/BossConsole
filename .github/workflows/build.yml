@@ -275,6 +275,14 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y cmake g++ pkg-config libx11-dev libxcomposite-dev libxres-dev libxdamage-dev libxrender-dev libsystemd-dev
 
+      - name: Native macOS address shortcut smoke
+        if: runner.os == 'macOS'
+        shell: bash
+        run: ./gradlew :composeApp:desktopTest --tests '*MacAddressKeyboardShortcutSmokeTest' -PskipLint --no-daemon --console=plain
+        env:
+          BOSS_TEST_NATIVE_TOOLBAR: '1'
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: 🔨 Build and Test Application
         shell: bash
         run: |
