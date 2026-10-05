@@ -114,7 +114,10 @@ class FaviconArtworkCacheTest {
             assertNull(loadFaviconArtwork(HOST, dir, URL))
             assertNull(loadFaviconArtwork(HOST, dir, "http://$HOST:8443/"))
             assertEquals(HqFaviconDiskCache.originalKeyFor(HOST), HqFaviconDiskCache.originalKeyFor("$URL:443/"))
-            assertEquals(HqFaviconDiskCache.originalKeyFor(HOST), HqFaviconDiskCache.originalKeyFor("HTTPS://$HOST:443/"))
+            assertEquals(
+                HqFaviconDiskCache.originalKeyFor(HOST),
+                HqFaviconDiskCache.originalKeyFor("HTTPS://$HOST:443/"),
+            )
             assertFailsWith<IllegalArgumentException> { HqFaviconDiskCache.originalKeyFor("file:///tmp/icon") }
         }
 

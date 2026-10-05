@@ -111,7 +111,9 @@ internal object OriginalFaviconSource {
         if (html != null) {
             for (url in iconLinks(origin, html).filterNot { it == faviconUrl }.take(4)) {
                 val candidate = matchingIcon(page, fetch(url))
-                if (candidate != null && (best == null || sharperMatchingFavicon(best.icon, candidate.icon) === candidate.icon)) {
+                if (candidate != null &&
+                    (best == null || sharperMatchingFavicon(best.icon, candidate.icon) === candidate.icon)
+                ) {
                     best = candidate
                 }
                 if (hasSharpCardFavicon(best?.icon)) {

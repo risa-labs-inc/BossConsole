@@ -28,7 +28,11 @@ class OriginalFaviconHttpTest {
                     HttpClient(
                         MockEngine { request ->
                             if (request.headers[HttpHeaders.Host] == "example.com") {
-                                respond("", HttpStatusCode.Found, headersOf(HttpHeaders.Location, "https://cdn.example.com/icon"))
+                                respond(
+                                    "",
+                                    HttpStatusCode.Found,
+                                    headersOf(HttpHeaders.Location, "https://cdn.example.com/icon"),
+                                )
                             } else {
                                 respond("icon")
                             }

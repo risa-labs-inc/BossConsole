@@ -45,6 +45,7 @@ class MacAddressKeyboardShortcutSmokeTest {
             controllers.forEachIndexed { index, controller ->
                 controller.update("", listOf(address("https://example.com/$index")), false, -1, emptyMap())
             }
+            awaitEditor(controllers[0])
             onAppKit {
                 val first = controllers[0].addressField
                 val second = controllers[1].addressField
@@ -143,6 +144,16 @@ class MacAddressKeyboardShortcutSmokeTest {
             send(pointer(editor, "valueForKey:", string("selectedRange")), "getValue:size:", bytes, 16L)
             bytes.getLong(0) to bytes.getLong(8)
         }
+
+    private fun awaitEditor(controller: MacSidebarToolbar) {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        while (System.nanoTime() < deadline) {
+            controller.focusAddress()
+            if (onAppKit { pointer(controller.addressField.editing.view, "currentEditor") != null }) return
+            Thread.sleep(25)
+        }
+        error("AppKit did not attach the synthetic address editor")
+    }
 
     private fun <T> onAppKit(action: () -> T): T {
         val result = CompletableFuture<T>()
