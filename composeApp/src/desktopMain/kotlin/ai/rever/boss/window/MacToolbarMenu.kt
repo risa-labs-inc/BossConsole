@@ -23,7 +23,14 @@ internal object MacToolbarMenu {
         send(item, "setEnabled:", 1.toByte())
         MacToolbarContextMenu.update(popup, action.contextMenu, target)
         if (action.menu == null) {
-            send(popup, "setTitle:", string("${action.label} ⌄"))
+            send(popup, "setTitle:", string(action.label))
+            send(popup, "setFont:", pointer(clazz("NSFont"), "systemFontOfSize:", 13.0))
+            send(popup, "setContentTintColor:", pointer(clazz("NSColor"), "labelColor"))
+            val chevron = pointer(clazz("NSImage"), "imageWithSystemSymbolName:accessibilityDescription:", string("chevron.down"), null)
+            val symbolSize = pointer(clazz("NSImageSymbolConfiguration"), "configurationWithPointSize:weight:", 10.0, 0.0)
+            send(popup, "setImage:", pointer(chevron, "imageWithSymbolConfiguration:", symbolSize))
+            send(popup, "setImagePosition:", 3L) // NSImageRight: matches the native Space popup.
+            send(popup, "setEnabled:", 1.toByte())
             send(popup, "setTarget:", target)
             send(popup, "setAction:", selector("activate:"))
             send(popup, "setTag:", MacToolbarRuntime.number(item, "tag"))
