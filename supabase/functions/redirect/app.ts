@@ -124,7 +124,8 @@ export const LIVE_SESSIONS_REDIRECTS: ReadonlySet<string> = new Set([
 // Lockstep: config.toml additional_redirect_urls, the prod Auth allow-list, and both email
 // templates' `$optimist` predicate.
 export const OPTIMIST_REDIRECTS: ReadonlySet<string> = new Set([
-  "https://spark-7226.basa-tone.ts.net/auth/callback",
+  "https://optimist.risalabs.ai/auth/callback",
+  "https://spark-7226.basa-tone.ts.net/auth/callback", // DGX tailnet host, pre-domain
 ])
 
 export function isLiveSessionsRedirect(redirectTo: string | undefined): boolean {
