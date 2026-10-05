@@ -2337,8 +2337,10 @@ class SplitViewState(
         val result = mutableListOf<ActiveTab>()
         val seenTabIds = mutableSetOf<String>()
 
-        // Collect from current state
-        _currentWorkspaceId?.let { workspaceId ->
+        // The visible tree exists even before a Space has been assigned.
+        // Use a window-local inventory identity without creating a saved workspace.
+        run {
+            val workspaceId = _currentWorkspaceId ?: "unsaved-window-$windowId"
             // Get the actual workspace name from preserved states or use a default
             val workspaceName =
                 preservedWorkspaceStates[workspaceId]?.workspaceName
@@ -2439,11 +2441,13 @@ class SplitViewState(
                 ?: preservedWorkspaceStates[workspaceId]?.workspaceName
                 ?: when (workspaceId) {
                     "last-session" -> "Last Session"
+                    "unsaved-window-$windowId" -> "Current Window"
                     else -> "Space $workspaceId"
                 }
 
-        // Collect from current state (only if it has tabs)
-        _currentWorkspaceId?.let { workspaceId ->
+        // Include visible tabs in a window that has not yet been assigned a Space.
+        run {
+            val workspaceId = _currentWorkspaceId ?: "unsaved-window-$windowId"
             val currentTabs = mutableListOf<ActiveTab>()
 
             val panels = getAllPanels()
