@@ -23,3 +23,9 @@ expect suspend fun loadHighQualityFavicon(
     url: String?,
     standardCacheKey: String?,
 ): ai.rever.boss.plugin.api.TabIcon.Image?
+
+/** Resolve original site artwork for the larger icons on Home, retaining the page's identity. */
+expect suspend fun loadHighQualityCardFavicon(
+    url: String?,
+    standardCacheKey: String?,
+): ai.rever.boss.plugin.api.TabIcon.Image?

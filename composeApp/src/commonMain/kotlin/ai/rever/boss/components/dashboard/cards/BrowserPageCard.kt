@@ -1,5 +1,6 @@
 package ai.rever.boss.components.dashboard.cards
 
+import ai.rever.boss.cache.loadHighQualityCardFavicon
 import ai.rever.boss.cache.loadHighQualityFavicon
 import ai.rever.boss.dashboard.RecentBrowserPage
 import ai.rever.boss.dashboard.RecentBrowserPagesManager
@@ -68,9 +69,8 @@ fun BrowserPageCard(
     val iconColor = getDomainColor(domain)
     val cardShape = RoundedCornerShape(12.dp)
 
-    // The page's own cached favicon, or Google's guess about its host when there is none -
-    // loadHighQualityFavicon settles that order. A 16px page icon is soft in this 36dp card;
-    // it is still the right site, which the 128px guess about a parent domain was not.
+    // Show the cached artwork first. A 32dp card needs at least 64px on a Retina display;
+    // the card resolver can fetch the site's original ICO/SVG when Chromium cached only 16px.
     //
     // Unguarded, and keyed the same way the effect is: loadHighQualityFavicon does not throw, and
     // a catch here would swallow the cancellation this effect's disposal raises.
@@ -79,6 +79,9 @@ fun BrowserPageCard(
     }
     LaunchedEffect(page.url, page.faviconCacheKey) {
         favicon = loadHighQualityFavicon(page.url, page.faviconCacheKey)
+        if ((favicon?.painter?.intrinsicSize?.minDimension ?: 0f) < 64f) {
+            favicon = loadHighQualityCardFavicon(page.url, page.faviconCacheKey) ?: favicon
+        }
     }
 
     Box(

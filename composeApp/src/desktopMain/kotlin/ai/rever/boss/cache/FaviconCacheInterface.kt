@@ -17,3 +17,8 @@ actual suspend fun loadHighQualityFavicon(
     url: String?,
     standardCacheKey: String?,
 ): ai.rever.boss.plugin.api.TabIcon.Image? = HighQualityFaviconService.getHighQualityFavicon(url, standardCacheKey)
+
+actual suspend fun loadHighQualityCardFavicon(
+    url: String?,
+    standardCacheKey: String?,
+): ai.rever.boss.plugin.api.TabIcon.Image? = resolveHighQualityCardFavicon(url, standardCacheKey)

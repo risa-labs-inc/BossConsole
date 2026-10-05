@@ -369,6 +369,7 @@ object HighQualityFaviconService {
     suspend fun clearCache() {
         HqFaviconDiskCache.clear()
         FaviconMissMemory.forget()
+        OriginalFaviconSource.clearAttempts()
     }
 
     /**
@@ -376,5 +377,6 @@ object HighQualityFaviconService {
      */
     fun close() {
         if (httpClientLazy.isInitialized()) httpClientLazy.value.close()
+        OriginalFaviconSource.close()
     }
 }

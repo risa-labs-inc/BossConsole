@@ -10,3 +10,13 @@ account information, or session data.
 
 These fixtures test artwork matching without network access. Google and GitHub
 retain ownership of their respective logos.
+
+Home card fixtures also cover the original assets served by the sites:
+
+- BOSS: its 16px cached icon and `/app-viewer/boss-logo.svg` from
+  `https://cli.risaboss.com/`, preserving its embedded 256px PNG for the card.
+- Gmail: its 16px cached icon and the 256px ICO from
+  `https://mail.google.com/favicon.ico`. Its app-specific artwork must not be
+  replaced with a generic Google G.
+
+These assets contain only the public logos. BOSS and Google retain ownership.
