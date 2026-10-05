@@ -73,7 +73,7 @@ internal object DefaultAppsManager {
     val categories: List<FileTypeCategory> get() = FileTypeCategories.categories
 
     /** Status for every category, in the resource's order. */
-    suspend fun statuses(): List<DefaultAppStatus> =
+    suspend fun statuses(categories: List<FileTypeCategory> = this.categories): List<DefaultAppStatus> =
         withContext(Dispatchers.IO) {
             categories.map { category -> DefaultAppStatus(category, statusOf(category)) }
         }
