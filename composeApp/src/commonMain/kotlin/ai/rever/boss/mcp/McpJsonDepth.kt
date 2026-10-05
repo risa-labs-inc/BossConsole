@@ -7,10 +7,11 @@ package ai.rever.boss.mcp
  * kotlinx's tree reader recurses once per nested array, so `Json.parseToJsonElement` on a deeply
  * nested payload throws StackOverflowError - an Error that `catch (e: Exception)` does not stop.
  * Every parse of agent-supplied arguments on the invoke path checks [mcpJsonNestingExceeds] first:
- * the registry's own argument parse, the risk evaluator's shell scan, the argument sanitizer
- * the ledger record is built from, and the secret substitution pre-pass (`McpArgumentSubstitution`).
+ * the registry's shape gate (`invalidArguments`) and argument parse (`parseMcpToolArgs`), the risk
+ * evaluator's shell scan (`shellPayloads`), the argument sanitizer (`parseArguments`), the secret
+ * substitution pre-pass (`parseElement`), and schema validation (`parseJsonObject`).
  * A payload that would overflow is rejected before the parser sees it, and the ledger row is still
- * written. One constant and one guard, so the four callers cannot drift apart.
+ * written. One constant and one guard, so the six call sites cannot drift apart.
  *
  * The cost is deliberate (#1655): a legitimately deeper payload (129+ levels) is never parsed,
  * so its arguments are omitted from the ledger record (`[OMITTED: too deeply nested]`), the tool
@@ -36,7 +37,7 @@ internal fun mcpJsonNestingExceeds(
             c == '"' -> inString = !inString
             inString -> Unit
             c == '[' || c == '{' -> if (++depth > limit) return true
-            c == ']' || c == '}' -> depth = maxOf(0, depth - 1)
+            c == ']' || c == '}' -> if (depth > 0) depth--
         }
     }
     return false

@@ -2272,7 +2272,9 @@ the effect; there is no session or provider-wide deny, so under those scopes Den
 once”. The bottom bar shows all three consent surfaces (session trust, tool policies, trusted
 plugins) behind one “MCP access” item, badged in the alert colour while session trust is live.
 The "Always, for this tool" scope says in the dialog that it is keyed by tool name, so it also
-covers a replacement plugin shipping a tool of that name - the one place the operator is told.
+covers a replacement plugin shipping a tool of that name - the one place the operator is told
+(a saved allow under it still does not cover a shell call the evaluator rates CRITICAL - see
+below).
 Provider trust also covers tools added by later versions and replacement plugins claiming
 that provider id. Already queued sibling prompts still ask. Explicit tool ASK rules
 still override provider ALLOW. The Trusted plugins UI lists ALLOW rules only; hand-edited
