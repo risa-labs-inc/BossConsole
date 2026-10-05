@@ -10,6 +10,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.test.runTest
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.util.concurrent.atomic.AtomicInteger
 import javax.imageio.ImageIO
 import kotlin.test.AfterTest
@@ -25,7 +26,7 @@ class OriginalFaviconSourceTest {
     fun cleanUp(): Unit =
         runTest {
             OriginalFaviconSource.clearAttempts()
-            HqFaviconDiskCache.delete(HqFaviconDiskCache.keyFor("home-lookup.test"))
+            HqFaviconDiskCache.delete(HqFaviconDiskCache.keyFor("home-lookup.example.com"))
         }
 
     @Test
@@ -135,7 +136,6 @@ class OriginalFaviconSourceTest {
             listOf(
                 "https://example.test/icons/site.ico",
                 "https://example.test/apple.png",
-                "https://cdn.example.test/logo.svg",
             ),
             OriginalFaviconSource.iconLinks("https://example.test/", html),
         )
@@ -187,15 +187,23 @@ class OriginalFaviconSourceTest {
                 bytes("gmail-original.ico")
             }
             val page = page("gmail-page-16.png")
-            val first = async { OriginalFaviconSource.sharperIcon("https://home-lookup.test/first", page, fetch) }
+            val first =
+                async {
+                    OriginalFaviconSource.sharperIcon("https://home-lookup.example.com/first", page, fetch)
+                }
             entered.await()
-            val second = async { OriginalFaviconSource.sharperIcon("https://home-lookup.test/second", page, fetch) }
+            val second =
+                async {
+                    OriginalFaviconSource.sharperIcon("https://home-lookup.example.com/second", page, fetch)
+                }
             release.complete(Unit)
             assertEquals(256f, assertNotNull(first.await()).painter.intrinsicSize.width)
             assertEquals(256f, assertNotNull(second.await()).painter.intrinsicSize.width)
             assertEquals(1, requests.get())
             assertNotNull(
-                OriginalFaviconSource.sharperIcon("https://home-lookup.test/third", page) { error("fetched twice") },
+                OriginalFaviconSource.sharperIcon("https://home-lookup.example.com/third", page) {
+                    error("fetched twice")
+                },
             )
         }
 
@@ -206,7 +214,7 @@ class OriginalFaviconSourceTest {
             val page = page("gmail-page-16.png")
             val first =
                 async {
-                    OriginalFaviconSource.sharperIcon("https://home-lookup.test/first", page) {
+                    OriginalFaviconSource.sharperIcon("https://home-lookup.example.com/first", page) {
                         entered.complete(Unit)
                         CompletableDeferred<ByteArray?>().await()
                     }
@@ -214,10 +222,59 @@ class OriginalFaviconSourceTest {
             entered.await()
             first.cancelAndJoin()
             val result =
-                OriginalFaviconSource.sharperIcon("https://home-lookup.test/second", page) {
+                OriginalFaviconSource.sharperIcon("https://home-lookup.example.com/second", page) {
                     bytes("gmail-original.ico")
                 }
             assertEquals(256f, assertNotNull(result).painter.intrinsicSize.width)
+        }
+
+    @Test
+    fun `large source images are reduced before being retained or cached`() {
+        val image = BufferedImage(1024, 512, BufferedImage.TYPE_INT_ARGB)
+        val original = OriginalFaviconSource.OriginalIcon(image.toComposeImageBitmap())
+        assertEquals(256, original.bitmap.width)
+        assertEquals(128, original.bitmap.height)
+    }
+
+    @Test
+    fun `HTML icon links cannot target another origin or private service`() {
+        val html =
+            """
+            <LINK REL='ICON' HREF='/safe.ico'></LINK>
+            <link rel='icon' href='http://127.0.0.1/icon'>
+            <link rel='icon' href='http://169.254.169.254/metadata'>
+            <link rel='icon' href='https://example.com:8443/another-service'>
+            <link rel='icon' href='https://cdn.example.com/icon'>
+            <link rel='icon' href='http://example.com/icon'>
+            """.trimIndent()
+        assertEquals(
+            listOf("https://example.com/safe.ico"),
+            OriginalFaviconSource.iconLinks("https://example.com/", html),
+        )
+    }
+
+    @Test
+    fun `HTML parser errors leave discovery safe and do not propagate`() {
+        assertEquals(
+            emptyList(),
+            OriginalFaviconSource.iconLinks("https://example.com/", "<malformed>") { _, _ ->
+                throw IOException("malformed response")
+            },
+        )
+        assertEquals(
+            emptyList(),
+            OriginalFaviconSource.iconLinks("https://example.com/", "<malformed>") { _, _ ->
+                throw IllegalArgumentException("malformed response")
+            },
+        )
+    }
+
+    @Test
+    fun `local card origins do not trigger automatic background discovery`(): Unit =
+        runTest {
+            for (url in listOf("http://localhost:3000", "http://127.0.0.1", "https://app.internal")) {
+                assertNull(OriginalFaviconSource.sharperIcon(url, null) { error("local origin fetched") })
+            }
         }
 
     private fun bytes(name: String): ByteArray =

@@ -25,11 +25,17 @@ internal suspend fun upgradeCachedFavicon(
     page: TabIcon.Image,
     nowMs: Long = System.currentTimeMillis(),
     loadCandidate: (String) -> CachedFavicon? = { host -> HqFaviconDiskCache.load(HqFaviconDiskCache.keyFor(host)) },
-    refresh: suspend (String) -> TabIcon.Image? = { HighQualityFaviconService.hostIcon(it, refreshSmallIcon = true) },
+    refresh: suspend (String) -> TabIcon.Image? = {
+        HighQualityFaviconService.hostIcon(it, nowMs = nowMs, refreshSmallIcon = true)
+    },
 ): TabIcon.Image {
-    val cached = FaviconHost.of(url)?.let(loadCandidate) ?: return page
-    val candidate = if (qualityRefreshDue(cached, nowMs)) refresh(checkNotNull(url)) else cached.icon
-    return sharperMatchingFavicon(page, candidate)
+    val host = FaviconHost.of(url)
+    val cached = host?.let(loadCandidate) ?: return page
+    val candidate = if (qualityRefreshDue(cached, nowMs)) refresh("https://$host") else cached.icon
+    val upgraded = sharperMatchingFavicon(page, candidate)
+    // NoIcon returns null after intentionally deleting the cache. An unrelated non-null refresh
+    // may belong to another page on the same host; keep the old verified artwork for this page.
+    return if (candidate != null && upgraded === page) sharperMatchingFavicon(page, cached.icon) else upgraded
 }
 
 internal fun qualityRefreshDue(
@@ -37,7 +43,12 @@ internal fun qualityRefreshDue(
     nowMs: Long,
 ): Boolean =
     FaviconFreshness.isEntryExpired(cached.fetchedAtMs, nowMs) ||
-        (cached.icon.painter.intrinsicSize.minDimension < 128f && nowMs - cached.fetchedAtMs > SMALL_ICON_REFRESH_MS)
+        (
+            cached.icon.painter.intrinsicSize.let { size ->
+                (!size.width.isFinite() || !size.height.isFinite() || size.minDimension < FAVICON_TARGET_SIZE) &&
+                    nowMs - cached.fetchedAtMs > SMALL_ICON_REFRESH_MS
+            }
+        )
 
 internal fun sharperMatchingFavicon(
     page: TabIcon.Image,
@@ -53,13 +64,20 @@ private fun matchingArtwork(
     first: TabIcon.Image,
     second: TabIcon.Image,
 ): Boolean {
-    val a = faviconSample(first).toPixelMap()
-    val b = faviconSample(second).toPixelMap()
+    val firstSample = faviconSample(first)
+    val secondSample = faviconSample(second)
+    val a = firstSample.bitmap.toPixelMap()
+    val b = secondSample.bitmap.toPixelMap()
     val coloursA = Array(COMPARISON_SIZE * COMPARISON_SIZE) { i -> a[i % COMPARISON_SIZE, i / COMPARISON_SIZE] }
     val coloursB = Array(COMPARISON_SIZE * COMPARISON_SIZE) { i -> b[i % COMPARISON_SIZE, i / COMPARISON_SIZE] }
+    // Normalizing padding may shift a tiny glyph by a pixel. Permit those theme/size variants,
+    // but never stretch a tall glyph into a wide one and call them the same artwork.
+    val aspectChange =
+        maxOf(firstSample.aspectRatio, secondSample.aspectRatio) /
+            minOf(firstSample.aspectRatio, secondSample.aspectRatio)
+    if (aspectChange > 1.5f || coloursA.none { it.alpha > 0.01f } || coloursB.none { it.alpha > 0.01f }) return false
     val colourError = coloursA.indices.sumOf { i -> pixelDifference(coloursA[i], coloursB[i]).toDouble() }.toFloat()
-    if (colourError / (coloursA.size * 4) < ARTWORK_DIFFERENCE_LIMIT) return true
-    return monochromeArtworkMatches(coloursA, coloursB)
+    return colourError / (coloursA.size * 4) < ARTWORK_DIFFERENCE_LIMIT || monochromeArtworkMatches(coloursA, coloursB)
 }
 
 /** Only achromatic artwork can match after inversion; coloured logos must keep their colours. */
@@ -117,8 +135,13 @@ private fun pixelDifference(
     return red * red + green * green + blue * blue + alpha * alpha
 }
 
-/** Trim transparent padding before comparing: the same logo may occupy 90% or 60% of its PNG. */
-private fun faviconSample(icon: TabIcon.Image): ImageBitmap {
+private class FaviconArtworkSample(
+    val bitmap: ImageBitmap,
+    val aspectRatio: Float,
+)
+
+/** Trim padding but retain its aspect for comparison: the same logo can occupy 90% or 60% of a PNG. */
+private fun faviconSample(icon: TabIcon.Image): FaviconArtworkSample {
     val padded = ImageBitmap(PADDING_SAMPLE_SIZE, PADDING_SAMPLE_SIZE)
     val paddedSize = PADDING_SAMPLE_SIZE.toFloat()
     CanvasDrawScope().draw(Density(1f), LayoutDirection.Ltr, Canvas(padded), Size(paddedSize, paddedSize)) {
@@ -148,7 +171,7 @@ private fun faviconSample(icon: TabIcon.Image): ImageBitmap {
     }
     val sample = ImageBitmap(COMPARISON_SIZE, COMPARISON_SIZE)
     val hasBounds = right >= left && bottom >= top
-    if (!hasBounds && background == null) return sample
+    if (!hasBounds && background == null) return FaviconArtworkSample(sample, 1f)
     val contentSize =
         if (hasBounds) {
             IntSize(right - left + 1, bottom - top + 1)
@@ -164,5 +187,5 @@ private fun faviconSample(icon: TabIcon.Image): ImageBitmap {
             filterQuality = FilterQuality.Medium,
         )
     }
-    return sample
+    return FaviconArtworkSample(sample, contentSize.width.toFloat() / contentSize.height)
 }

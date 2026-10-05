@@ -1,17 +1,14 @@
 package ai.rever.boss.cache
 
 import ai.rever.boss.plugin.api.TabIcon
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
-import io.ktor.client.plugins.HttpTimeout
-import io.ktor.client.request.prepareGet
-import io.ktor.client.statement.bodyAsChannel
-import io.ktor.http.HttpStatusCode
-import io.ktor.http.contentLength
-import io.ktor.utils.io.readAvailable
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Semaphore
@@ -24,7 +21,9 @@ import org.jetbrains.skia.Image
 import org.jetbrains.skia.Surface
 import org.jetbrains.skia.svg.SVGDOM
 import org.w3c.dom.Element
-import java.io.ByteArrayOutputStream
+import java.awt.RenderingHints
+import java.awt.image.BufferedImage
+import java.io.IOException
 import java.io.StringReader
 import java.net.URI
 import java.util.Base64
@@ -32,23 +31,18 @@ import javax.swing.text.MutableAttributeSet
 import javax.swing.text.html.HTML
 import javax.swing.text.html.HTMLEditorKit
 import javax.swing.text.html.parser.ParserDelegator
+import javax.xml.XMLConstants
 import javax.xml.parsers.DocumentBuilderFactory
 
 /** Original site icons retain app-specific artwork that a parent-domain favicon cannot supply. */
 internal object OriginalFaviconSource {
-    private const val MAX_BYTES = 256 * 1024
     private const val MAX_DIMENSION = 1024
-    private const val SVG_SIZE = 128
     private val attempts = OriginalFaviconAttempts()
     private val semaphore = Semaphore(3)
     private val clientLazy =
         lazy {
             HttpClient(CIO) {
-                install(HttpTimeout) {
-                    requestTimeoutMillis = 2500
-                    connectTimeoutMillis = 2500
-                }
-                expectSuccess = false
+                configureOriginalFaviconClient()
             }
         }
     private val client by clientLazy
@@ -60,6 +54,7 @@ internal object OriginalFaviconSource {
     ): TabIcon.Image? =
         withContext(Dispatchers.IO) {
             val origin = originFor(url) ?: return@withContext null
+            if (FaviconHost.of(origin)?.let(::isPublicFaviconHost) != true) return@withContext null
             val (attempt, owner) = attempts.acquire(origin) ?: return@withContext null
             val result =
                 if (owner) {
@@ -95,9 +90,12 @@ internal object OriginalFaviconSource {
         }.getOrNull()
 
     internal class OriginalIcon(
-        val bitmap: androidx.compose.ui.graphics.ImageBitmap,
+        bitmap: ImageBitmap,
     ) {
-        val icon = TabIcon.Image(BitmapPainter(bitmap))
+        // At most 256px is retained in the attempt map or saved in the HQ cache (~50MB at its
+        // 200-origin bound), even when the source asset is a 1024px apple-touch icon.
+        val bitmap = boundedOriginalFavicon(bitmap)
+        val icon = TabIcon.Image(BitmapPainter(this.bitmap))
     }
 
     /** Sources are injected so identity, ICO/SVG decoding and URL resolution need no network tests. */
@@ -108,14 +106,7 @@ internal object OriginalFaviconSource {
     ): OriginalIcon? {
         val faviconUrl = URI(origin).resolve("favicon.ico").toString()
         var best = matchingIcon(page, fetch(faviconUrl))
-        if ((
-                best
-                    ?.icon
-                    ?.painter
-                    ?.intrinsicSize
-                    ?.minDimension ?: 0f
-            ) >= 64f
-        ) {
+        if (hasSharpCardFavicon(best?.icon)) {
             return best
         }
         val html = fetch(origin)?.toString(Charsets.UTF_8)
@@ -123,14 +114,7 @@ internal object OriginalFaviconSource {
             for (url in iconLinks(origin, html).filterNot { it == faviconUrl }.take(4)) {
                 val candidate = matchingIcon(best?.icon ?: page, fetch(url))
                 if (candidate != null) best = candidate
-                if ((
-                        best
-                            ?.icon
-                            ?.painter
-                            ?.intrinsicSize
-                            ?.minDimension ?: 0f
-                    ) >= 64f
-                ) {
+                if (hasSharpCardFavicon(best?.icon)) {
                     break
                 }
             }
@@ -146,14 +130,27 @@ internal object OriginalFaviconSource {
         return candidate?.takeIf { page == null || sharperMatchingFavicon(page, it.icon) === it.icon }
     }
 
+    // Swing's parser can throw unchecked exceptions on malformed remote HTML. Discovery is
+    // optional: keep any links/icon already found, while cancellation must still propagate.
+    @Suppress("TooGenericExceptionCaught")
     internal fun iconLinks(
         origin: String,
         html: String,
+        parse: (String, HTMLEditorKit.ParserCallback) -> Unit = { source, callback ->
+            ParserDelegator().parse(StringReader(source), callback, true)
+        },
     ): List<String> {
         val links = mutableListOf<String>()
-        ParserDelegator().parse(
-            StringReader(html),
+        val callback =
             object : HTMLEditorKit.ParserCallback() {
+                override fun handleStartTag(
+                    tag: HTML.Tag,
+                    attributes: MutableAttributeSet,
+                    position: Int,
+                ) {
+                    handleSimpleTag(tag, attributes, position)
+                }
+
                 override fun handleSimpleTag(
                     tag: HTML.Tag,
                     attributes: MutableAttributeSet,
@@ -170,20 +167,25 @@ internal object OriginalFaviconSource {
                     val href = attributes.getAttribute(HTML.Attribute.HREF)?.toString()
                     if (href != null && rel.any { it == "icon" || it == "apple-touch-icon" }) {
                         val uri = runCatching { URI(origin).resolve(href) }.getOrNull()
-                        if (uri?.scheme in listOf("http", "https") && uri?.host != null && uri.userInfo == null) {
+                        if (uri != null && sameFaviconOrigin(URI(origin), uri)) {
                             links.add(uri.toString())
                         }
                     }
                 }
-            },
-            true,
-        )
+            }
+        try {
+            parse(html, callback)
+        } catch (e: IOException) {
+            logOriginalFaviconParseFailure(e)
+        } catch (e: RuntimeException) {
+            logOriginalFaviconParseFailure(e)
+        }
         return links.distinct()
     }
 
     internal fun decode(bytes: ByteArray): OriginalIcon? =
         runCatching {
-            require(bytes.size <= MAX_BYTES)
+            require(bytes.size <= MAX_ORIGINAL_FAVICON_BYTES)
             Data.makeFromBytes(bytes).use { data ->
                 if (bytes.toString(Charsets.UTF_8).trimStart().startsWith("<")) {
                     embeddedSvgBitmap(bytes)?.let(::decode) ?: decodeSvg(data)
@@ -199,32 +201,18 @@ internal object OriginalFaviconSource {
     private fun decodeSvg(data: Data): OriginalIcon =
         SVGDOM(data).use { svg ->
             requireNotNull(svg.root)
-            Surface.makeRasterN32Premul(SVG_SIZE, SVG_SIZE).use { surface ->
+            Surface.makeRasterN32Premul(FAVICON_TARGET_SIZE, FAVICON_TARGET_SIZE).use { surface ->
                 surface.canvas.clear(0)
-                svg.setContainerSize(SVG_SIZE.toFloat(), SVG_SIZE.toFloat())
+                svg.setContainerSize(FAVICON_TARGET_SIZE.toFloat(), FAVICON_TARGET_SIZE.toFloat())
                 svg.render(surface.canvas)
                 surface.makeImageSnapshot().use { OriginalIcon(it.toComposeImageBitmap()) }
             }
         }
 
-    /** Bound the bytes while reading, including chunked responses without Content-Length. */
-    private suspend fun fetch(url: String): ByteArray? =
-        client.prepareGet(url).execute { response ->
-            if (response.status != HttpStatusCode.OK || (response.contentLength() ?: 0) > MAX_BYTES) return@execute null
-            val channel = response.bodyAsChannel()
-            val output = ByteArrayOutputStream()
-            val buffer = ByteArray(8192)
-            while (!channel.isClosedForRead) {
-                val count = channel.readAvailable(buffer)
-                if (count < 0) break
-                if (output.size() + count > MAX_BYTES) {
-                    channel.cancel(null)
-                    return@execute null
-                }
-                output.write(buffer, 0, count)
-            }
-            output.toByteArray()
-        }
+    private suspend fun fetch(url: String): ByteArray? {
+        val uri = URI(url)
+        return fetchOriginalFavicon(client, url, htmlPrefix = uri.rawPath == "/" && uri.rawQuery == null)
+    }
 
     fun clearAttempts() {
         attempts.clear()
@@ -235,11 +223,56 @@ internal object OriginalFaviconSource {
     }
 }
 
+private fun logOriginalFaviconParseFailure(error: Exception) {
+    if (error is kotlinx.coroutines.CancellationException) throw error
+    BossLogger.forComponent("OriginalFaviconSource").debug(
+        LogCategory.BROWSER,
+        "Favicon HTML parsing stopped; retaining discovered artwork",
+        mapOf("errorType" to error.javaClass.simpleName),
+    )
+}
+
+/** HTML must not make Home fetch another service, including one on another port or a local IP. */
+private fun sameFaviconOrigin(
+    origin: URI,
+    candidate: URI,
+): Boolean =
+    candidate.userInfo == null && candidate.scheme.equals(origin.scheme, true) &&
+        candidate.host?.equals(origin.host, true) == true && faviconPort(candidate) == faviconPort(origin)
+
+private fun faviconPort(uri: URI): Int =
+    if (uri.port >= 0) {
+        uri.port
+    } else if (uri.scheme == "https") {
+        443
+    } else {
+        80
+    }
+
+private fun boundedOriginalFavicon(bitmap: ImageBitmap): ImageBitmap {
+    val longest = maxOf(bitmap.width, bitmap.height)
+    if (longest <= 256) return bitmap
+    val scale = 256.0 / longest
+    val reduced =
+        BufferedImage(
+            maxOf(1, (bitmap.width * scale).toInt()),
+            maxOf(1, (bitmap.height * scale).toInt()),
+            BufferedImage.TYPE_INT_ARGB,
+        )
+    reduced.createGraphics().apply {
+        setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC)
+        drawImage(bitmap.toAwtImage(), 0, 0, reduced.width, reduced.height, null)
+        dispose()
+    }
+    return reduced.toComposeImageBitmap()
+}
+
 /** Skia's SVG loader has no image-resource provider; preserve a full-canvas embedded raster logo. */
 private fun embeddedSvgBitmap(bytes: ByteArray): ByteArray? =
     runCatching {
         val factory = DocumentBuilderFactory.newInstance()
         factory.isNamespaceAware = true
+        factory.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true)
         factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
         factory.setFeature("http://xml.org/sax/features/external-general-entities", false)
         factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false)
@@ -268,29 +301,38 @@ private fun embeddedSvgBitmap(bytes: ByteArray): ByteArray? =
         Base64.getDecoder().decode(href.substringAfter(','))
     }.getOrNull()
 
+internal class CardFaviconSources(
+    val pageIcon: (String?) -> TabIcon.Image? = { it?.let(FaviconCache::loadFavicon) },
+    val hostIcon: suspend (String?) -> TabIcon.Image? = {
+        HighQualityFaviconService.hostIcon(it, refreshSmallIcon = true)
+    },
+    val qualityUpgrade: suspend (String?, TabIcon.Image) -> TabIcon.Image = { pageUrl, page ->
+        upgradeCachedFavicon(pageUrl, page)
+    },
+    val originalIcon: suspend (String?, TabIcon.Image?) -> TabIcon.Image? = { pageUrl, page ->
+        OriginalFaviconSource.sharperIcon(pageUrl, page)
+    },
+)
+
 /** Home may fetch original artwork when the cached image is too small for its larger cards. */
 internal suspend fun resolveHighQualityCardFavicon(
     url: String?,
     standardCacheKey: String?,
+    sources: CardFaviconSources = CardFaviconSources(),
 ): TabIcon.Image? =
     HighQualityFaviconService.resolve(
         url = url,
         standardCacheKey = standardCacheKey,
-        pageIcon = { it?.let(FaviconCache::loadFavicon) },
+        pageIcon = sources.pageIcon,
         hostGuess = {
-            OriginalFaviconSource.sharperIcon(it, null)
-                ?: HighQualityFaviconService.hostIcon(it, refreshSmallIcon = true)
+            sources.originalIcon(it, null) ?: sources.hostIcon(it)
         },
         qualityUpgrade = { pageUrl, page ->
-            val cached = upgradeCachedFavicon(pageUrl, page)
-            if (cached.painter.intrinsicSize.minDimension >= 64f) {
+            val cached = sources.qualityUpgrade(pageUrl, page)
+            if (hasSharpCardFavicon(cached)) {
                 cached
             } else {
-                val original = OriginalFaviconSource.sharperIcon(pageUrl, cached)
-                original ?: sharperMatchingFavicon(
-                    cached,
-                    HighQualityFaviconService.hostIcon(pageUrl, refreshSmallIcon = true),
-                )
+                sources.originalIcon(pageUrl, cached) ?: sharperMatchingFavicon(cached, sources.hostIcon(pageUrl))
             }
         },
     )

@@ -37,6 +37,7 @@ class HostIconResolutionTest {
     fun cleanUp() {
         dir.deleteRecursively()
         FaviconMissMemory.forget()
+        FaviconRetryMemory.clear()
     }
 
     private fun entryFor(host: String) = File(dir, "${HqFaviconDiskCache.keyFor(host)}.png")
@@ -246,9 +247,9 @@ class HostIconResolutionTest {
         }.use { it.readBytes() }
 
     private companion object {
-        const val HOST = "example.test"
+        const val HOST = "example.com"
         val KEY: String = HqFaviconDiskCache.keyFor(HOST)
-        const val URL = "https://example.test/page"
+        const val URL = "https://example.com/page"
         const val NOW = 1_700_000_000_000L
         const val DAY = 24L * 60 * 60 * 1000
     }

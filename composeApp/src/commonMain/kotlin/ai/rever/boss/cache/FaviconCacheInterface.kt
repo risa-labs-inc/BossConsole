@@ -1,6 +1,7 @@
 package ai.rever.boss.cache
 
-import ai.rever.boss.plugin.api.TabIcon
+/** Stable resolution identity; paths and queries do not invalidate a host's artwork. */
+internal expect fun faviconLookupHost(url: String?): String?
 
 /**
  * Platform-specific favicon cache interface.

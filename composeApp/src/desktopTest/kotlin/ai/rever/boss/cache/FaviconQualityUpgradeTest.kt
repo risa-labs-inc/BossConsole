@@ -1,13 +1,17 @@
 package ai.rever.boss.cache
 
 import ai.rever.boss.plugin.api.TabIcon
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.painter.BitmapPainter
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import kotlinx.coroutines.test.runTest
 import java.awt.Color
 import java.awt.image.BufferedImage
 import javax.imageio.ImageIO
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -26,6 +30,41 @@ class FaviconQualityUpgradeTest {
         assertSame(page, sharperMatchingFavicon(page, icon(128, Color.RED)))
         assertSame(page, sharperMatchingFavicon(page, icon(16, Color.BLUE)))
         assertSame(page, sharperMatchingFavicon(page, null))
+    }
+
+    @Test
+    fun `tall and wide glyphs retain their aspect ratio during identity checks`() {
+        fun glyph(
+            size: Int,
+            tall: Boolean,
+        ): TabIcon.Image {
+            val image = BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB)
+            image.createGraphics().apply {
+                color = Color.BLACK
+                if (tall) {
+                    fillRect(size * 3 / 8, size / 8, size / 4, size * 3 / 4)
+                } else {
+                    fillRect(size / 8, size * 3 / 8, size * 3 / 4, size / 4)
+                }
+                dispose()
+            }
+            return TabIcon.Image(BitmapPainter(image.toComposeImageBitmap()))
+        }
+        val page = glyph(16, true)
+        assertSame(page, sharperMatchingFavicon(page, glyph(128, false)))
+    }
+
+    @Test
+    fun `blank images are not evidence that two icons share artwork`() {
+        val page =
+            TabIcon.Image(
+                BitmapPainter(BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB).toComposeImageBitmap()),
+            )
+        val larger =
+            TabIcon.Image(
+                BitmapPainter(BufferedImage(128, 128, BufferedImage.TYPE_INT_ARGB).toComposeImageBitmap()),
+            )
+        assertSame(page, sharperMatchingFavicon(page, larger))
     }
 
     @Test
@@ -123,14 +162,50 @@ class FaviconQualityUpgradeTest {
     }
 
     @Test
-    fun `no icon and unrelated refreshed artwork keep the original page icon`(): Unit =
+    fun `definite no icon uses the page while unrelated refreshed artwork keeps its old matching copy`(): Unit =
         runTest {
             val page = icon(16, Color.BLUE)
             val now = 2_000_000_000_000L
             val old = CachedFavicon(icon(32, Color.BLUE), now - FaviconFreshness.MAX_CACHE_AGE_MS - 1)
             assertSame(page, upgradeCachedFavicon("https://example.test", page, now, { old }, { null }))
-            assertSame(page, upgradeCachedFavicon("https://example.test", page, now, { old }, { icon(128, Color.RED) }))
+            assertSame(
+                old.icon,
+                upgradeCachedFavicon("https://example.test", page, now, { old }, { icon(128, Color.RED) }),
+            )
         }
+
+    @Test
+    fun `refresh receives only the host without credentials paths queries or fragments`(): Unit =
+        runTest {
+            val page = icon(16, Color.BLUE)
+            var requested: String? = null
+            upgradeCachedFavicon(
+                "https://user:password@example.com:443/path?secret=value#fragment",
+                page,
+                1_000,
+                loadCandidate = { CachedFavicon(icon(128, Color.BLUE), 1_001) },
+                refresh = {
+                    requested = it
+                    null
+                },
+            )
+            assertEquals("https://example.com", requested)
+        }
+
+    @Test
+    fun `unspecified size and future timestamps do not remain fresh forever`() {
+        val unspecified =
+            TabIcon.Image(
+                object : Painter() {
+                    override val intrinsicSize = Size.Unspecified
+
+                    override fun DrawScope.onDraw() = Unit
+                },
+            )
+        val now = 2_000_000_000_000L
+        assertTrue(qualityRefreshDue(CachedFavicon(unspecified, now - 24 * 60 * 60 * 1000L - 1), now))
+        assertTrue(qualityRefreshDue(CachedFavicon(icon(128, Color.BLUE), now + 1), now))
+    }
 
     @Test
     fun `a failed quality source keeps the cached page and does not use a host guess`(): Unit =

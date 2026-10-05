@@ -2,6 +2,8 @@ package ai.rever.boss.cache
 
 import ai.rever.boss.plugin.api.TabIcon
 
+internal actual fun faviconLookupHost(url: String?): String? = FaviconHost.of(url)
+
 /**
  * Desktop implementation of favicon cache loading.
  */

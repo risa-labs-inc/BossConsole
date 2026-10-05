@@ -69,7 +69,7 @@ fun BrowserPageCard(
     val iconColor = getDomainColor(domain)
     val cardShape = RoundedCornerShape(12.dp)
 
-    // Show the cached artwork first. A 32dp card needs at least 64px on a Retina display;
+    // Show the cached artwork first. Larger Home cards need at least 64px on a Retina display;
     // the card resolver can fetch the site's original ICO/SVG when Chromium cached only 16px.
     //
     // Unguarded, and keyed the same way the effect is: loadHighQualityFavicon does not throw, and
@@ -79,7 +79,9 @@ fun BrowserPageCard(
     }
     LaunchedEffect(page.url, page.faviconCacheKey) {
         favicon = loadHighQualityFavicon(page.url, page.faviconCacheKey)
-        if ((favicon?.painter?.intrinsicSize?.minDimension ?: 0f) < 64f) {
+        if (!ai.rever.boss.cache
+                .hasSharpCardFavicon(favicon)
+        ) {
             favicon = loadHighQualityCardFavicon(page.url, page.faviconCacheKey) ?: favicon
         }
     }
