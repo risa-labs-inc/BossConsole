@@ -12,6 +12,7 @@ import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -44,6 +45,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.semantics.Role
@@ -122,10 +124,14 @@ fun McpPolicyManagerDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(),
     ) {
-        Surface(
-            modifier = Modifier.widthIn(max = maxWidth).width(600.dp).heightIn(max = maxHeight),
-            shape = RoundedCornerShape(radii.dialog),
-            color = colors.panel,
+        Box(
+            modifier =
+                Modifier
+                    .widthIn(max = maxWidth)
+                    .width(600.dp)
+                    .heightIn(max = maxHeight)
+                    .clip(RoundedCornerShape(radii.dialog))
+                    .background(colors.panel.copy(alpha = 1f)),
         ) {
             Column(modifier = Modifier.padding(24.dp)) {
                 Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {

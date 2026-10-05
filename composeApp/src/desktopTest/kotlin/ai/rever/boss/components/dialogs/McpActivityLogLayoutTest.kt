@@ -65,14 +65,16 @@ class McpActivityLogLayoutTest {
     private fun show(
         light: Boolean = false,
         windowSize: IntSize = IntSize(700, 360),
+        panelAlpha: Float = 1f,
         content: @Composable () -> Unit,
     ) {
         captureTheme = if (light) "light" else "dark"
+        val colors = if (light) BossBlueprintLightColorScheme else BossBlueprintColorScheme
         rule.setContent {
             CompositionLocalProvider(
                 LocalHeavyweightOverlays provides true,
                 LocalDensity provides Density(1f),
-                LocalBossColors provides if (light) BossBlueprintLightColorScheme else BossBlueprintColorScheme,
+                LocalBossColors provides colors.copy(panel = colors.panel.copy(alpha = panelAlpha)),
                 LocalWindowInfo provides
                     object : WindowInfo {
                         override val isWindowFocused = true
@@ -153,5 +155,39 @@ class McpActivityLogLayoutTest {
         closeIsInsideWindow()
         assertTrue(rule.onNodeWithText("Close").getUnclippedBoundsInRoot().right <= 360.dp)
         rule.onNodeWithText("/actual/ledger.jsonl", substring = true).assertExists()
+    }
+
+    private fun assertOpaqueCard(
+        title: String,
+        light: Boolean,
+    ) {
+        val bounds = rule.onNodeWithText(title).getUnclippedBoundsInRoot()
+        val pixels = rule.onRoot().captureToImage().toPixelMap()
+        // Sample the card's padding, clear of text and the rounded corner.
+        val background = pixels[(bounds.left.value - 12).toInt(), (bounds.top.value - 12).toInt()]
+        val colors = if (light) BossBlueprintLightColorScheme else BossBlueprintColorScheme
+        assertEquals(colors.panel.toArgb(), background.toArgb())
+    }
+
+    @Test fun `activity card is opaque with a translucent dark panel token`() {
+        show(panelAlpha = 0.25f) { McpActivityLogDialog(emptyList(), 0, 0, onDismiss = {}) }
+        assertOpaqueCard("MCP Activity Log", light = false)
+    }
+
+    @Test fun `activity card is opaque with a translucent light panel token`() {
+        show(light = true, panelAlpha = 0.25f) { McpActivityLogDialog(emptyList(), 0, 0, onDismiss = {}) }
+        assertOpaqueCard("MCP Activity Log", light = true)
+    }
+
+    @Test fun `trusted plugins card is opaque with a translucent dark panel token`() {
+        show(panelAlpha = 0.25f) { McpProviderTrustDialog(emptyMap(), onRevoke = { true }, onDismiss = {}) }
+        assertOpaqueCard("Trusted Plugins", light = false)
+    }
+
+    @Test fun `trusted plugins card is opaque with a translucent light panel token`() {
+        show(light = true, panelAlpha = 0.25f) {
+            McpProviderTrustDialog(emptyMap(), onRevoke = { true }, onDismiss = {})
+        }
+        assertOpaqueCard("Trusted Plugins", light = true)
     }
 }

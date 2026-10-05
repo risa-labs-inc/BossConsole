@@ -6,7 +6,9 @@ import ai.rever.boss.mcp.McpPolicyAction
 import ai.rever.boss.plugin.ui.BossColorScheme
 import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -22,12 +24,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.Button
 import androidx.compose.material.ButtonDefaults
-import androidx.compose.material.Surface
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.font.FontFamily
@@ -78,10 +80,14 @@ fun McpActivityLogDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(),
     ) {
-        Surface(
-            modifier = Modifier.widthIn(max = maxWidth).width(560.dp).heightIn(max = maxHeight),
-            shape = RoundedCornerShape(radii.dialog),
-            color = colors.panel,
+        Box(
+            modifier =
+                Modifier
+                    .widthIn(max = maxWidth)
+                    .width(560.dp)
+                    .heightIn(max = maxHeight)
+                    .clip(RoundedCornerShape(radii.dialog))
+                    .background(colors.panel.copy(alpha = 1f)),
         ) {
             Column(modifier = Modifier.padding(24.dp)) {
                 Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
