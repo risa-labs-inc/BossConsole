@@ -101,6 +101,7 @@ function harness(options: { row?: VaultRequestRow; items?: ClaimedItem[] } = {})
     claimInbox: () => Promise.resolve(options.items ?? []),
     instance: () => Promise.resolve(null),
     registerInstance: () => Promise.resolve("unavailable"),
+    rotateInstance: () => Promise.resolve("unavailable"),
     userFromToken: () => Promise.resolve(null),
   }
   return { handler: createHandler(deps), created, stored, logs }
