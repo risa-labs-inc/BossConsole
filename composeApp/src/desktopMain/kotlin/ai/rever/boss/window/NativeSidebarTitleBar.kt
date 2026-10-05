@@ -62,9 +62,7 @@ internal actual fun NativeSidebarTitleBar(
                 window.windowHandle,
                 { headerHeight = it },
                 onAction = { id ->
-                    currentActions
-                        .flatMap { listOf(it) + it.menu.orEmpty() + it.contextMenu }
-                        .find { it.id == id }
+                    findNativeTitleBarAction(currentActions, id)
                         ?.onClick
                         ?.invoke()
                 },

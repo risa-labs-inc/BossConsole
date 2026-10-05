@@ -391,7 +391,9 @@ fun ApplicationScope.BossWindow(
         // currentWorkspace, which never sees a switch made anywhere else - so the menu's
         // "disable the active workspace" row greyed out whatever this instance had last
         // loaded (nothing, usually) rather than what the window is actually showing.
-        val workspaces by workspaceManager.workspaces.collectAsState()
+        val workspaces by workspaceManager.visibleWorkspaces.collectAsState()
+        val spaceMenuSettings by ai.rever.boss.components.workspaces.WorkspaceSettingsManager.currentSettings.collectAsState()
+        val spaceGroups = ai.rever.boss.components.workspaces.spaceMenuGroups(workspaces, spaceMenuSettings.recentSpaceIds)
         val currentWorkspace by workspaceManager.currentWorkspace.collectAsState()
 
         // Get split enabled state (whether there are tabs to split)
@@ -516,7 +518,9 @@ fun ApplicationScope.BossWindow(
 
                 // Workspace submenu
                 Menu("Select Space") {
-                    workspaces.forEach { workspace ->
+                    Item("Create New Space…", onClick = { MenuActionsHandler.triggerCreateSpace(windowState.id) })
+                    Separator()
+                    spaceGroups.recent.forEach { workspace ->
                         Item(
                             text = workspace.name,
                             onClick = {
@@ -524,6 +528,21 @@ fun ApplicationScope.BossWindow(
                             },
                             enabled = currentWorkspace?.id != workspace.id, // Disable current workspace
                         )
+                    }
+
+                    if (spaceGroups.more.isNotEmpty()) {
+                        Menu("More") {
+                            spaceGroups.more.forEach { workspace ->
+                                Item(workspace.name, enabled = currentWorkspace?.id != workspace.id,
+                                    onClick = { MenuActionsHandler.triggerApplyWorkspace(windowState.id, workspace) })
+                            }
+                        }
+                    }
+                    Separator()
+                    Menu("Template Spaces") {
+                        spaceGroups.templates.forEach { workspace ->
+                            Item(workspace.name, onClick = { MenuActionsHandler.triggerApplyWorkspace(windowState.id, workspace) })
+                        }
                     }
 
                     if (workspaces.isEmpty()) {

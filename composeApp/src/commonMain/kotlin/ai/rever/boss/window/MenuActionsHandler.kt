@@ -143,6 +143,12 @@ object MenuActionsHandler {
 
     private val _saveWorkspaceEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
     val saveWorkspaceEvents: SharedFlow<String> = _saveWorkspaceEvents.asSharedFlow()
+    private val _createSpaceEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
+    val createSpaceEvents: SharedFlow<String> = _createSpaceEvents.asSharedFlow()
+
+    fun triggerCreateSpace(windowId: String) {
+        _createSpaceEvents.tryEmit(windowId)
+    }
 
     private val _openCodebaseEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
     val openCodebaseEvents: SharedFlow<String> = _openCodebaseEvents.asSharedFlow()

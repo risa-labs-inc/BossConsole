@@ -185,7 +185,7 @@ internal class MacToolbarInput(
                     if (isCurrent(target)) {
                         val current = actions.get()[target.id]?.takeIf { it.enabled && !it.localOnly }
                         val entries = if (context) current?.contextMenu else current?.menu
-                        entries?.singleOrNull { it.id == id && it.enabled && !it.localOnly }?.onClick?.invoke()
+                        findNativeTitleBarAction(entries.orEmpty(), id, allowLocalOnly = false)?.onClick?.invoke()
                     }
                 },
             )

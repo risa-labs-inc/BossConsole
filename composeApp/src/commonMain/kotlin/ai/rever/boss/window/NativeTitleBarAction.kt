@@ -22,6 +22,21 @@ internal data class NativeTitleBarAction(
     val onClick: () -> Unit,
 )
 
+/** Resolve submenu actions recursively while honoring every ancestor's enabled/access state. */
+internal fun findNativeTitleBarAction(
+    actions: List<NativeTitleBarAction>,
+    id: String,
+    allowLocalOnly: Boolean = true,
+): NativeTitleBarAction? {
+    actions.forEach { action ->
+        if (action.enabled && (allowLocalOnly || !action.localOnly)) {
+            if (action.id == id) return action
+            findNativeTitleBarAction(action.menu.orEmpty() + action.contextMenu, id, allowLocalOnly)?.let { return it }
+        }
+    }
+    return null
+}
+
 /** The AppKit title-bar/sidebar integration is exclusive to macOS. */
 internal fun usesNativeSidebarTitleBar(
     isMacOs: Boolean,

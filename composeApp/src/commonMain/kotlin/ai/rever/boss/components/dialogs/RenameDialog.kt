@@ -29,6 +29,7 @@ fun RenameDialog(
     label: String,
     onDismiss: () -> Unit,
     onRename: (newName: String) -> Unit,
+    confirmLabel: String = "Rename",
 ) {
     var newName by remember { mutableStateOf(currentName) }
 
@@ -111,7 +112,7 @@ fun RenameDialog(
                             ),
                         shape = RoundedCornerShape(6.dp),
                     ) {
-                        Text("Rename", fontWeight = FontWeight.Medium)
+                        Text(confirmLabel, fontWeight = FontWeight.Medium)
                     }
                 }
             }

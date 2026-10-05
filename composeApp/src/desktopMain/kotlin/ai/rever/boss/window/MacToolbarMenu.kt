@@ -33,21 +33,7 @@ internal object MacToolbarMenu {
                 )
             send(menu, "addItem:", header)
             send(header, "release")
-            action.menu.orEmpty().forEach { entry ->
-                val row =
-                    pointer(
-                        pointer(clazz("NSMenuItem"), "alloc"),
-                        "initWithTitle:action:keyEquivalent:",
-                        string(entry.label),
-                        selector("activate:"),
-                        string(""),
-                    )
-                send(row, "setTarget:", target)
-                send(row, "setRepresentedObject:", string(entry.id))
-                send(row, "setState:", if (entry.active) 1L else 0L)
-                send(menu, "addItem:", row)
-                send(row, "release")
-            }
+            MacToolbarActionMenu.appendEntries(checkNotNull(menu), action.menu.orEmpty(), target)
             send(popup, "setMenu:", menu)
             send(popup, "sizeToFit")
         } finally {

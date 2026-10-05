@@ -339,16 +339,17 @@ internal fun BossAppMenuActionEffects(
             }.launchIn(this)
     }
 
+    LaunchedEffect(windowId) {
+        MenuActionsHandler.createSpaceEvents.onEach { targetWindowId ->
+            if (targetWindowId == windowId) state.showCreateSpaceDialog = true
+        }.launchIn(this)
+    }
+
     LaunchedEffect(windowId, workspaceManager, splitViewState) {
         MenuActionsHandler.applyWorkspaceEvents
             .onEach { (eventWindowId, workspace) ->
                 if (eventWindowId == windowId) {
-                    // Apply first: a refused apply keeps what is on screen, and the manager
-                    // entering a Space that was never applied would leave the two disagreeing
-                    // about what this window shows.
-                    if (applyWorkspace(workspace, splitViewState, windowProjectState)) {
-                        workspaceManager.loadWorkspace(workspace)
-                    }
+                    state.pendingSpaceToOpen = workspace
                 }
             }.launchIn(this)
     }

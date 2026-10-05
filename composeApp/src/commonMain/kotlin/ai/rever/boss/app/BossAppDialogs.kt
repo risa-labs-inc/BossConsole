@@ -1,6 +1,7 @@
 package ai.rever.boss.app
 
 import ai.rever.boss.components.bars.horizontal.StatusMessageManager
+import ai.rever.boss.components.dialogs.RenameDialog
 import ai.rever.boss.components.dialogs.CloneProjectDialog
 import ai.rever.boss.components.dialogs.ConfirmationDialog
 import ai.rever.boss.components.dialogs.GlobalSearchDialog
@@ -126,6 +127,24 @@ internal fun BossAppDialogs(state: BossAppState) {
     // ShortcutHelpDialog uses the current keymap below.
     val keymapSettings by KeymapSettingsManager.currentSettings.collectAsState()
     KeymapRecoveryDialog()
+
+    if (state.showCreateSpaceDialog) {
+        RenameDialog(
+            title = "Create New Space",
+            currentName = "",
+            label = "Space name",
+            confirmLabel = "Create Space",
+            onDismiss = { state.showCreateSpaceDialog = false },
+            onRename = { name ->
+                state.showCreateSpaceDialog = false
+                coroutineScope.launch {
+                    val space = workspaceManager.createSpace(name)
+                    if (space != null) MenuActionsHandler.triggerApplyWorkspace(windowId, space)
+                    else StatusMessageManager.showMessage("Could not create Space")
+                }
+            },
+        )
+    }
 
     // Plugin update confirmation prompt (from "Check for Updates" or the header badge).
     state.pluginUpdatePrompt?.let { prompt ->

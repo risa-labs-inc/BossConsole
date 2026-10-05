@@ -5,6 +5,10 @@ import ai.rever.boss.components.window_panel.SplitViewState
 import ai.rever.boss.components.workspaces.LayoutWorkspace
 import ai.rever.boss.components.workspaces.isUserOwnedSpace
 import ai.rever.boss.components.workspaces.workspaceManager
+import ai.rever.boss.components.workspaces.WorkspaceSettingsManager
+import ai.rever.boss.components.workspaces.spaceMenuGroups
+import ai.rever.boss.window.MenuActionsHandler
+import ai.rever.boss.window.LocalWindowId
 import ai.rever.boss.plugin.tab.terminal.TerminalTabType
 import ai.rever.boss.window.NativeTitleBarAction
 import androidx.compose.runtime.Composable
@@ -23,8 +27,11 @@ internal fun nativeSpaceTitleAction(
     onOpen: (LayoutWorkspace) -> Unit,
 ): NativeTitleBarAction {
     val spaces by workspaceManager.visibleWorkspaces.collectAsState()
+    val allSpaces by workspaceManager.workspaces.collectAsState()
+    val settings by WorkspaceSettingsManager.currentSettings.collectAsState()
+    val windowId = LocalWindowId.current
     val currentId = splitViewState.currentWorkspaceId
-    val current = spaces.find { it.id == currentId }
+    val current = allSpaces.find { it.id == currentId }
     var renameTarget by remember { mutableStateOf<LayoutWorkspace?>(null) }
     renameTarget?.let { target ->
         RenameDialog(
@@ -37,7 +44,7 @@ internal fun nativeSpaceTitleAction(
     }
     return NativeTitleBarAction(
         id = "space",
-        label = current?.name ?: "Default",
+        label = current?.name ?: "Planet Berul",
         subtitle = projectName.ifBlank { "No project" },
         contextMenu =
             if (current != null && isUserOwnedSpace(current.id)) {
@@ -45,11 +52,31 @@ internal fun nativeSpaceTitleAction(
             } else {
                 emptyList()
             },
-        menu =
-            spaces.map { space ->
-                NativeTitleBarAction("space:${space.id}", space.name, active = space.id == currentId) { onOpen(space) }
-            },
+        menu = spaceTitleMenu(spaces, settings.recentSpaceIds, currentId, onOpen) {
+            windowId?.let(MenuActionsHandler::triggerCreateSpace)
+        },
     ) {}
+}
+
+internal fun spaceTitleMenu(
+    spaces: List<LayoutWorkspace>,
+    recentIds: List<String>,
+    currentId: String?,
+    onOpen: (LayoutWorkspace) -> Unit,
+    onCreate: () -> Unit,
+): List<NativeTitleBarAction> {
+    val groups = spaceMenuGroups(spaces, recentIds)
+    fun row(space: LayoutWorkspace) =
+        NativeTitleBarAction("space:${space.id}", space.name, active = space.id == currentId) { onOpen(space) }
+    return buildList {
+        add(NativeTitleBarAction("create-space", "Create New Space…", onClick = onCreate))
+        add(NativeTitleBarAction("recent-spaces", "Recent Spaces", enabled = false) {})
+        addAll(groups.recent.map(::row))
+        if (groups.more.isNotEmpty()) {
+            add(NativeTitleBarAction("more-spaces", "More", menu = groups.more.map(::row)) {})
+        }
+        add(NativeTitleBarAction("template-spaces", "Template Spaces", menu = groups.templates.map(::row)) {})
+    }
 }
 
 /** Separate live terminal label; the Space picker always retains its own identity. */

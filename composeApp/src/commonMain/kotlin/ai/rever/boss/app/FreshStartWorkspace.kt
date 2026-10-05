@@ -2,6 +2,7 @@ package ai.rever.boss.app
 
 import ai.rever.boss.components.window_panel.SplitViewState
 import ai.rever.boss.components.workspaces.LayoutWorkspace
+import ai.rever.boss.components.workspaces.DefaultSpace
 import ai.rever.boss.components.workspaces.WorkspaceSettingsManager
 import ai.rever.boss.components.workspaces.applyWorkspace
 import ai.rever.boss.components.workspaces.requiresProject
@@ -22,10 +23,8 @@ import ai.rever.boss.window.WindowProjectState
  *   nothing, which is why it reaches first launch and the terminal-first layouts keep
  *   waiting for a project.
  *
- * A fresh install reaches neither branch any more: its default is
- * `WorkspaceSettings.ASK_WORKSPACE_ID`, so `getDefaultWorkspace()` returns null and the
- * window opens empty, which is the point. This path is now for someone who went to
- * Settings and named a workspace they want applied without being asked.
+ * A fresh install starts in the empty Planet Berul Space. A configured layout that
+ * requires a project still waits for project selection.
  */
 internal fun shouldApplyOnFreshStart(
     workspace: LayoutWorkspace?,
@@ -33,10 +32,8 @@ internal fun shouldApplyOnFreshStart(
 ): Boolean = workspace != null && !hasProject && !workspace.requiresProject()
 
 /**
- * Apply the configured default workspace to a first window that restored nothing - no
- * Last Session, no project - so an install whose owner named a default comes up on it
- * rather than on an empty window. With the shipped default ("ask") there is nothing to
- * apply and the window stays empty until a project is opened.
+ * Apply the configured default workspace, or Planet Berul, to a first window that
+ * restored nothing and has no project.
  *
  * Returns the workspace applied, or null if [shouldApplyOnFreshStart] declined. Must be
  * called before `markHandlersReady`: [applyWorkspace] clears all panels, which would
@@ -45,7 +42,7 @@ internal fun shouldApplyOnFreshStart(
 internal suspend fun applyDefaultWorkspaceOnFreshStart(
     splitViewState: SplitViewState,
     windowProjectState: WindowProjectState,
-    workspace: LayoutWorkspace? = WorkspaceSettingsManager.getDefaultWorkspace(),
+    workspace: LayoutWorkspace? = WorkspaceSettingsManager.getDefaultWorkspace() ?: DefaultSpace.planetBerul,
 ): LayoutWorkspace? {
     val selectedProject = windowProjectState.selectedProject.value
     val hasProject = selectedProject.path.isNotEmpty()

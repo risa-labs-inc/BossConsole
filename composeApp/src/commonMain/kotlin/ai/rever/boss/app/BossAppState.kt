@@ -116,6 +116,8 @@ internal class BossAppState(
      */
     var pendingWorkspaceSwitch by mutableStateOf<LayoutWorkspace?>(null)
     var showNewProjectDialog by mutableStateOf(false)
+    var pendingSpaceToOpen by mutableStateOf<ai.rever.boss.components.workspaces.LayoutWorkspace?>(null)
+    var showCreateSpaceDialog by mutableStateOf(false)
     var showCloneProjectDialog by mutableStateOf(false)
     var projectToOpen by mutableStateOf<Project?>(null)
 
