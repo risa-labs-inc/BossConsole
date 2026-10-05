@@ -44,7 +44,7 @@ interface Harness {
  */
 function page(kind: string, sealKey: string): Harness {
   const fields: Record<string, Field> = {}
-  for (const name of ["f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11"]) {
+  for (const name of ["f1", "f2", "f3", "f4", "f5", "f6", "f7", "f9", "f10", "f11"]) {
     const listeners: Record<string, () => void> = {}
     fields[name] = {
       value: "",
@@ -193,7 +193,6 @@ Deno.test("the page seals a card the DGX key opens", async () => {
     f5: "Town",
     f6: "12345",
     f7: "US",
-    f8: true,
     f9: "200",
     f10: "usd",
   })
@@ -205,18 +204,18 @@ Deno.test("the page seals a card the DGX key opens", async () => {
     pan: "4111111111111111",
     exp: "04/29",
     cvv: "123",
-    virtual: true,
     limit_minor: 20000,
     currency: "USD",
     billing: { line1: "1 Street", city: "Town", postal: "12345", country: "US" },
   })
 })
 
-Deno.test("a card with no virtual-card attestation and no limit is refused in the browser", async () => {
-  const { base64 } = await recipient()
+Deno.test("any card is accepted without a virtual-card attestation; a missing limit is refused", async () => {
+  const { base64, privateKey } = await recipient()
 
-  const unattested = page("card", base64)
-  await unattested.submit({
+  // Virtual or physical is the owner's choice: there is no checkbox and nothing claims either.
+  const plain = page("card", base64)
+  await plain.submit({
     f1: "A Person",
     f2: "4242424242424242",
     f3: "04/29",
@@ -225,8 +224,9 @@ Deno.test("a card with no virtual-card attestation and no limit is refused in th
     f9: "200",
     f10: "USD",
   })
-  assertEquals(unattested.submitted(), 0)
-  assertStringIncludes(unattested.error(), "virtual card")
+  assertEquals(plain.submitted(), 1)
+  const sealed = JSON.parse(await open(privateKey, JTI, plain.ciphertext()))
+  assert(!("virtual" in sealed))
 
   const nolimit = page("card", base64)
   await nolimit.submit({
@@ -235,7 +235,6 @@ Deno.test("a card with no virtual-card attestation and no limit is refused in th
     f3: "04/29",
     f11: "123",
     f6: "12345",
-    f8: true,
     f10: "USD",
   })
   assertEquals(nolimit.submitted(), 0)
@@ -248,7 +247,6 @@ Deno.test("a card with no virtual-card attestation and no limit is refused in th
     f3: "04/29",
     f11: "123",
     f6: "12345",
-    f8: true,
     f9: "200",
     f10: "dollars",
   })
@@ -264,7 +262,6 @@ Deno.test("the card limit is sealed in the currency's ISO 4217 minor unit", asyn
     f3: "04/29",
     f11: "123",
     f6: "12345",
-    f8: true,
   }
   const cases: [string, string, number][] = [
     ["200", "USD", 20_000],
@@ -372,7 +369,6 @@ Deno.test("four bare digits are accepted as an expiry and a bad month is refused
     f3: "0429",
     f11: "123",
     f6: "12345",
-    f8: true,
     f9: "200",
     f10: "usd",
   })
@@ -385,7 +381,6 @@ Deno.test("four bare digits are accepted as an expiry and a bad month is refused
     f3: "13/29",
     f11: "123",
     f6: "12345",
-    f8: true,
     f9: "200",
     f10: "usd",
   })
@@ -399,7 +394,6 @@ Deno.test("the card's security code is sealed with it: three digits, four for Am
     f1: "A Person",
     f3: "04/29",
     f6: "12345",
-    f8: true,
     f9: "200",
     f10: "USD",
   }
