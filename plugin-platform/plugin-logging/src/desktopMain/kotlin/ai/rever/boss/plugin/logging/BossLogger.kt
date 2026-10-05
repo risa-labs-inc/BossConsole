@@ -561,39 +561,10 @@ object BossLogger {
         }
 
         // Format message for SLF4J
-        val formattedMessage =
-            buildString {
-                append("[${entry.category}]")
-                append(" ${entry.component}: ${entry.message}")
-                if (entry.data != null) {
-                    append(" | ${entry.data}")
-                }
-            }
+        val formattedMessage = renderConsoleMessage(entry)
 
         // Log to SLF4J (which outputs to stdout, captured by GlobalLogCapture)
-        when (entry.level) {
-            LogLevel.TRACE -> {
-                slf4jLogger.trace(formattedMessage, entry.error)
-            }
-
-            LogLevel.DEBUG -> {
-                slf4jLogger.debug(formattedMessage, entry.error)
-            }
-
-            LogLevel.INFO -> {
-                slf4jLogger.info(formattedMessage, entry.error)
-            }
-
-            LogLevel.WARN -> {
-                slf4jLogger.warn(formattedMessage, entry.error)
-            }
-
-            LogLevel.ERROR -> {
-                slf4jLogger.error(formattedMessage, entry.error)
-            }
-
-            LogLevel.OFF -> { /* no-op */ }
-        }
+        logToSlf4j(entry.level, formattedMessage, entry.error)
 
         // Queue for async file logging
         if (writesToFile(entry.level)) {
@@ -623,6 +594,119 @@ object BossLogger {
             .format(dateFormatter)
 
     /**
+     * The exact text of one console (SLF4J) message.
+     *
+     * Split out so the shape can be tested without a running appender. One entry is one line: see [LogLineText].
+     */
+    internal fun renderConsoleMessage(entry: LogEntry): String =
+        buildString {
+            append("[${entry.category}]")
+            append(" ${LogLineText.neutralize(entry.component)}: ${LogLineText.neutralize(entry.message)}")
+            if (entry.data != null) {
+                append(" | ${LogLineText.neutralize(entry.data.toString())}")
+            }
+        }
+
+    /**
+     * The exact text of one log-file record, trailing newline included.
+     *
+     * Text that came from outside the logger is escaped by [LogLineText] so it cannot start a second
+     * record. A record starts at column 0 with a timestamp, and every continuation line is indented.
+     * The only unescaped line breaks written here are the logger's own, before the exception block
+     * and its frames.
+     */
+    internal fun renderFileLine(entry: LogEntry): String =
+        buildString {
+            append(formatTimestamp(entry.timestamp))
+            append(" [${entry.level.name.padEnd(5)}]")
+            append(" [${entry.category.name}]")
+            append(" ${LogLineText.neutralize(entry.component)}: ${LogLineText.neutralize(entry.message)}")
+            if (entry.data != null) {
+                append(" | ${LogLineText.neutralize(entry.data.toString())}")
+            }
+            if (entry.error != null) {
+                append("\n  Exception: ${LogLineText.neutralize(entry.error.message.toString())}")
+                // Use configurable stack trace depth
+                val frames =
+                    if (stackTraceDepth <= 0) {
+                        entry.error.stackTrace.toList()
+                    } else {
+                        entry.error.stackTrace.take(stackTraceDepth)
+                    }
+                frames.forEach { frame ->
+                    append("\n    at $frame")
+                }
+                if (stackTraceDepth > 0 && entry.error.stackTrace.size > stackTraceDepth) {
+                    append("\n    ... ${entry.error.stackTrace.size - stackTraceDepth} more frames")
+                }
+            }
+            append("\n")
+        }
+
+    /**
+     * Sanitizes a throwable for console (SLF4J) output.
+     *
+     * A hostile or unhandled exception message containing newlines or control characters would
+     * split the console stream and forge log records when printed by SLF4J simple logger.
+     * Rebuilds the throwable and its cause chain with neutralized messages while preserving
+     * the original stack traces.
+     */
+    internal fun sanitizeThrowable(throwable: Throwable?): Throwable? {
+        if (throwable == null) return null
+        val rawMessage = throwable.message
+        val sanitizedMessage = rawMessage?.let(LogLineText::neutralize)
+        val sanitizedCause = sanitizeThrowable(throwable.cause)
+        val className = throwable::class.qualifiedName ?: throwable::class.java.name
+        val sanitized = SanitizedThrowable(className, sanitizedMessage, sanitizedCause)
+        sanitized.stackTrace = throwable.stackTrace
+        return sanitized
+    }
+
+    private class SanitizedThrowable(
+        private val originalClassName: String,
+        message: String?,
+        cause: Throwable?,
+    ) : Throwable(message, cause) {
+        override fun toString(): String =
+            if (message.isNullOrEmpty()) {
+                originalClassName
+            } else {
+                "$originalClassName: $message"
+            }
+    }
+
+    private fun logToSlf4j(
+        level: LogLevel,
+        message: String,
+        error: Throwable?,
+    ) {
+        val sanitizedError = sanitizeThrowable(error)
+        when (level) {
+            LogLevel.TRACE -> {
+                if (sanitizedError != null) slf4jLogger.trace(message, sanitizedError) else slf4jLogger.trace(message)
+            }
+
+            LogLevel.DEBUG -> {
+                if (sanitizedError != null) slf4jLogger.debug(message, sanitizedError) else slf4jLogger.debug(message)
+            }
+
+            LogLevel.INFO -> {
+                if (sanitizedError != null) slf4jLogger.info(message, sanitizedError) else slf4jLogger.info(message)
+            }
+
+            LogLevel.WARN -> {
+                if (sanitizedError != null) slf4jLogger.warn(message, sanitizedError) else slf4jLogger.warn(message)
+            }
+
+            LogLevel.ERROR -> {
+                if (sanitizedError != null) slf4jLogger.error(message, sanitizedError) else slf4jLogger.error(message)
+            }
+
+            LogLevel.OFF -> { /* no-op */ }
+        }
+    }
+
+    /**
      * Write log entry to file asynchronously.
      * Includes file rotation when size limit is exceeded.
      */
@@ -634,34 +718,7 @@ object BossLogger {
                 rotateLogFiles(file)
             }
 
-            val line =
-                buildString {
-                    append(formatTimestamp(entry.timestamp))
-                    append(" [${entry.level.name.padEnd(5)}]")
-                    append(" [${entry.category.name}]")
-                    append(" ${entry.component}: ${entry.message}")
-                    if (entry.data != null) {
-                        append(" | ${entry.data}")
-                    }
-                    if (entry.error != null) {
-                        append("\n  Exception: ${entry.error.message}")
-                        // Use configurable stack trace depth
-                        val frames =
-                            if (stackTraceDepth <= 0) {
-                                entry.error.stackTrace.toList()
-                            } else {
-                                entry.error.stackTrace.take(stackTraceDepth)
-                            }
-                        frames.forEach { frame ->
-                            append("\n    at $frame")
-                        }
-                        if (stackTraceDepth > 0 && entry.error.stackTrace.size > stackTraceDepth) {
-                            append("\n    ... ${entry.error.stackTrace.size - stackTraceDepth} more frames")
-                        }
-                    }
-                    append("\n")
-                }
-            file.appendText(line)
+            file.appendText(renderFileLine(entry))
         } catch (e: Exception) {
             // Avoid recursive logging
             slf4jLogger.warn("Failed to write to log file: ${e.message}")

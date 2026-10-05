@@ -22,6 +22,7 @@ import ai.rever.boss.kernel.ui.RemoteUiSurfaceRegistry
 import ai.rever.boss.kernel.ui.SurfaceRegistration
 import ai.rever.boss.plugin.api.PanelRegistry
 import ai.rever.boss.plugin.api.TabRegistry
+import ai.rever.boss.plugin.logging.BossLogger
 import ai.rever.boss.ui.sdk.DiffOperation
 import ai.rever.boss.ui.sdk.WidgetProtoConverter.toProtoDiff
 import io.grpc.ManagedChannel
@@ -45,6 +46,7 @@ import kotlinx.coroutines.withTimeout
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.io.path.createTempFile
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -664,6 +666,42 @@ class PluginUIServiceBridgeTest {
                 assertNull(registry.surfaceOf(PANEL), "the impersonation attempt must not have registered anything")
                 assertTrue(panelRegistry.getAllPanels().none { it.id.panelId == PANEL })
                 assertTrue(tabRegistry.getAllTabTypes().none { it.typeId.typeId == PANEL })
+            }
+        }
+
+    // ---- BossConsole#1549: surfaceId log-splitting defense ----
+
+    @Test
+    fun `hostile surfaceId containing newlines cannot split kernel log records in metadata`() =
+        runBlocking {
+            val hostileSurfaceId = "hostile-panel\n2026-10-01 00:00:00.000 [ERROR] [AUTH] Auth: forged session"
+            val tempLogFile = createTempFile("boss-test-1549", ".log").toFile()
+            tempLogFile.deleteOnExit()
+            BossLogger.enableFileLogging(tempLogFile)
+
+            try {
+                // Impersonation refusal puts request.surfaceId straight into log entry data map
+                // (PluginUIServiceBridge:88), where unescaped line breaks would split log records.
+                assertFailsWith<StatusException> {
+                    plugin.registerUI(registration(hostileSurfaceId, process = "impersonated-process"))
+                }
+
+                awaitTrue { tempLogFile.exists() && tempLogFile.length() > 0 }
+                val lines = tempLogFile.readLines()
+                val matchingRecords = lines.filter { it.contains("hostile-panel") }
+                assertTrue(matchingRecords.isNotEmpty(), "expected refused RegisterUI log line in log file")
+
+                // CWE-117: exactly one record per log entry, and no unescaped newline creating forged lines.
+                for (record in matchingRecords) {
+                    assertTrue(record.contains("hostile-panel\\n2026-10-01"), "newline must be escaped in log record")
+                }
+                assertFalse(
+                    lines.any { it.startsWith("2026-10-01 00:00:00.000 [ERROR]") },
+                    "forged line must not exist",
+                )
+            } finally {
+                BossLogger.disableFileLogging()
+                tempLogFile.delete()
             }
         }
 
