@@ -140,6 +140,7 @@ internal object CoreAuthService {
             if (!SupabaseConfig.isInitialized.value) {
                 SupabaseConfig.initializeFromEnvironment()
             }
+            startSessionFileImport(authScope)
 
             // Wait for session to load from storage and then set proper state
             authScope.launch {
