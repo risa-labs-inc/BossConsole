@@ -1,7 +1,6 @@
 package ai.rever.boss.app
 
 import ai.rever.boss.components.bars.horizontal.StatusMessageManager
-import ai.rever.boss.components.dialogs.RenameDialog
 import ai.rever.boss.components.dialogs.CloneProjectDialog
 import ai.rever.boss.components.dialogs.ConfirmationDialog
 import ai.rever.boss.components.dialogs.GlobalSearchDialog
@@ -13,6 +12,7 @@ import ai.rever.boss.components.dialogs.NewProjectWizardDialog
 import ai.rever.boss.components.dialogs.NewTabDialog
 import ai.rever.boss.components.dialogs.ProjectOpenModeDialog
 import ai.rever.boss.components.dialogs.ProjectSelectionDialog
+import ai.rever.boss.components.dialogs.RenameDialog
 import ai.rever.boss.components.dialogs.ShortcutHelpDialog
 import ai.rever.boss.components.dialogs.TabType
 import ai.rever.boss.components.dialogs.TerminalLinkOpenDialog
@@ -139,8 +139,11 @@ internal fun BossAppDialogs(state: BossAppState) {
                 state.showCreateSpaceDialog = false
                 coroutineScope.launch {
                     val space = workspaceManager.createSpace(name)
-                    if (space != null) MenuActionsHandler.triggerApplyWorkspace(windowId, space)
-                    else StatusMessageManager.showMessage("Could not create Space")
+                    if (space != null) {
+                        MenuActionsHandler.triggerApplyWorkspace(windowId, space)
+                    } else {
+                        StatusMessageManager.showMessage("Could not create Space")
+                    }
                 }
             },
         )
@@ -591,7 +594,11 @@ internal fun BossAppDialogs(state: BossAppState) {
 
                             "editor" -> {
                                 bookmark.tabConfig.filePath?.let { filePath ->
-                                    FileEventBus.openFile(filePath, sourceWindowId = windowId, projectPath = selectedProject.path)
+                                    FileEventBus.openFile(
+                                        filePath,
+                                        sourceWindowId = windowId,
+                                        projectPath = selectedProject.path,
+                                    )
                                 }
                             }
 
@@ -599,7 +606,11 @@ internal fun BossAppDialogs(state: BossAppState) {
                             // it in the notebook tab when the plugin is present, else the editor.
                             "jupyter" -> {
                                 bookmark.tabConfig.filePath?.takeIf { it.isNotBlank() }?.let { filePath ->
-                                    FileEventBus.openFile(filePath, sourceWindowId = windowId, projectPath = selectedProject.path)
+                                    FileEventBus.openFile(
+                                        filePath,
+                                        sourceWindowId = windowId,
+                                        projectPath = selectedProject.path,
+                                    )
                                 }
                             }
 

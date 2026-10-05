@@ -19,8 +19,56 @@ class DefaultAppsOfferTest {
     @get:Rule
     val rule = createComposeRule()
 
-    private val statuses = FileTypeCategories.categories.map {
-        DefaultAppStatus(it, DefaultHandlerState.Other(null))
+    private val operationScope =
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main)
+
+    @org.junit.After
+    fun stopOperations() {
+        operationScope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
+    }
+
+    private val statuses =
+        FileTypeCategories.categories.map {
+            DefaultAppStatus(it, DefaultHandlerState.Other(null))
+        }
+
+    @Test
+    fun `dismissal unmounts dialog while decline persistence and browser claim finish`() {
+        val visible = androidx.compose.runtime.mutableStateOf(true)
+        val releaseClaim = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val releaseDecline = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val claimDone = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val declineDone = kotlinx.coroutines.CompletableDeferred<List<String>>()
+        var closes = 0
+        rule.setContent {
+            if (visible.value) {
+                DefaultAppsOfferDialog(
+                    unclaimed = statuses,
+                    operationScope = operationScope,
+                    onClose = {
+                        closes++
+                        visible.value = false
+                    },
+                    claimCategories = {
+                        releaseClaim.await()
+                        claimDone.complete(Unit)
+                        ClaimOutcome.Claimed
+                    },
+                    recordDeclined = { ids ->
+                        releaseDecline.await()
+                        declineDone.complete(ids)
+                    },
+                )
+            }
+        }
+        rule.onNodeWithText("Make default browser").performClick()
+        rule.onNodeWithText("Skip").performClick()
+        rule.onNodeWithTag("default-browser-offer").assertDoesNotExist()
+        releaseClaim.complete(Unit)
+        releaseDecline.complete(Unit)
+        rule.waitUntil(5000) { claimDone.isCompleted && declineDone.isCompleted }
+        rule.runOnIdle { assertEquals(1, closes) }
+        assertEquals(listOf("web-links"), kotlinx.coroutines.runBlocking { declineDone.await() })
     }
 
     @Test
@@ -29,6 +77,7 @@ class DefaultAppsOfferTest {
         rule.setContent {
             DefaultAppsOfferDialog(
                 unclaimed = statuses,
+                operationScope = operationScope,
                 onClose = {},
                 claimCategories = { categories ->
                     claimed = categories.map { it.id }
@@ -51,8 +100,12 @@ class DefaultAppsOfferTest {
         rule.setContent {
             DefaultAppsOfferDialog(
                 unclaimed = statuses,
+                operationScope = operationScope,
                 onClose = { closed = true },
-                claimCategories = { claimed = true; ClaimOutcome.Claimed },
+                claimCategories = {
+                    claimed = true
+                    ClaimOutcome.Claimed
+                },
                 recordDeclined = {},
             )
         }
@@ -69,6 +122,7 @@ class DefaultAppsOfferTest {
         rule.setContent {
             DefaultAppsOfferDialog(
                 unclaimed = statuses,
+                operationScope = operationScope,
                 onClose = { closes++ },
                 claimCategories = { awaitCancellation() },
                 recordDeclined = {},
@@ -78,6 +132,6 @@ class DefaultAppsOfferTest {
         rule.onNodeWithText("Skip").assertIsEnabled().performClick()
         rule.runOnIdle { assertEquals(1, closes) }
         rule.onNodeWithTag("default-browser-offer").performKeyInput { pressKey(Key.Escape) }
-        rule.runOnIdle { assertEquals(2, closes) }
+        rule.runOnIdle { assertEquals(1, closes) }
     }
 }

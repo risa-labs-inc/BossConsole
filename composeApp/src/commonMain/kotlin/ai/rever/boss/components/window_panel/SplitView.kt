@@ -21,6 +21,7 @@ import ai.rever.boss.components.window_panel.components.main_window_panels.BossM
 import ai.rever.boss.components.window_panel.components.main_window_panels.BossTabsComponent
 import ai.rever.boss.components.window_panel.components.main_window_panels.TabBarLayout
 import ai.rever.boss.components.window_panel.components.main_window_panels.TabBarRevealState
+import ai.rever.boss.components.window_panel.components.main_window_panels.TrackTabBarRevealPointer
 import ai.rever.boss.components.window_panel.components.main_window_panels.VerticalTabBarResizeHandle
 import ai.rever.boss.components.window_panel.components.main_window_panels.WindowRevealedTabBarDrawer
 import ai.rever.boss.components.window_panel.components.main_window_panels.WindowVerticalTabBar
@@ -31,8 +32,6 @@ import ai.rever.boss.components.window_panel.components.main_window_panels.paneL
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberPinDrawerAction
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberTabBarLayout
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberTabBarRevealState
-import ai.rever.boss.components.window_panel.components.main_window_panels.TrackTabBarRevealPointer
-import ai.rever.boss.components.window_panel.components.main_window_panels.tabBarRailWidth
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberTabGroupExpansion
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberToggleCollapseAction
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberWindowTabGroups
@@ -1538,7 +1537,11 @@ class SplitViewState(
      * @param excludePanelId The panel ID to exclude from the search
      * @return The first available panel with a different ID, or null if only one panel exists
      */
-    fun getFirstOtherPanelExcluding(excludePanelId: String): SplitNode.Panel? = getAllPanels().firstOrNull { it.id != excludePanelId }
+    fun getFirstOtherPanelExcluding(excludePanelId: String): SplitNode.Panel? =
+        getAllPanels().firstOrNull {
+            it.id !=
+                excludePanelId
+        }
 
     /**
      * Find the panel that contains a tab with the given ID.
@@ -2621,6 +2624,7 @@ fun rememberSplitViewState(
  * has no room to render groups and TOP is the default.
  */
 @Composable
+@Suppress("LongMethod") // Keep the cohesive dialog/window composition in one scope.
 fun SplitViewPanel(
     splitViewState: SplitViewState,
     modifier: Modifier = Modifier,

@@ -24,13 +24,28 @@ internal fun reusableSessionSpaceIdentity(
     enabled: Boolean,
     known: List<LayoutWorkspace>,
 ): LayoutWorkspace {
-    val recovery = known.filter { it.name == "Recovered Space" && it.id != LAST_SESSION_ID }
-        .maxByOrNull { it.timestamp }
+    val recovery =
+        known
+            .filter { it.name == "Recovered Space" && it.id != LAST_SESSION_ID }
+            .maxByOrNull { it.timestamp }
     return sessionSpaceIdentity(workspace, enabled) { recovery?.id ?: "space-recovered-session" }
 }
 
 /** Recognize recovery copies created by the old restore path, without hiding user namesakes. */
 internal fun isRecoverySnapshot(space: LayoutWorkspace): Boolean =
     space.id == LAST_SESSION_ID || space.id == "space-recovered-session" ||
-        (space.description == "Automatically saved session" &&
-            Regex("""Recovered Space(?: \(\d+\))?""").matches(space.name))
+        (
+            space.description == "Automatically saved session" &&
+                Regex("""Recovered Space(?: \(\d+\))?""").matches(space.name)
+        )
+
+/** Recovery contributes its live layout to the default Space, never a new saved version. */
+internal fun recoverIntoDefaultSpace(
+    workspace: LayoutWorkspace,
+    defaultSpace: LayoutWorkspace,
+): LayoutWorkspace =
+    if (isRecoverySnapshot(workspace)) {
+        workspace.copy(id = defaultSpace.id, name = defaultSpace.name)
+    } else {
+        workspace
+    }

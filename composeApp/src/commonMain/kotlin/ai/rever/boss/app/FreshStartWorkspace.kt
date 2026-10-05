@@ -1,8 +1,8 @@
 package ai.rever.boss.app
 
 import ai.rever.boss.components.window_panel.SplitViewState
-import ai.rever.boss.components.workspaces.LayoutWorkspace
 import ai.rever.boss.components.workspaces.DefaultSpace
+import ai.rever.boss.components.workspaces.LayoutWorkspace
 import ai.rever.boss.components.workspaces.WorkspaceSettingsManager
 import ai.rever.boss.components.workspaces.applyWorkspace
 import ai.rever.boss.components.workspaces.requiresProject
@@ -42,7 +42,10 @@ internal fun shouldApplyOnFreshStart(
 internal suspend fun applyDefaultWorkspaceOnFreshStart(
     splitViewState: SplitViewState,
     windowProjectState: WindowProjectState,
-    workspace: LayoutWorkspace? = WorkspaceSettingsManager.getDefaultWorkspace() ?: DefaultSpace.planetBerul,
+    workspace: LayoutWorkspace? =
+        WorkspaceSettingsManager.getDefaultWorkspace()
+            ?: workspaceManager.savedCopyOf(DefaultSpace.ID)
+            ?: DefaultSpace.planetBerul,
 ): LayoutWorkspace? {
     val selectedProject = windowProjectState.selectedProject.value
     val hasProject = selectedProject.path.isNotEmpty()

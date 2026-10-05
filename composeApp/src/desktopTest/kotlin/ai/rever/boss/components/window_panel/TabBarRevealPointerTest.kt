@@ -1,8 +1,10 @@
+@file:Suppress("PackageNaming") // Mirrors the existing window_panel package.
+
 package ai.rever.boss.components.window_panel
 
+import ai.rever.boss.components.window_panel.components.main_window_panels.TabBarRevealState
 import ai.rever.boss.components.window_panel.components.main_window_panels.pointerReachesSidebarEdge
 import ai.rever.boss.components.window_panel.components.main_window_panels.pointerWithinSidebarMargin
-import ai.rever.boss.components.window_panel.components.main_window_panels.TabBarRevealState
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberTabBarRevealState
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.IntRect

@@ -31,7 +31,10 @@ internal object MacToolbarContextMenu {
     val popupClass: Pointer by lazy { contextClass("NSPopUpButton", "BossConsoleSpacePopUpButton") }
     val buttonClass: Pointer by lazy { contextClass("NSButton", "BossConsoleSpaceButton") }
 
-    private fun contextClass(superclass: String, name: String): Pointer {
+    private fun contextClass(
+        superclass: String,
+        name: String,
+    ): Pointer {
         val objc = MacToolbarRuntime.objc
         val cls =
             checkNotNull(

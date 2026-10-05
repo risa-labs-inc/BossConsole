@@ -340,9 +340,10 @@ internal fun BossAppMenuActionEffects(
     }
 
     LaunchedEffect(windowId) {
-        MenuActionsHandler.createSpaceEvents.onEach { targetWindowId ->
-            if (targetWindowId == windowId) state.showCreateSpaceDialog = true
-        }.launchIn(this)
+        MenuActionsHandler.createSpaceEvents
+            .onEach { targetWindowId ->
+                if (targetWindowId == windowId) state.showCreateSpaceDialog = true
+            }.launchIn(this)
     }
 
     LaunchedEffect(windowId, workspaceManager, splitViewState) {
@@ -684,7 +685,9 @@ internal fun BossAppMenuActionEffects(
                         if (result.isSuccess) {
                             StatusMessageManager.showMessage("Reloaded: ${result.getOrNull()?.manifest?.displayName}")
                         } else {
-                            StatusMessageManager.showMessage("Failed to reload plugin: ${result.exceptionOrNull()?.message}")
+                            StatusMessageManager.showMessage(
+                                "Failed to reload plugin: ${result.exceptionOrNull()?.message}",
+                            )
                         }
                     }
                 }

@@ -42,12 +42,26 @@ internal fun hoverRevealTarget(
 ): Boolean = enabled && railShown && (pointerOnRail || pointerOnDrawer || drawerBusy)
 
 /** Exact edge activation, with crossing detection for cursor movements that skip the edge. */
-internal fun pointerReachesSidebarEdge(x: Int, y: Int, previousX: Int?, region: IntRect): Boolean =
+internal fun pointerReachesSidebarEdge(
+    x: Int,
+    y: Int,
+    previousX: Int?,
+    region: IntRect,
+): Boolean =
     y >= region.top && y < region.bottom &&
-        (x == region.left || (previousX != null &&
-            ((previousX > region.left && x < region.left) ||
-                (previousX < region.left && x > region.left))))
+        (
+            x == region.left || (
+                previousX != null &&
+                    (
+                        (previousX > region.left && x < region.left) ||
+                            (previousX < region.left && x > region.left)
+                    )
+            )
+        )
 
 /** Retention is horizontal only: leaving through the left edge keeps the reveal open. */
-internal fun pointerWithinSidebarMargin(x: Int, region: IntRect, sidebarWidthDp: Float): Boolean =
-    x <= region.left + sidebarWidthDp + 100f
+internal fun pointerWithinSidebarMargin(
+    x: Int,
+    region: IntRect,
+    sidebarWidthDp: Float,
+): Boolean = x <= region.left + sidebarWidthDp + 100f

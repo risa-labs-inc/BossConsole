@@ -16,9 +16,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.DpSize
@@ -29,6 +29,7 @@ import javax.swing.SwingUtilities
 
 /** A remotely opened toolbar menu belongs to the captured window, without activating the OS window. */
 @Composable
+@Suppress("LongMethod") // Keep the cohesive dialog/window composition in one scope.
 internal fun NativeRemoteToolbarMenu(
     request: NativeToolbarMenuRequest,
     dismiss: () -> Unit,
@@ -58,7 +59,11 @@ internal fun NativeRemoteToolbarMenu(
                 .padding(8.dp),
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(path.lastOrNull()?.label ?: request.title, color = BossTheme.colors.textPrimary, modifier = Modifier.weight(1f).padding(8.dp))
+                Text(
+                    path.lastOrNull()?.label ?: request.title,
+                    color = BossTheme.colors.textPrimary,
+                    modifier = Modifier.weight(1f).padding(8.dp),
+                )
                 Text(
                     "×",
                     color = BossTheme.colors.textPrimary,
@@ -66,19 +71,24 @@ internal fun NativeRemoteToolbarMenu(
                 )
             }
             if (path.isNotEmpty()) {
-                Text("← Back", color = BossTheme.colors.textPrimary,
-                    modifier = Modifier.fillMaxWidth().clickable { path = path.dropLast(1) }.padding(10.dp))
+                Text(
+                    "← Back",
+                    color = BossTheme.colors.textPrimary,
+                    modifier = Modifier.fillMaxWidth().clickable { path = path.dropLast(1) }.padding(10.dp),
+                )
             }
             entries.forEach { entry ->
                 Text(
-                    text = (if (entry.active) "✓ ${entry.label}" else entry.label) + if (entry.menu != null) " ›" else "",
+                    text =
+                        (if (entry.active) "✓ ${entry.label}" else entry.label) + if (entry.menu != null) " ›" else "",
                     color = BossTheme.colors.textPrimary.copy(alpha = if (entry.enabled) 1f else 0.45f),
                     modifier =
                         Modifier
                             .fillMaxWidth()
                             .clickable(enabled = entry.enabled && !entry.localOnly) {
-                                if (entry.menu != null) path = path + entry
-                                else {
+                                if (entry.menu != null) {
+                                    path = path + entry
+                                } else {
                                     dismiss()
                                     request.select(entry.id)
                                 }

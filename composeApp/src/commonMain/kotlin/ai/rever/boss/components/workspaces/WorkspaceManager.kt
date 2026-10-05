@@ -370,7 +370,10 @@ class WorkspaceManager(
             // Space was a built-in - which is the Save button not working. See
             // `mergeSavedWorkspaces`, which also says what becomes of a legacy file whose id IS a
             // built-in's.
-            _workspaces.value = mergeSavedWorkspaces(listOf(DefaultSpace.planetBerul) + PredefinedWorkspaces.allWorkspaces, saved)
+            _workspaces.value =
+                mergeSavedWorkspaces(PredefinedWorkspaces.allWorkspaces, saved).let { spaces ->
+                    if (spaces.any { it.id == DefaultSpace.ID }) spaces else listOf(DefaultSpace.planetBerul) + spaces
+                }
         }
     }
 
@@ -401,14 +404,16 @@ class WorkspaceManager(
 
     /** Persist a new empty Space before offering it for switching. */
     suspend fun createSpace(name: String): LayoutWorkspace? {
-        val space = DefaultSpace.planetBerul.copy(
-            id = LayoutWorkspace.generateId(),
-            name = uniqueWorkspaceName(name.trim().ifBlank { "New Space" }, savedSpaceNames(_workspaces.value)),
-            timestamp = Clock.System.now().toEpochMilliseconds(),
-            layout = ai.rever.boss.plugin.workspace.SplitConfig.SinglePanel(
-                PanelConfig(id = "panel-${LayoutWorkspace.generateId()}", tabs = emptyList()),
-            ),
-        )
+        val space =
+            DefaultSpace.planetBerul.copy(
+                id = LayoutWorkspace.generateId(),
+                name = uniqueWorkspaceName(name.trim().ifBlank { "New Space" }, savedSpaceNames(_workspaces.value)),
+                timestamp = Clock.System.now().toEpochMilliseconds(),
+                layout =
+                    ai.rever.boss.plugin.workspace.SplitConfig.SinglePanel(
+                        PanelConfig(id = "panel-${LayoutWorkspace.generateId()}", tabs = emptyList()),
+                    ),
+            )
         val fileName = fileNameFor(space)
         withContext(Dispatchers.IO) { fileManager.saveWorkspace(space, fileName) } ?: return null
         loadedFileNames[space.id] = fileName

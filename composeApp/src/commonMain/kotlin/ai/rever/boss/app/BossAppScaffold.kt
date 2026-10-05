@@ -101,8 +101,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -548,12 +548,7 @@ internal fun BossAppScaffold(
             Column(modifier = Modifier.fillMaxSize()) {
                 val workspaceSwitch = rememberWorkspaceSwitch(state, splitViewState)
                 val applyWorkspaceAndPreserve = workspaceSwitch.request
-                LaunchedEffect(state.pendingSpaceToOpen) {
-                    state.pendingSpaceToOpen?.let { space ->
-                        state.pendingSpaceToOpen = null
-                        workspaceSwitch.request(space)
-                    }
-                }
+                HandleMenuSpaceSwitch(state, workspaceSwitch)
                 WorkspaceSwitchPrompt(state, workspaceSwitch)
                 // Title bar - conditionally shown based on settings
                 // Default: hidden on Linux/Windows, shown on macOS

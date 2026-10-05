@@ -28,16 +28,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -112,6 +111,7 @@ internal fun DefaultAppsOfferDialog(
     onClose: () -> Unit,
     claimCategories: suspend (List<FileTypeCategory>) -> ClaimOutcome = { DefaultAppsManager.claimAll(it) },
     recordDeclined: suspend (List<String>) -> Unit = { DefaultAppsSettingsManager.markDeclined(it) },
+    operationScope: kotlinx.coroutines.CoroutineScope = DefaultAppsManager.offerScope,
 ) {
     var working by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -123,9 +123,12 @@ internal fun DefaultAppsOfferDialog(
         remember(offered) {
             mutableStateListOf<String>().apply { addAll(offered.map { it.category.id }) }
         }
-    val scope = rememberCoroutineScope()
+    val scope = operationScope
+    var dismissed by remember { mutableStateOf(false) }
 
     fun dismiss() {
+        if (dismissed) return
+        dismissed = true
         // Everything on offer counts as declined, so a later "Set all" in
         // Settings does not quietly claim what was just refused.
         scope.launch { recordDeclined(offered.map { it.category.id }) }
@@ -141,17 +144,24 @@ internal fun DefaultAppsOfferDialog(
                 val declined = offered.map { it.category.id }.filterNot { it in selected }
                 if (declined.isNotEmpty()) recordDeclined(declined)
 
-                when (val outcome = claimCategories(categories)) {
-                    is ClaimOutcome.Claimed -> onClose()
+                val outcome = claimCategories(categories)
+                if (dismissed) return@launch
+                when (outcome) {
+                    is ClaimOutcome.Claimed -> {
+                        dismissed = true
+                        onClose()
+                    }
 
-                    // Kept on screen: the user has something to do, and closing
-                    // the dialog would take the instruction away with it.
-                    is ClaimOutcome.NeedsUserAction -> error = outcome.instruction
+                    is ClaimOutcome.NeedsUserAction -> {
+                        error = outcome.instruction
+                    }
 
-                    is ClaimOutcome.Failed -> error = outcome.message
+                    is ClaimOutcome.Failed -> {
+                        error = outcome.message
+                    }
                 }
             } finally {
-                working = false
+                if (!dismissed) working = false
             }
         }
     }

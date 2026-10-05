@@ -257,9 +257,10 @@ internal class MacSidebarToolbar(
             }
         // NSButton forwards representedObject to its cell, where the context menu lives.
         // Only NSString identifiers may receive UTF8String; controls use their action tag.
-        val id = remoteInput.taggedAction(sender) ?: identifier
-            ?.takeIf { number(it, "isKindOfClass:", clazz("NSString")) != 0L }
-            ?.let { pointer(it, "UTF8String")?.getString(0) } ?: return
+        val id =
+            remoteInput.taggedAction(sender) ?: identifier
+                ?.takeIf { number(it, "isKindOfClass:", clazz("NSString")) != 0L }
+                ?.let { pointer(it, "UTF8String")?.getString(0) } ?: return
         if (openGroupedMenu(id)) return
         SwingUtilities.invokeLater {
             if (!closed) {

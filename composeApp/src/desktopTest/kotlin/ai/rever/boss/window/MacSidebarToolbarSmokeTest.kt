@@ -59,33 +59,7 @@ class MacSidebarToolbarSmokeTest {
             assertItems(firstHandle, "browser_reload")
             assertItems(secondHandle, "terminal_title")
 
-            // Space controls must replace their popup view when a plugin owns primary clicks.
-            listOf(false, true, false).forEach { opensPlugin ->
-                val action = NativeTitleBarAction(
-                    "space", "Planet Berul",
-                    contextMenu = listOf(NativeTitleBarAction("create-space", "Create New Space") {}),
-                    menu = if (opensPlugin) null else listOf(NativeTitleBarAction("new-space", "Create New Space") {}),
-                    onClick = {},
-                )
-                first.update("Test", listOf(action), dark = false, background = -1, icons = emptyMap())
-                onAppKit {
-                    val items = pointer(pointer(Pointer(firstHandle), "toolbar"), "items")
-                    val item = (0 until number(items, "count")).map { pointer(items, "objectAtIndex:", it) }
-                        .first { text(pointer(it, "itemIdentifier")) == "space" }
-                    val view = pointer(item, "view")
-                    assertEquals(
-                        if (opensPlugin) MacToolbarContextMenu.buttonClass else MacToolbarContextMenu.popupClass,
-                        pointer(view, "class"),
-                    )
-                    if (opensPlugin) {
-                        assertEquals(number(item, "tag"), number(view, "tag"))
-                        kotlin.test.assertNotNull(pointer(view, "target"))
-                        kotlin.test.assertNotNull(pointer(view, "action"))
-                        MacToolbarRuntime.send(view, "performClick:", null)
-                    }
-                }
-                if (opensPlugin) assertEquals("space", clicked.get(5, TimeUnit.SECONDS))
-            }
+            assertSpaceControlTransitions(first, firstHandle, clicked)
 
             first.close()
             onAppKit { assertEquals(null, pointer(Pointer(firstHandle), "toolbar")) }
@@ -216,6 +190,44 @@ class MacSidebarToolbarSmokeTest {
             Thread.sleep(25)
         }
         kotlin.test.fail("Native toolbar presence must become $present")
+    }
+
+    private fun assertSpaceControlTransitions(
+        first: MacSidebarToolbar,
+        firstHandle: Long,
+        clicked: CompletableFuture<String>,
+    ) {
+        // Space controls must replace their popup view when a plugin owns primary clicks.
+        listOf(false, true, false).forEach { opensPlugin ->
+            val action =
+                NativeTitleBarAction(
+                    "space",
+                    "Planet Berul",
+                    contextMenu = listOf(NativeTitleBarAction("create-space", "Create New Space") {}),
+                    menu = if (opensPlugin) null else listOf(NativeTitleBarAction("new-space", "Create New Space") {}),
+                    onClick = {},
+                )
+            first.update("Test", listOf(action), dark = false, background = -1, icons = emptyMap())
+            onAppKit {
+                val items = pointer(pointer(Pointer(firstHandle), "toolbar"), "items")
+                val item =
+                    (0 until number(items, "count"))
+                        .map { pointer(items, "objectAtIndex:", it) }
+                        .first { text(pointer(it, "itemIdentifier")) == "space" }
+                val view = pointer(item, "view")
+                assertEquals(
+                    if (opensPlugin) MacToolbarContextMenu.buttonClass else MacToolbarContextMenu.popupClass,
+                    pointer(view, "class"),
+                )
+                if (opensPlugin) {
+                    assertEquals(number(item, "tag"), number(view, "tag"))
+                    kotlin.test.assertNotNull(pointer(view, "target"))
+                    kotlin.test.assertNotNull(pointer(view, "action"))
+                    MacToolbarRuntime.send(view, "performClick:", null)
+                }
+            }
+            if (opensPlugin) assertEquals("space", clicked.get(5, TimeUnit.SECONDS))
+        }
     }
 
     private fun update(

@@ -47,7 +47,11 @@ internal object MacToolbarActionMenu {
         return menu
     }
 
-    fun appendEntries(menu: Pointer, entries: List<NativeTitleBarAction>, target: Pointer?) {
+    fun appendEntries(
+        menu: Pointer,
+        entries: List<NativeTitleBarAction>,
+        target: Pointer?,
+    ) {
         entries.forEach { entry ->
             val row =
                 pointer(

@@ -23,6 +23,7 @@ import androidx.compose.ui.window.DialogProperties
  * @param onRename Callback with new name
  */
 @Composable
+@Suppress("LongMethod") // Keep the cohesive dialog/window composition in one scope.
 fun RenameDialog(
     title: String,
     currentName: String,

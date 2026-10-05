@@ -51,6 +51,10 @@ internal sealed interface ClaimOutcome {
  * UI thread - see docs/THREADING.md.
  */
 internal object DefaultAppsManager {
+    // OS registration and decline persistence survive dismissal of the startup dialog.
+    internal val offerScope =
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main)
+
     private val logger = BossLogger.forComponent("DefaultAppsManager")
 
     private val osName = System.getProperty("os.name").lowercase()

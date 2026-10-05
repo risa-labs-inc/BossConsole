@@ -8,21 +8,28 @@ import ai.rever.boss.components.workspaces.sessionSetOf
 import ai.rever.boss.components.workspaces.workspaceManager
 
 /** Recovery snapshots remain session records, never imported as saved Spaces. */
-internal fun prepareSessionSpace(workspace: LayoutWorkspace): LayoutWorkspace = workspace
+internal fun prepareSessionSpace(workspace: LayoutWorkspace): LayoutWorkspace =
+    ai.rever.boss.components.workspaces.recoverIntoDefaultSpace(
+        workspace,
+        workspaceManager.savedCopyOf(ai.rever.boss.components.workspaces.DefaultSpace.ID)
+            ?: ai.rever.boss.components.workspaces.DefaultSpace.planetBerul,
+    )
 
 /** A new window must not adopt the hidden recovery slot as its visible identity. */
 internal fun updateSessionSpace(
     current: LayoutWorkspace,
     splitViewState: SplitViewState,
 ) {
-    val bound = splitViewState.currentWorkspaceId
-        ?.takeIf { it != LAST_SESSION_ID }
-        ?.let(workspaceManager::savedCopyOf)
-    val space = if (bound != null && current.id == LAST_SESSION_ID) {
-        current.copy(id = bound.id, name = bound.name)
-    } else {
-        prepareSessionSpace(current)
-    }
+    val bound =
+        splitViewState.currentWorkspaceId
+            ?.takeIf { it != LAST_SESSION_ID }
+            ?.let(workspaceManager::savedCopyOf)
+    val space =
+        if (bound != null && current.id == LAST_SESSION_ID) {
+            current.copy(id = bound.id, name = bound.name)
+        } else {
+            prepareSessionSpace(current)
+        }
     if (splitViewState.currentWorkspaceId == null || splitViewState.currentWorkspaceId == LAST_SESSION_ID) {
         splitViewState.rebindCurrentWorkspace(space.id)
     }

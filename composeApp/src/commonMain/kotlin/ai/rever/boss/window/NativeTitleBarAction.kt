@@ -27,15 +27,18 @@ internal fun findNativeTitleBarAction(
     actions: List<NativeTitleBarAction>,
     id: String,
     allowLocalOnly: Boolean = true,
-): NativeTitleBarAction? {
-    actions.forEach { action ->
+): NativeTitleBarAction? =
+    actions.firstNotNullOfOrNull { action ->
         if (action.enabled && (allowLocalOnly || !action.localOnly)) {
-            if (action.id == id) return action
-            findNativeTitleBarAction(action.menu.orEmpty() + action.contextMenu, id, allowLocalOnly)?.let { return it }
+            if (action.id == id) {
+                action
+            } else {
+                findNativeTitleBarAction(action.menu.orEmpty() + action.contextMenu, id, allowLocalOnly)
+            }
+        } else {
+            null
         }
     }
-    return null
-}
 
 /** The AppKit title-bar/sidebar integration is exclusive to macOS. */
 internal fun usesNativeSidebarTitleBar(
