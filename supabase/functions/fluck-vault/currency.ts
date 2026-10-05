@@ -60,6 +60,6 @@ export function minorUnitExponent(code: string): number | null {
 
 /**
  * The largest amount accepted, in minor units. Well inside 2^53 so the double JSON parses into
- * is exact, and far above any purchase a spending-limited virtual card can make.
+ * is exact, and far above any purchase within a card's spending limit.
  */
 export const MAX_MINOR_AMOUNT = 1_000_000_000_000

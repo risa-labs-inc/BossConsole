@@ -40,8 +40,6 @@ input:focus{outline:2px solid #111;outline-offset:1px}
 .row label{flex:1}
 button{width:100%;margin-top:8px;padding:14px;font-size:17px;font-weight:600;
 border:0;border-radius:8px;background:#111;color:#fff}
-.att{display:flex;gap:10px;align-items:flex-start}
-.att input{width:auto;margin:3px 0 0}
 .note{font-size:14px;color:#666;margin-top:20px}
 .err{color:#b00020;font-size:14px;min-height:1.5em;margin:0 0 8px}
 @media(prefers-color-scheme:dark){
@@ -68,7 +66,6 @@ function b64(buf){var a=new Uint8Array(buf);var s="";
 for(var i=0;i<a.length;i++)s+=String.fromCharCode(a[i]);return btoa(s)}
 function digits(v){return(v||"").replace(/[^0-9]/g,"")}
 function field(n){var el=form.elements[n];return el?el.value:""}
-function checked(n){var el=form.elements[n];return!!(el&&el.checked)}
 function luhn(n){if(n.length<13||n.length>19)return false;var sum=0,alt=false;
 for(var i=n.length-1;i>=0;i--){var d=n.charCodeAt(i)-48;
 if(alt){d*=2;if(d>9)d-=9}sum+=d;alt=!alt}return sum%10===0}
@@ -92,7 +89,6 @@ var name=field("f1").trim();
 if(!name)return fail("Enter the name on the card.");
 var postal=field("f6").trim();
 if(!postal)return fail("Enter the billing postcode.");
-if(!checked("f8"))return fail("Only a virtual card with a spending limit can be added. Tick the box.");
 var cur=field("f10").trim().toUpperCase();
 if(!/^[A-Z]{3}$/.test(cur))return fail("Enter the limit currency as three letters, like USD.");
 var xp=Object.prototype.hasOwnProperty.call(EXP,cur)?EXP[cur]:2;
@@ -100,7 +96,7 @@ var lim=field("f9").trim();var lm=/^([0-9]+)(?:\\.([0-9]+))?$/.exec(lim);
 if(!lm||(lm[2]||"").length>xp)return fail(xp===0?"Enter the spending limit as a whole number, like 200.":"Enter the spending limit, like 200 or 200."+"0000".slice(0,xp)+".");
 var minor=parseInt(lm[1]+((lm[2]||"")+"0000").slice(0,xp),10);
 if(!(minor>0)||minor>${MAX_MINOR_AMOUNT})return fail("Enter the spending limit, like 200.");
-return{kind:"card",name:name,pan:pan,exp:exp,cvv:code,virtual:true,limit_minor:minor,currency:cur,
+return{kind:"card",name:name,pan:pan,exp:exp,cvv:code,limit_minor:minor,currency:cur,
 billing:{line1:field("f4").trim(),
 city:field("f5").trim(),postal:postal,country:field("f7").trim()}}}
 var cvv=digits(field("f1"));
@@ -265,8 +261,7 @@ export async function form(page: FormPage): Promise<Response> {
 <div class="row"><label>City<input name="f5" type="text" autocomplete="off"></label>
 <label>Country<input name="f7" type="text" autocomplete="off"></label></div>
 <div class="row"><label>Spending limit<input name="f9" type="text" inputmode="decimal" autocomplete="off" required></label>
-<label>Limit currency<input name="f10" type="text" value="USD" maxlength="3" autocomplete="off" spellcheck="false" required></label></div>
-<label class="att"><input name="f8" type="checkbox" required>This is a virtual card with a spending limit</label>`
+<label>Limit currency<input name="f10" type="text" value="USD" maxlength="3" autocomplete="off" spellcheck="false" required></label></div>`
     : `<label>Security code<input name="f1" type="text" inputmode="numeric" autocomplete="off" required autofocus></label>`
 
   const body = `<h1>${escapeHtml(page.title)}</h1><p>${escapeHtml(page.intro)}</p>
