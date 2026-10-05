@@ -16,6 +16,8 @@ Bring your own agent - Claude Code, Codex, Gemini, or OpenCode - and give it a r
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-blue.svg)](https://github.com/risa-labs-inc/BossConsole-Releases/releases/latest)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
+[**Wiki & getting started**](https://github.com/risa-labs-inc/BossConsole/wiki) · [**Visual walkthrough**](https://github.com/risa-labs-inc/BossConsole/wiki/Product-Walkthrough) · [**Live sessions**](https://cli.risaboss.com/)
+
 [**⬇ Download**](#downloads) · [**🛠 Contributing**](CONTRIBUTING.md) · [📊 Compare](#how-boss-compares) · [⚡ Browser benchmark](#browser-performance) · [🤖 Run an agent](#run-any-ai-coding-agent) · [🔐 Governance](#you-decide-what-your-agents-can-touch) · [🧰 Toolbox](#toolbox--an-app-store-inside-the-app) · [🖥️ BossTerm](#bossterm--a-terminal-you-can-share-to-any-device)
 
 </div>
@@ -23,6 +25,26 @@ Bring your own agent - Claude Code, Codex, Gemini, or OpenCode - and give it a r
 > **Just want to download BOSS?** Head to [**BossConsole-Releases**](https://github.com/risa-labs-inc/BossConsole-Releases) for pre-built installers.
 
 Built with Kotlin Multiplatform and Compose Multiplatform, BOSS unifies an embedded browser, a blazing-fast shareable terminal, a code editor, an extensible **Toolbox** of plugins, and a governed **MCP** tool layer into one desktop workspace for complex, AI-assisted work.
+
+---
+
+## Start here
+
+[![Watch the BOSS Console launch film](https://raw.githubusercontent.com/wiki/risa-labs-inc/BossConsole/images/boss-launch-poster.jpg)](https://bossconsole.ai/media/boss-launch.mp4)
+
+**[Watch the 64-second launch film](https://bossconsole.ai/media/boss-launch.mp4)** · [Explore bossconsole.ai](https://bossconsole.ai/)
+
+The [**BossConsole wiki**](https://github.com/risa-labs-inc/BossConsole/wiki) brings together practical guides, original product captures, a visual walkthrough, and a diagram of window sharing.
+
+| You want to… | Start here |
+| --- | --- |
+| Install BOSS and begin working | [Getting started](https://github.com/risa-labs-inc/BossConsole/wiki/Getting-Started) |
+| See an agent use the workspace | [Visual product walkthrough](https://github.com/risa-labs-inc/BossConsole/wiki/Product-Walkthrough) |
+| Connect an agent and choose its tools | [Agents and MCP](https://github.com/risa-labs-inc/BossConsole/wiki/Agents-and-MCP) |
+| Open your sessions from another device | [Live sessions and window sharing](https://github.com/risa-labs-inc/BossConsole/wiki/Live-Sessions-and-Window-Sharing) |
+| Build plugins or contribute to the host | [Plugins](https://github.com/risa-labs-inc/BossConsole/wiki/Plugins) · [Development and contributing](https://github.com/risa-labs-inc/BossConsole/wiki/Development-and-Contributing) |
+
+**[cli.risaboss.com](https://cli.risaboss.com/)** lists your shared BossTerm terminals and BossConsole windows using the same BOSS account. The sharing guide covers access settings, encryption, and current host capture support.
 
 ---
 
@@ -75,6 +97,7 @@ Absolute scores were depressed by heavy co-tenancy - **800–1300% ambient CPU**
 
 ## Contents
 
+- [Start here](#start-here)
 - [How BOSS compares](#how-boss-compares)
 - [Browser performance](#browser-performance)
 - [Downloads](#downloads)
@@ -430,6 +453,10 @@ See [docs/PLUGIN_LAUNCHPAD.md](docs/PLUGIN_LAUNCHPAD.md) for plugin authoring, t
 ---
 
 ## Documentation
+
+Start with the [**BossConsole wiki**](https://github.com/risa-labs-inc/BossConsole/wiki) for installation, everyday use, agents, plugins, sharing, security, and troubleshooting. The [visual walkthrough](https://github.com/risa-labs-inc/BossConsole/wiki/Product-Walkthrough) combines the launch video with an illustrated tour of context, approval, and results.
+
+### Technical references
 
 - [Command Line Interface (CLI)](docs/CLI.md) - CLI Agent Harness, `boss status`, `boss mcp`, and agent scripting
 - [Plugin Launchpad](docs/PLUGIN_LAUNCHPAD.md) - Developer CLI (`boss plugin init`, `validate`, `link`) & hot-reload
