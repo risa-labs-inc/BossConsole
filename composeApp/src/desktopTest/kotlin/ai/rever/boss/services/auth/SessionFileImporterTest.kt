@@ -28,7 +28,12 @@ import kotlin.time.Duration.Companion.milliseconds
  * this user, and at most once: it is gone before the token reaches the network.
  */
 class SessionFileImporterTest {
-    private val dir = createTempDirectory("session-import")
+    private val dir =
+        createTempDirectory("session-import").also {
+            if ("posix" in FileSystems.getDefault().supportedFileAttributeViews()) {
+                Files.setPosixFilePermissions(it, PosixFilePermissions.fromString("rwx------"))
+            }
+        }
     private val file = dir.resolve("session-import.json")
     private val posix = "posix" in FileSystems.getDefault().supportedFileAttributeViews()
 
@@ -115,6 +120,16 @@ class SessionFileImporterTest {
             assertEquals(Outcome.REJECTED, importer().importOnce())
             assertTrue(target.exists())
             assertFalse(Files.exists(file, LinkOption.NOFOLLOW_LINKS))
+            assertTrue(adopted.isEmpty())
+        }
+
+    @Test
+    fun `a file in a directory others can write to is refused`(): Unit =
+        runBlocking {
+            if (!posix) return@runBlocking
+            write()
+            Files.setPosixFilePermissions(dir, PosixFilePermissions.fromString("rwxrwx---"))
+            assertEquals(Outcome.REJECTED, importer().importOnce())
             assertTrue(adopted.isEmpty())
         }
 

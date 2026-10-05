@@ -1,23 +1,14 @@
 package ai.rever.boss.services.auth
 
-import ai.rever.boss.services.supabase.SupabaseConfig
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.utils.logging.decodeFailure
-import io.github.jan.supabase.auth.auth
-import io.github.jan.supabase.auth.status.SessionSource
-import io.github.jan.supabase.auth.status.SessionStatus
-import io.github.jan.supabase.exceptions.RestException
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
@@ -50,6 +41,7 @@ internal class SessionFileImporter(
     private val adopt: suspend (refreshToken: String) -> Unit,
     private val currentUser: String? = System.getProperty("user.name"),
     private val pollInterval: Duration = 500.milliseconds,
+    private val failureStatus: (Exception) -> Int? = { null },
 ) {
     enum class Outcome { ABSENT, SIGNED_IN, REJECTED, MALFORMED, IMPORTED, FAILED }
 
@@ -96,7 +88,7 @@ internal class SessionFileImporter(
             logger.warn(
                 LogCategory.AUTH,
                 "Session import failed",
-                mapOf("error" to e::class.simpleName, "status" to (e as? RestException)?.statusCode),
+                mapOf("error" to e::class.simpleName, "status" to failureStatus(e)),
             )
             Outcome.FAILED
         }
@@ -142,8 +134,16 @@ internal class SessionFileImporter(
             currentUser.isNullOrBlank() || attrs.owner().name != currentUser -> "not owned by the current user"
             attrs.permissions() != OWNER_RW -> "mode is not 0600"
             attrs.size() > MAX_BYTES -> "too large"
+            !parentIsPrivate() -> "parent directory is writable by others"
             else -> null
         }
+
+    // A directory others can write to lets them rename a different file in between check and read.
+    private fun parentIsPrivate(): Boolean {
+        val parent = path.parent ?: return false
+        val dir = Files.readAttributes(parent, PosixFileAttributes::class.java)
+        return dir.owner().name == currentUser && dir.permissions().none { it in OTHERS_WRITE }
+    }
 
     private fun readBounded(): ByteArray =
         Files.newByteChannel(path, setOf(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)).use { ch ->
@@ -197,6 +197,7 @@ internal class SessionFileImporter(
         const val ENV = "BOSS_SESSION_IMPORT"
         private const val FIELD = "refresh_token"
         private const val MAX_BYTES = 16 * 1024
+        private val OTHERS_WRITE = setOf(PosixFilePermission.GROUP_WRITE, PosixFilePermission.OTHERS_WRITE)
         private val OWNER_RW = setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE)
 
         /** The configured file, or null when [ENV] is unset, blank or not an absolute path. */
@@ -212,27 +213,4 @@ internal class SessionFileImporter(
             return path.takeIf { it.isAbsolute }
         }
     }
-}
-
-@Volatile
-private var sessionImportJob: Job? = null
-
-internal actual fun startSessionFileImport(scope: CoroutineScope) {
-    val path = SessionFileImporter.pathFromEnvironment() ?: return
-    if (sessionImportJob?.isActive == true) return
-    val auth = SupabaseConfig.client.auth
-    val importer =
-        SessionFileImporter(
-            path = path,
-            isSignedIn = { auth.currentSessionOrNull() != null },
-            adopt = { refreshToken ->
-                val session = auth.refreshSession(refreshToken)
-                auth.importSession(session, source = SessionSource.External)
-            },
-        )
-    BossLogger.forComponent("SessionFileImporter").info(LogCategory.AUTH, "Session import hook enabled")
-    sessionImportJob =
-        scope.launch {
-            importer.run(auth.sessionStatus.map { it is SessionStatus.NotAuthenticated })
-        }
 }
