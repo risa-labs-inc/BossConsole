@@ -41,7 +41,7 @@ internal object OriginalFaviconSource {
     suspend fun sharperIcon(
         url: String?,
         page: TabIcon.Image?,
-        fetch: suspend (String) -> ByteArray? = ::fetch,
+        fetch: (suspend (String) -> ByteArray?)? = null,
     ): TabIcon.Image? =
         withContext(Dispatchers.IO) {
             val origin = originFor(url) ?: return@withContext null
@@ -52,7 +52,13 @@ internal object OriginalFaviconSource {
                     try {
                         semaphore
                             .withPermit {
-                                withTimeoutOrNull(5000) { resolve(origin, page, fetch) }
+                                withTimeoutOrNull(5000) {
+                                    if (fetch != null) {
+                                        resolve(origin, page, fetch)
+                                    } else {
+                                        OriginalFaviconHttpSession().use { resolve(origin, page, it::fetch) }
+                                    }
+                                }
                             }.also { attempt.result.complete(it) }
                     } finally {
                         // A cancelled or failed owner must always release the other cards.
@@ -66,8 +72,7 @@ internal object OriginalFaviconSource {
                 }
             val matching = result?.takeIf { page == null || sharperMatchingFavicon(page, it.icon) === it.icon }
             if (matching != null && owner) {
-                val host = FaviconHost.of(url) ?: return@withContext matching.icon
-                HqFaviconDiskCache.save(HqFaviconDiskCache.originalKeyFor(host), matching.bitmap.toAwtImage())
+                HqFaviconDiskCache.save(HqFaviconDiskCache.originalKeyFor(origin), matching.bitmap.toAwtImage())
             }
             matching?.icon
         }
@@ -76,15 +81,17 @@ internal object OriginalFaviconSource {
     internal fun originFor(url: String?): String? =
         runCatching {
             val uri = URI(url ?: return null)
-            if (uri.scheme !in listOf("http", "https") || uri.host == null) return null
-            URI(uri.scheme, null, uri.host, uri.port, "/", null, null).toString()
+            val scheme = uri.scheme?.lowercase()
+            if (scheme !in listOf("http", "https") || uri.host == null) return null
+            val port = uri.port.takeUnless { it == if (scheme == "https") 443 else 80 } ?: -1
+            URI(scheme, null, uri.host.lowercase(), port, "/", null, null).toString()
         }.getOrNull()
 
     internal class OriginalIcon(
         bitmap: ImageBitmap,
     ) {
-        // At most 256px is retained in the attempt map or saved in the HQ cache (~50MB at its
-        // 200-origin bound), even when the source asset is a 1024px apple-touch icon.
+        // At most 256px is retained in the attempt map or saved in the HQ cache (~16MB at its
+        // 64-origin bound), even when the source asset is a 1024px apple-touch icon.
         val bitmap = boundedOriginalFavicon(bitmap)
         val icon = TabIcon.Image(BitmapPainter(this.bitmap))
     }
@@ -103,8 +110,10 @@ internal object OriginalFaviconSource {
         val html = fetch(origin)?.toString(Charsets.UTF_8)
         if (html != null) {
             for (url in iconLinks(origin, html).filterNot { it == faviconUrl }.take(4)) {
-                val candidate = matchingIcon(best?.icon ?: page, fetch(url))
-                if (candidate != null) best = candidate
+                val candidate = matchingIcon(page, fetch(url))
+                if (candidate != null && (best == null || sharperMatchingFavicon(best.icon, candidate.icon) === candidate.icon)) {
+                    best = candidate
+                }
                 if (hasSharpCardFavicon(best?.icon)) {
                     break
                 }
@@ -199,11 +208,6 @@ internal object OriginalFaviconSource {
                 surface.makeImageSnapshot().use { OriginalIcon(it.toComposeImageBitmap()) }
             }
         }
-
-    private suspend fun fetch(url: String): ByteArray? {
-        val uri = URI(url)
-        return fetchOriginalFavicon(null, url, htmlPrefix = uri.rawPath == "/" && uri.rawQuery == null)
-    }
 
     fun clearAttempts() {
         attempts.clear()
@@ -368,6 +372,6 @@ internal class OriginalFaviconAttempts {
 
     private companion object {
         const val RETRY_MS = 10 * 60 * 1000L
-        const val MAX_ATTEMPTS = 200
+        const val MAX_ATTEMPTS = 64
     }
 }

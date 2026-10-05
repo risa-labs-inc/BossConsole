@@ -7,8 +7,9 @@ import java.io.File
 internal fun loadFaviconArtwork(
     host: String,
     dir: File = HqFaviconDiskCache.defaultDir,
+    origin: String? = null,
 ): CachedFavicon? {
-    val original = HqFaviconDiskCache.loadOriginal(host, dir)
+    val original = HqFaviconDiskCache.loadOriginal(origin ?: host, dir)
     return original ?: HqFaviconDiskCache.load(HqFaviconDiskCache.keyFor(host), dir)
 }
 

@@ -3,6 +3,9 @@ package ai.rever.boss.cache
 /** Stable resolution identity; paths and queries do not invalidate a host's artwork. */
 internal expect fun faviconLookupHost(url: String?): String?
 
+/** Site artwork is isolated by scheme and port, while paths share a cache entry. */
+internal expect fun faviconLookupOrigin(url: String?): String?
+
 /**
  * Platform-specific favicon cache interface.
  * Desktop implementation uses file-based cache, other platforms return null.
@@ -27,6 +30,12 @@ expect suspend fun loadHighQualityFavicon(
 
 /** Resolve original site artwork for the larger icons on Home, retaining the page's identity. */
 expect suspend fun loadHighQualityCardFavicon(
+    url: String?,
+    standardCacheKey: String?,
+): ai.rever.boss.plugin.api.TabIcon.Image?
+
+/** Cached artwork only; tab rows never initiate favicon network requests. */
+internal expect suspend fun loadCachedHighQualityFavicon(
     url: String?,
     standardCacheKey: String?,
 ): ai.rever.boss.plugin.api.TabIcon.Image?

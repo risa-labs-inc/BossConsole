@@ -1,7 +1,8 @@
 package ai.rever.boss.components.common
 
 import ai.rever.boss.cache.faviconLookupHost
-import ai.rever.boss.cache.loadHighQualityFavicon
+import ai.rever.boss.cache.faviconLookupOrigin
+import ai.rever.boss.cache.loadCachedHighQualityFavicon
 import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
 import ai.rever.boss.plugin.api.TabIcon
 import ai.rever.boss.plugin.api.TabInfo
@@ -29,16 +30,17 @@ fun rememberFaviconLoader(tabInfo: TabInfo): TabIcon.Image? {
     val faviconCacheKey = rememberFaviconCacheKey(tabInfo)
     val pageUrl = faviconPageUrl(tabInfo)
     val host = faviconLookupHost(pageUrl)
+    val origin = faviconLookupOrigin(pageUrl)
 
-    var loadedFavicon by remember(host, faviconCacheKey) {
+    var loadedFavicon by remember(origin, faviconCacheKey) {
         mutableStateOf<TabIcon.Image?>(null)
     }
 
     // The resolver performs IO off the UI thread and preserves cancellation. A sharper cached
     // icon is used only when its artwork matches the page's own favicon.
-    LaunchedEffect(host, faviconCacheKey) {
+    LaunchedEffect(origin, faviconCacheKey) {
         if (host != null || faviconCacheKey != null) {
-            loadedFavicon = loadHighQualityFavicon(host?.let { "https://$it" }, faviconCacheKey)
+            loadedFavicon = loadCachedHighQualityFavicon(pageUrl, faviconCacheKey)
         }
     }
 

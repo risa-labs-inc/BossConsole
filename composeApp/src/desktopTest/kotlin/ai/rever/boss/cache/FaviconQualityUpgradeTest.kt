@@ -189,7 +189,7 @@ class FaviconQualityUpgradeTest {
                     null
                 },
             )
-            assertEquals("https://example.com", requested)
+            assertEquals("https://example.com/", requested)
         }
 
     @Test

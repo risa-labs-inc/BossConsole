@@ -73,6 +73,7 @@ internal suspend fun fetchOriginalFavicon(
     client: HttpClient?,
     url: String,
     htmlPrefix: Boolean,
+    clientForHost: ((String) -> HttpClient)? = null,
     resolveAddresses: suspend (String) -> List<InetAddress> = ::resolveOriginalFaviconHost,
 ): ByteArray? {
     var currentUrl = url
@@ -87,7 +88,9 @@ internal suspend fun fetchOriginalFavicon(
         val address = addresses.takeIf { it.isNotEmpty() && it.all(::isPublicFaviconAddress) }?.firstOrNull()
         val reply =
             if (safe != null && address != null) {
-                if (client == null) {
+                if (clientForHost != null) {
+                    requestOriginalFavicon(clientForHost(safe.host), safe, address, htmlPrefix)
+                } else if (client == null) {
                     pinnedOriginalFaviconClient(safe.host).use { requestOriginalFavicon(it, safe, address, htmlPrefix) }
                 } else {
                     requestOriginalFavicon(client, safe, address, htmlPrefix)
@@ -121,7 +124,7 @@ private suspend fun requestOriginalFavicon(
     // Host for virtual hosting; the production engine's SNI/certificate name is set separately.
     client
         .prepareGet(uri.toString()) {
-            url.host = address.hostAddress
+            url.host = address.hostAddress.let { if (':' in it) "[$it]" else it }
             header(HttpHeaders.Host, uri.rawAuthority)
         }.execute { response ->
             when {
@@ -160,4 +163,27 @@ private suspend fun readOriginalFaviconBody(
         count = channel.readAvailable(buffer)
     }
     return if (oversized) null else output.toByteArray()
+}
+
+/** One client per TLS identity for a discovery attempt, including redirect hops. */
+internal class OriginalFaviconHttpSession(
+    private val createClient: (String) -> HttpClient = ::pinnedOriginalFaviconClient,
+    private val resolveAddresses: suspend (String) -> List<InetAddress> = ::resolveOriginalFaviconHost,
+) : AutoCloseable {
+    private val clients = mutableMapOf<String, HttpClient>()
+
+    suspend fun fetch(url: String): ByteArray? {
+        val uri = URI(url)
+        return fetchOriginalFavicon(
+            null,
+            url,
+            htmlPrefix = uri.rawPath == "/" && uri.rawQuery == null,
+            clientForHost = { clients.getOrPut(it) { createClient(it) } },
+            resolveAddresses = resolveAddresses,
+        )
+    }
+
+    override fun close() {
+        clients.values.forEach { it.close() }
+    }
 }

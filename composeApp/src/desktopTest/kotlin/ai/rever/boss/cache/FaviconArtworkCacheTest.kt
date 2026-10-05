@@ -10,6 +10,7 @@ import java.io.File
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
@@ -102,6 +103,37 @@ class FaviconArtworkCacheTest {
                 )
             assertSame(old.icon, result)
             assertEquals(URL, requested)
+        }
+
+    @Test
+    fun `site artwork is isolated by scheme and port but canonical origins share it`(): Unit =
+        runTest {
+            val origin = "https://$HOST:8443/page?q=secret"
+            HqFaviconDiskCache.save(HqFaviconDiskCache.originalKeyFor(origin), image(256, Color.BLUE), dir)
+            assertNotNull(loadFaviconArtwork(HOST, dir, "https://$HOST:8443/other"))
+            assertNull(loadFaviconArtwork(HOST, dir, URL))
+            assertNull(loadFaviconArtwork(HOST, dir, "http://$HOST:8443/"))
+            assertEquals(HqFaviconDiskCache.originalKeyFor(HOST), HqFaviconDiskCache.originalKeyFor("$URL:443/"))
+            assertEquals(HqFaviconDiskCache.originalKeyFor(HOST), HqFaviconDiskCache.originalKeyFor("HTTPS://$HOST:443/"))
+            assertFailsWith<IllegalArgumentException> { HqFaviconDiskCache.originalKeyFor("file:///tmp/icon") }
+        }
+
+    @Test
+    fun `expired site refresh keeps the original scheme and port`(): Unit =
+        runTest {
+            val url = "http://$HOST:8080/page"
+            var requested: String? = null
+            upgradeCachedFavicon(
+                url,
+                icon(16, Color.BLUE),
+                NOW,
+                loadCandidate = { CachedFavicon(icon(256, Color.BLUE), 1, FaviconArtworkSource.SITE) },
+                refresh = { target, cached ->
+                    requested = target
+                    cached.icon
+                },
+            )
+            assertEquals("http://$HOST:8080/", requested)
         }
 
     private suspend fun saveOriginal() {

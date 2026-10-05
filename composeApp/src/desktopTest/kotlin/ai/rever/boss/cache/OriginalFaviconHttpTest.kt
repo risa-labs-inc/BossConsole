@@ -19,6 +19,52 @@ import kotlin.test.assertTrue
 
 class OriginalFaviconHttpTest {
     @Test
+    fun `discovery reuses clients for each TLS host across icons and redirects`(): Unit =
+        runTest {
+            val created = mutableListOf<String>()
+            OriginalFaviconHttpSession(
+                createClient = { host ->
+                    created.add(host)
+                    HttpClient(
+                        MockEngine { request ->
+                            if (request.headers[HttpHeaders.Host] == "example.com") {
+                                respond("", HttpStatusCode.Found, headersOf(HttpHeaders.Location, "https://cdn.example.com/icon"))
+                            } else {
+                                respond("icon")
+                            }
+                        },
+                    ) { configureOriginalFaviconClient() }
+                },
+                resolveAddresses = { listOf(InetAddress.getByName("8.8.8.8")) },
+            ).use { session ->
+                assertNotNull(session.fetch("https://example.com/favicon.ico"))
+                assertNotNull(session.fetch("https://example.com/second.png"))
+                assertEquals(listOf("example.com", "cdn.example.com"), created)
+            }
+        }
+
+    @Test
+    fun `IPv6 routes use a bracketed authority while preserving site Host`(): Unit =
+        runTest {
+            HttpClient(
+                MockEngine { request ->
+                    assertEquals("example.com", request.headers[HttpHeaders.Host])
+                    assertTrue(request.url.toString().startsWith("https://[2606:4700:4700:"))
+                    respond("icon")
+                },
+            ) { configureOriginalFaviconClient() }.use { client ->
+                assertNotNull(
+                    fetchOriginalFavicon(
+                        client,
+                        "https://example.com/favicon.ico",
+                        false,
+                        resolveAddresses = { listOf(InetAddress.getByName("2606:4700:4700::1111")) },
+                    ),
+                )
+            }
+        }
+
+    @Test
     fun `redirects cannot reach a private service`(): Unit =
         runTest {
             var requests = 0

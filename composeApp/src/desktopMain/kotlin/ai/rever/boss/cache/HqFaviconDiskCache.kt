@@ -52,7 +52,10 @@ internal object HqFaviconDiskCache {
     }
 
     /** Google never writes/deletes this namespace; existing untagged cache entries stay readable. */
-    fun originalKeyFor(host: String): String = keyFor("site:$host")
+    fun originalKeyFor(origin: String): String {
+        val normalized = requireNotNull(OriginalFaviconSource.originFor(origin.takeIf { "://" in it } ?: "https://$origin"))
+        return keyFor("site:$normalized")
+    }
 
     fun loadOriginal(
         host: String,

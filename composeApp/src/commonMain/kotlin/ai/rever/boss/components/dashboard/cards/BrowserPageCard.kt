@@ -1,7 +1,6 @@
 package ai.rever.boss.components.dashboard.cards
 
 import ai.rever.boss.cache.loadHighQualityCardFavicon
-import ai.rever.boss.cache.loadHighQualityFavicon
 import ai.rever.boss.dashboard.RecentBrowserPage
 import ai.rever.boss.dashboard.RecentBrowserPagesManager
 import ai.rever.boss.plugin.api.TabIcon
@@ -69,21 +68,16 @@ fun BrowserPageCard(
     val iconColor = getDomainColor(domain)
     val cardShape = RoundedCornerShape(12.dp)
 
-    // Show the cached artwork first. Larger Home cards need at least 64px on a Retina display;
+    // Resolve the page artwork once. Larger Home cards need at least 64px on a Retina display;
     // the card resolver can fetch the site's original ICO/SVG when Chromium cached only 16px.
     //
-    // Unguarded, and keyed the same way the effect is: loadHighQualityFavicon does not throw, and
+    // Unguarded, and keyed the same way the effect is: the card resolver does not throw, and
     // a catch here would swallow the cancellation this effect's disposal raises.
     var favicon by remember(page.url, page.faviconCacheKey) {
         mutableStateOf<ai.rever.boss.plugin.api.TabIcon.Image?>(null)
     }
     LaunchedEffect(page.url, page.faviconCacheKey) {
-        favicon = loadHighQualityFavicon(page.url, page.faviconCacheKey)
-        if (!ai.rever.boss.cache
-                .hasSharpCardFavicon(favicon)
-        ) {
-            favicon = loadHighQualityCardFavicon(page.url, page.faviconCacheKey) ?: favicon
-        }
+        favicon = loadHighQualityCardFavicon(page.url, page.faviconCacheKey)
     }
 
     Box(

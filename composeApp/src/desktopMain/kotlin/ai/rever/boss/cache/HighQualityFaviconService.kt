@@ -50,7 +50,7 @@ import javax.imageio.ImageIO
  * Existing HQ entries are refreshed when expired, or daily when still below the requested size.
  * If no matching larger representation exists, the original page icon remains the fallback.
  *
- * The regular tab resolver never starts a new Google lookup for a cached page with no HQ entry.
+ * Tab rows use a separate cache-only resolver, including stale artwork, without network requests.
  * Home's larger cards first try original same-origin ICO/SVG artwork, then allow a public-host
  * Google fallback if the original artwork is missing or unsuitable. Refreshing an
  * existing HQ entry makes a new request containing only its public host, without paths, queries
@@ -136,7 +136,7 @@ object HighQualityFaviconService {
             // `hostGuess` is, so the compiler rejects the reversal a test would otherwise pin.
             pageIcon = ::loadStandardFavicon,
             hostGuess = { url ->
-                FaviconHost.of(url)?.let { HqFaviconDiskCache.loadOriginal(it)?.icon } ?: hostIcon(url)
+                FaviconHost.of(url)?.let { HqFaviconDiskCache.loadOriginal(url ?: it)?.icon } ?: hostIcon(url)
             },
             qualityUpgrade = { pageUrl, icon -> upgradeCachedFavicon(pageUrl, icon) },
         )
