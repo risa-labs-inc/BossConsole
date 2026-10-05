@@ -56,7 +56,7 @@ internal fun nativeSpaceTitleAction(
     }
     return NativeTitleBarAction(
         id = "space",
-        label = current?.name ?: "Planet Berul",
+        label = current?.name ?: "Current Window",
         subtitle = projectName.ifBlank { "No project" },
         contextMenu = (if (current != null && isUserOwnedSpace(current.id)) {
                 listOf(NativeTitleBarAction("rename-space", "Rename Space…") { renameTarget = current })

@@ -704,6 +704,19 @@ internal fun BossAppStartupEffects(state: BossAppState) {
         }
     }
 
+    // Give new/unassigned windows a real default Space without rebuilding their live tabs.
+    LaunchedEffect(state.workspaceRestorationComplete, splitViewState.currentWorkspaceId) {
+        if (state.workspaceRestorationComplete && !state.sessionRestoreRefused &&
+            (splitViewState.currentWorkspaceId == null ||
+                splitViewState.currentWorkspaceId?.startsWith("unsaved-window-") == true)
+        ) {
+            val space = workspaceManager.savedCopyOf(ai.rever.boss.components.workspaces.DefaultSpace.ID)
+                ?: ai.rever.boss.components.workspaces.DefaultSpace.planetBerul
+            splitViewState.rebindCurrentWorkspace(space.id)
+            workspaceManager.loadWorkspace(space)
+        }
+    }
+
     // Separate effect to handle session resolution AFTER Last Session may have loaded
     // This ensures terminal handler is marked ready even if session resolves late
     LaunchedEffect(isSessionResolved, workspaceManager.currentWorkspace.value) {
