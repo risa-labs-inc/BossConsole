@@ -184,7 +184,7 @@ internal class EncryptedSessionSettings(
             // Never replace or delete this sidecar: all processes must lock the same inode.
             // The JVM monitor prevents overlapping FileLocks between threads in this process.
             val lockFile = File(keyFile.absolutePath + ".lock")
-            createKeyFileExclusively(lockFile)
+            createLockFileExclusively(lockFile)
             FileChannel.open(lockFile.toPath(), StandardOpenOption.WRITE).use { channel ->
                 channel.lock().use { loadOrCreateKeyLocked(keyFile) }
             }
@@ -218,10 +218,10 @@ internal class EncryptedSessionSettings(
     /**
      * Creates the persistent lock file owner-only; an existing sidecar is reused as-is.
      */
-    private fun createKeyFileExclusively(keyFile: File): Boolean {
-        keyFile.parentFile?.mkdirs()
+    private fun createLockFileExclusively(lockFile: File): Boolean {
+        lockFile.parentFile?.mkdirs()
         return try {
-            val path = keyFile.toPath()
+            val path = lockFile.toPath()
             if (path.fileSystem.supportedFileAttributeViews().contains("posix")) {
                 // Owner-only from the file's first byte, matching atomicWriteText's contract.
                 Files.createFile(

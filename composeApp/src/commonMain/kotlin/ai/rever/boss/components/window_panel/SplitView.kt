@@ -2333,12 +2333,26 @@ class SplitViewState(
         }
     }
 
+    private fun inventoryWorkspaceId(windowId: String) = _currentWorkspaceId ?: "unsaved-window-$windowId"
+
+    private fun defaultInventoryWorkspaceName(
+        workspaceId: String,
+        windowId: String,
+    ): String =
+        when (workspaceId) {
+            "last-session" -> "Last Session"
+            "unsaved-window-$windowId" -> "Current Window"
+            else -> "Space $workspaceId"
+        }
+
     fun collectAllActiveFluckTabs(windowId: String = "unknown"): List<ActiveTab> {
         val result = mutableListOf<ActiveTab>()
         val seenTabIds = mutableSetOf<String>()
 
-        // Collect from current state
-        _currentWorkspaceId?.let { workspaceId ->
+        // The visible tree exists even before a Space has been assigned.
+        // Use a window-local inventory identity without creating a saved workspace.
+        run {
+            val workspaceId = inventoryWorkspaceId(windowId)
             // Get the actual workspace name from preserved states or use a default
             val workspaceName =
                 preservedWorkspaceStates[workspaceId]?.workspaceName
@@ -2437,18 +2451,21 @@ class SplitViewState(
                 ?.find { it.id == workspaceId }
                 ?.name
                 ?: preservedWorkspaceStates[workspaceId]?.workspaceName
-                ?: when (workspaceId) {
-                    "last-session" -> "Last Session"
-                    else -> "Space $workspaceId"
-                }
+                ?: defaultInventoryWorkspaceName(workspaceId, windowId)
 
-        // Collect from current state (only if it has tabs)
-        _currentWorkspaceId?.let { workspaceId ->
+        // Include visible tabs in a window that has not yet been assigned a Space.
+        run {
+            val workspaceId = inventoryWorkspaceId(windowId)
             val currentTabs = mutableListOf<ActiveTab>()
 
             val panels = getAllPanels()
             val splitPositions = splitPositionsFor(panels)
+            val currentActivePanelId = _activePanelId.value
             panels.forEach { panel ->
+                val isPanelActive = panel.id == currentActivePanelId
+                val selectedTabId =
+                    panel.tabsComponent.tabsState.value.activeTab
+                        ?.id
                 panel.tabsComponent.tabsState.value.tabs.forEach { tab ->
                     if (!seenTabIds.contains(tab.id)) {
                         currentTabs.add(
@@ -2459,6 +2476,8 @@ class SplitViewState(
                                 panelId = panel.id,
                                 windowId = windowId,
                                 splitPosition = splitPositions[panel.id],
+                                isSelected = tab.id == selectedTabId,
+                                isPanelActive = isPanelActive,
                             ),
                         )
                         seenTabIds.add(tab.id)
@@ -2504,6 +2523,9 @@ class SplitViewState(
     ) {
         when (node) {
             is SplitNode.Panel -> {
+                val selectedTabId =
+                    node.tabsComponent.tabsState.value.activeTab
+                        ?.id
                 node.tabsComponent.tabsState.value.tabs.forEach { tab ->
                     if (!seenTabIds.contains(tab.id) && (tab is FluckTabInfo || tab.typeId.typeId == "fluck")) {
                         result.add(
@@ -2514,6 +2536,8 @@ class SplitViewState(
                                 panelId = node.id,
                                 windowId = context.windowId,
                                 splitPosition = context.splitPositions[node.id],
+                                isSelected = tab.id == selectedTabId,
+                                isPanelActive = false,
                             ),
                         )
                         seenTabIds.add(tab.id)
@@ -2541,6 +2565,9 @@ class SplitViewState(
     ) {
         when (node) {
             is SplitNode.Panel -> {
+                val selectedTabId =
+                    node.tabsComponent.tabsState.value.activeTab
+                        ?.id
                 node.tabsComponent.tabsState.value.tabs.forEach { tab ->
                     if (!seenTabIds.contains(tab.id)) {
                         result.add(
@@ -2551,6 +2578,8 @@ class SplitViewState(
                                 panelId = node.id,
                                 windowId = context.windowId,
                                 splitPosition = context.splitPositions[node.id],
+                                isSelected = tab.id == selectedTabId,
+                                isPanelActive = false,
                             ),
                         )
                         seenTabIds.add(tab.id)

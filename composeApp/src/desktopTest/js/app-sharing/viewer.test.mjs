@@ -5,6 +5,7 @@ import { AppControlChannel } from '../../../desktopMain/resources/app-sharing/co
 
 test('hosted window switching admits afresh and waits for old control/media cleanup before subscribing', async () => {
   class Element extends EventTarget {
+    style = {};
     constructor() { super(); this.children = []; this.value = ''; }
     append(value) { this.children.push(value); }
     replaceChildren() { this.children = []; }

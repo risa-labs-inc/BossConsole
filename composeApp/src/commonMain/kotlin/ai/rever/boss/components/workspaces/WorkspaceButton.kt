@@ -380,7 +380,9 @@ fun WorkspaceButton(
                             onSaved = { savedWorkspace ->
                                 try {
                                     when (saveOwner.rebind(savedWorkspace.id)) {
-                                        NamedSaveRebindOutcome.REBOUND -> {}
+                                        NamedSaveRebindOutcome.REBOUND -> {
+                                            StatusMessageManager.showMessage("Space Saved")
+                                        }
 
                                         NamedSaveRebindOutcome.NEVER_REGISTERED -> {
                                             workspaceButtonLogger.debug(
@@ -414,6 +416,12 @@ fun WorkspaceButton(
                             },
                         )
                     }
+                } else {
+                    workspaceButtonLogger.debug(
+                        LogCategory.WORKSPACE,
+                        "Ignored overlapping named save press",
+                        mapOf("name" to name),
+                    )
                 }
                 showSaveDialog = false
             },

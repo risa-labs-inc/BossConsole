@@ -3,6 +3,7 @@ package ai.rever.boss.components.events
 import ai.rever.boss.ipc.IpcEventBridge
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 
 /**
@@ -36,6 +37,10 @@ object WorkspaceEventBus {
             extraBufferCapacity = 10, // Buffer up to 10 events if collector not ready yet
         )
     val workspaceLoadEvents: SharedFlow<WorkspaceLoadEvent> = _workspaceLoadEvents.asSharedFlow()
+
+    /** Subscription count of the load events flow for subscriber readiness synchronization. */
+    val subscriptionCount: StateFlow<Int>
+        get() = _workspaceLoadEvents.subscriptionCount
 
     /**
      * Emit a workspace load event.

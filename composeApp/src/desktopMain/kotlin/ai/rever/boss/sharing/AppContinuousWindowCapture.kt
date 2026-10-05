@@ -79,10 +79,14 @@ internal class AppContinuousWindowCapture(
         resources.own(
             AutoCloseable {
                 closed.set(true)
-                executor.shutdownNow()
-                onFrame(null)
-                val retired = synchronized(streams) { streams.toList().also { streams.clear() } }
-                retired.forEach { runCatching { it.close() } }
+                // Stop scheduling without interrupting this worker's EDT cleanup or stop callback.
+                executor.shutdown()
+                try {
+                    onFrame(null)
+                } finally {
+                    val retired = synchronized(streams) { streams.toList().also { streams.clear() } }
+                    retired.forEach { runCatching { it.close() } }
+                }
             },
         )
 

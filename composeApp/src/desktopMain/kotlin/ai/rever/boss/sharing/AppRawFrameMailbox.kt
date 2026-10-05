@@ -10,6 +10,8 @@ internal class AppRawFrameMailbox : AutoCloseable {
     data class Snapshot(
         val sequence: Long,
         val frame: AppRawCapturedFrame?,
+        val cursor: String = "default",
+        val frameSequence: Long = sequence,
     )
 
     private val current = AtomicReference(Snapshot(0, null))
@@ -36,7 +38,16 @@ internal class AppRawFrameMailbox : AutoCloseable {
     fun offer(frame: AppRawCapturedFrame?) {
         lock.withLock {
             if (retired) return
-            current.updateAndGet { Snapshot(it.sequence + 1, frame) }
+            current.updateAndGet { Snapshot(it.sequence + 1, frame, if (frame == null) "default" else it.cursor) }
+            changed.signalAll()
+        }
+    }
+
+    /** Wake the publisher without copying or painting the unchanged native pixels. */
+    fun cursor(shape: String) {
+        lock.withLock {
+            if (retired || current.get().cursor == shape) return
+            current.updateAndGet { it.copy(sequence = it.sequence + 1, cursor = shape) }
             changed.signalAll()
         }
     }

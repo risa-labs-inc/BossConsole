@@ -4,9 +4,13 @@ import com.google.rpc.RetryInfo
 import io.grpc.Status
 import io.grpc.StatusRuntimeException
 import io.grpc.protobuf.StatusProto
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -20,9 +24,11 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class TerminalSendQueueTest {
@@ -168,10 +174,76 @@ class TerminalSendQueueTest {
             }
         }
 
+    @Test
+    fun `cancelling a queued closeStdin abandons closing input`(): Unit =
+        runBlocking {
+            val process = BlockedInputProcess()
+            // inputWriteTimeoutMillis = 60_000 ensures slow runners cannot reach discardInput (5s default)
+            // while the holder write is held, which would close stdin for reasons unrelated to cancellation.
+            val session =
+                TerminalSession(
+                    "fixture",
+                    "/fixture",
+                    listOf("fixture"),
+                    process,
+                    80,
+                    24,
+                    inputWriteTimeoutMillis = 60_000,
+                )
+            val holder = CompletableFuture.runAsync { runBlocking { session.send(byteArrayOf(0)) } }
+            try {
+                assertTrue(process.writeStarted.await(5, TimeUnit.SECONDS))
+                val queued = launch { session.closeStdin() }
+                delay(200)
+                assertTrue(queued.isActive)
+                // The caller gave up while closeStdin was queued on the input lock; once the pipe
+                // drains nothing may deliver EOF on a dead call's behalf.
+                queued.cancelAndJoin()
+                process.releaseWrite.countDown()
+                holder.get(5, TimeUnit.SECONDS)
+                assertFalse(process.stdinClosed.get(), "stdin must not be closed after cancellation")
+            } finally {
+                process.releaseWrite.countDown()
+            }
+        }
+
+    @Test
+    fun `cancelling a caller during uncontended acquireInputLock releases the mutex`(): Unit =
+        runBlocking {
+            val process = BlockedInputProcess()
+            val session =
+                TerminalSession(
+                    "fixture",
+                    "/fixture",
+                    listOf("fixture"),
+                    process,
+                    80,
+                    24,
+                    inputWriteTimeoutMillis = 60_000,
+                )
+            // An uncontended caller cancelled around acquireInputLock must not leak the ticket lock (#1778).
+            val job =
+                launch(start = CoroutineStart.UNDISPATCHED) {
+                    cancel()
+                    session.send(byteArrayOf(42))
+                }
+            job.join()
+            assertTrue(job.isCancelled)
+
+            // If the ticket lock had been leaked, the subsequent send would time out with RESOURCE_EXHAUSTED.
+            // With the fix, the mutex was returned on CancellationException and the subsequent send succeeds.
+            val subsequent = launch(Dispatchers.IO) { session.send(byteArrayOf(99)) }
+            assertTrue(process.writeStarted.await(5, TimeUnit.SECONDS), "Subsequent send must acquire the input lock")
+            process.releaseWrite.countDown()
+            subsequent.join()
+            assertTrue(process.writes.contains(99.toByte()), "Subsequent write must be delivered")
+        }
+
     private class BlockedInputProcess : Process() {
         val writeStarted = CountDownLatch(1)
         val releaseWrite = CountDownLatch(1)
         val writes = ConcurrentLinkedQueue<Byte>()
+        val stdinClosed = AtomicBoolean(false)
         private val stdin =
             object : OutputStream() {
                 override fun write(
@@ -190,6 +262,10 @@ class TerminalSendQueueTest {
                 }
 
                 override fun write(byte: Int) = write(byteArrayOf(byte.toByte()), 0, 1)
+
+                override fun close() {
+                    stdinClosed.set(true)
+                }
             }
 
         override fun getInputStream(): InputStream = ByteArrayInputStream(byteArrayOf())

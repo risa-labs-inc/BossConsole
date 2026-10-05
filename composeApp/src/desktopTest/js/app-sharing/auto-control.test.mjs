@@ -5,6 +5,7 @@ import { AppControlChannel } from '../../../desktopMain/resources/app-sharing/co
 
 test('browser and native viewers acquire control on connect, respecting view roles, opt-out and busy leases', async () => {
   class Element extends EventTarget {
+    style = {};
     constructor() { super(); this.children = []; this.value = ''; this.focusCount = 0; }
     append(value) { this.children.push(value); }
     replaceChildren() { this.children = []; }

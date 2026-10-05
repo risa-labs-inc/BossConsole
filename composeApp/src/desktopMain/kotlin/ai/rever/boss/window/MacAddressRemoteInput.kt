@@ -161,6 +161,7 @@ private fun horizontalAddressCommand(
     direction: String,
 ): String =
     when {
+        event.alt && event.shift -> "moveWord${direction}AndModifySelection:"
         event.shift -> "move${direction}AndModifySelection:"
         event.alt -> "moveWord$direction:"
         else -> "move$direction:"

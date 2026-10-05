@@ -125,6 +125,33 @@ class EncryptedSessionSettingsTest {
     }
 
     @Test
+    fun `fresh key creation publishes non-empty key with owner permissions`() {
+        val directory = File(temporary, "fresh-key-dir").apply { mkdirs() }
+        val key = File(directory, KEY_FILE_NAME)
+        assertFalse(key.exists(), "key file must not exist before initialization")
+
+        EncryptedSessionSettings(File(directory, STORE_FILE_NAME), key)
+
+        assertTrue(key.isFile, "key file must exist after initialization")
+        assertTrue(key.length() > 0, "key file must never exist empty")
+        assertEquals(32, Base64.getDecoder().decode(key.readText().trim()).size)
+        val lock = File(directory, "$KEY_FILE_NAME.lock")
+        assertTrue(lock.isFile, "lock sidecar must exist after initialization")
+        if (Files.getFileAttributeView(key.toPath(), PosixFileAttributeView::class.java) != null) {
+            assertEquals(
+                setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE),
+                Files.getPosixFilePermissions(key.toPath()),
+                "fresh key must be owner-only (0600)",
+            )
+            assertEquals(
+                setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE),
+                Files.getPosixFilePermissions(lock.toPath()),
+                "lock sidecar must be owner-only (0600)",
+            )
+        }
+    }
+
+    @Test
     fun `session strings roundtrip and survive reopening the store`() {
         val settings = newStore()
         settings.putString(SettingsSessionManager.SETTINGS_KEY, sessionJson)

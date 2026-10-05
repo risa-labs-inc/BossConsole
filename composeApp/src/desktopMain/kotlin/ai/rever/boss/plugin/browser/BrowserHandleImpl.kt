@@ -3,6 +3,7 @@ package ai.rever.boss.plugin.browser
 import ai.rever.boss.components.overlays.OverlayCorner
 import ai.rever.boss.components.overlays.overlayCornerIsHeavyweight
 import ai.rever.boss.components.plugin.TabAudioSource
+import ai.rever.boss.components.window_panel.components.main_window_panels.LocalActivateMainWindowPanel
 import ai.rever.boss.components.window_panel.components.main_window_panels.LocalInMainWindowPanel
 import ai.rever.boss.config.AutoPipSettingsManager
 import ai.rever.boss.config.JxBrowserConfig
@@ -32,6 +33,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -116,7 +118,6 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.awt.GraphicsEnvironment
 import java.awt.Window
-import java.lang.ref.WeakReference
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -263,34 +264,6 @@ internal fun ContextMenuTarget.toContextMenuInfo(
         menuContext = menuContext,
     )
 }
-
-/** Per-handle authority; navigation or callback replacement revokes previously issued tokens. */
-internal class BrowserMenuContextAuthority {
-    private val generation = AtomicLong()
-
-    fun invalidate() {
-        generation.incrementAndGet()
-    }
-
-    fun snapshot(): Long = generation.get()
-
-    fun capture(
-        frame: Frame?,
-        capturedGeneration: Long = snapshot(),
-    ): BrowserMenuContext = BrowserMenuContextImpl(WeakReference(frame), this, capturedGeneration)
-
-    fun resolve(context: BrowserMenuContext): Frame? {
-        val token = context as? BrowserMenuContextImpl ?: return null
-        val frame = token.frameRef.get()
-        return frame.takeIf { token.owner === this && token.generation == generation.get() }
-    }
-}
-
-private class BrowserMenuContextImpl(
-    val frameRef: WeakReference<Frame>,
-    val owner: BrowserMenuContextAuthority,
-    val generation: Long,
-) : BrowserMenuContext
 
 /**
  * Desktop implementation of [BrowserHandle] that wraps a JxBrowser [Browser] instance.
@@ -496,6 +469,8 @@ internal class BrowserHandleImpl(
     @Volatile private var pointerOverBrowserView = false
 
     @Volatile private var appInputSurfaceToken: Any? = null
+
+    @Volatile private var activateAppInputPanel: () -> Unit = {}
 
     // This view's bounds in Compose-root coordinates, refreshed on every layout pass.
     // The HARDWARE_ACCELERATED substitute for hover: Compose knows where the view IS
@@ -1143,6 +1118,7 @@ internal class BrowserHandleImpl(
                 bounds.width.toDouble() / density,
                 bounds.height.toDouble() / density,
             ),
+            activate = activateAppInputPanel,
         ) {
             appInputSurfaceToken === token && frameStallHostWindow === window &&
                 browserViewBoundsInWindow != null && isValid
@@ -1873,6 +1849,18 @@ internal class BrowserHandleImpl(
         browser.set(
             ShowContextMenuCallback::class.java,
             ShowContextMenuCallback { params, tell ->
+                val remoteClick =
+                    try {
+                        ai.rever.boss.sharing.AppBrowserMenuDispatch
+                            .consume(browser, params.location())
+                    } catch (_: Exception) {
+                        closeContextMenuQuietly(tell)
+                        return@ShowContextMenuCallback
+                    }
+                if (remoteClick != null && !runCatching(remoteClick.current).getOrDefault(false)) {
+                    closeContextMenuQuietly(tell)
+                    return@ShowContextMenuCallback
+                }
                 val callback = contextMenuCallback
                 if (callback == null) {
                     // Nobody is going to draw a menu, so hand the request back rather than
@@ -1902,7 +1890,7 @@ internal class BrowserHandleImpl(
                         // grant an old frame a new generation. Missing frames retain an invalid token.
                         val menuGeneration = menuContextAuthority.snapshot()
                         val frame = params.frame().orElse(null)
-                        val menuContext = menuContextAuthority.capture(frame, menuGeneration)
+                        val menuContext = menuContextAuthority.capture(frame, menuGeneration, remoteClick)
                         val target =
                             ContextMenuTarget(
                                 contentTypes = params.contentTypes(),
@@ -1977,7 +1965,7 @@ internal class BrowserHandleImpl(
                     // interrupt the blocking call either, so check before delivering rather
                     // than pushing a menu at a tab that is gone.
                     if (disposed.get()) return@launch
-                    deliverContextMenu(current, info.copy(formFieldInfo = formFieldInfo))
+                    deliverContextMenu(current, info.withFormField(formFieldInfo))
                 }
             },
         )
@@ -4124,6 +4112,7 @@ internal class BrowserHandleImpl(
         // constraint. The comment explaining what they mean lives with the find-bar effect.
         val isPanelActive = LocalIsPanelActive.current
         val inMainPanel = LocalInMainWindowPanel.current
+        val activateInputPanel by rememberUpdatedState(LocalActivateMainWindowPanel.current)
 
         // Which browser the View menu's Zoom In / Zoom Out / Actual Size / Reload act on in this
         // window. Registered from here rather than from the tab component because the tab
@@ -4183,6 +4172,7 @@ internal class BrowserHandleImpl(
             frameStallHostWindow = awtWindow
             val inputSurfaceToken = Any()
             appInputSurfaceToken = inputSurfaceToken
+            activateAppInputPanel = { activateInputPanel() }
 
             // Reuse a retained surface ONLY while it still belongs to this window. This effect is
             // keyed on hostWindowId precisely so a tab moved to another window rebinds (see the
@@ -4262,7 +4252,10 @@ internal class BrowserHandleImpl(
             }
 
             onDispose {
-                if (appInputSurfaceToken === inputSurfaceToken) appInputSurfaceToken = null
+                if (appInputSurfaceToken === inputSurfaceToken) {
+                    appInputSurfaceToken = null
+                    activateAppInputPanel = {}
+                }
                 pointerOverBrowserView = false
                 // Both gate inputs must go stale together with the listener they gate.
                 // A retained HARDWARE surface outlives this effect, so leaving stale

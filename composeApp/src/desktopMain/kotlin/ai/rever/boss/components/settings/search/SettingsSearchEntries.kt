@@ -575,6 +575,7 @@ private fun gettingStartedEntries() =
 private fun sharingEntries() =
     section(SettingsSection.SHARING) {
         group("BossConsole Sharing", "screen", "window", "remote", "mirror")
+        setting("Share automatically after sign-in", "BossConsole Sharing", "automatic", "startup", "login")
         setting("Use media relay", "BossConsole Sharing")
         group("Account Access", "approval", "same account")
         setting("Allow my devices without approval", "Account Access")

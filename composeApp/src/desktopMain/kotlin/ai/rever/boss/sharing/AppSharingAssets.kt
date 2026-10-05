@@ -271,7 +271,7 @@ internal class AppSharingAssets(
         page: Page,
         name: String,
     ) {
-        val validName = name.matches(Regex("[a-z][a-z0-9-]*[.](html|mjs|js|css)"))
+        val validName = name.matches(Regex("[a-z][a-z0-9-]*[.](html|mjs|js|css|svg)"))
         val expectedHtml = if (page.host) "host.html" else "viewer.html"
         checkRequest(exchange.requestMethod == "GET" && validName, 404)
         checkRequest(!name.endsWith(".html") || name == expectedHtml, 404)
@@ -293,6 +293,7 @@ internal class AppSharingAssets(
             when (name.substringAfterLast('.')) {
                 "html" -> "text/html; charset=utf-8"
                 "css" -> "text/css"
+                "svg" -> "image/svg+xml"
                 else -> "text/javascript"
             }
         exchange.responseHeaders.set(
@@ -327,8 +328,9 @@ internal class AppSharingAssets(
             after: Long?,
         ) {
             exchange.responseHeaders.set("X-Boss-App-Sequence", latest.sequence.toString())
+            exchange.responseHeaders.set("X-Boss-App-Cursor", latest.cursor)
             val frame = latest.frame
-            if (frame == null || after == latest.sequence) {
+            if (frame == null || (after != null && after >= latest.frameSequence)) {
                 exchange.responseHeaders.set("X-Boss-App-Empty", (frame == null).toString())
                 exchange.responseHeaders.set("Cache-Control", "no-store")
                 exchange.sendResponseHeaders(204, -1)

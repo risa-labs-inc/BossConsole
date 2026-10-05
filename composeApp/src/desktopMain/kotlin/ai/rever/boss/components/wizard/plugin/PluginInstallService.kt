@@ -895,22 +895,7 @@ internal suspend fun stageAndInstall(
 
     // Both refusals in one place, and both decided before a byte moves: a refusal that arrives
     // after the move cannot be undone.
-    val refusal =
-        when {
-            isResident(pluginId) -> {
-                "$pluginId is still loaded from an earlier session, so it cannot be reinstalled now. " +
-                    "Restart BOSS, or remove it in the plugin manager, and try again."
-            }
-
-            occupied != null -> {
-                "${occupied.name} already exists, so $pluginId was not reinstalled over it. " +
-                    "Remove the existing plugin in the plugin manager, or delete that file, and try again."
-            }
-
-            else -> {
-                null
-            }
-        }
+    val refusal = stageRefusal(pluginId, occupied, isResident)
     if (refusal != null) {
         // Only the download is removed. Whatever is installed stays exactly as it was - which
         // means NOT removing it when the download is the destination: there is no separate
@@ -942,7 +927,7 @@ internal suspend fun stageAndInstall(
             } catch (e: CancellationException) {
                 // Cancellation is not a failed install, and swallowing it would break structured
                 // concurrency. Clear what this call put there, then let it propagate.
-                destination.delete()
+                if (movingIntoPlace) destination.delete()
                 throw e
             } catch (
                 @Suppress("TooGenericExceptionCaught") e: Exception,
@@ -957,9 +942,30 @@ internal suspend fun stageAndInstall(
     // Every path this touches was established free above and written only by this call, so the
     // cleanup cannot take an artifact that belongs to somebody else. After a failed promotion it
     // is a no-op - moveTo has already put the destination back.
-    if (result.isFailure) destination.delete()
+    if (result.isFailure && movingIntoPlace) destination.delete()
     return result
 }
+
+private fun stageRefusal(
+    pluginId: String,
+    occupied: File?,
+    isResident: (String) -> Boolean,
+): String? =
+    when {
+        isResident(pluginId) -> {
+            "$pluginId is still loaded from an earlier session, so it cannot be reinstalled now. " +
+                "Restart BOSS, or remove it in the plugin manager, and try again."
+        }
+
+        occupied != null -> {
+            "${occupied.name} already exists, so $pluginId was not reinstalled over it. " +
+                "Remove the existing plugin in the plugin manager, or delete that file, and try again."
+        }
+
+        else -> {
+            null
+        }
+    }
 
 /** Reject unloaded binary-incompatible results before either wizard path persists success. */
 internal fun usableWizardInstallResult(

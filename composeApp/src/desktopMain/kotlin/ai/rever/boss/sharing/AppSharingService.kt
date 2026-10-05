@@ -20,9 +20,10 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -61,6 +62,7 @@ internal data class AppSharingState(
     val controller: Boolean = false,
     val busy: Boolean = false,
     val relayEnabled: Boolean = true,
+    val automaticSharingEnabled: Boolean = true,
     val preferences: JsonObject? = null,
 )
 
@@ -76,6 +78,8 @@ internal object AppSharingService {
     private val windows = ConcurrentHashMap<String, Window>()
     private val serial = AtomicLong()
     private val lifecycle = Any()
+    private val automaticStart = AppSharingAutoStart()
+    private val preferenceMutex = Mutex()
     private val _state = MutableStateFlow(AppSharingState())
     val state: StateFlow<AppSharingState> = _state.asStateFlow()
 
@@ -111,10 +115,12 @@ internal object AppSharingService {
         scope.launch {
             combine(AuthService.currentUser, AuthService.authState) { user, auth ->
                 user?.id?.takeIf { auth is AuthService.AuthState.Authenticated }
-            }.distinctUntilChanged().collect {
-                stop()
+            }.distinctUntilChanged().collect { owner ->
+                automaticStart.accountChanged(owner)
+                stopActive(null, "Application sharing is stopped.")
                 closeAssetServer()
                 _state.update { old -> old.copy(sessions = emptyList(), preferences = null) }
+                if (owner != null) scheduleAutomaticSharing()
             }
         }
     }
@@ -128,16 +134,48 @@ internal object AppSharingService {
         _state.update {
             it.copy(windows = it.windows.filterNot { entry -> entry.id == id } + SharedAppWindow(id, title))
         }
+        scheduleAutomaticSharing()
     }
 
     fun unregisterWindow(id: String) {
         windows.remove(id)
-        if (id in _state.value.activeWindowIds) stop()
+        if (id in _state.value.activeWindowIds) {
+            stopActive(null, "Application sharing is stopped.")
+            automaticStart.windowClosed()
+        }
         _state.update {
             it.copy(
                 windows = it.windows.filterNot { entry -> entry.id == id },
                 selectedWindowIds = it.selectedWindowIds - id,
             )
+        }
+        scheduleAutomaticSharing()
+    }
+
+    private fun scheduleAutomaticSharing() =
+        scope.launch {
+            // Let startup restore the main windows before choosing the initial publication.
+            delay(500)
+            val local = preferenceMutex.withLock { preferenceStore.load() }
+            updateLocalPreferences(local)
+            val owner = runCatching { owner() }.getOrNull()
+            val visible =
+                onEdt {
+                    windows.entries
+                        .filter { it.value.isShowing }
+                        .map { it.key }
+                        .sorted()
+                }
+            synchronized(lifecycle) {
+                val state = _state.value
+                val plan = automaticStart.claim(owner, visible, local, state.busy || state.activeWindowIds.isNotEmpty())
+                if (plan != null && automaticStart.isCurrent(plan)) startWindows(plan.windows, plan.owner)
+            }
+        }
+
+    private fun updateLocalPreferences(local: AppSharingLocalPreferences) {
+        _state.update {
+            it.copy(relayEnabled = local.relayEnabled, automaticSharingEnabled = local.automaticSharingEnabled)
         }
     }
 
@@ -152,7 +190,10 @@ internal object AppSharingService {
     }
 
     /** Local native menu/toolbar only: remote input must never activate or expand capture. */
-    fun startSelectedWindows() = startWindows(_state.value.selectedWindowIds.toList())
+    fun startSelectedWindows() {
+        automaticStart.pause()
+        startWindows(_state.value.selectedWindowIds.toList())
+    }
 
     private fun owner(): String =
         AuthService.currentUser.value
@@ -160,44 +201,41 @@ internal object AppSharingService {
             ?.takeIf { AuthService.authState.value is AuthService.AuthState.Authenticated }
             ?: throw AppSharingException("sign_in_required")
 
-    private fun request(
-        action: String,
-        body: JsonObject = buildJsonObject {},
-    ): JsonObject =
-        buildJsonObject {
-            body.forEach { (key, value) -> put(key, value) }
-            put("action", action)
-        }
-
     fun refresh() =
         scope.launch {
             runCatching {
-                val local = preferenceStore.load()
-                _state.update { it.copy(relayEnabled = local.relayEnabled) }
+                val local = preferenceMutex.withLock { preferenceStore.load() }
+                updateLocalPreferences(local)
                 val owner = owner()
-                val preferences = backend.call(owner, request("preferencesGet"))
-                val listed = backend.call(owner, request("list"))
+                val snapshot = loadAppSharingAccountSnapshot(backend, owner)
                 check(owner() == owner)
                 _state.update {
                     it.copy(
-                        preferences = preferences,
-                        sessions =
-                            listed["sessions"]
-                                ?.jsonArray
-                                ?.map { item ->
-                                    item.jsonObject
-                                }.orEmpty(),
+                        preferences = snapshot.preferences,
+                        sessions = snapshot.sessions,
                     )
                 }
             }.onFailure(::report)
         }
 
-    fun setRelayEnabled(enabled: Boolean) =
+    fun setRelayEnabled(enabled: Boolean) = changeLocalPreferences { it.copy(relayEnabled = enabled) }
+
+    fun setAutomaticSharingEnabled(enabled: Boolean) =
+        changeLocalPreferences {
+            it.copy(automaticSharingEnabled = enabled)
+        }
+
+    private fun changeLocalPreferences(update: (AppSharingLocalPreferences) -> AppSharingLocalPreferences) =
         scope.launch {
             runCatching {
-                preferenceStore.save(preferenceStore.load().copy(relayEnabled = enabled))
-                _state.update { it.copy(relayEnabled = enabled) }
-                if (!enabled) stop()
+                val local = preferenceMutex.withLock { update(preferenceStore.load()).also(preferenceStore::save) }
+                updateLocalPreferences(local)
+                if (!local.relayEnabled || !local.automaticSharingEnabled) {
+                    stop()
+                } else {
+                    automaticStart.resume()
+                    scheduleAutomaticSharing()
+                }
             }.onFailure(::report)
         }
 
@@ -206,22 +244,9 @@ internal object AppSharingService {
         enabled: Boolean,
     ) = scope.launch {
         runCatching {
-            require(name in setOf("auto_admit", "auto_control"))
             val current = _state.value.preferences ?: return@runCatching
             val owner = owner()
-            val result =
-                backend.call(
-                    owner,
-                    request(
-                        "preferencesSet",
-                        buildJsonObject {
-                            put("auto_admit", current["auto_admit"] ?: JsonPrimitive(true))
-                            put("auto_control", current["auto_control"] ?: JsonPrimitive(true))
-                            put("revision", current["revision"] ?: JsonPrimitive(0))
-                            put(name, enabled)
-                        },
-                    ),
-                )
+            val result = setAppSharingAccountPreference(backend, owner, current, name, enabled)
             check(owner() == owner)
             _state.update { it.copy(preferences = result) }
             if (!enabled) {
@@ -234,18 +259,25 @@ internal object AppSharingService {
     }
 
     // Local native menu entry. Registration/capture/browser startup retire partial resources on failure.
-    fun start(windowId: String) = startWindows(listOf(windowId))
+    fun start(windowId: String) {
+        automaticStart.pause()
+        startWindows(listOf(windowId))
+    }
 
     @Suppress("TooGenericExceptionCaught")
-    private fun startWindows(windowIds: List<String>) {
+    private fun startWindows(
+        windowIds: List<String>,
+        expectedOwner: String? = null,
+    ) {
         if (windowIds.isEmpty() || windowIds.size > 16) return
-        stop()
+        stopActive(null, "Application sharing is stopped.")
         val attempt = beginStart(windowIds)
         val pendingStart =
             scope.launch(start = CoroutineStart.LAZY) {
                 var registered: Active? = null
                 try {
                     delay(250) // The native menu must close before the selected window can be captured.
+                    if (expectedOwner != null) check(owner() == expectedOwner)
                     val generation = UUID.randomUUID().toString()
                     val targets =
                         windowIds.map { id ->
@@ -304,9 +336,8 @@ internal object AppSharingService {
 
     private suspend fun preparePublication(targets: List<AppCaptureTarget>): PreparedPublication {
         val owner = owner()
-        val preferences = preferenceStore.load()
+        val preferences = preferenceMutex.withLock { preferenceStore.load().also(preferenceStore::save) }
         if (!preferences.relayEnabled) throw AppSharingException("relay_disabled")
-        preferenceStore.save(preferences)
         targets.forEach { target ->
             val capability = onEdt { capture.capability(target) }
             if (!capability.supported) {
@@ -315,16 +346,13 @@ internal object AppSharingService {
         }
         val target = targets.first()
         val identity = AppPublicationIdentity(target)
-        val title =
-            _state.value.windows
-                .firstOrNull { it.id == target.windowId }
-                ?.title ?: "BossConsole"
         val sharedWindows =
-            targets.map { selected ->
-                _state.value.windows.first { it.id == selected.windowId }
+            onEdt {
+                targets.map { selected -> SharedAppWindow(selected.windowId, appSharingWindowTitle(selected)) }
             }
+        val title = appSharingSessionName()
         val registration = identity.registration(preferences.deviceId, instanceId, title, sharedWindows)
-        val result = backend.call(owner, request("register", registration))
+        val result = backend.call(owner, appSharingRequest("register", registration))
         val host =
             Active(
                 owner,
@@ -349,7 +377,10 @@ internal object AppSharingService {
         val peer = AppSharingPeerScope(host.sessionId, generation, host.peerId, true, windowId)
         val page = assetServer().open(appSharingHostConfig(config), true) { backend.call(owner, peer.bind(it)) }
         check(host.resources.own(AutoCloseable { page.close() }))
-        val sink = AwtAppInputSink(window, requireForeground = false).apply { pauseCapture() }
+        val sink =
+            AwtAppInputSink(window, requireForeground = false, onCursor = page.rawFrames::cursor).apply {
+                pauseCapture()
+            }
         val media =
             AppSharingMediaHost(page, { handleMediaState(host, windowId, it) }, { input ->
                 host.controller?.let { controller ->
@@ -533,6 +564,7 @@ internal object AppSharingService {
     }
 
     fun stop() {
+        automaticStart.pause()
         stopActive(null, "Application sharing is stopped.")
     }
 
@@ -560,15 +592,7 @@ internal object AppSharingService {
                 startJob?.cancel()
                 startJob = null
                 _state.update {
-                    it.copy(
-                        busy = false,
-                        activeWindowId = null,
-                        activeWindowIds = emptySet(),
-                        viewers = 0,
-                        statusWindowId = expected?.windowId,
-                        controller = false,
-                        status = status,
-                    )
+                    it.stopped(status, expected?.windowId)
                 }
                 active.also { active = null }
             }
@@ -585,14 +609,7 @@ internal object AppSharingService {
     private fun scoped(
         host: Active,
         action: String,
-    ) = request(
-        action,
-        buildJsonObject {
-            put("session_id", host.sessionId)
-            put("generation", host.generation)
-            put("peer_id", host.peerId)
-        },
-    )
+    ) = appSharingHostRequest(action, host.sessionId, host.generation, host.peerId)
 
     @Synchronized private fun assetServer(): AppSharingAssets = assets ?: AppSharingAssets().also { assets = it }
 
@@ -610,7 +627,7 @@ internal object AppSharingService {
             val owner = owner()
             val sessionId = descriptor.getValue("session_id").jsonPrimitive.content
             val generation = descriptor.getValue("generation").jsonPrimitive.content
-            val device = preferenceStore.load().also(preferenceStore::save).deviceId
+            val device = preferenceMutex.withLock { preferenceStore.load().also(preferenceStore::save).deviceId }
             val role =
                 if (_state.value.preferences
                         ?.get("auto_control")
@@ -632,7 +649,7 @@ internal object AppSharingService {
             val consumed =
                 backend.call(
                     owner,
-                    request(
+                    appSharingRequest(
                         "consume",
                         buildJsonObject {
                             admission.forEach { (key, value) -> put(key, value) }
@@ -641,7 +658,7 @@ internal object AppSharingService {
                     ),
                 )
             val peerId = consumed.getValue("peer_id").jsonPrimitive.content
-            val config = viewerConfig(descriptor, consumed, role, windowId)
+            val config = appSharingViewerConfig(descriptor, consumed, role, windowId)
             val peer =
                 AppSharingPeerScope(
                     sessionId,
@@ -670,7 +687,7 @@ internal object AppSharingService {
         preferred: JsonObject,
     ): Pair<JsonObject, JsonObject> =
         try {
-            preferred to backend.call(owner, request("admit", preferred))
+            preferred to backend.call(owner, appSharingRequest("admit", preferred))
         } catch (error: AppSharingException) {
             val requestedControl = preferred["role"]?.jsonPrimitive?.content == "control"
             val canWatchInstead = error.reason == "approval_required" && requestedControl
@@ -680,40 +697,8 @@ internal object AppSharingService {
                     preferred.forEach { (key, value) -> put(key, value) }
                     put("role", "view")
                 }
-            viewOnly to backend.call(owner, request("admit", viewOnly))
+            viewOnly to backend.call(owner, appSharingRequest("admit", viewOnly))
         }
-
-    private fun viewerConfig(
-        descriptor: JsonObject,
-        consumed: JsonObject,
-        role: String,
-        requestedWindowId: String?,
-    ): JsonObject {
-        val windowId =
-            descriptor
-                .getValue("windows")
-                .jsonArray
-                .first { requestedWindowId == null || it.jsonObject["id"]?.jsonPrimitive?.content == requestedWindowId }
-                .jsonObject
-                .getValue("id")
-                .jsonPrimitive.content
-        val key =
-            URI(descriptor.getValue("viewer_url").jsonPrimitive.content)
-                .rawFragment
-                ?.split('&')
-                ?.firstOrNull { it.startsWith("k=") }
-                ?.removePrefix("k=") ?: error("Missing media key")
-        return buildJsonObject {
-            put("sessionId", descriptor.getValue("session_id"))
-            put("generation", descriptor.getValue("generation"))
-            put("peerId", consumed.getValue("peer_id"))
-            put("windowId", windowId)
-            put("keyEpoch", descriptor.getValue("key_epoch"))
-            put("mediaRootKey", key)
-            put("hostPublicKey", descriptor.getValue("host_public_key"))
-            put("role", consumed["role"] ?: JsonPrimitive(role))
-        }
-    }
 
     private fun report(error: Throwable) {
         if (error is CancellationException) return
@@ -732,6 +717,21 @@ internal object AppSharingService {
         _state.update { it.copy(status = appSharingFailureStatus(error)) }
     }
 }
+
+/** Retire visible authority while preserving the user's local policy and window selection. */
+internal fun AppSharingState.stopped(
+    status: String,
+    windowId: String?,
+): AppSharingState =
+    copy(
+        busy = false,
+        activeWindowId = null,
+        activeWindowIds = emptySet(),
+        viewers = 0,
+        statusWindowId = windowId,
+        controller = false,
+        status = status,
+    )
 
 /** Retain recovery authority while pixels are paused, and publish fresh coordinates together on the EDT. */
 private fun updateCapturedInput(

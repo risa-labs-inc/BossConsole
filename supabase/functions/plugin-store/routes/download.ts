@@ -3,7 +3,7 @@ import {
   DownloadInfoResponseSchema,
   ErrorResponseSchema
 } from "../types/schemas.ts"
-import { getPlugin, getPluginById } from "../services/plugins.ts"
+import { getPluginForDownload } from "../services/plugins.ts"
 import { getLatestVersion, getVersion } from "../services/versions.ts"
 import { getSignedDownloadUrl } from "../services/storage.ts"
 import { recordDownload, hashIp } from "../services/downloads.ts"
@@ -184,8 +184,8 @@ download.openapi(downloadLatestRoute, async (ctx) => {
     const supabase = ctx.get("supabase")
     const { pluginId } = ctx.req.valid('param')
 
-    // Get plugin
-    const plugin = await getPlugin(supabase, pluginId)
+    // No visibility here: canInstall below is the gate. See getPluginForDownload.
+    const plugin = await getPluginForDownload(supabase, pluginId)
     if (!plugin) {
       return ctx.json({ error: 'Plugin not found' }, 404)
     }
@@ -242,6 +242,9 @@ download.openapi(downloadLatestRoute, async (ctx) => {
       // Don't fail the request if tracking fails
     }
 
+    // Private: the body can describe an org plugin and holds a signed URL, but the path names no
+    // caller, so a shared cache would hand it to the next anonymous request.
+    ctx.header('Cache-Control', 'private, no-store')
     return ctx.json({
       downloadUrl,
       sha256: version.sha256,
@@ -351,8 +354,8 @@ download.openapi(downloadVersionRoute, async (ctx) => {
     const supabase = ctx.get("supabase")
     const { pluginId, version: versionStr } = ctx.req.valid('param')
 
-    // Get plugin
-    const plugin = await getPlugin(supabase, pluginId)
+    // No visibility here: canInstall below is the gate. See getPluginForDownload.
+    const plugin = await getPluginForDownload(supabase, pluginId)
     if (!plugin) {
       return ctx.json({ error: 'Plugin not found' }, 404)
     }
@@ -406,6 +409,9 @@ download.openapi(downloadVersionRoute, async (ctx) => {
       console.error('Error tracking download:', e)
     }
 
+    // Private: the body can describe an org plugin and holds a signed URL, but the path names no
+    // caller, so a shared cache would hand it to the next anonymous request.
+    ctx.header('Cache-Control', 'private, no-store')
     return ctx.json({
       downloadUrl,
       sha256: version.sha256,

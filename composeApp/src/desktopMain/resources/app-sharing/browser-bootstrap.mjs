@@ -47,6 +47,6 @@ export async function browserViewerConfig(location = globalThis.location, fetche
     const registeredLink = new URL(admitted.viewer_url ?? session.viewer_url);
     const mediaRootKey = new URLSearchParams(registeredLink.hash.slice(1)).get('k');
     if (!mediaRootKey) throw new Error('The sharing key is unavailable.');
-    return { ...auth, sessionId: session.session_id, generation: session.generation, peerId: consumed.peer_id, windowId: window.id, windows, canSwitchWindows: true, keyEpoch: admitted.key_epoch ?? session.key_epoch, hostPublicKey: admitted.host_public_key ?? session.host_public_key, mediaRootKey, role };
+    return { ...auth, returnUrl: new URL('../', page).href, sessionId: session.session_id, generation: session.generation, peerId: consumed.peer_id, windowId: window.id, windows, canSwitchWindows: true, keyEpoch: admitted.key_epoch ?? session.key_epoch, hostPublicKey: admitted.host_public_key ?? session.host_public_key, mediaRootKey, role };
   } finally { bridge.close(); }
 }

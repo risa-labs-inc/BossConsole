@@ -7,6 +7,7 @@ import ai.rever.boss.plugin.ui.BossThemes
 import ai.rever.boss.utils.SystemUtils
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -15,6 +16,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerializationException
 
 /**
  * Persists the user's host theme choice and keeps the live [BossThemeController]
@@ -105,10 +107,17 @@ object AppThemeSettingsManager {
         try {
             val content = if (settingsFile.exists()) settingsFile.readText() else null
             _settings.value = AppThemeSettings.decodeOrDefaults(content, SystemUtils.isWindows)
+        } catch (e: SerializationException) {
+            logger.warn(LogCategory.SYSTEM, "Failed to load app theme settings, using default", decodeFailure(e))
+            _settings.value = platformDefaults
         } catch (e: Exception) {
             logger.warn(LogCategory.SYSTEM, "Failed to load app theme settings, using default", error = e)
             _settings.value = platformDefaults
         }
+    }
+
+    internal fun reloadForTest() {
+        loadSync()
     }
 
     private suspend fun save() =

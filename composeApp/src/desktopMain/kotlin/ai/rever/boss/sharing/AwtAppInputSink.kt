@@ -1,5 +1,6 @@
 package ai.rever.boss.sharing
 
+import ai.rever.boss.utils.SystemUtils
 import ai.rever.boss.window.MacToolbarInput
 import ai.rever.boss.window.MacToolbarInputTarget
 import ai.rever.boss.window.OwnedWindowControls
@@ -36,6 +37,7 @@ internal class AwtAppInputSink(
     private val window: Window,
     private val privateSurfaceAllowed: () -> Boolean = { true },
     private val requireForeground: Boolean = true,
+    private val onCursor: (String) -> Unit = {},
     private val browserSurfaceAt: (Window, Int, Int) -> AppBrowserInputSurface? = ::appBrowserInputSurfaceAt,
 ) : AppScopedInputSink {
     private data class HeldPointer(
@@ -230,6 +232,7 @@ internal class AwtAppInputSink(
                 return false
             }
             if (target.nativeTarget == null) target.component.requestFocusInWindow()
+            target.browserSurface?.activatePanel()
             keyboardTarget = (target.component as? javax.swing.RootPaneContainer)?.contentPane ?: target.component
             keyboardBrowser = target.browserSurface
             keyboardNative = target.nativeTarget?.takeIf { it.id == "browser_url" }
@@ -250,7 +253,28 @@ internal class AwtAppInputSink(
             },
             validUntilMillis,
         )
+        publishCursor(target)
         return true
+    }
+
+    /** Compose updates hover icons asynchronously. Fence feedback against retired input authority. */
+    private fun publishCursor(target: HeldPointer) {
+        val epoch = authorityEpoch.get()
+        SwingUtilities.invokeLater {
+            if (authorityEpoch.get() != epoch || !visibleInputWindow()) return@invokeLater
+            if (target.component.isShowing &&
+                allowedWindow(SwingUtilities.getWindowAncestor(target.component)) &&
+                target.browserSurface?.isCurrent() != false
+            ) {
+                val cursor =
+                    when {
+                        target.nativeTarget?.id == "browser_url" -> "text"
+                        target.nativeTarget != null || target.browserSurface != null -> "default"
+                        else -> appCursorCss(target.component.cursor)
+                    }
+                onCursor(cursor)
+            }
+        }
     }
 
     private fun applyWheel(event: AppInputEvent.Wheel): Boolean {
@@ -311,13 +335,27 @@ internal class AwtAppInputSink(
                     ?: return false
             }
         if (event.action == "down") keys[event.code] = target
+        if (event.action == "down" && target.browserSurface == null && target.component !is BrowserView) {
+            if (traverseFocus(event)) return true
+        }
         key(target.component, event, target.browserSurface)
+        return true
+    }
+
+    /** redispatchEvent bypasses AWT traversal; move only the viewer's scoped target, never OS focus. */
+    private fun traverseFocus(event: AppInputEvent.Key): Boolean {
+        val target = scoped(focusedComponent())
+        val destination = target?.let { scoped(appTraversalTarget(it, event)) } ?: return false
+        keyboardTarget = destination
+        keyboardBrowser = null
+        if (requireForeground) destination.requestFocusInWindow()
         return true
     }
 
     override fun releaseAll() {
         check(SwingUtilities.isEventDispatchThread())
         authorityEpoch.incrementAndGet()
+        onCursor("default")
         releaseHeldInput()
     }
 
@@ -330,7 +368,7 @@ internal class AwtAppInputSink(
         // Releasing held input on a geometry change does not change the viewer-selected focus.
         // focusedComponent rechecks visibility, ownership and modal boundaries before reuse.
         heldButtons.forEach { (button, target) ->
-            if (target.nativeTarget == null) runCatching { pointer(target, "up", button) }
+            if (target.nativeTarget == null) runCatching { pointer(target, "up", button, popupAllowed = false) }
         }
         heldKeys.values.forEach { held ->
             runCatching {
@@ -396,6 +434,7 @@ internal class AwtAppInputSink(
         action: String,
         button: Int,
         validUntilMillis: Long = Long.MAX_VALUE,
+        popupAllowed: Boolean = true,
     ) {
         val target = held.component
         val x = held.x
@@ -420,6 +459,28 @@ internal class AwtAppInputSink(
         val browser = browserSurface?.browser ?: (target as? BrowserView)?.browser
         if (browser != null) {
             val point = browserSurface?.point(target, x, y) ?: Point.of(x, y)
+            if (action != "move" && button == 2) {
+                val epoch = authorityEpoch.get()
+                AppBrowserMenuDispatch.record(
+                    browser,
+                    MouseEvent(
+                        target,
+                        if (action == "down") MouseEvent.MOUSE_PRESSED else MouseEvent.MOUSE_RELEASED,
+                        System.currentTimeMillis(),
+                        modifiers(),
+                        x,
+                        y,
+                        1,
+                        true,
+                        MouseEvent.BUTTON3,
+                    ),
+                    point,
+                ) {
+                    popupAllowed && epoch == authorityEpoch.get() &&
+                        allowedWindow(SwingUtilities.getWindowAncestor(target)) &&
+                        privateSurfaceAllowed() && browserSurface?.isCurrent() != false
+                }
+            }
             if (action == "down") browser.focus()
             val browserButton =
                 when (button) {
@@ -486,7 +547,7 @@ internal class AwtAppInputSink(
                     x,
                     y,
                     if (action == "move") 0 else 1,
-                    false,
+                    popupAllowed && button == 2 && action == (if (SystemUtils.isMacOS) "down" else "up"),
                     if (action == "move") MouseEvent.NOBUTTON else awtButton,
                 ),
             )
@@ -528,7 +589,7 @@ internal class AwtAppInputSink(
                     window,
                     KeyPressed
                         .newBuilder(browserCode)
-                        .keyChar(char)
+                        .keyChar(browserTypedChar(event))
                         .keyModifiers(mods)
                         .build(),
                 ) {

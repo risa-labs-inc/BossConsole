@@ -2,6 +2,7 @@ package ai.rever.boss.components.dialogs
 
 import ai.rever.boss.mcp.McpApprovalRequest
 import ai.rever.boss.mcp.McpMutatingToolCatalog
+import ai.rever.boss.mcp.PreparedPackDisplayModel
 import ai.rever.boss.mcp.secrets.SecretDescriptor
 import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
@@ -24,6 +25,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
@@ -128,6 +130,7 @@ internal object McpPromptChoices {
      */
     fun scopesFor(request: McpApprovalRequest): List<McpApprovalScope> =
         when {
+            !request.allowStandingTrust -> listOf(McpApprovalScope.ONCE)
             request.escalated -> listOf(McpApprovalScope.ONCE, McpApprovalScope.ALWAYS_TOOL)
             request.secretRefs.isNotEmpty() -> listOf(McpApprovalScope.ONCE, McpApprovalScope.SESSION)
             else -> McpApprovalScope.entries
@@ -137,13 +140,23 @@ internal object McpPromptChoices {
     fun allowFlagsFor(
         request: McpApprovalRequest,
         scope: McpApprovalScope,
-    ): McpApproveFlags = if (request.escalated) McpApprovalScope.ONCE.approveFlags() else scope.approveFlags()
+    ): McpApproveFlags =
+        if (!request.allowStandingTrust || request.escalated) {
+            McpApprovalScope.ONCE.approveFlags()
+        } else {
+            scope.approveFlags()
+        }
 
     /** The allow button's label, matching [allowFlagsFor]. */
     fun allowLabelFor(
         request: McpApprovalRequest,
         scope: McpApprovalScope,
-    ): String = if (request.escalated) McpApprovalScope.ONCE.allowLabel() else scope.allowLabel()
+    ): String =
+        when {
+            !request.allowStandingTrust -> "Approve Once"
+            request.escalated -> McpApprovalScope.ONCE.allowLabel()
+            else -> scope.allowLabel()
+        }
 
     /** Title and description of the "Always, for this tool" option, which only denies when escalated. */
     fun alwaysToolText(request: McpApprovalRequest): Pair<String, String> =
@@ -193,7 +206,7 @@ private const val DEFAULT_DENY_REASON = "Operator declined this action"
  * menu.
  */
 @Composable
-@Suppress("LongMethod") // Declarative Compose layout.
+@Suppress("LongMethod", "CyclomaticComplexMethod") // Declarative Compose layout.
 fun McpApprovalDialog(
     request: McpApprovalRequest,
     pendingQueueSize: Int = 1,
@@ -273,6 +286,146 @@ fun McpApprovalDialog(
                                 .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 16.dp),
                     ) {
                         ToolDetails(request)
+
+                        val packModel = request.displayModel as? PreparedPackDisplayModel
+                        if (packModel != null) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                text = "Resolved Pack Plan (${packModel.packId}):",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = colors.textPrimary,
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            val planScrollState = rememberScrollState()
+                            Box(
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(max = 200.dp)
+                                        .background(colors.raised, RoundedCornerShape(4.dp))
+                                        .border(1.dp, colors.line, RoundedCornerShape(4.dp)),
+                            ) {
+                                Column(
+                                    modifier =
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .verticalScroll(planScrollState)
+                                            .padding(8.dp),
+                                ) {
+                                    if (packModel.plugins.isNotEmpty()) {
+                                        Text(
+                                            text = "Plugins (${packModel.plugins.size}):",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = colors.signal,
+                                        )
+                                        packModel.plugins.forEach { plugin ->
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Column(modifier = Modifier.fillMaxWidth().padding(start = 6.dp)) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Text(
+                                                        text = "${plugin.pluginId} [${plugin.action}]",
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontFamily = FontFamily.Monospace,
+                                                        color = colors.textPrimary,
+                                                    )
+                                                    if (plugin.optional) {
+                                                        Text(
+                                                            text = " (optional)",
+                                                            fontSize = 10.sp,
+                                                            color = colors.textSecondary,
+                                                        )
+                                                    }
+                                                }
+                                                val versionDetails =
+                                                    buildString {
+                                                        if (plugin.installedVersion != null) {
+                                                            append("installed: ${plugin.installedVersion} -> ")
+                                                        }
+                                                        if (plugin.targetVersion != null) {
+                                                            append("target: ${plugin.targetVersion}")
+                                                        }
+                                                        val hash = plugin.targetSha256?.takeIf { it.isNotBlank() }
+                                                        if (hash != null) {
+                                                            append(" (${hash.take(12)}…)")
+                                                        }
+                                                    }
+                                                if (versionDetails.isNotBlank()) {
+                                                    Text(
+                                                        text = versionDetails,
+                                                        fontSize = 10.sp,
+                                                        fontFamily = FontFamily.Monospace,
+                                                        color = colors.textSecondary,
+                                                    )
+                                                }
+                                                if (plugin.extraDependencies.isNotEmpty()) {
+                                                    Text(
+                                                        text = "Also installs:",
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Medium,
+                                                        color = colors.warn,
+                                                    )
+                                                    plugin.extraDependencies.forEach { dep ->
+                                                        val depHash = dep.sha256.takeIf { it.isNotBlank() }
+                                                        val hashPreview =
+                                                            if (depHash != null) {
+                                                                " (${depHash.take(12)}…)"
+                                                            } else {
+                                                                ""
+                                                            }
+                                                        Text(
+                                                            text = "• ${dep.pluginId}@${dep.version}$hashPreview",
+                                                            fontSize = 10.sp,
+                                                            fontFamily = FontFamily.Monospace,
+                                                            color = colors.textSecondary,
+                                                            modifier = Modifier.padding(start = 6.dp),
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if (packModel.rules.isNotEmpty()) {
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text(
+                                            text = "Policy Rules (${packModel.rules.size}):",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = colors.signal,
+                                        )
+                                        packModel.rules.forEach { rule ->
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Column(modifier = Modifier.fillMaxWidth().padding(start = 6.dp)) {
+                                                val ruleHeader = "${rule.scope} / ${rule.subject}"
+                                                Text(
+                                                    text = "$ruleHeader: ${rule.action} -> ${rule.outcome}",
+                                                    fontSize = 11.sp,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    color = colors.textPrimary,
+                                                )
+                                                if (rule.existing != null) {
+                                                    Text(
+                                                        text = "replaces existing: ${rule.existing}",
+                                                        fontSize = 10.sp,
+                                                        color = colors.textSecondary,
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                VerticalScrollbar(
+                                    adapter = rememberScrollbarAdapter(planScrollState),
+                                    modifier =
+                                        Modifier
+                                            .matchParentSize()
+                                            .wrapContentWidth(Alignment.End)
+                                            .padding(vertical = 2.dp, horizontal = 2.dp),
+                                )
+                            }
+                        }
 
                         // What the tool would be handed from the vault. Metadata only - the request
                         // carries descriptors, never values - and above the risk line because it is
@@ -570,6 +723,16 @@ private fun ScopeOptions(
                 selected = selected == McpApprovalScope.ALWAYS_PLUGIN,
                 titleColor = BossTheme.colors.warn,
                 onSelect = { onSelect(McpApprovalScope.ALWAYS_PLUGIN) },
+            )
+        }
+        if (!request.allowStandingTrust) {
+            Text(
+                text =
+                    "Pack applications require fresh approval for each plan and cannot be granted " +
+                        "standing or session trust.",
+                fontSize = 11.sp,
+                color = BossTheme.colors.textSecondary,
+                modifier = Modifier.padding(top = 4.dp),
             )
         }
     }

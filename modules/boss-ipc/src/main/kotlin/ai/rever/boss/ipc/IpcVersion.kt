@@ -37,9 +37,10 @@ object IpcVersion {
      * History:
      * - 1.4.0 - additive `TerminalService.CloseInput` RPC delivers stdin EOF to a session
      *   without terminating it, so a caller can let a stdin-consuming one-shot command (sort,
-     *   grep, cat with no args, ...) exit on its own. Like 1.0.0 below, this bump is not a
-     *   capability signal: an older host is still compatible and answers `CloseInput` with
-     *   UNIMPLEMENTED, which callers must treat as "not supported" rather than a session fault.
+     *   grep, cat with no args, ...) exit on its own. A runtime that keeps its `minIpcVersion` at
+     *   or below 1.3.0 talking to an older host receives UNIMPLEMENTED for `CloseInput`, which
+     *   callers must treat as "not supported" rather than a session fault; a runtime declaring
+     *   `minIpcVersion: 1.4.0` is rejected at spawn time by a 1.3.0 or older host.
      * - 1.3.0 - MasteryService surfaces guarded edges that fired (the target node
      *   was never invoked) through additive MasteryProgress oneof field 9
      *   NodeSkipped. Old runtimes receive a Progress with an unset oneof - the

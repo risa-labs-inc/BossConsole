@@ -12,6 +12,8 @@ This directory contains detailed release notes for each version of BOSS.
 <!-- RELEASE_INDEX_START -->
 | Version | Date | Summary |
 |---------|------|---------|
+| [v9.5.37](v9.5.37.md) | 2026-10-04 | BossConsole sharing starts automatically after sign-in, and remote viewers get fullscreen and live cursor shapes (#1813). A rare macOS startup crash is fixed (#1780), and fullscreen browser pages take keyboard input again (#1814). |
+| [v9.5.36](v9.5.36.md) | 2026-10-04 | Automatic Updates download new releases in the background and install them after you quit (#1807). Window sharing streams continuously at up to 60 FPS with scoped remote control, and Windows and Linux X11 get native capture helpers (#1810). |
 | [v9.5.34](v9.5.34.md) | 2026-10-01 | Sign in to BOSS with Google or Apple, through the system browser with a PKCE flow (#1767). Links clicked in terminal tabs ask where to open again (#1798), and the window sharing status sits below the macOS title bar (#1782). |
 | [v9.5.33](v9.5.33.md) | 2026-09-29 | A preview of encrypted BossConsole window sharing arrives on macOS, letting your own signed-in devices view and control a selected window (#1768). A crash with several macOS windows open is fixed (#1776), and download dialogs stay readable in Liquid Glass themes (#1766). |
 | [v9.5.32](v9.5.32.md) | 2026-09-29 | The browser engine moves to JxBrowser 9.5.2 (#1761). Corrupt keymap, zoom and Space settings files recover with a notice, local files that fail to decode are no longer written into logs, and the MCP ledger records escalated shell calls and `boss mcp ledger secrets` reports credential use (#1728). On macOS, favorites wrap to the sidebar width and glass settings apply immediately (#1765). |

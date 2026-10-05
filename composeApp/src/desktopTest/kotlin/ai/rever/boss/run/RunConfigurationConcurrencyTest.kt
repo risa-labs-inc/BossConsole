@@ -520,31 +520,58 @@ class RunConfigurationConcurrencyTest {
         // with the temp stage already completed.
         val blockedTarget = File(tempDir, "blocked-target")
         assertTrue(blockedTarget.mkdir(), "The blocked target must start as an empty directory")
-        RunConfigurationManager.resetForTesting(blockedTarget)
+        try {
+            RunConfigurationManager.resetForTesting(blockedTarget)
 
-        val seeded = createConfig(7001)
-        runBlocking {
-            // Both calls hit the failing write; neither may throw or leave memory torn.
-            RunConfigurationManager.addConfiguration(seeded)
-            RunConfigurationManager.updateConfiguration(seeded.copy(command = "cannot-persist"))
+            val seeded = createConfig(7001)
+            runBlocking {
+                // Both calls hit the failing write; neither may throw or leave memory torn.
+                RunConfigurationManager.addConfiguration(seeded)
+                RunConfigurationManager.updateConfiguration(seeded.copy(command = "cannot-persist"))
+            }
+
+            assertTrue(blockedTarget.isDirectory, "The blocked target must be left untouched")
+            assertEquals(
+                1,
+                RunConfigurationManager.currentSettings.value.configurations.size,
+                "Memory must still apply the session's edits while persistence keeps failing",
+            )
+            assertEquals(
+                "cannot-persist",
+                RunConfigurationManager.currentSettings.value.configurations
+                    .single()
+                    .command,
+            )
+            // The temp sibling that failed its move must have been cleaned up, not abandoned.
+            val strayTempFiles = tempDir.listFiles { file -> file.name.endsWith(".tmp") }.orEmpty()
+            assertEquals(0, strayTempFiles.size, "A failed write must clean up its temp file")
+        } finally {
+            RunConfigurationManager.resetForTesting(tempFile)
         }
-
-        assertTrue(blockedTarget.isDirectory, "The blocked target must be left untouched")
-        assertEquals(
-            1,
-            RunConfigurationManager.currentSettings.value.configurations.size,
-            "Memory must still apply the session's edits while persistence keeps failing",
-        )
-        assertEquals(
-            "cannot-persist",
-            RunConfigurationManager.currentSettings.value.configurations
-                .single()
-                .command,
-        )
-        // The temp sibling that failed its move must have been cleaned up, not abandoned.
-        val strayTempFiles = tempDir.listFiles { file -> file.name.endsWith(".tmp") }.orEmpty()
-        assertEquals(0, strayTempFiles.size, "A failed write must clean up its temp file")
     }
+
+    @Test
+    fun `resetForTesting serializes with in-flight mutations under settingsMutex and isolates state`() =
+        runBlocking(Dispatchers.Default) {
+            val config = createConfig(9001)
+            val resetDir = Files.createTempDirectory("run-config-reset-test-").toFile()
+            val resetFile = File(resetDir, "clean-reset.json")
+            try {
+                RunConfigurationManager.addConfiguration(config)
+                assertEquals(1, RunConfigurationManager.currentSettings.value.configurations.size)
+
+                RunConfigurationManager.resetForTesting(resetFile)
+
+                assertEquals(
+                    0,
+                    RunConfigurationManager.currentSettings.value.configurations.size,
+                    "resetForTesting under settingsMutex must cleanly reset configurations to empty state",
+                )
+            } finally {
+                resetDir.deleteRecursively()
+                RunConfigurationManager.resetForTesting(tempFile)
+            }
+        }
 
     @Test
     fun `a reader never observes a torn settings file while updates and saves are in flight`() =

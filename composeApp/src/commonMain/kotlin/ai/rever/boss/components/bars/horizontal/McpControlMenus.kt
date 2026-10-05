@@ -21,7 +21,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** Shared permission dialogs and actions for the title-bar menu and bottom-bar fallback. */
+/** Shared permission dialogs and actions available from both the title bar and bottom bar. */
 @Composable
 @Suppress("LongMethod") // Declarative Compose layout.
 internal fun rememberMcpAccessMenu(persistedPolicyConfig: McpToolPolicyConfig): McpAccessMenu {

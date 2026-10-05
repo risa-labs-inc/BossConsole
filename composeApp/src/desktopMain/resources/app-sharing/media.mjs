@@ -1,5 +1,6 @@
 import { createMediaCipher } from './crypto.mjs';
 import { SHARING_RECOVERY_MS, transientSharingFailure } from './recovery.mjs';
+import { remoteCursor } from './cursor.mjs';
 
 export function encryptionSupport(env = globalThis) {
   return !!(env.crypto?.subtle && env.RTCPeerConnection &&
@@ -575,6 +576,7 @@ export class NativeRawFrameCanvas {
       }
       if (![200, 204].includes(response.status)) throw new Error('Native stream unavailable');
       this.retries = 0;
+      const cursor = remoteCursor(response.headers.get('X-Boss-App-Cursor'));
       const sequenceHeader = response.headers.get('X-Boss-App-Sequence');
       const sequence = Number(sequenceHeader);
       if (sequenceHeader === null || !/^\d+$/.test(sequenceHeader) || !Number.isSafeInteger(sequence) || sequence < 0) throw new Error('Invalid native stream sequence');
@@ -594,9 +596,13 @@ export class NativeRawFrameCanvas {
         await this.paint(bytes, width, height, format);
         if (this.closed) return;
         this.empty = false;
-        this.onGeometry({ width, height, geometryRevision });
+        this.geometry = { width, height, geometryRevision, cursor };
+        this.onGeometry(this.geometry);
         this.lastPaint = this.env.performance.now();
       } else if (response.status === 204) {
+        if (this.geometry && this.geometry.cursor !== cursor) {
+          this.geometry = { ...this.geometry, cursor }; this.onGeometry(this.geometry);
+        }
         if (response.headers.get('X-Boss-App-Empty') === 'true' && !this.empty) {
           if (this.direct) await this.direct.clear();
           else { this.painter.clear(); this.track.requestFrame(); }

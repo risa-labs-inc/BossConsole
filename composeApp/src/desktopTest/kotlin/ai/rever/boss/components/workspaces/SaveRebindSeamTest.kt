@@ -252,4 +252,24 @@ class SaveRebindSeamTest {
         assertFalse(latch.inFlight)
         assertTrue(latch.press(), "callback failure must not wedge future saves")
     }
+
+    @Test
+    fun `tryStart transitions to inFlight and rejects overlapping attempts`() {
+        val latch = SaveInFlightLatch()
+
+        assertTrue(latch.tryStart())
+        assertTrue(latch.inFlight)
+        assertFalse(latch.tryStart())
+        assertFalse(latch.press())
+
+        var rerunStarted = false
+        latch.settle {
+            rerunStarted = latch.tryStart()
+        }
+
+        assertTrue(rerunStarted)
+        assertTrue(latch.inFlight)
+        latch.settle {}
+        assertFalse(latch.inFlight)
+    }
 }

@@ -82,6 +82,14 @@ actual object PluginStoreVersionBridge {
         version: String,
         sourceUrl: String?,
         manager: DynamicPluginManager,
+    ): Result<String> = installStoreVersion(pluginId, version, sourceUrl, manager, expectedSha256 = null)
+
+    actual suspend fun installStoreVersion(
+        pluginId: String,
+        version: String,
+        sourceUrl: String?,
+        manager: DynamicPluginManager,
+        expectedSha256: String?,
     ): Result<String> {
         // Outside the detached job on purpose: the question belongs to the window the user is
         // looking at, and detaching it would let the swap start before anyone had answered.
@@ -129,6 +137,7 @@ actual object PluginStoreVersionBridge {
                         sourceUrl = sourceUrl,
                         runningJarPath = manager.getPluginInfo(pluginId)?.jarPath,
                         hasLiveInstance = manager.getPluginInfo(pluginId)?.state == PluginState.LOADED,
+                        expectedSha256 = expectedSha256,
                     ),
                     displayName,
                     manager,

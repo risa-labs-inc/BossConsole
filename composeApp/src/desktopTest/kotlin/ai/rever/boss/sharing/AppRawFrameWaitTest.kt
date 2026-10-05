@@ -60,6 +60,31 @@ class AppRawFrameWaitTest {
     }
 
     @Test
+    fun `cursor feedback wakes a waiting publisher without retransmitting native pixels`() {
+        AppSharingAssets().use { server ->
+            val page = server.open(buildJsonObject {}, true) { buildJsonObject {} }
+            val bytes = byteArrayOf(30, 20, 10, -1)
+            page.rawFrames.offer(frame(bytes))
+            val waiting = client.sendAsync(request(page, "1"), HttpResponse.BodyHandlers.ofByteArray())
+            awaitAdmission(page)
+            page.rawFrames.cursor("ew-resize")
+            val cursor = waiting.get(2, TimeUnit.SECONDS)
+            assertEquals(204, cursor.statusCode())
+            assertEquals(0, cursor.body().size)
+            assertEquals("ew-resize", cursor.headers().firstValue("X-Boss-App-Cursor").orElseThrow())
+            assertEquals("2", cursor.headers().firstValue("X-Boss-App-Sequence").orElseThrow())
+            assertEquals("false", cursor.headers().firstValue("X-Boss-App-Empty").orElseThrow())
+            val initial = client.send(request(page, "-1"), HttpResponse.BodyHandlers.ofByteArray())
+            assertEquals(200, initial.statusCode())
+            assertTrue(bytes.contentEquals(initial.body()))
+            page.rawFrames.offer(frame(bytes))
+            val next = client.send(request(page, "2"), HttpResponse.BodyHandlers.ofByteArray())
+            assertEquals(200, next.statusCode())
+            assertEquals("ew-resize", next.headers().firstValue("X-Boss-App-Cursor").orElseThrow())
+        }
+    }
+
+    @Test
     fun `retiring a waiting page releases delivery and prevents late captured pixels from returning`() {
         AppSharingAssets().use { server ->
             val page = server.open(buildJsonObject {}, true) { buildJsonObject {} }

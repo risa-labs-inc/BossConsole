@@ -2635,23 +2635,25 @@ object FluckEngine {
 
     /**
      * Resolves both input acceptance and the destination for application shortcuts.
-     * A window-owned browser is accepted only while its owner is focused, and its
-     * stable owner always wins over the legacy process-focused fallback.
+     * A window-owned browser is accepted only while its input surface is focused, and its
+     * stable owner always wins over the legacy process-focused fallback. HTML fullscreen
+     * moves that surface to an owned Swing window without changing shortcut ownership.
      */
     internal fun resolveBrowserKeyEventRoute(
         ownerWindowId: String?,
         ownerWindowIsFocused: Boolean,
         fallbackFocusedWindowId: String?,
+        fullscreenSurfaceFocused: Boolean? = null,
     ): BrowserKeyEventRoute =
         when {
             ownerWindowId == null -> {
                 BrowserKeyEventRoute(
-                    acceptsInput = true,
-                    shortcutWindowId = fallbackFocusedWindowId,
+                    acceptsInput = fullscreenSurfaceFocused ?: true,
+                    shortcutWindowId = if (fullscreenSurfaceFocused == false) null else fallbackFocusedWindowId,
                 )
             }
 
-            ownerWindowIsFocused -> {
+            (fullscreenSurfaceFocused ?: ownerWindowIsFocused) -> {
                 BrowserKeyEventRoute(
                     acceptsInput = true,
                     shortcutWindowId = ownerWindowId,
@@ -2975,6 +2977,10 @@ object FluckEngine {
                     resolveBrowserKeyEventRoute(
                         ownerWindowId = ownerWindowId,
                         ownerWindowIsFocused = ownerWindowId?.let(WindowFocusManager::isWindowFocused) == true,
+                        // Fullscreen changes the input surface, while shortcuts retain their tab's owner.
+                        fullscreenSurfaceFocused =
+                            ai.rever.boss.tabfullscreen.fullscreenBrowserInput
+                                .focusFor(browser, ownerWindowId),
                         fallbackFocusedWindowId =
                             if (ownerWindowId == null) {
                                 WindowFocusManager.focusedWindowFlow.value

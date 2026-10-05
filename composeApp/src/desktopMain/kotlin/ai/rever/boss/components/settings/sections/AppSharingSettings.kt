@@ -53,13 +53,21 @@ private fun AppSharingLocalSettings(
 ) {
     SettingsSection(title = "BossConsole Sharing") {
         SettingsToggle(
+            label = "Share automatically after sign-in",
+            checked = state.automaticSharingEnabled,
+            onCheckedChange = { AppSharingService.setAutomaticSharingEnabled(it) },
+            description =
+                "Enabled by default. Your account can open this BossConsole from Live Sessions. " +
+                    "Stop sharing pauses it until the next sign-in.",
+        )
+        SettingsToggle(
             label = "Use media relay",
             checked = state.relayEnabled,
             onCheckedChange = { AppSharingService.setRelayEnabled(it) },
             description = "One encrypted publication serves all viewers. Turning this off stops sharing.",
         )
         Text(
-            "Choose the windows to share, or start from Window → Share BossConsole Window.",
+            "Sharing starts automatically after sign-in. You can also choose windows from the sharing menu.",
             color = TextMuted,
             fontSize = 12.sp,
         )

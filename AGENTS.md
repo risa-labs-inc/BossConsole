@@ -872,22 +872,41 @@ callers or engine-level forced closure.
 
 ## JxBrowser's native libraries swap the process's malloc zones when they load
 
-On macOS each of JxBrowser's JNI libraries (`libtoolkit`, `libipc`, `libawt_toolkit`) makes
-PartitionAlloc the default malloc zone in a static initializer, briefly unregistering the system
-zone; a `free()` on another thread in that gap is an uncatchable SIGTRAP. `ChromiumToolkitPreload`
-loads the first two on the main thread before the engine pre-warm. Its KDoc is the canonical
-account (mechanism, measurements, what it does not cover); keep it there rather than here.
+On macOS the FIRST of JxBrowser's JNI libraries to load (normally `libtoolkit`) makes PartitionAlloc
+the default malloc zone in a static initializer, briefly unregistering the system zone; a `free()` on
+another thread in that gap is an uncatchable SIGTRAP at `libtoolkit+0x4c9f4`. Later libraries
+(`libipc`, `libawt_toolkit`) see PartitionAlloc already registered and do not swap again (measured
+with an interposer). Two layers close the window:
+
+- **The native agent** (`native/toolkit-preload-agent`, built by `prepareToolkitPreloadAgent`, shipped
+  as `$APPDIR/resources/toolkit-preload/libbosstoolkitpreload.dylib` and named by `-agentpath` in the
+  launcher). It loads the toolkit from `Agent_OnLoad`, when the only threads are the launcher's two
+  idle ones, so nothing can free during the swap. It decides nothing: it loads what
+  `ToolkitPreloadManifest` recorded on the previous launch, and only while every file that decision
+  read is unchanged. 9.5.37 still crashed because the JVM's own C2 compiler thread freed mid-swap,
+  which no Java-side ordering can prevent.
+- **`ChromiumToolkitPreload`**, the in-JVM preload on the main thread before AppKit. It still runs
+  every launch (a no-op after the agent), covers the launches the agent skips, and writes the
+  manifest for the next one. Its KDoc is the canonical account; keep detail there.
 
 Rules for anyone touching it:
 
-- **Preload only from the directory `FluckEngine.resolveEngineDir` boots**, or the library loads
-  twice from two paths and swaps zones twice.
+- **Preload only from the directory `FluckEngine.resolveEngineDir` boots.** A second copy from
+  another path does not swap again, but it registers duplicate Objective-C classes (including
+  `NSWindowSwizzler`), so the agent skips on ANY doubt rather than guess.
+- **Anything the engine decision starts reading must be guarded in the manifest**
+  (`ToolkitPreloadManifest.inputsFor`), or the agent can load an engine this launch would not pick.
+- **A packaged launcher must never name an agent it does not carry**: a missing `-agentpath` library
+  stops the JVM from starting. `verifyToolkitPreloadAgent` fails the build for that, and
+  `Agent_OnLoad` always returns `JNI_OK`.
 - **JxBrowser must stay in the host class loader.** A plugin that bundled JxBrowser would get
   `already loaded in another classloader` for a library the host preloaded.
-- **Known gaps:** `libawt_toolkit` is not preloaded (it links `libjawt` and must follow AWT), and
-  a first-run download-then-boot gets no preload. Off switch: `BOSS_TOOLKIT_PRELOAD=false`.
-- **Re-measure after a JxBrowser bump.** The offsets in the KDoc are for 9.5.0 / Chromium
-  152.0.7977.65; check the zone swap still sits in a static initializer before trusting them.
+- **Known gaps:** the first launch after an install, engine change or app update has no valid
+  manifest and keeps only the in-JVM preload; a first-run download-then-boot gets no preload; a
+  native allocation failure is still a `brk #0` (only moving JxBrowser out of process fixes that).
+  Off switch for both layers: `BOSS_TOOLKIT_PRELOAD=false`.
+- **Re-measure after a JxBrowser bump.** Check the zone swap still sits in a static initializer and
+  still happens only once per process before trusting any of the above.
 
 ## Browser telemetry, and how to turn it off
 
@@ -947,6 +966,9 @@ restart. There is no Settings row and no per-site exclusion.
   ungated). Confinement is to the open project only - `resolveFile` refuses
   paths outside it, canonical and symlink-checked. A plugin that needs project
   search should be vetted the same way one that subscribes to the bus is.
+
+- **`WorkspaceContextMcpProvider` exposes open file paths and browser URLs to MCP agents under explicit permission and policy gates.**
+  Where `IntrospectionMcpToolProvider` intentionally emits magnitudes only (counts of tabs/terminals, deliberately refusing to disclose file paths or browser URLs), `get_workspace_context` and `get_active_editor_file` exist specifically to let operator-attached AI coding agents inspect active workspace context, locate open files, and reference current browser URLs. `get_workspace_context` inventories tabs across all Spaces (current and preserved workspaces across all open windows). To prevent ungated exposure of background workspace paths and cross-window URLs to untrusted callers, both tools require the `workspace.context` permission (which admin status bypasses under the standard RBAC rules) and are enrolled in `McpMutatingToolCatalog.KNOWN_MUTATING_TOOLS` as sensitive reads, routing invocations through the approval-requiring ASK default so operator approval remains mandatory.
 
 ## Two-finger swipe navigation (macOS)
 
@@ -2706,3 +2728,10 @@ Native NSWindow background stays clear in glass mode, including fullscreen. The 
 after it shows the focused terminal tab's live title and disappears on other tabs.
 GlassSurfaceRenderingTest renders the actual integrated sidebar and verifies that both surfaces
 continue through their headers without tint overlap, in both palettes.
+
+## Tab inventory before a Space is assigned
+
+The current split tree may contain live tabs while `currentWorkspaceId` is null. Both tab
+inventories must include that tree using a window-local `unsaved-window-<windowId>` identity,
+without assigning or persisting a workspace. Browser lookup matches the shared `TabInfo.id`;
+dynamic browser tabs are not instances of the host's built-in `FluckTabInfo`.

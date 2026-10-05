@@ -14,9 +14,14 @@ internal class AppBrowserInputSurface(
     val browser: Browser,
     val origin: Component,
     val bounds: Rectangle2D.Double,
+    private val activate: () -> Unit = {},
     private val current: () -> Boolean,
 ) {
     fun isCurrent(): Boolean = origin.isShowing && current()
+
+    fun activatePanel() {
+        if (isCurrent()) activate()
+    }
 
     fun point(
         component: Component,

@@ -4,9 +4,13 @@ import { AppControlChannel, videoPoint } from './control.mjs';
 import { browserViewerConfig } from './browser-bootstrap.mjs';
 import { SharingPerformanceBar } from './performance-bar.mjs';
 import { acquireControlWithRetry, CONTROL_ATTEMPTS } from './control-retry.mjs';
+import { setupViewerFullscreen } from './fullscreen.mjs';
+import { StreamPlaceholder } from './placeholder.mjs';
+import { remoteCursor } from './cursor.mjs';
 
 const video = document.getElementById('screen');
 const status = document.getElementById('status');
+const placeholder = new StreamPlaceholder(video, document.getElementById('placeholder'), document.getElementById('placeholder-status'));
 const controlButton = document.getElementById('control');
 const windowPicker = document.getElementById('window');
 const windowLabel = document.getElementById('window-label');
@@ -60,12 +64,21 @@ function recoverWindow() {
   attempt(0);
 }
 let current = null;
+const heldKeys = new Map();
 let navigation = 0;
-function text(value) { status.textContent = value; }
+setupViewerFullscreen({ document, root: document.documentElement, button: document.getElementById('fullscreen'),
+  focusStream: () => { if (current?.lease && !document.hidden) video.focus(); } });
+function text(value) { status.textContent = value; placeholder.text(value); }
 function paused(owner) { return owner.recovering || owner.hostPaused; }
+function updateCursor(owner) {
+  video.style.cursor = owner?.lease && owner.pointerInside && !owner.failed && !paused(owner) && !owner.inactive && !document.hidden
+    ? remoteCursor(owner.geometry?.cursor) : 'default';
+}
 function updateViewing(owner) {
   if (current !== owner) return;
+  updateCursor(owner);
   updateWindowActions(owner);
+  placeholder.unavailable(owner.failed || paused(owner));
   const retry = ['busy', 'temporary', 'expired'].includes(owner.controlFailure);
   controlButton.disabled = owner.failed || paused(owner) || !!owner.controlAttempt || owner.config.role === 'view' ||
     owner.control?.channel?.readyState !== 'open' || ['denied', 'unavailable'].includes(owner.controlFailure);
@@ -95,6 +108,9 @@ function suspendControl(owner) {
 }
 function stopOwner() {
   const owner = current; current = null;
+  updateCursor(null);
+  heldKeys.clear();
+  placeholder.reset(); placeholder.unavailable(false);
   updateWindowActions(null);
   if (!owner) return;
   cancelWindowRecovery(owner);
@@ -105,6 +121,17 @@ function stopOwner() {
   return closing;
 }
 function stop() { navigation++; return stopOwner(); }
+function leaveViewer(owner = current) {
+  if (current !== owner) return;
+  // Only the cookie-authenticated hosted entry supplies this field. Derive the
+  // destination again so a supplied config cannot redirect to another site.
+  const returnUrl = owner?.config.returnUrl;
+  const destination = new URL('../', globalThis.location.href).href;
+  stop();
+  // releaseControl/mediaClose start their keepalive requests synchronously.
+  // An unhealthy network must not leave this page waiting on their responses.
+  if (returnUrl === destination && !globalThis.__bossAppShareBridge) globalThis.location.replace(destination);
+}
 function configureWindows(config) {
   windowPicker.replaceChildren();
   for (const window of config.windows ?? []) {
@@ -137,9 +164,14 @@ async function start(value) {
         owner.performance?.pause();
         if (owner.recovering) suspendControl(owner); else { owner.wantsControl = false; owner.controlAttempt?.abort.abort(); owner.control?.stop(); }
         updateViewing(owner);
+        if (owner.failed && owner.config.returnUrl) leaveViewer(owner);
       }
     } });
-    await owner.media.subscribe(track => { video.srcObject = new MediaStream([track]); video.play().catch(() => text('Select the video to start playback')); });
+    await owner.media.subscribe(track => {
+      if (current !== owner) return;
+      video.srcObject = new MediaStream([track]); placeholder.attach(track);
+      video.play().catch(() => text('Select the video to start playback'));
+    });
     if (current !== owner) return;
     owner.performance = new SharingPerformanceBar(owner.media, video, document.getElementById('client-metrics'), document.getElementById('remote-metrics'));
     owner.performance.resume();
@@ -147,6 +179,7 @@ async function start(value) {
       onLease: (lease, details = {}) => {
         if (current !== owner) return;
         const lost = !!owner.lease && !lease;
+        if (!lease) heldKeys.clear();
         if (lost) cancelWindowRecovery(owner);
         owner.lease = lease;
         if (lost && details.reason !== 'suspended') {
@@ -177,7 +210,7 @@ async function start(value) {
       }
     } catch (_) { if (current === owner) { owner.controlFailure = 'unavailable'; updateViewing(owner); } }
   } catch (_) {
-    if (current === owner) { stop(); text('Unable to connect. Reopen the session from BossConsole.'); }
+    if (current === owner) { leaveViewer(owner); text('Unable to connect. Reopen the session from BossConsole.'); }
   }
 }
 async function switchWindow() {
@@ -238,8 +271,9 @@ function point(event) {
 }
 for (const [eventName, action] of [['pointermove', 'move'], ['pointerdown', 'down'], ['pointerup', 'up']]) {
   video.addEventListener(eventName, event => {
-    if (!current?.lease) return;
     const coordinates = point(event);
+    if (current) { current.pointerInside = !!coordinates; updateCursor(current); }
+    if (!current?.lease) return;
     // Releasing outside the image cannot leave a held host button behind.
     if (!coordinates) { if (action === 'up') releaseControl(); return; }
     if (event.button > 2) return;
@@ -248,6 +282,7 @@ for (const [eventName, action] of [['pointermove', 'move'], ['pointerdown', 'dow
     current.control.send({ type: 'pointer', action, ...coordinates, button: event.button < 0 ? 0 : event.button });
   });
 }
+video.addEventListener('pointerleave', () => { if (current) { current.pointerInside = false; updateCursor(current); } });
 video.addEventListener('pointercancel', releaseControl);
 video.addEventListener('wheel', event => {
   if (!current?.lease) return;
@@ -256,12 +291,22 @@ video.addEventListener('wheel', event => {
   const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 400 : 1;
   current.control.send({ type: 'wheel', ...coordinates, deltaX: Math.max(-1000, Math.min(1000, event.deltaX * unit)), deltaY: Math.max(-1000, Math.min(1000, event.deltaY * unit)) });
 }, { passive: false });
-for (const [eventName, action] of [['keydown', 'down'], ['keyup', 'up']]) video.addEventListener(eventName, event => {
-  if (!current?.lease) return;
+function sendKey(action, event) {
+  const owner = current;
+  if (!owner?.lease || event.isComposing) return;
+  if (action === 'down') heldKeys.set(event.code, { owner, leaseId: owner.lease.leaseId });
+  else {
+    const held = heldKeys.get(event.code); heldKeys.delete(event.code);
+    if (held?.owner !== owner || held.leaseId !== owner.lease.leaseId) return;
+  }
   event.preventDefault();
-  if (event.isComposing) return;
-  current.control.send({ type: 'key', action, code: event.code, key: event.key, alt: event.altKey, ctrl: event.ctrlKey, meta: event.metaKey, shift: event.shiftKey });
-});
+  owner.control.send({ type: 'key', action, code: event.code, key: event.key, alt: event.altKey, ctrl: event.ctrlKey, meta: event.metaKey, shift: event.shiftKey });
+}
+video.addEventListener('keydown', event => sendKey('down', event));
+video.addEventListener('keyup', event => sendKey('up', event));
+// A button can take focus while a remote modifier is held. Release only keys that
+// began on this stream; ordinary footer keyboard navigation stays in the viewer.
+document.addEventListener('keyup', event => sendKey('up', event), true);
 video.addEventListener('contextmenu', event => { if (current?.lease) event.preventDefault(); });
 video.addEventListener('click', () => video.play().catch(() => {}));
 globalThis.addEventListener('blur', suspendViewer);
@@ -269,7 +314,7 @@ globalThis.addEventListener('focus', resumeViewer);
 document.addEventListener('visibilitychange', () => document.hidden ? suspendViewer() : resumeViewer());
 globalThis.addEventListener('pagehide', stop);
 controlButton.addEventListener('click', () => current?.lease ? releaseControl() : takeControl());
-document.getElementById('disconnect').addEventListener('click', stop);
+document.getElementById('disconnect').addEventListener('click', () => leaveViewer());
 windowPicker.addEventListener('change', switchWindow);
 windowActions?.addEventListener('change', recoverWindow);
 globalThis.BossAppShareViewer = { start, stop, takeControl, releaseControl, resolve: resolveBridgeRequest, reject: rejectBridgeRequest };

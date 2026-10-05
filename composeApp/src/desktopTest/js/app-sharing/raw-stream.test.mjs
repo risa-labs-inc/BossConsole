@@ -31,7 +31,7 @@ function rawResponse(bytes, extra = {}) {
 
 test('continuous raw pixels use authenticated binary transport and exact BGRA-to-RGBA colors', async () => {
   const f = fixture(rawResponse(new Uint8Array([10, 20, 30, 255, 40, 50, 60, 255])), geometry => {
-    assert.deepEqual(geometry, { width: 2, height: 1, geometryRevision: 7 });
+    assert.deepEqual(geometry, { width: 2, height: 1, geometryRevision: 7, cursor: 'default' });
   });
   await f.stream.running;
   assert.deepEqual([...f.result().painted.bytes], [30, 20, 10, 255, 60, 50, 40, 255]);
@@ -110,7 +110,7 @@ test('binary transport negotiates NV12 and validates its compact plane size', as
     await stream.running;
     if (length === 6) {
       assert.equal(failure, undefined);
-      assert.deepEqual(geometry, { width: 2, height: 2, geometryRevision: 7 });
+      assert.deepEqual(geometry, { width: 2, height: 2, geometryRevision: 7, cursor: 'default' });
       assert.equal(h.writes[0].options.format, 'NV12');
     } else {
       assert.match(failure.message, /Invalid native stream pixels/);
@@ -207,6 +207,23 @@ const emptyResponse = (sequence = '1', acknowledged = true, extra = {}) => ({
 });
 const rejectedResponse = (status = 409, acknowledged = true) => ({
   status, headers: new Headers(acknowledged ? { 'X-Boss-App-Wait': 'true' } : {}),
+});
+
+test('cursor-only updates announce shapes without repainting or accepting arbitrary CSS', async () => {
+  const seen = [];
+  const f = transportFixture((_options, call) => {
+    if (call === 1) return rawResponse(new Uint8Array(8), { 'X-Boss-App-Wait': 'true' });
+    if (call === 2) return emptyResponse('2', true, { 'X-Boss-App-Cursor': 'ew-resize' });
+    if (call === 3) return emptyResponse('3', true, { 'X-Boss-App-Cursor': 'ew-resize' });
+    if (call === 4) return emptyResponse('4', true, { 'X-Boss-App-Cursor': 'url(https://untrusted/cursor), auto' });
+  });
+  f.stream.onGeometry = value => seen.push(value);
+  await settle();
+  assert.deepEqual(seen.map(value => value.cursor), ['default', 'ew-resize', 'default']);
+  assert.ok(seen.every(value => value.geometryRevision === 7));
+  assert.equal(f.paints.length, 1, 'Cursor feedback must not paint unchanged video');
+  assert.equal(f.requests.at(-1).headers['X-Boss-App-After'], '4');
+  f.stream.stop(); await f.stream.running; assert.equal(f.failure(), undefined);
 });
 
 test('fresh-frame acknowledgement skips pacing and empty demand advances sequence while clearing pixels', async () => {

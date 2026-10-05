@@ -1,6 +1,9 @@
 package ai.rever.boss.sharing
 
+import ai.rever.boss.platform.CursorUtil.cursorForHorizontalResize
+import ai.rever.boss.platform.CursorUtil.cursorForVerticalResize
 import ai.rever.boss.window.BossWindowIcon
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -19,6 +22,7 @@ import java.awt.BorderLayout
 import java.awt.Component
 import java.awt.GraphicsEnvironment
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import javax.swing.JButton
@@ -32,6 +36,63 @@ import kotlin.test.assertTrue
 
 /** All UI is synthetic; no global Robot, key dispatch queue, or user application is touched. */
 class AppScopedInputNativeTest {
+    @Test
+    fun `background Compose split dividers publish resize shapes without OS focus`() {
+        assumeTrue(System.getenv("BOSS_TEST_APP_CAPTURE") == "1", "Synthetic input smoke is opt-in")
+        assumeTrue(!GraphicsEnvironment.isHeadless())
+        val ready = CountDownLatch(1)
+        val shapes = LinkedBlockingQueue<String>()
+        val selected =
+            onEdt {
+                ComposeWindow().apply {
+                    title = "Synthetic remote divider cursors"
+                    focusableWindowState = false
+                    setSize(400, 260)
+                    setContent {
+                        Column(Modifier.onGloballyPositioned { ready.countDown() }) {
+                            Box(Modifier.fillMaxWidth().height(80.dp).cursorForHorizontalResize())
+                            Box(Modifier.fillMaxWidth().height(80.dp).cursorForVerticalResize())
+                            Box(Modifier.fillMaxWidth().height(80.dp))
+                        }
+                    }
+                    isVisible = true
+                }
+            }
+        val sink = AwtAppInputSink(selected, requireForeground = false, onCursor = { shapes.offer(it) })
+        try {
+            assertTrue(ready.await(10, TimeUnit.SECONDS))
+            for ((y, expected) in listOf(40 to "ew-resize", 120 to "ns-resize", 200 to "default")) {
+                onEdt {
+                    shapes.clear()
+                    assertTrue(
+                        sink.apply(
+                            AppInputEvent.Pointer(
+                                "move",
+                                100.0 / (selected.width - 1),
+                                (selected.insets.top + y.toDouble()) / (selected.height - 1),
+                                0,
+                            ),
+                        ),
+                    )
+                }
+                assertEquals(expected, shapes.poll(2, TimeUnit.SECONDS))
+                assertFalse(selected.isFocused)
+            }
+            onEdt {
+                shapes.clear()
+                sink.apply(AppInputEvent.Pointer("move", 0.25, 0.1, 0))
+                sink.releaseAll()
+            }
+            onEdt { /* Drain the fenced hover callback. */ }
+            assertEquals(listOf("default"), shapes.toList())
+        } finally {
+            onEdt {
+                sink.releaseAll()
+                selected.dispose()
+            }
+        }
+    }
+
     @Test fun `scoped delivery types into selected field and clicks selected button without changing another window`() {
         assumeTrue(System.getenv("BOSS_TEST_APP_CAPTURE") == "1", "Synthetic input smoke is opt-in")
         assumeTrue(!GraphicsEnvironment.isHeadless())

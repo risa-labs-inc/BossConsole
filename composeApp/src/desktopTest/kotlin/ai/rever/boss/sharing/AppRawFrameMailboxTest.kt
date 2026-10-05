@@ -67,4 +67,29 @@ class AppRawFrameMailboxTest {
             assertEquals(before, mailbox.awaitNext(-1))
         }
     }
+
+    @Test
+    fun `cursor updates wake publication without advancing the pixel sequence or restoring retired state`() {
+        AppRawFrameMailbox().use { mailbox ->
+            val pixels = frame()
+            mailbox.offer(pixels)
+            val before = mailbox.latest()
+            mailbox.cursor("ew-resize")
+            val changed = mailbox.awaitNext(before.sequence)
+            assertTrue(changed.sequence > before.sequence)
+            assertEquals(before.frameSequence, changed.frameSequence)
+            assertSame(pixels, changed.frame)
+            assertEquals("ew-resize", changed.cursor)
+            mailbox.cursor("ew-resize")
+            assertEquals(changed, mailbox.latest())
+            mailbox.offer(frame())
+            assertEquals("ew-resize", mailbox.latest().cursor)
+            assertEquals(mailbox.latest().sequence, mailbox.latest().frameSequence)
+            mailbox.close()
+            val retired = mailbox.latest()
+            mailbox.cursor("ns-resize")
+            assertEquals(retired, mailbox.latest())
+            assertEquals("default", retired.cursor)
+        }
+    }
 }
