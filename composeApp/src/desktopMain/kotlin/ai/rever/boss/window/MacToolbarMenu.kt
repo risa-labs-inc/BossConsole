@@ -23,7 +23,7 @@ internal object MacToolbarMenu {
         send(item, "setEnabled:", 1.toByte())
         MacToolbarContextMenu.update(popup, action.contextMenu, target)
         if (action.menu == null) {
-            send(popup, "setTitle:", string(action.label))
+            send(popup, "setTitle:", string("${action.label} ⌄"))
             send(popup, "setTarget:", target)
             send(popup, "setAction:", selector("activate:"))
             send(popup, "setTag:", MacToolbarRuntime.number(item, "tag"))
