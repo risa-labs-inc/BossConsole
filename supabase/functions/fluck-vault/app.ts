@@ -253,7 +253,7 @@ const COPY = {
   passwordSubmit: "Save",
   passwordNote: "Encrypted in this browser before it is sent.",
   cardTitle: "Add a card",
-  cardIntro: "Use a virtual card with a spending limit. Fluck never sees it in Messages.",
+  cardIntro: "Add a card and the most Fluck may spend on it. Fluck never sees it in Messages.",
   cardSubmit: "Add card",
   cardNote:
     "The card and its security code are encrypted on this device, so only your Fluck can read them.",
