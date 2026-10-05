@@ -19,5 +19,7 @@ class WindowIdProviderImpl(
 class WindowProjectStateProviderImpl(
     private val windowProjectState: WindowProjectState?,
 ) : WindowProjectStateProvider {
-    override fun getSelectedProjectPath(): String? = windowProjectState?.selectedProject?.value?.path
+    // Nullable for the same reason PluginContext.projectPath is: the flow's initial
+    // value is a "No Project" sentinel with an empty path, and this is declared String?.
+    override fun getSelectedProjectPath(): String? = windowProjectState?.selectedProjectPath
 }
