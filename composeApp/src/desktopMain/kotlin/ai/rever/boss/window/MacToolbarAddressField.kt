@@ -54,6 +54,20 @@ internal class MacToolbarAddressField {
         claimEditorFocus()
     }
 
+    fun performShortcut(command: String): Boolean {
+        val available = !editing.closed && editing.input != null
+        if (available && command == "focusAddress") focus()
+        val editor = editing.view?.takeIf { available }?.let { pointer(it, "currentEditor") } ?: return false
+        val window = pointer(editing.view, "window")
+        val ownsEditor = !editing.closed && editing.active && pointer(window, "firstResponder") == editor
+        val handled = ownsEditor && (command == "focusAddress" || MacToolbarRuntime.supports(editor, command))
+        if (handled && command != "focusAddress") {
+            send(editor, command, null)
+            revealNativeAddressCaret(editor)
+        }
+        return handled
+    }
+
     fun claimEditorFocus() {
         val editor = pointer(editing.view, "currentEditor")
         if (editor != null && pointer(pointer(editing.view, "window"), "firstResponder") == editor) {

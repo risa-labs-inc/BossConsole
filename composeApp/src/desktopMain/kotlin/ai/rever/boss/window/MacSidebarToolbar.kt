@@ -125,6 +125,7 @@ internal class MacSidebarToolbar(
         previousTitleVisibility = number(window, "titleVisibility")
         delegate = pointer(MacSidebarToolbarBridge.bridgeClass, "new")
         MacSidebarToolbarBridge.owners[Pointer.nativeValue(delegate)] = this
+        MacAddressKeyboardMonitor.install()
         toolbar =
             checkNotNull(
                 pointer(pointer(clazz("NSToolbar"), "alloc"), "initWithIdentifier:", string(toolbarIdentifier)),
@@ -234,6 +235,12 @@ internal class MacSidebarToolbar(
     }
 
     val focusAddress: () -> Unit = { dispatchSafely { addressField.focus() } }
+
+    internal fun ownsAddressEventWindow(eventWindow: Pointer): Boolean =
+        !closed && actions["browser_url"]?.textInput != null &&
+            MacToolbarRuntime.isLiveWindow(window) && pointer(window, "toolbar") == toolbar &&
+            pointer(window, "attachedSheet") == null && ownsNativeToolbarWindow(window, eventWindow) &&
+            ownsNativeToolbarView(window, addressField.editing.view)
 
     fun submitAddress() {
         addressField.editing.submit()
@@ -372,6 +379,7 @@ internal class MacSidebarToolbar(
             }
             send(toolbar, "setDelegate:", null)
             MacSidebarToolbarBridge.owners.remove(Pointer.nativeValue(delegate))
+            MacAddressKeyboardMonitor.removeIfUnused()
             items.values.forEach { send(it, "release") }
             items.clear()
             addressField.editing.closed = true
