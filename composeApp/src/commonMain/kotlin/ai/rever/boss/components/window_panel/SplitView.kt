@@ -31,6 +31,8 @@ import ai.rever.boss.components.window_panel.components.main_window_panels.paneL
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberPinDrawerAction
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberTabBarLayout
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberTabBarRevealState
+import ai.rever.boss.components.window_panel.components.main_window_panels.TrackTabBarRevealPointer
+import ai.rever.boss.components.window_panel.components.main_window_panels.tabBarRailWidth
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberTabGroupExpansion
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberToggleCollapseAction
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberWindowTabGroups
@@ -2699,6 +2701,13 @@ fun SplitViewPanel(
     // This area's rectangle in dp relative to the window's content pane, for the drawer's
     // heavyweight overlay window. Null until measured, and the drawer draws nothing while it is.
     var contentRegion by remember { mutableStateOf<IntRect?>(null) }
+
+    TrackTabBarRevealPointer(
+        state = reveal,
+        enabled = bar.railShown && bar.hoverExpand,
+        region = contentRegion,
+        sidebarWidth = bar.width + if (sidebarToggleRequests != null) 0.dp else tabBarRailWidth,
+    )
 
     // In an effect, not during composition: the window turns this into a placement decision that
     // feeds back into what this composable is given, and writing it inline would be a state write

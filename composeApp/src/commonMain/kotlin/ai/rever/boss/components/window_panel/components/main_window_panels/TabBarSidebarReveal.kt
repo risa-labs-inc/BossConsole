@@ -1,10 +1,12 @@
 package ai.rever.boss.components.window_panel.components.main_window_panels
 
+import androidx.compose.ui.unit.IntRect
+
 /**
  * Hover-reveal for the collapsed vertical tab bar: when the bar is down to its slim icon rail -
  * either forced by a narrow panel ([TAB_BAR_AUTO_COLLAPSE_WIDTH]) or collapsed with the chevron -
- * resting the pointer on the rail slides the full bar in as an overlay drawer, which retracts
- * once the pointer leaves. Gated by the `tabBarHoverExpand` setting (on by default).
+ * reaching or crossing its left edge reveals the full bar as an overlay drawer. It remains
+ * open through a 100dp margin beyond its right edge. Gated by `tabBarHoverExpand`.
  *
  * The timing lives in a `LaunchedEffect` in `BossMainPanel`; the decision itself is kept pure
  * here so it can be unit-tested. Ported from BossTerm's `tabs/SidebarHoverReveal.kt`, where the
@@ -12,14 +14,9 @@ package ai.rever.boss.components.window_panel.components.main_window_panels
  * the drawer retracting out from under an interaction.
  */
 
-/** Pointer rest time before the collapsed rail reveals the full bar. */
-internal const val SIDEBAR_REVEAL_OPEN_DELAY_MS = 150L
-
 /**
- * Grace period after the pointer leaves before the reveal retracts. Must exceed
- * [SIDEBAR_REVEAL_OPEN_DELAY_MS]: it covers the rail-to-drawer handoff (the drawer slides over
- * the rail, so hover moves between two different nodes - and under HARDWARE it moves between two
- * different WINDOWS, which is slower still) and brief excursions past the drawer's edge.
+ * Brief grace after leaving the 100dp retention margin, so a transient native cursor sample
+ * does not dispose an interaction.
  */
 internal const val SIDEBAR_REVEAL_CLOSE_DELAY_MS = 250L
 
@@ -43,3 +40,14 @@ internal fun hoverRevealTarget(
     pointerOnDrawer: Boolean,
     drawerBusy: Boolean = false,
 ): Boolean = enabled && railShown && (pointerOnRail || pointerOnDrawer || drawerBusy)
+
+/** Exact edge activation, with crossing detection for cursor movements that skip the edge. */
+internal fun pointerReachesSidebarEdge(x: Int, y: Int, previousX: Int?, region: IntRect): Boolean =
+    y >= region.top && y < region.bottom &&
+        (x == region.left || (previousX != null &&
+            ((previousX > region.left && x < region.left) ||
+                (previousX < region.left && x > region.left))))
+
+/** Retention is horizontal only: leaving through the left edge keeps the reveal open. */
+internal fun pointerWithinSidebarMargin(x: Int, region: IntRect, sidebarWidthDp: Float): Boolean =
+    x <= region.left + sidebarWidthDp + 100f
